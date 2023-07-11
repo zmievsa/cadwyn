@@ -1,0 +1,129 @@
+[tool.poetry]
+name = "universi"
+version = "0.1.1"
+description = ""
+authors = ["Stanislav Zmiev <szmiev2000@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/ovsyanka83/universi"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+typing-extensions = "*"
+typer = {version="*", extras=["all"]}
+fastapi = ">=0.96.1"
+type-inspector = "^1.2.2"
+
+[tool.poetry.group.dev.dependencies]
+black = "*"
+ruff = "*"
+pytest = ">=7.2.1"
+pytest-cov = ">=4.0.0"
+httpx = ">=0.23.0"
+uvicorn = "*"
+devtools = "*"
+pdbpp = "^0.10.3"
+pytest-pretty = "^1.2.0"
+notebook = "^6.5.4"
+
+[tool.coverage.report]
+fail_under = 100
+skip_covered = true
+skip_empty = true
+# Taken from https://coverage.readthedocs.io/en/7.1.0/excluding.html#advanced-exclusion
+exclude_lines = [
+    "pragma: no cover",
+    "assert_never\\(",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if False:",
+    "assert_never",
+    "if 0:",
+    "class .*\\bProtocol\\):",
+    "if __name__ == .__main__.:",
+    # Impossible to cover
+    # It is impossible to cover "if TYPE_CHECKING" statements because they never actually run
+    "if TYPE_CHECKING:",
+    "@(abc\\.)?abstractmethod",
+    "@(typing\\.)?overload",
+    "__rich_repr__",
+    "__repr__",
+]
+
+
+[tool.ruff]
+line-length = 120
+select = [
+    "F",        # pyflakes
+    "E",        # pycodestyle errors
+    "W",        # pycodestyle warnings
+    "C90",      # mccabe
+    "I",        # isort
+    "N",        # pep8-naming
+    "UP",       # pyupgrade
+    "YTT",      # flake8-2020
+    "S",        # flake8-bandit
+    "BLE",      # flake8-blind-except
+    "FBT003",   # flake8-boolean-trap
+    "B",        # flake8-bugbear
+    "A",        # flake8-builtins
+    "COM",      # flake8-commas
+    "C4",       # flake8-comprehensions
+    "T10",      # flake8-debugger
+    "ISC",      # flake8-implicit-str-concat
+    "G010",     # Logging statement uses warn instead of warning
+    "G201",     # Logging .exception(...) should be used instead of .error(..., exc_info=True)
+    "G202",     # Logging statement has redundant exc_info
+    "INP",      # flake8-no-pep420
+    "PIE",      # flake8-pie
+    "T20",      # flake8-print
+    "PYI",      # flake8-pyi
+    "PT",       # flake8-pytest-style
+    "Q",        # flake8-quotes
+    "RSE",      # flake8-raise
+    "RET",      # flake8-return
+    "SIM",      # flake8-simplify
+    "TCH",      # flake8-type-checking
+    "ARG",      # flake8-unused-arguments
+    "PTH",      # flake8-use-pathlib
+    "ERA",      # flake8-eradicate
+    "PGH",      # pygrep-hooks
+    "PLC0414",  # Import alias does not rename original package 
+    "PLE",      # Error
+    "PLW",      # Warning
+    "TRY",      # tryceratops
+    "FLY",      # flynt
+    "RUF",      # ruff-specific rules
+    "ANN001",   # missing type annotation for arguments
+    "ANN002",   # missing type annotation for *args
+    "ANN003",   # missing type annotation for **kwargs
+]
+unfixable = [
+    "ERA001",   # eradicate: found commented out code (can be dangerous if fixed automatically)
+]
+ignore = [
+    "A002",   # builtin shadowing in arguments
+    "A003",   # builtin shadowing in attributes
+    "D203",   # 1 blank line required before class docstring
+    "ARG002", # Unused method argument
+    "TRY003", # Avoid specifying long messages outside the exception class
+    "TRY300", # Consider moving statement into the else clause
+    "ARG001", # Unused first argument
+    "PT019",  # Fixture without value is injected as parameter, use @pytest.mark.usefixtures instead
+    "SIM108"  # Use ternary operator instead of if-else block (ternaries lie to coverage)
+]
+extend-exclude = ["migrations"]
+
+[tool.ruff.per-file-ignores]
+"tests/*" = [
+    "S",        # ignore bandit security issues in tests
+    "B018",     # ignore useless expressions in tests
+    "PT012",    # ignore complex with pytest.raises clauses
+]
+
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
