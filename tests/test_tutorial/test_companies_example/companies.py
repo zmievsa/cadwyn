@@ -1,18 +1,23 @@
 from datetime import date
 from typing import Any
 
-from tests.test_tutorial.test_companies_example003.schemas.latest.companies import (
+from .schemas.latest.companies import (
     BaseCompany,
     CompanyCreateRequest,
     CompanyResource,
     CompanyVATIDResourceList,
 )
-from universi import Field
-from universi.routing import VersionedAPIRouter
-from universi.structure.endpoints import endpoint
-from universi.structure.responses import convert_response_to_previous_version_for
-from universi.structure.schemas import field, schema
-from universi.structure.versions import AbstractVersionChange, Version, Versions
+from universi import Field, VersionedAPIRouter
+from universi.structure import (
+    endpoint,
+    convert_response_to_previous_version_for,
+    field,
+    schema,
+    AbstractVersionChange,
+    Version,
+    Versions,
+)
+from .schemas import latest
 
 router = VersionedAPIRouter()
 
@@ -20,7 +25,9 @@ router = VersionedAPIRouter()
 @router.post("/companies", response_model=CompanyResource)
 async def create_company(company: CompanyCreateRequest):
     company_id = 83
-    default_vat_id = getattr(company, "vat_id", None) or company.default_vat_id
+    default_vat_id = (
+        getattr(company, "vat_id", None) or getattr(company, "vat_ids", [None])[0] or company.default_vat_id
+    )
     return {
         "id": company_id,
         "name": "Company 1",
@@ -37,7 +44,6 @@ async def get_company(company_id: int):
     }
 
 
-# TODO: NEed to validate that the user doesn't use versioned schemas instead of the latest ones
 @router.get("/companies/{company_id}/vat_ids", response_model=CompanyVATIDResourceList)
 async def get_company_vat_ids(company_id: int):
     return [{"id": 83, "value": "First VAT ID"}, {"id": 91, "value": "Second VAT ID"}]
@@ -82,17 +88,3 @@ versions = Versions(
     Version(date(2001, 1, 1), ChangeVatIDToList),
     Version(date(2000, 1, 1)),
 )
-
-from tests.test_tutorial.test_companies_example001.schemas import latest
-from universi.codegen import regenerate_dir_to_all_versions
-
-regenerate_dir_to_all_versions(latest, versions)
-
-
-# routers = router.create_versioned_copies(versions, latest_schemas_module=latest)
-# app = FastAPI()
-# version = date(2002, 1, 1)
-# api_version_var.set(version)
-# app.include_router(routers[version])
-# print(version)
-# uvicorn.run(app, port=8000)

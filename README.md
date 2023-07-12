@@ -24,3 +24,8 @@ Package description
 ```bash
 pip install universi
 ```
+
+<!---
+# TODO: Note that we don't handle "from .schemas import Schema as OtherSchema" case
+# TODO: Need to validate that the user doesn't use versioned schemas instead of the latest ones
+-->
