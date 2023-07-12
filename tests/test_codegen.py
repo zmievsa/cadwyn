@@ -297,7 +297,7 @@ def test__codegen__with_deleted_source_file__error():
 
     with pytest.raises(
         CodeGenerationError,
-        match="Module <module 'tests._data.latest.another_temp1.hello' from '.+universi/tests/_data/latest/another_temp1/hello.py'> is not a package",
+        match="Module <module 'tests._data.latest.another_temp1.hello' from .+ is not a package",
     ):
         generate_test_version_packages(enum(latest.EnumWithOneMember).didnt_have("foo"), package=hello)
 
