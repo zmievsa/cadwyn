@@ -25,6 +25,10 @@ devtools = "*"
 pdbpp = "^0.10.3"
 pytest-pretty = "^1.2.0"
 notebook = "^6.5.4"
+pytest-asyncio = "^0.21.0"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [tool.coverage.report]
 fail_under = 100

@@ -1,9 +1,6 @@
 from datetime import date
 from typing import Any
 
-import uvicorn
-from fastapi import FastAPI
-
 from tests.test_tutorial.test_companies_example001.schemas.latest.companies import (
     BaseCompany,
     CompanyCreateRequest,
@@ -11,7 +8,6 @@ from tests.test_tutorial.test_companies_example001.schemas.latest.companies impo
     CompanyVATIDResourceList,
 )
 from universi import Field
-from universi.header import api_version_var
 from universi.routing import VersionedAPIRouter
 from universi.structure.endpoints import endpoint
 from universi.structure.responses import convert_response_to_previous_version_for
@@ -96,8 +92,6 @@ versions = Versions(
     Version(date(2000, 1, 1)),
 )
 
-from tests.test_tutorial.test_companies_example001.schemas import latest
-from universi.codegen import regenerate_dir_to_all_versions
 
 # regenerate_dir_to_all_versions(latest, versions)
 

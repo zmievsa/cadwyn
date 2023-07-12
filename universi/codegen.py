@@ -1,9 +1,7 @@
 import ast
 import importlib
 import inspect
-import json
 import os
-import pprint
 import shutil
 import sys
 from collections.abc import Sequence
@@ -12,16 +10,20 @@ from datetime import date
 from enum import Enum, auto
 from pathlib import Path
 from types import GenericAlias, LambdaType, ModuleType
-from typing import Any, TypeAlias, get_args, get_origin
+from typing import (
+    Any,
+    TypeAlias,
+    _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
+    get_args,
+    get_origin,
+)
 
 from pydantic import BaseConfig, BaseModel
-from pydantic.fields import ModelField
-from typing_extensions import assert_never
 from pydantic.fields import FieldInfo as PydanticFieldInfo
+from pydantic.fields import ModelField
+from pydantic.typing import convert_generics
+from typing_extensions import assert_never
 
-from ._utils import Sentinel
-from .exceptions import CodeGenerationError, InvalidGenerationInstructionError
-from .fields import FieldInfo
 from universi.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
 from universi.structure.schemas import (
     AlterSchemaInstruction,
@@ -30,8 +32,12 @@ from universi.structure.schemas import (
     OldSchemaHadField,
 )
 from universi.structure.versions import Version, Versions
-from pydantic.typing import convert_generics
 
+from ._utils import Sentinel
+from .exceptions import CodeGenerationError, InvalidGenerationInstructionError
+from .fields import FieldInfo
+
+LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
 FieldNameT: TypeAlias = str
 dict_of_empty_field_info = {k: getattr(PydanticFieldInfo(), k) for k in PydanticFieldInfo.__slots__}
 
@@ -47,10 +53,10 @@ def regenerate_dir_to_all_versions(template_module: ModuleType, versions: Versio
         _generate_versioned_directory(template_module, schemas, enums, version.date)
         _apply_migrations(version, schemas, enums)
 
-    base_package = template_module.__name__.split(".")[0]
-    for module_name, module_value in sys.modules.copy().items():
-        if module_name.startswith(base_package) and module_name in sys.modules:
-            importlib.reload(module_value)
+    current_package = template_module.__name__
+    while current_package != "":
+        importlib.reload(sys.modules[current_package])
+        current_package = ".".join(current_package.split(".")[:-1])
 
 
 def _apply_migrations(
@@ -87,11 +93,11 @@ def _apply_alter_schema_instructions(
                 if field_change.type is not Sentinel:
                     if model_field.annotation == field_change.type:
                         raise InvalidGenerationInstructionError(
-                            f"You tried to change the type of field '{field_change.field_name}' to '{field_change.type}' in {schema.__name__} but it already has type '{model_field.annotation}'"
+                            f"You tried to change the type of field '{field_change.field_name}' to '{field_change.type}' in {schema.__name__} but it already has type '{model_field.annotation}'",
                         )
-                    setattr(model_field, "annotation", field_change.type)
-                    setattr(model_field, "type_", convert_generics(field_change.type))
-                    setattr(model_field, "outer_type_", field_change.type)
+                    model_field.annotation = field_change.type
+                    model_field.type_ = convert_generics(field_change.type)
+                    model_field.outer_type_ = field_change.type
                 field_info = model_field.field_info
 
                 if not isinstance(field_info, FieldInfo):
@@ -101,7 +107,7 @@ def _apply_alter_schema_instructions(
                         model_field.field_info = field_info
                     else:
                         raise InvalidGenerationInstructionError(
-                            f"You have defined a Field using pydantic.fields.Field but you must use universi.Field in {schema.__name__}"
+                            f"You have defined a Field using pydantic.fields.Field but you must use universi.Field in {schema.__name__}",
                         )
                 for attr_name in field_change.field_changes.__dataclass_fields__:
                     attr_value = getattr(field_change.field_changes, attr_name)
@@ -135,7 +141,7 @@ def _apply_alter_enum_instructions(
             for member in alter_enum_instruction.members:
                 if member not in enum_member_to_value[1]:
                     raise InvalidGenerationInstructionError(
-                        f"Enum member '{member}' was not found in enum '{enum_path}'"
+                        f"Enum member '{member}' was not found in enum '{enum_path}'",
                     )
                 enum_member_to_value[1].pop(member)
         elif isinstance(alter_enum_instruction, EnumHadMembersInstruction):
@@ -247,7 +253,10 @@ def _modify_module(
     else:
         module_name = module.__name__
     body = ast.Module(
-        [ast.ImportFrom(module="universi", names=[ast.alias(name="Field")], level=0)]
+        [
+            ast.ImportFrom(module="universi", names=[ast.alias(name="Field")], level=0),
+            ast.Import(names=[ast.alias(name="typing")], level=0),
+        ]
         + [
             _modify_cls(n, module_name, modified_schemas, modified_enums) if isinstance(n, ast.ClassDef) else n
             for n in parsed_file.body
@@ -343,13 +352,12 @@ def _pop_docstring_from_cls_body(old_body: list[ast.stmt]) -> list[ast.stmt]:
 # The following is based on by Samuel Colvin's devtools
 
 
-# TODO: Fully cover this with tests
 def custom_repr(value: Any) -> Any:
     if isinstance(value, list | tuple | set | frozenset):
         return PlainRepr(value.__class__(map(custom_repr, value)))
     if isinstance(value, dict):
         return PlainRepr(value.__class__((custom_repr(k), custom_repr(v)) for k, v in value.items()))
-    if isinstance(value, GenericAlias):
+    if isinstance(value, _BaseGenericAlias | GenericAlias):
         return f"{custom_repr(get_origin(value))}[{', '.join(custom_repr(a) for a in get_args(value))}]"
     if isinstance(value, type):
         return value.__name__
@@ -357,7 +365,7 @@ def custom_repr(value: Any) -> Any:
         return PlainRepr(f"{value.__class__.__name__}.{value.name}")
     if isinstance(value, auto):
         return PlainRepr("auto()")
-    if isinstance(value, LambdaType):
+    if isinstance(value, LambdaType) and LambdaFunctionName == value.__name__:
         return _find_a_lambda(inspect.getsource(value).strip())
     if inspect.isfunction(value):
         return PlainRepr(value.__name__)
@@ -384,7 +392,7 @@ def _find_a_lambda(source: str) -> str:
     # These two errors are really hard to cover. Not sure if even possible, honestly :)
     elif len(found_lambdas) == 0:  # pragma: no cover
         raise InvalidGenerationInstructionError(
-            f"No lambda found in default_factory even though one was passed: {source}"
+            f"No lambda found in default_factory even though one was passed: {source}",
         )
     else:  # pragma: no cover
         raise InvalidGenerationInstructionError("More than one lambda found in default_factory. This is not supported.")

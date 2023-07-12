@@ -63,7 +63,7 @@ class OldSchemaHadField:
 @dataclass(slots=True)
 class AlterSchemaSubInstructionFactory:
     name: str
-    # TODO: Add a validation to linter to check that field actually changed
+    # TODO: Add a validation  to check that field actually changed
 
     def had(
         self,

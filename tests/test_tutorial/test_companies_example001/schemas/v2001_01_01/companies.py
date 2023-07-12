@@ -1,6 +1,7 @@
 from universi import Field
-from pydantic import BaseModel
+import typing
 from uuid import UUID
+from pydantic import BaseModel
 
 class BaseCompany(BaseModel):
     name: str

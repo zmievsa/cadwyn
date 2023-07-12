@@ -17,12 +17,9 @@ class AlterResponseInstruction:
     owner: type = field(init=False)
 
     def __post_init__(self):
-        assert inspect.signature(self.method).return_annotation is None
-        assert (
-            len(inspect.signature(self.method).parameters) == 2
-        ), f"Method {self.method.__name__} must have 2 parameters: cls and data"
-        annotation = inspect.signature(self.method).parameters["data"].annotation
-        assert annotation == dict[str, Any], annotation
+        signature = inspect.signature(self.method)
+        if list(signature.parameters) != ["cls", "data"]:
+            raise ValueError(f"Method '{self.method.__name__}' must have 2 parameters: cls and data")
 
         functools.update_wrapper(self, self.method)
 
@@ -34,7 +31,9 @@ class AlterResponseInstruction:
 
 
 def convert_response_to_previous_version_for(
-    first_endpoint: Endpoint, /, *other_endpoints: Endpoint,
+    first_endpoint: Endpoint,
+    /,
+    *other_endpoints: Endpoint,
 ) -> "type[classmethod[Any, _P, None]]":
     def decorator(method: Callable[[object, dict[str, Any]], None]) -> Any:
         return AlterResponseInstruction((first_endpoint, *other_endpoints), method)

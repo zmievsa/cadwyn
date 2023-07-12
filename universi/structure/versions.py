@@ -1,13 +1,13 @@
-from contextvars import ContextVar
 import datetime
 import functools
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from enum import Enum
-from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, overload
+from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
 
 from fastapi.routing import _prepare_response_content
-from universi.exceptions import UniversiStructureError
 
+from universi.exceptions import UniversiStructureError
 from universi.header import api_version_var
 from universi.structure.endpoints import AlterEndpointSubInstruction
 from universi.structure.enums import AlterEnumSubInstruction
@@ -20,21 +20,21 @@ from .schemas import AlterSchemaInstruction
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 VersionDate: TypeAlias = datetime.date
+PossibleInstructions: TypeAlias = AlterSchemaInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction
 
 
 class AbstractVersionChange:
     side_effects: ClassVar[bool] = False
     description: ClassVar[str] = Sentinel
-    instructions_to_migrate_to_previous_version: ClassVar[
-        Sequence[AlterSchemaInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction]
-    ] = Sentinel
+    instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
     alter_schema_instructions: ClassVar[Sequence[AlterSchemaInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[Sequence[AlterEnumSubInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[Sequence[AlterEndpointSubInstruction]] = Sentinel
     alter_response_instructions: ClassVar[dict[Endpoint, AlterResponseInstruction]] = Sentinel
 
     def __init_subclass__(cls) -> None:
-        assert isinstance(cls.side_effects, bool)
+        if not isinstance(cls.side_effects, bool):
+            raise UniversiStructureError(f"Side effects must be bool. Found: {type(cls.side_effects)}")
         if cls.description is Sentinel:
             raise UniversiStructureError(f"Version change description is not set on '{cls.__name__}' but is required.")
         if cls.instructions_to_migrate_to_previous_version is Sentinel:
@@ -45,6 +45,11 @@ class AbstractVersionChange:
             raise UniversiStructureError(
                 f"Attribute 'instructions_to_migrate_to_previous_version' must be a sequence in '{cls.__name__}'.",
             )
+        for instruction in cls.instructions_to_migrate_to_previous_version:
+            if not isinstance(instruction, PossibleInstructions):
+                raise UniversiStructureError(
+                    f"Instruction '{instruction}' is not allowed. Please, use the correct instruction types",
+                )
         for attr_name, attr_value in cls.__dict__.items():
             if not isinstance(attr_value, AlterResponseInstruction) and attr_name not in {
                 "description",
@@ -75,9 +80,11 @@ class AbstractVersionChange:
         }
         repetitions = set()
         for alter_instruction in cls.alter_schema_instructions:
-            assert (
-                alter_instruction.schema not in repetitions
-            ), f"Model {alter_instruction.schema} got repeated. Please, merge these instructions."
+            if alter_instruction.schema in repetitions:
+                raise UniversiStructureError(
+                    f"'{alter_instruction.schema.__name__}' got repeated in multiple instructions. "
+                    "Please, merge these instructions.",
+                )
             repetitions.add(alter_instruction.schema)
 
         if cls.mro() != [cls, AbstractVersionChange, object]:
@@ -135,7 +142,7 @@ class Versions:
     def is_active(self, version_change: type[AbstractVersionChange]) -> bool:
         api_version = self.api_version_var.get()
         if api_version is None:
-            return False
+            return True
         return self._version_changes_to_version_mapping[version_change] <= api_version
 
     # TODO: It might need caching for iteration to speed it up
@@ -153,55 +160,33 @@ class Versions:
                     version_change.alter_response_instructions[endpoint](data)
         return data
 
-    @overload
-    def versioned(self, endpoint: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
-        ...
-
-    @overload
-    def versioned(
-        self,
-        endpoint: None = None,
-    ) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]:
-        ...
-
     def versioned(
         self,
         endpoint: Endpoint | None = None,
-    ) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]] | Endpoint[_P, _R]:
-        if endpoint is not None:
-
-            @functools.wraps(endpoint)
+    ) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]:
+        def wrapper(func: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
+            @functools.wraps(func)
             async def decorator(*args: _P.args, **kwargs: _P.kwargs) -> _R:
                 return await self._convert_endpoint_response_to_version(
-                    endpoint,
+                    func,
+                    endpoint or func,
                     args,
                     kwargs,
                 )
 
-            decorator.func = endpoint  # pyright: ignore[reportGeneralTypeIssues]
-            return decorator
-
-        def wrapper(endpoint: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
-            @functools.wraps(endpoint)
-            async def decorator(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-                return await self._convert_endpoint_response_to_version(
-                    endpoint,
-                    args,
-                    kwargs,
-                )
-
-            decorator.func = endpoint  # pyright: ignore[reportGeneralTypeIssues]
+            decorator.func = func  # pyright: ignore[reportGeneralTypeIssues]
             return decorator
 
         return wrapper
 
     async def _convert_endpoint_response_to_version(
         self,
+        func_to_get_response_from: Endpoint,
         endpoint: Endpoint,
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> Any:
-        response = await endpoint(*args, **kwargs)
+        response = await func_to_get_response_from(*args, **kwargs)
         api_version = self.api_version_var.get()
         if api_version is None:
             return response

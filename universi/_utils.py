@@ -5,6 +5,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from universi.exceptions import UniversiError
+
 Sentinel: Any = object()
 
 
@@ -16,12 +18,11 @@ def get_another_version_of_cls(cls_from_old_version: type[Any], new_version_dir:
     return getattr(module, cls_from_old_version.__name__)
 
 
-# TODO: WHat if the user puts model in __init__.py?
 def get_another_version_of_module(module_from_old_version: ModuleType, new_version_dir: Path):
     file = inspect.getsourcefile(module_from_old_version)
     if file is None:
-        raise Exception(f"Model {module_from_old_version} is not defined in a file")
-
+        # Seems quite unnecessary to cover
+        raise UniversiError(f"Model {module_from_old_version} is not defined in a file")  # pragma: no cover
     # /home/ovsyanka/package/companies/latest/__init__.py
     file = Path(file)
     if file.name == "__init__.py":

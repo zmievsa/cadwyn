@@ -1,8 +1,8 @@
 from decimal import Decimal
 from enum import Enum, auto
-from pydantic import Field as PydanticField
 
 from pydantic import BaseModel
+from pydantic import Field as PydanticField
 
 from universi import Field
 
