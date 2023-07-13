@@ -11,7 +11,7 @@ Sentinel: Any = object()
 
 
 def get_another_version_of_cls(cls_from_old_version: type[Any], new_version_dir: Path) -> None:
-    # version_dir = /home/ovsyanka/package/companies/v2021_01_01
+    # version_dir = /home/myuser/package/companies/v2021_01_01
 
     module_from_old_version = sys.modules[cls_from_old_version.__module__]
     module = get_another_version_of_module(module_from_old_version, new_version_dir)
@@ -23,12 +23,12 @@ def get_another_version_of_module(module_from_old_version: ModuleType, new_versi
     if file is None:
         # Seems quite unnecessary to cover
         raise UniversiError(f"Model {module_from_old_version} is not defined in a file")  # pragma: no cover
-    # /home/ovsyanka/package/companies/latest/__init__.py
+    # /home/myuser/package/companies/latest/__init__.py
     file = Path(file)
     if file.name == "__init__.py":
-        # /home/ovsyanka/package/companies/latest/
+        # /home/myuser/package/companies/latest/
         file = file.parent
-    # /home/ovsyanka/package/companies
+    # /home/myuser/package/companies
     root_dir = new_version_dir.parent
     # latest/schemas
     relative_file = file.relative_to(root_dir).with_suffix("")
