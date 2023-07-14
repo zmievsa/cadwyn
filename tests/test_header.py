@@ -37,7 +37,12 @@ def test__header():
 
 def test__header__with_default_version():
     app = FastAPI(
-        dependencies=[get_universi_dependency(version_header_name="x-test-version", default_version=date(2021, 1, 1))],
+        dependencies=[
+            get_universi_dependency(
+                version_header_name="x-test-version",
+                default_version=date(2021, 1, 1),
+            ),
+        ],
     )
 
     @app.get("/")

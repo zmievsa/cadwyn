@@ -13,5 +13,8 @@ def test__allow_mutation_arg():
         class Config:
             validate_assignment = True
 
-    with pytest.raises(TypeError, match=re.escape('"foo" has allow_mutation set to False and cannot be assigned')):
+    with pytest.raises(
+        TypeError,
+        match=re.escape('"foo" has allow_mutation set to False and cannot be assigned'),
+    ):
         ModelWithAllowMutationArg(foo="bar").foo = "baz"

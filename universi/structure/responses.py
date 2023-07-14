@@ -19,7 +19,9 @@ class AlterResponseInstruction:
     def __post_init__(self):
         signature = inspect.signature(self.method)
         if list(signature.parameters) != ["cls", "data"]:
-            raise ValueError(f"Method '{self.method.__name__}' must have 2 parameters: cls and data")
+            raise ValueError(
+                f"Method '{self.method.__name__}' must have 2 parameters: cls and data",
+            )
 
         functools.update_wrapper(self, self.method)
 

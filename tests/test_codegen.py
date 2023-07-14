@@ -36,7 +36,10 @@ def serialize(enum: type[Enum]) -> dict[str, Any]:
     return {member.name: member.value for member in enum}
 
 
-def generate_test_version_packages(*instructions, package: ModuleType = latest) -> tuple[ModuleType, ModuleType]:
+def generate_test_version_packages(
+    *instructions,
+    package: ModuleType = latest,
+) -> tuple[ModuleType, ModuleType]:
     class SomeVersionChange(AbstractVersionChange):
         description = "..."
         instructions_to_migrate_to_previous_version = instructions
@@ -87,35 +90,51 @@ def test__latest_enums_are_unchanged():
 
 
 def test__enum_had__original_enum_is_empty():
-    v2000_01_01, v2001_01_01 = generate_test_version_packages(enum(latest.EmptyEnum).had(b=auto()))
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(
+        enum(latest.EmptyEnum).had(b=auto()),
+    )
     # insert_assert(serialize(v2000_01_01.EmptyEnum))
     assert serialize(v2000_01_01.EmptyEnum) == {"b": 1}
     assert serialize(v2001_01_01.EmptyEnum) == serialize(latest.EmptyEnum)
 
 
 def test__enum_had__original_enum_is_nonempty():
-    v2000_01_01, v2001_01_01 = generate_test_version_packages(enum(latest.EnumWithOneMember).had(b=7))
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(
+        enum(latest.EnumWithOneMember).had(b=7),
+    )
     # insert_assert(serialize(v2000_01_01.EnumWithOneMember))
     assert serialize(v2000_01_01.EnumWithOneMember) == {"a": 1, "b": 7}
-    assert serialize(v2001_01_01.EnumWithOneMember) == serialize(latest.EnumWithOneMember)
+    assert serialize(v2001_01_01.EnumWithOneMember) == serialize(
+        latest.EnumWithOneMember,
+    )
 
 
 def test__enum_didnt_have__original_enum_has_one_member():
-    v2000_01_01, v2001_01_01 = generate_test_version_packages(enum(latest.EnumWithOneMember).didnt_have("a"))
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(
+        enum(latest.EnumWithOneMember).didnt_have("a"),
+    )
     # insert_assert(serialize(v2000_01_01.EnumWithOneMember))
     assert serialize(v2000_01_01.EnumWithOneMember) == {}
-    assert serialize(latest.EnumWithOneMember) == serialize(v2001_01_01.EnumWithOneMember)
+    assert serialize(latest.EnumWithOneMember) == serialize(
+        v2001_01_01.EnumWithOneMember,
+    )
 
 
 def test__enum_didnt_have__original_enum_has_two_members():
-    v2000_01_01, v2001_01_01 = generate_test_version_packages(enum(latest.EnumWithTwoMembers).didnt_have("a"))
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(
+        enum(latest.EnumWithTwoMembers).didnt_have("a"),
+    )
     # insert_assert(serialize(v2000_01_01.EnumWithTwoMembers))
     assert serialize(v2000_01_01.EnumWithTwoMembers) == {"b": 2}
-    assert serialize(latest.EnumWithTwoMembers) == serialize(v2001_01_01.EnumWithTwoMembers)
+    assert serialize(latest.EnumWithTwoMembers) == serialize(
+        v2001_01_01.EnumWithTwoMembers,
+    )
 
 
 def test__enum_had__original_schema_is_empty():
-    v2000_01_01, v2001_01_01 = generate_test_version_packages(enum(latest.EmptyEnum).had(b=7))
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(
+        enum(latest.EmptyEnum).had(b=7),
+    )
     # insert_assert(serialize(v2000_01_01.EmptyEnum))
     assert serialize(v2000_01_01.EmptyEnum) == {"b": 7}
     assert serialize(v2001_01_01.EmptyEnum) == serialize(latest.EmptyEnum)
@@ -123,7 +142,10 @@ def test__enum_had__original_schema_is_empty():
 
 def test__field_existed_with__original_schema_is_empty():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.EmptySchema, field("bar").existed_with(type=int, info=Field(description="hewwo"))),
+        schema(
+            latest.EmptySchema,
+            field("bar").existed_with(type=int, info=Field(description="hewwo")),
+        ),
     )
     assert len(v2001_01_01.EmptySchema.__fields__) == 0
     # insert_assert(inspect.getsource(v2000_01_01.EmptySchema))
@@ -135,7 +157,10 @@ def test__field_existed_with__original_schema_is_empty():
 
 def test__field_existed_with__original_schema_has_a_field():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaWithOneStrField, field("bar").existed_with(type=int, info=Field(description="hewwo"))),
+        schema(
+            latest.SchemaWithOneStrField,
+            field("bar").existed_with(type=int, info=Field(description="hewwo")),
+        ),
     )
     # insert_assert(inspect.getsource(v2000_01_01.SchemaWithOneStrField))
     assert (
@@ -248,7 +273,11 @@ def test__field_had__list_of_int_field(attr: str, attr_value: Any):
 
 
 def test__field_had__float_field():
-    assert_field_had_changes_apply(latest.SchemaWithOneFloatField, "allow_inf_nan", False)
+    assert_field_had_changes_apply(
+        latest.SchemaWithOneFloatField,
+        "allow_inf_nan",
+        False,
+    )
 
 
 def test__schema_field_had__change_to_the_same_field_type__error():
@@ -258,7 +287,9 @@ def test__schema_field_had__change_to_the_same_field_type__error():
             "You tried to change the type of field 'foo' to '<class 'int'>' in SchemaWithOneIntField but it already has type '<class 'int'>'",
         ),
     ):
-        generate_test_version_packages(schema(latest.SchemaWithOneIntField, field("foo").had(type=int)))
+        generate_test_version_packages(
+            schema(latest.SchemaWithOneIntField, field("foo").had(type=int)),
+        )
 
 
 def test__schema_field_had__schema_was_defined_with_pydantic_field__error():
@@ -268,7 +299,9 @@ def test__schema_field_had__schema_was_defined_with_pydantic_field__error():
             "You have defined a Field using pydantic.fields.Field but you must use universi.Field in SchemaWithWrongFieldConstructor",
         ),
     ):
-        generate_test_version_packages(schema(latest.SchemaWithWrongFieldConstructor, field("foo").had(type=int)))
+        generate_test_version_packages(
+            schema(latest.SchemaWithWrongFieldConstructor, field("foo").had(type=int)),
+        )
 
 
 def test__enum_had__same_name_as_other_value__error():
@@ -284,7 +317,9 @@ def test__enum_had__same_name_as_other_value__error():
 def test__enum_didnt_have__nonexisting_name__error():
     with pytest.raises(
         InvalidGenerationInstructionError,
-        match=re.escape("Enum member 'foo' was not found in enum 'tests._data.latestEmptyEnum'"),
+        match=re.escape(
+            "Enum member 'foo' was not found in enum 'tests._data.latestEmptyEnum'",
+        ),
     ):
         generate_test_version_packages(enum(latest.EmptyEnum).didnt_have("foo"))
 
@@ -299,26 +334,40 @@ def test__codegen__with_deleted_source_file__error():
         CodeGenerationError,
         match="Module <module 'tests._data.latest.another_temp1.hello' from .+ is not a package",
     ):
-        generate_test_version_packages(enum(latest.EnumWithOneMember).didnt_have("foo"), package=hello)
+        generate_test_version_packages(
+            enum(latest.EnumWithOneMember).didnt_have("foo"),
+            package=hello,
+        )
 
 
 def test__codegen__non_python_files__copied_to_all_dirs():
     generate_test_version_packages()
-    assert json.loads(Path("tests/_data/v2000_01_01/json_files/foo.json").read_text()) == {"hello": "world"}
-    assert json.loads(Path("tests/_data/v2001_01_01/json_files/foo.json").read_text()) == {"hello": "world"}
+    assert json.loads(
+        Path("tests/_data/v2000_01_01/json_files/foo.json").read_text(),
+    ) == {"hello": "world"}
+    assert json.loads(
+        Path("tests/_data/v2001_01_01/json_files/foo.json").read_text(),
+    ) == {"hello": "world"}
 
 
 def test__codegen__non_pydantic_schema__error():
     with pytest.raises(
         CodeGenerationError,
-        match=re.escape("Model <class 'tests._data.latest.NonPydanticSchema'> is not a subclass of BaseModel"),
+        match=re.escape(
+            "Model <class 'tests._data.latest.NonPydanticSchema'> is not a subclass of BaseModel",
+        ),
     ):
-        generate_test_version_packages(schema(latest.NonPydanticSchema, field("foo").didnt_exist))
+        generate_test_version_packages(
+            schema(latest.NonPydanticSchema, field("foo").didnt_exist),
+        )
 
 
 def test__codegen__schema_that_overrides_fields_from_mro():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaThatOverridesField, field("bar").existed_with(type=int, info=Field())),
+        schema(
+            latest.SchemaThatOverridesField,
+            field("bar").existed_with(type=int, info=Field()),
+        ),
     )
 
     # insert_assert(inspect.getsource(v2000_01_01.SchemaThatOverridesField))
@@ -367,3 +416,21 @@ def test__codegen__with_weird_data_types():
         "    bar: list[int] = Field(default_factory=my_default_factory)\n"
         "    baz: typing.Literal[MyEnum.baz] = Field()\n"
     )
+
+
+def test__codegen_unions__init_file():
+    generate_test_version_packages()
+    from tests._data.unions import EnumWithOneMemberUnion, SchemaWithOneIntFieldUnion
+    from tests._data import v2000_01_01, v2001_01_01
+
+    assert EnumWithOneMemberUnion == v2000_01_01.EnumWithOneMember | v2001_01_01.EnumWithOneMember
+    assert SchemaWithOneIntFieldUnion == v2000_01_01.SchemaWithOneIntField | v2001_01_01.SchemaWithOneIntField
+
+
+def test__codegen_unions__regular_file():
+    generate_test_version_packages()
+    from tests._data.unions.some_schema import MySchemaUnion
+    from tests._data.v2000_01_01.some_schema import MySchema as MySchema2000
+    from tests._data.v2001_01_01.some_schema import MySchema as MySchema2001
+
+    assert MySchemaUnion == MySchema2000 | MySchema2001

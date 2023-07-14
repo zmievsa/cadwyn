@@ -139,7 +139,9 @@ def field(name: str, /) -> AlterSchemaSubInstructionFactory:
     return AlterSchemaSubInstructionFactory(name=name)
 
 
-AlterSchemaSubInstruction = OldSchemaFieldWas | OldSchemaDidntHaveField | OldSchemaHadField
+AlterSchemaSubInstruction = (
+    OldSchemaFieldWas | OldSchemaDidntHaveField | OldSchemaHadField
+)
 
 
 @dataclass

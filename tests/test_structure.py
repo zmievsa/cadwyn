@@ -43,7 +43,10 @@ def versions():
 
 
 def test_non_boolean_side_effects():
-    with pytest.raises(UniversiStructureError, match=re.escape("Side effects must be bool. Found: <class 'str'>")):
+    with pytest.raises(
+        UniversiStructureError,
+        match=re.escape("Side effects must be bool. Found: <class 'str'>"),
+    ):
 
         class DummySubClass(AbstractVersionChange):
             side_effects = "not a boolean"
@@ -54,7 +57,9 @@ def test_non_boolean_side_effects():
 def test_description_sentinel():
     with pytest.raises(
         UniversiStructureError,
-        match=re.escape("Version change description is not set on 'DummySubClass' but is required."),
+        match=re.escape(
+            "Version change description is not set on 'DummySubClass' but is required.",
+        ),
     ):
 
         class DummySubClass(AbstractVersionChange):
@@ -106,7 +111,10 @@ def test_incorrect_subclass_hierarchy():
         instructions_to_migrate_to_previous_version = []
 
     with pytest.raises(
-        TypeError, match=re.escape("Can't subclass DummySubSubClass as it was never meant to be subclassed."),
+        TypeError,
+        match=re.escape(
+            "Can't subclass DummySubSubClass as it was never meant to be subclassed.",
+        ),
     ):
 
         class DummySubSubClass(DummySubClass):
@@ -115,7 +123,10 @@ def test_incorrect_subclass_hierarchy():
 
 def test_instantiation_attempt():
     with pytest.raises(
-        TypeError, match=re.escape("Can't instantiate DummySubClass as it was never meant to be instantiated."),
+        TypeError,
+        match=re.escape(
+            "Can't instantiate DummySubClass as it was never meant to be instantiated.",
+        ),
     ):
 
         class DummySubClass(AbstractVersionChange):
@@ -128,7 +139,9 @@ def test_instantiation_attempt():
 def test_invalid_type_in_instructions():
     with pytest.raises(
         UniversiStructureError,
-        match=re.escape("Instruction 'True' is not allowed. Please, use the correct instruction types"),
+        match=re.escape(
+            "Instruction 'True' is not allowed. Please, use the correct instruction types",
+        ),
     ):
 
         class DummySubClass(AbstractVersionChange):
@@ -148,13 +161,19 @@ def test_repeated_instructions():
             description = "dummy description"
             instructions_to_migrate_to_previous_version = [
                 schema(SchemaWithOneIntField, field("foo").had(type=str)),
-                schema(SchemaWithOneIntField, field("bar").existed_with(type=str, info=Field())),
+                schema(
+                    SchemaWithOneIntField,
+                    field("bar").existed_with(type=str, info=Field()),
+                ),
             ]
 
 
 def test_incorrectly_sorted_versions():
     with pytest.raises(
-        ValueError, match=re.escape("Versions are not sorted correctly. Please sort them in descending order."),
+        ValueError,
+        match=re.escape(
+            "Versions are not sorted correctly. Please sort them in descending order.",
+        ),
     ):
         Versions(Version(date(2000, 1, 1)), Version(date(2001, 1, 1)))
 
@@ -196,7 +215,10 @@ def test__conversion_method__with_incorrect_structure():
         raise NotImplementedError
 
     with pytest.raises(
-        ValueError, match=re.escape("Method 'my_conversion_method' must have 2 parameters: cls and data"),
+        ValueError,
+        match=re.escape(
+            "Method 'my_conversion_method' must have 2 parameters: cls and data",
+        ),
     ):
 
         @convert_response_to_previous_version_for(some_endpoint)
@@ -204,7 +226,10 @@ def test__conversion_method__with_incorrect_structure():
             raise NotImplementedError
 
     with pytest.raises(
-        ValueError, match=re.escape("Method 'my_conversion_method2' must have 2 parameters: cls and data"),
+        ValueError,
+        match=re.escape(
+            "Method 'my_conversion_method2' must have 2 parameters: cls and data",
+        ),
     ):
 
         @convert_response_to_previous_version_for(some_endpoint)

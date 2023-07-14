@@ -10,6 +10,7 @@ from tests.test_codegen import CURRENT_DIR
 @pytest.fixture(autouse=True, scope="module")
 def remove_generated_files():
     yield
+    shutil.rmtree(CURRENT_DIR / "_data/unions", ignore_errors=True)
     shutil.rmtree(CURRENT_DIR / "_data/v2000_01_01", ignore_errors=True)
     shutil.rmtree(CURRENT_DIR / "_data/v2001_01_01", ignore_errors=True)
     shutil.rmtree("tests/_data/latest/another_temp1", ignore_errors=True)

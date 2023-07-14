@@ -20,23 +20,35 @@ from .schemas import AlterSchemaInstruction
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 VersionDate: TypeAlias = datetime.date
-PossibleInstructions: TypeAlias = AlterSchemaInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction
+PossibleInstructions: TypeAlias = (
+    AlterSchemaInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction
+)
 
 
 class AbstractVersionChange:
     side_effects: ClassVar[bool] = False
     description: ClassVar[str] = Sentinel
-    instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
+    instructions_to_migrate_to_previous_version: ClassVar[
+        Sequence[PossibleInstructions]
+    ] = Sentinel
     alter_schema_instructions: ClassVar[Sequence[AlterSchemaInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[Sequence[AlterEnumSubInstruction]] = Sentinel
-    alter_endpoint_instructions: ClassVar[Sequence[AlterEndpointSubInstruction]] = Sentinel
-    alter_response_instructions: ClassVar[dict[Endpoint, AlterResponseInstruction]] = Sentinel
+    alter_endpoint_instructions: ClassVar[
+        Sequence[AlterEndpointSubInstruction]
+    ] = Sentinel
+    alter_response_instructions: ClassVar[
+        dict[Endpoint, AlterResponseInstruction]
+    ] = Sentinel
 
     def __init_subclass__(cls) -> None:
         if not isinstance(cls.side_effects, bool):
-            raise UniversiStructureError(f"Side effects must be bool. Found: {type(cls.side_effects)}")
+            raise UniversiStructureError(
+                f"Side effects must be bool. Found: {type(cls.side_effects)}",
+            )
         if cls.description is Sentinel:
-            raise UniversiStructureError(f"Version change description is not set on '{cls.__name__}' but is required.")
+            raise UniversiStructureError(
+                f"Version change description is not set on '{cls.__name__}' but is required.",
+            )
         if cls.instructions_to_migrate_to_previous_version is Sentinel:
             raise UniversiStructureError(
                 f"Attribute 'instructions_to_migrate_to_previous_version' is not set on '{cls.__name__}' but is required.",
@@ -51,7 +63,10 @@ class AbstractVersionChange:
                     f"Instruction '{instruction}' is not allowed. Please, use the correct instruction types",
                 )
         for attr_name, attr_value in cls.__dict__.items():
-            if not isinstance(attr_value, AlterResponseInstruction) and attr_name not in {
+            if not isinstance(
+                attr_value,
+                AlterResponseInstruction,
+            ) and attr_name not in {
                 "description",
                 "side_effects",
                 "instructions_to_migrate_to_previous_version",
@@ -109,7 +124,11 @@ class Version:
 
 
 class Versions:
-    def __init__(self, *versions: Version, api_version_var: ContextVar[VersionDate | None] = api_version_var) -> None:
+    def __init__(
+        self,
+        *versions: Version,
+        api_version_var: ContextVar[VersionDate | None] = api_version_var,
+    ) -> None:
         self.versions = versions
         self.api_version_var = api_version_var
         if sorted(versions, key=lambda v: v.date, reverse=True) != list(versions):
@@ -120,7 +139,8 @@ class Versions:
     @functools.cached_property
     def versioned_schemas(self) -> dict[str, type[VersionedModel]]:
         return {
-            instruction.schema.__module__ + instruction.schema.__name__: instruction.schema
+            instruction.schema.__module__
+            + instruction.schema.__name__: instruction.schema
             for version in self.versions
             for version_change in version.version_changes
             for instruction in version_change.alter_schema_instructions
@@ -136,8 +156,14 @@ class Versions:
         }
 
     @functools.cached_property
-    def _version_changes_to_version_mapping(self) -> dict[type[AbstractVersionChange], VersionDate]:
-        return {version_change: version.date for version in self.versions for version_change in version.version_changes}
+    def _version_changes_to_version_mapping(
+        self,
+    ) -> dict[type[AbstractVersionChange], VersionDate]:
+        return {
+            version_change: version.date
+            for version in self.versions
+            for version_change in version.version_changes
+        }
 
     def is_active(self, version_change: type[AbstractVersionChange]) -> bool:
         api_version = self.api_version_var.get()

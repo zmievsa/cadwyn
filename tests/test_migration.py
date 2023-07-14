@@ -4,7 +4,12 @@ from typing import Any
 import pytest
 
 from universi import api_version_var
-from universi.structure import AbstractVersionChange, Version, Versions, convert_response_to_previous_version_for
+from universi.structure import (
+    AbstractVersionChange,
+    Version,
+    Versions,
+    convert_response_to_previous_version_for,
+)
 
 
 async def test_endpoint():
@@ -38,10 +43,16 @@ def test__migrate__with_no_migrations__should_not_raise_error():
 
 
 def test__migrate_simple_data_one_version_down():
-    versions = Versions(Version(date(2002, 1, 1), VersionChange1), Version(date(2001, 1, 1)))
+    versions = Versions(
+        Version(date(2002, 1, 1), VersionChange1),
+        Version(date(2001, 1, 1)),
+    )
     assert versions.data_to_version(
         test_endpoint,
-        {"name": "HeliCorp", "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}]},
+        {
+            "name": "HeliCorp",
+            "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}],
+        },
         date(2001, 1, 1),
     ) == {"name": "HeliCorp", "vat_ids": ["Foo", "Bar"]}
 
@@ -58,10 +69,16 @@ def test__migrate_simple_data_one_version_down__with_some_inapplicable_migration
         def break_vat_ids(cls, data: dict[str, Any]) -> None:
             raise NotImplementedError
 
-    versions = Versions(Version(date(2002, 1, 1), VersionChange1, VersionChange3), Version(date(2001, 1, 1)))
+    versions = Versions(
+        Version(date(2002, 1, 1), VersionChange1, VersionChange3),
+        Version(date(2001, 1, 1)),
+    )
     assert versions.data_to_version(
         test_endpoint,
-        {"name": "HeliCorp", "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}]},
+        {
+            "name": "HeliCorp",
+            "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}],
+        },
         date(2001, 1, 1),
     ) == {"name": "HeliCorp", "vat_ids": ["Foo", "Bar"]}
 
@@ -74,14 +91,22 @@ def test__migrate_simple_data_two_versions_down():
     )
     assert versions.data_to_version(
         test_endpoint,
-        {"name": "HeliCorp", "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}]},
+        {
+            "name": "HeliCorp",
+            "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}],
+        },
         date(2000, 1, 1),
     ) == {"name": "HeliCorp", "vat_id": "Foo"}
 
 
 @pytest.mark.parametrize("api_version", [None, date(2001, 1, 1)])
-async def test__versioned_decorator__with_latest_version__response_is_unchanged(api_version: date | None):
-    versions = Versions(Version(date(2001, 1, 1), VersionChange2), Version(date(2000, 1, 1)))
+async def test__versioned_decorator__with_latest_version__response_is_unchanged(
+    api_version: date | None,
+):
+    versions = Versions(
+        Version(date(2001, 1, 1), VersionChange2),
+        Version(date(2000, 1, 1)),
+    )
 
     @versions.versioned(test_endpoint)
     async def test():
@@ -92,7 +117,10 @@ async def test__versioned_decorator__with_latest_version__response_is_unchanged(
 
 
 async def test__versioned_decorator__with_earlier_version__response_is_migrated():
-    versions = Versions(Version(date(2001, 1, 1), VersionChange2), Version(date(2000, 1, 1)))
+    versions = Versions(
+        Version(date(2001, 1, 1), VersionChange2),
+        Version(date(2000, 1, 1)),
+    )
 
     @versions.versioned(test_endpoint)
     async def test():

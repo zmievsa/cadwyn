@@ -4,7 +4,7 @@ import inspect
 import os
 import shutil
 import sys
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from copy import deepcopy
 from datetime import date
 from enum import Enum, auto
@@ -24,7 +24,11 @@ from pydantic.fields import ModelField
 from pydantic.typing import convert_generics
 from typing_extensions import assert_never
 
-from universi.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
+from universi.structure.enums import (
+    AlterEnumSubInstruction,
+    EnumDidntHaveMembersInstruction,
+    EnumHadMembersInstruction,
+)
 from universi.structure.schemas import (
     AlterSchemaInstruction,
     OldSchemaDidntHaveField,
@@ -33,7 +37,7 @@ from universi.structure.schemas import (
 )
 from universi.structure.versions import Version, Versions
 
-from ._utils import Sentinel
+from ._utils import Sentinel, get_index_of_base_schema_dir_in_pythonpath
 from .exceptions import CodeGenerationError, InvalidGenerationInstructionError
 from .fields import FieldInfo
 
@@ -52,11 +56,76 @@ def regenerate_dir_to_all_versions(template_module: ModuleType, versions: Versio
 
         _generate_versioned_directory(template_module, schemas, enums, version.date)
         _apply_migrations(version, schemas, enums)
+    _generate_union_directory(template_module, versions)
 
     current_package = template_module.__name__
     while current_package != "":
         importlib.reload(sys.modules[current_package])
         current_package = ".".join(current_package.split(".")[:-1])
+
+
+def _generate_union_directory(template_module: ModuleType, versions: Versions):
+    template_dir = _get_package_path_from_module(template_module)
+    union_dir = template_dir.with_name("unions")
+    index_of_base_schema_in_pythonpath = get_index_of_base_schema_dir_in_pythonpath(
+        template_module,
+        union_dir,
+    )
+    for (
+        relative_path_to_file,
+        original_module,
+        parallel_file,
+    ) in _generate_parallel_directory(
+        template_module,
+        union_dir,
+    ):
+        new_module_text = _get_unionized_version_of_module(
+            original_module,
+            relative_path_to_file,
+            versions,
+            index_of_base_schema_in_pythonpath,
+        )
+        parallel_file.write_text(new_module_text)
+
+
+def _get_unionized_version_of_module(
+    original_module: ModuleType,
+    relative_path_to_file: Path,
+    versions: Versions,
+    index_of_base_schema_in_pythonpath: int,
+):
+    original_module_parts = original_module.__name__.split(".")
+    original_module_parts[index_of_base_schema_in_pythonpath] = "{}"
+
+    import_pythonpath_template = (".".join(original_module_parts)).removesuffix(".__init__")
+    imported_modules = [
+        import_pythonpath_template.format(_get_version_dir_name(version.date)) for version in versions.versions
+    ]
+
+    parsed_file = _parse_python_module(original_module)
+
+    if original_module.__name__.endswith(".__init__"):
+        module_name = original_module.__name__.removesuffix(".__init__")
+    else:
+        module_name = original_module.__name__
+    body = ast.Module(
+        [
+            ast.ImportFrom(module="universi", names=[ast.alias(name="Field")], level=0),
+            ast.Import(names=[ast.alias(name="typing")], level=0),
+            *[ast.Import(names=[ast.Name(module)]) for module in imported_modules],
+        ]
+        + [
+            ast.Name(
+                f"\n{node.name}Union: typing.TypeAlias = {' | '.join(f'{module}.{node.name}' for module in imported_modules)}",
+            )
+            if isinstance(node, ast.ClassDef)
+            else node
+            for node in parsed_file.body
+        ],
+        [],
+    )
+
+    return ast.unparse(body)
 
 
 def _apply_migrations(
@@ -68,12 +137,18 @@ def _apply_migrations(
     enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ):
     for version_change in version.version_changes:
-        _apply_alter_schema_instructions(schemas, version_change.alter_schema_instructions)
+        _apply_alter_schema_instructions(
+            schemas,
+            version_change.alter_schema_instructions,
+        )
         _apply_alter_enum_instructions(enums, version_change.alter_enum_instructions)
 
 
 def _apply_alter_schema_instructions(
-    schemas: dict[str, tuple[type[BaseModel], dict[FieldNameT, tuple[type[BaseModel], ModelField]]]],
+    schemas: dict[
+        str,
+        tuple[type[BaseModel], dict[FieldNameT, tuple[type[BaseModel], ModelField]]],
+    ],
     alter_schema_instructions: Sequence[AlterSchemaInstruction],
 ):
     for alter_schema_instruction in alter_schema_instructions:
@@ -156,11 +231,13 @@ def _apply_alter_enum_instructions(
             assert_never(alter_enum_instruction)
 
 
-def _get_versioned_schema_dir_name(template_module: ModuleType, version: date) -> Path:
+def _get_version_dir_path(template_module: ModuleType, version: date) -> Path:
     template_dir = _get_package_path_from_module(template_module)
+    return template_dir.with_name(_get_version_dir_name(version))
 
-    version_as_str = version.isoformat().replace("-", "_")
-    return template_dir.with_name("v" + version_as_str)
+
+def _get_version_dir_name(version: date):
+    return "v" + version.isoformat().replace("-", "_")
 
 
 def _get_package_path_from_module(template_module: ModuleType) -> Path:
@@ -184,40 +261,63 @@ def _generate_versioned_directory(
     enums: dict[str, tuple[type[Enum], dict[str, Any]]],
     version: date,
 ):
+    version_dir = _get_version_dir_path(template_module, version)
+    for (
+        _relative_path_to_file,
+        original_module,
+        parallel_file,
+    ) in _generate_parallel_directory(
+        template_module,
+        version_dir,
+    ):
+        new_module_text = _migrate_module_to_another_version(
+            original_module,
+            schemas,
+            enums,
+        )
+        parallel_file.write_text(new_module_text)
+
+
+def _generate_parallel_directory(
+    template_module: ModuleType,
+    parallel_dir: Path,
+) -> Generator[tuple[Path, ModuleType, Path], Any, None]:
     assert template_module.__file__ is not None
     dir = _get_package_path_from_module(template_module)
-    version_dir = _get_versioned_schema_dir_name(template_module, version)
-    version_dir.mkdir(exist_ok=True)
+    parallel_dir.mkdir(exist_ok=True)
     # [universi, structure, schemas]
     template_module_python_path_parts = template_module.__name__.split(".")
     # [home, foo, bar, universi, structure, schemas]
     template_module_path_parts = Path(template_module.__file__).parent.parts
     # [home, foo, bar] = [home, foo, bar, universi, structure, schemas][:-3]
-    root_module_path = Path(*template_module_path_parts[: -len(template_module_python_path_parts)])
+    root_module_path = Path(
+        *template_module_path_parts[: -len(template_module_python_path_parts)],
+    )
     for subroot, dirnames, filenames in os.walk(dir):
         original_subroot = Path(subroot)
-        versioned_subroot = version_dir / original_subroot.relative_to(dir)
+        parallel_subroot = parallel_dir / original_subroot.relative_to(dir)
         if "__pycache__" in dirnames:
             dirnames.remove("__pycache__")
         for dirname in dirnames:
-            (versioned_subroot / dirname).mkdir(exist_ok=True)
+            (parallel_subroot / dirname).mkdir(exist_ok=True)
         for filename in filenames:
             original_file = (original_subroot / filename).absolute()
-            versioned_file = (versioned_subroot / filename).absolute()
+            parallel_file = (parallel_subroot / filename).absolute()
             print(original_file)
 
             if filename.endswith(".py"):
-                module_path = ".".join(
+                original_module_path = ".".join(
                     original_file.relative_to(root_module_path).with_suffix("").parts,
                 )
-                module = importlib.import_module(module_path)
-                new_module_text = _modify_module(module, schemas, enums)
-                versioned_file.write_text(new_module_text)
+                original_module = importlib.import_module(original_module_path)
+                yield original_subroot.relative_to(dir), original_module, parallel_file
             else:
-                shutil.copyfile(original_file, versioned_file)
+                shutil.copyfile(original_file, parallel_file)
 
 
-def _get_fields_for_model(model: type[BaseModel]) -> dict[FieldNameT, tuple[type[BaseModel], ModelField]]:
+def _get_fields_for_model(
+    model: type[BaseModel],
+) -> dict[FieldNameT, tuple[type[BaseModel], ModelField]]:
     actual_fields: dict[FieldNameT, tuple[type[BaseModel], ModelField]] = {}
     for cls in model.__mro__:
         if cls is BaseModel:
@@ -231,7 +331,21 @@ def _get_fields_for_model(model: type[BaseModel]) -> dict[FieldNameT, tuple[type
         raise CodeGenerationError(f"Model {model} is not a subclass of BaseModel")
 
 
-def _modify_module(
+def _parse_python_module(module: ModuleType) -> ast.Module:
+    try:
+        return ast.parse(inspect.getsource(module))
+    except OSError as e:
+        if module.__file__ is None:  # pragma: no cover
+            raise CodeGenerationError("Failed to get file path to the module") from e
+
+        path = Path(module.__file__)
+        if path.is_file() and path.read_text() == "":
+            return ast.Module([])
+        # Not sure how to get here so this is just a precaution
+        raise CodeGenerationError("Failed to get source code for module") from e  # pragma: no cover
+
+
+def _migrate_module_to_another_version(
     module,
     modified_schemas: dict[
         str,
@@ -239,15 +353,7 @@ def _modify_module(
     ],
     modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ) -> str:
-    try:
-        parsed_file = ast.parse(inspect.getsource(module))
-    except OSError as e:
-        path = Path(module.__file__)
-        if path.is_file() and path.read_text() == "":
-            return ""
-        # Not sure how to get here so this is just a precaution
-        raise CodeGenerationError("Failed to get source code for module") from e  # pragma: no cover
-
+    parsed_file = _parse_python_module(module)
     if module.__name__.endswith(".__init__"):
         module_name = module.__name__.removesuffix(".__init__")
     else:
@@ -258,7 +364,14 @@ def _modify_module(
             ast.Import(names=[ast.alias(name="typing")], level=0),
         ]
         + [
-            _modify_cls(n, module_name, modified_schemas, modified_enums) if isinstance(n, ast.ClassDef) else n
+            _migrate_cls_to_another_version(
+                n,
+                module_name,
+                modified_schemas,
+                modified_enums,
+            )
+            if isinstance(n, ast.ClassDef)
+            else n
             for n in parsed_file.body
         ],
         [],
@@ -267,7 +380,7 @@ def _modify_module(
     return ast.unparse(body)
 
 
-def _modify_cls(
+def _migrate_cls_to_another_version(
     cls_node: ast.ClassDef,
     module_python_path: str,
     modified_schemas: dict[
@@ -306,7 +419,11 @@ def _modify_schema_cls(
                         ),
                     )
                     # TODO: We should lint the code to make sure that the user is not using pydantic.fields.Field instead of universi.Field
-                    for attr in getattr(field[1].field_info, "_universi_field_names", ())
+                    for attr in getattr(
+                        field[1].field_info,
+                        "_universi_field_names",
+                        (),
+                    )
                 ],
             ),
             simple=1,
@@ -356,7 +473,9 @@ def custom_repr(value: Any) -> Any:
     if isinstance(value, list | tuple | set | frozenset):
         return PlainRepr(value.__class__(map(custom_repr, value)))
     if isinstance(value, dict):
-        return PlainRepr(value.__class__((custom_repr(k), custom_repr(v)) for k, v in value.items()))
+        return PlainRepr(
+            value.__class__((custom_repr(k), custom_repr(v)) for k, v in value.items()),
+        )
     if isinstance(value, _BaseGenericAlias | GenericAlias):
         return f"{custom_repr(get_origin(value))}[{', '.join(custom_repr(a) for a in get_args(value))}]"
     if isinstance(value, type):
@@ -395,4 +514,6 @@ def _find_a_lambda(source: str) -> str:
             f"No lambda found in default_factory even though one was passed: {source}",
         )
     else:  # pragma: no cover
-        raise InvalidGenerationInstructionError("More than one lambda found in default_factory. This is not supported.")
+        raise InvalidGenerationInstructionError(
+            "More than one lambda found in default_factory. This is not supported.",
+        )

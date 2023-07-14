@@ -6,7 +6,7 @@ from copy import deepcopy
 from enum import Enum
 from pathlib import Path
 from threading import Lock
-from types import FunctionType, GenericAlias, MappingProxyType, ModuleType
+from types import GenericAlias, MappingProxyType, ModuleType
 from typing import (
     Any,
     TypeVar,
@@ -17,7 +17,11 @@ from typing import (
 )
 
 import fastapi.routing
-from fastapi.dependencies.utils import get_body_field, get_dependant, get_parameterless_sub_dependant
+from fastapi.dependencies.utils import (
+    get_body_field,
+    get_dependant,
+    get_parameterless_sub_dependant,
+)
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
@@ -30,7 +34,7 @@ from starlette.routing import Mount as Mount  # noqa
 from typing_extensions import Self, assert_never
 
 from universi._utils import Sentinel, get_another_version_of_cls
-from universi.codegen import _get_versioned_schema_dir_name
+from universi.codegen import _get_version_dir_path
 from universi.exceptions import RouterGenerationError
 from universi.structure.common import Endpoint
 from universi.structure.endpoints import (
@@ -94,9 +98,11 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         routers = {}
         for version in versions.versions:
             if latest_schemas_module:
-                version_dir = _get_versioned_schema_dir_name(latest_schemas_module, version.date)
+                version_dir = _get_version_dir_path(latest_schemas_module, version.date)
                 if not version_dir.is_dir():
-                    raise RouterGenerationError(f"Versioned schema directory '{version_dir}' does not exist.")
+                    raise RouterGenerationError(
+                        f"Versioned schema directory '{version_dir}' does not exist.",
+                    )
                 for route in router.routes:
                     if isinstance(route, APIRoute):
                         if route.response_model is not None:
@@ -105,14 +111,29 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
                                 version_dir,
                             )
                         # TODO: Write a test for this line
-                        route.dependencies = _change_versions_of_all_annotations(route.dependencies, version_dir)
-                        route.endpoint = _change_versions_of_all_annotations(route.endpoint, version_dir)
-                        route.dependant = get_dependant(path=route.path_format, call=route.endpoint)
-                        route.body_field = get_body_field(dependant=route.dependant, name=route.unique_id)
+                        route.dependencies = _change_versions_of_all_annotations(
+                            route.dependencies,
+                            version_dir,
+                        )
+                        route.endpoint = _change_versions_of_all_annotations(
+                            route.endpoint,
+                            version_dir,
+                        )
+                        route.dependant = get_dependant(
+                            path=route.path_format,
+                            call=route.endpoint,
+                        )
+                        route.body_field = get_body_field(
+                            dependant=route.dependant,
+                            name=route.unique_id,
+                        )
                         for depends in route.dependencies[::-1]:
                             route.dependant.dependencies.insert(
                                 0,
-                                get_parameterless_sub_dependant(depends=depends, path=route.path_format),
+                                get_parameterless_sub_dependant(
+                                    depends=depends,
+                                    path=route.path_format,
+                                ),
                             )
                         route.app = request_response(route.get_route_handler())
 
@@ -165,7 +186,10 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
 def _change_versions_of_all_annotations(annotation: Any, version_dir: Path) -> Any:
     if isinstance(annotation, dict):
         return {
-            _change_versions_of_all_annotations(key, version_dir): _change_versions_of_all_annotations(
+            _change_versions_of_all_annotations(
+                key,
+                version_dir,
+            ): _change_versions_of_all_annotations(
                 value,
                 version_dir,
             )
@@ -173,7 +197,9 @@ def _change_versions_of_all_annotations(annotation: Any, version_dir: Path) -> A
         }
 
     elif isinstance(annotation, list | tuple):
-        return type(annotation)(_change_versions_of_all_annotations(v, version_dir) for v in annotation)
+        return type(annotation)(
+            _change_versions_of_all_annotations(v, version_dir) for v in annotation
+        )
     else:
         return _memoized_change_versions_of_all_annotations(annotation, version_dir)
 
@@ -181,10 +207,16 @@ def _change_versions_of_all_annotations(annotation: Any, version_dir: Path) -> A
 # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
 # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
 @functools.cache
-def _memoized_change_versions_of_all_annotations(annotation: Any, version_dir: Path) -> Any:
+def _memoized_change_versions_of_all_annotations(
+    annotation: Any,
+    version_dir: Path,
+) -> Any:
     if isinstance(annotation, _BaseGenericAlias | GenericAlias):
         return _change_versions_of_all_annotations(get_origin(annotation), version_dir)[
-            tuple(_change_versions_of_all_annotations(arg, version_dir) for arg in get_args(annotation))
+            tuple(
+                _change_versions_of_all_annotations(arg, version_dir)
+                for arg in get_args(annotation)
+            )
         ]
     elif isinstance(annotation, Depends):
         return Depends(
@@ -221,9 +253,16 @@ def _memoized_change_versions_of_all_annotations(annotation: Any, version_dir: P
         callable_annotations = new_callable.__annotations__
 
         new_callable: Any = cast(Any, new_callable)
-        new_callable.__annotations__ = _change_versions_of_all_annotations(callable_annotations, version_dir)
+        new_callable.__annotations__ = _change_versions_of_all_annotations(
+            callable_annotations,
+            version_dir,
+        )
         new_callable.__defaults__ = _change_versions_of_all_annotations(
-            tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
+            tuple(
+                p.default
+                for p in old_params.values()
+                if p.default is not inspect.Signature.empty
+            ),
             version_dir=version_dir,
         )
         new_callable.__signature__ = _generate_signature(new_callable, old_params)
@@ -232,7 +271,10 @@ def _memoized_change_versions_of_all_annotations(annotation: Any, version_dir: P
         return annotation
 
 
-def _generate_signature(new_callable: Callable, old_params: MappingProxyType[str, inspect.Parameter]):
+def _generate_signature(
+    new_callable: Callable,
+    old_params: MappingProxyType[str, inspect.Parameter],
+):
     parameters = []
     default_counter = 0
     for param in old_params.values():
@@ -246,19 +288,26 @@ def _generate_signature(new_callable: Callable, old_params: MappingProxyType[str
                 param.name,
                 param.kind,
                 default=default,
-                annotation=new_callable.__annotations__.get(param.name, inspect.Signature.empty),
+                annotation=new_callable.__annotations__.get(
+                    param.name,
+                    inspect.Signature.empty,
+                ),
             ),
         )
     return inspect.Signature(
         parameters=parameters,
-        return_annotation=new_callable.__annotations__.get("return", inspect.Signature.empty),
+        return_annotation=new_callable.__annotations__.get(
+            "return",
+            inspect.Signature.empty,
+        ),
     )
 
 
 def _get_route_index(routes: list[BaseRoute], endpoint: Endpoint):
     for index, route in enumerate(routes):
         if isinstance(route, APIRoute) and (
-            route.endpoint == endpoint or getattr(route.endpoint, "func", None) == endpoint
+            route.endpoint == endpoint
+            or getattr(route.endpoint, "func", None) == endpoint
         ):
             return index
     return None
