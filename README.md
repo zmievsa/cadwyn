@@ -1,6 +1,6 @@
 # universi
 
-Package description
+Modern Stripe-like API versioning
 
 ---
 
