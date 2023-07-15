@@ -15,30 +15,22 @@ from universi.structure.enums import AlterEnumSubInstruction
 from .._utils import Sentinel
 from .common import Endpoint, VersionedModel
 from .responses import AlterResponseInstruction
-from .schemas import AlterSchemaInstruction
+from .schemas import AlterSchemaSubInstruction, SchemaPropertyDefinitionInstruction
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 VersionDate: TypeAlias = datetime.date
-PossibleInstructions: TypeAlias = (
-    AlterSchemaInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction
-)
+PossibleInstructions: TypeAlias = AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction
 
 
 class AbstractVersionChange:
     side_effects: ClassVar[bool] = False
     description: ClassVar[str] = Sentinel
-    instructions_to_migrate_to_previous_version: ClassVar[
-        Sequence[PossibleInstructions]
-    ] = Sentinel
-    alter_schema_instructions: ClassVar[Sequence[AlterSchemaInstruction]] = Sentinel
+    instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
+    alter_schema_instructions: ClassVar[Sequence[AlterSchemaSubInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[Sequence[AlterEnumSubInstruction]] = Sentinel
-    alter_endpoint_instructions: ClassVar[
-        Sequence[AlterEndpointSubInstruction]
-    ] = Sentinel
-    alter_response_instructions: ClassVar[
-        dict[Endpoint, AlterResponseInstruction]
-    ] = Sentinel
+    alter_endpoint_instructions: ClassVar[Sequence[AlterEndpointSubInstruction]] = Sentinel
+    alter_response_instructions: ClassVar[dict[Endpoint, AlterResponseInstruction]] = Sentinel
 
     def __init_subclass__(cls) -> None:
         if not isinstance(cls.side_effects, bool):
@@ -65,7 +57,7 @@ class AbstractVersionChange:
         for attr_name, attr_value in cls.__dict__.items():
             if not isinstance(
                 attr_value,
-                AlterResponseInstruction,
+                (AlterResponseInstruction, SchemaPropertyDefinitionInstruction),
             ) and attr_name not in {
                 "description",
                 "side_effects",
@@ -74,33 +66,29 @@ class AbstractVersionChange:
                 "__doc__",
             }:
                 raise UniversiStructureError(
-                    f"Found: '{attr_name}' attribute in {cls.__name__}. Only migration instructions are allowed in version change classes.",
+                    f"Found: '{attr_name}' attribute of type '{type(attr_value)}' in '{cls.__name__}'. Only migration instructions and schema properties are allowed in version change class body.",
                 )
 
         cls.alter_schema_instructions = []
         cls.alter_enum_instructions = []
         cls.alter_endpoint_instructions = []
         for alter_instruction in cls.instructions_to_migrate_to_previous_version:
-            if isinstance(alter_instruction, AlterSchemaInstruction):
+            if isinstance(alter_instruction, AlterSchemaSubInstruction):
                 cls.alter_schema_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, AlterEnumSubInstruction):
                 cls.alter_enum_instructions.append(alter_instruction)
-            else:
+            elif isinstance(alter_instruction, AlterEndpointSubInstruction):
                 cls.alter_endpoint_instructions.append(alter_instruction)
+        for value in cls.__dict__.values():
+            if isinstance(value, SchemaPropertyDefinitionInstruction):
+                cls.alter_schema_instructions.append(value)
+        # TODO: You can include it in a for loop over dict above. Do so
         cls.alter_response_instructions = {
             endpoint: instruction
             for instruction in cls.__dict__.values()
             if isinstance(instruction, AlterResponseInstruction)
             for endpoint in instruction.endpoints
         }
-        repetitions = set()
-        for alter_instruction in cls.alter_schema_instructions:
-            if alter_instruction.schema in repetitions:
-                raise UniversiStructureError(
-                    f"'{alter_instruction.schema.__name__}' got repeated in multiple instructions. "
-                    "Please, merge these instructions.",
-                )
-            repetitions.add(alter_instruction.schema)
 
         if cls.mro() != [cls, AbstractVersionChange, object]:
             raise TypeError(
@@ -139,8 +127,7 @@ class Versions:
     @functools.cached_property
     def versioned_schemas(self) -> dict[str, type[VersionedModel]]:
         return {
-            instruction.schema.__module__
-            + instruction.schema.__name__: instruction.schema
+            instruction.schema.__module__ + instruction.schema.__name__: instruction.schema
             for version in self.versions
             for version_change in version.version_changes
             for instruction in version_change.alter_schema_instructions
@@ -159,11 +146,7 @@ class Versions:
     def _version_changes_to_version_mapping(
         self,
     ) -> dict[type[AbstractVersionChange], VersionDate]:
-        return {
-            version_change: version.date
-            for version in self.versions
-            for version_change in version.version_changes
-        }
+        return {version_change: version.date for version in self.versions for version_change in version.version_changes}
 
     def is_active(self, version_change: type[AbstractVersionChange]) -> bool:
         api_version = self.api_version_var.get()

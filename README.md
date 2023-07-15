@@ -71,7 +71,7 @@ async def create_user(payload: UserCreateRequest):
     }
 
 @router.get("/users/{user_id}", response_model=UserResource)
-async def get_user(user_id: UUID):
+async def get_user(user_id: int):
     return {
         "id": user_id,
         "address": "123 Example St",
@@ -88,19 +88,18 @@ from universi import Field
 
 
 class UserCreateRequest(BaseModel):
-    id: int
-    addresses: str = Field(min_items=1)
+    addresses: list[str] = Field(min_items=1)
 
 class UserResource(BaseModel):
     id: int
-    addresses: str
+    addresses: list[str]
 ```
 
 ```python
 @router.post("/users", response_model=UserResource)
 async def create_user(payload: UserCreateRequest):
     return {
-        "id": uuid4(),
+        "id": int,
         "addresses": payload.addresses,
     }
 
@@ -124,12 +123,11 @@ Universi is heavily inspired by this approach so let's continue our tutorial and
 We need to create a migration to handle changes between these versions. This migration will convert the list of addresses back to a single address when migrating to the previous version. Yes, migrating **back**: you might be used to database migrations where we write upgrade migration and downgrade migration but here our goal is to have an app of latest version and to describe what older versions looked like in comparison to it. That way the old versions are frozen in migrations and you can **almost** safely forget about them.
 
 ```python
+from universi import Field
 from universi.structure import (
-    field,
     schema,
     AbstractVersionChange,
     convert_response_to_previous_version_for,
-    Field
 )
 
 class ChangeAddressToList(AbstractVersionChange):
@@ -138,44 +136,27 @@ class ChangeAddressToList(AbstractVersionChange):
         "allow the user to specify multiple addresses"
     )
     instructions_to_migrate_to_previous_version = (
-        schema(
-            UserCreateRequest,
-            field("addresses").didnt_exist,
-            field("address").existed_with(type=str, info=Field()),
-        ),
-        schema(
-            UserResource,
-            field("addresses").didnt_exist,
-            field("address").existed_with(type=str, info=Field()),
-        )
+        # You should use schema inheritance if you don't want to repeat yourself in such cases
+        schema(UserCreateRequest).field("addresses").didnt_exist,
+        schema(UserCreateRequest).field("address").existed_with(type=str, info=Field()),
+        schema(UserResource).field("addresses").didnt_exist,
+        schema(UserResource).field("address").existed_with(type=str, info=Field()),
     )
 
     @convert_response_to_previous_version_for(get_user, create_user)
     def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
         data["address"] = data.pop("addresses")[0]
+    
+    @schema(UserCreateRequest).had_property("addresses")
+    def addresses_property(parsed_schema):
+        return [parsed_schema.address]
+
 ```
 
+s
 See how we are popping the first address from the list? This is only guaranteed to be possible because we specified earlier that `min_items` for `addresses` must be `1`. If we didn't, then the user would be able to create a user in a newer version that would be impossible to represent in the older version. I.e. If anyone tried to get that user from the older version, they would get a `ResponseValidationError` because the user wouldn't have data for a mandatory `address` field. You need to always keep in mind tht API versioning is only for versioning your **API**, your interface. Your versions must still be completely compatible in terms of data. If they are not, then you are versioning your data and you should really go with a separate app instance. Otherwise, your users will have a hard time migrating back and forth between API versions and so many unexpected errors.
 
-Now that we've made our migration, we are realizing that even though we are migrating data for our response so we don't need to worry about it in our business logic, our user creation function still cannot handle the old version: it will just break when it tries to get `addresses` from `UserCreateRequest` because the old version doesn't have it.
-
-### Accomodating changes in request schemas
-
-```python
-@router.post("/users", response_model=UserResource)
-async def create_user(payload: UserCreateRequest):s
-    if hasattr(payload, "addresses"):
-        addresses = payload.addresses
-    else:
-        addresses = [payload.address]
-    return {
-        "id": uuid4(),
-        "addresses": payload.addresses,
-    }
-
-```
-
-Now we just need to combine everything together and ask universi to generate for us the parts that we would copy-paste in traditional versioning.
+See how we added the `addresses` property? This simple instruction will allow us to use `addresses` even from the old schema, which means that our api route will not need to know anything about versioning. The main goal of universi is to shift the logic of versioning away from your business logic and api endpoints which makes your project easier to navigate and which makes deleting versions a breeze.
 
 ### Grouping Version Changes
 

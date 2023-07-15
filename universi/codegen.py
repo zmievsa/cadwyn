@@ -1,4 +1,5 @@
 import ast
+from dataclasses import dataclass, field
 import importlib
 import inspect
 import os
@@ -9,9 +10,11 @@ from copy import deepcopy
 from datetime import date
 from enum import Enum, auto
 from pathlib import Path
+import textwrap
 from types import GenericAlias, LambdaType, ModuleType
 from typing import (
     Any,
+    Callable,
     TypeAlias,
     _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
     get_args,
@@ -30,10 +33,12 @@ from universi.structure.enums import (
     EnumHadMembersInstruction,
 )
 from universi.structure.schemas import (
-    AlterSchemaInstruction,
+    AlterSchemaSubInstruction,
     OldSchemaDidntHaveField,
     OldSchemaFieldWas,
     OldSchemaHadField,
+    SchemaPropertyDefinitionInstruction,
+    SchemaPropertyDidntExistInstruction,
 )
 from universi.structure.versions import Version, Versions
 
@@ -41,14 +46,21 @@ from ._utils import Sentinel, get_index_of_base_schema_dir_in_pythonpath
 from .exceptions import CodeGenerationError, InvalidGenerationInstructionError
 from .fields import FieldInfo
 
-LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
-FieldNameT: TypeAlias = str
-dict_of_empty_field_info = {k: getattr(PydanticFieldInfo(), k) for k in PydanticFieldInfo.__slots__}
+_LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
+_FieldName: TypeAlias = str
+_PropertyName: TypeAlias = str
+_dict_of_empty_field_info = {k: getattr(PydanticFieldInfo(), k) for k in PydanticFieldInfo.__slots__}
+
+
+@dataclass(slots=True)
+class ModelInfo:
+    fields: dict[_FieldName, tuple[type[BaseModel], ModelField]]
+    properties: dict[_PropertyName, Callable[[Any], Any]] = field(default_factory=dict)
 
 
 # TODO: Add enum alteration here
 def regenerate_dir_to_all_versions(template_module: ModuleType, versions: Versions):
-    schemas = {k: (v, _get_fields_for_model(v)) for k, v in deepcopy(versions.versioned_schemas).items()}
+    schemas = {k: ModelInfo(_get_fields_for_model(v)) for k, v in deepcopy(versions.versioned_schemas).items()}
     enums = {k: (v, {member.name: member.value for member in v}) for k, v in deepcopy(versions.versioned_enums).items()}
 
     for version in versions.versions:
@@ -71,17 +83,12 @@ def _generate_union_directory(template_module: ModuleType, versions: Versions):
         template_module,
         union_dir,
     )
-    for (
-        relative_path_to_file,
-        original_module,
-        parallel_file,
-    ) in _generate_parallel_directory(
+    for _, original_module, parallel_file in _generate_parallel_directory(
         template_module,
         union_dir,
     ):
         new_module_text = _get_unionized_version_of_module(
             original_module,
-            relative_path_to_file,
             versions,
             index_of_base_schema_in_pythonpath,
         )
@@ -90,7 +97,6 @@ def _generate_union_directory(template_module: ModuleType, versions: Versions):
 
 def _get_unionized_version_of_module(
     original_module: ModuleType,
-    relative_path_to_file: Path,
     versions: Versions,
     index_of_base_schema_in_pythonpath: int,
 ):
@@ -104,10 +110,6 @@ def _get_unionized_version_of_module(
 
     parsed_file = _parse_python_module(original_module)
 
-    if original_module.__name__.endswith(".__init__"):
-        module_name = original_module.__name__.removesuffix(".__init__")
-    else:
-        module_name = original_module.__name__
     body = ast.Module(
         [
             ast.ImportFrom(module="universi", names=[ast.alias(name="Field")], level=0),
@@ -132,7 +134,7 @@ def _apply_migrations(
     version: Version,
     schemas: dict[
         str,
-        tuple[type[BaseModel], dict[FieldNameT, tuple[type[BaseModel], ModelField]]],
+        ModelInfo,
     ],
     enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ):
@@ -145,63 +147,72 @@ def _apply_migrations(
 
 
 def _apply_alter_schema_instructions(
-    schemas: dict[
-        str,
-        tuple[type[BaseModel], dict[FieldNameT, tuple[type[BaseModel], ModelField]]],
-    ],
-    alter_schema_instructions: Sequence[AlterSchemaInstruction],
+    schema_infos: dict[str, ModelInfo],
+    alter_schema_instructions: Sequence[AlterSchemaSubInstruction],
 ):
     for alter_schema_instruction in alter_schema_instructions:
         schema = alter_schema_instruction.schema
         schema_path = schema.__module__ + schema.__name__
-        schema_field_info_bundle = schemas[schema_path]
-        field_name_to_field_model = schema_field_info_bundle[1]
-        for field_change in alter_schema_instruction.changes:
-            if isinstance(field_change, OldSchemaDidntHaveField):
-                # TODO: Check that the user doesn't pop it and change it at the same time
-                # TODO: Add a check that field actually exists (it's very necessary!)
-                field_name_to_field_model.pop(field_change.field_name)
+        field_name_to_field_model = schema_infos[schema_path].fields
+        if isinstance(alter_schema_instruction, OldSchemaDidntHaveField):
+            # TODO: Check that the user doesn't pop it and change it at the same time
+            # TODO: Add a check that field actually exists (it's necessary!)
+            field_name_to_field_model.pop(alter_schema_instruction.field_name)
 
-            elif isinstance(field_change, OldSchemaFieldWas):
-                # TODO: Add a check that field actually exists (it's very necessary!)
-                model_field = field_name_to_field_model[field_change.field_name][1]
-                if field_change.type is not Sentinel:
-                    if model_field.annotation == field_change.type:
-                        raise InvalidGenerationInstructionError(
-                            f"You tried to change the type of field '{field_change.field_name}' to '{field_change.type}' in {schema.__name__} but it already has type '{model_field.annotation}'",
-                        )
-                    model_field.annotation = field_change.type
-                    model_field.type_ = convert_generics(field_change.type)
-                    model_field.outer_type_ = field_change.type
-                field_info = model_field.field_info
+        elif isinstance(alter_schema_instruction, OldSchemaFieldWas):
+            # TODO: Add a check that field actually exists (it's necessary!)
+            model_field = field_name_to_field_model[alter_schema_instruction.field_name][1]
+            if alter_schema_instruction.type is not Sentinel:
+                if model_field.annotation == alter_schema_instruction.type:
+                    raise InvalidGenerationInstructionError(
+                        f"You tried to change the type of field '{alter_schema_instruction.field_name}' to '{alter_schema_instruction.type}' in {schema.__name__} but it already has type '{model_field.annotation}'",
+                    )
+                model_field.annotation = alter_schema_instruction.type
+                model_field.type_ = convert_generics(alter_schema_instruction.type)
+                model_field.outer_type_ = alter_schema_instruction.type
+            field_info = model_field.field_info
 
-                if not isinstance(field_info, FieldInfo):
-                    dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
-                    if dict_of_field_info == dict_of_empty_field_info:
-                        field_info = FieldInfo()
-                        model_field.field_info = field_info
-                    else:
-                        raise InvalidGenerationInstructionError(
-                            f"You have defined a Field using pydantic.fields.Field but you must use universi.Field in {schema.__name__}",
-                        )
-                for attr_name in field_change.field_changes.__dataclass_fields__:
-                    attr_value = getattr(field_change.field_changes, attr_name)
-                    if attr_value is not Sentinel:
-                        setattr(field_info, attr_name, attr_value)
-                        field_info._universi_field_names.add(attr_name)
-            elif isinstance(field_change, OldSchemaHadField):
-                field_name_to_field_model[field_change.field_name] = (
-                    schema,
-                    ModelField(
-                        name=field_change.field_name,
-                        type_=field_change.type,
-                        field_info=field_change.field,
-                        class_validators=None,
-                        model_config=BaseConfig,
-                    ),
+            if not isinstance(field_info, FieldInfo):
+                dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
+                if dict_of_field_info == _dict_of_empty_field_info:
+                    field_info = FieldInfo()
+                    model_field.field_info = field_info
+                else:
+                    raise InvalidGenerationInstructionError(
+                        f"You have defined a Field using pydantic.fields.Field but you must use universi.Field in {schema.__name__}",
+                    )
+            for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
+                attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
+                if attr_value is not Sentinel:
+                    setattr(field_info, attr_name, attr_value)
+                    field_info._universi_field_names.add(attr_name)
+        elif isinstance(alter_schema_instruction, OldSchemaHadField):
+            field_name_to_field_model[alter_schema_instruction.field_name] = (
+                schema,
+                ModelField(
+                    name=alter_schema_instruction.field_name,
+                    type_=alter_schema_instruction.type,
+                    field_info=alter_schema_instruction.field,
+                    class_validators=None,
+                    model_config=BaseConfig,
+                ),
+            )
+        elif isinstance(alter_schema_instruction, SchemaPropertyDefinitionInstruction):
+            if alter_schema_instruction.name in field_name_to_field_model:
+                raise InvalidGenerationInstructionError(
+                    f"You tried to define a property '{alter_schema_instruction.name}' in '{schema.__name__}' "
+                    "but there is already a field with that name."
                 )
-            else:
-                assert_never(field_change)
+            schema_infos[schema_path].properties[alter_schema_instruction.name] = alter_schema_instruction.function
+        elif isinstance(alter_schema_instruction, SchemaPropertyDidntExistInstruction):
+            if alter_schema_instruction.name not in schema_infos[schema_path].properties:
+                raise InvalidGenerationInstructionError(
+                    f"You tried to delete a property '{alter_schema_instruction.name}' in '{schema.__name__}' "
+                    "but there is no such property defined in any of the migrations."
+                )
+            schema_infos[schema_path].properties.pop(alter_schema_instruction.name)
+        else:
+            assert_never(alter_schema_instruction)
 
 
 def _apply_alter_enum_instructions(
@@ -254,10 +265,7 @@ def _get_package_path_from_module(template_module: ModuleType) -> Path:
 
 def _generate_versioned_directory(
     template_module: ModuleType,
-    schemas: dict[
-        str,
-        tuple[type[BaseModel], dict[FieldNameT, tuple[type[BaseModel], ModelField]]],
-    ],
+    schemas: dict[str, ModelInfo],
     enums: dict[str, tuple[type[Enum], dict[str, Any]]],
     version: date,
 ):
@@ -317,8 +325,8 @@ def _generate_parallel_directory(
 
 def _get_fields_for_model(
     model: type[BaseModel],
-) -> dict[FieldNameT, tuple[type[BaseModel], ModelField]]:
-    actual_fields: dict[FieldNameT, tuple[type[BaseModel], ModelField]] = {}
+) -> dict[_FieldName, tuple[type[BaseModel], ModelField]]:
+    actual_fields: dict[_FieldName, tuple[type[BaseModel], ModelField]] = {}
     for cls in model.__mro__:
         if cls is BaseModel:
             return actual_fields
@@ -347,10 +355,7 @@ def _parse_python_module(module: ModuleType) -> ast.Module:
 
 def _migrate_module_to_another_version(
     module,
-    modified_schemas: dict[
-        str,
-        tuple[type[BaseModel], dict[str, tuple[type[BaseModel], ModelField]]],
-    ],
+    modified_schemas: dict[str, ModelInfo],
     modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ) -> str:
     parsed_file = _parse_python_module(module)
@@ -358,10 +363,12 @@ def _migrate_module_to_another_version(
         module_name = module.__name__.removesuffix(".__init__")
     else:
         module_name = module.__name__
+
     body = ast.Module(
         [
             ast.ImportFrom(module="universi", names=[ast.alias(name="Field")], level=0),
             ast.Import(names=[ast.alias(name="typing")], level=0),
+            ast.ImportFrom(module="typing", names=[ast.alias(name="Any")], level=0),
         ]
         + [
             _migrate_cls_to_another_version(
@@ -383,15 +390,12 @@ def _migrate_module_to_another_version(
 def _migrate_cls_to_another_version(
     cls_node: ast.ClassDef,
     module_python_path: str,
-    modified_schemas: dict[
-        str,
-        tuple[type[BaseModel], dict[str, tuple[type[BaseModel], ModelField]]],
-    ],
+    modified_schemas: dict[str, ModelInfo],
     modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ) -> ast.ClassDef:
     cls_python_path = module_python_path + cls_node.name
     if cls_python_path in modified_schemas:
-        cls_node = _modify_schema_cls(cls_node, modified_schemas[cls_python_path][1])
+        cls_node = _modify_schema_cls(cls_node, modified_schemas[cls_python_path])
     if cls_python_path in modified_enums:
         cls_node = _modify_enum_cls(cls_node, modified_enums[cls_python_path][1])
 
@@ -402,21 +406,19 @@ def _migrate_cls_to_another_version(
 
 def _modify_schema_cls(
     cls_node: ast.ClassDef,
-    actual_fields: dict[str, tuple[type[BaseModel], ModelField]],
+    model_info: ModelInfo,
 ) -> ast.ClassDef:
-    body = [
+    field_definitions = [
         ast.AnnAssign(
-            target=ast.Name(id=name, ctx=ast.Store()),
-            annotation=ast.Name(id=custom_repr(field[1].annotation), ctx=ast.Load()),
+            target=ast.Name(name, ctx=ast.Store()),
+            annotation=ast.Name(custom_repr(field[1].annotation)),
             value=ast.Call(
-                func=ast.Name(id="Field", ctx=ast.Load()),
+                func=ast.Name("Field"),
                 args=[],
                 keywords=[
                     ast.keyword(
                         arg=attr,
-                        value=ast.Name(
-                            id=custom_repr(getattr(field[1].field_info, attr)),
-                        ),
+                        value=ast.Name(custom_repr(getattr(field[1].field_info, attr))),
                     )
                     # TODO: We should lint the code to make sure that the user is not using pydantic.fields.Field instead of universi.Field
                     for attr in getattr(
@@ -428,20 +430,33 @@ def _modify_schema_cls(
             ),
             simple=1,
         )
-        for name, field in actual_fields.items()
+        for name, field in model_info.fields.items()
     ]
+    property_definitions = [_make_property_ast(name, func) for name, func in model_info.properties.items()]
     old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Pass | ast.Ellipsis)]
     docstring = _pop_docstring_from_cls_body(old_body)
-    cls_node.body = docstring + body + old_body
+    cls_node.body = docstring + field_definitions + old_body + property_definitions
 
     return cls_node
+
+
+# TODO: Type hint these func definitions everywhere
+def _make_property_ast(name: str, func: Callable):
+    func_source = inspect.getsource(func)
+
+    func_ast = ast.parse(textwrap.dedent(func_source)).body[0]
+    # TODO: What if it's a lambda?
+    assert isinstance(func_ast, ast.FunctionDef)
+    func_ast.decorator_list = [ast.Name("property")]
+    func_ast.name = name
+    return func_ast
 
 
 def _modify_enum_cls(cls_node: ast.ClassDef, enum_info: dict[str, Any]) -> ast.ClassDef:
     new_body = [
         ast.Assign(
-            targets=[ast.Name(id=member, ctx=ast.Store())],
-            value=ast.Name(id=custom_repr(member_value)),
+            targets=[ast.Name(member, ctx=ast.Store())],
+            value=ast.Name(custom_repr(member_value)),
             lineno=0,
         )
         for member, member_value in enum_info.items()
@@ -479,12 +494,17 @@ def custom_repr(value: Any) -> Any:
     if isinstance(value, _BaseGenericAlias | GenericAlias):
         return f"{custom_repr(get_origin(value))}[{', '.join(custom_repr(a) for a in get_args(value))}]"
     if isinstance(value, type):
+        # TODO: Add tests for constrained types
+        # TODO: Be wary of this hack when migrating to pydantic v2
+        # This is a hack for pydantic's Constrained types
+        if value.__name__.startswith("Constrained") and hasattr(value, "__origin__") and hasattr(value, "__args__"):
+            return custom_repr(value.__origin__[value.__args__])
         return value.__name__
     if isinstance(value, Enum):
         return PlainRepr(f"{value.__class__.__name__}.{value.name}")
     if isinstance(value, auto):
         return PlainRepr("auto()")
-    if isinstance(value, LambdaType) and LambdaFunctionName == value.__name__:
+    if isinstance(value, LambdaType) and _LambdaFunctionName == value.__name__:
         return _find_a_lambda(inspect.getsource(value).strip())
     if inspect.isfunction(value):
         return PlainRepr(value.__name__)

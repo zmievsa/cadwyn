@@ -19,10 +19,13 @@ from universi.structure import (
     Version,
     Versions,
     enum,
-    field,
     schema,
 )
 from universi.structure.versions import AbstractVersionChange, Version, Versions
+
+from universi.structure.schemas import AlterSchemaSubInstruction
+
+from universi.structure.enums import AlterEnumSubInstruction
 
 CURRENT_DIR = Path(__file__).parent
 
@@ -37,7 +40,7 @@ def serialize(enum: type[Enum]) -> dict[str, Any]:
 
 
 def generate_test_version_packages(
-    *instructions,
+    *instructions: AlterSchemaSubInstruction | AlterEnumSubInstruction,
     package: ModuleType = latest,
 ) -> tuple[ModuleType, ModuleType]:
     class SomeVersionChange(AbstractVersionChange):
@@ -59,7 +62,7 @@ def generate_test_version_packages(
 
 def assert_field_had_changes_apply(model: type[BaseModel], attr: str, attr_value: Any):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(getattr(latest, model.__name__), field("foo").had(**{attr: attr_value})),
+        schema(getattr(latest, model.__name__)).field("foo").had(**{attr: attr_value})
     )
     # For some reason it said that auto and Field were not defined, even though I was importing them
     d1 = {"auto": auto, "Field": Field}
@@ -142,10 +145,7 @@ def test__enum_had__original_schema_is_empty():
 
 def test__field_existed_with__original_schema_is_empty():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(
-            latest.EmptySchema,
-            field("bar").existed_with(type=int, info=Field(description="hewwo")),
-        ),
+        schema(latest.EmptySchema).field("bar").existed_with(type=int, info=Field(description="hewwo")),
     )
     assert len(v2001_01_01.EmptySchema.__fields__) == 0
     # insert_assert(inspect.getsource(v2000_01_01.EmptySchema))
@@ -157,10 +157,7 @@ def test__field_existed_with__original_schema_is_empty():
 
 def test__field_existed_with__original_schema_has_a_field():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(
-            latest.SchemaWithOneStrField,
-            field("bar").existed_with(type=int, info=Field(description="hewwo")),
-        ),
+        schema(latest.SchemaWithOneStrField).field("bar").existed_with(type=int, info=Field(description="hewwo")),
     )
     # insert_assert(inspect.getsource(v2000_01_01.SchemaWithOneStrField))
     assert (
@@ -176,7 +173,7 @@ def test__field_existed_with__original_schema_has_a_field():
 
 def test__field_didnt_exist():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaWithOneStrField, field("foo").didnt_exist),
+        schema(latest.SchemaWithOneStrField).field("foo").didnt_exist
     )
     # insert_assert(inspect.getsource(v2000_01_01.SchemaWithOneStrField))
     assert inspect.getsource(v2000_01_01.SchemaWithOneStrField) == "class SchemaWithOneStrField(BaseModel):\n    pass\n"
@@ -233,10 +230,7 @@ def test__field_had__decimal_field(attr: str, attr_value: Any):
 
 def test__field_had__default_factory():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(
-            latest.SchemaWithOneIntField,
-            field("foo").had(default_factory=lambda: 91),  # pragma: no cover
-        ),
+        schema(latest.SchemaWithOneIntField).field("foo").had(default_factory=lambda: 91),  # pragma: no cover
     )
 
     assert v2000_01_01.SchemaWithOneIntField.__fields__["foo"].default_factory() == 91
@@ -248,7 +242,7 @@ def test__field_had__default_factory():
 
 def test__field_had__type():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaWithOneIntField, field("foo").had(type=bytes)),
+        schema(latest.SchemaWithOneIntField).field("foo").had(type=bytes)
     )
 
     assert v2000_01_01.SchemaWithOneIntField.__fields__["foo"].annotation is bytes
@@ -287,9 +281,7 @@ def test__schema_field_had__change_to_the_same_field_type__error():
             "You tried to change the type of field 'foo' to '<class 'int'>' in SchemaWithOneIntField but it already has type '<class 'int'>'",
         ),
     ):
-        generate_test_version_packages(
-            schema(latest.SchemaWithOneIntField, field("foo").had(type=int)),
-        )
+        generate_test_version_packages(schema(latest.SchemaWithOneIntField).field("foo").had(type=int))
 
 
 def test__schema_field_had__schema_was_defined_with_pydantic_field__error():
@@ -299,9 +291,7 @@ def test__schema_field_had__schema_was_defined_with_pydantic_field__error():
             "You have defined a Field using pydantic.fields.Field but you must use universi.Field in SchemaWithWrongFieldConstructor",
         ),
     ):
-        generate_test_version_packages(
-            schema(latest.SchemaWithWrongFieldConstructor, field("foo").had(type=int)),
-        )
+        generate_test_version_packages(schema(latest.SchemaWithWrongFieldConstructor).field("foo").had(type=int))
 
 
 def test__enum_had__same_name_as_other_value__error():
@@ -357,17 +347,12 @@ def test__codegen__non_pydantic_schema__error():
             "Model <class 'tests._data.latest.NonPydanticSchema'> is not a subclass of BaseModel",
         ),
     ):
-        generate_test_version_packages(
-            schema(latest.NonPydanticSchema, field("foo").didnt_exist),
-        )
+        generate_test_version_packages(schema(latest.NonPydanticSchema).field("foo").didnt_exist)
 
 
 def test__codegen__schema_that_overrides_fields_from_mro():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(
-            latest.SchemaThatOverridesField,
-            field("bar").existed_with(type=int, info=Field()),
-        ),
+        schema(latest.SchemaThatOverridesField).field("bar").existed_with(type=int, info=Field())
     )
 
     # insert_assert(inspect.getsource(v2000_01_01.SchemaThatOverridesField))
@@ -385,7 +370,7 @@ def test__codegen__schema_that_overrides_fields_from_mro():
 def test__codegen__schema_defined_in_a_non_init_file():
     from tests._data.latest.some_schema import MySchema
 
-    generate_test_version_packages(schema(MySchema, field("foo").didnt_exist))
+    generate_test_version_packages(schema(MySchema).field("foo").didnt_exist)
 
     from tests._data.v2000_01_01.some_schema import MySchema as MySchema2000
     from tests._data.v2001_01_01.some_schema import MySchema as MySchema2001
@@ -397,7 +382,9 @@ def test__codegen__schema_defined_in_a_non_init_file():
 
 
 def test__codegen__with_weird_data_types():
-    generate_test_version_packages(schema(weird_schemas.ModelWithWeirdFields))
+    generate_test_version_packages(
+        schema(weird_schemas.ModelWithWeirdFields).field("bad").existed_with(type=int, info=Field()),
+    )
 
     from tests._data.v2000_01_01.weird_schemas import ModelWithWeirdFields as MySchema2000
     from tests._data.v2001_01_01.weird_schemas import ModelWithWeirdFields as MySchema2001
@@ -408,6 +395,7 @@ def test__codegen__with_weird_data_types():
         "    foo: dict = Field(default={'a': 'b'})\n"
         "    bar: list[int] = Field(default_factory=my_default_factory)\n"
         "    baz: typing.Literal[MyEnum.baz] = Field()\n"
+        "    bad: int = Field()\n"
     )
     # insert_assert(inspect.getsource(MySchema2001))
     assert inspect.getsource(MySchema2001) == (
