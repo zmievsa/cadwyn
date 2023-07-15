@@ -95,7 +95,7 @@ def test_non_instruction_attribute():
     with pytest.raises(
         UniversiStructureError,
         match=re.escape(
-            "Found: 'dummy_attribute' attribute in DummySubClass. Only migration instructions and schema properties are allowed in version change class body."
+            "Found: 'dummy_attribute' attribute of type '<class 'str'>' in 'DummySubClass'. Only migration instructions and schema properties are allowed in version change class body."
         ),
     ):
 

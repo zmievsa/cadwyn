@@ -10,6 +10,7 @@ from copy import deepcopy
 from datetime import date
 from enum import Enum, auto
 from pathlib import Path
+import textwrap
 from types import GenericAlias, LambdaType, ModuleType
 from typing import (
     Any,
@@ -362,10 +363,12 @@ def _migrate_module_to_another_version(
         module_name = module.__name__.removesuffix(".__init__")
     else:
         module_name = module.__name__
+
     body = ast.Module(
         [
             ast.ImportFrom(module="universi", names=[ast.alias(name="Field")], level=0),
             ast.Import(names=[ast.alias(name="typing")], level=0),
+            ast.ImportFrom(module="typing", names=[ast.alias(name="Any")], level=0),
         ]
         + [
             _migrate_cls_to_another_version(
@@ -405,19 +408,17 @@ def _modify_schema_cls(
     cls_node: ast.ClassDef,
     model_info: ModelInfo,
 ) -> ast.ClassDef:
-    body = [
+    field_definitions = [
         ast.AnnAssign(
-            target=ast.Name(id=name, ctx=ast.Store()),
-            annotation=ast.Name(id=custom_repr(field[1].annotation), ctx=ast.Load()),
+            target=ast.Name(name, ctx=ast.Store()),
+            annotation=ast.Name(custom_repr(field[1].annotation)),
             value=ast.Call(
-                func=ast.Name(id="Field", ctx=ast.Load()),
+                func=ast.Name("Field"),
                 args=[],
                 keywords=[
                     ast.keyword(
                         arg=attr,
-                        value=ast.Name(
-                            id=custom_repr(getattr(field[1].field_info, attr)),
-                        ),
+                        value=ast.Name(custom_repr(getattr(field[1].field_info, attr))),
                     )
                     # TODO: We should lint the code to make sure that the user is not using pydantic.fields.Field instead of universi.Field
                     for attr in getattr(
@@ -431,18 +432,31 @@ def _modify_schema_cls(
         )
         for name, field in model_info.fields.items()
     ]
+    property_definitions = [_make_property_ast(name, func) for name, func in model_info.properties.items()]
     old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Pass | ast.Ellipsis)]
     docstring = _pop_docstring_from_cls_body(old_body)
-    cls_node.body = docstring + body + old_body
+    cls_node.body = docstring + field_definitions + old_body + property_definitions
 
     return cls_node
+
+
+# TODO: Type hint these func definitions everywhere
+def _make_property_ast(name: str, func: Callable):
+    func_source = inspect.getsource(func)
+
+    func_ast = ast.parse(textwrap.dedent(func_source)).body[0]
+    # TODO: What if it's a lambda?
+    assert isinstance(func_ast, ast.FunctionDef)
+    func_ast.decorator_list = [ast.Name("property")]
+    func_ast.name = name
+    return func_ast
 
 
 def _modify_enum_cls(cls_node: ast.ClassDef, enum_info: dict[str, Any]) -> ast.ClassDef:
     new_body = [
         ast.Assign(
-            targets=[ast.Name(id=member, ctx=ast.Store())],
-            value=ast.Name(id=custom_repr(member_value)),
+            targets=[ast.Name(member, ctx=ast.Store())],
+            value=ast.Name(custom_repr(member_value)),
             lineno=0,
         )
         for member, member_value in enum_info.items()
@@ -480,6 +494,11 @@ def custom_repr(value: Any) -> Any:
     if isinstance(value, _BaseGenericAlias | GenericAlias):
         return f"{custom_repr(get_origin(value))}[{', '.join(custom_repr(a) for a in get_args(value))}]"
     if isinstance(value, type):
+        # TODO: Add tests for constrained types
+        # TODO: Be wary of this hack when migrating to pydantic v2
+        # This is a hack for pydantic's Constrained types
+        if value.__name__.startswith("Constrained") and hasattr(value, "__origin__") and hasattr(value, "__args__"):
+            return custom_repr(value.__origin__[value.__args__])
         return value.__name__
     if isinstance(value, Enum):
         return PlainRepr(f"{value.__class__.__name__}.{value.name}")

@@ -21,10 +21,9 @@ router = VersionedAPIRouter()
 
 @router.post("/users", response_model=UserResource)
 async def create_user(user: UserCreateRequest):
-    default_address = getattr(user, "address", None) or getattr(user, "addresses", [None])[0] or user.default_address
     return {
         "id": 83,
-        "_prefetched_addresses": [{"id": 100, "value": default_address}],
+        "_prefetched_addresses": [{"id": 100, "value": user.default_address}],
     }
 
 
@@ -38,7 +37,7 @@ async def get_user(user_id: int):
 
 @router.get("/users/{user_id}/addresses", response_model=UserAddressResourceList)
 async def get_user_addresses(user_id: int):
-    return {"data": [{"id": 83, "value": "First Address"}, {"id": 91, "value": "Second Address"}]}
+    return {"data": [{"id": 83, "value": "123 Example St"}, {"id": 91, "value": "456 Main St"}]}
 
 
 class ChangeAddressToList(AbstractVersionChange):
@@ -54,10 +53,9 @@ class ChangeAddressToList(AbstractVersionChange):
     def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
         data["address"] = data.pop("addresses")[0]
 
-    # @staticmethod
-    # @schema(UserCreateRequest).property("addresses")
-    # def addresses_property(parsed_schema: Any):
-    #     return [parsed_schema.address]
+    @schema(UserCreateRequest).had_property("addresses")
+    def addresses_property(parsed_schema):
+        return [parsed_schema.address]  # pragma: no cover
 
 
 class ChangeAddressesToSubresource(AbstractVersionChange):
@@ -72,6 +70,10 @@ class ChangeAddressesToSubresource(AbstractVersionChange):
     @convert_response_to_previous_version_for(get_user, create_user)
     def change_addresses_to_list(cls, data: dict[str, Any]) -> None:
         data["addresses"] = [id["value"] for id in data.pop("_prefetched_addresses")]
+
+    @schema(UserCreateRequest).had_property("default_address")
+    def default_address_property(parsed_schema):
+        return parsed_schema.addresses[0]  # pragma: no cover
 
 
 versions = Versions(

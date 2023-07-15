@@ -66,7 +66,7 @@ class AbstractVersionChange:
                 "__doc__",
             }:
                 raise UniversiStructureError(
-                    f"Found: '{attr_name}' attribute in {cls.__name__}. Only migration instructions and schema properties are allowed in version change class body.",
+                    f"Found: '{attr_name}' attribute of type '{type(attr_value)}' in '{cls.__name__}'. Only migration instructions and schema properties are allowed in version change class body.",
                 )
 
         cls.alter_schema_instructions = []

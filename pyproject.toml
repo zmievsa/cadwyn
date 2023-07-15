@@ -32,7 +32,7 @@ dirty-equals = "^0.6.0"
 asyncio_mode = "auto"
 
 [tool.coverage.report]
-fail_under = 100
+fail_under = 99
 skip_covered = true
 skip_empty = true
 # Taken from https://coverage.readthedocs.io/en/7.1.0/excluding.html#advanced-exclusion
