@@ -1,4 +1,5 @@
 import ast
+from dataclasses import dataclass, field
 import importlib
 import inspect
 import os
@@ -12,6 +13,7 @@ from pathlib import Path
 from types import GenericAlias, LambdaType, ModuleType
 from typing import (
     Any,
+    Callable,
     TypeAlias,
     _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
     get_args,
@@ -34,6 +36,8 @@ from universi.structure.schemas import (
     OldSchemaDidntHaveField,
     OldSchemaFieldWas,
     OldSchemaHadField,
+    SchemaPropertyDefinitionInstruction,
+    SchemaPropertyDidntExistInstruction,
 )
 from universi.structure.versions import Version, Versions
 
@@ -41,14 +45,21 @@ from ._utils import Sentinel, get_index_of_base_schema_dir_in_pythonpath
 from .exceptions import CodeGenerationError, InvalidGenerationInstructionError
 from .fields import FieldInfo
 
-LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
-FieldNameT: TypeAlias = str
-dict_of_empty_field_info = {k: getattr(PydanticFieldInfo(), k) for k in PydanticFieldInfo.__slots__}
+_LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
+_FieldName: TypeAlias = str
+_PropertyName: TypeAlias = str
+_dict_of_empty_field_info = {k: getattr(PydanticFieldInfo(), k) for k in PydanticFieldInfo.__slots__}
+
+
+@dataclass(slots=True)
+class ModelInfo:
+    fields: dict[_FieldName, tuple[type[BaseModel], ModelField]]
+    properties: dict[_PropertyName, Callable[[Any], Any]] = field(default_factory=dict)
 
 
 # TODO: Add enum alteration here
 def regenerate_dir_to_all_versions(template_module: ModuleType, versions: Versions):
-    schemas = {k: (v, _get_fields_for_model(v)) for k, v in deepcopy(versions.versioned_schemas).items()}
+    schemas = {k: ModelInfo(_get_fields_for_model(v)) for k, v in deepcopy(versions.versioned_schemas).items()}
     enums = {k: (v, {member.name: member.value for member in v}) for k, v in deepcopy(versions.versioned_enums).items()}
 
     for version in versions.versions:
@@ -71,17 +82,12 @@ def _generate_union_directory(template_module: ModuleType, versions: Versions):
         template_module,
         union_dir,
     )
-    for (
-        relative_path_to_file,
-        original_module,
-        parallel_file,
-    ) in _generate_parallel_directory(
+    for _, original_module, parallel_file in _generate_parallel_directory(
         template_module,
         union_dir,
     ):
         new_module_text = _get_unionized_version_of_module(
             original_module,
-            relative_path_to_file,
             versions,
             index_of_base_schema_in_pythonpath,
         )
@@ -90,7 +96,6 @@ def _generate_union_directory(template_module: ModuleType, versions: Versions):
 
 def _get_unionized_version_of_module(
     original_module: ModuleType,
-    relative_path_to_file: Path,
     versions: Versions,
     index_of_base_schema_in_pythonpath: int,
 ):
@@ -104,10 +109,6 @@ def _get_unionized_version_of_module(
 
     parsed_file = _parse_python_module(original_module)
 
-    if original_module.__name__.endswith(".__init__"):
-        module_name = original_module.__name__.removesuffix(".__init__")
-    else:
-        module_name = original_module.__name__
     body = ast.Module(
         [
             ast.ImportFrom(module="universi", names=[ast.alias(name="Field")], level=0),
@@ -132,7 +133,7 @@ def _apply_migrations(
     version: Version,
     schemas: dict[
         str,
-        tuple[type[BaseModel], dict[FieldNameT, tuple[type[BaseModel], ModelField]]],
+        ModelInfo,
     ],
     enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ):
@@ -145,24 +146,20 @@ def _apply_migrations(
 
 
 def _apply_alter_schema_instructions(
-    schemas: dict[
-        str,
-        tuple[type[BaseModel], dict[FieldNameT, tuple[type[BaseModel], ModelField]]],
-    ],
+    schema_infos: dict[str, ModelInfo],
     alter_schema_instructions: Sequence[AlterSchemaSubInstruction],
 ):
     for alter_schema_instruction in alter_schema_instructions:
         schema = alter_schema_instruction.schema
         schema_path = schema.__module__ + schema.__name__
-        schema_field_info_bundle = schemas[schema_path]
-        field_name_to_field_model = schema_field_info_bundle[1]
+        field_name_to_field_model = schema_infos[schema_path].fields
         if isinstance(alter_schema_instruction, OldSchemaDidntHaveField):
             # TODO: Check that the user doesn't pop it and change it at the same time
-            # TODO: Add a check that field actually exists (it's very necessary!)
+            # TODO: Add a check that field actually exists (it's necessary!)
             field_name_to_field_model.pop(alter_schema_instruction.field_name)
 
         elif isinstance(alter_schema_instruction, OldSchemaFieldWas):
-            # TODO: Add a check that field actually exists (it's very necessary!)
+            # TODO: Add a check that field actually exists (it's necessary!)
             model_field = field_name_to_field_model[alter_schema_instruction.field_name][1]
             if alter_schema_instruction.type is not Sentinel:
                 if model_field.annotation == alter_schema_instruction.type:
@@ -176,7 +173,7 @@ def _apply_alter_schema_instructions(
 
             if not isinstance(field_info, FieldInfo):
                 dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
-                if dict_of_field_info == dict_of_empty_field_info:
+                if dict_of_field_info == _dict_of_empty_field_info:
                     field_info = FieldInfo()
                     model_field.field_info = field_info
                 else:
@@ -199,6 +196,20 @@ def _apply_alter_schema_instructions(
                     model_config=BaseConfig,
                 ),
             )
+        elif isinstance(alter_schema_instruction, SchemaPropertyDefinitionInstruction):
+            if alter_schema_instruction.name in field_name_to_field_model:
+                raise InvalidGenerationInstructionError(
+                    f"You tried to define a property '{alter_schema_instruction.name}' in '{schema.__name__}' "
+                    "but there is already a field with that name."
+                )
+            schema_infos[schema_path].properties[alter_schema_instruction.name] = alter_schema_instruction.function
+        elif isinstance(alter_schema_instruction, SchemaPropertyDidntExistInstruction):
+            if alter_schema_instruction.name not in schema_infos[schema_path].properties:
+                raise InvalidGenerationInstructionError(
+                    f"You tried to delete a property '{alter_schema_instruction.name}' in '{schema.__name__}' "
+                    "but there is no such property defined in any of the migrations."
+                )
+            schema_infos[schema_path].properties.pop(alter_schema_instruction.name)
         else:
             assert_never(alter_schema_instruction)
 
@@ -253,10 +264,7 @@ def _get_package_path_from_module(template_module: ModuleType) -> Path:
 
 def _generate_versioned_directory(
     template_module: ModuleType,
-    schemas: dict[
-        str,
-        tuple[type[BaseModel], dict[FieldNameT, tuple[type[BaseModel], ModelField]]],
-    ],
+    schemas: dict[str, ModelInfo],
     enums: dict[str, tuple[type[Enum], dict[str, Any]]],
     version: date,
 ):
@@ -316,8 +324,8 @@ def _generate_parallel_directory(
 
 def _get_fields_for_model(
     model: type[BaseModel],
-) -> dict[FieldNameT, tuple[type[BaseModel], ModelField]]:
-    actual_fields: dict[FieldNameT, tuple[type[BaseModel], ModelField]] = {}
+) -> dict[_FieldName, tuple[type[BaseModel], ModelField]]:
+    actual_fields: dict[_FieldName, tuple[type[BaseModel], ModelField]] = {}
     for cls in model.__mro__:
         if cls is BaseModel:
             return actual_fields
@@ -346,10 +354,7 @@ def _parse_python_module(module: ModuleType) -> ast.Module:
 
 def _migrate_module_to_another_version(
     module,
-    modified_schemas: dict[
-        str,
-        tuple[type[BaseModel], dict[str, tuple[type[BaseModel], ModelField]]],
-    ],
+    modified_schemas: dict[str, ModelInfo],
     modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ) -> str:
     parsed_file = _parse_python_module(module)
@@ -382,15 +387,12 @@ def _migrate_module_to_another_version(
 def _migrate_cls_to_another_version(
     cls_node: ast.ClassDef,
     module_python_path: str,
-    modified_schemas: dict[
-        str,
-        tuple[type[BaseModel], dict[str, tuple[type[BaseModel], ModelField]]],
-    ],
+    modified_schemas: dict[str, ModelInfo],
     modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ) -> ast.ClassDef:
     cls_python_path = module_python_path + cls_node.name
     if cls_python_path in modified_schemas:
-        cls_node = _modify_schema_cls(cls_node, modified_schemas[cls_python_path][1])
+        cls_node = _modify_schema_cls(cls_node, modified_schemas[cls_python_path])
     if cls_python_path in modified_enums:
         cls_node = _modify_enum_cls(cls_node, modified_enums[cls_python_path][1])
 
@@ -401,7 +403,7 @@ def _migrate_cls_to_another_version(
 
 def _modify_schema_cls(
     cls_node: ast.ClassDef,
-    actual_fields: dict[str, tuple[type[BaseModel], ModelField]],
+    model_info: ModelInfo,
 ) -> ast.ClassDef:
     body = [
         ast.AnnAssign(
@@ -427,7 +429,7 @@ def _modify_schema_cls(
             ),
             simple=1,
         )
-        for name, field in actual_fields.items()
+        for name, field in model_info.fields.items()
     ]
     old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Pass | ast.Ellipsis)]
     docstring = _pop_docstring_from_cls_body(old_body)
@@ -483,7 +485,7 @@ def custom_repr(value: Any) -> Any:
         return PlainRepr(f"{value.__class__.__name__}.{value.name}")
     if isinstance(value, auto):
         return PlainRepr("auto()")
-    if isinstance(value, LambdaType) and LambdaFunctionName == value.__name__:
+    if isinstance(value, LambdaType) and _LambdaFunctionName == value.__name__:
         return _find_a_lambda(inspect.getsource(value).strip())
     if inspect.isfunction(value):
         return PlainRepr(value.__name__)

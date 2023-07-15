@@ -149,6 +149,7 @@ class SchemaPropertyDidntExistInstruction:
     name: str
 
 
+# TODO: Validate that the function has the correct definition
 @dataclass(slots=True)
 class SchemaPropertyDefinitionInstruction(Generic[_SchemaInstance, _R]):
     schema: type[BaseModel]
