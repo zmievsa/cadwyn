@@ -1,6 +1,6 @@
 # universi
 
-Modern Stripe-like API versioning
+Modern Stripe-like API versioning for FastAPI
 
 ---
 
@@ -30,6 +30,10 @@ pip install universi
 # TODO: Need to validate that the user doesn't use versioned schemas instead of the latest ones
 -->
 
+## Who is this for?
+
+Universi and its approach will be useful if you want to support many API versions for a long time and backport features and bugfixes back to all of your versions easily like Stripe does. It is made possible by moving all "versioning" logic away from your business code and encapsulating it in small "migration modules" which are then combined to create a full blown versioning infrastructure.
+
 ## Tutorial
 
 This guide provides a step-by-step tutorial for setting up automatic API versioning using Universi library. I will illustrate this with an example of a User API, where we will be implementing changes to a User's address.
@@ -47,7 +51,6 @@ from pydantic import BaseModel
 
 
 class UserCreateRequest(BaseModel):
-    id: int
     address: str
 
 class UserResource(BaseModel):
