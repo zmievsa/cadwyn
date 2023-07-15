@@ -2,4 +2,4 @@
 import collections
 from collections.abc import Callable
 
-collections.Callable = Callable
+collections.Callable = Callable  # pyright: ignore[reportGeneralTypeIssues]

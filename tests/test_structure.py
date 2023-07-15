@@ -8,7 +8,7 @@ from universi import Field, api_version_var
 from universi.exceptions import UniversiStructureError
 from universi.structure import AbstractVersionChange
 from universi.structure.responses import convert_response_to_previous_version_for
-from universi.structure.schemas import field, schema
+from universi.structure.schemas import schema
 from universi.structure.versions import Version, Versions
 
 
@@ -95,7 +95,7 @@ def test_non_instruction_attribute():
     with pytest.raises(
         UniversiStructureError,
         match=re.escape(
-            "Found: 'dummy_attribute' attribute in DummySubClass. Only migration instructions are allowed in version change classes.",
+            "Found: 'dummy_attribute' attribute in DummySubClass. Only migration instructions and schema properties are allowed in version change class body."
         ),
     ):
 
@@ -147,25 +147,6 @@ def test_invalid_type_in_instructions():
         class DummySubClass(AbstractVersionChange):
             description = "dummy description"
             instructions_to_migrate_to_previous_version = [True]
-
-
-def test_repeated_instructions():
-    with pytest.raises(
-        UniversiStructureError,
-        match=re.escape(
-            "'SchemaWithOneIntField' got repeated in multiple instructions. Please, merge these instructions.",
-        ),
-    ):
-
-        class DummySubClass(AbstractVersionChange):
-            description = "dummy description"
-            instructions_to_migrate_to_previous_version = [
-                schema(SchemaWithOneIntField, field("foo").had(type=str)),
-                schema(
-                    SchemaWithOneIntField,
-                    field("bar").existed_with(type=str, info=Field()),
-                ),
-            ]
 
 
 def test_incorrectly_sorted_versions():

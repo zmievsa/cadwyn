@@ -30,7 +30,7 @@ from universi.structure.enums import (
     EnumHadMembersInstruction,
 )
 from universi.structure.schemas import (
-    AlterSchemaInstruction,
+    AlterSchemaSubInstruction,
     OldSchemaDidntHaveField,
     OldSchemaFieldWas,
     OldSchemaHadField,
@@ -149,59 +149,58 @@ def _apply_alter_schema_instructions(
         str,
         tuple[type[BaseModel], dict[FieldNameT, tuple[type[BaseModel], ModelField]]],
     ],
-    alter_schema_instructions: Sequence[AlterSchemaInstruction],
+    alter_schema_instructions: Sequence[AlterSchemaSubInstruction],
 ):
     for alter_schema_instruction in alter_schema_instructions:
         schema = alter_schema_instruction.schema
         schema_path = schema.__module__ + schema.__name__
         schema_field_info_bundle = schemas[schema_path]
         field_name_to_field_model = schema_field_info_bundle[1]
-        for field_change in alter_schema_instruction.changes:
-            if isinstance(field_change, OldSchemaDidntHaveField):
-                # TODO: Check that the user doesn't pop it and change it at the same time
-                # TODO: Add a check that field actually exists (it's very necessary!)
-                field_name_to_field_model.pop(field_change.field_name)
+        if isinstance(alter_schema_instruction, OldSchemaDidntHaveField):
+            # TODO: Check that the user doesn't pop it and change it at the same time
+            # TODO: Add a check that field actually exists (it's very necessary!)
+            field_name_to_field_model.pop(alter_schema_instruction.field_name)
 
-            elif isinstance(field_change, OldSchemaFieldWas):
-                # TODO: Add a check that field actually exists (it's very necessary!)
-                model_field = field_name_to_field_model[field_change.field_name][1]
-                if field_change.type is not Sentinel:
-                    if model_field.annotation == field_change.type:
-                        raise InvalidGenerationInstructionError(
-                            f"You tried to change the type of field '{field_change.field_name}' to '{field_change.type}' in {schema.__name__} but it already has type '{model_field.annotation}'",
-                        )
-                    model_field.annotation = field_change.type
-                    model_field.type_ = convert_generics(field_change.type)
-                    model_field.outer_type_ = field_change.type
-                field_info = model_field.field_info
+        elif isinstance(alter_schema_instruction, OldSchemaFieldWas):
+            # TODO: Add a check that field actually exists (it's very necessary!)
+            model_field = field_name_to_field_model[alter_schema_instruction.field_name][1]
+            if alter_schema_instruction.type is not Sentinel:
+                if model_field.annotation == alter_schema_instruction.type:
+                    raise InvalidGenerationInstructionError(
+                        f"You tried to change the type of field '{alter_schema_instruction.field_name}' to '{alter_schema_instruction.type}' in {schema.__name__} but it already has type '{model_field.annotation}'",
+                    )
+                model_field.annotation = alter_schema_instruction.type
+                model_field.type_ = convert_generics(alter_schema_instruction.type)
+                model_field.outer_type_ = alter_schema_instruction.type
+            field_info = model_field.field_info
 
-                if not isinstance(field_info, FieldInfo):
-                    dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
-                    if dict_of_field_info == dict_of_empty_field_info:
-                        field_info = FieldInfo()
-                        model_field.field_info = field_info
-                    else:
-                        raise InvalidGenerationInstructionError(
-                            f"You have defined a Field using pydantic.fields.Field but you must use universi.Field in {schema.__name__}",
-                        )
-                for attr_name in field_change.field_changes.__dataclass_fields__:
-                    attr_value = getattr(field_change.field_changes, attr_name)
-                    if attr_value is not Sentinel:
-                        setattr(field_info, attr_name, attr_value)
-                        field_info._universi_field_names.add(attr_name)
-            elif isinstance(field_change, OldSchemaHadField):
-                field_name_to_field_model[field_change.field_name] = (
-                    schema,
-                    ModelField(
-                        name=field_change.field_name,
-                        type_=field_change.type,
-                        field_info=field_change.field,
-                        class_validators=None,
-                        model_config=BaseConfig,
-                    ),
-                )
-            else:
-                assert_never(field_change)
+            if not isinstance(field_info, FieldInfo):
+                dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
+                if dict_of_field_info == dict_of_empty_field_info:
+                    field_info = FieldInfo()
+                    model_field.field_info = field_info
+                else:
+                    raise InvalidGenerationInstructionError(
+                        f"You have defined a Field using pydantic.fields.Field but you must use universi.Field in {schema.__name__}",
+                    )
+            for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
+                attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
+                if attr_value is not Sentinel:
+                    setattr(field_info, attr_name, attr_value)
+                    field_info._universi_field_names.add(attr_name)
+        elif isinstance(alter_schema_instruction, OldSchemaHadField):
+            field_name_to_field_model[alter_schema_instruction.field_name] = (
+                schema,
+                ModelField(
+                    name=alter_schema_instruction.field_name,
+                    type_=alter_schema_instruction.type,
+                    field_info=alter_schema_instruction.field,
+                    class_validators=None,
+                    model_config=BaseConfig,
+                ),
+            )
+        else:
+            assert_never(alter_schema_instruction)
 
 
 def _apply_alter_enum_instructions(

@@ -1,6 +1,6 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar
 
 from pydantic import BaseModel
 
@@ -10,6 +10,9 @@ from .._utils import Sentinel
 
 if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
+
+_SchemaInstance = TypeVar("_SchemaInstance", bound=Any)
+_R = TypeVar("_R")
 
 
 @dataclass
@@ -43,6 +46,7 @@ class FieldChanges:
 
 @dataclass
 class OldSchemaFieldWas:
+    schema: type[BaseModel]
     field_name: str
     type: type
     field_changes: FieldChanges
@@ -50,18 +54,21 @@ class OldSchemaFieldWas:
 
 @dataclass
 class OldSchemaDidntHaveField:
+    schema: type[BaseModel]
     field_name: str
 
 
 @dataclass
 class OldSchemaHadField:
+    schema: type[BaseModel]
     field_name: str
     type: type
     field: FieldInfo
 
 
 @dataclass(slots=True)
-class AlterSchemaSubInstructionFactory:
+class AlterFieldInstructionFactory:
+    schema: type[BaseModel]
     name: str
     # TODO: Add a validation  to check that field actually changed
 
@@ -96,6 +103,7 @@ class AlterSchemaSubInstructionFactory:
         repr: bool = Sentinel,
     ) -> OldSchemaFieldWas:
         return OldSchemaFieldWas(
+            schema=self.schema,
             field_name=self.name,
             type=type,
             field_changes=FieldChanges(
@@ -129,30 +137,62 @@ class AlterSchemaSubInstructionFactory:
 
     @property
     def didnt_exist(self) -> OldSchemaDidntHaveField:
-        return OldSchemaDidntHaveField(field_name=self.name)
+        return OldSchemaDidntHaveField(self.schema, field_name=self.name)
 
     def existed_with(self, *, type: type, info: FieldInfo) -> OldSchemaHadField:
-        return OldSchemaHadField(field_name=self.name, type=type, field=info)
+        return OldSchemaHadField(self.schema, field_name=self.name, type=type, field=info)
 
 
-def field(name: str, /) -> AlterSchemaSubInstructionFactory:
-    return AlterSchemaSubInstructionFactory(name=name)
+@dataclass(slots=True)
+class SchemaPropertyDidntExistInstruction:
+    schema: type[BaseModel]
+    name: str
+
+
+@dataclass(slots=True)
+class SchemaPropertyDefinitionInstruction(Generic[_SchemaInstance, _R]):
+    schema: type[BaseModel]
+    name: str
+    function: Callable[[_SchemaInstance], _R]
+
+    def __call__(self, __parsed_schema: _SchemaInstance) -> _R:
+        return self.function(__parsed_schema)
+
+
+@dataclass(slots=True)
+class AlterPropertyInstructionFactory:
+    schema: type[BaseModel]
+    name: str
+
+    def __call__(
+        self, function: Callable[[_SchemaInstance], _R]
+    ) -> SchemaPropertyDefinitionInstruction[_SchemaInstance, _R]:
+        return SchemaPropertyDefinitionInstruction(self.schema, self.name, function)
+
+    @property
+    def didnt_exist(self) -> SchemaPropertyDidntExistInstruction:
+        return SchemaPropertyDidntExistInstruction(self.schema, self.name)
 
 
 AlterSchemaSubInstruction = (
-    OldSchemaFieldWas | OldSchemaDidntHaveField | OldSchemaHadField
+    OldSchemaFieldWas
+    | OldSchemaDidntHaveField
+    | OldSchemaHadField
+    | SchemaPropertyDidntExistInstruction
+    | SchemaPropertyDefinitionInstruction
 )
 
 
 @dataclass
-class AlterSchemaInstruction:
+class AlterSchemaSubInstructionFactory:
     schema: type[BaseModel]
-    changes: Sequence[AlterSchemaSubInstruction]
+
+    def field(self, name: str, /) -> AlterFieldInstructionFactory:
+        return AlterFieldInstructionFactory(self.schema, name)
+
+    def property(self, name: str, /) -> AlterPropertyInstructionFactory:
+        return AlterPropertyInstructionFactory(self.schema, name)
 
 
-def schema(
-    model: type[BaseModel],
-    /,
-    *changes: AlterSchemaSubInstruction,
-) -> AlterSchemaInstruction:
-    return AlterSchemaInstruction(schema=model, changes=changes)
+def schema(model: type[BaseModel], /) -> AlterSchemaSubInstructionFactory:
+    return AlterSchemaSubInstructionFactory(model)

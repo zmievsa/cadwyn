@@ -1,7 +1,7 @@
 if __name__ == "__main__":
-    from tests.test_tutorial.test_companies_example.companies import router, versions
-    from tests.test_tutorial.test_companies_example.utils import clean_versions
-    from tests.test_tutorial.test_companies_example.schemas import latest
+    from tests.test_tutorial.test_users_example.users import router, versions
+    from tests.test_tutorial.test_users_example.utils import clean_versions
+    from tests.test_tutorial.test_users_example.schemas import latest
     from universi import regenerate_dir_to_all_versions, api_version_var
     from datetime import date
 
