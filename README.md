@@ -1,6 +1,6 @@
 # universi
 
-Modern Stripe-like API versioning for FastAPI
+Modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning for FastAPI
 
 ---
 
@@ -32,7 +32,14 @@ pip install universi
 
 ## Who is this for?
 
-Universi and its approach will be useful if you want to support many API versions for a long time and backport features and bugfixes back to all of your versions easily like Stripe does. It is made possible by moving all "versioning" logic away from your business code and encapsulating it in small "migration modules" which are then combined to create a full blown versioning infrastructure.
+Universi allows you to support a single version of your code, auto-generating the code/routes for older versions. You keep versioning encapsulated in small and independent "version change" modules while your business logic knows nothing about versioning.
+
+Its approach will be useful if you want to:
+
+1. Support many API versions for a long time
+2. Effortlessly backport features and bugfixes to all of your versions
+
+Otherwise, more conventional methods of API versioning may be preferable.
 
 ## Tutorial
 
