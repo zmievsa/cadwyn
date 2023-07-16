@@ -398,8 +398,14 @@ def test__codegen_unions__init_file():
     from tests._data import v2000_01_01, v2001_01_01
     from tests._data.unions import EnumWithOneMemberUnion, SchemaWithOneIntFieldUnion
 
-    assert EnumWithOneMemberUnion == v2000_01_01.EnumWithOneMember | v2001_01_01.EnumWithOneMember
-    assert SchemaWithOneIntFieldUnion == v2000_01_01.SchemaWithOneIntField | v2001_01_01.SchemaWithOneIntField
+    assert (
+        EnumWithOneMemberUnion
+        == v2000_01_01.EnumWithOneMember | v2001_01_01.EnumWithOneMember | latest.EnumWithOneMember
+    )
+    assert (
+        SchemaWithOneIntFieldUnion
+        == v2000_01_01.SchemaWithOneIntField | v2001_01_01.SchemaWithOneIntField | latest.SchemaWithOneIntField
+    )
 
 
 def test__codegen_unions__regular_file():
@@ -407,8 +413,9 @@ def test__codegen_unions__regular_file():
     from tests._data.unions.some_schema import MySchemaUnion
     from tests._data.v2000_01_01.some_schema import MySchema as MySchema2000
     from tests._data.v2001_01_01.some_schema import MySchema as MySchema2001
+    from tests._data.latest.some_schema import MySchema as MySchemaLatest
 
-    assert MySchemaUnion == MySchema2000 | MySchema2001
+    assert MySchemaUnion == MySchema2000 | MySchema2001 | MySchemaLatest
 
 
 def test__codegen_property():

@@ -117,7 +117,7 @@ def _get_unionized_version_of_module(
         import_pythonpath_template.format(_get_version_dir_name(version.date))
         for version in versions.versions
     ]
-
+    imported_modules += [import_pythonpath_template.format("latest")]
     parsed_file = _parse_python_module(original_module)
 
     body = ast.Module(
