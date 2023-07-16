@@ -1,19 +1,20 @@
 from datetime import date
 from typing import Any
 
-from .schemas.latest.users import (
-    UserCreateRequest,
-    UserResource,
-    UserAddressResourceList,
-)
 from universi import Field, VersionedAPIRouter
 from universi.structure import (
-    endpoint,
-    convert_response_to_previous_version_for,
-    schema,
-    AbstractVersionChange,
     Version,
+    VersionChange,
     Versions,
+    convert_response_to_previous_version_for,
+    endpoint,
+    schema,
+)
+
+from .schemas.latest.users import (
+    UserAddressResourceList,
+    UserCreateRequest,
+    UserResource,
 )
 
 router = VersionedAPIRouter()
@@ -37,10 +38,15 @@ async def get_user(user_id: int):
 
 @router.get("/users/{user_id}/addresses", response_model=UserAddressResourceList)
 async def get_user_addresses(user_id: int):
-    return {"data": [{"id": 83, "value": "123 Example St"}, {"id": 91, "value": "456 Main St"}]}
+    return {
+        "data": [
+            {"id": 83, "value": "123 Example St"},
+            {"id": 91, "value": "456 Main St"},
+        ],
+    }
 
 
-class ChangeAddressToList(AbstractVersionChange):
+class ChangeAddressToList(VersionChange):
     description = "Change vat id to list"
     instructions_to_migrate_to_previous_version = (
         schema(UserCreateRequest).field("addresses").didnt_exist,
@@ -58,12 +64,16 @@ class ChangeAddressToList(AbstractVersionChange):
         return [parsed_schema.address]  # pragma: no cover
 
 
-class ChangeAddressesToSubresource(AbstractVersionChange):
+class ChangeAddressesToSubresource(VersionChange):
     description = "Change vat ids to subresource"
     instructions_to_migrate_to_previous_version = (
-        schema(UserCreateRequest).field("addresses").existed_with(type=list[str], info=Field()),
+        schema(UserCreateRequest)
+        .field("addresses")
+        .existed_with(type=list[str], info=Field()),
         schema(UserCreateRequest).field("default_address").didnt_exist,
-        schema(UserResource).field("addresses").existed_with(type=list[str], info=Field()),
+        schema(UserResource)
+        .field("addresses")
+        .existed_with(type=list[str], info=Field()),
         endpoint(get_user_addresses).didnt_exist,
     )
 

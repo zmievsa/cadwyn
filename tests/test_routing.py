@@ -24,7 +24,7 @@ from universi.structure import Version, endpoint, schema
 from universi.structure.endpoints import AlterEndpointSubInstruction
 from universi.structure.enums import AlterEnumSubInstruction, enum
 from universi.structure.schemas import AlterSchemaSubInstruction
-from universi.structure.versions import AbstractVersionChange
+from universi.structure.versions import VersionChange
 
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
 
@@ -45,16 +45,18 @@ def test_endpoint(router: VersionedAPIRouter) -> Endpoint:
 
 def create_versioned_copies(
     router: VersionedAPIRouter,
-    *instructions: AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction,
+    *instructions: AlterSchemaSubInstruction
+    | AlterEndpointSubInstruction
+    | AlterEnumSubInstruction,
     latest_schemas_module: ModuleType | None = None,
 ) -> dict[date, VersionedAPIRouter]:
-    class VersionChange(AbstractVersionChange):
+    class MyVersionChange(VersionChange):
         description = "..."
         instructions_to_migrate_to_previous_version = instructions
 
     return router.create_versioned_copies(
         Versions(
-            Version(date(2001, 1, 1), VersionChange),
+            Version(date(2001, 1, 1), MyVersionChange),
             Version(date(2000, 1, 1)),
         ),
         latest_schemas_module=latest_schemas_module,
@@ -63,7 +65,9 @@ def create_versioned_copies(
 
 def create_versioned_api_routes(
     router: VersionedAPIRouter,
-    *instructions: AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction,
+    *instructions: AlterSchemaSubInstruction
+    | AlterEndpointSubInstruction
+    | AlterEnumSubInstruction,
     latest_schemas_module: ModuleType | None = None,
 ) -> tuple[list[APIRoute], list[APIRoute]]:
     routers = create_versioned_copies(
@@ -213,7 +217,7 @@ def test__router_generation__changing_a_deleted_endpoint__error(
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            "Endpoint 'test' you tried to delete in 'VersionChange' doesn't exist in new version",
+            "Endpoint 'test' you tried to delete in 'MyVersionChange' doesn't exist in new version",
         ),
     ):
         create_versioned_copies(router, endpoint(test).had(description="Hewwo"))
@@ -230,7 +234,7 @@ def test__router_generation__deleting_a_deleted_endpoint__error(
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            "Endpoint 'test' you tried to delete in 'VersionChange' doesn't exist in new version",
+            "Endpoint 'test' you tried to delete in 'MyVersionChange' doesn't exist in new version",
         ),
     ):
         create_versioned_copies(router, endpoint(test).didnt_exist)
@@ -243,14 +247,19 @@ def test__router_generation__re_creating_an_existing_endpoint__error(
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            "Endpoint 'test' you tried to re-create in 'VersionChange' already existed in newer versions",
+            "Endpoint 'test' you tried to re-create in 'MyVersionChange' already existed in newer versions",
         ),
     ):
         create_versioned_copies(router, endpoint(test_endpoint).existed)
 
 
 def get_nested_field_type(annotation: Any) -> type[BaseModel]:
-    return get_args(get_args(annotation)[1])[0].__fields__["foo"].type_.__fields__["foo"].annotation
+    return (
+        get_args(get_args(annotation)[1])[0]
+        .__fields__["foo"]
+        .type_.__fields__["foo"]
+        .annotation
+    )
 
 
 def test__router_generation__re_creating_a_non_endpoint__error(
@@ -262,7 +271,7 @@ def test__router_generation__re_creating_a_non_endpoint__error(
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            "Endpoint 'test' you tried to re-create in 'VersionChange' wasn't among the deleted routes",
+            "Endpoint 'test' you tried to re-create in 'MyVersionChange' wasn't among the deleted routes",
         ),
     ):
         create_versioned_copies(router, endpoint(test).existed)
@@ -329,8 +338,14 @@ def test__router_generation__updating_response_model(
         latest_schemas_module=latest,
     )
     assert len(routes_2000) == len(routes_2001) == 1
-    assert routes_2000[0].response_model == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
-    assert routes_2001[0].response_model == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
+    assert (
+        routes_2000[0].response_model
+        == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
+    )
+    assert (
+        routes_2001[0].response_model
+        == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
+    )
 
     assert get_nested_field_type(routes_2000[0].response_model) == list[str]
     assert get_nested_field_type(routes_2001[0].response_model) == int
@@ -354,14 +369,21 @@ def test__router_generation__updating_request_models(
     )
     assert len(routes_2000) == len(routes_2001) == 1
     assert (
-        routes_2000[0].dependant.body_params[0].annotation == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
+        routes_2000[0].dependant.body_params[0].annotation
+        == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
     )
     assert (
-        routes_2001[0].dependant.body_params[0].annotation == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
+        routes_2001[0].dependant.body_params[0].annotation
+        == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
     )
 
-    assert get_nested_field_type(routes_2000[0].dependant.body_params[0].annotation) == list[str]
-    assert get_nested_field_type(routes_2001[0].dependant.body_params[0].annotation) == int
+    assert (
+        get_nested_field_type(routes_2000[0].dependant.body_params[0].annotation)
+        == list[str]
+    )
+    assert (
+        get_nested_field_type(routes_2001[0].dependant.body_params[0].annotation) == int
+    )
 
 
 # TODO: This test should become multiple tests

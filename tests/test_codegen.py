@@ -4,7 +4,6 @@ import re
 from datetime import date
 from enum import Enum, auto
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 import pytest
@@ -12,22 +11,21 @@ from pydantic import BaseModel
 
 from tests._data import latest
 from tests._data.latest import weird_schemas
+from tests.conftest import generate_test_version_packages
 from universi import Field, regenerate_dir_to_all_versions
-from universi.exceptions import CodeGenerationError, InvalidGenerationInstructionError
+from universi.exceptions import (
+    CodeGenerationError,
+    InvalidGenerationInstructionError,
+    UniversiStructureError,
+)
 from universi.structure import (
-    AbstractVersionChange,
     Version,
+    VersionChange,
     Versions,
     enum,
     schema,
 )
-from universi.structure.versions import AbstractVersionChange, Version, Versions
-
-from universi.structure.schemas import AlterSchemaSubInstruction
-
-from universi.structure.enums import AlterEnumSubInstruction
-
-CURRENT_DIR = Path(__file__).parent
+from universi.structure.versions import Version, VersionChange, Versions
 
 
 @pytest.fixture(autouse=True)
@@ -39,30 +37,9 @@ def serialize(enum: type[Enum]) -> dict[str, Any]:
     return {member.name: member.value for member in enum}
 
 
-def generate_test_version_packages(
-    *instructions: AlterSchemaSubInstruction | AlterEnumSubInstruction,
-    package: ModuleType = latest,
-) -> tuple[ModuleType, ModuleType]:
-    class SomeVersionChange(AbstractVersionChange):
-        description = "..."
-        instructions_to_migrate_to_previous_version = instructions
-
-    regenerate_dir_to_all_versions(
-        package,
-        Versions(
-            Version(date(2001, 1, 1), SomeVersionChange),
-            Version(date(2000, 1, 1)),
-        ),
-    )
-
-    from tests._data import v2000_01_01, v2001_01_01
-
-    return v2000_01_01, v2001_01_01
-
-
 def assert_field_had_changes_apply(model: type[BaseModel], attr: str, attr_value: Any):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(getattr(latest, model.__name__)).field("foo").had(**{attr: attr_value})
+        schema(getattr(latest, model.__name__)).field("foo").had(**{attr: attr_value}),
     )
     # For some reason it said that auto and Field were not defined, even though I was importing them
     d1 = {"auto": auto, "Field": Field}
@@ -173,7 +150,7 @@ def test__field_existed_with__original_schema_has_a_field():
 
 def test__field_didnt_exist():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaWithOneStrField).field("foo").didnt_exist
+        schema(latest.SchemaWithOneStrField).field("foo").didnt_exist,
     )
     # insert_assert(inspect.getsource(v2000_01_01.SchemaWithOneStrField))
     assert inspect.getsource(v2000_01_01.SchemaWithOneStrField) == "class SchemaWithOneStrField(BaseModel):\n    pass\n"
@@ -229,8 +206,8 @@ def test__field_had__decimal_field(attr: str, attr_value: Any):
 
 
 def test__field_had__default_factory():
-    v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaWithOneIntField).field("foo").had(default_factory=lambda: 91),  # pragma: no cover
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(  # pragma: no cover
+        schema(latest.SchemaWithOneIntField).field("foo").had(default_factory=lambda: 91),
     )
 
     assert v2000_01_01.SchemaWithOneIntField.__fields__["foo"].default_factory() == 91
@@ -242,7 +219,7 @@ def test__field_had__default_factory():
 
 def test__field_had__type():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaWithOneIntField).field("foo").had(type=bytes)
+        schema(latest.SchemaWithOneIntField).field("foo").had(type=bytes),
     )
 
     assert v2000_01_01.SchemaWithOneIntField.__fields__["foo"].annotation is bytes
@@ -281,7 +258,9 @@ def test__schema_field_had__change_to_the_same_field_type__error():
             "You tried to change the type of field 'foo' to '<class 'int'>' in SchemaWithOneIntField but it already has type '<class 'int'>'",
         ),
     ):
-        generate_test_version_packages(schema(latest.SchemaWithOneIntField).field("foo").had(type=int))
+        generate_test_version_packages(
+            schema(latest.SchemaWithOneIntField).field("foo").had(type=int),
+        )
 
 
 def test__schema_field_had__schema_was_defined_with_pydantic_field__error():
@@ -291,7 +270,9 @@ def test__schema_field_had__schema_was_defined_with_pydantic_field__error():
             "You have defined a Field using pydantic.fields.Field but you must use universi.Field in SchemaWithWrongFieldConstructor",
         ),
     ):
-        generate_test_version_packages(schema(latest.SchemaWithWrongFieldConstructor).field("foo").had(type=int))
+        generate_test_version_packages(
+            schema(latest.SchemaWithWrongFieldConstructor).field("foo").had(type=int),
+        )
 
 
 def test__enum_had__same_name_as_other_value__error():
@@ -347,12 +328,14 @@ def test__codegen__non_pydantic_schema__error():
             "Model <class 'tests._data.latest.NonPydanticSchema'> is not a subclass of BaseModel",
         ),
     ):
-        generate_test_version_packages(schema(latest.NonPydanticSchema).field("foo").didnt_exist)
+        generate_test_version_packages(
+            schema(latest.NonPydanticSchema).field("foo").didnt_exist,
+        )
 
 
 def test__codegen__schema_that_overrides_fields_from_mro():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaThatOverridesField).field("bar").existed_with(type=int, info=Field())
+        schema(latest.SchemaThatOverridesField).field("bar").existed_with(type=int, info=Field()),
     )
 
     # insert_assert(inspect.getsource(v2000_01_01.SchemaThatOverridesField))
@@ -386,8 +369,12 @@ def test__codegen__with_weird_data_types():
         schema(weird_schemas.ModelWithWeirdFields).field("bad").existed_with(type=int, info=Field()),
     )
 
-    from tests._data.v2000_01_01.weird_schemas import ModelWithWeirdFields as MySchema2000
-    from tests._data.v2001_01_01.weird_schemas import ModelWithWeirdFields as MySchema2001
+    from tests._data.v2000_01_01.weird_schemas import (
+        ModelWithWeirdFields as MySchema2000,
+    )
+    from tests._data.v2001_01_01.weird_schemas import (
+        ModelWithWeirdFields as MySchema2001,
+    )
 
     # insert_assert(inspect.getsource(MySchema2000))
     assert inspect.getsource(MySchema2000) == (
@@ -408,8 +395,8 @@ def test__codegen__with_weird_data_types():
 
 def test__codegen_unions__init_file():
     generate_test_version_packages()
-    from tests._data.unions import EnumWithOneMemberUnion, SchemaWithOneIntFieldUnion
     from tests._data import v2000_01_01, v2001_01_01
+    from tests._data.unions import EnumWithOneMemberUnion, SchemaWithOneIntFieldUnion
 
     assert EnumWithOneMemberUnion == v2000_01_01.EnumWithOneMember | v2001_01_01.EnumWithOneMember
     assert SchemaWithOneIntFieldUnion == v2000_01_01.SchemaWithOneIntField | v2001_01_01.SchemaWithOneIntField
@@ -422,3 +409,100 @@ def test__codegen_unions__regular_file():
     from tests._data.v2001_01_01.some_schema import MySchema as MySchema2001
 
     assert MySchemaUnion == MySchema2000 | MySchema2001
+
+
+def test__codegen_property():
+    def baz_property(hewwo):
+        raise NotImplementedError
+
+    class VersionChange2(VersionChange):
+        description = "..."
+        instructions_to_migrate_to_previous_version = [
+            schema(latest.SchemaWithOneFloatField).property("baz")(baz_property),
+        ]
+
+        @schema(latest.SchemaWithOneFloatField).had_property("bar")
+        def bar_property(arg1: list[str]):
+            return 83
+
+    class VersionChange1(VersionChange):
+        description = "..."
+        instructions_to_migrate_to_previous_version = [
+            schema(latest.SchemaWithOneFloatField).property("bar").didnt_exist,
+        ]
+
+    assert VersionChange2.bar_property([]) == 83
+
+    regenerate_dir_to_all_versions(
+        latest,
+        Versions(
+            Version(date(2002, 1, 1), VersionChange2),
+            Version(date(2001, 1, 1), VersionChange1),
+            Version(date(2000, 1, 1)),
+        ),
+    )
+
+    from tests._data import v2000_01_01, v2001_01_01, v2002_01_01
+
+    # insert_assert(inspect.getsource(v2000_01_01.SchemaWithOneFloatField))
+    assert inspect.getsource(v2000_01_01.SchemaWithOneFloatField) == (
+        "class SchemaWithOneFloatField(BaseModel):\n"
+        "    foo: float = Field()\n\n"
+        "    @property\n"
+        "    def baz(hewwo):\n"
+        "        raise NotImplementedError\n"
+    )
+    # insert_assert(inspect.getsource(v2001_01_01.SchemaWithOneFloatField))
+    assert inspect.getsource(v2001_01_01.SchemaWithOneFloatField) == (
+        "class SchemaWithOneFloatField(BaseModel):\n"
+        "    foo: float = Field()\n\n"
+        "    @property\n"
+        "    def baz(hewwo):\n"
+        "        raise NotImplementedError\n\n"
+        "    @property\n"
+        "    def bar(arg1):\n"
+        "        return 83\n"
+    )
+    # insert_assert(inspect.getsource(v2002_01_01.SchemaWithOneFloatField))
+    assert inspect.getsource(v2002_01_01.SchemaWithOneFloatField) == (
+        "class SchemaWithOneFloatField(BaseModel):\n    foo: float = Field()\n"
+    )
+
+
+def test__codegen_delete_nonexistent_property():
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            "You tried to delete a property 'bar' in 'SchemaWithOneFloatField' "
+            "but there is no such property defined in any of the migrations.",
+        ),
+    ):
+        generate_test_version_packages(
+            schema(latest.SchemaWithOneFloatField).property("bar").didnt_exist,
+        )
+
+
+def test__codegen_property_with_wrong_number_of_args():
+    def baz(hello, world):
+        raise NotImplementedError
+
+    with pytest.raises(
+        UniversiStructureError,
+        match=re.escape("Property 'baz' must have one argument and it has 2"),
+    ):
+        schema(latest.SchemaWithOneFloatField).property("baz")(baz)
+
+
+def test__codegen_property__there_is_already_field_with_the_same_name__error():
+    def baz(hello):
+        raise NotImplementedError
+
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            "You tried to define a property 'foo' in 'SchemaWithOneFloatField' but there is already a field with that name.",
+        ),
+    ):
+        generate_test_version_packages(
+            schema(latest.SchemaWithOneFloatField).property("foo")(baz),
+        )

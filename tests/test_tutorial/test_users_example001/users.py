@@ -1,20 +1,18 @@
 from datetime import date
 from typing import Any
-from uuid import uuid4
 
-from universi import VersionedAPIRouter
+from universi import Field, VersionedAPIRouter
+from universi.structure import (
+    Version,
+    VersionChange,
+    Versions,
+    convert_response_to_previous_version_for,
+    schema,
+)
 
 from .schemas.latest.users import (
     UserCreateRequest,
     UserResource,
-)
-from universi import Field
-from universi.structure import (
-    convert_response_to_previous_version_for,
-    schema,
-    AbstractVersionChange,
-    Version,
-    Versions,
 )
 
 router = VersionedAPIRouter()
@@ -36,8 +34,11 @@ async def get_user(user_id: int):
     }
 
 
-class ChangeAddressToList(AbstractVersionChange):
-    description = "Change user address to a list of strings to " "allow the user to specify multiple addresses"
+class ChangeAddressToList(VersionChange):
+    description = (
+        "Change user address to a list of strings to "
+        "allow the user to specify multiple addresses"
+    )
     instructions_to_migrate_to_previous_version = (
         # You should use schema inheritance if you don't want to repeat yourself in such cases
         schema(UserCreateRequest).field("addresses").didnt_exist,

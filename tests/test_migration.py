@@ -5,8 +5,8 @@ import pytest
 
 from universi import api_version_var
 from universi.structure import (
-    AbstractVersionChange,
     Version,
+    VersionChange,
     Versions,
     convert_response_to_previous_version_for,
 )
@@ -16,7 +16,7 @@ async def test_endpoint():
     pass
 
 
-class VersionChange1(AbstractVersionChange):
+class VersionChange1(VersionChange):
     description = "Change vat id to list"
     instructions_to_migrate_to_previous_version = ()
 
@@ -25,7 +25,7 @@ class VersionChange1(AbstractVersionChange):
         data["vat_ids"] = [id["value"] for id in data.pop("_prefetched_vat_ids")]
 
 
-class VersionChange2(AbstractVersionChange):
+class VersionChange2(VersionChange):
     description = "Change vat ids to str"
     instructions_to_migrate_to_previous_version = ()
 
@@ -61,7 +61,7 @@ def test__migrate_simple_data_one_version_down__with_some_inapplicable_migration
     async def test_endpoint2():
         raise NotImplementedError
 
-    class VersionChange3(AbstractVersionChange):
+    class VersionChange3(VersionChange):
         description = "Change vat ids to str"
         instructions_to_migrate_to_previous_version = ()
 

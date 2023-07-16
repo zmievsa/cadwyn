@@ -1,10 +1,12 @@
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 import functools
-from typing import TYPE_CHECKING, Any, Generic, ParamSpec, TypeAlias, TypeVar, cast
+import inspect
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 from pydantic import BaseModel
 
+from universi.exceptions import UniversiStructureError
 from universi.fields import FieldInfo
 
 from .._utils import Sentinel
@@ -142,7 +144,12 @@ class AlterFieldInstructionFactory:
         return OldSchemaDidntHaveField(self.schema, field_name=self.name)
 
     def existed_with(self, *, type: type, info: FieldInfo) -> OldSchemaHadField:
-        return OldSchemaHadField(self.schema, field_name=self.name, type=type, field=info)
+        return OldSchemaHadField(
+            self.schema,
+            field_name=self.name,
+            type=type,
+            field=info,
+        )
 
 
 @dataclass(slots=True)
@@ -158,9 +165,12 @@ class SchemaPropertyDefinitionInstruction:
     name: str
     function: Callable
 
-    # TODO: Only allow one argument and disallow type hints on it to make sure that the type checker
-    # is making sure that the produced properties are valid.
     def __post_init__(self):
+        sig = inspect.signature(self.function)
+        if len(sig.parameters) != 1:
+            raise UniversiStructureError(
+                f"Property '{self.name}' must have one argument and it has {len(sig.parameters)}",
+            )
         functools.update_wrapper(self, self.function)
 
     def __call__(self, __parsed_schema: BaseModel):
@@ -197,7 +207,10 @@ class AlterSchemaSubInstructionFactory:
         return AlterFieldInstructionFactory(self.schema, name)
 
     def had_property(self, name: str, /) -> type[staticmethod]:
-        return cast(type[staticmethod], AlterPropertyInstructionFactory(self.schema, name))
+        return cast(
+            type[staticmethod],
+            AlterPropertyInstructionFactory(self.schema, name),
+        )
 
     def property(self, name: str, /) -> AlterPropertyInstructionFactory:
         return AlterPropertyInstructionFactory(self.schema, name)
