@@ -102,7 +102,7 @@ class UserResource(BaseModel):
 @router.post("/users", response_model=UserResource)
 async def create_user(payload: UserCreateRequest):
     return {
-        "id": int,
+        "id": 83,
         "addresses": payload.addresses,
     }
 
