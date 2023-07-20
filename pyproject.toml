@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "universi"
-version = "0.7.0"
+version = "0.8.0"
 description = ""
 authors = ["Stanislav Zmiev <szmiev2000@gmail.com>"]
 license = "MIT"

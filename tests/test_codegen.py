@@ -350,6 +350,20 @@ def test__codegen__schema_that_overrides_fields_from_mro():
     )
 
 
+def test__codegen_schema_example():
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(
+        schema(latest.EmptySchema).field("bar").existed_with(type=int, info=Field(example=83)),
+    )
+
+    # insert_assert(inspect.getsource(v2000_01_01.EmptySchema))
+    assert (
+        inspect.getsource(v2000_01_01.EmptySchema)
+        == "class EmptySchema(BaseModel):\n    bar: int = Field(example=83)\n"
+    )
+    # insert_assert(inspect.getsource(v2001_01_01.EmptySchema))
+    assert inspect.getsource(v2001_01_01.EmptySchema) == "class EmptySchema(BaseModel):\n    pass\n"
+
+
 def test__codegen__schema_defined_in_a_non_init_file():
     from tests._data.latest.some_schema import MySchema
 
