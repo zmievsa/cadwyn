@@ -21,24 +21,16 @@ from .schemas import AlterSchemaSubInstruction, SchemaPropertyDefinitionInstruct
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 VersionDate: TypeAlias = datetime.date
-PossibleInstructions: TypeAlias = (
-    AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction
-)
+PossibleInstructions: TypeAlias = AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction
 
 
 class VersionChange:
     description: ClassVar[str] = Sentinel
-    instructions_to_migrate_to_previous_version: ClassVar[
-        Sequence[PossibleInstructions]
-    ] = Sentinel
+    instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
     alter_schema_instructions: ClassVar[Sequence[AlterSchemaSubInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[Sequence[AlterEnumSubInstruction]] = Sentinel
-    alter_endpoint_instructions: ClassVar[
-        Sequence[AlterEndpointSubInstruction]
-    ] = Sentinel
-    alter_response_instructions: ClassVar[
-        dict[Endpoint, AlterResponseInstruction]
-    ] = Sentinel
+    alter_endpoint_instructions: ClassVar[Sequence[AlterEndpointSubInstruction]] = Sentinel
+    alter_response_instructions: ClassVar[dict[Endpoint, AlterResponseInstruction]] = Sentinel
 
     def __init_subclass__(cls, _abstract: bool = False) -> None:
         if _abstract:
@@ -159,8 +151,7 @@ class Versions:
     @functools.cached_property
     def versioned_schemas(self) -> dict[str, type[VersionedModel]]:
         return {
-            instruction.schema.__module__
-            + instruction.schema.__name__: instruction.schema
+            instruction.schema.__module__ + instruction.schema.__name__: instruction.schema
             for version in self.versions
             for version_change in version.version_changes
             for instruction in version_change.alter_schema_instructions
@@ -179,11 +170,7 @@ class Versions:
     def _version_changes_to_version_mapping(
         self,
     ) -> dict[type[VersionChange], VersionDate]:
-        return {
-            version_change: version.date
-            for version in self.versions
-            for version_change in version.version_changes
-        }
+        return {version_change: version.date for version in self.versions for version_change in version.version_changes}
 
     # TODO: It might need caching for iteration to speed it up
     def data_to_version(
@@ -192,6 +179,17 @@ class Versions:
         data: dict[str, Any],
         version: VersionDate,
     ) -> dict[str, Any]:
+        """Convert the data to a specific version by applying all version changes in reverse order.
+
+        Args:
+            endpoint: the function which usually returns this data. Data migrations marked with this endpoint will
+            be applied to the passed data
+            data: data to be migrated. Will be mutated during the call
+            version: the version to which the data should be converted
+
+        Returns:
+            Modified data
+        """
         for v in self.versions:
             if v.date <= version:
                 break

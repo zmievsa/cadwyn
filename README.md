@@ -136,11 +136,11 @@ We need to create a migration to handle changes between these versions. This mig
 from universi import Field
 from universi.structure import (
     schema,
-    AbstractVersionChange,
+    VersionChange,
     convert_response_to_previous_version_for,
 )
 
-class ChangeAddressToList(AbstractVersionChange):
+class ChangeAddressToList(VersionChange):
     description = (
         "Change user address to a list of strings to "
         "allow the user to specify multiple addresses"
@@ -206,8 +206,278 @@ You can now just pick a router by its version and run it separately or use a par
 
 Note that universi migrates your response data based on the api_version_var context variable so you must set it with each request. `universi.header` has a dependency that does that for you.
 
-Obviously, this was just a simple example and universi has a lot more features so if you're interested -- take a look at the reference
+Obviously, this was just a simple example and universi has a lot more features so if you're interested -- take a look at the reference.
+
+### Examples
+
+Please, see [tutorial examples](https://github.com/Ovsyanka83/universi/tree/main/tests/test_tutorial) for the fully working version of the project above.
+
+## Important warnings
+
+1. The goal of Universi is to **minimize** the impact of versioning on your business logic. It provides all necessary tools to prevent you from **ever** checking for a concrete version in your code. So please, if you are tempted to check something like `api_version_var.get() >= date(2022, 11, 11)` -- please, take another look into [reference](#version-changes-with-side-effects) section. I am confident that you will find a better solution there.
+2. Universi uses its own `universi.Field` function for defining pydantic fields. If you want your pydantic schemas to migrate correctly, then you must use `universi.Field` instead of `pydantic.Field` everywhere because `pydantic.Field` does not preserve the information about which attributes were passed and which were not so code generation is much harder with it.
+3. Universi does not include a header-based router like FastAPI. We hope that soon a framework for header-based routing will surface which will allow universi to be a full versioning solution.
+4. We migrate responses backwards in versions from the latest version using data migration functions and requests forward in versions until the latest version using properties on pydantic models.
 
 ## Reference
 
-TBD
+### Endpoints
+
+#### Defining endpoints that didn't exist in new versions
+
+If you had an endpoint in old version but do not have it in a new one, you must still define it but mark it as deleted.
+
+```python
+@router.only_exists_in_older_versions
+@router.get("/my_old_endpoint")
+async def my_old_endpoint():
+    ...
+```
+
+and then define it as existing in one of the older versions:
+
+```python
+from universi.structure import VersionChange, endpoint
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        endpoint(my_old_endpoint).existed,
+    )
+
+```
+
+#### Defining endpoints that didn't exist in old versions
+
+If you have an endpoint in your new version that must not exist in older versions, you define it as usual and then mark it as "non-existing" in old versions:
+
+```python
+from universi.structure import VersionChange, endpoint
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        endpoint(my_new_endpoint).didnt_exist,
+    )
+
+```
+
+#### Changing endpoint attributes
+
+If you want to change any attribute of your endpoint in a new version, you can return the attribute's value in all older versions like so:
+
+```python
+from universi.structure import VersionChange, endpoint
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        endpoint(my_endpoint).had(description="My old description"),
+    )
+
+```
+
+### Enums
+
+#### Adding enum members
+
+Note that adding enum members **can** be a breaking change unlike adding optional fields to a schema. For example, if I return a list of entities, each of which has some type, and I add a new type -- then my client's code is likely to break.
+
+So I suggest adding enum members in new versions as well.
+
+```python
+from universi.structure import VersionChange, enum
+from enum import auto
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        enum(my_enum).had(foo="baz", bar=auto()),
+    )
+
+```
+
+#### Removing enum members
+
+```python
+from universi.structure import VersionChange, enum
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        enum(my_endpoint).didnt_have("foo", "bar"),
+    )
+
+```
+
+### Schemas
+
+#### Add a field
+
+```python
+from universi import Field
+from universi.structure import VersionChange, schema
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        schema(MySchema).field("foo").existed_with(type=list[str], info=Field(description="Foo")),
+    )
+
+```
+
+#### Remove a field
+
+```python
+from universi.structure import VersionChange, schema
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        schema(MySchema).field("foo").didnt_exist,
+    )
+
+```
+
+#### Change a field
+
+```python
+from universi.structure import VersionChange, schema
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        schema(MySchema).field("foo").had(description="Foo"),
+    )
+
+```
+
+#### Add a property
+
+```python
+from universi.structure import VersionChange, schema
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = ()
+
+    @schema(MySchema).had_property("foo")
+    def any_name_here(parsed_schema):
+        # Anything can be returned from here
+        return parsed_schema.some_other_field
+
+```
+
+#### Remove a property
+
+```python
+from universi.structure import VersionChange, schema
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        schema(MySchema).property("foo").didnt_exist,
+    )
+
+```
+
+### Unions
+
+As you probably realize, when you have many versions with different request schemas and your business logic receives one of them -- you're in trouble. You could handle them all separately by checking the version of each schema and then using the correct logic for it but universi tries to offer something better.
+
+Instead, we take a union of all of our request schemas and write our business logic as if it receives that union. For example, if version 2000 had field "foo" of type `str` and then version 2001 changed that field to type `int`, then a union of these schemas will have foo as `str | int` so your type checker will protect you against incorrect usage. Same goes for added/deleted fields. Obviously, manually importing all your schemas and then taking a union of them is tough, especially if you have many versions, which is why Universi not only generates a directory for each of your versions, but it also generates a "unions" directory that contains unions of all your schemas and enums.
+
+For example, if we had a schema named `MySchema` and two versions of it: 2000 and 2001, then the union definition will look like the following:
+
+```python
+import src.versions.v2000_01_01.my_schema_module
+import src.versions.v2001_01_01.my_schema_module
+import src.versions.latest.my_schema_module
+
+MySchemaUnion = (
+    versions.v2000_01_01.my_schema_module.MySchema |
+    versions.v2001_01_01.my_schema_module.MySchema |
+    versions.latest.my_schema_module.MySchema
+)
+```
+
+and you would be able to use it like so:
+
+```python
+from src.versions.unions.my_schema_module import MySchemaUnion
+
+async def the_entrypoint_of_my_business_logic(request_payload: MySchemaUnion):
+    ...
+
+```
+
+Note that this feature only affects type checking and does not affect your functionality.
+
+### Data conversion
+
+As described in the tutorial, universi can convert your response data into older versions. It does so by running your "migration" functions whenever it encounters a version change:
+
+```python
+from universi.structure import VersionChange, convert_response_to_previous_version_for
+from typing import Any
+
+class ChangeAddressToList(VersionChange):
+    description = "..."
+
+    @convert_response_to_previous_version_for(my_endpoint, my_other_endpoint)
+    def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
+        data["address"] = data.pop("addresses")[0]
+
+```
+
+It is done by applying `universi.Versions.versioned(...)` decorator to each endpoint which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
+
+If you want to convert a specific response to a specific version, you can use `universi.Versions.data_to_version(...)`.
+
+### Version changes with side effects
+
+Sometimes you will use API versioning to handle a breaking change in your **business logic**, not in the schemas themselves. In such cases, it is tempting to add a version check and just follow the new business logic such as:
+
+```python
+if api_version_var.get() >= date(2022, 11, 11):
+    # do new logic here
+```
+
+In universi, this approach is highly discouraged. It is recommended that you avoid side effects like this at any cost because each one makes your core logic harder to understand. But if you cannot, then I urge you to at least abstract away versions and versioning from your business logic which will make your code much easier to read.
+
+To simplify this, universi has a special `VersionChangeWithSideEffects` class. It makes finding dangerous versions that have side effects much easier and provides a nice abstraction for checking whether we are on a version where these side effects have been applied.
+
+As an example, let's use the tutorial section's case with the user and their address. Let's say that we use an external service to check whether user's address is listed in it and return 400 response if it is not. Let's also say that we only added this check in the newest version.
+
+```python
+from universi.structure import VersionChangeWithSideEffects
+
+class UserAddressIsCheckedInExternalService(VersionChangeWithSideEffects):
+    description = (
+        "User's address is now checked for existense in an external service. "
+        "If it doesn't exist there, a 400 code is returned."
+    )
+
+```
+
+Then we will have the following check in our business logic:
+
+```python
+from src.versions import versions, UserAddressIsCheckedInExternalService
+
+
+async def create_user(payload):
+    if UserAddressIsCheckedInExternalService.is_active(versions):
+        check_user_address_exists_in_an_external_service(payload.address)
+    ...
+```
+
+So this change can be contained in any version -- your business logic doesn't know which version it has and shouldn't.
+
+### API Version header and context variables
+
+Universi automatically converts your data to a correct version and has "version checks" when dealing with side effects as described in [the section above](#version-changes-with-side-effects). It can only do so using a special [context variable](https://docs.python.org/3/library/contextvars.html) that stores the current API version.
+
+Universi has such default variable defined as `universi.api_version_var`. You can also use `universi.get_universi_dependency` to get a `fastapi.Depends` that automatically sets this contextvar based on a header name that you pick.
+
+You can also set the variable yourself or even pass a different compatible contextvar to your `universi.Versions` constructor.
