@@ -1,6 +1,6 @@
 # universi
 
-Modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning for FastAPI
+Modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning in FastAPI
 
 ---
 
