@@ -12,7 +12,10 @@ if __name__ == "__main__":
 
     try:
         regenerate_dir_to_all_versions(latest, versions)
-        router_versions = router.create_versioned_copies(versions, latest_schemas_module=latest)
+        router_versions = router.create_versioned_copies(
+            versions,
+            latest_schemas_module=latest,
+        )
         app = FastAPI()
         api_version_var.set(date(2000, 1, 1))
         app.include_router(router_versions[date(2000, 1, 1)])

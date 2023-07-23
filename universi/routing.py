@@ -42,7 +42,7 @@ from universi.structure.endpoints import (
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from universi.structure.versions import Versions
+from universi.structure.versions import VersionBundle
 
 _T = TypeVar("_T", bound=Callable[..., Any])
 annotation_resolution_lock = Lock()
@@ -83,7 +83,7 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
     @lock_cache
     def create_versioned_copies(
         self,
-        versions: Versions,
+        versions: VersionBundle,
         *,
         latest_schemas_module: ModuleType | None,
     ) -> dict[datetime.date, Self]:
@@ -196,7 +196,9 @@ def _change_versions_of_all_annotations(annotation: Any, version_dir: Path) -> A
         }
 
     elif isinstance(annotation, list | tuple):
-        return type(annotation)(_change_versions_of_all_annotations(v, version_dir) for v in annotation)
+        return type(annotation)(
+            _change_versions_of_all_annotations(v, version_dir) for v in annotation
+        )
     else:
         return _memoized_change_versions_of_all_annotations(annotation, version_dir)
 
@@ -210,7 +212,10 @@ def _memoized_change_versions_of_all_annotations(
 ) -> Any:
     if isinstance(annotation, _BaseGenericAlias | GenericAlias):
         return _change_versions_of_all_annotations(get_origin(annotation), version_dir)[
-            tuple(_change_versions_of_all_annotations(arg, version_dir) for arg in get_args(annotation))
+            tuple(
+                _change_versions_of_all_annotations(arg, version_dir)
+                for arg in get_args(annotation)
+            )
         ]
     elif isinstance(annotation, Depends):
         return Depends(
@@ -252,7 +257,11 @@ def _memoized_change_versions_of_all_annotations(
             version_dir,
         )
         new_callable.__defaults__ = _change_versions_of_all_annotations(
-            tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
+            tuple(
+                p.default
+                for p in old_params.values()
+                if p.default is not inspect.Signature.empty
+            ),
             version_dir=version_dir,
         )
         new_callable.__signature__ = _generate_signature(new_callable, old_params)
@@ -296,7 +305,8 @@ def _generate_signature(
 def _get_route_index(routes: list[BaseRoute], endpoint: Endpoint):
     for index, route in enumerate(routes):
         if isinstance(route, APIRoute) and (
-            route.endpoint == endpoint or getattr(route.endpoint, "func", None) == endpoint
+            route.endpoint == endpoint
+            or getattr(route.endpoint, "func", None) == endpoint
         ):
             return index
     return None

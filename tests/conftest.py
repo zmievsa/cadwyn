@@ -9,10 +9,10 @@ import pytest
 
 from tests._data import latest
 from universi import regenerate_dir_to_all_versions
-from universi.structure import Version, VersionChange, Versions
+from universi.structure import Version, VersionBundle, VersionChange
 from universi.structure.enums import AlterEnumSubInstruction
 from universi.structure.schemas import AlterSchemaSubInstruction
-from universi.structure.versions import Version, VersionChange, Versions
+from universi.structure.versions import Version, VersionBundle, VersionChange
 
 CURRENT_DIR = Path(__file__).parent
 
@@ -50,7 +50,7 @@ def generate_test_version_packages(
 
     regenerate_dir_to_all_versions(
         package,
-        Versions(
+        VersionBundle(
             Version(date(2001, 1, 1), SomeVersionChange),
             Version(date(2000, 1, 1)),
         ),

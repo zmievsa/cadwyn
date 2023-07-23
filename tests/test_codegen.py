@@ -20,12 +20,12 @@ from universi.exceptions import (
 )
 from universi.structure import (
     Version,
+    VersionBundle,
     VersionChange,
-    Versions,
     enum,
     schema,
 )
-from universi.structure.versions import Version, VersionChange, Versions
+from universi.structure.versions import Version, VersionBundle, VersionChange
 
 
 @pytest.fixture(autouse=True)
@@ -122,7 +122,9 @@ def test__enum_had__original_schema_is_empty():
 
 def test__field_existed_with__original_schema_is_empty():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.EmptySchema).field("bar").existed_with(type=int, info=Field(description="hewwo")),
+        schema(latest.EmptySchema)
+        .field("bar")
+        .existed_with(type=int, info=Field(description="hewwo")),
     )
     assert len(v2001_01_01.EmptySchema.__fields__) == 0
     # insert_assert(inspect.getsource(v2000_01_01.EmptySchema))
@@ -134,7 +136,9 @@ def test__field_existed_with__original_schema_is_empty():
 
 def test__field_existed_with__original_schema_has_a_field():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaWithOneStrField).field("bar").existed_with(type=int, info=Field(description="hewwo")),
+        schema(latest.SchemaWithOneStrField)
+        .field("bar")
+        .existed_with(type=int, info=Field(description="hewwo")),
     )
     # insert_assert(inspect.getsource(v2000_01_01.SchemaWithOneStrField))
     assert (
@@ -153,7 +157,10 @@ def test__field_didnt_exist():
         schema(latest.SchemaWithOneStrField).field("foo").didnt_exist,
     )
     # insert_assert(inspect.getsource(v2000_01_01.SchemaWithOneStrField))
-    assert inspect.getsource(v2000_01_01.SchemaWithOneStrField) == "class SchemaWithOneStrField(BaseModel):\n    pass\n"
+    assert (
+        inspect.getsource(v2000_01_01.SchemaWithOneStrField)
+        == "class SchemaWithOneStrField(BaseModel):\n    pass\n"
+    )
     # insert_assert(inspect.getsource(v2001_01_01.SchemaWithOneStrField))
     assert (
         inspect.getsource(v2001_01_01.SchemaWithOneStrField)
@@ -207,7 +214,9 @@ def test__field_had__decimal_field(attr: str, attr_value: Any):
 
 def test__field_had__default_factory():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(  # pragma: no cover
-        schema(latest.SchemaWithOneIntField).field("foo").had(default_factory=lambda: 91),
+        schema(latest.SchemaWithOneIntField)
+        .field("foo")
+        .had(default_factory=lambda: 91),
     )
 
     assert v2000_01_01.SchemaWithOneIntField.__fields__["foo"].default_factory() == 91
@@ -335,7 +344,9 @@ def test__codegen__non_pydantic_schema__error():
 
 def test__codegen__schema_that_overrides_fields_from_mro():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaThatOverridesField).field("bar").existed_with(type=int, info=Field()),
+        schema(latest.SchemaThatOverridesField)
+        .field("bar")
+        .existed_with(type=int, info=Field()),
     )
 
     # insert_assert(inspect.getsource(v2000_01_01.SchemaThatOverridesField))
@@ -352,7 +363,9 @@ def test__codegen__schema_that_overrides_fields_from_mro():
 
 def test__codegen_schema_example():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.EmptySchema).field("bar").existed_with(type=int, info=Field(example=83)),
+        schema(latest.EmptySchema)
+        .field("bar")
+        .existed_with(type=int, info=Field(example=83)),
     )
 
     # insert_assert(inspect.getsource(v2000_01_01.EmptySchema))
@@ -361,7 +374,10 @@ def test__codegen_schema_example():
         == "class EmptySchema(BaseModel):\n    bar: int = Field(example=83)\n"
     )
     # insert_assert(inspect.getsource(v2001_01_01.EmptySchema))
-    assert inspect.getsource(v2001_01_01.EmptySchema) == "class EmptySchema(BaseModel):\n    pass\n"
+    assert (
+        inspect.getsource(v2001_01_01.EmptySchema)
+        == "class EmptySchema(BaseModel):\n    pass\n"
+    )
 
 
 def test__codegen__schema_defined_in_a_non_init_file():
@@ -375,12 +391,17 @@ def test__codegen__schema_defined_in_a_non_init_file():
     # insert_assert(inspect.getsource(MySchema2000))
     assert inspect.getsource(MySchema2000) == "class MySchema(BaseModel):\n    pass\n"
     # insert_assert(inspect.getsource(MySchema2001))
-    assert inspect.getsource(MySchema2001) == "class MySchema(BaseModel):\n    foo: int = Field()\n"
+    assert (
+        inspect.getsource(MySchema2001)
+        == "class MySchema(BaseModel):\n    foo: int = Field()\n"
+    )
 
 
 def test__codegen__with_weird_data_types():
     generate_test_version_packages(
-        schema(weird_schemas.ModelWithWeirdFields).field("bad").existed_with(type=int, info=Field()),
+        schema(weird_schemas.ModelWithWeirdFields)
+        .field("bad")
+        .existed_with(type=int, info=Field()),
     )
 
     from tests._data.v2000_01_01.weird_schemas import (
@@ -414,20 +435,24 @@ def test__codegen_unions__init_file():
 
     assert (
         EnumWithOneMemberUnion
-        == v2000_01_01.EnumWithOneMember | v2001_01_01.EnumWithOneMember | latest.EnumWithOneMember
+        == v2000_01_01.EnumWithOneMember
+        | v2001_01_01.EnumWithOneMember
+        | latest.EnumWithOneMember
     )
     assert (
         SchemaWithOneIntFieldUnion
-        == v2000_01_01.SchemaWithOneIntField | v2001_01_01.SchemaWithOneIntField | latest.SchemaWithOneIntField
+        == v2000_01_01.SchemaWithOneIntField
+        | v2001_01_01.SchemaWithOneIntField
+        | latest.SchemaWithOneIntField
     )
 
 
 def test__codegen_unions__regular_file():
     generate_test_version_packages()
+    from tests._data.latest.some_schema import MySchema as MySchemaLatest
     from tests._data.unions.some_schema import MySchemaUnion
     from tests._data.v2000_01_01.some_schema import MySchema as MySchema2000
     from tests._data.v2001_01_01.some_schema import MySchema as MySchema2001
-    from tests._data.latest.some_schema import MySchema as MySchemaLatest
 
     assert MySchemaUnion == MySchema2000 | MySchema2001 | MySchemaLatest
 
@@ -456,7 +481,7 @@ def test__codegen_property():
 
     regenerate_dir_to_all_versions(
         latest,
-        Versions(
+        VersionBundle(
             Version(date(2002, 1, 1), VersionChange2),
             Version(date(2001, 1, 1), VersionChange1),
             Version(date(2000, 1, 1)),

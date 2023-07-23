@@ -4,8 +4,8 @@ from typing import Any
 from universi import Field, VersionedAPIRouter
 from universi.structure import (
     Version,
+    VersionBundle,
     VersionChange,
-    Versions,
     convert_response_to_previous_version_for,
     endpoint,
     schema,
@@ -86,7 +86,7 @@ class ChangeAddressesToSubresource(VersionChange):
         return parsed_schema.addresses[0]  # pragma: no cover
 
 
-versions = Versions(
+versions = VersionBundle(
     Version(date(2002, 1, 1), ChangeAddressesToSubresource),
     Version(date(2001, 1, 1), ChangeAddressToList),
     Version(date(2000, 1, 1)),

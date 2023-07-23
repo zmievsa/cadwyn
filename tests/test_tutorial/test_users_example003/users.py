@@ -4,19 +4,19 @@ from typing import Any
 from universi import Field, VersionedAPIRouter
 from universi.structure import (
     Version,
+    VersionBundle,
     VersionChange,
-    Versions,
     convert_response_to_previous_version_for,
     endpoint,
     schema,
 )
 
+from .scenario import UserScenario
 from .schemas.latest.users import (
     UserAddressResourceList,
     UserCreateRequest,
     UserResource,
 )
-from .scenario import UserScenario
 
 router = VersionedAPIRouter()
 
@@ -57,9 +57,13 @@ class ChangeAddressToList(VersionChange):
 class ChangeAddressesToSubresource(VersionChange):
     description = "Change vat ids to subresource"
     instructions_to_migrate_to_previous_version = (
-        schema(UserCreateRequest).field("addresses").existed_with(type=list[str], info=Field()),
+        schema(UserCreateRequest)
+        .field("addresses")
+        .existed_with(type=list[str], info=Field()),
         schema(UserCreateRequest).field("default_address").didnt_exist,
-        schema(UserResource).field("addresses").existed_with(type=list[str], info=Field()),
+        schema(UserResource)
+        .field("addresses")
+        .existed_with(type=list[str], info=Field()),
         endpoint(get_user_addresses).didnt_exist,
     )
 
@@ -72,7 +76,7 @@ class ChangeAddressesToSubresource(VersionChange):
         return parsed_schema.addresses[0]  # pragma: no cover
 
 
-versions = Versions(
+versions = VersionBundle(
     Version(date(2002, 1, 1), ChangeAddressesToSubresource),
     Version(date(2001, 1, 1), ChangeAddressToList),
     Version(date(2000, 1, 1)),

@@ -5,7 +5,7 @@ from types import ModuleType
 from typing import Annotated, Any, TypeAlias, cast, get_args
 
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -18,14 +18,13 @@ from tests.test_codegen import (
 )
 
 # TODO: It's bad to import between tests like that
-from universi import VersionedAPIRouter, Versions
+from universi import VersionBundle, VersionedAPIRouter
 from universi.exceptions import RouterGenerationError
 from universi.structure import Version, endpoint, schema
 from universi.structure.endpoints import AlterEndpointSubInstruction
 from universi.structure.enums import AlterEnumSubInstruction, enum
 from universi.structure.schemas import AlterSchemaSubInstruction
 from universi.structure.versions import VersionChange
-from fastapi import APIRouter
 
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
 
@@ -52,7 +51,9 @@ def client(router: APIRouter) -> TestClient:
 
 def create_versioned_copies(
     router: VersionedAPIRouter,
-    *instructions: AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction,
+    *instructions: AlterSchemaSubInstruction
+    | AlterEndpointSubInstruction
+    | AlterEnumSubInstruction,
     latest_schemas_module: ModuleType | None = None,
 ) -> dict[date, VersionedAPIRouter]:
     class MyVersionChange(VersionChange):
@@ -60,7 +61,7 @@ def create_versioned_copies(
         instructions_to_migrate_to_previous_version = instructions
 
     return router.create_versioned_copies(
-        Versions(
+        VersionBundle(
             Version(date(2001, 1, 1), MyVersionChange),
             Version(date(2000, 1, 1)),
         ),
@@ -70,7 +71,9 @@ def create_versioned_copies(
 
 def create_versioned_api_routes(
     router: VersionedAPIRouter,
-    *instructions: AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction,
+    *instructions: AlterSchemaSubInstruction
+    | AlterEndpointSubInstruction
+    | AlterEnumSubInstruction,
     latest_schemas_module: ModuleType | None = None,
 ) -> tuple[list[APIRoute], list[APIRoute]]:
     routers = create_versioned_copies(
@@ -257,7 +260,12 @@ def test__router_generation__re_creating_an_existing_endpoint__error(
 
 
 def get_nested_field_type(annotation: Any) -> type[BaseModel]:
-    return get_args(get_args(annotation)[1])[0].__fields__["foo"].type_.__fields__["foo"].annotation
+    return (
+        get_args(get_args(annotation)[1])[0]
+        .__fields__["foo"]
+        .type_.__fields__["foo"]
+        .annotation
+    )
 
 
 def test__router_generation__re_creating_a_non_endpoint__error(
@@ -336,8 +344,14 @@ def test__router_generation__updating_response_model(
         latest_schemas_module=latest,
     )
     assert len(routes_2000) == len(routes_2001) == 1
-    assert routes_2000[0].response_model == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
-    assert routes_2001[0].response_model == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
+    assert (
+        routes_2000[0].response_model
+        == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
+    )
+    assert (
+        routes_2001[0].response_model
+        == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
+    )
 
     assert get_nested_field_type(routes_2000[0].response_model) == list[str]
     assert get_nested_field_type(routes_2001[0].response_model) == int
@@ -361,14 +375,21 @@ def test__router_generation__updating_request_models(
     )
     assert len(routes_2000) == len(routes_2001) == 1
     assert (
-        routes_2000[0].dependant.body_params[0].annotation == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
+        routes_2000[0].dependant.body_params[0].annotation
+        == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
     )
     assert (
-        routes_2001[0].dependant.body_params[0].annotation == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
+        routes_2001[0].dependant.body_params[0].annotation
+        == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
     )
 
-    assert get_nested_field_type(routes_2000[0].dependant.body_params[0].annotation) == list[str]
-    assert get_nested_field_type(routes_2001[0].dependant.body_params[0].annotation) == int
+    assert (
+        get_nested_field_type(routes_2000[0].dependant.body_params[0].annotation)
+        == list[str]
+    )
+    assert (
+        get_nested_field_type(routes_2001[0].dependant.body_params[0].annotation) == int
+    )
 
 
 # TODO: This test should become multiple tests
@@ -478,7 +499,7 @@ def test__cascading_router_exists(router: VersionedAPIRouter):
         description = ""
         instructions_to_migrate_to_previous_version = [endpoint(test_with_dep1).existed]
 
-    versions = Versions(
+    versions = VersionBundle(
         Version(date(2002, 1, 1), V2002),
         Version(date(2001, 1, 1)),
         Version(date(2000, 1, 1)),
@@ -487,7 +508,9 @@ def test__cascading_router_exists(router: VersionedAPIRouter):
     routers = router.create_versioned_copies(versions, latest_schemas_module=None)
 
     # insert_assert(client(routers[date(2002, 1, 1)]).get("/test").json())
-    assert client(routers[date(2002, 1, 1)]).get("/test").json() == {"detail": "Not Found"}
+    assert client(routers[date(2002, 1, 1)]).get("/test").json() == {
+        "detail": "Not Found",
+    }
     # insert_assert(client(routers[date(2001, 1, 1)]).get("/test").json())
     assert client(routers[date(2001, 1, 1)]).get("/test").json() == 83
     # insert_assert(client(routers[date(2000, 1, 1)]).get("/test").json())
@@ -501,9 +524,11 @@ def test__cascading_router_didnt_exist(router: VersionedAPIRouter):
 
     class V2002(VersionChange):
         description = ""
-        instructions_to_migrate_to_previous_version = [endpoint(test_with_dep1).didnt_exist]
+        instructions_to_migrate_to_previous_version = [
+            endpoint(test_with_dep1).didnt_exist,
+        ]
 
-    versions = Versions(
+    versions = VersionBundle(
         Version(date(2002, 1, 1), V2002),
         Version(date(2001, 1, 1)),
         Version(date(2000, 1, 1)),
@@ -514,6 +539,10 @@ def test__cascading_router_didnt_exist(router: VersionedAPIRouter):
     # insert_assert(client(routers[date(2002, 1, 1)]).get("/test").json())
     assert client(routers[date(2002, 1, 1)]).get("/test").json() == 83
     # insert_assert(client(routers[date(2001, 1, 1)]).get("/test").json())
-    assert client(routers[date(2001, 1, 1)]).get("/test").json() == {"detail": "Not Found"}
+    assert client(routers[date(2001, 1, 1)]).get("/test").json() == {
+        "detail": "Not Found",
+    }
     # insert_assert(client(routers[date(2000, 1, 1)]).get("/test").json())
-    assert client(routers[date(2000, 1, 1)]).get("/test").json() == {"detail": "Not Found"}
+    assert client(routers[date(2000, 1, 1)]).get("/test").json() == {
+        "detail": "Not Found",
+    }

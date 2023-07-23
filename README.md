@@ -170,13 +170,13 @@ See how we added the `addresses` property? This simple instruction will allow us
 
 ### Grouping Version Changes
 
-Finally, we group the version changes in the `Versions` class. This represents the different versions of your API and the changes between them. You can add any "version changes" to any version. For simplicity, let's use versions 2002 and 2001 which means that we had a single address in API in 2001 and added addresses as a list in 2002's version.
+Finally, we group the version changes in the `VersionBundle` class. This represents the different versions of your API and the changes between them. You can add any "version changes" to any version. For simplicity, let's use versions 2002 and 2001 which means that we had a single address in API in 2001 and added addresses as a list in 2002's version.
 
 ```python
-from universi.structure import Version, Versions
+from universi.structure import Version, VersionBundle
 from datetime import date
 
-versions = Versions(
+versions = VersionBundle(
     Version(date(2002, 1, 1), ChangeAddressToList),
     Version(date(2001, 1, 1)),
 )
@@ -430,9 +430,9 @@ class ChangeAddressToList(VersionChange):
 
 ```
 
-It is done by applying `universi.Versions.versioned(...)` decorator to each endpoint which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
+It is done by applying `universi.VersionBundle.versioned(...)` decorator to each endpoint which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
 
-If you want to convert a specific response to a specific version, you can use `universi.Versions.data_to_version(...)`.
+If you want to convert a specific response to a specific version, you can use `universi.VersionBundle.data_to_version(...)`.
 
 ### Version changes with side effects
 
@@ -467,7 +467,7 @@ from src.versions import versions, UserAddressIsCheckedInExternalService
 
 
 async def create_user(payload):
-    if UserAddressIsCheckedInExternalService.is_active(versions):
+    if UserAddressIsCheckedInExternalService.is_active:
         check_user_address_exists_in_an_external_service(payload.address)
     ...
 ```
@@ -480,4 +480,4 @@ Universi automatically converts your data to a correct version and has "version 
 
 Universi has such default variable defined as `universi.api_version_var`. You can also use `universi.get_universi_dependency` to get a `fastapi.Depends` that automatically sets this contextvar based on a header name that you pick.
 
-You can also set the variable yourself or even pass a different compatible contextvar to your `universi.Versions` constructor.
+You can also set the variable yourself or even pass a different compatible contextvar to your `universi.VersionBundle` constructor.

@@ -7,7 +7,7 @@ from universi import api_version_var
 from universi.exceptions import UniversiError, UniversiStructureError
 from universi.structure import VersionChange, VersionChangeWithSideEffects
 from universi.structure.responses import convert_response_to_previous_version_for
-from universi.structure.versions import Version, Versions
+from universi.structure.versions import Version, VersionBundle
 
 
 class DummySubClass2000_001(VersionChangeWithSideEffects):
@@ -30,19 +30,29 @@ class DummySubClass2002(VersionChangeWithSideEffects):
     instructions_to_migrate_to_previous_version = []
 
 
-class DummySubClassWithoutVersion(VersionChangeWithSideEffects):
-    description = "dummy description4"
-    instructions_to_migrate_to_previous_version = []
+@pytest.fixture()
+def dummy_sub_class_without_version():
+    class DummySubClassWithoutVersion(VersionChangeWithSideEffects):
+        description = "dummy description4"
+        instructions_to_migrate_to_previous_version = []
+
+    return DummySubClassWithoutVersion
 
 
 @pytest.fixture()
 def versions():
-    return Versions(
-        Version(date(2002, 1, 1), DummySubClass2002),
-        Version(date(2001, 1, 1), DummySubClass2001),
-        Version(date(2000, 1, 1), DummySubClass2000_001, DummySubClass2000_002),
-        Version(date(1999, 1, 1)),
-    )
+    try:
+        yield VersionBundle(
+            Version(date(2002, 1, 1), DummySubClass2002),
+            Version(date(2001, 1, 1), DummySubClass2001),
+            Version(date(2000, 1, 1), DummySubClass2000_001, DummySubClass2000_002),
+            Version(date(1999, 1, 1)),
+        )
+    finally:
+        DummySubClass2002._bound_versions = None
+        DummySubClass2001._bound_versions = None
+        DummySubClass2000_001._bound_versions = None
+        DummySubClass2000_002._bound_versions = None
 
 
 def test_description_sentinel():
@@ -79,7 +89,7 @@ def test_instructions_not_a_sequence():
 
         class DummySubClass(VersionChange):
             description = "dummy description"
-            instructions_to_migrate_to_previous_version = True
+            instructions_to_migrate_to_previous_version = True  # pyright: ignore
 
 
 def test_non_instruction_attribute():
@@ -141,7 +151,7 @@ def test_invalid_type_in_instructions():
 
         class DummySubClass(VersionChange):
             description = "dummy description"
-            instructions_to_migrate_to_previous_version = [True]
+            instructions_to_migrate_to_previous_version = [True]  # pyright: ignore
 
 
 def test_incorrectly_sorted_versions():
@@ -151,65 +161,97 @@ def test_incorrectly_sorted_versions():
             "Versions are not sorted correctly. Please sort them in descending order.",
         ),
     ):
-        Versions(Version(date(2000, 1, 1)), Version(date(2001, 1, 1)))
+        VersionBundle(Version(date(2000, 1, 1)), Version(date(2001, 1, 1)))
 
 
-def test__is_active__var_is_none__everything_is_active(versions: Versions):
+def test__is_active__var_is_none__everything_is_active(versions: VersionBundle):
     api_version_var.set(None)
-    assert DummySubClass2002.is_active(versions) is True
-    assert DummySubClass2001.is_active(versions) is True
-    assert DummySubClass2000_001.is_active(versions) is True
-    assert DummySubClass2000_002.is_active(versions) is True
+    assert DummySubClass2002.is_active is True
+    assert DummySubClass2001.is_active is True
+    assert DummySubClass2000_001.is_active is True
+    assert DummySubClass2000_002.is_active is True
 
 
-def test__is_active__var_is_later_than_latest__everything_is_active(versions: Versions):
+def test__is_active__var_is_later_than_latest__everything_is_active(
+    versions: VersionBundle,
+):
     api_version_var.set(date(2003, 1, 1))
-    assert DummySubClass2002.is_active(versions) is True
-    assert DummySubClass2001.is_active(versions) is True
-    assert DummySubClass2000_001.is_active(versions) is True
-    assert DummySubClass2000_002.is_active(versions) is True
+    assert DummySubClass2002.is_active is True
+    assert DummySubClass2001.is_active is True
+    assert DummySubClass2000_001.is_active is True
+    assert DummySubClass2000_002.is_active is True
 
 
-def test__is_active__var_is_before_latest__latest_is_inactive(versions: Versions):
+def test__is_active__var_is_before_latest__latest_is_inactive(versions: VersionBundle):
     api_version_var.set(date(2001, 1, 1))
-    assert DummySubClass2002.is_active(versions) is False
-    assert DummySubClass2001.is_active(versions) is True
-    assert DummySubClass2000_001.is_active(versions) is True
-    assert DummySubClass2000_002.is_active(versions) is True
+    assert DummySubClass2002.is_active is False
+    assert DummySubClass2001.is_active is True
+    assert DummySubClass2000_001.is_active is True
+    assert DummySubClass2000_002.is_active is True
 
 
-def test__is_active__var_is_at_earliest__everything_is_inactive(versions: Versions):
+def test__is_active__var_is_at_earliest__everything_is_inactive(
+    versions: VersionBundle,
+):
     api_version_var.set(date(1999, 3, 1))
-    assert DummySubClass2002.is_active(versions) is False
-    assert DummySubClass2001.is_active(versions) is False
-    assert DummySubClass2000_001.is_active(versions) is False
-    assert DummySubClass2000_002.is_active(versions) is False
+    assert DummySubClass2002.is_active is False
+    assert DummySubClass2001.is_active is False
+    assert DummySubClass2000_001.is_active is False
+    assert DummySubClass2000_002.is_active is False
 
 
 def test__is_active__var_set_version_change_class_not_in_versions__error(
-    versions: Versions,
+    dummy_sub_class_without_version: type[VersionChangeWithSideEffects],
 ):
     api_version_var.set(date(1999, 3, 1))
     with pytest.raises(
         UniversiError,
         match=re.escape(
-            "You tried to check whether 'DummySubClassWithoutVersion' is active but it was never added into any version change.",
+            "You tried to check whether 'DummySubClassWithoutVersion' is active but it was never bound to any version.",
         ),
     ):
-        DummySubClassWithoutVersion.is_active(versions)
+        assert dummy_sub_class_without_version.is_active
 
 
 def test__is_active__var_unset_version_change_class_not_in_versions__error(
-    versions: Versions,
+    dummy_sub_class_without_version: type[VersionChangeWithSideEffects],
 ):
     api_version_var.set(None)
     with pytest.raises(
         UniversiError,
         match=re.escape(
-            "You tried to check whether 'DummySubClassWithoutVersion' is active but it was never added into any version change.",
+            "You tried to check whether 'DummySubClassWithoutVersion' is active but it was never bound to any version.",
         ),
     ):
-        DummySubClassWithoutVersion.is_active(versions)
+        assert dummy_sub_class_without_version.is_active
+
+
+def test__versions__one_version_change_attached_to_two_version_bundles__error(
+    dummy_sub_class_without_version: type[VersionChangeWithSideEffects],
+):
+    VersionBundle(Version(date(2000, 1, 1), dummy_sub_class_without_version))
+    with pytest.raises(
+        UniversiStructureError,
+        match=re.escape(
+            "You tried to bind version change 'DummySubClassWithoutVersion' to two different versions. It is prohibited.",
+        ),
+    ):
+        VersionBundle(Version(date(2000, 1, 1), dummy_sub_class_without_version))
+
+
+def test__versions__one_version_change_attached_to_two_versions__error(
+    dummy_sub_class_without_version: type[VersionChangeWithSideEffects],
+):
+    with pytest.raises(
+        UniversiStructureError,
+        match=re.escape(
+            "You tried to bind version change 'DummySubClassWithoutVersion' to two different versions. It is prohibited.",
+        ),
+    ):
+        VersionBundle(
+            Version(date(2001, 1, 1), dummy_sub_class_without_version),
+            Version(date(2000, 1, 1), dummy_sub_class_without_version),
+        )
 
 
 def test__conversion_method__with_incorrect_structure():
