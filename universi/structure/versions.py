@@ -21,24 +21,16 @@ from .schemas import AlterSchemaSubInstruction, SchemaPropertyDefinitionInstruct
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 VersionDate: TypeAlias = datetime.date
-PossibleInstructions: TypeAlias = (
-    AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction
-)
+PossibleInstructions: TypeAlias = AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction
 
 
 class VersionChange:
     description: ClassVar[str] = Sentinel
-    instructions_to_migrate_to_previous_version: ClassVar[
-        Sequence[PossibleInstructions]
-    ] = Sentinel
+    instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
     alter_schema_instructions: ClassVar[Sequence[AlterSchemaSubInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[Sequence[AlterEnumSubInstruction]] = Sentinel
-    alter_endpoint_instructions: ClassVar[
-        Sequence[AlterEndpointSubInstruction]
-    ] = Sentinel
-    alter_response_instructions: ClassVar[
-        dict[Endpoint, AlterResponseInstruction]
-    ] = Sentinel
+    alter_endpoint_instructions: ClassVar[Sequence[AlterEndpointSubInstruction]] = Sentinel
+    alter_response_instructions: ClassVar[dict[Endpoint, AlterResponseInstruction]] = Sentinel
     _bound_versions: "VersionBundle | None"
 
     def __init_subclass__(cls, _abstract: bool = False) -> None:
@@ -126,19 +118,14 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
     @classmethod
     @property
     def is_active(cls) -> bool:
-        if (
-            cls._bound_versions is None
-            or cls not in cls._bound_versions._version_changes_to_version_mapping
-        ):
+        if cls._bound_versions is None or cls not in cls._bound_versions._version_changes_to_version_mapping:
             raise UniversiError(
                 f"You tried to check whether '{cls.__name__}' is active but it was never bound to any version.",
             )
         api_version = cls._bound_versions.api_version_var.get()
         if api_version is None:
             return True
-        return (
-            cls._bound_versions._version_changes_to_version_mapping[cls] <= api_version
-        )
+        return cls._bound_versions._version_changes_to_version_mapping[cls] <= api_version
 
 
 class Version:
@@ -175,8 +162,7 @@ class VersionBundle:
     @functools.cached_property
     def versioned_schemas(self) -> dict[str, type[VersionedModel]]:
         return {
-            instruction.schema.__module__
-            + instruction.schema.__name__: instruction.schema
+            instruction.schema.__module__ + instruction.schema.__name__: instruction.schema
             for version in self.versions
             for version_change in version.version_changes
             for instruction in version_change.alter_schema_instructions
@@ -195,11 +181,7 @@ class VersionBundle:
     def _version_changes_to_version_mapping(
         self,
     ) -> dict[type[VersionChange], VersionDate]:
-        return {
-            version_change: version.date
-            for version in self.versions
-            for version_change in version.version_changes
-        }
+        return {version_change: version.date for version in self.versions for version_change in version.version_changes}
 
     # TODO: It might need caching for iteration to speed it up
     def data_to_version(

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "universi"
-version = "1.0.1"
+version = "1.0.2"
 description = ""
 authors = ["Stanislav Zmiev <szmiev2000@gmail.com>"]
 license = "MIT"
@@ -56,6 +56,8 @@ exclude_lines = [
 ]
 omit=["tests/test_tutorial/test_users_example003/*"]
 
+[tool.black]
+line-length = 120
 
 [tool.ruff]
 line-length = 120

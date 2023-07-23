@@ -57,13 +57,9 @@ class ChangeAddressToList(VersionChange):
 class ChangeAddressesToSubresource(VersionChange):
     description = "Change vat ids to subresource"
     instructions_to_migrate_to_previous_version = (
-        schema(UserCreateRequest)
-        .field("addresses")
-        .existed_with(type=list[str], info=Field()),
+        schema(UserCreateRequest).field("addresses").existed_with(type=list[str], info=Field()),
         schema(UserCreateRequest).field("default_address").didnt_exist,
-        schema(UserResource)
-        .field("addresses")
-        .existed_with(type=list[str], info=Field()),
+        schema(UserResource).field("addresses").existed_with(type=list[str], info=Field()),
         endpoint(get_user_addresses).didnt_exist,
     )
 
