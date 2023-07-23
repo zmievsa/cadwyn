@@ -217,7 +217,8 @@ Please, see [tutorial examples](https://github.com/Ovsyanka83/universi/tree/main
 1. The goal of Universi is to **minimize** the impact of versioning on your business logic. It provides all necessary tools to prevent you from **ever** checking for a concrete version in your code. So please, if you are tempted to check something like `api_version_var.get() >= date(2022, 11, 11)` -- please, take another look into [reference](#version-changes-with-side-effects) section. I am confident that you will find a better solution there.
 2. Universi uses its own `universi.Field` function for defining pydantic fields. If you want your pydantic schemas to migrate correctly, then you must use `universi.Field` instead of `pydantic.Field` everywhere because `pydantic.Field` does not preserve the information about which attributes were passed and which were not so code generation is much harder with it.
 3. Universi does not include a header-based router like FastAPI. We hope that soon a framework for header-based routing will surface which will allow universi to be a full versioning solution.
-4. We migrate responses backwards in versions from the latest version using data migration functions and requests forward in versions until the latest version using properties on pydantic models.
+4. I ask you to be very detailed in your descriptions for version changes. Spending these 5 extra minutes will potentially save you tens of hours in the future when everybody forgets when, how, and why the version change was made.
+5. We migrate responses backwards in versions from the latest version using data migration functions and requests forward in versions until the latest version using properties on pydantic models.
 
 ## Reference
 
