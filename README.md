@@ -1,4 +1,4 @@
-# universi
+# Universi
 
 Modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning in FastAPI
 
