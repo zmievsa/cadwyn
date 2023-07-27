@@ -468,7 +468,7 @@ from src.versions import versions, UserAddressIsCheckedInExternalService
 
 
 async def create_user(payload):
-    if UserAddressIsCheckedInExternalService.is_active:
+    if UserAddressIsCheckedInExternalService.is_applied:
         check_user_address_exists_in_an_external_service(payload.address)
     ...
 ```

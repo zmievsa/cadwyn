@@ -164,43 +164,43 @@ def test_incorrectly_sorted_versions():
         VersionBundle(Version(date(2000, 1, 1)), Version(date(2001, 1, 1)))
 
 
-def test__is_active__var_is_none__everything_is_active(versions: VersionBundle):
+def test__is_applied__var_is_none__everything_is_applied(versions: VersionBundle):
     api_version_var.set(None)
-    assert DummySubClass2002.is_active is True
-    assert DummySubClass2001.is_active is True
-    assert DummySubClass2000_001.is_active is True
-    assert DummySubClass2000_002.is_active is True
+    assert DummySubClass2002.is_applied is True
+    assert DummySubClass2001.is_applied is True
+    assert DummySubClass2000_001.is_applied is True
+    assert DummySubClass2000_002.is_applied is True
 
 
-def test__is_active__var_is_later_than_latest__everything_is_active(
+def test__is_applied__var_is_later_than_latest__everything_is_applied(
     versions: VersionBundle,
 ):
     api_version_var.set(date(2003, 1, 1))
-    assert DummySubClass2002.is_active is True
-    assert DummySubClass2001.is_active is True
-    assert DummySubClass2000_001.is_active is True
-    assert DummySubClass2000_002.is_active is True
+    assert DummySubClass2002.is_applied is True
+    assert DummySubClass2001.is_applied is True
+    assert DummySubClass2000_001.is_applied is True
+    assert DummySubClass2000_002.is_applied is True
 
 
-def test__is_active__var_is_before_latest__latest_is_inactive(versions: VersionBundle):
+def test__is_applied__var_is_before_latest__latest_is_inactive(versions: VersionBundle):
     api_version_var.set(date(2001, 1, 1))
-    assert DummySubClass2002.is_active is False
-    assert DummySubClass2001.is_active is True
-    assert DummySubClass2000_001.is_active is True
-    assert DummySubClass2000_002.is_active is True
+    assert DummySubClass2002.is_applied is False
+    assert DummySubClass2001.is_applied is True
+    assert DummySubClass2000_001.is_applied is True
+    assert DummySubClass2000_002.is_applied is True
 
 
-def test__is_active__var_is_at_earliest__everything_is_inactive(
+def test__is_applied__var_is_at_earliest__everything_is_inactive(
     versions: VersionBundle,
 ):
     api_version_var.set(date(1999, 3, 1))
-    assert DummySubClass2002.is_active is False
-    assert DummySubClass2001.is_active is False
-    assert DummySubClass2000_001.is_active is False
-    assert DummySubClass2000_002.is_active is False
+    assert DummySubClass2002.is_applied is False
+    assert DummySubClass2001.is_applied is False
+    assert DummySubClass2000_001.is_applied is False
+    assert DummySubClass2000_002.is_applied is False
 
 
-def test__is_active__var_set_version_change_class_not_in_versions__error(
+def test__is_applied__var_set_version_change_class_not_in_versions__error(
     dummy_sub_class_without_version: type[VersionChangeWithSideEffects],
 ):
     api_version_var.set(date(1999, 3, 1))
@@ -210,10 +210,10 @@ def test__is_active__var_set_version_change_class_not_in_versions__error(
             "You tried to check whether 'DummySubClassWithoutVersion' is active but it was never bound to any version.",
         ),
     ):
-        assert dummy_sub_class_without_version.is_active
+        assert dummy_sub_class_without_version.is_applied
 
 
-def test__is_active__var_unset_version_change_class_not_in_versions__error(
+def test__is_applied__var_unset_version_change_class_not_in_versions__error(
     dummy_sub_class_without_version: type[VersionChangeWithSideEffects],
 ):
     api_version_var.set(None)
@@ -223,7 +223,7 @@ def test__is_active__var_unset_version_change_class_not_in_versions__error(
             "You tried to check whether 'DummySubClassWithoutVersion' is active but it was never bound to any version.",
         ),
     ):
-        assert dummy_sub_class_without_version.is_active
+        assert dummy_sub_class_without_version.is_applied
 
 
 def test__versions__one_version_change_attached_to_two_version_bundles__error(

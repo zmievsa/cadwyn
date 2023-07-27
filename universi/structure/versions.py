@@ -117,7 +117,7 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
 
     @classmethod
     @property
-    def is_active(cls) -> bool:
+    def is_applied(cls) -> bool:
         if cls._bound_versions is None or cls not in cls._bound_versions._version_changes_to_version_mapping:
             raise UniversiError(
                 f"You tried to check whether '{cls.__name__}' is active but it was never bound to any version.",
