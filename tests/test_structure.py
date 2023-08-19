@@ -1,5 +1,6 @@
 import re
 from datetime import date
+from typing import Any
 
 import pytest
 
@@ -89,14 +90,15 @@ def test_instructions_not_a_sequence():
 
         class DummySubClass(VersionChange):
             description = "dummy description"
-            instructions_to_migrate_to_previous_version = True  # pyright: ignore
+            instructions_to_migrate_to_previous_version = True  # pyright: ignore[reportGeneralTypeIssues]
 
 
 def test_non_instruction_attribute():
     with pytest.raises(
         UniversiStructureError,
         match=re.escape(
-            "Found: 'dummy_attribute' attribute of type '<class 'str'>' in 'DummySubClass'. Only migration instructions and schema properties are allowed in version change class body.",
+            "Found: 'dummy_attribute' attribute of type '<class 'str'>' in 'DummySubClass'."
+            " Only migration instructions and schema properties are allowed in version change class body.",
         ),
     ):
 
@@ -151,7 +153,7 @@ def test_invalid_type_in_instructions():
 
         class DummySubClass(VersionChange):
             description = "dummy description"
-            instructions_to_migrate_to_previous_version = [True]  # pyright: ignore
+            instructions_to_migrate_to_previous_version = [True]  # pyright: ignore[reportGeneralTypeIssues]
 
 
 def test_incorrectly_sorted_versions():
@@ -233,7 +235,8 @@ def test__versions__one_version_change_attached_to_two_version_bundles__error(
     with pytest.raises(
         UniversiStructureError,
         match=re.escape(
-            "You tried to bind version change 'DummySubClassWithoutVersion' to two different versions. It is prohibited.",
+            "You tried to bind version change 'DummySubClassWithoutVersion' to two different versions."
+            " It is prohibited.",
         ),
     ):
         VersionBundle(Version(date(2000, 1, 1), dummy_sub_class_without_version))
@@ -245,7 +248,8 @@ def test__versions__one_version_change_attached_to_two_versions__error(
     with pytest.raises(
         UniversiStructureError,
         match=re.escape(
-            "You tried to bind version change 'DummySubClassWithoutVersion' to two different versions. It is prohibited.",
+            "You tried to bind version change 'DummySubClassWithoutVersion' to two different versions."
+            " It is prohibited.",
         ),
     ):
         VersionBundle(
@@ -266,7 +270,7 @@ def test__conversion_method__with_incorrect_structure():
     ):
 
         @convert_response_to_previous_version_for(some_endpoint)
-        def my_conversion_method(cls, response):
+        def my_conversion_method(cls: Any, response: Any):
             raise NotImplementedError
 
     with pytest.raises(
@@ -276,6 +280,6 @@ def test__conversion_method__with_incorrect_structure():
         ),
     ):
 
-        @convert_response_to_previous_version_for(some_endpoint)
+        @convert_response_to_previous_version_for(some_endpoint)  # pyright: ignore[reportGeneralTypeIssues]
         def my_conversion_method2():
             raise NotImplementedError

@@ -29,8 +29,7 @@ def get_another_version_of_module(
         module_from_old_version,
         new_version_dir,
     )
-    module = importlib.import_module(new_model_module_python_path)
-    return module
+    return importlib.import_module(new_model_module_python_path)
 
 
 def get_pythonpath_to_another_version_of_module(
@@ -50,8 +49,7 @@ def get_pythonpath_to_another_version_of_module(
     # ['package', 'companies', 'v2021_01_01', 'schemas']
     model_split_python_path[index_of_base_schema_dir] = new_version_dir.name
     # package.companies.v2021_01_01.schemas
-    new_model_module_python_path = ".".join(model_split_python_path)
-    return new_model_module_python_path
+    return ".".join(model_split_python_path)
 
 
 def get_index_of_base_schema_dir_in_pythonpath(

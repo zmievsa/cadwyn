@@ -25,7 +25,7 @@ class AlterResponseInstruction:
 
         functools.update_wrapper(self, self.method)
 
-    def __set_name__(self, owner, name):
+    def __set_name__(self, owner: type, name: str):
         self.owner = owner
 
     def __call__(self, data: dict[str, Any]) -> None:

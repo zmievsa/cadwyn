@@ -12,13 +12,12 @@ from universi import regenerate_dir_to_all_versions
 from universi.structure import Version, VersionBundle, VersionChange
 from universi.structure.enums import AlterEnumSubInstruction
 from universi.structure.schemas import AlterSchemaSubInstruction
-from universi.structure.versions import Version, VersionBundle, VersionChange
 
 CURRENT_DIR = Path(__file__).parent
 
 
 @pytest.fixture(autouse=True, scope="module")
-def remove_generated_files():
+def _remove_generated_files():
     yield
     shutil.rmtree(CURRENT_DIR / "_data/unions", ignore_errors=True)
     shutil.rmtree(CURRENT_DIR / "_data/v2000_01_01", ignore_errors=True)

@@ -20,10 +20,10 @@ class EnumDidntHaveMembersInstruction:
 class EnumInstructionFactory:
     enum_class: type[Enum]
 
-    def had(self, **enum_member_to_value_mapping) -> EnumHadMembersInstruction:
+    def had(self, **enum_member_to_value_mapping: Any) -> EnumHadMembersInstruction:
         return EnumHadMembersInstruction(self.enum_class, enum_member_to_value_mapping)
 
-    def didnt_have(self, *enum_members) -> EnumDidntHaveMembersInstruction:
+    def didnt_have(self, *enum_members: str) -> EnumDidntHaveMembersInstruction:
         return EnumDidntHaveMembersInstruction(self.enum_class, enum_members)
 
 

@@ -40,7 +40,7 @@ class FieldInfo(PydanticFieldInfo):
         )
 
 
-def Field(
+def Field(  # noqa: N802
     default: Any = Undefined,
     *,
     default_factory: Callable = Sentinel,

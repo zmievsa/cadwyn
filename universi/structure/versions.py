@@ -36,37 +36,7 @@ class VersionChange:
     def __init_subclass__(cls, _abstract: bool = False) -> None:
         if _abstract:
             return
-        if cls.description is Sentinel:
-            raise UniversiStructureError(
-                f"Version change description is not set on '{cls.__name__}' but is required.",
-            )
-        if cls.instructions_to_migrate_to_previous_version is Sentinel:
-            raise UniversiStructureError(
-                f"Attribute 'instructions_to_migrate_to_previous_version' is not set on '{cls.__name__}' but is required.",
-            )
-        if not isinstance(cls.instructions_to_migrate_to_previous_version, Sequence):
-            raise UniversiStructureError(
-                f"Attribute 'instructions_to_migrate_to_previous_version' must be a sequence in '{cls.__name__}'.",
-            )
-        for instruction in cls.instructions_to_migrate_to_previous_version:
-            if not isinstance(instruction, PossibleInstructions):
-                raise UniversiStructureError(
-                    f"Instruction '{instruction}' is not allowed. Please, use the correct instruction types",
-                )
-        for attr_name, attr_value in cls.__dict__.items():
-            if not isinstance(
-                attr_value,
-                AlterResponseInstruction | SchemaPropertyDefinitionInstruction,
-            ) and attr_name not in {
-                "description",
-                "side_effects",
-                "instructions_to_migrate_to_previous_version",
-                "__module__",
-                "__doc__",
-            }:
-                raise UniversiStructureError(
-                    f"Found: '{attr_name}' attribute of type '{type(attr_value)}' in '{cls.__name__}'. Only migration instructions and schema properties are allowed in version change class body.",
-                )
+        cls._validate_subclass()
 
         cls.alter_schema_instructions = []
         cls.alter_enum_instructions = []
@@ -93,6 +63,42 @@ class VersionChange:
 
         cls._check_no_subclassing()
         cls._bound_versions = None
+
+    @classmethod
+    def _validate_subclass(cls):
+        if cls.description is Sentinel:
+            raise UniversiStructureError(
+                f"Version change description is not set on '{cls.__name__}' but is required.",
+            )
+        if cls.instructions_to_migrate_to_previous_version is Sentinel:
+            raise UniversiStructureError(
+                f"Attribute 'instructions_to_migrate_to_previous_version' is not set on '{cls.__name__}'"
+                " but is required.",
+            )
+        if not isinstance(cls.instructions_to_migrate_to_previous_version, Sequence):
+            raise UniversiStructureError(
+                f"Attribute 'instructions_to_migrate_to_previous_version' must be a sequence in '{cls.__name__}'.",
+            )
+        for instruction in cls.instructions_to_migrate_to_previous_version:
+            if not isinstance(instruction, PossibleInstructions):
+                raise UniversiStructureError(
+                    f"Instruction '{instruction}' is not allowed. Please, use the correct instruction types",
+                )
+        for attr_name, attr_value in cls.__dict__.items():
+            if not isinstance(
+                attr_value,
+                AlterResponseInstruction | SchemaPropertyDefinitionInstruction,
+            ) and attr_name not in {
+                "description",
+                "side_effects",
+                "instructions_to_migrate_to_previous_version",
+                "__module__",
+                "__doc__",
+            }:
+                raise UniversiStructureError(
+                    f"Found: '{attr_name}' attribute of type '{type(attr_value)}' in '{cls.__name__}'."
+                    " Only migration instructions and schema properties are allowed in version change class body.",
+                )
 
     @classmethod
     def _check_no_subclassing(cls):

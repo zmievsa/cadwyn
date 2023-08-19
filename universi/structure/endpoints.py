@@ -4,25 +4,12 @@ from enum import Enum
 from typing import Any
 
 from fastapi import Response
-from fastapi.params import Body, Depends, Param
+from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute
 
 from .._utils import Sentinel
 from .common import Endpoint
-
-
-@dataclass(slots=True)
-class EndpointDidntHaveDependencyInstruction:
-    endpoint: Endpoint
-    dependency_name: str
-
-
-@dataclass(slots=True)
-class EndpointHadDependencyInstruction:
-    endpoint: Endpoint
-    dependency_name: str
-    dependency: Depends | Body | Param
 
 
 @dataclass(slots=True)
@@ -42,6 +29,11 @@ class EndpointAttributesPayload:
     path: str
     status_code: int
     tags: list[str | Enum]
+    # Adding/removing dependencies between versions seems like a bad choice.
+    # It makes the system overly complex. Instead, we allow people to
+    # overwrite all dependencies of a route at once. Hence you always know exactly
+    # which dependencies have been specified, no matter how many migrations you have.
+
     dependencies: Sequence[Depends]
     summary: str
     description: str
@@ -128,23 +120,6 @@ class EndpointInstructionFactory:
                 generate_unique_id_function=generate_unique_id_function,
             ),
         )
-
-
-# Adding/removing  dependencies between versions seems like a bad choice.
-# It makes the system overly complex.
-
-# def didnt_have_dependency(
-#     self,
-#     name: str,
-# ) -> EndpointDidntHaveDependencyInstruction:
-#     return EndpointDidntHaveDependencyInstruction(self.endpoint, name)
-
-# def had_dependency(
-#     self,
-#     name: str,
-#     dependency: Depends | Body | Param,
-# ) -> EndpointHadDependencyInstruction:
-#     return EndpointHadDependencyInstruction(self.endpoint, name, dependency)
 
 
 def endpoint(endpoint: Endpoint, /) -> EndpointInstructionFactory:

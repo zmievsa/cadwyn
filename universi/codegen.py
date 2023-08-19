@@ -7,7 +7,8 @@ import sys
 import textwrap
 from collections.abc import Callable, Generator, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import date
 from enum import Enum, auto
 from pathlib import Path
@@ -54,7 +55,7 @@ _dict_of_empty_field_info = {k: getattr(PydanticFieldInfo(), k) for k in Pydanti
 @dataclass(slots=True)
 class ModelInfo:
     fields: dict[_FieldName, tuple[type[BaseModel], ModelField]]
-    properties: dict[_PropertyName, Callable[[Any], Any]] = field(default_factory=dict)
+    properties: dict[_PropertyName, Callable[[Any], Any]] = dataclass_field(default_factory=dict)
 
 
 # TODO: Add enum alteration here
@@ -122,7 +123,7 @@ def _get_unionized_version_of_module(
         ]
         + [
             ast.Name(
-                f"\n{node.name}Union: typing.TypeAlias = {' | '.join(f'{module}.{node.name}' for module in imported_modules)}",
+                f"\n{node.name}Union: typing.TypeAlias = {' | '.join(f'{m}.{node.name}' for m in imported_modules)}",
             )
             if isinstance(node, ast.ClassDef)
             else node
@@ -169,7 +170,9 @@ def _apply_alter_schema_instructions(
             if alter_schema_instruction.type is not Sentinel:
                 if model_field.annotation == alter_schema_instruction.type:
                     raise InvalidGenerationInstructionError(
-                        f"You tried to change the type of field '{alter_schema_instruction.field_name}' to '{alter_schema_instruction.type}' in {schema.__name__} but it already has type '{model_field.annotation}'",
+                        f"You tried to change the type of field '{alter_schema_instruction.field_name}' to"
+                        f" '{alter_schema_instruction.type}' in {schema.__name__} but it already has type"
+                        f" '{model_field.annotation}'",
                     )
                 model_field.annotation = alter_schema_instruction.type
                 model_field.type_ = convert_generics(alter_schema_instruction.type)
@@ -183,7 +186,8 @@ def _apply_alter_schema_instructions(
                     model_field.field_info = field_info
                 else:
                     raise InvalidGenerationInstructionError(
-                        f"You have defined a Field using pydantic.fields.Field but you must use universi.Field in {schema.__name__}",
+                        f"You have defined a Field using pydantic.fields.Field"
+                        f" but you must use universi.Field in {schema.__name__}",
                     )
             for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
                 attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
@@ -240,8 +244,7 @@ def _apply_alter_enum_instructions(
                     raise InvalidGenerationInstructionError(
                         f"Enum member '{member}' already exists in enum '{enum_path}' with the same value",
                     )
-                else:
-                    enum_member_to_value[1][member] = member_value
+                enum_member_to_value[1][member] = member_value
         else:
             assert_never(alter_enum_instruction)
 
@@ -339,8 +342,7 @@ def _get_fields_for_model(
         for field_name, field in cls.__fields__.items():
             if field_name not in actual_fields and field_name in cls.__annotations__:
                 actual_fields[field_name] = (cls, field)
-    else:
-        raise CodeGenerationError(f"Model {model} is not a subclass of BaseModel")
+    raise CodeGenerationError(f"Model {model} is not a subclass of BaseModel")
 
 
 def _parse_python_module(module: ModuleType) -> ast.Module:
@@ -360,7 +362,7 @@ def _parse_python_module(module: ModuleType) -> ast.Module:
 
 
 def _migrate_module_to_another_version(
-    module,
+    module: ModuleType,
     modified_schemas: dict[str, ModelInfo],
     modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ) -> str:
@@ -433,7 +435,7 @@ def _modify_schema_cls(
                             custom_repr(_get_field_from_field_info(field[1], attr)),
                         ),
                     )
-                    # TODO: We should lint the code to make sure that the user is not using pydantic.fields.Field instead of universi.Field
+                    # TODO: We must lint to make sure the user is not using pydantic.Field instead of universi.Field
                     for attr in getattr(
                         field[1].field_info,
                         "_universi_field_names",

@@ -24,7 +24,7 @@ def get_universi_dependency(
         extra_kwargs = extra_kwargs_to_header_constructor | {"default": default_version}
 
     async def dependency(
-        api_version: datetime.date = Header(alias=version_header_name, **extra_kwargs),
+        api_version: datetime.date = Header(alias=version_header_name, **extra_kwargs),  # noqa: B008
     ):
         api_version_var.set(api_version)
         return api_version

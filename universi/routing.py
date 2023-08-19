@@ -1,16 +1,15 @@
 import datetime
 import functools
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from enum import Enum
 from pathlib import Path
-from threading import Lock
 from types import GenericAlias, MappingProxyType, ModuleType
 from typing import (
     Any,
     TypeVar,
-    _BaseGenericAlias,  # pyright: ignore
+    _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
     cast,
     get_args,
     get_origin,
@@ -30,7 +29,6 @@ from starlette.routing import (
     BaseRoute,
     request_response,
 )
-from starlette.routing import Mount as Mount  # noqa
 from typing_extensions import Self, assert_never
 
 from universi._utils import Sentinel, get_another_version_of_cls
@@ -50,7 +48,7 @@ AnnotationChanger = Callable[[Any, Path, "AnnotationChanger"], Any]
 
 def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
     def decorator(f: Callable) -> _T:
-        return f  # pyright: ignore
+        return f  # pyright: ignore[reportGeneralTypeIssues]
 
     return decorator
 
@@ -59,13 +57,14 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
     @same_definition_as_in(fastapi.routing.APIRouter.__init__)
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._deleted_routes = []
+        self._deleted_routes: list[APIRoute] = []
 
     def only_exists_in_older_versions(self, endpoint: _T) -> _T:
-        index = _get_route_index(self.routes, endpoint)
-        if index is None:
+        index, route = _get_index_and_route(self.routes, endpoint)
+        if index is None or route is None:
             raise LookupError(f"Route not found on endpoint: '{endpoint.__name__}'")
-        self._deleted_routes.append(self.routes.pop(index))
+        self.routes.pop(index)
+        self._deleted_routes.append(route)
         return endpoint
 
     def create_versioned_copies(
@@ -134,43 +133,50 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
             router = deepcopy(router)
             for version_change in version.version_changes:
                 for instruction in version_change.alter_endpoint_instructions:
-                    original_route_index = _get_route_index(
+                    original_route_index, original_route = _get_index_and_route(
                         router.routes,
                         instruction.endpoint,
                     )
                     if isinstance(instruction, EndpointDidntExistInstruction):
                         if original_route_index is None:
                             raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint.__name__}' you tried to delete in '{version_change.__name__}' doesn't exist in new version",
+                                f"Endpoint '{instruction.endpoint.__name__}' you tried to delete in"
+                                f" '{version_change.__name__}' doesn't exist in new version",
                             )
                         router.routes.pop(original_route_index)
                     elif isinstance(instruction, EndpointExistedInstruction):
                         if original_route_index is not None:
                             raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint.__name__}' you tried to re-create in '{version_change.__name__}' already existed in newer versions",
+                                f"Endpoint '{instruction.endpoint.__name__}' you tried to re-create in"
+                                f" '{version_change.__name__}' already existed in newer versions",
                             )
-                        deleted_route_index = _get_route_index(
-                            router._deleted_routes,
-                            instruction.endpoint,
-                        )
+                        deleted_route_index, _ = _get_index_and_route(router._deleted_routes, instruction.endpoint)
                         if deleted_route_index is None:
                             raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint.__name__}' you tried to re-create in '{version_change.__name__}' wasn't among the deleted routes",
+                                f"Endpoint '{instruction.endpoint.__name__}' you tried to re-create in"
+                                f" '{version_change.__name__}' wasn't among the deleted routes",
                             )
                         router.routes.append(
                             router._deleted_routes.pop(deleted_route_index),
                         )
                     elif isinstance(instruction, EndpointHadInstruction):
-                        if original_route_index is None:
+                        if original_route_index is None or original_route is None:
                             raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint.__name__}' you tried to delete in '{version_change.__name__}' doesn't exist in new version",
+                                f"Endpoint '{instruction.endpoint.__name__}' you tried to delete in"
+                                f" '{version_change.__name__}' doesn't exist in new version",
                             )
-                        route = router.routes[original_route_index]
                         for attr_name in instruction.attributes.__dataclass_fields__:
                             attr = getattr(instruction.attributes, attr_name)
                             if attr is not Sentinel:
-                                assert getattr(route, attr_name) != attr
-                                setattr(route, attr_name, attr)
+                                if getattr(original_route, attr_name) == attr:
+                                    raise RouterGenerationError(
+                                        f"Expected attribute '{attr_name}' of endpoint"
+                                        f" '{original_route.endpoint.__name__}' to be different in"
+                                        f" '{version_change.__name__}', but it was the same."
+                                        " It means that your version change has no effect on the attribute"
+                                        " and can be removed.",
+                                    )
+                                setattr(original_route, attr_name, attr)
                     else:
                         assert_never(instruction)
         return routers
@@ -254,7 +260,9 @@ def _change_versions_of_a_non_container_annotation(
 
         new_callable: Any = cast(Any, new_callable)
         new_callable.__annotations__ = _change_versions_of_all_annotations(
-            callable_annotations, version_dir, change_simple_annotation
+            callable_annotations,
+            version_dir,
+            change_simple_annotation,
         )
         new_callable.__defaults__ = _change_versions_of_all_annotations(
             tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
@@ -299,10 +307,13 @@ def _generate_signature(
     )
 
 
-def _get_route_index(routes: list[BaseRoute], endpoint: Endpoint):
+def _get_index_and_route(
+    routes: Sequence[BaseRoute | APIRoute],
+    endpoint: Endpoint,
+) -> tuple[int, APIRoute] | tuple[None, None]:
     for index, route in enumerate(routes):
         if isinstance(route, APIRoute) and (
             route.endpoint == endpoint or getattr(route.endpoint, "func", None) == endpoint
         ):
-            return index
-    return None
+            return index, route
+    return None, None

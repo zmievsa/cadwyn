@@ -35,7 +35,7 @@ async def get_user(user_id: int):
 
 
 class ChangeAddressToList(VersionChange):
-    description = "Change user address to a list of strings to " "allow the user to specify multiple addresses"
+    description = "Change user address to a list of strings to allow the user to specify multiple addresses"
     instructions_to_migrate_to_previous_version = (
         # You should use schema inheritance if you don't want to repeat yourself in such cases
         schema(UserCreateRequest).field("addresses").didnt_exist,

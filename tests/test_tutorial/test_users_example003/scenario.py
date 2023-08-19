@@ -1,4 +1,4 @@
-from .schemas.unions.users import UserCreateRequestUnion
+from .schemas.unions.users import UserCreateRequestUnion  # pyright: ignore[reportMissingImports]
 
 
 class UserScenario:

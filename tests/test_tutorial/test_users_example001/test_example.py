@@ -3,7 +3,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from universi import (
@@ -17,7 +17,7 @@ from .schemas import latest
 from .users import router, versions
 
 
-def get_app(router):
+def get_app(router: APIRouter) -> FastAPI:
     app = FastAPI(
         dependencies=[get_universi_dependency(version_header_name="X-API-VERSION")],
     )
@@ -51,12 +51,11 @@ def testclient_2001(routers: dict[date, VersionedAPIRouter]) -> TestClient:
 
 
 def test__2000(testclient_2000: TestClient):
-    # insert_assert(testclient_2000.get("/users/1").json())
     assert testclient_2000.get("/users/1").json() == {
         "id": 1,
         "address": "123 Example St",
     }
-    # insert_assert(testclient_2000.post("/users", json={"name": "MyUser", "address": "123"}).json())
+
     assert testclient_2000.post(
         "/users",
         json={"name": "MyUser", "address": "123"},
@@ -67,12 +66,11 @@ def test__2000(testclient_2000: TestClient):
 
 
 def test__2001(testclient_2001: TestClient):
-    # insert_assert(testclient_2001.get("/users/2").json())
     assert testclient_2001.get("/users/2").json() == {
         "id": 2,
         "addresses": ["123 Example St", "456 Main St"],
     }
-    # insert_assert(testclient_2001.post("/users", json={"name": "MyUser", "addresses": ["124"]}).json())
+
     assert testclient_2001.post(
         "/users",
         json={"name": "MyUser", "addresses": ["124"]},

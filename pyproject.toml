@@ -74,7 +74,6 @@ select = [
     "BLE",      # flake8-blind-except
     "FBT003",   # flake8-boolean-trap
     "B",        # flake8-bugbear
-    "A",        # flake8-builtins
     "COM",      # flake8-commas
     "C4",       # flake8-comprehensions
     "T10",      # flake8-debugger
@@ -110,15 +109,15 @@ unfixable = [
     "ERA001",   # eradicate: found commented out code (can be dangerous if fixed automatically)
 ]
 ignore = [
-    "A002",   # builtin shadowing in arguments
-    "A003",   # builtin shadowing in attributes
     "D203",   # 1 blank line required before class docstring
     "ARG002", # Unused method argument
     "TRY003", # Avoid specifying long messages outside the exception class
     "TRY300", # Consider moving statement into the else clause
     "ARG001", # Unused first argument
     "PT019",  # Fixture without value is injected as parameter, use @pytest.mark.usefixtures instead
-    "SIM108"  # Use ternary operator instead of if-else block (ternaries lie to coverage)
+    "SIM108", # Use ternary operator instead of if-else block (ternaries lie to coverage)
+    "RET505", # Unnecessary `else` after `return` statement
+    "N805",   # First argument of a method should be named `self`
 ]
 extend-exclude = ["migrations"]
 
@@ -127,6 +126,9 @@ extend-exclude = ["migrations"]
     "S",        # ignore bandit security issues in tests
     "B018",     # ignore useless expressions in tests
     "PT012",    # ignore complex with pytest.raises clauses
+]
+"universi/_utils.py" = [
+    "ERA001"    # Found commented-out code (it's not actually commented out. It's just comments)
 ]
 
 
