@@ -55,6 +55,6 @@ def generate_test_version_packages(
         ),
     )
 
-    from tests._data import v2000_01_01, v2001_01_01
+    from tests._data import v2000_01_01, v2001_01_01  # pyright: ignore[reportGeneralTypeIssues]
 
     return v2000_01_01, v2001_01_01

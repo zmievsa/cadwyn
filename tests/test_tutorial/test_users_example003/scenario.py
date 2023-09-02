@@ -1,8 +1,8 @@
-from .schemas.unions.users import UserCreateRequestUnion  # pyright: ignore[reportMissingImports]
+from .schemas.unions.users import UserCreateRequest  # pyright: ignore[reportMissingImports]
 
 
 class UserScenario:
-    async def create_user(self, payload: UserCreateRequestUnion):
+    async def create_user(self, payload: UserCreateRequest):
         return {
             "id": 83,
             "_prefetched_addresses": [{"id": 100, "value": payload.default_address}],

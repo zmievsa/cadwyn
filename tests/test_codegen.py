@@ -408,16 +408,13 @@ def test__codegen_unions__init_file():
     generate_test_version_packages()
     from tests._data import v2000_01_01, v2001_01_01  # pyright: ignore[reportGeneralTypeIssues]
     from tests._data.unions import (  # pyright: ignore[reportMissingImports]
-        EnumWithOneMemberUnion,
-        SchemaWithOneIntFieldUnion,
+        EnumWithOneMember,
+        SchemaWithOneIntField,
     )
 
+    assert EnumWithOneMember == v2000_01_01.EnumWithOneMember | v2001_01_01.EnumWithOneMember | latest.EnumWithOneMember
     assert (
-        EnumWithOneMemberUnion
-        == v2000_01_01.EnumWithOneMember | v2001_01_01.EnumWithOneMember | latest.EnumWithOneMember
-    )
-    assert (
-        SchemaWithOneIntFieldUnion
+        SchemaWithOneIntField
         == v2000_01_01.SchemaWithOneIntField | v2001_01_01.SchemaWithOneIntField | latest.SchemaWithOneIntField
     )
 
@@ -425,11 +422,11 @@ def test__codegen_unions__init_file():
 def test__codegen_unions__regular_file():
     generate_test_version_packages()
     from tests._data.latest.some_schema import MySchema as MySchemaLatest
-    from tests._data.unions.some_schema import MySchemaUnion  # pyright: ignore[reportMissingImports]
+    from tests._data.unions.some_schema import MySchema  # pyright: ignore[reportMissingImports]
     from tests._data.v2000_01_01.some_schema import MySchema as MySchema2000  # pyright: ignore[reportMissingImports]
     from tests._data.v2001_01_01.some_schema import MySchema as MySchema2001  # pyright: ignore[reportMissingImports]
 
-    assert MySchemaUnion == MySchema2000 | MySchema2001 | MySchemaLatest
+    assert MySchema == MySchema2000 | MySchema2001 | MySchemaLatest
 
 
 def test__codegen_property():

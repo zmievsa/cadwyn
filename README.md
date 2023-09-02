@@ -199,7 +199,7 @@ uvicorn.run(router_versions[date(2002, 1, 1)])
 
 Universi has generated multiple things in this code:
 
-* Three versions of our schemas: one for each API version and one that includes definitions of unions of all versions for each schema which will be useful when you want to type check that you are using requests of different versions correctly. For example, we'll have `UserCreateRequestUnion` defined there which is a `TypeAlias` pointing to the union of 2002 version and 2001 version of `UserCreateRequest`.
+* Three versions of our schemas: one for each API version and one that includes definitions of unions of all versions for each schema which will be useful when you want to type check that you are using requests of different versions correctly. For example, we'll have `UserCreateRequest` defined there which is a `TypeAlias` pointing to the union of 2002 version and 2001 version of `UserCreateRequest`.
 * Two versions of our API router: one for each API version
 
 You can now just pick a router by its version and run it separately or use a parent router/app to specify the logic by which you'd like to pick a version. I recommend using a header-based router with version dates as headers. And yes, that's how Stripe does it.
@@ -391,23 +391,23 @@ Instead, we take a union of all of our request schemas and write our business lo
 For example, if we had a schema named `MySchema` and two versions of it: 2000 and 2001, then the union definition will look like the following:
 
 ```python
-import src.versions.v2000_01_01.my_schema_module
-import src.versions.v2001_01_01.my_schema_module
-import src.versions.latest.my_schema_module
+from ..latest import my_schema_module as latest_my_schema_module
+from ..v2000_01_01 import my_schema_module as v2000_01_01_my_schema_module
+from ..v2001_01_01 import my_schema_module as v2001_01_01_my_schema_module
 
-MySchemaUnion = (
-    versions.v2000_01_01.my_schema_module.MySchema |
-    versions.v2001_01_01.my_schema_module.MySchema |
-    versions.latest.my_schema_module.MySchema
+MySchema = (
+    latest_my_schema_module.MySchema |
+    v2000_01_01_my_schema_module.MySchema |
+    v2001_01_01_my_schema_module.MySchema
 )
 ```
 
 and you would be able to use it like so:
 
 ```python
-from src.versions.unions.my_schema_module import MySchemaUnion
+from src.versions.unions.my_schema_module import MySchema
 
-async def the_entrypoint_of_my_business_logic(request_payload: MySchemaUnion):
+async def the_entrypoint_of_my_business_logic(request_payload: MySchema):
     ...
 
 ```
@@ -482,3 +482,11 @@ Universi automatically converts your data to a correct version and has "version 
 Universi has such default variable defined as `universi.api_version_var`. You can also use `universi.get_universi_dependency` to get a `fastapi.Depends` that automatically sets this contextvar based on a header name that you pick.
 
 You can also set the variable yourself or even pass a different compatible contextvar to your `universi.VersionBundle` constructor.
+
+## Similar projects
+
+The following projects are trying to accomplish similar results with a lot more simplistic functionality.
+
+* <https://github.com/sjkaliski/pinned>
+* <https://github.com/lukepolo/laravel-api-migrations>
+* <https://github.com/tomschlick/request-migrations>

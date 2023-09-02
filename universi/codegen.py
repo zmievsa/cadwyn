@@ -58,6 +58,18 @@ class ModelInfo:
     properties: dict[_PropertyName, Callable[[Any], Any]] = dataclass_field(default_factory=dict)
 
 
+class ImportedModule:
+    __slots__ = ("path", "name", "alias")
+
+    def __init__(self, version_dir: str, import_pythonpath_template: str, package_name: str) -> None:
+        self.path = import_pythonpath_template.format(version_dir)
+        self.name = package_name.format(version_dir)
+        if self.path == "":
+            self.alias = self.name
+        else:
+            self.alias = f"{self.path.replace('.', '_')}_{self.name}"
+
+
 # TODO: Add enum alteration here
 def regenerate_dir_to_all_versions(
     template_module: ModuleType,
@@ -82,7 +94,7 @@ def regenerate_dir_to_all_versions(
 def _generate_union_directory(template_module: ModuleType, versions: VersionBundle):
     template_dir = _get_package_path_from_module(template_module)
     union_dir = template_dir.with_name("unions")
-    index_of_base_schema_in_pythonpath = get_index_of_base_schema_dir_in_pythonpath(
+    index_of_latest_schema_dir_in_pythonpath = get_index_of_base_schema_dir_in_pythonpath(
         template_module,
         union_dir,
     )
@@ -93,7 +105,7 @@ def _generate_union_directory(template_module: ModuleType, versions: VersionBund
         new_module_text = _get_unionized_version_of_module(
             original_module,
             versions,
-            index_of_base_schema_in_pythonpath,
+            index_of_latest_schema_dir_in_pythonpath,
         )
         parallel_file.write_text(new_module_text)
 
@@ -101,29 +113,43 @@ def _generate_union_directory(template_module: ModuleType, versions: VersionBund
 def _get_unionized_version_of_module(
     original_module: ModuleType,
     versions: VersionBundle,
-    index_of_base_schema_in_pythonpath: int,
+    index_of_latesst_schema_dir_in_pythonpath: int,
 ):
     original_module_parts = original_module.__name__.split(".")
-    original_module_parts[index_of_base_schema_in_pythonpath] = "{}"
-
-    import_pythonpath_template = (".".join(original_module_parts)).removesuffix(
-        ".__init__",
+    original_module_parts[index_of_latesst_schema_dir_in_pythonpath] = "{}"
+    how_far_up_is_base_schema_dir_from_current_module = (
+        len(original_module_parts) - index_of_latesst_schema_dir_in_pythonpath
     )
-    imported_modules = [
-        import_pythonpath_template.format(_get_version_dir_name(version.date)) for version in versions.versions
+    if original_module_parts[-1] == "__init__":
+        original_module_parts.pop(-1)
+    imported_modules = _prepare_unionized_imports(
+        versions, index_of_latesst_schema_dir_in_pythonpath, original_module_parts
+    )
+    imports = [
+        ast.ImportFrom(module="universi", names=[ast.alias(name="Field")], level=0),
+        ast.Import(names=[ast.alias(name="typing")], level=0),
+        *[
+            ast.ImportFrom(
+                level=how_far_up_is_base_schema_dir_from_current_module,
+                module=module.path,
+                names=[
+                    ast.Name(module.name)
+                    if module.alias == module.name
+                    else ast.alias(
+                        name=module.name,
+                        asname=module.alias,
+                    )
+                ],
+            )
+            for module in imported_modules
+        ],
     ]
-    imported_modules += [import_pythonpath_template.format("latest")]
     parsed_file = _parse_python_module(original_module)
-
     body = ast.Module(
-        [
-            ast.ImportFrom(module="universi", names=[ast.alias(name="Field")], level=0),
-            ast.Import(names=[ast.alias(name="typing")], level=0),
-            *[ast.Import(names=[ast.Name(module)]) for module in imported_modules],
-        ]
+        imports
         + [
             ast.Name(
-                f"\n{node.name}Union: typing.TypeAlias = {' | '.join(f'{m}.{node.name}' for m in imported_modules)}",
+                f"\n{node.name}: typing.TypeAlias = {' | '.join(f'{m.alias}.{node.name}' for m in imported_modules)}",
             )
             if isinstance(node, ast.ClassDef)
             else node
@@ -133,6 +159,24 @@ def _get_unionized_version_of_module(
     )
 
     return ast.unparse(body)
+
+
+def _prepare_unionized_imports(
+    versions: VersionBundle,
+    index_of_latest_schema_dir_in_pythonpath: int,
+    original_module_parts: list[str],
+) -> list[ImportedModule]:
+    # package.latest                     -> from .. import latest
+    # package.latest.module              -> from ...latest import module
+    # package.latest.subpackage          -> from ...latest import subpackage
+    # package.latest.subpackage.module   -> from ....subpackage import module
+
+    package_name = original_module_parts[-1]
+    package_path = original_module_parts[index_of_latest_schema_dir_in_pythonpath:-1]
+
+    import_pythonpath_template = ".".join(package_path)
+    version_dirs = ["latest"] + [_get_version_dir_name(version.date) for version in versions.versions]
+    return [ImportedModule(version_dir, import_pythonpath_template, package_name) for version_dir in version_dirs]
 
 
 def _apply_migrations(
