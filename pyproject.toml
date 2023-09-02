@@ -34,6 +34,7 @@ classifiers = [
 python = "^3.10"
 typing-extensions = "*"
 fastapi = ">=0.96.1"
+pydantic = "^1.10.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "*"
@@ -45,6 +46,7 @@ devtools = "*"
 pdbpp = "^0.10.3"
 pytest-pretty = "^1.2.0"
 pytest-asyncio = "^0.21.0"
+
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
