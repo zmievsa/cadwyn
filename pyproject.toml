@@ -6,6 +6,29 @@ authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/ovsyanka83/universi"
+classifiers = [
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python",
+    "Topic :: Internet",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development",
+    "Typing :: Typed",
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: AsyncIO",
+    "Framework :: FastAPI",
+    "Framework :: Pydantic",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Internet :: WWW/HTTP",
+]
+
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -17,14 +40,11 @@ black = "*"
 ruff = "*"
 pytest = ">=7.2.1"
 pytest-cov = ">=4.0.0"
-httpx = ">=0.23.0"
 uvicorn = "*"
 devtools = "*"
 pdbpp = "^0.10.3"
 pytest-pretty = "^1.2.0"
-notebook = "^6.5.4"
 pytest-asyncio = "^0.21.0"
-dirty-equals = "^0.6.0"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
