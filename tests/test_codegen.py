@@ -4,6 +4,7 @@ import re
 from datetime import date
 from enum import Enum, auto
 from pathlib import Path
+import time
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from universi.structure import (
     enum,
     schema,
 )
+import sys
 
 
 @pytest.fixture(autouse=True)
@@ -78,6 +80,8 @@ def test__enum_had__original_enum_is_empty():
 
 
 def test__enum_had__original_enum_is_nonempty():
+    if sys.platform.startswith("win"):
+        time.sleep(1)
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         enum(latest.EnumWithOneMember).had(b=7),
     )
