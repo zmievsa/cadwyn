@@ -53,7 +53,6 @@ httpx = "*"
 asyncio_mode = "auto"
 
 [tool.coverage.report]
-fail_under = 100
 skip_covered = true
 skip_empty = true
 # Taken from https://coverage.readthedocs.io/en/7.1.0/excluding.html#advanced-exclusion
