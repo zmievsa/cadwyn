@@ -12,7 +12,7 @@ from dataclasses import field as dataclass_field
 from datetime import date
 from enum import Enum, auto
 from pathlib import Path
-from types import GenericAlias, LambdaType, ModuleType
+from types import GenericAlias, LambdaType, ModuleType, NoneType
 from typing import (
     Any,
     TypeAlias,
@@ -26,6 +26,7 @@ from pydantic.fields import FieldInfo as PydanticFieldInfo
 from pydantic.fields import ModelField
 from pydantic.typing import convert_generics
 from typing_extensions import assert_never
+from universi._utils import UnionType
 
 from universi.structure.enums import (
     AlterEnumSubInstruction,
@@ -41,8 +42,7 @@ from universi.structure.schemas import (
     SchemaPropertyDidntExistInstruction,
 )
 from universi.structure.versions import Version, VersionBundle
-
-from ._utils import Sentinel, get_index_of_base_schema_dir_in_pythonpath
+from ._utils import UnionType, Sentinel, get_index_of_base_schema_dir_in_pythonpath
 from .exceptions import CodeGenerationError, InvalidGenerationInstructionError
 from .fields import FieldInfo
 
@@ -53,8 +53,15 @@ _dict_of_empty_field_info = {k: getattr(PydanticFieldInfo(), k) for k in Pydanti
 
 
 @dataclass(slots=True)
+class ModelFieldLike:
+    name: str
+    annotation: Any
+    field_info: FieldInfo
+
+
+@dataclass(slots=True)
 class ModelInfo:
-    fields: dict[_FieldName, tuple[type[BaseModel], ModelField]]
+    fields: dict[_FieldName, tuple[type[BaseModel], ModelField | ModelFieldLike]]
     properties: dict[_PropertyName, Callable[[Any], Any]] = dataclass_field(default_factory=dict)
 
 
@@ -219,8 +226,6 @@ def _apply_alter_schema_instructions(
                         f" '{model_field.annotation}'",
                     )
                 model_field.annotation = alter_schema_instruction.type
-                model_field.type_ = convert_generics(alter_schema_instruction.type)
-                model_field.outer_type_ = alter_schema_instruction.type
             field_info = model_field.field_info
 
             if not isinstance(field_info, FieldInfo):
@@ -241,12 +246,10 @@ def _apply_alter_schema_instructions(
         elif isinstance(alter_schema_instruction, OldSchemaHadField):
             field_name_to_field_model[alter_schema_instruction.field_name] = (
                 schema,
-                ModelField(
+                ModelFieldLike(
                     name=alter_schema_instruction.field_name,
-                    type_=alter_schema_instruction.type,
+                    annotation=alter_schema_instruction.type,
                     field_info=alter_schema_instruction.field,
-                    class_validators=None,
-                    model_config=BaseConfig,
                 ),
             )
         elif isinstance(alter_schema_instruction, SchemaPropertyDefinitionInstruction):
@@ -376,8 +379,8 @@ def _generate_parallel_directory(
 
 def _get_fields_for_model(
     model: type[BaseModel],
-) -> dict[_FieldName, tuple[type[BaseModel], ModelField]]:
-    actual_fields: dict[_FieldName, tuple[type[BaseModel], ModelField]] = {}
+) -> dict[_FieldName, tuple[type[BaseModel], ModelField | ModelFieldLike]]:
+    actual_fields: dict[_FieldName, tuple[type[BaseModel], ModelField | ModelFieldLike]] = {}
     for cls in model.__mro__:
         if cls is BaseModel:
             return actual_fields
@@ -468,7 +471,7 @@ def _modify_schema_cls(
     field_definitions = [
         ast.AnnAssign(
             target=ast.Name(name, ctx=ast.Store()),
-            annotation=ast.Name(custom_repr(field[1].annotation)),
+            annotation=ast.Name(custom_repr(field.annotation)),
             value=ast.Call(
                 func=ast.Name("Field"),
                 args=[],
@@ -476,12 +479,12 @@ def _modify_schema_cls(
                     ast.keyword(
                         arg=attr,
                         value=ast.Name(
-                            custom_repr(_get_field_from_field_info(field[1], attr)),
+                            custom_repr(_get_attribute_from_field_info(field, attr)),
                         ),
                     )
                     # TODO: We must lint to make sure the user is not using pydantic.Field instead of universi.Field
                     for attr in getattr(
-                        field[1].field_info,
+                        field.field_info,
                         "_universi_field_names",
                         (),
                     )
@@ -489,7 +492,7 @@ def _modify_schema_cls(
             ),
             simple=1,
         )
-        for name, field in model_info.fields.items()
+        for name, (_, field) in model_info.fields.items()
     ]
     property_definitions = [_make_property_ast(name, func) for name, func in model_info.properties.items()]
     old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Pass | ast.Ellipsis)]
@@ -499,7 +502,7 @@ def _modify_schema_cls(
     return cls_node
 
 
-def _get_field_from_field_info(field: ModelField, attr: str) -> Any:
+def _get_attribute_from_field_info(field: ModelField | ModelFieldLike, attr: str) -> Any:
     field_value = getattr(field.field_info, attr, Sentinel)
     if field_value is Sentinel:
         field_value = field.field_info.extra.get(attr, Sentinel)
@@ -562,17 +565,22 @@ def custom_repr(value: Any) -> Any:
         )
     if isinstance(value, _BaseGenericAlias | GenericAlias):
         return f"{custom_repr(get_origin(value))}[{', '.join(custom_repr(a) for a in get_args(value))}]"
+    if value is None or value is NoneType:
+        return "None"
     if isinstance(value, type):
         # TODO: Add tests for constrained types
         # TODO: Be wary of this hack when migrating to pydantic v2
         # This is a hack for pydantic's Constrained types
-        if value.__name__.startswith("Constrained") and hasattr(value, "__origin__") and hasattr(value, "__args__"):
+        if value.__name__.startswith("Constrained"):
+            # No, get_origin and get_args don't work here. No idea why
             return custom_repr(value.__origin__[value.__args__])
         return value.__name__
     if isinstance(value, Enum):
         return PlainRepr(f"{value.__class__.__name__}.{value.name}")
     if isinstance(value, auto):
         return PlainRepr("auto()")
+    if isinstance(value, UnionType):
+        return "typing.Union[" + (", ".join(custom_repr(a) for a in get_args(value))) + "]"
     if isinstance(value, LambdaType) and _LambdaFunctionName == value.__name__:
         # We clean source because getsource() can return only a part of the expression which
         # on its own is not a valid expression such as: "\n  .had(default_factory=lambda: 91)"

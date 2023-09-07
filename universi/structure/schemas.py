@@ -143,7 +143,7 @@ class AlterFieldInstructionFactory:
     def didnt_exist(self) -> OldSchemaDidntHaveField:
         return OldSchemaDidntHaveField(self.schema, field_name=self.name)
 
-    def existed_with(self, *, type: type, info: FieldInfo) -> OldSchemaHadField:
+    def existed_with(self, *, type: Any, info: FieldInfo) -> OldSchemaHadField:
         return OldSchemaHadField(
             self.schema,
             field_name=self.name,

@@ -64,3 +64,8 @@ class NonPydanticSchema:
 
 class SchemaThatOverridesField(SchemaWithOneIntField):
     foo: bytes
+
+
+class SchemaWithUnionFields(BaseModel):
+    foo: int | str
+    bar: EmptySchema | None

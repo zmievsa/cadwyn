@@ -408,6 +408,24 @@ def test__codegen__with_weird_data_types():
     )
 
 
+def test__codegen_union_fields():
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(
+        schema(latest.SchemaWithUnionFields).field("baz").existed_with(type="EmptySchema", info=Field()),
+    )
+
+    assert inspect.getsource(v2000_01_01.SchemaWithUnionFields) == (
+        "class SchemaWithUnionFields(BaseModel):\n"
+        "    foo: typing.Union[int, str] = Field()\n"
+        "    bar: typing.Union[EmptySchema, None] = Field()\n"
+        "    baz: 'EmptySchema' = Field()\n"
+    )
+    assert inspect.getsource(v2001_01_01.SchemaWithUnionFields) == (
+        "class SchemaWithUnionFields(BaseModel):\n"
+        "    foo: typing.Union[int, str] = Field()\n"
+        "    bar: typing.Union[EmptySchema, None] = Field()\n"
+    )
+
+
 def test__codegen_unions__init_file():
     generate_test_version_packages()
     from tests._data import v2000_01_01, v2001_01_01  # pyright: ignore[reportGeneralTypeIssues]

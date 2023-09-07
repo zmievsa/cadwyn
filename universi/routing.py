@@ -14,6 +14,7 @@ from typing import (
     get_args,
     get_origin,
 )
+import typing
 
 import fastapi.routing
 from fastapi.dependencies.utils import (
@@ -31,8 +32,8 @@ from starlette.routing import (
 )
 from typing_extensions import Self, assert_never
 
-from universi._utils import Sentinel, get_another_version_of_cls
-from universi.codegen import _get_version_dir_path
+from universi._utils import Sentinel, get_another_version_of_cls, UnionType
+from universi.codegen import _get_package_path_from_module, _get_version_dir_path
 from universi.exceptions import RouterGenerationError
 from universi.structure.common import Endpoint
 from universi.structure.endpoints import (
@@ -43,7 +44,7 @@ from universi.structure.endpoints import (
 from universi.structure.versions import VersionBundle
 
 _T = TypeVar("_T", bound=Callable[..., Any])
-AnnotationChanger = Callable[[Any, Path, "AnnotationChanger"], Any]
+AnnotationChanger = Callable[[Any, Path, "AnnotationChanger", frozenset[Path]], Any]
 
 
 def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
@@ -59,6 +60,7 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         super().__init__(*args, **kwargs)
         self._deleted_routes: list[APIRoute] = []
 
+    # TODO: Raise error if endpoint was marked with this but was never used in any version
     def only_exists_in_older_versions(self, endpoint: _T) -> _T:
         index, route = _get_index_and_route(self.routes, endpoint)
         if index is None or route is None:
@@ -76,7 +78,13 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
         # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
         change_simple_annotation = functools.cache(_change_versions_of_a_non_container_annotation)
-
+        if latest_schemas_module is not None:
+            version_dirs = frozenset(
+                [_get_package_path_from_module(latest_schemas_module)]
+                + [_get_version_dir_path(latest_schemas_module, version.date) for version in versions.versions],
+            )
+        else:
+            version_dirs: frozenset[Path] = frozenset()
         router = self
         for route in router.routes + router._deleted_routes:
             if isinstance(route, APIRoute):
@@ -100,16 +108,19 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
                                 route.response_model,
                                 version_dir,
                                 change_simple_annotation,
+                                version_dirs,
                             )
                         route.dependencies = _change_versions_of_all_annotations(
                             route.dependencies,
                             version_dir,
                             change_simple_annotation,
+                            version_dirs,
                         )
                         route.endpoint = _change_versions_of_all_annotations(
                             route.endpoint,
                             version_dir,
                             change_simple_annotation,
+                            version_dirs,
                         )
                         route.dependant = get_dependant(
                             path=route.path_format,
@@ -186,6 +197,7 @@ def _change_versions_of_all_annotations(
     annotation: Any,
     version_dir: Path,
     change_simple_annotation: AnnotationChanger,
+    version_dirs: frozenset[Path],
 ) -> Any:
     """Recursively go through all annotations and if they were taken from any versioned package, change them to the
     annotations corresponding to the version_dir passed.
@@ -200,38 +212,52 @@ def _change_versions_of_all_annotations(
                 key,
                 version_dir,
                 change_simple_annotation,
-            ): _change_versions_of_all_annotations(value, version_dir, change_simple_annotation)
+                version_dirs,
+            ): _change_versions_of_all_annotations(value, version_dir, change_simple_annotation, version_dirs)
             for key, value in annotation.items()
         }
 
     elif isinstance(annotation, list | tuple):
         return type(annotation)(
-            _change_versions_of_all_annotations(v, version_dir, change_simple_annotation) for v in annotation
+            _change_versions_of_all_annotations(v, version_dir, change_simple_annotation, version_dirs)
+            for v in annotation
         )
     else:
-        return change_simple_annotation(annotation, version_dir, change_simple_annotation)
+        return change_simple_annotation(annotation, version_dir, change_simple_annotation, version_dirs)
 
 
 def _change_versions_of_a_non_container_annotation(
     annotation: Any,
     version_dir: Path,
     change_simple_annotation: AnnotationChanger,
+    version_dirs: frozenset[Path],
 ) -> Any:
     if isinstance(annotation, _BaseGenericAlias | GenericAlias):
-        return _change_versions_of_all_annotations(get_origin(annotation), version_dir, change_simple_annotation)[
+        return get_origin(annotation)[
             tuple(
-                _change_versions_of_all_annotations(arg, version_dir, change_simple_annotation)
+                _change_versions_of_all_annotations(arg, version_dir, change_simple_annotation, version_dirs)
                 for arg in get_args(annotation)
             )
         ]
     elif isinstance(annotation, Depends):
         return Depends(
-            _change_versions_of_all_annotations(annotation.dependency, version_dir, change_simple_annotation),
+            _change_versions_of_all_annotations(
+                annotation.dependency, version_dir, change_simple_annotation, version_dirs
+            ),
             use_cache=annotation.use_cache,
         )
+    elif isinstance(annotation, UnionType):
+        return typing.Union.__getitem__(
+            tuple(
+                _change_versions_of_all_annotations(a, version_dir, change_simple_annotation, version_dirs)
+                for a in get_args(annotation)
+            )
+        )
+    elif annotation is typing.Any or isinstance(annotation, typing.NewType):
+        return annotation
     elif isinstance(annotation, type):
         if issubclass(annotation, BaseModel | Enum):
-            return get_another_version_of_cls(annotation, version_dir)
+            return get_another_version_of_cls(annotation, version_dir, version_dirs)
         else:
             return annotation
     elif callable(annotation):
@@ -263,11 +289,13 @@ def _change_versions_of_a_non_container_annotation(
             callable_annotations,
             version_dir,
             change_simple_annotation,
+            version_dirs,
         )
         new_callable.__defaults__ = _change_versions_of_all_annotations(
             tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
             version_dir,
             change_simple_annotation,
+            version_dirs,
         )
         new_callable.__signature__ = _generate_signature(new_callable, old_params)
         return new_callable
