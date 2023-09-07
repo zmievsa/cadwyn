@@ -1,5 +1,6 @@
 from datetime import date
 from typing import Any
+from pydantic import BaseModel
 
 import pytest
 
@@ -12,8 +13,13 @@ from universi.structure import (
 )
 
 
-async def test_endpoint():
-    pass
+class TestSchema(BaseModel):
+    name: str
+    vat_ids: list[dict[str, str]]
+
+
+class TestSchema2(BaseModel):
+    name: str
 
 
 @pytest.fixture()
@@ -22,7 +28,7 @@ def version_change_1():
         description = "Change vat id to list"
         instructions_to_migrate_to_previous_version = ()
 
-        @convert_response_to_previous_version_for(test_endpoint)
+        @convert_response_to_previous_version_for(TestSchema)
         def change_vat_ids_to_list(cls, data: dict[str, Any]) -> None:
             data["vat_ids"] = [id["value"] for id in data.pop("_prefetched_vat_ids")]
 
@@ -35,7 +41,7 @@ def version_change_2():
         description = "Change vat ids to str"
         instructions_to_migrate_to_previous_version = ()
 
-        @convert_response_to_previous_version_for(test_endpoint)
+        @convert_response_to_previous_version_for(TestSchema)
         def change_vat_ids_to_single_item(cls, data: dict[str, Any]) -> None:
             data["vat_id"] = data.pop("vat_ids")[0]
 
@@ -44,7 +50,7 @@ def version_change_2():
 
 def test__migrate__with_no_migrations__should_not_raise_error():
     assert VersionBundle().data_to_version(
-        test_endpoint,
+        TestSchema,
         {"A": "B"},
         date(2000, 1, 1),
     ) == {"A": "B"}
@@ -56,7 +62,7 @@ def test__migrate_simple_data_one_version_down(version_change_1: type[VersionCha
         Version(date(2001, 1, 1)),
     )
     assert versions.data_to_version(
-        test_endpoint,
+        TestSchema,
         {
             "name": "HeliCorp",
             "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}],
@@ -68,14 +74,11 @@ def test__migrate_simple_data_one_version_down(version_change_1: type[VersionCha
 def test__migrate_simple_data_one_version_down__with_some_inapplicable_migrations__result_is_unaffected(
     version_change_1: type[VersionChange],
 ):
-    async def test_endpoint2():
-        raise NotImplementedError
-
     class VersionChange3(VersionChange):
         description = "Change vat ids to str"
         instructions_to_migrate_to_previous_version = ()
 
-        @convert_response_to_previous_version_for(test_endpoint2)
+        @convert_response_to_previous_version_for(TestSchema2)
         def break_vat_ids(cls, data: dict[str, Any]) -> None:
             raise NotImplementedError
 
@@ -84,7 +87,7 @@ def test__migrate_simple_data_one_version_down__with_some_inapplicable_migration
         Version(date(2001, 1, 1)),
     )
     assert versions.data_to_version(
-        test_endpoint,
+        TestSchema,
         {
             "name": "HeliCorp",
             "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}],
@@ -103,7 +106,7 @@ def test__migrate_simple_data_two_versions_down(
         Version(date(2000, 1, 1)),
     )
     assert versions.data_to_version(
-        test_endpoint,
+        TestSchema,
         {
             "name": "HeliCorp",
             "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}],
@@ -122,7 +125,7 @@ async def test__versioned_decorator__with_latest_version__response_is_unchanged(
         Version(date(2000, 1, 1)),
     )
 
-    @versions.versioned(test_endpoint)
+    @versions.versioned(TestSchema)
     async def test():
         return {"name": "HeliCorp", "vat_ids": ["Foo", "Bar"]}
 
@@ -138,7 +141,7 @@ async def test__versioned_decorator__with_earlier_version__response_is_migrated(
         Version(date(2000, 1, 1)),
     )
 
-    @versions.versioned(test_endpoint)
+    @versions.versioned(TestSchema)
     async def test():
         return {"name": "HeliCorp", "vat_ids": ["Foo", "Bar"]}
 

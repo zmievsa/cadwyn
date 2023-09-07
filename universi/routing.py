@@ -62,7 +62,7 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
 
     # TODO: Raise error if endpoint was marked with this but was never used in any version
     def only_exists_in_older_versions(self, endpoint: _T) -> _T:
-        index, route = _get_index_and_route(self.routes, endpoint)
+        index, route = _get_index_and_route_from_func(self.routes, endpoint)
         if index is None or route is None:
             raise LookupError(f"Route not found on endpoint: '{endpoint.__name__}'")
         self.routes.pop(index)
@@ -92,7 +92,7 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
                     raise TypeError(
                         "All versioned endpoints must be asynchronous.",
                     )
-                route.endpoint = versions.versioned()(route.endpoint)
+                route.endpoint = versions.versioned(route.response_model)(route.endpoint)
         routers = {}
         for version in versions.versions:
             if latest_schemas_module:
@@ -144,27 +144,29 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
             router = deepcopy(router)
             for version_change in version.version_changes:
                 for instruction in version_change.alter_endpoint_instructions:
-                    original_route_index, original_route = _get_index_and_route(
+                    original_route_index, original_route = _get_index_and_route_from_path(
                         router.routes,
-                        instruction.endpoint,
+                        instruction.endpoint_path,
                     )
                     if isinstance(instruction, EndpointDidntExistInstruction):
                         if original_route_index is None:
                             raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint.__name__}' you tried to delete in"
+                                f"Endpoint '{instruction.endpoint_path}' you tried to delete in"
                                 f" '{version_change.__name__}' doesn't exist in new version",
                             )
                         router.routes.pop(original_route_index)
                     elif isinstance(instruction, EndpointExistedInstruction):
                         if original_route_index is not None:
                             raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint.__name__}' you tried to re-create in"
+                                f"Endpoint '{instruction.endpoint_path}' you tried to re-create in"
                                 f" '{version_change.__name__}' already existed in newer versions",
                             )
-                        deleted_route_index, _ = _get_index_and_route(router._deleted_routes, instruction.endpoint)
+                        deleted_route_index, _ = _get_index_and_route_from_path(
+                            router._deleted_routes, instruction.endpoint_path
+                        )
                         if deleted_route_index is None:
                             raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint.__name__}' you tried to re-create in"
+                                f"Endpoint '{instruction.endpoint_path}' you tried to re-create in"
                                 f" '{version_change.__name__}' wasn't among the deleted routes",
                             )
                         router.routes.append(
@@ -173,7 +175,7 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
                     elif isinstance(instruction, EndpointHadInstruction):
                         if original_route_index is None or original_route is None:
                             raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint.__name__}' you tried to delete in"
+                                f"Endpoint '{instruction.endpoint_path}' you tried to delete in"
                                 f" '{version_change.__name__}' doesn't exist in new version",
                             )
                         for attr_name in instruction.attributes.__dataclass_fields__:
@@ -247,7 +249,8 @@ def _change_versions_of_a_non_container_annotation(
             use_cache=annotation.use_cache,
         )
     elif isinstance(annotation, UnionType):
-        return typing.Union.__getitem__(
+        getitem = typing.Union.__getitem__  # pyright: ignore[reportGeneralTypeIssues]
+        return getitem(
             tuple(
                 _change_versions_of_all_annotations(a, version_dir, change_simple_annotation, version_dirs)
                 for a in get_args(annotation)
@@ -335,7 +338,17 @@ def _generate_signature(
     )
 
 
-def _get_index_and_route(
+def _get_index_and_route_from_path(
+    routes: Sequence[BaseRoute | APIRoute],
+    endpoint_path: str,
+) -> tuple[int, APIRoute] | tuple[None, None]:
+    for index, route in enumerate(routes):
+        if isinstance(route, APIRoute) and route.path == endpoint_path:
+            return index, route
+    return None, None
+
+
+def _get_index_and_route_from_func(
     routes: Sequence[BaseRoute | APIRoute],
     endpoint: Endpoint,
 ) -> tuple[int, APIRoute] | tuple[None, None]:

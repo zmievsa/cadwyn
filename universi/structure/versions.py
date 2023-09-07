@@ -30,7 +30,7 @@ class VersionChange:
     alter_schema_instructions: ClassVar[Sequence[AlterSchemaSubInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[Sequence[AlterEnumSubInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[Sequence[AlterEndpointSubInstruction]] = Sentinel
-    alter_response_instructions: ClassVar[dict[Endpoint, AlterResponseInstruction]] = Sentinel
+    alter_response_instructions: ClassVar[dict[Any, AlterResponseInstruction]] = Sentinel
     _bound_versions: "VersionBundle | None"
 
     def __init_subclass__(cls, _abstract: bool = False) -> None:
@@ -55,10 +55,9 @@ class VersionChange:
                 cls.alter_schema_instructions.append(value)
         # TODO: You can include it in a for loop over dict above. Do so
         cls.alter_response_instructions = {
-            endpoint: instruction
+            instruction.schema: instruction
             for instruction in cls.__dict__.values()
             if isinstance(instruction, AlterResponseInstruction)
-            for endpoint in instruction.endpoints
         }
 
         cls._check_no_subclassing()
@@ -189,10 +188,10 @@ class VersionBundle:
     ) -> dict[type[VersionChange], VersionDate]:
         return {version_change: version.date for version in self.versions for version_change in version.version_changes}
 
-    # TODO: It might need caching for iteration to speed it up
+    # TODO: It might need caching or something for iteration to speed it up
     def data_to_version(
         self,
-        endpoint: Endpoint,
+        response_model: Any,
         data: dict[str, Any],
         version: VersionDate,
     ) -> dict[str, Any]:
@@ -211,25 +210,22 @@ class VersionBundle:
             if v.date <= version:
                 break
             for version_change in v.version_changes:
-                if endpoint in version_change.alter_response_instructions:
-                    version_change.alter_response_instructions[endpoint](data)
+                if response_model in version_change.alter_response_instructions:
+                    version_change.alter_response_instructions[response_model](data)
         return data
 
-    def versioned(
-        self,
-        endpoint: Endpoint | None = None,
-    ) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]:
-        def wrapper(func: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
-            @functools.wraps(func)
+    def versioned(self, response_model: Any) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]:
+        def wrapper(endpoint: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
+            @functools.wraps(endpoint)
             async def decorator(*args: _P.args, **kwargs: _P.kwargs) -> _R:
                 return await self._convert_endpoint_response_to_version(
-                    func,
-                    endpoint or func,
+                    endpoint,
+                    response_model,
                     args,
                     kwargs,
                 )
 
-            decorator.func = func  # pyright: ignore[reportGeneralTypeIssues]
+            decorator.func = endpoint  # pyright: ignore[reportGeneralTypeIssues]
             return decorator
 
         return wrapper
@@ -237,7 +233,7 @@ class VersionBundle:
     async def _convert_endpoint_response_to_version(
         self,
         func_to_get_response_from: Endpoint,
-        endpoint: Endpoint,
+        response_model: Any,
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> Any:
@@ -248,4 +244,4 @@ class VersionBundle:
         # TODO We probably need to call this in the same way as in fastapi instead of hardcoding exclude_unset.
         # We have such an ability if we force passing the route into this wrapper. Or maybe not... Important!
         response = _prepare_response_content(response, exclude_unset=False)
-        return self.data_to_version(endpoint, response, api_version)
+        return self.data_to_version(response_model, response, api_version)
