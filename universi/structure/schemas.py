@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import BaseModel
 
 from universi.exceptions import UniversiStructureError
-from universi.fields import FieldInfo
+from pydantic.fields import FieldInfo
 
 from .._utils import Sentinel
 

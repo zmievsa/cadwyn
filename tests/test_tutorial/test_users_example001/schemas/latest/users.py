@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from universi import Field
+from pydantic import Field
 
 
 class UserCreateRequest(BaseModel):

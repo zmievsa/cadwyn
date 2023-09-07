@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from universi import Field
+from pydantic import Field
 
 
 def my_default_factory():

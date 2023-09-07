@@ -1,7 +1,8 @@
 from datetime import date
 from typing import Any
 
-from universi import Field, VersionedAPIRouter
+from universi import VersionedAPIRouter
+from pydantic import Field
 from universi.structure import (
     Version,
     VersionBundle,

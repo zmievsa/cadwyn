@@ -22,7 +22,7 @@ from typing import (
 )
 
 from pydantic import BaseConfig, BaseModel
-from pydantic.fields import FieldInfo as PydanticFieldInfo
+from pydantic.fields import FieldInfo
 from pydantic.fields import ModelField
 from pydantic.typing import convert_generics
 from typing_extensions import assert_never
@@ -44,12 +44,12 @@ from universi.structure.schemas import (
 from universi.structure.versions import Version, VersionBundle
 from ._utils import UnionType, Sentinel, get_index_of_base_schema_dir_in_pythonpath
 from .exceptions import CodeGenerationError, InvalidGenerationInstructionError
-from .fields import FieldInfo
 
 _LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
 _FieldName: TypeAlias = str
 _PropertyName: TypeAlias = str
-_dict_of_empty_field_info = {k: getattr(PydanticFieldInfo(), k) for k in PydanticFieldInfo.__slots__}
+_empty_field_info = FieldInfo()
+_dict_of_empty_field_info = {k: getattr(_empty_field_info, k) for k in FieldInfo.__slots__}
 
 
 @dataclass(slots=True)
@@ -133,7 +133,7 @@ def _get_unionized_version_of_module(
         versions, index_of_latesst_schema_dir_in_pythonpath, original_module_parts
     )
     imports = [
-        ast.ImportFrom(module="universi", names=[ast.alias(name="Field")], level=0),
+        ast.ImportFrom(module="pydantic", names=[ast.alias(name="Field")], level=0),
         ast.Import(names=[ast.alias(name="typing")], level=0),
         *[
             ast.ImportFrom(
@@ -228,21 +228,14 @@ def _apply_alter_schema_instructions(
                 model_field.annotation = alter_schema_instruction.type
             field_info = model_field.field_info
 
-            if not isinstance(field_info, FieldInfo):
-                dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
-                if dict_of_field_info == _dict_of_empty_field_info:
-                    field_info = FieldInfo()
-                    model_field.field_info = field_info
-                else:
-                    raise InvalidGenerationInstructionError(
-                        f"You have defined a Field using pydantic.fields.Field"
-                        f" but you must use universi.Field in {schema.__name__}",
-                    )
+            dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
+            if dict_of_field_info == _dict_of_empty_field_info:
+                field_info = FieldInfo()
+                model_field.field_info = field_info
             for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
                 attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
                 if attr_value is not Sentinel:
                     setattr(field_info, attr_name, attr_value)
-                    field_info._universi_field_names.add(attr_name)
         elif isinstance(alter_schema_instruction, OldSchemaHadField):
             field_name_to_field_model[alter_schema_instruction.field_name] = (
                 schema,
@@ -421,7 +414,7 @@ def _migrate_module_to_another_version(
 
     body = ast.Module(
         [
-            ast.ImportFrom(module="universi", names=[ast.alias(name="Field")], level=0),
+            ast.ImportFrom(module="pydantic", names=[ast.alias(name="Field")], level=0),
             ast.Import(names=[ast.alias(name="typing")], level=0),
             ast.ImportFrom(module="typing", names=[ast.alias(name="Any")], level=0),
         ]
@@ -478,16 +471,10 @@ def _modify_schema_cls(
                 keywords=[
                     ast.keyword(
                         arg=attr,
-                        value=ast.Name(
-                            custom_repr(_get_attribute_from_field_info(field, attr)),
-                        ),
+                        value=ast.Name(custom_repr(_get_attribute_from_field_info(field, attr))),
                     )
                     # TODO: We must lint to make sure the user is not using pydantic.Field instead of universi.Field
-                    for attr in getattr(
-                        field.field_info,
-                        "_universi_field_names",
-                        (),
-                    )
+                    for attr in _get_passed_attributes(field.field_info)
                 ],
             ),
             simple=1,
@@ -551,6 +538,15 @@ def _pop_docstring_from_cls_body(old_body: list[ast.stmt]) -> list[ast.stmt]:
         return [old_body.pop(0)]
     else:
         return []
+
+
+def _get_passed_attributes(field_info: FieldInfo):
+    for attr_name, attr_val in _dict_of_empty_field_info.items():
+        if attr_name == "extra":
+            continue
+        if getattr(field_info, attr_name) != attr_val:
+            yield attr_name
+    yield from field_info.extra
 
 
 # The following is based on by Samuel Colvin's devtools

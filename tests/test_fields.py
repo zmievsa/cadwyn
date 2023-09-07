@@ -3,7 +3,7 @@ import re
 import pytest
 from pydantic import BaseModel
 
-from universi import Field
+from pydantic import Field
 
 
 def test__allow_mutation_arg():

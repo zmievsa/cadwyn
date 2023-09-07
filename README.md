@@ -94,7 +94,7 @@ During our development, we have realized that the initial API design was wrong a
 
 ```python
 from pydantic import BaseModel
-from universi import Field
+from pydantic import Field
 
 
 class UserCreateRequest(BaseModel):
@@ -133,7 +133,7 @@ Universi is heavily inspired by this approach so let's continue our tutorial and
 We need to create a migration to handle changes between these versions. For every endpoint whose `response_model` is `UserResource`, this migration will convert the list of addresses back to a single address when migrating to the previous version. Yes, migrating **back**: you might be used to database migrations where we write upgrade migration and downgrade migration but here our goal is to have an app of latest version and to describe what older versions looked like in comparison to it. That way the old versions are frozen in migrations and you can **almost** safely forget about them.
 
 ```python
-from universi import Field
+from pydantic import Field
 from universi.structure import (
     schema,
     VersionChange,
@@ -214,10 +214,9 @@ Please, see [tutorial examples](https://github.com/Ovsyanka83/universi/tree/main
 ## Important warnings
 
 1. The goal of Universi is to **minimize** the impact of versioning on your business logic. It provides all necessary tools to prevent you from **ever** checking for a concrete version in your code. So please, if you are tempted to check something like `api_version_var.get() >= date(2022, 11, 11)` -- please, take another look into [reference](#version-changes-with-side-effects) section. I am confident that you will find a better solution there.
-2. Universi uses its own `universi.Field` function for defining pydantic fields. If you want your pydantic schemas to migrate correctly, then you must use `universi.Field` instead of `pydantic.Field` everywhere because `pydantic.Field` does not preserve the information about which attributes were passed and which were not so code generation is much harder with it.
-3. Universi does not include a header-based router like FastAPI. We hope that soon a framework for header-based routing will surface which will allow universi to be a full versioning solution.
-4. I ask you to be very detailed in your descriptions for version changes. Spending these 5 extra minutes will potentially save you tens of hours in the future when everybody forgets when, how, and why the version change was made.
-5. We migrate responses backwards in versions from the latest version using data migration functions and requests forward in versions until the latest version using properties on pydantic models.
+2. Universi does not include a header-based router like FastAPI. We hope that soon a framework for header-based routing will surface which will allow universi to be a full versioning solution.
+3. I ask you to be very detailed in your descriptions for version changes. Spending these 5 extra minutes will potentially save you tens of hours in the future when everybody forgets when, how, and why the version change was made.
+4. We migrate responses backwards in versions from the latest version using data migration functions and requests forward in versions until the latest version using properties on pydantic models.
 
 ## Reference
 
@@ -315,7 +314,7 @@ class MyChange(VersionChange):
 #### Add a field
 
 ```python
-from universi import Field
+from pydantic import Field
 from universi.structure import VersionChange, schema
 
 class MyChange(VersionChange):

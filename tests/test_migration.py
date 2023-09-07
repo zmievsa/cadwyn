@@ -13,12 +13,12 @@ from universi.structure import (
 )
 
 
-class TestSchema(BaseModel):
+class DummySchema(BaseModel):
     name: str
     vat_ids: list[dict[str, str]]
 
 
-class TestSchema2(BaseModel):
+class DummySchema2(BaseModel):
     name: str
 
 
@@ -28,7 +28,7 @@ def version_change_1():
         description = "Change vat id to list"
         instructions_to_migrate_to_previous_version = ()
 
-        @convert_response_to_previous_version_for(TestSchema)
+        @convert_response_to_previous_version_for(DummySchema)
         def change_vat_ids_to_list(cls, data: dict[str, Any]) -> None:
             data["vat_ids"] = [id["value"] for id in data.pop("_prefetched_vat_ids")]
 
@@ -41,7 +41,7 @@ def version_change_2():
         description = "Change vat ids to str"
         instructions_to_migrate_to_previous_version = ()
 
-        @convert_response_to_previous_version_for(TestSchema)
+        @convert_response_to_previous_version_for(DummySchema)
         def change_vat_ids_to_single_item(cls, data: dict[str, Any]) -> None:
             data["vat_id"] = data.pop("vat_ids")[0]
 
@@ -50,7 +50,7 @@ def version_change_2():
 
 def test__migrate__with_no_migrations__should_not_raise_error():
     assert VersionBundle().data_to_version(
-        TestSchema,
+        DummySchema,
         {"A": "B"},
         date(2000, 1, 1),
     ) == {"A": "B"}
@@ -62,7 +62,7 @@ def test__migrate_simple_data_one_version_down(version_change_1: type[VersionCha
         Version(date(2001, 1, 1)),
     )
     assert versions.data_to_version(
-        TestSchema,
+        DummySchema,
         {
             "name": "HeliCorp",
             "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}],
@@ -78,7 +78,7 @@ def test__migrate_simple_data_one_version_down__with_some_inapplicable_migration
         description = "Change vat ids to str"
         instructions_to_migrate_to_previous_version = ()
 
-        @convert_response_to_previous_version_for(TestSchema2)
+        @convert_response_to_previous_version_for(DummySchema2)
         def break_vat_ids(cls, data: dict[str, Any]) -> None:
             raise NotImplementedError
 
@@ -87,7 +87,7 @@ def test__migrate_simple_data_one_version_down__with_some_inapplicable_migration
         Version(date(2001, 1, 1)),
     )
     assert versions.data_to_version(
-        TestSchema,
+        DummySchema,
         {
             "name": "HeliCorp",
             "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}],
@@ -106,7 +106,7 @@ def test__migrate_simple_data_two_versions_down(
         Version(date(2000, 1, 1)),
     )
     assert versions.data_to_version(
-        TestSchema,
+        DummySchema,
         {
             "name": "HeliCorp",
             "_prefetched_vat_ids": [{"value": "Foo"}, {"value": "Bar"}],
@@ -125,7 +125,7 @@ async def test__versioned_decorator__with_latest_version__response_is_unchanged(
         Version(date(2000, 1, 1)),
     )
 
-    @versions.versioned(TestSchema)
+    @versions.versioned(DummySchema)
     async def test():
         return {"name": "HeliCorp", "vat_ids": ["Foo", "Bar"]}
 
@@ -141,7 +141,7 @@ async def test__versioned_decorator__with_earlier_version__response_is_migrated(
         Version(date(2000, 1, 1)),
     )
 
-    @versions.versioned(TestSchema)
+    @versions.versioned(DummySchema)
     async def test():
         return {"name": "HeliCorp", "vat_ids": ["Foo", "Bar"]}
 

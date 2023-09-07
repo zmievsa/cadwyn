@@ -4,7 +4,7 @@ from enum import Enum, auto
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
 
-from universi import Field
+from pydantic import Field
 
 
 class StrEnum(str, Enum):
@@ -69,3 +69,7 @@ class SchemaThatOverridesField(SchemaWithOneIntField):
 class SchemaWithUnionFields(BaseModel):
     foo: int | str
     bar: EmptySchema | None
+
+
+class SchemaWithExtras(BaseModel):
+    foo: str = Field(lulz="foo")
