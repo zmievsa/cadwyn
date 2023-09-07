@@ -573,7 +573,8 @@ def custom_repr(value: Any) -> Any:
         # This is a hack for pydantic's Constrained types
         if value.__name__.startswith("Constrained"):
             # No, get_origin and get_args don't work here. No idea why
-            return custom_repr(value.__origin__[value.__args__])
+            origin, args = value.__origin__, value.__args__  # pyright: ignore[reportGeneralTypeIssues]
+            return custom_repr(origin[args])
         return value.__name__
     if isinstance(value, Enum):
         return PlainRepr(f"{value.__class__.__name__}.{value.name}")

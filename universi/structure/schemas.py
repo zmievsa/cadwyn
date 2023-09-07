@@ -2,7 +2,7 @@ import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel
 
@@ -13,10 +13,6 @@ from .._utils import Sentinel
 
 if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
-
-_SchemaInstance = TypeVar("_SchemaInstance", bound=Any)
-_R = TypeVar("_R")
-_P = ParamSpec("_P")
 
 
 @dataclass
@@ -74,7 +70,8 @@ class OldSchemaHadField:
 class AlterFieldInstructionFactory:
     schema: type[BaseModel]
     name: str
-    # TODO: Add a validation  to check that field actually changed
+    # TODO: Check if TODO below is still valid. I think, it's not.
+    # TODO: Add a validation to check that field actually changed
 
     def had(
         self,

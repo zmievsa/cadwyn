@@ -130,7 +130,7 @@ Universi is heavily inspired by this approach so let's continue our tutorial and
 
 ### Creating the Migration
 
-We need to create a migration to handle changes between these versions. This migration will convert the list of addresses back to a single address when migrating to the previous version. Yes, migrating **back**: you might be used to database migrations where we write upgrade migration and downgrade migration but here our goal is to have an app of latest version and to describe what older versions looked like in comparison to it. That way the old versions are frozen in migrations and you can **almost** safely forget about them.
+We need to create a migration to handle changes between these versions. For every endpoint whose `response_model` is `UserResource`, this migration will convert the list of addresses back to a single address when migrating to the previous version. Yes, migrating **back**: you might be used to database migrations where we write upgrade migration and downgrade migration but here our goal is to have an app of latest version and to describe what older versions looked like in comparison to it. That way the old versions are frozen in migrations and you can **almost** safely forget about them.
 
 ```python
 from universi import Field
@@ -153,7 +153,7 @@ class ChangeAddressToList(VersionChange):
         schema(UserResource).field("address").existed_with(type=str, info=Field()),
     )
 
-    @convert_response_to_previous_version_for(get_user, create_user)
+    @convert_response_to_previous_version_for(UserResource)
     def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
         data["address"] = data.pop("addresses")[0]
     
@@ -242,7 +242,7 @@ from universi.structure import VersionChange, endpoint
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        endpoint(my_old_endpoint).existed,
+        endpoint("/my_old_endpoint").existed,
     )
 
 ```
@@ -257,7 +257,7 @@ from universi.structure import VersionChange, endpoint
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        endpoint(my_new_endpoint).didnt_exist,
+        endpoint("/my_new_endpoint").didnt_exist,
     )
 
 ```
@@ -272,7 +272,7 @@ from universi.structure import VersionChange, endpoint
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        endpoint(my_endpoint).had(description="My old description"),
+        endpoint("/my_endpoint").had(description="My old description"),
     )
 
 ```
@@ -404,7 +404,7 @@ MySchema = (
 and you would be able to use it like so:
 
 ```python
-from src.versions.unions.my_schema_module import MySchema
+from src.schemas.unions.my_schema_module import MySchema
 
 async def the_entrypoint_of_my_business_logic(request_payload: MySchema):
     ...
@@ -424,13 +424,13 @@ from typing import Any
 class ChangeAddressToList(VersionChange):
     description = "..."
 
-    @convert_response_to_previous_version_for(my_endpoint, my_other_endpoint)
+    @convert_response_to_previous_version_for(MyEndpointResponseModel)
     def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
         data["address"] = data.pop("addresses")[0]
 
 ```
 
-It is done by applying `universi.VersionBundle.versioned(...)` decorator to each endpoint which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
+It is done by applying `universi.VersionBundle.versioned(...)` decorator to each endpoint with the given `response_model` which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
 
 If you want to convert a specific response to a specific version, you can use `universi.VersionBundle.data_to_version(...)`.
 
@@ -475,6 +475,8 @@ async def create_user(payload):
 So this change can be contained in any version -- your business logic doesn't know which version it has and shouldn't.
 
 ### API Version header and context variables
+
+**Note that this behavior is deprecated. Only use a custom contextvar that you made yourself**
 
 Universi automatically converts your data to a correct version and has "version checks" when dealing with side effects as described in [the section above](#version-changes-with-side-effects). It can only do so using a special [context variable](https://docs.python.org/3/library/contextvars.html) that stores the current API version.
 

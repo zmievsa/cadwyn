@@ -1,6 +1,7 @@
 import re
 from datetime import date
 from typing import Any
+from pydantic import BaseModel
 
 import pytest
 
@@ -259,8 +260,8 @@ def test__versions__one_version_change_attached_to_two_versions__error(
 
 
 def test__conversion_method__with_incorrect_structure():
-    async def some_endpoint():
-        raise NotImplementedError
+    class SomeSchema(BaseModel):
+        pass
 
     with pytest.raises(
         ValueError,
@@ -269,7 +270,7 @@ def test__conversion_method__with_incorrect_structure():
         ),
     ):
 
-        @convert_response_to_previous_version_for(some_endpoint)
+        @convert_response_to_previous_version_for(SomeSchema)
         def my_conversion_method(cls: Any, response: Any):
             raise NotImplementedError
 
@@ -280,6 +281,6 @@ def test__conversion_method__with_incorrect_structure():
         ),
     ):
 
-        @convert_response_to_previous_version_for(some_endpoint)  # pyright: ignore[reportGeneralTypeIssues]
+        @convert_response_to_previous_version_for(SomeSchema)  # pyright: ignore[reportGeneralTypeIssues]
         def my_conversion_method2():
             raise NotImplementedError
