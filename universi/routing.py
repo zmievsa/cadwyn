@@ -37,11 +37,13 @@ from universi.codegen import _get_package_path_from_module, _get_version_dir_pat
 from universi.exceptions import RouterGenerationError
 from universi.structure.common import Endpoint
 from universi.structure.endpoints import (
+    AlterEndpointSubInstruction,
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from universi.structure.versions import VersionBundle
+from universi.structure import Version, VersionBundle
+from universi.structure.versions import VersionChange
 
 _T = TypeVar("_T", bound=Callable[..., Any])
 AnnotationChanger = Callable[[Any, Path, "AnnotationChanger", frozenset[Path]], Any]
@@ -81,20 +83,14 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         if latest_schemas_module is not None:
             version_dirs = frozenset(
                 [_get_package_path_from_module(latest_schemas_module)]
-                + [_get_version_dir_path(latest_schemas_module, version.date) for version in versions.versions],
+                + [_get_version_dir_path(latest_schemas_module, version.date) for version in versions],
             )
         else:
             version_dirs: frozenset[Path] = frozenset()
+        _add_data_migrations_to_all_routes(self, versions)
         router = self
-        for route in router.routes + router._deleted_routes:
-            if isinstance(route, APIRoute):
-                if not is_async_callable(route.endpoint):
-                    raise TypeError(
-                        "All versioned endpoints must be asynchronous.",
-                    )
-                route.endpoint = versions.versioned(route.response_model)(route.endpoint)
         routers = {}
-        for version in versions.versions:
+        for version in versions:
             if latest_schemas_module:
                 version_dir = _get_version_dir_path(latest_schemas_module, version.date)
                 if not version_dir.is_dir():
@@ -102,98 +98,139 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
                         f"Versioned schema directory '{version_dir}' does not exist.",
                     )
                 for route in router.routes:
-                    if isinstance(route, APIRoute):
-                        if route.response_model is not None:
-                            route.response_model = _change_versions_of_all_annotations(
-                                route.response_model,
-                                version_dir,
-                                change_simple_annotation,
-                                version_dirs,
-                            )
-                        route.dependencies = _change_versions_of_all_annotations(
-                            route.dependencies,
+                    if not isinstance(route, APIRoute):
+                        continue
+                    if route.response_model is not None:
+                        route.response_model = _change_versions_of_all_annotations(
+                            route.response_model,
                             version_dir,
                             change_simple_annotation,
                             version_dirs,
                         )
-                        route.endpoint = _change_versions_of_all_annotations(
-                            route.endpoint,
-                            version_dir,
-                            change_simple_annotation,
-                            version_dirs,
+                    route.dependencies = _change_versions_of_all_annotations(
+                        route.dependencies,
+                        version_dir,
+                        change_simple_annotation,
+                        version_dirs,
+                    )
+                    route.endpoint = _change_versions_of_all_annotations(
+                        route.endpoint,
+                        version_dir,
+                        change_simple_annotation,
+                        version_dirs,
+                    )
+                    route.dependant = get_dependant(
+                        path=route.path_format,
+                        call=route.endpoint,
+                    )
+                    route.body_field = get_body_field(
+                        dependant=route.dependant,
+                        name=route.unique_id,
+                    )
+                    for depends in route.dependencies[::-1]:
+                        route.dependant.dependencies.insert(
+                            0,
+                            get_parameterless_sub_dependant(
+                                depends=depends,
+                                path=route.path_format,
+                            ),
                         )
-                        route.dependant = get_dependant(
-                            path=route.path_format,
-                            call=route.endpoint,
-                        )
-                        route.body_field = get_body_field(
-                            dependant=route.dependant,
-                            name=route.unique_id,
-                        )
-                        for depends in route.dependencies[::-1]:
-                            route.dependant.dependencies.insert(
-                                0,
-                                get_parameterless_sub_dependant(
-                                    depends=depends,
-                                    path=route.path_format,
-                                ),
-                            )
-                        route.app = request_response(route.get_route_handler())
+                    route.app = request_response(route.get_route_handler())
 
             routers[version.date] = router
             router = deepcopy(router)
-            for version_change in version.version_changes:
-                for instruction in version_change.alter_endpoint_instructions:
-                    original_route_index, original_route = _get_index_and_route_from_path(
-                        router.routes,
-                        instruction.endpoint_path,
-                        instruction.endpoint_methods
-                    )
-                    if isinstance(instruction, EndpointDidntExistInstruction):
-                        if original_route_index is None:
-                            raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint_path}' you tried to delete in"
-                                f" '{version_change.__name__}' doesn't exist in new version",
-                            )
-                        router.routes.pop(original_route_index)
-                    elif isinstance(instruction, EndpointExistedInstruction):
-                        if original_route_index is not None:
-                            raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint_path}' you tried to re-create in"
-                                f" '{version_change.__name__}' already existed in newer versions",
-                            )
-                        deleted_route_index, _ = _get_index_and_route_from_path(
-                            router._deleted_routes, instruction.endpoint_path, instruction.endpoint_methods
-                        )
-                        if deleted_route_index is None:
-                            raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint_path}' you tried to re-create in"
-                                f" '{version_change.__name__}' wasn't among the deleted routes",
-                            )
-                        router.routes.append(
-                            router._deleted_routes.pop(deleted_route_index),
-                        )
-                    elif isinstance(instruction, EndpointHadInstruction):
-                        if original_route_index is None or original_route is None:
-                            raise RouterGenerationError(
-                                f"Endpoint '{instruction.endpoint_path}' you tried to delete in"
-                                f" '{version_change.__name__}' doesn't exist in new version",
-                            )
-                        for attr_name in instruction.attributes.__dataclass_fields__:
-                            attr = getattr(instruction.attributes, attr_name)
-                            if attr is not Sentinel:
-                                if getattr(original_route, attr_name) == attr:
-                                    raise RouterGenerationError(
-                                        f"Expected attribute '{attr_name}' of endpoint"
-                                        f" '{original_route.endpoint.__name__}' to be different in"
-                                        f" '{version_change.__name__}', but it was the same."
-                                        " It means that your version change has no effect on the attribute"
-                                        " and can be removed.",
-                                    )
-                                setattr(original_route, attr_name, attr)
-                    else:
-                        assert_never(instruction)
+            _apply_endpoint_changes_to_router(router, version)
         return routers
+
+
+def _add_data_migrations_to_all_routes(router: VersionedAPIRouter, versions: VersionBundle):
+    for route in router.routes + router._deleted_routes:
+        if isinstance(route, APIRoute):
+            if not is_async_callable(route.endpoint):
+                raise RouterGenerationError("All versioned endpoints must be asynchronous.")
+            route.endpoint = versions.versioned(route.response_model)(route.endpoint)
+
+
+# TODO: This code is slow. It does a lot of unnecessary actions such as list seeks. Optimize it maybe?
+# TODO: This code is very complex. But no matter how I try to refactor it, nothing really fits.
+def _apply_endpoint_changes_to_router(router: VersionedAPIRouter, version: Version):
+    routes = cast(list[APIRoute], router.routes)
+    for version_change in version.version_changes:
+        for instruction in version_change.alter_endpoint_instructions:
+            original_routes = _get_routes(routes, instruction.endpoint_path, instruction.endpoint_methods)
+            methods_to_which_we_applied_changes = set()
+            methods_we_should_have_applied_changes_to = set(instruction.endpoint_methods)
+
+            if isinstance(instruction, EndpointDidntExistInstruction):
+                for original_route in original_routes:
+                    methods_to_which_we_applied_changes |= original_route.methods
+                    # OP
+                    router.routes.remove(original_route)
+                err = (
+                    'Endpoint "{endpoint_methods} {endpoint_path}" you tried to delete in'
+                    ' "{version_change_name}" doesn\'t exist in a newer version'
+                )
+            elif isinstance(instruction, EndpointExistedInstruction):
+                if original_routes:
+                    method_union = set()
+                    for original_route in original_routes:
+                        method_union |= original_route.methods
+                    raise RouterGenerationError(
+                        f'Endpoint "{list(method_union)} {instruction.endpoint_path}" you tried to re-create in'
+                        f' "{version_change.__name__}" already existed in a newer version'
+                    )
+                deleted_routes = _get_routes(
+                    router._deleted_routes, instruction.endpoint_path, instruction.endpoint_methods
+                )
+                for deleted_route in deleted_routes:
+                    methods_to_which_we_applied_changes |= deleted_route.methods
+                    # OP
+                    router._deleted_routes.remove(deleted_route)
+                    router.routes.append(deleted_route)
+                err = (
+                    'Endpoint "{endpoint_methods} {endpoint_path}" you tried to re-create in'
+                    ' "{version_change_name}" wasn\'t among the deleted routes'
+                )
+            elif isinstance(instruction, EndpointHadInstruction):
+                for original_route in original_routes:
+                    methods_to_which_we_applied_changes |= original_route.methods
+                    # OP
+                    _apply_endpoint_had_instruction(version_change, instruction, original_route)
+                err = (
+                    'Endpoint "{endpoint_methods} {endpoint_path}" you tried to change in'
+                    ' "{version_change_name}" doesn\'t exist'
+                )
+            else:
+                assert_never(instruction)
+            method_diff = methods_we_should_have_applied_changes_to - methods_to_which_we_applied_changes
+            if method_diff:
+                # ERR
+                raise RouterGenerationError(
+                    err.format(
+                        endpoint_methods=list(method_diff),
+                        endpoint_path=instruction.endpoint_path,
+                        version_change_name=version_change.__name__,
+                    )
+                )
+
+
+def _apply_endpoint_had_instruction(
+    version_change: type[VersionChange],
+    instruction: EndpointHadInstruction,
+    original_route: APIRoute,
+):
+    for attr_name in instruction.attributes.__dataclass_fields__:
+        attr = getattr(instruction.attributes, attr_name)
+        if attr is not Sentinel:
+            if getattr(original_route, attr_name) == attr:
+                raise RouterGenerationError(
+                    f'Expected attribute "{attr_name}" of endpoint'
+                    f' "{list(original_route.methods)} {original_route.path}"'
+                    f' to be different in "{version_change.__name__}", but it was the same.'
+                    " It means that your version change has no effect on the attribute"
+                    " and can be removed.",
+                )
+            setattr(original_route, attr_name, attr)
 
 
 def _change_versions_of_all_annotations(
@@ -339,19 +376,21 @@ def _generate_signature(
     )
 
 
-def _get_index_and_route_from_path(
+def _get_routes(
     routes: Sequence[BaseRoute | APIRoute],
     endpoint_path: str,
     endpoint_methods: list[str],
-) -> tuple[int, APIRoute] | tuple[None, None]:
+) -> list[APIRoute]:
+    found_routes = []
+    endpoint_method_set = set(endpoint_methods)
     for index, route in enumerate(routes):
         if (
-                isinstance(route, APIRoute) and
-                route.path == endpoint_path and
-                sorted(route.methods) == sorted(endpoint_methods)
+            isinstance(route, APIRoute)
+            and route.path == endpoint_path
+            and set(route.methods).issubset(endpoint_method_set)
         ):
-            return index, route
-    return None, None
+            found_routes.append(route)
+    return found_routes
 
 
 def _get_index_and_route_from_func(

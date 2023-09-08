@@ -85,7 +85,7 @@ def regenerate_dir_to_all_versions(
     schemas = {k: ModelInfo(_get_fields_for_model(v)) for k, v in deepcopy(versions.versioned_schemas).items()}
     enums = {k: (v, {member.name: member.value for member in v}) for k, v in deepcopy(versions.versioned_enums).items()}
 
-    for version in versions.versions:
+    for version in versions:
         # NOTE: You'll have to use relative imports
 
         _generate_versioned_directory(template_module, schemas, enums, version.date)
@@ -182,7 +182,7 @@ def _prepare_unionized_imports(
     package_path = original_module_parts[index_of_latest_schema_dir_in_pythonpath:-1]
 
     import_pythonpath_template = ".".join(package_path)
-    version_dirs = ["latest"] + [_get_version_dir_name(version.date) for version in versions.versions]
+    version_dirs = ["latest"] + [_get_version_dir_name(version.date) for version in versions]
     return [ImportedModule(version_dir, import_pythonpath_template, package_name) for version_dir in version_dirs]
 
 

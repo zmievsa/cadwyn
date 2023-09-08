@@ -219,7 +219,7 @@ def test__router_generation__creating_a_synchronous_endpoint__error(
         raise NotImplementedError
 
     with pytest.raises(
-        TypeError,
+        RouterGenerationError,
         match=re.escape("All versioned endpoints must be asynchronous."),
     ):
         create_versioned_copies(router, endpoint("/test", ["GET"]).didnt_exist)
@@ -236,7 +236,7 @@ def test__router_generation__changing_a_deleted_endpoint__error(
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            "Endpoint '/test' you tried to delete in 'MyVersionChange' doesn't exist in new version",
+            'Endpoint "[\'GET\'] /test" you tried to change in "MyVersionChange" doesn\'t exist',
         ),
     ):
         create_versioned_copies(router, endpoint("/test", ["GET"]).had(description="Hewwo"))
@@ -253,7 +253,7 @@ def test__router_generation__deleting_a_deleted_endpoint__error(
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            "Endpoint '/test' you tried to delete in 'MyVersionChange' doesn't exist in new version",
+            'Endpoint "[\'GET\'] /test" you tried to delete in "MyVersionChange" doesn\'t exist in a newer version',
         ),
     ):
         create_versioned_copies(router, endpoint("/test", ["GET"]).didnt_exist)
@@ -267,10 +267,70 @@ def test__router_generation__re_creating_an_existing_endpoint__error(
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            "Endpoint '/test/{hewoo}' you tried to re-create in 'MyVersionChange' already existed in newer versions",
+            'Endpoint "[\'GET\'] /test/{hewoo}" you tried to re-create in "MyVersionChange" already existed in a newer version',
         ),
     ):
         create_versioned_copies(router, endpoint(test_path, ["GET"]).existed)
+
+
+def test__router_generation__editing_an_endpoint_with_wrong_method__should_raise_error(
+    router: VersionedAPIRouter,
+    test_endpoint: Endpoint,
+    test_path: str,
+):
+    with pytest.raises(
+        RouterGenerationError,
+        match=re.escape('Endpoint "[\'POST\'] /test/{hewoo}" you tried to change in "MyVersionChange" doesn\'t exist'),
+    ):
+        create_versioned_copies(router, endpoint(test_path, ["POST"]).had(description="Hewwo"))
+
+
+def test__router_generation__editing_an_endpoint_with_a_less_general_method__should_raise_error(
+    router: VersionedAPIRouter,
+):
+    @router.route("/test/{hewoo}", methods=["GET", "POST"])
+    async def test(hewwo: int):
+        raise NotImplementedError
+
+    with pytest.raises(
+        RouterGenerationError,
+        match=re.escape('Endpoint "[\'GET\'] /test/{hewoo}" you tried to change in "MyVersionChange" doesn\'t exist'),
+    ):
+        create_versioned_copies(router, endpoint("/test/{hewoo}", ["GET"]).had(description="Hewwo"))
+
+
+def test__router_generation__editing_an_endpoint_with_a_more_general_method__should_raise_error(
+    router: VersionedAPIRouter,
+    test_endpoint: Endpoint,
+    test_path: str,
+):
+    with pytest.raises(
+        RouterGenerationError,
+        match=re.escape('Endpoint "[\'POST\'] /test/{hewoo}" you tried to change in "MyVersionChange" doesn\'t exist'),
+    ):
+        create_versioned_copies(router, endpoint(test_path, ["GET", "POST"]).had(description="Hewwo"))
+
+
+def test__router_generation__editing_multiple_methods_of_multiple_endpoints__should_edit_both_methods(
+    router: VersionedAPIRouter,
+):
+    @router.get("/test")
+    async def test_get():
+        raise NotImplementedError
+
+    @router.post("/test")
+    async def test_post():
+        raise NotImplementedError
+
+    routes_2000, routes_2001 = create_versioned_api_routes(
+        router,
+        endpoint("/test", ["GET", "POST"]).had(description="Meaw"),
+    )
+    assert routes_2000[0].description == "Meaw"
+    assert routes_2000[1].description == "Meaw"
+
+    assert routes_2001[0].description == ""
+    assert routes_2001[1].description == ""
 
 
 def get_nested_field_type(annotation: Any) -> type[BaseModel]:
@@ -283,7 +343,7 @@ def test__router_generation__re_creating_a_non_endpoint__error(
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            "Endpoint '/test' you tried to re-create in 'MyVersionChange' wasn't among the deleted routes",
+            'Endpoint "[\'GET\'] /test" you tried to re-create in "MyVersionChange" wasn\'t among the deleted routes',
         ),
     ):
         create_versioned_copies(router, endpoint("/test", ["GET"]).existed)
@@ -297,8 +357,8 @@ def test__router_generation__changing_attribute_to_the_same_value__error(
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            "Expected attribute 'path' of endpoint 'test' to be different in 'MyVersionChange', but it was the same."
-            " It means that your version change has no effect on the attribute and can be removed.",
+            'Expected attribute "path" of endpoint "[\'GET\'] /test/{hewoo}" to be different in "MyVersionChange", but it'
+            " was the same. It means that your version change has no effect on the attribute and can be removed.",
         ),
     ):
         create_versioned_copies(router, endpoint(test_path, ["GET"]).had(path=test_path))
