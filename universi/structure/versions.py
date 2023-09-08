@@ -164,6 +164,9 @@ class VersionBundle:
                     )
                 version_change._bound_versions = self
 
+    def __iter__(self):
+        yield next(iter(self.versions))
+        
     @functools.cached_property
     def versioned_schemas(self) -> dict[str, type[VersionedModel]]:
         return {
