@@ -1,9 +1,9 @@
 from contextvars import ContextVar
 from datetime import date
 from typing import Any
-from pydantic import BaseModel
 
 import pytest
+from pydantic import BaseModel
 
 from universi.structure import (
     Version,
@@ -57,7 +57,8 @@ def test__migrate__with_no_migrations__should_not_raise_error(api_version_var: C
 
 
 def test__migrate_simple_data_one_version_down(
-    version_change_1: type[VersionChange], api_version_var: ContextVar[date | None]
+    version_change_1: type[VersionChange],
+    api_version_var: ContextVar[date | None],
 ):
     versions = VersionBundle(
         Version(date(2002, 1, 1), version_change_1),

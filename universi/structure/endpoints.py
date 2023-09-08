@@ -9,7 +9,6 @@ from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute
 
 from .._utils import Sentinel
-from .common import Endpoint
 
 
 @dataclass(slots=True)

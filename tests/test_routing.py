@@ -1,6 +1,6 @@
-from contextvars import ContextVar
 import re
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from datetime import date
 from types import ModuleType
 from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
@@ -10,10 +10,14 @@ from fastapi import APIRouter, Body, Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
+from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
 
 from tests._data import latest
 from tests._data.latest import some_schema
+from tests._data.unversioned_schema_dir import UnversionedSchema2
+from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
+from tests._data.unversioned_schemas import UnversionedSchema3
 from tests.conftest import GenerateTestVersionPackages
 
 # TODO: It's bad to import between tests like that
@@ -24,10 +28,6 @@ from universi.structure.endpoints import AlterEndpointSubInstruction
 from universi.structure.enums import AlterEnumSubInstruction, enum
 from universi.structure.schemas import AlterSchemaSubInstruction
 from universi.structure.versions import VersionChange
-from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
-from tests._data.unversioned_schema_dir import UnversionedSchema2
-from tests._data.unversioned_schemas import UnversionedSchema3
-from pytest_fixture_classes import fixture_class
 
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
 

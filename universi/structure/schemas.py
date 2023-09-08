@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel, Field
+from pydantic.fields import FieldInfo
 
 from universi.exceptions import UniversiStructureError
-from pydantic.fields import FieldInfo
 
 from .._utils import Sentinel
 

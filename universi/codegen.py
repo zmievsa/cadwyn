@@ -21,13 +21,11 @@ from typing import (
     get_origin,
 )
 
-from pydantic import BaseConfig, BaseModel
-from pydantic.fields import FieldInfo
-from pydantic.fields import ModelField
-from pydantic.typing import convert_generics
+from pydantic import BaseModel
+from pydantic.fields import FieldInfo, ModelField
 from typing_extensions import assert_never
-from universi._utils import UnionType
 
+from universi._utils import UnionType
 from universi.structure.enums import (
     AlterEnumSubInstruction,
     EnumDidntHaveMembersInstruction,
@@ -36,13 +34,14 @@ from universi.structure.enums import (
 from universi.structure.schemas import (
     AlterSchemaSubInstruction,
     OldSchemaFieldDidntExist,
-    OldSchemaFieldHad,
     OldSchemaFieldExistedWith,
+    OldSchemaFieldHad,
     SchemaPropertyDefinitionInstruction,
     SchemaPropertyDidntExistInstruction,
 )
 from universi.structure.versions import Version, VersionBundle
-from ._utils import UnionType, Sentinel, get_index_of_base_schema_dir_in_pythonpath
+
+from ._utils import Sentinel, UnionType, get_index_of_base_schema_dir_in_pythonpath
 from .exceptions import CodeGenerationError, InvalidGenerationInstructionError
 
 _LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
@@ -128,7 +127,9 @@ def _get_unionized_version_of_module(
     if original_module_parts[-1] == "__init__":
         original_module_parts.pop(-1)
     imported_modules = _prepare_unionized_imports(
-        versions, index_of_latesst_schema_dir_in_pythonpath, original_module_parts
+        versions,
+        index_of_latesst_schema_dir_in_pythonpath,
+        original_module_parts,
     )
     imports = [
         ast.ImportFrom(module="pydantic", names=[ast.alias(name="Field")], level=0),
@@ -143,7 +144,7 @@ def _get_unionized_version_of_module(
                     else ast.alias(
                         name=module.name,
                         asname=module.alias,
-                    )
+                    ),
                 ],
             )
             for module in imported_modules

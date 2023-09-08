@@ -1,10 +1,8 @@
 from decimal import Decimal
 from enum import Enum, auto
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic import Field as PydanticField
-
-from pydantic import Field
 
 
 class StrEnum(str, Enum):

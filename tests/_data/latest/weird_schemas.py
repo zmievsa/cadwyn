@@ -1,9 +1,7 @@
 from enum import Enum, auto
 from typing import Literal
 
-from pydantic import BaseModel
-
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 
 def my_default_factory():

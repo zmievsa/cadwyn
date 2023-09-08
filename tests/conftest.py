@@ -1,20 +1,19 @@
-from contextvars import ContextVar
 import importlib
 import shutil
 import sys
+from contextvars import ContextVar
 from datetime import date
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from pytest_fixture_classes import fixture_class
 
 from tests._data import latest
 from universi import regenerate_dir_to_all_versions
 from universi.structure import Version, VersionBundle, VersionChange
 from universi.structure.enums import AlterEnumSubInstruction
 from universi.structure.schemas import AlterSchemaSubInstruction
-
-from pytest_fixture_classes import fixture_class
 
 CURRENT_DIR = Path(__file__).parent
 

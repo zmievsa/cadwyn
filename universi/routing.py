@@ -1,6 +1,7 @@
 import datetime
 import functools
 import inspect
+import typing
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from enum import Enum
@@ -14,7 +15,6 @@ from typing import (
     get_args,
     get_origin,
 )
-import typing
 
 import fastapi.routing
 from fastapi.dependencies.utils import (
@@ -32,17 +32,16 @@ from starlette.routing import (
 )
 from typing_extensions import Self, assert_never
 
-from universi._utils import Sentinel, get_another_version_of_cls, UnionType
+from universi._utils import Sentinel, UnionType, get_another_version_of_cls
 from universi.codegen import _get_package_path_from_module, _get_version_dir_path
 from universi.exceptions import RouterGenerationError
+from universi.structure import Version, VersionBundle
 from universi.structure.common import Endpoint
 from universi.structure.endpoints import (
-    AlterEndpointSubInstruction,
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from universi.structure import Version, VersionBundle
 from universi.structure.versions import VersionChange
 
 _T = TypeVar("_T", bound=Callable[..., Any])
@@ -177,10 +176,12 @@ def _apply_endpoint_changes_to_router(router: VersionedAPIRouter, version: Versi
                         method_union |= original_route.methods
                     raise RouterGenerationError(
                         f'Endpoint "{list(method_union)} {instruction.endpoint_path}" you tried to re-create in'
-                        f' "{version_change.__name__}" already existed in a newer version'
+                        f' "{version_change.__name__}" already existed in a newer version',
                     )
                 deleted_routes = _get_routes(
-                    router._deleted_routes, instruction.endpoint_path, instruction.endpoint_methods
+                    router._deleted_routes,
+                    instruction.endpoint_path,
+                    instruction.endpoint_methods,
                 )
                 for deleted_route in deleted_routes:
                     methods_to_which_we_applied_changes |= deleted_route.methods
@@ -210,7 +211,7 @@ def _apply_endpoint_changes_to_router(router: VersionedAPIRouter, version: Versi
                         endpoint_methods=list(method_diff),
                         endpoint_path=instruction.endpoint_path,
                         version_change_name=version_change.__name__,
-                    )
+                    ),
                 )
 
 
@@ -282,7 +283,10 @@ def _change_versions_of_a_non_container_annotation(
     elif isinstance(annotation, Depends):
         return Depends(
             _change_versions_of_all_annotations(
-                annotation.dependency, version_dir, change_simple_annotation, version_dirs
+                annotation.dependency,
+                version_dir,
+                change_simple_annotation,
+                version_dirs,
             ),
             use_cache=annotation.use_cache,
         )
@@ -292,7 +296,7 @@ def _change_versions_of_a_non_container_annotation(
             tuple(
                 _change_versions_of_all_annotations(a, version_dir, change_simple_annotation, version_dirs)
                 for a in get_args(annotation)
-            )
+            ),
         )
     elif annotation is typing.Any or isinstance(annotation, typing.NewType):
         return annotation
@@ -383,7 +387,7 @@ def _get_routes(
 ) -> list[APIRoute]:
     found_routes = []
     endpoint_method_set = set(endpoint_methods)
-    for index, route in enumerate(routes):
+    for _index, route in enumerate(routes):
         if (
             isinstance(route, APIRoute)
             and route.path == endpoint_path

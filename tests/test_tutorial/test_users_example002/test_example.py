@@ -1,5 +1,4 @@
 from collections.abc import Generator
-from contextvars import ContextVar
 from datetime import date
 from pathlib import Path
 
@@ -15,7 +14,7 @@ from universi import (
 
 from ..utils import clean_versions
 from .schemas import latest
-from .users import router, versions, api_version_var
+from .users import api_version_var, router, versions
 
 
 def get_app(router: APIRouter) -> FastAPI:

@@ -1,21 +1,21 @@
-from contextvars import ContextVar
 import inspect
 import json
 import re
+import sys
+import time
+from contextvars import ContextVar
 from datetime import date
 from enum import Enum, auto
 from pathlib import Path
-import time
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from tests._data import latest
 from tests._data.latest import weird_schemas
 from tests.conftest import GenerateTestVersionPackages
 from universi import regenerate_dir_to_all_versions
-from pydantic import Field
 from universi.exceptions import (
     CodeGenerationError,
     InvalidGenerationInstructionError,
@@ -28,7 +28,6 @@ from universi.structure import (
     enum,
     schema,
 )
-import sys
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +40,10 @@ def serialize(enum: type[Enum]) -> dict[str, Any]:
 
 
 def assert_field_had_changes_apply(
-    model: type[BaseModel], attr: str, attr_value: Any, generate_test_version_packages: GenerateTestVersionPackages
+    model: type[BaseModel],
+    attr: str,
+    attr_value: Any,
+    generate_test_version_packages: GenerateTestVersionPackages,
 ):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(getattr(latest, model.__name__)).field("foo").had(**{attr: attr_value}),
@@ -192,7 +194,7 @@ def test__field_didnt_exist__field_is_missing__should_raise_error(
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to delete a field "bar" from "SchemaWithOneStrField" in "SomeVersionChange" but it doesn\'t have such a field.'
+            'You tried to delete a field "bar" from "SchemaWithOneStrField" in "SomeVersionChange" but it doesn\'t have such a field.',
         ),
     ):
         generate_test_version_packages(
@@ -241,7 +243,9 @@ def test__field_had__str_field(attr: str, attr_value: Any, generate_test_version
     ],
 )
 def test__field_had__decimal_field(
-    attr: str, attr_value: Any, generate_test_version_packages: GenerateTestVersionPackages
+    attr: str,
+    attr_value: Any,
+    generate_test_version_packages: GenerateTestVersionPackages,
 ):
     assert_field_had_changes_apply(latest.SchemaWithOneDecimalField, attr, attr_value, generate_test_version_packages)
 
@@ -281,7 +285,9 @@ def test__field_had__type(generate_test_version_packages: GenerateTestVersionPac
     ],
 )
 def test__field_had__list_of_int_field(
-    attr: str, attr_value: Any, generate_test_version_packages: GenerateTestVersionPackages
+    attr: str,
+    attr_value: Any,
+    generate_test_version_packages: GenerateTestVersionPackages,
 ):
     assert_field_had_changes_apply(latest.SchemaWithOneListOfIntField, attr, attr_value, generate_test_version_packages)
 
@@ -316,7 +322,7 @@ def test__schema_field_had__nonexistent_field__should_raise_error(
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to change the type of field "boo" from "SchemaWithOneIntField" in "SomeVersionChange" but it doesn\'t have such a field.'
+            'You tried to change the type of field "boo" from "SchemaWithOneIntField" in "SomeVersionChange" but it doesn\'t have such a field.',
         ),
     ):
         generate_test_version_packages(
@@ -416,7 +422,7 @@ def test__codegen_schema_field_existed_with__already_existing_field__should_rais
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to add a field "foo" to "SchemaWithOneIntField" in "SomeVersionChange" but there is already a field with that name.'
+            'You tried to add a field "foo" to "SchemaWithOneIntField" in "SomeVersionChange" but there is already a field with that name.',
         ),
     ):
         generate_test_version_packages(
@@ -570,7 +576,7 @@ def test__codegen_delete_nonexistent_property(generate_test_version_packages: Ge
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to delete a property "bar" from "SchemaWithOneFloatField" in "SomeVersionChange" but there is no such property defined in any of the migrations.'
+            'You tried to delete a property "bar" from "SchemaWithOneFloatField" in "SomeVersionChange" but there is no such property defined in any of the migrations.',
         ),
     ):
         generate_test_version_packages(
@@ -598,7 +604,7 @@ def test__codegen_property__there_is_already_field_with_the_same_name__error(
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to define a property "foo" inside "SchemaWithOneFloatField" in "SomeVersionChange" but there is already a field with that name.'
+            'You tried to define a property "foo" inside "SchemaWithOneFloatField" in "SomeVersionChange" but there is already a field with that name.',
         ),
     ):
         generate_test_version_packages(

@@ -1,9 +1,7 @@
 import re
 
 import pytest
-from pydantic import BaseModel
-
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 
 def test__allow_mutation_arg():

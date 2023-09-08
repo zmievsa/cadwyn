@@ -2,8 +2,9 @@ from contextvars import ContextVar
 from datetime import date
 from typing import Any
 
-from universi import VersionedAPIRouter
 from pydantic import Field
+
+from universi import VersionedAPIRouter
 from universi.structure import (
     Version,
     VersionBundle,

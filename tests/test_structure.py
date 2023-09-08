@@ -1,10 +1,10 @@
-from contextvars import ContextVar
 import re
+from contextvars import ContextVar
 from datetime import date
 from typing import Any
-from pydantic import BaseModel
 
 import pytest
+from pydantic import BaseModel
 
 from universi.exceptions import UniversiError, UniversiStructureError
 from universi.structure import VersionChange, VersionChangeWithSideEffects
