@@ -13,7 +13,8 @@ from pydantic import BaseModel
 from tests._data import latest
 from tests._data.latest import weird_schemas
 from tests.conftest import generate_test_version_packages
-from universi import Field, regenerate_dir_to_all_versions
+from universi import regenerate_dir_to_all_versions
+from pydantic import Field
 from universi.exceptions import (
     CodeGenerationError,
     InvalidGenerationInstructionError,
@@ -152,6 +153,21 @@ def test__field_existed_with__original_schema_has_a_field():
     )
 
 
+def test__field_existed_with__extras_are_added__should_generate_properly():
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(
+        schema(latest.SchemaWithExtras).field("bar").existed_with(type=int, info=Field(deflolt="hewwo")),
+    )
+
+    assert (
+        inspect.getsource(v2000_01_01.SchemaWithExtras)
+        == "class SchemaWithExtras(BaseModel):\n    foo: str = Field(lulz='foo')\n    bar: int = Field(deflolt='hewwo')\n"
+    )
+    assert (
+        inspect.getsource(v2001_01_01.SchemaWithExtras)
+        == "class SchemaWithExtras(BaseModel):\n    foo: str = Field(lulz='foo')\n"
+    )
+
+
 def test__field_didnt_exist():
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(latest.SchemaWithOneStrField).field("foo").didnt_exist,
@@ -265,19 +281,6 @@ def test__schema_field_had__change_to_the_same_field_type__error():
     ):
         generate_test_version_packages(
             schema(latest.SchemaWithOneIntField).field("foo").had(type=int),
-        )
-
-
-def test__schema_field_had__schema_was_defined_with_pydantic_field__error():
-    with pytest.raises(
-        InvalidGenerationInstructionError,
-        match=re.escape(
-            "You have defined a Field using pydantic.fields.Field"
-            " but you must use universi.Field in SchemaWithWrongFieldConstructor",
-        ),
-    ):
-        generate_test_version_packages(
-            schema(latest.SchemaWithWrongFieldConstructor).field("foo").had(type=int),
         )
 
 
@@ -405,6 +408,24 @@ def test__codegen__with_weird_data_types():
         "    foo: dict = Field(default={'a': 'b'})\n"
         "    bar: list[int] = Field(default_factory=my_default_factory)\n"
         "    baz: typing.Literal[MyEnum.baz] = Field()\n"
+    )
+
+
+def test__codegen_union_fields():
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(
+        schema(latest.SchemaWithUnionFields).field("baz").existed_with(type="EmptySchema", info=Field()),
+    )
+
+    assert inspect.getsource(v2000_01_01.SchemaWithUnionFields) == (
+        "class SchemaWithUnionFields(BaseModel):\n"
+        "    foo: typing.Union[int, str] = Field()\n"
+        "    bar: typing.Union[EmptySchema, None] = Field()\n"
+        "    baz: 'EmptySchema' = Field()\n"
+    )
+    assert inspect.getsource(v2001_01_01.SchemaWithUnionFields) == (
+        "class SchemaWithUnionFields(BaseModel):\n"
+        "    foo: typing.Union[int, str] = Field()\n"
+        "    bar: typing.Union[EmptySchema, None] = Field()\n"
     )
 
 

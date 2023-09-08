@@ -2,21 +2,17 @@ import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel
 
 from universi.exceptions import UniversiStructureError
-from universi.fields import FieldInfo
+from pydantic.fields import FieldInfo
 
 from .._utils import Sentinel
 
 if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
-
-_SchemaInstance = TypeVar("_SchemaInstance", bound=Any)
-_R = TypeVar("_R")
-_P = ParamSpec("_P")
 
 
 @dataclass
@@ -74,7 +70,8 @@ class OldSchemaHadField:
 class AlterFieldInstructionFactory:
     schema: type[BaseModel]
     name: str
-    # TODO: Add a validation  to check that field actually changed
+    # TODO: Check if TODO below is still valid. I think, it's not.
+    # TODO: Add a validation to check that field actually changed
 
     def had(
         self,
@@ -143,7 +140,7 @@ class AlterFieldInstructionFactory:
     def didnt_exist(self) -> OldSchemaDidntHaveField:
         return OldSchemaDidntHaveField(self.schema, field_name=self.name)
 
-    def existed_with(self, *, type: type, info: FieldInfo) -> OldSchemaHadField:
+    def existed_with(self, *, type: Any, info: FieldInfo) -> OldSchemaHadField:
         return OldSchemaHadField(
             self.schema,
             field_name=self.name,

@@ -52,31 +52,31 @@ class EndpointAttributesPayload:
 
 @dataclass(slots=True)
 class EndpointHadInstruction:
-    endpoint: Endpoint
+    endpoint_path: str
     attributes: EndpointAttributesPayload
 
 
 @dataclass(slots=True)
 class EndpointExistedInstruction:
-    endpoint: Endpoint
+    endpoint_path: str
 
 
 @dataclass(slots=True)
 class EndpointDidntExistInstruction:
-    endpoint: Endpoint
+    endpoint_path: str
 
 
 @dataclass(slots=True)
 class EndpointInstructionFactory:
-    endpoint: Endpoint
+    endpoint_path: str
 
     @property
     def didnt_exist(self) -> EndpointDidntExistInstruction:
-        return EndpointDidntExistInstruction(self.endpoint)
+        return EndpointDidntExistInstruction(self.endpoint_path)
 
     @property
     def existed(self) -> EndpointExistedInstruction:
-        return EndpointExistedInstruction(self.endpoint)
+        return EndpointExistedInstruction(self.endpoint_path)
 
     def had(
         self,
@@ -99,7 +99,7 @@ class EndpointInstructionFactory:
         generate_unique_id_function: Callable[[APIRoute], str] = Sentinel,
     ):
         return EndpointHadInstruction(
-            self.endpoint,
+            self.endpoint_path,
             EndpointAttributesPayload(
                 path=path,
                 status_code=status_code,
@@ -122,14 +122,8 @@ class EndpointInstructionFactory:
         )
 
 
-def endpoint(endpoint: Endpoint, /) -> EndpointInstructionFactory:
-    return EndpointInstructionFactory(endpoint)
+def endpoint(endpoint_path: str, /) -> EndpointInstructionFactory:
+    return EndpointInstructionFactory(endpoint_path)
 
 
-AlterEndpointSubInstruction = (
-    EndpointDidntExistInstruction
-    | EndpointExistedInstruction
-    | EndpointHadInstruction
-    # | EndpointDidntHaveDependencyInstruction
-    # | EndpointHadDependencyInstruction
-)
+AlterEndpointSubInstruction = EndpointDidntExistInstruction | EndpointExistedInstruction | EndpointHadInstruction

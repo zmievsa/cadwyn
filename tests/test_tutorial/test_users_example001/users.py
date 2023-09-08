@@ -1,7 +1,8 @@
 from datetime import date
 from typing import Any
 
-from universi import Field, VersionedAPIRouter
+from universi import VersionedAPIRouter
+from pydantic import Field
 from universi.structure import (
     Version,
     VersionBundle,
@@ -44,7 +45,7 @@ class ChangeAddressToList(VersionChange):
         schema(UserResource).field("address").existed_with(type=str, info=Field()),
     )
 
-    @convert_response_to_previous_version_for(get_user, create_user)
+    @convert_response_to_previous_version_for(UserResource)
     def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
         data["address"] = data.pop("addresses")[0]
 
