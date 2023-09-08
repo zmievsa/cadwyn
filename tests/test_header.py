@@ -1,14 +1,15 @@
+from contextvars import ContextVar
 from datetime import date
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from universi.header import api_version_var, get_universi_dependency
+from universi.header import get_universi_dependency
 
 
-def test__header():
+def test__header(api_version_var: ContextVar[date | None]):
     app = FastAPI(
-        dependencies=[get_universi_dependency(version_header_name="x-test-version")],
+        dependencies=[get_universi_dependency(version_header_name="x-test-version", api_version_var=api_version_var)],
     )
 
     @app.get("/")
@@ -35,12 +36,13 @@ def test__header():
     }
 
 
-def test__header__with_default_version():
+def test__header__with_default_version(api_version_var: ContextVar[date | None]):
     app = FastAPI(
         dependencies=[
             get_universi_dependency(
                 version_header_name="x-test-version",
                 default_version=date(2021, 1, 1),
+                api_version_var=api_version_var,
             ),
         ],
     )

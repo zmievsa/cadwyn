@@ -174,18 +174,22 @@ Finally, we group the version changes in the `VersionBundle` class. This represe
 ```python
 from universi.structure import Version, VersionBundle
 from datetime import date
+from contextvars import ContextVar
+
+api_version_var = ContextVar("api_version_var")
 
 versions = VersionBundle(
     Version(date(2002, 1, 1), ChangeAddressToList),
     Version(date(2001, 1, 1)),
+    api_version_var=api_version_var,
 )
 ```
 
 That's it. You're done with describing things. Now you just gotta ask universi to do the rest for you. We'll need the VersionedAPIRouter we used previously, our API versions, and the module representing the latest versions of our schemas.
 
 ```python
-from versions import latest
-from universi import regenerate_dir_to_all_versions, api_version_var
+from versions import latest, api_version_var
+from universi import regenerate_dir_to_all_versions
 
 regenerate_dir_to_all_versions(latest, versions)
 router_versions = router.create_versioned_copies(
@@ -203,7 +207,7 @@ Universi has generated multiple things in this code:
 
 You can now just pick a router by its version and run it separately or use a parent router/app to specify the logic by which you'd like to pick a version. I recommend using a header-based router with version dates as headers. And yes, that's how Stripe does it.
 
-Note that universi migrates your response data based on the api_version_var context variable so you must set it with each request. `universi.header` has a dependency that does that for you.
+Note that universi migrates your response data based on the `api_version_var` context variable so you must set it with each request. `universi.get_universi_dependency` does that for you automatically on every request based on header value.
 
 Obviously, this was just a simple example and universi has a lot more features so if you're interested -- take a look at the reference.
 
@@ -481,7 +485,7 @@ So this change can be contained in any version -- your business logic doesn't kn
 
 Universi automatically converts your data to a correct version and has "version checks" when dealing with side effects as described in [the section above](#version-changes-with-side-effects). It can only do so using a special [context variable](https://docs.python.org/3/library/contextvars.html) that stores the current API version.
 
-Universi has such default variable defined as `universi.api_version_var`. You can also use `universi.get_universi_dependency` to get a `fastapi.Depends` that automatically sets this contextvar based on a header name that you pick.
+Use `universi.get_universi_dependency` to get a `fastapi.Depends` that automatically sets this contextvar based on a header name that you pick.
 
 You can also set the variable yourself or even pass a different compatible contextvar to your `universi.VersionBundle` constructor.
 

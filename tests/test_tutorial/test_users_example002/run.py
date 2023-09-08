@@ -6,9 +6,9 @@ if __name__ == "__main__":
     from fastapi import FastAPI
 
     from tests.test_tutorial.test_users_example002.schemas import latest
-    from tests.test_tutorial.test_users_example002.users import router, versions
+    from tests.test_tutorial.test_users_example002.users import router, versions, api_version_var
     from tests.test_tutorial.utils import clean_versions
-    from universi import api_version_var, regenerate_dir_to_all_versions
+    from universi import regenerate_dir_to_all_versions
 
     try:
         regenerate_dir_to_all_versions(latest, versions)

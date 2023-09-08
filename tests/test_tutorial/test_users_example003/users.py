@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 from datetime import date
 from typing import Any
 
@@ -19,6 +20,7 @@ from .schemas.latest.users import (
     UserResource,
 )
 
+api_version_var = ContextVar("api_version_var")
 router = VersionedAPIRouter()
 
 
@@ -77,4 +79,5 @@ versions = VersionBundle(
     Version(date(2002, 1, 1), ChangeAddressesToSubresource),
     Version(date(2001, 1, 1), ChangeAddressToList),
     Version(date(2000, 1, 1)),
+    api_version_var=api_version_var,
 )

@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 import inspect
 import json
 import re
@@ -12,7 +13,7 @@ from pydantic import BaseModel
 
 from tests._data import latest
 from tests._data.latest import weird_schemas
-from tests.conftest import generate_test_version_packages
+from tests.conftest import GenerateTestVersionPackages
 from universi import regenerate_dir_to_all_versions
 from pydantic import Field
 from universi.exceptions import (
@@ -39,7 +40,9 @@ def serialize(enum: type[Enum]) -> dict[str, Any]:
     return {member.name: member.value for member in enum}
 
 
-def assert_field_had_changes_apply(model: type[BaseModel], attr: str, attr_value: Any):
+def assert_field_had_changes_apply(
+    model: type[BaseModel], attr: str, attr_value: Any, generate_test_version_packages: GenerateTestVersionPackages
+):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(getattr(latest, model.__name__)).field("foo").had(**{attr: attr_value}),
     )
@@ -71,7 +74,7 @@ def test__latest_enums_are_unchanged():
     assert serialize(latest.EnumWithTwoMembers) == {"a": 1, "b": 2}
 
 
-def test__enum_had__original_enum_is_empty():
+def test__enum_had__original_enum_is_empty(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         enum(latest.EmptyEnum).had(b=auto()),
     )
@@ -80,7 +83,7 @@ def test__enum_had__original_enum_is_empty():
     assert serialize(v2001_01_01.EmptyEnum) == serialize(latest.EmptyEnum)
 
 
-def test__enum_had__original_enum_is_nonempty():
+def test__enum_had__original_enum_is_nonempty(generate_test_version_packages: GenerateTestVersionPackages):
     if sys.platform.startswith("win"):
         time.sleep(1)
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
@@ -93,7 +96,7 @@ def test__enum_had__original_enum_is_nonempty():
     )
 
 
-def test__enum_didnt_have__original_enum_has_one_member():
+def test__enum_didnt_have__original_enum_has_one_member(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         enum(latest.EnumWithOneMember).didnt_have("a"),
     )
@@ -104,7 +107,7 @@ def test__enum_didnt_have__original_enum_has_one_member():
     )
 
 
-def test__enum_didnt_have__original_enum_has_two_members():
+def test__enum_didnt_have__original_enum_has_two_members(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         enum(latest.EnumWithTwoMembers).didnt_have("a"),
     )
@@ -115,7 +118,7 @@ def test__enum_didnt_have__original_enum_has_two_members():
     )
 
 
-def test__enum_had__original_schema_is_empty():
+def test__enum_had__original_schema_is_empty(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         enum(latest.EmptyEnum).had(b=7),
     )
@@ -124,7 +127,7 @@ def test__enum_had__original_schema_is_empty():
     assert serialize(v2001_01_01.EmptyEnum) == serialize(latest.EmptyEnum)
 
 
-def test__field_existed_with__original_schema_is_empty():
+def test__field_existed_with__original_schema_is_empty(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(latest.EmptySchema).field("bar").existed_with(type=int, info=Field(description="hewwo")),
     )
@@ -136,7 +139,7 @@ def test__field_existed_with__original_schema_is_empty():
     )
 
 
-def test__field_existed_with__original_schema_has_a_field():
+def test__field_existed_with__original_schema_has_a_field(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(latest.SchemaWithOneStrField).field("bar").existed_with(type=int, info=Field(description="hewwo")),
     )
@@ -153,7 +156,9 @@ def test__field_existed_with__original_schema_has_a_field():
     )
 
 
-def test__field_existed_with__extras_are_added__should_generate_properly():
+def test__field_existed_with__extras_are_added__should_generate_properly(
+    generate_test_version_packages: GenerateTestVersionPackages,
+):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(latest.SchemaWithExtras).field("bar").existed_with(type=int, info=Field(deflolt="hewwo")),
     )
@@ -168,7 +173,7 @@ def test__field_existed_with__extras_are_added__should_generate_properly():
     )
 
 
-def test__field_didnt_exist():
+def test__field_didnt_exist(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(latest.SchemaWithOneStrField).field("foo").didnt_exist,
     )
@@ -179,6 +184,20 @@ def test__field_didnt_exist():
         inspect.getsource(v2001_01_01.SchemaWithOneStrField)
         == "class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default='foo')\n"
     )
+
+
+def test__field_didnt_exist__field_is_missing__should_raise_error(
+    generate_test_version_packages: GenerateTestVersionPackages,
+):
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            'You tried to delete a field "bar" from "SchemaWithOneStrField" in "SomeVersionChange" but it doesn\'t have such a field.'
+        ),
+    ):
+        generate_test_version_packages(
+            schema(latest.SchemaWithOneStrField).field("bar").didnt_exist,
+        )
 
 
 # TODO: Make a list of fields we don't include with explanations and write a test that this list stays the same
@@ -197,9 +216,9 @@ def test__field_didnt_exist():
         ("repr", False),
     ],
 )
-def test__field_had__int_field(attr: str, attr_value: Any):
+def test__field_had__int_field(attr: str, attr_value: Any, generate_test_version_packages: GenerateTestVersionPackages):
     """This test is here to guarantee that we can handle all parameter types we provide"""
-    assert_field_had_changes_apply(latest.SchemaWithOneIntField, attr, attr_value)
+    assert_field_had_changes_apply(latest.SchemaWithOneIntField, attr, attr_value, generate_test_version_packages)
 
 
 @pytest.mark.parametrize(
@@ -210,8 +229,8 @@ def test__field_had__int_field(attr: str, attr_value: Any):
         ("regex", r"hewwo darkness"),
     ],
 )
-def test__field_had__str_field(attr: str, attr_value: Any):
-    assert_field_had_changes_apply(latest.SchemaWithOneStrField, attr, attr_value)
+def test__field_had__str_field(attr: str, attr_value: Any, generate_test_version_packages: GenerateTestVersionPackages):
+    assert_field_had_changes_apply(latest.SchemaWithOneStrField, attr, attr_value, generate_test_version_packages)
 
 
 @pytest.mark.parametrize(
@@ -221,11 +240,13 @@ def test__field_had__str_field(attr: str, attr_value: Any):
         ("decimal_places", 15),
     ],
 )
-def test__field_had__decimal_field(attr: str, attr_value: Any):
-    assert_field_had_changes_apply(latest.SchemaWithOneDecimalField, attr, attr_value)
+def test__field_had__decimal_field(
+    attr: str, attr_value: Any, generate_test_version_packages: GenerateTestVersionPackages
+):
+    assert_field_had_changes_apply(latest.SchemaWithOneDecimalField, attr, attr_value, generate_test_version_packages)
 
 
-def test__field_had__default_factory():
+def test__field_had__default_factory(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(  # pragma: no cover
         schema(latest.SchemaWithOneIntField).field("foo").had(default_factory=lambda: 91),
     )
@@ -237,7 +258,7 @@ def test__field_had__default_factory():
     )
 
 
-def test__field_had__type():
+def test__field_had__type(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(latest.SchemaWithOneIntField).field("foo").had(type=bytes),
     )
@@ -259,24 +280,29 @@ def test__field_had__type():
         ("unique_items", True),
     ],
 )
-def test__field_had__list_of_int_field(attr: str, attr_value: Any):
-    assert_field_had_changes_apply(latest.SchemaWithOneListOfIntField, attr, attr_value)
+def test__field_had__list_of_int_field(
+    attr: str, attr_value: Any, generate_test_version_packages: GenerateTestVersionPackages
+):
+    assert_field_had_changes_apply(latest.SchemaWithOneListOfIntField, attr, attr_value, generate_test_version_packages)
 
 
-def test__field_had__float_field():
+def test__field_had__float_field(generate_test_version_packages: GenerateTestVersionPackages):
     assert_field_had_changes_apply(
         latest.SchemaWithOneFloatField,
         "allow_inf_nan",
         attr_value=False,
+        generate_test_version_packages=generate_test_version_packages,
     )
 
 
-def test__schema_field_had__change_to_the_same_field_type__error():
+def test__schema_field_had__change_to_the_same_field_type__error(
+    generate_test_version_packages: GenerateTestVersionPackages,
+):
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            "You tried to change the type of field 'foo' to '<class 'int'>' in"
-            " SchemaWithOneIntField but it already has type '<class 'int'>'",
+            'You tried to change the type of field "foo" to "<class \'int\'>" from'
+            ' "SchemaWithOneIntField" in "SomeVersionChange" but it already has type "<class \'int\'>"',
         ),
     ):
         generate_test_version_packages(
@@ -284,27 +310,41 @@ def test__schema_field_had__change_to_the_same_field_type__error():
         )
 
 
-def test__enum_had__same_name_as_other_value__error():
+def test__schema_field_had__nonexistent_field__should_raise_error(
+    generate_test_version_packages: GenerateTestVersionPackages,
+):
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            "Enum member 'a' already exists in enum 'tests._data.latestEnumWithOneMember' with the same value",
+            'You tried to change the type of field "boo" from "SchemaWithOneIntField" in "SomeVersionChange" but it doesn\'t have such a field.'
+        ),
+    ):
+        generate_test_version_packages(
+            schema(latest.SchemaWithOneIntField).field("boo").had(type=int),
+        )
+
+
+def test__enum_had__same_name_as_other_value__error(generate_test_version_packages: GenerateTestVersionPackages):
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            'You tried to add a member "a" to "EnumWithOneMember" in "SomeVersionChange" but there is already a member with that name and value.',
         ),
     ):
         generate_test_version_packages(enum(latest.EnumWithOneMember).had(a=1))
 
 
-def test__enum_didnt_have__nonexisting_name__error():
+def test__enum_didnt_have__nonexisting_name__error(generate_test_version_packages: GenerateTestVersionPackages):
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            "Enum member 'foo' was not found in enum 'tests._data.latestEmptyEnum'",
+            'You tried to delete a member "foo" from "EmptyEnum" in "SomeVersionChange" but it doesn\'t have such a member.',
         ),
     ):
         generate_test_version_packages(enum(latest.EmptyEnum).didnt_have("foo"))
 
 
-def test__codegen__with_deleted_source_file__error():
+def test__codegen__with_deleted_source_file__error(generate_test_version_packages: GenerateTestVersionPackages):
     Path("tests/_data/latest/another_temp1").mkdir(exist_ok=True)
     Path("tests/_data/latest/another_temp1/hello.py").touch()
     from tests._data.latest.another_temp1 import hello  # pyright: ignore[reportMissingImports]
@@ -319,7 +359,7 @@ def test__codegen__with_deleted_source_file__error():
         )
 
 
-def test__codegen__non_python_files__copied_to_all_dirs():
+def test__codegen__non_python_files__copied_to_all_dirs(generate_test_version_packages: GenerateTestVersionPackages):
     generate_test_version_packages()
     assert json.loads(
         Path("tests/_data/v2000_01_01/json_files/foo.json").read_text(),
@@ -329,7 +369,7 @@ def test__codegen__non_python_files__copied_to_all_dirs():
     ) == {"hello": "world"}
 
 
-def test__codegen__non_pydantic_schema__error():
+def test__codegen__non_pydantic_schema__error(generate_test_version_packages: GenerateTestVersionPackages):
     with pytest.raises(
         CodeGenerationError,
         match=re.escape(
@@ -341,7 +381,7 @@ def test__codegen__non_pydantic_schema__error():
         )
 
 
-def test__codegen__schema_that_overrides_fields_from_mro():
+def test__codegen__schema_that_overrides_fields_from_mro(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(latest.SchemaThatOverridesField).field("bar").existed_with(type=int, info=Field()),
     )
@@ -357,7 +397,7 @@ def test__codegen__schema_that_overrides_fields_from_mro():
     )
 
 
-def test__codegen_schema_example():
+def test__codegen_schema_existed_with(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(latest.EmptySchema).field("bar").existed_with(type=int, info=Field(example=83)),
     )
@@ -370,7 +410,21 @@ def test__codegen_schema_example():
     assert inspect.getsource(v2001_01_01.EmptySchema) == "class EmptySchema(BaseModel):\n    pass\n"
 
 
-def test__codegen__schema_defined_in_a_non_init_file():
+def test__codegen_schema_field_existed_with__already_existing_field__should_raise_error(
+    generate_test_version_packages: GenerateTestVersionPackages,
+):
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            'You tried to add a field "foo" to "SchemaWithOneIntField" in "SomeVersionChange" but there is already a field with that name.'
+        ),
+    ):
+        generate_test_version_packages(
+            schema(latest.SchemaWithOneIntField).field("foo").existed_with(type=str),
+        )
+
+
+def test__codegen__schema_defined_in_a_non_init_file(generate_test_version_packages: GenerateTestVersionPackages):
     from tests._data.latest.some_schema import MySchema
 
     generate_test_version_packages(schema(MySchema).field("foo").didnt_exist)
@@ -383,7 +437,7 @@ def test__codegen__schema_defined_in_a_non_init_file():
     assert inspect.getsource(MySchema2001) == "class MySchema(BaseModel):\n    foo: int = Field()\n"
 
 
-def test__codegen__with_weird_data_types():
+def test__codegen__with_weird_data_types(generate_test_version_packages: GenerateTestVersionPackages):
     generate_test_version_packages(
         schema(weird_schemas.ModelWithWeirdFields).field("bad").existed_with(type=int, info=Field()),
     )
@@ -411,7 +465,7 @@ def test__codegen__with_weird_data_types():
     )
 
 
-def test__codegen_union_fields():
+def test__codegen_union_fields(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(latest.SchemaWithUnionFields).field("baz").existed_with(type="EmptySchema", info=Field()),
     )
@@ -429,7 +483,7 @@ def test__codegen_union_fields():
     )
 
 
-def test__codegen_unions__init_file():
+def test__codegen_unions__init_file(generate_test_version_packages: GenerateTestVersionPackages):
     generate_test_version_packages()
     from tests._data import v2000_01_01, v2001_01_01  # pyright: ignore[reportGeneralTypeIssues]
     from tests._data.unions import (  # pyright: ignore[reportMissingImports]
@@ -444,7 +498,7 @@ def test__codegen_unions__init_file():
     )
 
 
-def test__codegen_unions__regular_file():
+def test__codegen_unions__regular_file(generate_test_version_packages: GenerateTestVersionPackages):
     generate_test_version_packages()
     from tests._data.latest.some_schema import MySchema as MySchemaLatest
     from tests._data.unions.some_schema import MySchema  # pyright: ignore[reportMissingImports]
@@ -454,7 +508,7 @@ def test__codegen_unions__regular_file():
     assert MySchema == MySchema2000 | MySchema2001 | MySchemaLatest
 
 
-def test__codegen_property():
+def test__codegen_property(api_version_var: ContextVar[date | None]):
     def baz_property(hewwo: Any):
         raise NotImplementedError
 
@@ -482,6 +536,7 @@ def test__codegen_property():
             Version(date(2002, 1, 1), VersionChange2),
             Version(date(2001, 1, 1), VersionChange1),
             Version(date(2000, 1, 1)),
+            api_version_var=api_version_var,
         ),
     )
 
@@ -511,12 +566,11 @@ def test__codegen_property():
     )
 
 
-def test__codegen_delete_nonexistent_property():
+def test__codegen_delete_nonexistent_property(generate_test_version_packages: GenerateTestVersionPackages):
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            "You tried to delete a property 'bar' in 'SchemaWithOneFloatField' "
-            "but there is no such property defined in any of the migrations.",
+            'You tried to delete a property "bar" from "SchemaWithOneFloatField" in "SomeVersionChange" but there is no such property defined in any of the migrations.'
         ),
     ):
         generate_test_version_packages(
@@ -535,15 +589,16 @@ def test__codegen_property_with_wrong_number_of_args():
         schema(latest.SchemaWithOneFloatField).property("baz")(baz)
 
 
-def test__codegen_property__there_is_already_field_with_the_same_name__error():
+def test__codegen_property__there_is_already_field_with_the_same_name__error(
+    generate_test_version_packages: GenerateTestVersionPackages,
+):
     def baz(hello: Any):
         raise NotImplementedError
 
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            "You tried to define a property 'foo' in 'SchemaWithOneFloatField'"
-            " but there is already a field with that name.",
+            'You tried to define a property "foo" inside "SchemaWithOneFloatField" in "SomeVersionChange" but there is already a field with that name.'
         ),
     ):
         generate_test_version_packages(

@@ -9,7 +9,6 @@ from fastapi.routing import _prepare_response_content
 from typing_extensions import assert_never
 
 from universi.exceptions import UniversiError, UniversiStructureError
-from universi.header import api_version_var
 from universi.structure.endpoints import AlterEndpointSubInstruction
 from universi.structure.enums import AlterEnumSubInstruction
 
@@ -147,7 +146,7 @@ class VersionBundle:
     def __init__(
         self,
         *versions: Version,
-        api_version_var: ContextVar[VersionDate | None] = api_version_var,
+        api_version_var: ContextVar[VersionDate | None],
     ) -> None:
         self.versions = versions
         self.api_version_var = api_version_var
@@ -166,11 +165,11 @@ class VersionBundle:
 
     def __iter__(self):
         yield from self.versions
-        
+
     @functools.cached_property
     def versioned_schemas(self) -> dict[str, type[VersionedModel]]:
         return {
-            instruction.schema.__module__ + instruction.schema.__name__: instruction.schema
+            f"{instruction.schema.__module__}.{instruction.schema.__name__}": instruction.schema
             for version in self.versions
             for version_change in version.version_changes
             for instruction in version_change.alter_schema_instructions
@@ -179,7 +178,7 @@ class VersionBundle:
     @functools.cached_property
     def versioned_enums(self) -> dict[str, type[Enum]]:
         return {
-            instruction.enum.__module__ + instruction.enum.__name__: instruction.enum
+            f"{instruction.enum.__module__}.{instruction.enum.__name__}": instruction.enum
             for version in self.versions
             for version_change in version.version_changes
             for instruction in version_change.alter_enum_instructions

@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 import re
 from datetime import date
 from typing import Any
@@ -5,7 +6,6 @@ from pydantic import BaseModel
 
 import pytest
 
-from universi import api_version_var
 from universi.exceptions import UniversiError, UniversiStructureError
 from universi.structure import VersionChange, VersionChangeWithSideEffects
 from universi.structure.responses import convert_response_to_previous_version_for
@@ -42,13 +42,14 @@ def dummy_sub_class_without_version():
 
 
 @pytest.fixture()
-def versions():
+def versions(api_version_var: ContextVar[date | None]):
     try:
         yield VersionBundle(
             Version(date(2002, 1, 1), DummySubClass2002),
             Version(date(2001, 1, 1), DummySubClass2001),
             Version(date(2000, 1, 1), DummySubClass2000_001, DummySubClass2000_002),
             Version(date(1999, 1, 1)),
+            api_version_var=api_version_var,
         )
     finally:
         DummySubClass2002._bound_versions = None
@@ -157,18 +158,24 @@ def test_invalid_type_in_instructions():
             instructions_to_migrate_to_previous_version = [True]  # pyright: ignore[reportGeneralTypeIssues]
 
 
-def test_incorrectly_sorted_versions():
+def test_incorrectly_sorted_versions(api_version_var: ContextVar[date | None]):
     with pytest.raises(
         ValueError,
         match=re.escape(
             "Versions are not sorted correctly. Please sort them in descending order.",
         ),
     ):
-        VersionBundle(Version(date(2000, 1, 1)), Version(date(2001, 1, 1)))
+        VersionBundle(
+            Version(date(2000, 1, 1)),
+            Version(date(2001, 1, 1)),
+            api_version_var=api_version_var,
+        )
 
 
-def test__is_applied__var_is_none__everything_is_applied(versions: VersionBundle):
-    api_version_var.set(None)
+def test__is_applied__var_is_none__everything_is_applied(
+    versions: VersionBundle,
+    api_version_var: ContextVar[date | None],
+):
     assert DummySubClass2002.is_applied is True
     assert DummySubClass2001.is_applied is True
     assert DummySubClass2000_001.is_applied is True
@@ -177,6 +184,7 @@ def test__is_applied__var_is_none__everything_is_applied(versions: VersionBundle
 
 def test__is_applied__var_is_later_than_latest__everything_is_applied(
     versions: VersionBundle,
+    api_version_var: ContextVar[date | None],
 ):
     api_version_var.set(date(2003, 1, 1))
     assert DummySubClass2002.is_applied is True
@@ -185,7 +193,10 @@ def test__is_applied__var_is_later_than_latest__everything_is_applied(
     assert DummySubClass2000_002.is_applied is True
 
 
-def test__is_applied__var_is_before_latest__latest_is_inactive(versions: VersionBundle):
+def test__is_applied__var_is_before_latest__latest_is_inactive(
+    versions: VersionBundle,
+    api_version_var: ContextVar[date | None],
+):
     api_version_var.set(date(2001, 1, 1))
     assert DummySubClass2002.is_applied is False
     assert DummySubClass2001.is_applied is True
@@ -195,6 +206,7 @@ def test__is_applied__var_is_before_latest__latest_is_inactive(versions: Version
 
 def test__is_applied__var_is_at_earliest__everything_is_inactive(
     versions: VersionBundle,
+    api_version_var: ContextVar[date | None],
 ):
     api_version_var.set(date(1999, 3, 1))
     assert DummySubClass2002.is_applied is False
@@ -205,6 +217,7 @@ def test__is_applied__var_is_at_earliest__everything_is_inactive(
 
 def test__is_applied__var_set_version_change_class_not_in_versions__error(
     dummy_sub_class_without_version: type[VersionChangeWithSideEffects],
+    api_version_var: ContextVar[date | None],
 ):
     api_version_var.set(date(1999, 3, 1))
     with pytest.raises(
@@ -218,8 +231,8 @@ def test__is_applied__var_set_version_change_class_not_in_versions__error(
 
 def test__is_applied__var_unset_version_change_class_not_in_versions__error(
     dummy_sub_class_without_version: type[VersionChangeWithSideEffects],
+    api_version_var: ContextVar[date | None],
 ):
-    api_version_var.set(None)
     with pytest.raises(
         UniversiError,
         match=re.escape(
@@ -231,8 +244,12 @@ def test__is_applied__var_unset_version_change_class_not_in_versions__error(
 
 def test__versions__one_version_change_attached_to_two_version_bundles__error(
     dummy_sub_class_without_version: type[VersionChangeWithSideEffects],
+    api_version_var: ContextVar[date | None],
 ):
-    VersionBundle(Version(date(2000, 1, 1), dummy_sub_class_without_version))
+    VersionBundle(
+        Version(date(2000, 1, 1), dummy_sub_class_without_version),
+        api_version_var=api_version_var,
+    )
     with pytest.raises(
         UniversiStructureError,
         match=re.escape(
@@ -240,11 +257,15 @@ def test__versions__one_version_change_attached_to_two_version_bundles__error(
             " It is prohibited.",
         ),
     ):
-        VersionBundle(Version(date(2000, 1, 1), dummy_sub_class_without_version))
+        VersionBundle(
+            Version(date(2000, 1, 1), dummy_sub_class_without_version),
+            api_version_var=api_version_var,
+        )
 
 
 def test__versions__one_version_change_attached_to_two_versions__error(
     dummy_sub_class_without_version: type[VersionChangeWithSideEffects],
+    api_version_var: ContextVar[date | None],
 ):
     with pytest.raises(
         UniversiStructureError,
@@ -256,6 +277,7 @@ def test__versions__one_version_change_attached_to_two_versions__error(
         VersionBundle(
             Version(date(2001, 1, 1), dummy_sub_class_without_version),
             Version(date(2000, 1, 1), dummy_sub_class_without_version),
+            api_version_var=api_version_var,
         )
 
 

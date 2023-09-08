@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from universi.exceptions import UniversiStructureError
 from pydantic.fields import FieldInfo
@@ -45,7 +45,7 @@ class FieldChanges:
 
 
 @dataclass
-class OldSchemaFieldWas:
+class OldSchemaFieldHad:
     schema: type[BaseModel]
     field_name: str
     type: type
@@ -53,13 +53,13 @@ class OldSchemaFieldWas:
 
 
 @dataclass
-class OldSchemaDidntHaveField:
+class OldSchemaFieldDidntExist:
     schema: type[BaseModel]
     field_name: str
 
 
 @dataclass
-class OldSchemaHadField:
+class OldSchemaFieldExistedWith:
     schema: type[BaseModel]
     field_name: str
     type: type
@@ -102,8 +102,8 @@ class AlterFieldInstructionFactory:
         regex: str = Sentinel,
         discriminator: str = Sentinel,
         repr: bool = Sentinel,
-    ) -> OldSchemaFieldWas:
-        return OldSchemaFieldWas(
+    ) -> OldSchemaFieldHad:
+        return OldSchemaFieldHad(
             schema=self.schema,
             field_name=self.name,
             type=type,
@@ -137,15 +137,15 @@ class AlterFieldInstructionFactory:
         )
 
     @property
-    def didnt_exist(self) -> OldSchemaDidntHaveField:
-        return OldSchemaDidntHaveField(self.schema, field_name=self.name)
+    def didnt_exist(self) -> OldSchemaFieldDidntExist:
+        return OldSchemaFieldDidntExist(self.schema, field_name=self.name)
 
-    def existed_with(self, *, type: Any, info: FieldInfo) -> OldSchemaHadField:
-        return OldSchemaHadField(
+    def existed_with(self, *, type: Any, info: FieldInfo | None = None) -> OldSchemaFieldExistedWith:
+        return OldSchemaFieldExistedWith(
             self.schema,
             field_name=self.name,
             type=type,
-            field=info,
+            field=info or Field(),
         )
 
 
@@ -187,9 +187,9 @@ class AlterPropertyInstructionFactory:
 
 
 AlterSchemaSubInstruction = (
-    OldSchemaFieldWas
-    | OldSchemaDidntHaveField
-    | OldSchemaHadField
+    OldSchemaFieldHad
+    | OldSchemaFieldDidntExist
+    | OldSchemaFieldExistedWith
     | SchemaPropertyDidntExistInstruction
     | SchemaPropertyDefinitionInstruction
 )

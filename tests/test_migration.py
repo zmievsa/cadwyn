@@ -1,10 +1,10 @@
+from contextvars import ContextVar
 from datetime import date
 from typing import Any
 from pydantic import BaseModel
 
 import pytest
 
-from universi import api_version_var
 from universi.structure import (
     Version,
     VersionBundle,
@@ -48,18 +48,21 @@ def version_change_2():
     return VersionChange2
 
 
-def test__migrate__with_no_migrations__should_not_raise_error():
-    assert VersionBundle().data_to_version(
+def test__migrate__with_no_migrations__should_not_raise_error(api_version_var: ContextVar[date | None]):
+    assert VersionBundle(api_version_var=api_version_var).data_to_version(
         DummySchema,
         {"A": "B"},
         date(2000, 1, 1),
     ) == {"A": "B"}
 
 
-def test__migrate_simple_data_one_version_down(version_change_1: type[VersionChange]):
+def test__migrate_simple_data_one_version_down(
+    version_change_1: type[VersionChange], api_version_var: ContextVar[date | None]
+):
     versions = VersionBundle(
         Version(date(2002, 1, 1), version_change_1),
         Version(date(2001, 1, 1)),
+        api_version_var=api_version_var,
     )
     assert versions.data_to_version(
         DummySchema,
@@ -73,6 +76,7 @@ def test__migrate_simple_data_one_version_down(version_change_1: type[VersionCha
 
 def test__migrate_simple_data_one_version_down__with_some_inapplicable_migrations__result_is_unaffected(
     version_change_1: type[VersionChange],
+    api_version_var: ContextVar[date | None],
 ):
     class VersionChange3(VersionChange):
         description = "Change vat ids to str"
@@ -85,6 +89,7 @@ def test__migrate_simple_data_one_version_down__with_some_inapplicable_migration
     versions = VersionBundle(
         Version(date(2002, 1, 1), version_change_1, VersionChange3),
         Version(date(2001, 1, 1)),
+        api_version_var=api_version_var,
     )
     assert versions.data_to_version(
         DummySchema,
@@ -99,11 +104,13 @@ def test__migrate_simple_data_one_version_down__with_some_inapplicable_migration
 def test__migrate_simple_data_two_versions_down(
     version_change_1: type[VersionChange],
     version_change_2: type[VersionChange],
+    api_version_var: ContextVar[date | None],
 ):
     versions = VersionBundle(
         Version(date(2002, 1, 1), version_change_1),
         Version(date(2001, 1, 1), version_change_2),
         Version(date(2000, 1, 1)),
+        api_version_var=api_version_var,
     )
     assert versions.data_to_version(
         DummySchema,
@@ -119,10 +126,12 @@ def test__migrate_simple_data_two_versions_down(
 async def test__versioned_decorator__with_latest_version__response_is_unchanged(
     api_version: date | None,
     version_change_2: type[VersionChange],
+    api_version_var: ContextVar[date | None],
 ):
     versions = VersionBundle(
         Version(date(2001, 1, 1), version_change_2),
         Version(date(2000, 1, 1)),
+        api_version_var=api_version_var,
     )
 
     @versions.versioned(DummySchema)
@@ -135,10 +144,12 @@ async def test__versioned_decorator__with_latest_version__response_is_unchanged(
 
 async def test__versioned_decorator__with_earlier_version__response_is_migrated(
     version_change_2: type[VersionChange],
+    api_version_var: ContextVar[date | None],
 ):
     versions = VersionBundle(
         Version(date(2001, 1, 1), version_change_2),
         Version(date(2000, 1, 1)),
+        api_version_var=api_version_var,
     )
 
     @versions.versioned(DummySchema)

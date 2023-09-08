@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "universi"
-version = "1.5.1"
+version = "1.6.0"
 description = "Modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -47,6 +47,7 @@ pdbpp = "^0.10.3"
 pytest-pretty = "^1.2.0"
 pytest-asyncio = "^0.21.0"
 httpx = "*"
+pytest-fixture-classes = "^1.0.3"
 
 
 [tool.pytest.ini_options]

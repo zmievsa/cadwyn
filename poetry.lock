@@ -405,6 +405,18 @@ pytest = ">=4.6"
 testing = ["fields", "hunter", "process-tests", "pytest-xdist", "six", "virtualenv"]
 
 [[package]]
+name = "pytest-fixture-classes"
+version = "1.0.3"
+description = "Fixtures as classes that work well with dependency injection, autocompletetion, type checkers, and language servers"
+category = "dev"
+optional = false
+python-versions = ">=3.7"
+
+[package.dependencies]
+pytest = "*"
+typing-extensions = ">=4.4.0"
+
+[[package]]
 name = "pytest-pretty"
 version = "1.2.0"
 description = "pytest plugin for printing summary data as I want it"
@@ -512,7 +524,7 @@ python-versions = "*"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "c2c8ba89c1c054b550e3177cd363cdf07e61753401e6a6dbeb94fa01eb6d308f"
+content-hash = "44431a0803a5543ef8c7038a16206355a92710962001f08e0f6d17a07477f0c6"
 
 [metadata.files]
 anyio = [
@@ -744,6 +756,10 @@ pytest-asyncio = [
 pytest-cov = [
     {file = "pytest-cov-4.1.0.tar.gz", hash = "sha256:3904b13dfbfec47f003b8e77fd5b589cd11904a21ddf1ab38a64f204d6a10ef6"},
     {file = "pytest_cov-4.1.0-py3-none-any.whl", hash = "sha256:6ba70b9e97e69fcc3fb45bfeab2d0a138fb65c4d0d6a41ef33983ad114be8c3a"},
+]
+pytest-fixture-classes = [
+    {file = "pytest_fixture_classes-1.0.3-py3-none-any.whl", hash = "sha256:0b1b3f0d2ccaa6fb620cbd9bf1b228979c5a1590627e6d0961fb73d29629221a"},
+    {file = "pytest_fixture_classes-1.0.3.tar.gz", hash = "sha256:5aee41a63dbd2d6317ce5a5587a9cfc5a0f825589cb0e0c456b1c3c6d8edfa5a"},
 ]
 pytest-pretty = [
     {file = "pytest_pretty-1.2.0-py3-none-any.whl", hash = "sha256:6f79122bf53864ae2951b6c9e94d7a06a87ef753476acd4588aeac018f062036"},
