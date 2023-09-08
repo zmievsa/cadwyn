@@ -481,8 +481,6 @@ So this change can be contained in any version -- your business logic doesn't kn
 
 ### API Version header and context variables
 
-**Note that this behavior is deprecated. Only use a custom contextvar that you made yourself**
-
 Universi automatically converts your data to a correct version and has "version checks" when dealing with side effects as described in [the section above](#version-changes-with-side-effects). It can only do so using a special [context variable](https://docs.python.org/3/library/contextvars.html) that stores the current API version.
 
 Use `universi.get_universi_dependency` to get a `fastapi.Depends` that automatically sets this contextvar based on a header name that you pick.
