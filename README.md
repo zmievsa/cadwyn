@@ -241,7 +241,7 @@ from universi.structure import VersionChange, endpoint
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        endpoint("/my_old_endpoint").existed,
+        endpoint("/my_old_endpoint", ["GET"]).existed,
     )
 
 ```
@@ -256,7 +256,7 @@ from universi.structure import VersionChange, endpoint
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        endpoint("/my_new_endpoint").didnt_exist,
+        endpoint("/my_new_endpoint", ["GET"]).didnt_exist,
     )
 
 ```
@@ -271,7 +271,7 @@ from universi.structure import VersionChange, endpoint
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        endpoint("/my_endpoint").had(description="My old description"),
+        endpoint("/my_endpoint", ["GET"]).had(description="My old description"),
     )
 
 ```
@@ -304,7 +304,7 @@ from universi.structure import VersionChange, enum
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        enum(my_endpoint).didnt_have("foo", "bar"),
+        enum(my_enum).didnt_have("foo", "bar"),
     )
 
 ```

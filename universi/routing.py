@@ -147,6 +147,7 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
                     original_route_index, original_route = _get_index_and_route_from_path(
                         router.routes,
                         instruction.endpoint_path,
+                        instruction.endpoint_methods
                     )
                     if isinstance(instruction, EndpointDidntExistInstruction):
                         if original_route_index is None:
@@ -162,7 +163,7 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
                                 f" '{version_change.__name__}' already existed in newer versions",
                             )
                         deleted_route_index, _ = _get_index_and_route_from_path(
-                            router._deleted_routes, instruction.endpoint_path
+                            router._deleted_routes, instruction.endpoint_path, instruction.endpoint_methods
                         )
                         if deleted_route_index is None:
                             raise RouterGenerationError(
@@ -341,9 +342,14 @@ def _generate_signature(
 def _get_index_and_route_from_path(
     routes: Sequence[BaseRoute | APIRoute],
     endpoint_path: str,
+    endpoint_methods: list[str],
 ) -> tuple[int, APIRoute] | tuple[None, None]:
     for index, route in enumerate(routes):
-        if isinstance(route, APIRoute) and route.path == endpoint_path:
+        if (
+                isinstance(route, APIRoute) and
+                route.path == endpoint_path and
+                sorted(route.methods) == sorted(endpoint_methods)
+        ):
             return index, route
     return None, None
 
