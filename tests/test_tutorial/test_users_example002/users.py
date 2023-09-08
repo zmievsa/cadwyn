@@ -71,7 +71,7 @@ class ChangeAddressesToSubresource(VersionChange):
         schema(UserCreateRequest).field("addresses").existed_with(type=list[str], info=Field()),
         schema(UserCreateRequest).field("default_address").didnt_exist,
         schema(UserResource).field("addresses").existed_with(type=list[str], info=Field()),
-        endpoint("/users/{user_id}/addresses").didnt_exist,
+        endpoint("/users/{user_id}/addresses", ["GET"]).didnt_exist,
     )
 
     @convert_response_to_previous_version_for(UserResource)
