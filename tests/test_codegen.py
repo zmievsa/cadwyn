@@ -520,6 +520,14 @@ def test__codegen_imports_and_aliases(generate_test_version_packages: GenerateTe
     )
 
 
+def test__codegen_imports_and_aliases__alias_without_import__should_raise_error():
+    with pytest.raises(
+        UniversiStructureError,
+        match=re.escape('Field "baz" has "import_as" but not "import_from" which is prohibited'),
+    ):
+        schema(latest.SchemaWithOneFloatField).field("baz").existed_with(type=str, import_as="MyStr")
+
+
 def test__codegen_unions__init_file(generate_test_version_packages: GenerateTestVersionPackages):
     generate_test_version_packages()
     from tests._data import v2000_01_01, v2001_01_01  # pyright: ignore[reportGeneralTypeIssues]
