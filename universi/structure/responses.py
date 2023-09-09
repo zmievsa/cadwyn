@@ -7,7 +7,6 @@ from typing import Any, ParamSpec, TypeVar
 from pydantic import BaseModel
 
 _P = ParamSpec("_P")
-_T = TypeVar("_T")
 
 
 @dataclass

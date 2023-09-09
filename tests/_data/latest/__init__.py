@@ -26,6 +26,10 @@ class EmptySchema(BaseModel):
     pass
 
 
+class EmptySchemaWithArbitraryTypesAllowed(BaseModel, arbitrary_types_allowed=True):
+    pass
+
+
 class SchemaWithOneStrField(BaseModel):
     foo: str = Field(default="foo")
 

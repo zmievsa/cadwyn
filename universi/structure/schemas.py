@@ -64,6 +64,14 @@ class OldSchemaFieldExistedWith:
     field_name: str
     type: type
     field: FieldInfo
+    import_from: str | None = None
+    import_as: str | None = None
+
+    def __post_init__(self):
+        if self.import_from is None and self.import_as is not None:
+            raise UniversiStructureError(
+                f'Field "{self.field_name}" has "import_as" but not "import_from" which is prohibited',
+            )
 
 
 @dataclass(slots=True)
@@ -140,12 +148,21 @@ class AlterFieldInstructionFactory:
     def didnt_exist(self) -> OldSchemaFieldDidntExist:
         return OldSchemaFieldDidntExist(self.schema, field_name=self.name)
 
-    def existed_with(self, *, type: Any, info: FieldInfo | None = None) -> OldSchemaFieldExistedWith:
+    def existed_with(
+        self,
+        *,
+        type: Any,
+        info: FieldInfo | None = None,
+        import_from: str | None = None,
+        import_as: str | None = None,
+    ) -> OldSchemaFieldExistedWith:
         return OldSchemaFieldExistedWith(
             self.schema,
             field_name=self.name,
             type=type,
             field=info or Field(),
+            import_from=import_from,
+            import_as=import_as,
         )
 
 

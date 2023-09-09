@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field
 
 from tests._data import latest
 from tests._data.latest import weird_schemas
+from tests._data.unversioned_schema_dir import UnversionedSchema2
+from tests._data.unversioned_schemas import UnversionedSchema3
 from tests.conftest import GenerateTestVersionPackages
 from universi import regenerate_dir_to_all_versions
 from universi.exceptions import (
@@ -474,15 +476,15 @@ def test__codegen__with_weird_data_types(generate_test_version_packages: Generat
 def test__codegen_union_fields(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(latest.SchemaWithUnionFields).field("baz").existed_with(type=int | latest.EmptySchema),
-        schema(latest.SchemaWithUnionFields).field("daz").existed_with(type=Union[int | latest.EmptySchema]),
+        schema(latest.SchemaWithUnionFields).field("daz").existed_with(type=Union[int, latest.EmptySchema]),
     )
 
     assert inspect.getsource(v2000_01_01.SchemaWithUnionFields) == (
         "class SchemaWithUnionFields(BaseModel):\n"
         "    foo: typing.Union[int, str] = Field()\n"
         "    bar: typing.Union[EmptySchema, None] = Field()\n"
-        "    baz: typing.Union[int | latest.EmptySchema] = Field()\n"
-        "    daz: typing.Union[int | latest.EmptySchema] = Field()\n"
+        "    baz: typing.Union[int, EmptySchema] = Field()\n"
+        "    daz: typing.Union[int, EmptySchema] = Field()\n"
     )
     assert inspect.getsource(v2001_01_01.SchemaWithUnionFields) == (
         "class SchemaWithUnionFields(BaseModel):\n"
@@ -493,21 +495,29 @@ def test__codegen_union_fields(generate_test_version_packages: GenerateTestVersi
 
 def test__codegen_imports_and_aliases(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.EmptySchema).field("foo").existed_with(type="datetime", import_from="datetime", import_as="..."),
+        schema(latest.EmptySchemaWithArbitraryTypesAllowed)
+        .field("foo")
+        .existed_with(type="Logger", import_from="logging", import_as="MyLogger"),
+        schema(latest.EmptySchemaWithArbitraryTypesAllowed)
+        .field("bar")
+        .existed_with(
+            type=UnversionedSchema3,
+            import_from="..unversioned_schemas",
+            import_as="MyLittleSchema",
+        ),
+        schema(latest.EmptySchemaWithArbitraryTypesAllowed)
+        .field("baz")
+        .existed_with(type=UnversionedSchema2, import_from="..unversioned_schema_dir"),
     )
-
-    assert inspect.getsource(v2000_01_01.EmptySchema) == (
-        "class EmptySchema(BaseModel):\n"
-        "    foo: typing.Union[int, str] = Field()\n"
-        "    bar: typing.Union[EmptySchema, None] = Field()\n"
-        "    baz: 'EmptySchema' = Field()\n"
+    assert inspect.getsource(v2000_01_01.EmptySchemaWithArbitraryTypesAllowed) == (
+        "class EmptySchemaWithArbitraryTypesAllowed(BaseModel, arbitrary_types_allowed=True):\n"
+        "    foo: 'MyLogger' = Field()\n"
+        "    bar: 'MyLittleSchema' = Field()\n"
+        "    baz: UnversionedSchema2 = Field()\n"
     )
-    assert inspect.getsource(v2001_01_01.EmptySchema) == (
-        "class EmptySchema(BaseModel):\n"
-        "    foo: typing.Union[int, str] = Field()\n"
-        "    bar: typing.Union[EmptySchema, None] = Field()\n"
+    assert inspect.getsource(v2001_01_01.EmptySchemaWithArbitraryTypesAllowed) == (
+        "class EmptySchemaWithArbitraryTypesAllowed(BaseModel, arbitrary_types_allowed=True):\n    pass\n"
     )
-
 
 
 def test__codegen_unions__init_file(generate_test_version_packages: GenerateTestVersionPackages):

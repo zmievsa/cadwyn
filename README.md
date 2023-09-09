@@ -331,6 +331,27 @@ class MyChange(VersionChange):
 
 ```
 
+You can also specify any string in place of type:
+```python
+schema(MySchema).field("foo").existed_with(type="AnythingHere")
+```
+
+It is often the case that you want to add a type that has not been imported in your schemas yet. You can use `import_from` and optionally `import_as` to do this:
+
+```python
+schema(MySchema).field("foo").existed_with(type=MyOtherSchema, import_from="..some_module", import_as="Foo")
+```
+
+Which will render as:
+
+```python
+from ..some_module import MyOtherSchema as Foo
+from pydantic import BaseModel, Field
+
+class MySchema(BaseModel):
+    foo: Foo = Field()
+```
+
 #### Remove a field
 
 ```python
