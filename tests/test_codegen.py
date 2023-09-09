@@ -7,7 +7,7 @@ from contextvars import ContextVar
 from datetime import date
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 import pytest
 from pydantic import BaseModel, Field
@@ -389,7 +389,7 @@ def test__codegen__non_pydantic_schema__error(generate_test_version_packages: Ge
 
 def test__codegen__schema_that_overrides_fields_from_mro(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaThatOverridesField).field("bar").existed_with(type=int, info=Field()),
+        schema(latest.SchemaThatOverridesField).field("bar").existed_with(type=int),
     )
 
     assert (
@@ -445,7 +445,7 @@ def test__codegen__schema_defined_in_a_non_init_file(generate_test_version_packa
 
 def test__codegen__with_weird_data_types(generate_test_version_packages: GenerateTestVersionPackages):
     generate_test_version_packages(
-        schema(weird_schemas.ModelWithWeirdFields).field("bad").existed_with(type=int, info=Field()),
+        schema(weird_schemas.ModelWithWeirdFields).field("bad").existed_with(type=int),
     )
 
     from tests._data.v2000_01_01.weird_schemas import (  # pyright: ignore[reportMissingImports]
@@ -473,20 +473,41 @@ def test__codegen__with_weird_data_types(generate_test_version_packages: Generat
 
 def test__codegen_union_fields(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaWithUnionFields).field("baz").existed_with(type="EmptySchema", info=Field()),
+        schema(latest.SchemaWithUnionFields).field("baz").existed_with(type=int | latest.EmptySchema),
+        schema(latest.SchemaWithUnionFields).field("daz").existed_with(type=Union[int | latest.EmptySchema]),
     )
 
     assert inspect.getsource(v2000_01_01.SchemaWithUnionFields) == (
         "class SchemaWithUnionFields(BaseModel):\n"
         "    foo: typing.Union[int, str] = Field()\n"
         "    bar: typing.Union[EmptySchema, None] = Field()\n"
-        "    baz: 'EmptySchema' = Field()\n"
+        "    baz: typing.Union[int | latest.EmptySchema] = Field()\n"
+        "    daz: typing.Union[int | latest.EmptySchema] = Field()\n"
     )
     assert inspect.getsource(v2001_01_01.SchemaWithUnionFields) == (
         "class SchemaWithUnionFields(BaseModel):\n"
         "    foo: typing.Union[int, str] = Field()\n"
         "    bar: typing.Union[EmptySchema, None] = Field()\n"
     )
+
+
+def test__codegen_imports_and_aliases(generate_test_version_packages: GenerateTestVersionPackages):
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(
+        schema(latest.EmptySchema).field("foo").existed_with(type="datetime", import_from="datetime", import_as="..."),
+    )
+
+    assert inspect.getsource(v2000_01_01.EmptySchema) == (
+        "class EmptySchema(BaseModel):\n"
+        "    foo: typing.Union[int, str] = Field()\n"
+        "    bar: typing.Union[EmptySchema, None] = Field()\n"
+        "    baz: 'EmptySchema' = Field()\n"
+    )
+    assert inspect.getsource(v2001_01_01.EmptySchema) == (
+        "class EmptySchema(BaseModel):\n"
+        "    foo: typing.Union[int, str] = Field()\n"
+        "    bar: typing.Union[EmptySchema, None] = Field()\n"
+    )
+
 
 
 def test__codegen_unions__init_file(generate_test_version_packages: GenerateTestVersionPackages):
