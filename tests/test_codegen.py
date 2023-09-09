@@ -7,13 +7,15 @@ from contextvars import ContextVar
 from datetime import date
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 import pytest
 from pydantic import BaseModel, Field
 
 from tests._data import latest
 from tests._data.latest import weird_schemas
+from tests._data.unversioned_schema_dir import UnversionedSchema2
+from tests._data.unversioned_schemas import UnversionedSchema3
 from tests.conftest import GenerateTestVersionPackages
 from universi import regenerate_dir_to_all_versions
 from universi.exceptions import (
@@ -389,7 +391,7 @@ def test__codegen__non_pydantic_schema__error(generate_test_version_packages: Ge
 
 def test__codegen__schema_that_overrides_fields_from_mro(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaThatOverridesField).field("bar").existed_with(type=int, info=Field()),
+        schema(latest.SchemaThatOverridesField).field("bar").existed_with(type=int),
     )
 
     assert (
@@ -445,7 +447,7 @@ def test__codegen__schema_defined_in_a_non_init_file(generate_test_version_packa
 
 def test__codegen__with_weird_data_types(generate_test_version_packages: GenerateTestVersionPackages):
     generate_test_version_packages(
-        schema(weird_schemas.ModelWithWeirdFields).field("bad").existed_with(type=int, info=Field()),
+        schema(weird_schemas.ModelWithWeirdFields).field("bad").existed_with(type=int),
     )
 
     from tests._data.v2000_01_01.weird_schemas import (  # pyright: ignore[reportMissingImports]
@@ -473,20 +475,57 @@ def test__codegen__with_weird_data_types(generate_test_version_packages: Generat
 
 def test__codegen_union_fields(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
-        schema(latest.SchemaWithUnionFields).field("baz").existed_with(type="EmptySchema", info=Field()),
+        schema(latest.SchemaWithUnionFields).field("baz").existed_with(type=int | latest.EmptySchema),
+        schema(latest.SchemaWithUnionFields).field("daz").existed_with(type=Union[int, latest.EmptySchema]),
     )
 
     assert inspect.getsource(v2000_01_01.SchemaWithUnionFields) == (
         "class SchemaWithUnionFields(BaseModel):\n"
         "    foo: typing.Union[int, str] = Field()\n"
         "    bar: typing.Union[EmptySchema, None] = Field()\n"
-        "    baz: 'EmptySchema' = Field()\n"
+        "    baz: typing.Union[int, EmptySchema] = Field()\n"
+        "    daz: typing.Union[int, EmptySchema] = Field()\n"
     )
     assert inspect.getsource(v2001_01_01.SchemaWithUnionFields) == (
         "class SchemaWithUnionFields(BaseModel):\n"
         "    foo: typing.Union[int, str] = Field()\n"
         "    bar: typing.Union[EmptySchema, None] = Field()\n"
     )
+
+
+def test__codegen_imports_and_aliases(generate_test_version_packages: GenerateTestVersionPackages):
+    v2000_01_01, v2001_01_01 = generate_test_version_packages(
+        schema(latest.EmptySchemaWithArbitraryTypesAllowed)
+        .field("foo")
+        .existed_with(type="Logger", import_from="logging", import_as="MyLogger"),
+        schema(latest.EmptySchemaWithArbitraryTypesAllowed)
+        .field("bar")
+        .existed_with(
+            type=UnversionedSchema3,
+            import_from="..unversioned_schemas",
+            import_as="MyLittleSchema",
+        ),
+        schema(latest.EmptySchemaWithArbitraryTypesAllowed)
+        .field("baz")
+        .existed_with(type=UnversionedSchema2, import_from="..unversioned_schema_dir"),
+    )
+    assert inspect.getsource(v2000_01_01.EmptySchemaWithArbitraryTypesAllowed) == (
+        "class EmptySchemaWithArbitraryTypesAllowed(BaseModel, arbitrary_types_allowed=True):\n"
+        "    foo: 'MyLogger' = Field()\n"
+        "    bar: 'MyLittleSchema' = Field()\n"
+        "    baz: UnversionedSchema2 = Field()\n"
+    )
+    assert inspect.getsource(v2001_01_01.EmptySchemaWithArbitraryTypesAllowed) == (
+        "class EmptySchemaWithArbitraryTypesAllowed(BaseModel, arbitrary_types_allowed=True):\n    pass\n"
+    )
+
+
+def test__codegen_imports_and_aliases__alias_without_import__should_raise_error():
+    with pytest.raises(
+        UniversiStructureError,
+        match=re.escape('Field "baz" has "import_as" but not "import_from" which is prohibited'),
+    ):
+        schema(latest.SchemaWithOneFloatField).field("baz").existed_with(type=str, import_as="MyStr")
 
 
 def test__codegen_unions__init_file(generate_test_version_packages: GenerateTestVersionPackages):
