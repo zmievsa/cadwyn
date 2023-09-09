@@ -327,6 +327,23 @@ def test__router_generation__editing_an_endpoint_with_a_less_general_method__sho
         create_versioned_copies(router, endpoint("/test/{hewoo}", ["GET"]).had(description="Hewwo"))
 
 
+def test__router_generation__editing_multiple_endpoints_with_same_route(
+    router: VersionedAPIRouter,
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+):
+    @router.api_route("/test/{hewoo}", methods=["GET", "POST"])
+    async def test(hewwo: int):
+        raise NotImplementedError
+
+    routes_2000, routes_2001 = create_versioned_api_routes(
+        router,
+        endpoint("/test/{hewoo}", ["GET", "POST"]).had(description="Meaw"),
+    )
+    assert len(routes_2000) == len(routes_2001) == 1
+    assert routes_2000[0].description == "Meaw"
+    assert routes_2001[0].description == ""
+
+
 def test__router_generation__editing_an_endpoint_with_a_more_general_method__should_raise_error(
     router: VersionedAPIRouter,
     test_endpoint: Endpoint,
