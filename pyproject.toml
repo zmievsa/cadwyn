@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "universi"
-version = "1.7.0"
+version = "1.8.0"
 description = "Modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
