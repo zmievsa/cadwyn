@@ -167,9 +167,10 @@ def test__field_existed_with__extras_are_added__should_generate_properly(
         schema(latest.SchemaWithExtras).field("bar").existed_with(type=int, info=Field(deflolt="hewwo")),
     )
 
-    assert (
-        inspect.getsource(v2000_01_01.SchemaWithExtras)
-        == "class SchemaWithExtras(BaseModel):\n    foo: str = Field(lulz='foo')\n    bar: int = Field(deflolt='hewwo')\n"
+    assert inspect.getsource(v2000_01_01.SchemaWithExtras) == (
+        "class SchemaWithExtras(BaseModel):\n"
+        "    foo: str = Field(lulz='foo')\n"
+        "    bar: int = Field(deflolt='hewwo')\n"
     )
     assert (
         inspect.getsource(v2001_01_01.SchemaWithExtras)
@@ -196,7 +197,8 @@ def test__field_didnt_exist__field_is_missing__should_raise_error(
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to delete a field "bar" from "SchemaWithOneStrField" in "SomeVersionChange" but it doesn\'t have such a field.',
+            'You tried to delete a field "bar" from "SchemaWithOneStrField" in '
+            '"SomeVersionChange" but it doesn\'t have such a field.',
         ),
     ):
         generate_test_version_packages(
@@ -204,7 +206,6 @@ def test__field_didnt_exist__field_is_missing__should_raise_error(
         )
 
 
-# TODO: Make a list of fields we don't include with explanations and write a test that this list stays the same
 @pytest.mark.parametrize(
     ("attr", "attr_value"),
     [
@@ -303,7 +304,7 @@ def test__field_had__float_field(generate_test_version_packages: GenerateTestVer
     )
 
 
-def test__schema_field_had__change_to_the_same_field_type__error(
+def test__schema_field_had__change_to_the_same_field_type__should_raise_error(
     generate_test_version_packages: GenerateTestVersionPackages,
 ):
     with pytest.raises(
@@ -318,13 +319,29 @@ def test__schema_field_had__change_to_the_same_field_type__error(
         )
 
 
+def test__schema_field_had__change_attr_to_same_value__should_raise_error(
+    generate_test_version_packages: GenerateTestVersionPackages,
+):
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            'You tried to change the attribute "default" of field "foo" from "SchemaWithOneStrField" to \'foo\' '
+            'in "SomeVersionChange" but it already has that value.',
+        ),
+    ):
+        generate_test_version_packages(
+            schema(latest.SchemaWithOneStrField).field("foo").had(default="foo"),
+        )
+
+
 def test__schema_field_had__nonexistent_field__should_raise_error(
     generate_test_version_packages: GenerateTestVersionPackages,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to change the type of field "boo" from "SchemaWithOneIntField" in "SomeVersionChange" but it doesn\'t have such a field.',
+            'You tried to change the type of field "boo" from "SchemaWithOneIntField" in '
+            '"SomeVersionChange" but it doesn\'t have such a field.',
         ),
     ):
         generate_test_version_packages(
@@ -336,7 +353,8 @@ def test__enum_had__same_name_as_other_value__error(generate_test_version_packag
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to add a member "a" to "EnumWithOneMember" in "SomeVersionChange" but there is already a member with that name and value.',
+            'You tried to add a member "a" to "EnumWithOneMember" in '
+            '"SomeVersionChange" but there is already a member with that name and value.',
         ),
     ):
         generate_test_version_packages(enum(latest.EnumWithOneMember).had(a=1))
@@ -346,7 +364,8 @@ def test__enum_didnt_have__nonexisting_name__error(generate_test_version_package
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to delete a member "foo" from "EmptyEnum" in "SomeVersionChange" but it doesn\'t have such a member.',
+            'You tried to delete a member "foo" from "EmptyEnum" in '
+            '"SomeVersionChange" but it doesn\'t have such a member.',
         ),
     ):
         generate_test_version_packages(enum(latest.EmptyEnum).didnt_have("foo"))
@@ -424,7 +443,8 @@ def test__codegen_schema_field_existed_with__already_existing_field__should_rais
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to add a field "foo" to "SchemaWithOneIntField" in "SomeVersionChange" but there is already a field with that name.',
+            'You tried to add a field "foo" to "SchemaWithOneIntField" in '
+            '"SomeVersionChange" but there is already a field with that name.',
         ),
     ):
         generate_test_version_packages(
@@ -559,9 +579,9 @@ def test__codegen_property(api_version_var: ContextVar[date | None]):
 
     class VersionChange2(VersionChange):
         description = "..."
-        instructions_to_migrate_to_previous_version = [
+        instructions_to_migrate_to_previous_version = (
             schema(latest.SchemaWithOneFloatField).property("baz")(baz_property),
-        ]
+        )
 
         @schema(latest.SchemaWithOneFloatField).had_property("bar")
         def bar_property(arg1: list[str]):
@@ -569,9 +589,9 @@ def test__codegen_property(api_version_var: ContextVar[date | None]):
 
     class VersionChange1(VersionChange):
         description = "..."
-        instructions_to_migrate_to_previous_version = [
+        instructions_to_migrate_to_previous_version = (
             schema(latest.SchemaWithOneFloatField).property("bar").didnt_exist,
-        ]
+        )
 
     assert VersionChange2.bar_property([]) == 83
 
@@ -615,11 +635,27 @@ def test__codegen_delete_nonexistent_property(generate_test_version_packages: Ge
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to delete a property "bar" from "SchemaWithOneFloatField" in "SomeVersionChange" but there is no such property defined in any of the migrations.',
+            'You tried to delete a property "bar" from "SchemaWithOneFloatField" in '
+            '"SomeVersionChange" but there is no such property defined in any of the migrations.',
         ),
     ):
         generate_test_version_packages(
             schema(latest.SchemaWithOneFloatField).property("bar").didnt_exist,
+        )
+
+
+def test__codegen_lambda_property(generate_test_version_packages: GenerateTestVersionPackages):
+    with pytest.raises(
+        CodeGenerationError,
+        match=re.escape(
+            'Failed to migrate class "SchemaWithOneFloatField" to an older version because: '
+            "You passed a lambda as a schema property. It is not supported yet. "
+            "Please, use a regular function instead. The lambda you have passed: "
+            'schema(latest.SchemaWithOneFloatField).property("bar")(lambda _: "Hewwo"),  # pragma: no cover\n',
+        ),
+    ):
+        generate_test_version_packages(
+            schema(latest.SchemaWithOneFloatField).property("bar")(lambda _: "Hewwo"),  # pragma: no cover
         )
 
 
@@ -643,7 +679,8 @@ def test__codegen_property__there_is_already_field_with_the_same_name__error(
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to define a property "foo" inside "SchemaWithOneFloatField" in "SomeVersionChange" but there is already a field with that name.',
+            'You tried to define a property "foo" inside "SchemaWithOneFloatField" in '
+            '"SomeVersionChange" but there is already a field with that name.',
         ),
     ):
         generate_test_version_packages(

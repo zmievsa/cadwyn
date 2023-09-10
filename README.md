@@ -25,11 +25,6 @@ Modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning in F
 pip install universi
 ```
 
-<!---
-# TODO: Note that we don't handle "from .schemas import Schema as OtherSchema" case
-# TODO: Need to validate that the user doesn't use versioned schemas instead of the latest ones
--->
-
 ## Who is this for?
 
 Universi allows you to support a single version of your code, auto-generating the code/routes for older versions. You keep versioning encapsulated in small and independent "version change" modules while your business logic knows nothing about versioning.
@@ -221,6 +216,7 @@ Please, see [tutorial examples](https://github.com/Ovsyanka83/universi/tree/main
 2. Universi does not include a header-based router like FastAPI. We hope that soon a framework for header-based routing will surface which will allow universi to be a full versioning solution.
 3. I ask you to be very detailed in your descriptions for version changes. Spending these 5 extra minutes will potentially save you tens of hours in the future when everybody forgets when, how, and why the version change was made.
 4. We migrate responses backwards in versions from the latest version using data migration functions and requests forward in versions until the latest version using properties on pydantic models.
+5. Universi doesn't edit your imports when generating schemas so if you make any imports from versioned code to versioned code, I would suggest using [relative imports](https://docs.python.org/3/reference/import.html#package-relative-imports) to make sure that they will still work as expected after code generation.
 
 ## Reference
 
@@ -332,6 +328,7 @@ class MyChange(VersionChange):
 ```
 
 You can also specify any string in place of type:
+
 ```python
 schema(MySchema).field("foo").existed_with(type="AnythingHere")
 ```

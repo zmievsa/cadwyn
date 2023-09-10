@@ -2,6 +2,7 @@ import datetime
 import functools
 import inspect
 import typing
+import warnings
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from enum import Enum
@@ -59,15 +60,14 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
     @same_definition_as_in(fastapi.routing.APIRouter.__init__)
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._deleted_routes: list[APIRoute] = []
+        self.deleted_routes: list[APIRoute] = []
 
-    # TODO: Raise error if endpoint was marked with this but was never used in any version
     def only_exists_in_older_versions(self, endpoint: _T) -> _T:
         index, route = _get_index_and_route_from_func(self.routes, endpoint)
         if index is None or route is None:
             raise LookupError(f"Route not found on endpoint: '{endpoint.__name__}'")
         self.routes.pop(index)
-        self._deleted_routes.append(route)
+        self.deleted_routes.append(route)
         return endpoint
 
     def create_versioned_copies(
@@ -76,143 +76,288 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         *,
         latest_schemas_module: ModuleType | None,
     ) -> dict[datetime.date, Self]:
+        _add_data_migrations_to_all_routes(self, versions)
+        return _EndpointTransformer(self, versions, latest_schemas_module).transform()
+
+
+class _EndpointTransformer:
+    def __init__(
+        self,
+        parent_router: VersionedAPIRouter,
+        versions: VersionBundle,
+        latest_schemas_module: ModuleType | None,
+    ) -> None:
+        self.parent_router = parent_router
+        self.versions = versions
+        if latest_schemas_module is not None:
+            self.annotation_transformer = _AnnotationTransformer(latest_schemas_module, versions)
+        else:
+            self.annotation_transformer = None
+
+        self.routes_that_never_existed = parent_router.deleted_routes.copy()
+
+    def transform(self):
+        router = self.parent_router
+        routers = {}
+        for version in self.versions:
+            if self.annotation_transformer:
+                self.annotation_transformer.migrate_router_to_version(router, version)
+
+            routers[version.value] = router
+            router = deepcopy(router)
+            self._apply_endpoint_changes_to_router(router, version)
+        if self.routes_that_never_existed:
+            raise RouterGenerationError(
+                "Every route you mark with "
+                f"@VersionedAPIRouter.{VersionedAPIRouter.only_exists_in_older_versions.__name__} "
+                "must be restored in one of the older versions. Otherwise you just need to delete it altogether. "
+                "The following routes have been marked with that decorator but were never restored: "
+                f"{self.routes_that_never_existed}",
+            )
+        return routers
+
+    def _apply_endpoint_changes_to_router(self, router: VersionedAPIRouter, version: Version):  # noqa: C901
+        routes = cast(list[APIRoute], router.routes)
+        for version_change in version.version_changes:
+            for instruction in version_change.alter_endpoint_instructions:
+                original_routes = _get_routes(routes, instruction.endpoint_path, instruction.endpoint_methods)
+                methods_to_which_we_applied_changes = set()
+                methods_we_should_have_applied_changes_to = set(instruction.endpoint_methods)
+
+                if isinstance(instruction, EndpointDidntExistInstruction):
+                    for original_route in original_routes:
+                        methods_to_which_we_applied_changes |= original_route.methods
+                        router.routes.remove(original_route)
+                        router.deleted_routes.append(original_route)
+                    err = (
+                        'Endpoint "{endpoint_methods} {endpoint_path}" you tried to delete in'
+                        ' "{version_change_name}" doesn\'t exist in a newer version'
+                    )
+                elif isinstance(instruction, EndpointExistedInstruction):
+                    if original_routes:
+                        method_union = set()
+                        for original_route in original_routes:
+                            method_union |= original_route.methods
+                        raise RouterGenerationError(
+                            f'Endpoint "{list(method_union)} {instruction.endpoint_path}" you tried to restore in'
+                            f' "{version_change.__name__}" already existed in a newer version',
+                        )
+                    deleted_routes = _get_routes(
+                        router.deleted_routes,
+                        instruction.endpoint_path,
+                        instruction.endpoint_methods,
+                    )
+                    for deleted_route in deleted_routes:
+                        methods_to_which_we_applied_changes |= deleted_route.methods
+                        router.deleted_routes.remove(deleted_route)
+                        router.routes.append(deleted_route)
+
+                        if deleted_route in self.routes_that_never_existed:
+                            self.routes_that_never_existed.remove(deleted_route)
+                    err = (
+                        'Endpoint "{endpoint_methods} {endpoint_path}" you tried to restore in'
+                        ' "{version_change_name}" wasn\'t among the deleted routes'
+                    )
+                elif isinstance(instruction, EndpointHadInstruction):
+                    for original_route in original_routes:
+                        methods_to_which_we_applied_changes |= original_route.methods
+                        # OP
+                        _apply_endpoint_had_instruction(version_change, instruction, original_route)
+                    err = (
+                        'Endpoint "{endpoint_methods} {endpoint_path}" you tried to change in'
+                        ' "{version_change_name}" doesn\'t exist'
+                    )
+                else:
+                    assert_never(instruction)
+                method_diff = methods_we_should_have_applied_changes_to - methods_to_which_we_applied_changes
+                if method_diff:
+                    # ERR
+                    raise RouterGenerationError(
+                        err.format(
+                            endpoint_methods=list(method_diff),
+                            endpoint_path=instruction.endpoint_path,
+                            version_change_name=version_change.__name__,
+                        ),
+                    )
+
+
+class _AnnotationTransformer:
+    __slots__ = (
+        "latest_schemas_module",
+        "version_dirs",
+        "template_version_dir",
+        "latest_version_dir",
+        "change_versions_of_a_non_container_annotation",
+    )
+
+    def __init__(self, latest_schemas_module: ModuleType, versions: VersionBundle) -> None:
+        if not hasattr(latest_schemas_module, "__path__"):
+            raise RouterGenerationError(
+                f'The latest schemas module must be a package. "{latest_schemas_module.__name__}" is not a package.',
+            )
+        if not latest_schemas_module.__name__.endswith(".latest"):
+            raise RouterGenerationError(
+                'The name of the latest schemas module must be "latest". '
+                f'Received "{latest_schemas_module.__name__}" instead.',
+            )
+        self.latest_schemas_module = latest_schemas_module
+        self.version_dirs = frozenset(
+            [_get_package_path_from_module(latest_schemas_module)]
+            + [_get_version_dir_path(latest_schemas_module, version.value) for version in versions],
+        )
+        # Okay, the naming is confusing, I know. Essentially template_version_dir is a dir of
+        # latest_schemas_module while latest_version_dir is a version equivalent to latest but
+        # with its own directory. Pick a better naming and make a PR, I am at your mercy.
+        self.template_version_dir = min(self.version_dirs)  # "latest" < "v0000_00_00"
+        self.latest_version_dir = max(self.version_dirs)  # "v2005_11_11" > "v2000_11_11"
+
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
         # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
-        change_simple_annotation = functools.cache(_change_versions_of_a_non_container_annotation)
-        if latest_schemas_module is not None:
-            version_dirs = frozenset(
-                [_get_package_path_from_module(latest_schemas_module)]
-                + [_get_version_dir_path(latest_schemas_module, version.date) for version in versions],
-            )
-        else:
-            version_dirs: frozenset[Path] = frozenset()
-        _add_data_migrations_to_all_routes(self, versions)
-        router = self
-        routers = {}
-        for version in versions:
-            if latest_schemas_module:
-                version_dir = _get_version_dir_path(latest_schemas_module, version.date)
-                if not version_dir.is_dir():
-                    raise RouterGenerationError(
-                        f"Versioned schema directory '{version_dir}' does not exist.",
-                    )
-                for route in router.routes:
-                    if not isinstance(route, APIRoute):
-                        continue
-                    if route.response_model is not None:
-                        route.response_model = _change_versions_of_all_annotations(
-                            route.response_model,
-                            version_dir,
-                            change_simple_annotation,
-                            version_dirs,
-                        )
-                    route.dependencies = _change_versions_of_all_annotations(
-                        route.dependencies,
-                        version_dir,
-                        change_simple_annotation,
-                        version_dirs,
-                    )
-                    route.endpoint = _change_versions_of_all_annotations(
-                        route.endpoint,
-                        version_dir,
-                        change_simple_annotation,
-                        version_dirs,
-                    )
-                    route.dependant = get_dependant(
-                        path=route.path_format,
-                        call=route.endpoint,
-                    )
-                    route.body_field = get_body_field(
-                        dependant=route.dependant,
-                        name=route.unique_id,
-                    )
-                    for depends in route.dependencies[::-1]:
-                        route.dependant.dependencies.insert(
-                            0,
-                            get_parameterless_sub_dependant(
-                                depends=depends,
-                                path=route.path_format,
-                            ),
-                        )
-                    route.app = request_response(route.get_route_handler())
+        # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
+        self.change_versions_of_a_non_container_annotation = functools.cache(
+            self._change_versions_of_a_non_container_annotation,
+        )
 
-            routers[version.date] = router
-            router = deepcopy(router)
-            _apply_endpoint_changes_to_router(router, version)
-        return routers
+    def migrate_router_to_version(self, router: VersionedAPIRouter, version: Version):
+        version_dir = _get_version_dir_path(self.latest_schemas_module, version.value)
+        if not version_dir.is_dir():
+            raise RouterGenerationError(
+                f"Versioned schema directory '{version_dir}' does not exist.",
+            )
+        for route in router.routes:
+            if not isinstance(route, APIRoute):
+                continue
+            if route.response_model is not None:
+                route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
+            route.dependencies = self._change_version_of_annotations(route.dependencies, version_dir)
+            route.endpoint = self._change_version_of_annotations(route.endpoint, version_dir)
+            route.dependant = get_dependant(path=route.path_format, call=route.endpoint)
+            route.body_field = get_body_field(dependant=route.dependant, name=route.unique_id)
+            for depends in route.dependencies[::-1]:
+                route.dependant.dependencies.insert(
+                    0,
+                    get_parameterless_sub_dependant(depends=depends, path=route.path_format),
+                )
+            route.app = request_response(route.get_route_handler())
+
+    def _change_versions_of_a_non_container_annotation(self, annotation: Any, version_dir: Path) -> Any:
+        if isinstance(annotation, _BaseGenericAlias | GenericAlias):
+            return get_origin(annotation)[
+                tuple(self._change_version_of_annotations(arg, version_dir) for arg in get_args(annotation))
+            ]
+        elif isinstance(annotation, Depends):
+            return Depends(
+                self._change_version_of_annotations(annotation.dependency, version_dir),
+                use_cache=annotation.use_cache,
+            )
+        elif isinstance(annotation, UnionType):
+            getitem = typing.Union.__getitem__  # pyright: ignore[reportGeneralTypeIssues]
+            return getitem(
+                tuple(self._change_version_of_annotations(a, version_dir) for a in get_args(annotation)),
+            )
+        elif annotation is typing.Any or isinstance(annotation, typing.NewType):
+            return annotation
+        elif isinstance(annotation, type):
+            return self._change_version_of_type(annotation, version_dir)
+        elif callable(annotation):
+            if inspect.iscoroutinefunction(annotation):
+
+                @functools.wraps(annotation)
+                async def new_callable(  # pyright: ignore[reportGeneralTypeIssues]
+                    *args: Any,
+                    **kwargs: Any,
+                ) -> Any:
+                    return await annotation(*args, **kwargs)
+
+            else:
+
+                @functools.wraps(annotation)
+                def new_callable(  # pyright: ignore[reportGeneralTypeIssues]
+                    *args: Any,
+                    **kwargs: Any,
+                ) -> Any:
+                    return annotation(*args, **kwargs)
+
+            # Otherwise it will have the same signature as __wrapped__
+            del new_callable.__wrapped__
+            old_params = inspect.signature(annotation).parameters
+            callable_annotations = new_callable.__annotations__
+
+            new_callable: Any = cast(Any, new_callable)
+            new_callable.__annotations__ = self._change_version_of_annotations(
+                callable_annotations,
+                version_dir,
+            )
+            new_callable.__defaults__ = self._change_version_of_annotations(
+                tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
+                version_dir,
+            )
+            new_callable.__signature__ = _generate_signature(new_callable, old_params)
+            return new_callable
+        else:
+            return annotation
+
+    def _change_version_of_annotations(self, annotation: Any, version_dir: Path) -> Any:
+        """Recursively go through all annotations and if they were taken from any versioned package, change them to the
+        annotations corresponding to the version_dir passed.
+
+        So if we had a annotation "UserResponse" from "latest" version, and we passed version_dir of "v1_0_1", it would
+        replace "UserResponse" with the the same class but from the "v1_0_1" version.
+
+        """
+        if isinstance(annotation, dict):
+            return {
+                self._change_version_of_annotations(key, version_dir): self._change_version_of_annotations(
+                    value,
+                    version_dir,
+                )
+                for key, value in annotation.items()
+            }
+
+        elif isinstance(annotation, (list, tuple)):
+            return type(annotation)(self._change_version_of_annotations(v, version_dir) for v in annotation)
+        else:
+            return self.change_versions_of_a_non_container_annotation(annotation, version_dir)
+
+    def _change_version_of_type(self, annotation: type, version_dir: Path):
+        if issubclass(annotation, BaseModel | Enum):
+            if version_dir == self.latest_version_dir:
+                source_file = inspect.getsourcefile(annotation)
+                if source_file is None:  # pragma: no cover # I am not even sure how to cover this
+                    warnings.warn(
+                        f'Failed to find where the type annotation "{annotation}" is located.'
+                        "Please, double check that it's located in the right directory",
+                        stacklevel=7,
+                    )
+                else:
+                    template_dir = str(self.template_version_dir)
+                    dir_with_versions = str(self.template_version_dir.parent)
+
+                    # So if it is somewhere close to version dirs (either within them or next to them),
+                    # but not located in "latest",
+                    # but also not located in any other version dir
+                    if (
+                        source_file.startswith(dir_with_versions)
+                        and not source_file.startswith(template_dir)
+                        and any(source_file.startswith(str(d)) for d in self.version_dirs)
+                    ):
+                        raise RouterGenerationError(
+                            f'"{annotation}" is not defined in "{self.template_version_dir}" even though it must be. '
+                            f'It is defined in "{Path(source_file).parent}". '
+                            "It probably means that you used a specific version of the class in fastapi dependencies "
+                            'or pydantic schemas instead of "latest".',
+                        )
+            return get_another_version_of_cls(annotation, version_dir, self.version_dirs)
+        else:
+            return annotation
 
 
 def _add_data_migrations_to_all_routes(router: VersionedAPIRouter, versions: VersionBundle):
-    for route in router.routes + router._deleted_routes:
+    for route in router.routes + router.deleted_routes:
         if isinstance(route, APIRoute):
             if not is_async_callable(route.endpoint):
                 raise RouterGenerationError("All versioned endpoints must be asynchronous.")
             route.endpoint = versions.versioned(route.response_model)(route.endpoint)
-
-
-# TODO: This code is slow. It does a lot of unnecessary actions such as list seeks. Optimize it maybe?
-# TODO: This code is very complex. But no matter how I try to refactor it, nothing really fits.
-def _apply_endpoint_changes_to_router(router: VersionedAPIRouter, version: Version):
-    routes = cast(list[APIRoute], router.routes)
-    for version_change in version.version_changes:
-        for instruction in version_change.alter_endpoint_instructions:
-            original_routes = _get_routes(routes, instruction.endpoint_path, instruction.endpoint_methods)
-            methods_to_which_we_applied_changes = set()
-            methods_we_should_have_applied_changes_to = set(instruction.endpoint_methods)
-
-            if isinstance(instruction, EndpointDidntExistInstruction):
-                for original_route in original_routes:
-                    methods_to_which_we_applied_changes |= original_route.methods
-                    # OP
-                    router.routes.remove(original_route)
-                err = (
-                    'Endpoint "{endpoint_methods} {endpoint_path}" you tried to delete in'
-                    ' "{version_change_name}" doesn\'t exist in a newer version'
-                )
-            elif isinstance(instruction, EndpointExistedInstruction):
-                if original_routes:
-                    method_union = set()
-                    for original_route in original_routes:
-                        method_union |= original_route.methods
-                    raise RouterGenerationError(
-                        f'Endpoint "{list(method_union)} {instruction.endpoint_path}" you tried to re-create in'
-                        f' "{version_change.__name__}" already existed in a newer version',
-                    )
-                deleted_routes = _get_routes(
-                    router._deleted_routes,
-                    instruction.endpoint_path,
-                    instruction.endpoint_methods,
-                )
-                for deleted_route in deleted_routes:
-                    methods_to_which_we_applied_changes |= deleted_route.methods
-                    # OP
-                    router._deleted_routes.remove(deleted_route)
-                    router.routes.append(deleted_route)
-                err = (
-                    'Endpoint "{endpoint_methods} {endpoint_path}" you tried to re-create in'
-                    ' "{version_change_name}" wasn\'t among the deleted routes'
-                )
-            elif isinstance(instruction, EndpointHadInstruction):
-                for original_route in original_routes:
-                    methods_to_which_we_applied_changes |= original_route.methods
-                    # OP
-                    _apply_endpoint_had_instruction(version_change, instruction, original_route)
-                err = (
-                    'Endpoint "{endpoint_methods} {endpoint_path}" you tried to change in'
-                    ' "{version_change_name}" doesn\'t exist'
-                )
-            else:
-                assert_never(instruction)
-            method_diff = methods_we_should_have_applied_changes_to - methods_to_which_we_applied_changes
-            if method_diff:
-                # ERR
-                raise RouterGenerationError(
-                    err.format(
-                        endpoint_methods=list(method_diff),
-                        endpoint_path=instruction.endpoint_path,
-                        version_change_name=version_change.__name__,
-                    ),
-                )
 
 
 def _apply_endpoint_had_instruction(
@@ -232,120 +377,6 @@ def _apply_endpoint_had_instruction(
                     " and can be removed.",
                 )
             setattr(original_route, attr_name, attr)
-
-
-def _change_versions_of_all_annotations(
-    annotation: Any,
-    version_dir: Path,
-    change_simple_annotation: AnnotationChanger,
-    version_dirs: frozenset[Path],
-) -> Any:
-    """Recursively go through all annotations and if they were taken from any versioned package, change them to the
-    annotations corresponding to the version_dir passed.
-
-    So if we had a annotation "UserResponse" from "latest" version, and we passed version_dir of "v1_0_1", it would
-    replace "UserResponse" with the the same class but from the "v1_0_1" version.
-
-    """
-    if isinstance(annotation, dict):
-        return {
-            _change_versions_of_all_annotations(
-                key,
-                version_dir,
-                change_simple_annotation,
-                version_dirs,
-            ): _change_versions_of_all_annotations(value, version_dir, change_simple_annotation, version_dirs)
-            for key, value in annotation.items()
-        }
-
-    elif isinstance(annotation, list | tuple):
-        return type(annotation)(
-            _change_versions_of_all_annotations(v, version_dir, change_simple_annotation, version_dirs)
-            for v in annotation
-        )
-    else:
-        return change_simple_annotation(annotation, version_dir, change_simple_annotation, version_dirs)
-
-
-def _change_versions_of_a_non_container_annotation(
-    annotation: Any,
-    version_dir: Path,
-    change_simple_annotation: AnnotationChanger,
-    version_dirs: frozenset[Path],
-) -> Any:
-    if isinstance(annotation, _BaseGenericAlias | GenericAlias):
-        return get_origin(annotation)[
-            tuple(
-                _change_versions_of_all_annotations(arg, version_dir, change_simple_annotation, version_dirs)
-                for arg in get_args(annotation)
-            )
-        ]
-    elif isinstance(annotation, Depends):
-        return Depends(
-            _change_versions_of_all_annotations(
-                annotation.dependency,
-                version_dir,
-                change_simple_annotation,
-                version_dirs,
-            ),
-            use_cache=annotation.use_cache,
-        )
-    elif isinstance(annotation, UnionType):
-        getitem = typing.Union.__getitem__  # pyright: ignore[reportGeneralTypeIssues]
-        return getitem(
-            tuple(
-                _change_versions_of_all_annotations(a, version_dir, change_simple_annotation, version_dirs)
-                for a in get_args(annotation)
-            ),
-        )
-    elif annotation is typing.Any or isinstance(annotation, typing.NewType):
-        return annotation
-    elif isinstance(annotation, type):
-        if issubclass(annotation, BaseModel | Enum):
-            return get_another_version_of_cls(annotation, version_dir, version_dirs)
-        else:
-            return annotation
-    elif callable(annotation):
-        if inspect.iscoroutinefunction(annotation):
-
-            @functools.wraps(annotation)
-            async def new_callable(  # pyright: ignore[reportGeneralTypeIssues]
-                *args: Any,
-                **kwargs: Any,
-            ) -> Any:
-                return await annotation(*args, **kwargs)
-
-        else:
-
-            @functools.wraps(annotation)
-            def new_callable(  # pyright: ignore[reportGeneralTypeIssues]
-                *args: Any,
-                **kwargs: Any,
-            ) -> Any:
-                return annotation(*args, **kwargs)
-
-        # Otherwise it will have the same signature as __wrapped__
-        del new_callable.__wrapped__
-        old_params = inspect.signature(annotation).parameters
-        callable_annotations = new_callable.__annotations__
-
-        new_callable: Any = cast(Any, new_callable)
-        new_callable.__annotations__ = _change_versions_of_all_annotations(
-            callable_annotations,
-            version_dir,
-            change_simple_annotation,
-            version_dirs,
-        )
-        new_callable.__defaults__ = _change_versions_of_all_annotations(
-            tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
-            version_dir,
-            change_simple_annotation,
-            version_dirs,
-        )
-        new_callable.__signature__ = _generate_signature(new_callable, old_params)
-        return new_callable
-    else:
-        return annotation
 
 
 def _generate_signature(

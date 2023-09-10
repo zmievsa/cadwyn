@@ -146,9 +146,10 @@ extend-exclude = ["migrations"]
 
 [tool.ruff.per-file-ignores]
 "tests/*" = [
-    "S",     # ignore bandit security issues in tests
-    "B018",  # ignore useless expressions in tests
-    "PT012", # ignore complex with pytest.raises clauses
+    "S",      # ignore bandit security issues in tests
+    "B018",   # ignore useless expressions in tests
+    "PT012",  # ignore complex with pytest.raises clauses
+    "RUF012", # ignore mutable class attributes ClassVar typehint requirement
 ]
 "universi/_utils.py" = [
     "ERA001", # Found commented-out code (it's not actually commented out. It's just comments)

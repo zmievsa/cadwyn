@@ -40,6 +40,7 @@ class VersionChange:
         cls.alter_schema_instructions = []
         cls.alter_enum_instructions = []
         cls.alter_endpoint_instructions = []
+        cls.alter_response_instructions = {}
         for alter_instruction in cls.instructions_to_migrate_to_previous_version:
             if isinstance(alter_instruction, AlterSchemaSubInstruction):
                 cls.alter_schema_instructions.append(alter_instruction)
@@ -49,15 +50,11 @@ class VersionChange:
                 cls.alter_endpoint_instructions.append(alter_instruction)
             else:
                 assert_never(alter_instruction)
-        for value in cls.__dict__.values():
-            if isinstance(value, SchemaPropertyDefinitionInstruction):
-                cls.alter_schema_instructions.append(value)
-        # TODO: You can include it in a for loop over dict above. Do so
-        cls.alter_response_instructions = {
-            instruction.schema: instruction
-            for instruction in cls.__dict__.values()
-            if isinstance(instruction, AlterResponseInstruction)
-        }
+        for instruction in cls.__dict__.values():
+            if isinstance(instruction, SchemaPropertyDefinitionInstruction):
+                cls.alter_schema_instructions.append(instruction)
+            elif isinstance(instruction, AlterResponseInstruction):
+                cls.alter_response_instructions[instruction.schema] = instruction
 
         cls._check_no_subclassing()
         cls._bound_versions = None
@@ -133,12 +130,8 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
 
 
 class Version:
-    def __init__(
-        self,
-        date: VersionDate,
-        *version_changes: type[VersionChange],
-    ) -> None:
-        self.date = date
+    def __init__(self, value: VersionDate, *version_changes: type[VersionChange]) -> None:
+        self.value = value
         self.version_changes = version_changes
 
 
@@ -150,7 +143,7 @@ class VersionBundle:
     ) -> None:
         self.versions = versions
         self.api_version_var = api_version_var
-        if sorted(versions, key=lambda v: v.date, reverse=True) != list(versions):
+        if sorted(versions, key=lambda v: v.value, reverse=True) != list(versions):
             raise ValueError(
                 "Versions are not sorted correctly. Please sort them in descending order.",
             )
@@ -188,9 +181,10 @@ class VersionBundle:
     def _version_changes_to_version_mapping(
         self,
     ) -> dict[type[VersionChange], VersionDate]:
-        return {version_change: version.date for version in self.versions for version_change in version.version_changes}
+        return {
+            version_change: version.value for version in self.versions for version_change in version.version_changes
+        }
 
-    # TODO: It might need caching or something for iteration to speed it up
     def data_to_version(
         self,
         response_model: Any,
@@ -209,7 +203,7 @@ class VersionBundle:
             Modified data
         """
         for v in self.versions:
-            if v.date <= version:
+            if v.value <= version:
                 break
             for version_change in v.version_changes:
                 if response_model in version_change.alter_response_instructions:

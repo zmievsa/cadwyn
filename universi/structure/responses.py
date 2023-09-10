@@ -2,9 +2,7 @@ import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ParamSpec, TypeVar
-
-from pydantic import BaseModel
+from typing import Any, ParamSpec
 
 _P = ParamSpec("_P")
 
@@ -31,8 +29,7 @@ class AlterResponseInstruction:
         return self.method(self.owner, data)
 
 
-# TODO: Change it to Any
-def convert_response_to_previous_version_for(schema: type[BaseModel], /) -> "type[classmethod[Any, _P, None]]":
+def convert_response_to_previous_version_for(schema: Any, /) -> "type[classmethod[Any, _P, None]]":
     def decorator(method: Callable[[object, Any], None]) -> Any:
         return AlterResponseInstruction(schema, method)
 

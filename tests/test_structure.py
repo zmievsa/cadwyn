@@ -12,12 +12,12 @@ from universi.structure.responses import convert_response_to_previous_version_fo
 from universi.structure.versions import Version, VersionBundle
 
 
-class DummySubClass2000_001(VersionChangeWithSideEffects):
+class DummySubClass2000_001(VersionChangeWithSideEffects):  # noqa: N801
     description = "dummy description"
     instructions_to_migrate_to_previous_version = []
 
 
-class DummySubClass2000_002(VersionChangeWithSideEffects):
+class DummySubClass2000_002(VersionChangeWithSideEffects):  # noqa: N801
     description = "dummy description2"
     instructions_to_migrate_to_previous_version = []
 

@@ -25,7 +25,6 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo, ModelField
 from typing_extensions import assert_never
 
-from universi._utils import UnionType
 from universi.structure.enums import (
     AlterEnumSubInstruction,
     EnumDidntHaveMembersInstruction,
@@ -80,15 +79,12 @@ class ImportedModule:
             self.alias = f"{self.path.replace('.', '_')}_{self.name}"
 
 
-# TODO: Add enum alteration here
 def regenerate_dir_to_all_versions(template_module: ModuleType, versions: VersionBundle):
     schemas = {k: ModelInfo(_get_fields_for_model(v)) for k, v in deepcopy(versions.versioned_schemas).items()}
     enums = {k: (v, {member.name: member.value for member in v}) for k, v in deepcopy(versions.versioned_enums).items()}
 
     for version in versions:
-        # NOTE: You'll have to use relative imports
-
-        _generate_versioned_directory(template_module, schemas, enums, version.date)
+        _generate_versioned_directory(template_module, schemas, enums, version.value)
         _apply_migrations(version, schemas, enums)
     _generate_union_directory(template_module, versions)
 
@@ -184,7 +180,7 @@ def _prepare_unionized_imports(
     package_path = original_module_parts[index_of_latest_schema_dir_in_pythonpath:-1]
 
     import_pythonpath_template = ".".join(package_path)
-    version_dirs = ["latest"] + [_get_version_dir_name(version.date) for version in versions]
+    version_dirs = ["latest"] + [_get_version_dir_name(version.value) for version in versions]
     return [ImportedModule(version_dir, import_pythonpath_template, package_name) for version_dir in version_dirs]
 
 
@@ -209,7 +205,7 @@ def _apply_migrations(
         )
 
 
-def _apply_alter_schema_instructions(
+def _apply_alter_schema_instructions(  # noqa: C901
     schema_infos: dict[str, ModelInfo],
     alter_schema_instructions: Sequence[AlterSchemaSubInstruction],
     version_change_name: str,
@@ -250,6 +246,13 @@ def _apply_alter_schema_instructions(
             for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
                 attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
                 if attr_value is not Sentinel:
+                    if getattr(field_info, attr_name) == attr_value:
+                        raise InvalidGenerationInstructionError(
+                            f'You tried to change the attribute "{attr_name}" of field '
+                            f'"{alter_schema_instruction.field_name}" '
+                            f'from "{schema.__name__}" to {attr_value!r} in "{version_change_name}" '
+                            "but it already has that value.",
+                        )
                     setattr(field_info, attr_name, attr_value)
         elif isinstance(alter_schema_instruction, OldSchemaFieldExistedWith):
             if alter_schema_instruction.field_name in field_name_to_field_model:
@@ -367,14 +370,18 @@ def _generate_parallel_directory(
     template_module: ModuleType,
     parallel_dir: Path,
 ) -> Generator[tuple[Path, ModuleType, Path], Any, None]:
-    assert template_module.__file__ is not None
+    if template_module.__file__ is None:  # pragma: no cover
+        raise ValueError(
+            f"You passed a {template_module=} but it doesn't have a file "
+            "so it is impossible to generate its counterpart.",
+        )
     dir = _get_package_path_from_module(template_module)
     parallel_dir.mkdir(exist_ok=True)
-    # [universi, structure, schemas]
+    # >>> [universi, structure, schemas]
     template_module_python_path_parts = template_module.__name__.split(".")
-    # [home, foo, bar, universi, structure, schemas]
+    # >>> [home, foo, bar, universi, structure, schemas]
     template_module_path_parts = Path(template_module.__file__).parent.parts
-    # [home, foo, bar] = [home, foo, bar, universi, structure, schemas][:-3]
+    # >>> [home, foo, bar] = [home, foo, bar, universi, structure, schemas][:-3]
     root_module_path = Path(
         *template_module_path_parts[: -len(template_module_python_path_parts)],
     )
@@ -480,18 +487,13 @@ def _migrate_module_to_another_version(
 def _get_all_names_defined_in_module(body: ast.Module) -> set[str]:  # pragma: no covers
     defined_names = set()
     for node in body.body:
-        if isinstance(node, ast.ClassDef):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             defined_names.add(node.name)
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     defined_names.add(target.id)
-        elif isinstance(node, ast.FunctionDef):
-            defined_names.add(node.name)
-        elif isinstance(node, ast.Import):
-            for name in node.names:
-                defined_names.add(name.name)
-        elif isinstance(node, ast.ImportFrom):
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
             for name in node.names:
                 defined_names.add(name.name)
     return defined_names
@@ -509,10 +511,8 @@ def _migrate_cls_to_another_version(
             cls_node = _modify_schema_cls(cls_node, modified_schemas[cls_python_path])
         if cls_python_path in modified_enums:
             cls_node = _modify_enum_cls(cls_node, modified_enums[cls_python_path][1])
-    except CodeGenerationError as e:  # pragma: no cover # This is just a safeguard that will likely never be triggered
-        raise CodeGenerationError(
-            f'Failed to migrate class "{cls_node.name}" to an older version.',
-        ) from e
+    except CodeGenerationError as e:
+        raise CodeGenerationError(f'Failed to migrate class "{cls_node.name}" to an older version because: {e}') from e
 
     if not cls_node.body:
         cls_node.body = [ast.Pass()]
@@ -559,13 +559,14 @@ def _get_attribute_from_field_info(field: ModelField | ModelFieldLike, attr: str
     return field_value
 
 
-# TODO: Type hint these func definitions everywhere
 def _make_property_ast(name: str, func: Callable):
-    func_source = inspect.getsource(func)
-
-    func_ast = ast.parse(textwrap.dedent(func_source)).body[0]
-    # TODO: What if it's a lambda?
-    assert isinstance(func_ast, ast.FunctionDef)
+    func_source = textwrap.dedent(inspect.getsource(func))
+    func_ast = ast.parse(func_source).body[0]
+    if not isinstance(func_ast, ast.FunctionDef):
+        raise CodeGenerationError(
+            "You passed a lambda as a schema property. It is not supported yet. "
+            f"Please, use a regular function instead. The lambda you have passed: {func_source}",
+        )
     func_ast.decorator_list = [ast.Name("property")]
     func_ast.name = name
     func_ast.args.args[0].annotation = None
@@ -613,7 +614,7 @@ def _get_passed_attributes(field_info: FieldInfo):
 # The following is based on by Samuel Colvin's devtools
 
 
-def custom_repr(value: Any) -> Any:
+def custom_repr(value: Any) -> Any:  # noqa: C901
     if isinstance(value, list | tuple | set | frozenset):
         return PlainRepr(value.__class__(map(custom_repr, value)))
     if isinstance(value, dict):
@@ -625,8 +626,7 @@ def custom_repr(value: Any) -> Any:
     if value is None or value is NoneType:
         return "None"
     if isinstance(value, type):
-        # TODO: Add tests for constrained types
-        # TODO: Be wary of this hack when migrating to pydantic v2
+        # NOTE: Be wary of this hack when migrating to pydantic v2
         # This is a hack for pydantic's Constrained types
         if value.__name__.startswith("Constrained"):
             # No, get_origin and get_args don't work here. No idea why

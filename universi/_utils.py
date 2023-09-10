@@ -12,7 +12,7 @@ Sentinel: Any = object()
 UnionType = type(int | str) | type(Union[int, str])
 
 
-class ModuleIsNotVersioned(ValueError):
+class ModuleIsNotVersionedError(ValueError):
     pass
 
 
@@ -22,7 +22,7 @@ def get_another_version_of_cls(cls_from_old_version: type[Any], new_version_dir:
     module_from_old_version = sys.modules[cls_from_old_version.__module__]
     try:
         module = get_another_version_of_module(module_from_old_version, new_version_dir, version_dirs)
-    except ModuleIsNotVersioned:
+    except ModuleIsNotVersionedError:
         return cls_from_old_version
     return getattr(module, cls_from_old_version.__name__)
 
@@ -104,4 +104,4 @@ def _validate_that_module_is_versioned(file: Path, version_dirs: Collection[Path
             return
         except ValueError:
             pass
-    raise ModuleIsNotVersioned(f"Module {file} is not versioned.")
+    raise ModuleIsNotVersionedError(f"Module {file} is not versioned.")

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
 
 
-@dataclass
+@dataclass(slots=True)
 class FieldChanges:
     default: Any
     default_factory: Any
@@ -44,7 +44,7 @@ class FieldChanges:
     repr: bool
 
 
-@dataclass
+@dataclass(slots=True)
 class OldSchemaFieldHad:
     schema: type[BaseModel]
     field_name: str
@@ -52,13 +52,13 @@ class OldSchemaFieldHad:
     field_changes: FieldChanges
 
 
-@dataclass
+@dataclass(slots=True)
 class OldSchemaFieldDidntExist:
     schema: type[BaseModel]
     field_name: str
 
 
-@dataclass
+@dataclass(slots=True)
 class OldSchemaFieldExistedWith:
     schema: type[BaseModel]
     field_name: str
@@ -78,8 +78,6 @@ class OldSchemaFieldExistedWith:
 class AlterFieldInstructionFactory:
     schema: type[BaseModel]
     name: str
-    # TODO: Check if TODO below is still valid. I think, it's not.
-    # TODO: Add a validation to check that field actually changed
 
     def had(
         self,
@@ -212,7 +210,7 @@ AlterSchemaSubInstruction = (
 )
 
 
-@dataclass
+@dataclass(slots=True)
 class AlterSchemaSubInstructionFactory:
     schema: type[BaseModel]
 
