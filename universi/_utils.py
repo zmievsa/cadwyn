@@ -2,16 +2,14 @@ import functools
 import importlib
 import inspect
 import sys
-from collections.abc import Collection
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Union
+from typing import Any, Collection, Union
 
 from universi.exceptions import UniversiError
 
 Sentinel: Any = object()
 UnionType = type(int | str) | type(Union[int, str])
-
 
 class ModuleIsNotVersionedError(ValueError):
     pass

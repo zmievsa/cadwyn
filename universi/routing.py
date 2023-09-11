@@ -116,7 +116,7 @@ class _EndpointTransformer:
             )
         return routers
 
-    def _apply_endpoint_changes_to_router(self, router: VersionedAPIRouter, version: Version):
+    def _apply_endpoint_changes_to_router(self, router: VersionedAPIRouter, version: Version):  # noqa: C901
         routes = cast(list[APIRoute], router.routes)
         for version_change in version.version_changes:
             for instruction in version_change.alter_endpoint_instructions:
@@ -314,7 +314,7 @@ class _AnnotationTransformer:
                 for key, value in annotation.items()
             }
 
-        elif isinstance(annotation, list | tuple):
+        elif isinstance(annotation, (list, tuple)):
             return type(annotation)(self._change_version_of_annotations(v, version_dir) for v in annotation)
         else:
             return self.change_versions_of_a_non_container_annotation(annotation, version_dir)

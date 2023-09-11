@@ -487,13 +487,13 @@ def _migrate_module_to_another_version(
 def _get_all_names_defined_in_module(body: ast.Module) -> set[str]:  # pragma: no covers
     defined_names = set()
     for node in body.body:
-        if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             defined_names.add(node.name)
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     defined_names.add(target.id)
-        elif isinstance(node, ast.Import | ast.ImportFrom):
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
             for name in node.names:
                 defined_names.add(name.name)
     return defined_names
@@ -614,7 +614,7 @@ def _get_passed_attributes(field_info: FieldInfo):
 # The following is based on by Samuel Colvin's devtools
 
 
-def custom_repr(value: Any) -> Any:
+def custom_repr(value: Any) -> Any:  # noqa: C901
     if isinstance(value, list | tuple | set | frozenset):
         return PlainRepr(value.__class__(map(custom_repr, value)))
     if isinstance(value, dict):

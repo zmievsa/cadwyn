@@ -146,22 +146,6 @@ ignore = [
     "RET505", # Unnecessary `else` after `return` statement
     "N805",   # First argument of a method should be named `self`
 ]
-exclude = [
-    ".eggs",
-    ".git",
-    ".git-rewrite",
-    ".mypy_cache",
-    ".nox",
-    ".pytype",
-    ".ruff_cache",
-    ".tox",
-    "venv",
-    ".venv",
-    "__pypackages__",
-    "_build",
-    "build",
-    "dist",
-]
 extend-exclude = ["migrations"]
 
 [tool.ruff.per-file-ignores]
@@ -174,6 +158,9 @@ extend-exclude = ["migrations"]
 "universi/_utils.py" = [
     "ERA001", # Found commented-out code (it's not actually commented out. It's just comments)
 ]
+
+[tool.ruff.mccabe]
+max-complexity = 14
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
