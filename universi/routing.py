@@ -357,7 +357,7 @@ def _add_data_migrations_to_all_routes(router: VersionedAPIRouter, versions: Ver
         if isinstance(route, APIRoute):
             if not is_async_callable(route.endpoint):
                 raise RouterGenerationError("All versioned endpoints must be asynchronous.")
-            route.endpoint = versions.versioned(route.response_model)(route.endpoint)
+            route.endpoint = versions.migrate_responses_backward(route.response_model)(route.endpoint)
 
 
 def _apply_endpoint_had_instruction(

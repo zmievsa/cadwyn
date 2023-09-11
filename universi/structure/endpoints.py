@@ -52,26 +52,26 @@ class EndpointAttributesPayload:
 @dataclass(slots=True)
 class EndpointHadInstruction:
     endpoint_path: str
-    endpoint_methods: list[str]
+    endpoint_methods: Sequence[str]
     attributes: EndpointAttributesPayload
 
 
 @dataclass(slots=True)
 class EndpointExistedInstruction:
     endpoint_path: str
-    endpoint_methods: list[str]
+    endpoint_methods: Sequence[str]
 
 
 @dataclass(slots=True)
 class EndpointDidntExistInstruction:
     endpoint_path: str
-    endpoint_methods: list[str]
+    endpoint_methods: Sequence[str]
 
 
 @dataclass(slots=True)
 class EndpointInstructionFactory:
     endpoint_path: str
-    endpoint_methods: list[str]
+    endpoint_methods: Sequence[str]
 
     @property
     def didnt_exist(self) -> EndpointDidntExistInstruction:

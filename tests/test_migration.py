@@ -49,7 +49,7 @@ def version_change_2():
 
 
 def test__migrate__with_no_migrations__should_not_raise_error(api_version_var: ContextVar[date | None]):
-    assert VersionBundle(api_version_var=api_version_var).data_to_version(
+    assert VersionBundle(api_version_var=api_version_var).migrate_response(
         DummySchema,
         {"A": "B"},
         date(2000, 1, 1),
@@ -65,7 +65,7 @@ def test__migrate_simple_data_one_version_down(
         Version(date(2001, 1, 1)),
         api_version_var=api_version_var,
     )
-    assert versions.data_to_version(
+    assert versions.migrate_response(
         DummySchema,
         {
             "name": "HeliCorp",
@@ -92,7 +92,7 @@ def test__migrate_simple_data_one_version_down__with_some_inapplicable_migration
         Version(date(2001, 1, 1)),
         api_version_var=api_version_var,
     )
-    assert versions.data_to_version(
+    assert versions.migrate_response(
         DummySchema,
         {
             "name": "HeliCorp",
@@ -113,7 +113,7 @@ def test__migrate_simple_data_two_versions_down(
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
     )
-    assert versions.data_to_version(
+    assert versions.migrate_response(
         DummySchema,
         {
             "name": "HeliCorp",
@@ -135,7 +135,7 @@ async def test__versioned_decorator__with_latest_version__response_is_unchanged(
         api_version_var=api_version_var,
     )
 
-    @versions.versioned(DummySchema)
+    @versions.migrate_requests_forward(DummySchema)
     async def test():
         return {"name": "HeliCorp", "vat_ids": ["Foo", "Bar"]}
 
@@ -153,7 +153,7 @@ async def test__versioned_decorator__with_earlier_version__response_is_migrated(
         api_version_var=api_version_var,
     )
 
-    @versions.versioned(DummySchema)
+    @versions.migrate_responses_backward(DummySchema)
     async def test():
         return {"name": "HeliCorp", "vat_ids": ["Foo", "Bar"]}
 
