@@ -151,7 +151,7 @@ class ChangeAddressToList(VersionChange):
     @convert_response_to_previous_version_for(UserResource)
     def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
         data["address"] = data.pop("addresses")[0]
-    
+
     @schema(UserCreateRequest).had_property("addresses")
     def addresses_property(parsed_schema):
         return [parsed_schema.address]
