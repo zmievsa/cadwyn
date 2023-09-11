@@ -5,12 +5,12 @@ import sys
 from collections.abc import Collection
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Union
 
 from universi.exceptions import UniversiError
 
 Sentinel: Any = object()
-UnionType = type(int | str) | type(int | str)
+UnionType = type(int | str) | type(Union[int, str])
 
 
 class ModuleIsNotVersionedError(ValueError):

@@ -7,7 +7,7 @@ from contextvars import ContextVar
 from datetime import date
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 import pytest
 from pydantic import BaseModel, Field
@@ -496,7 +496,7 @@ def test__codegen__with_weird_data_types(generate_test_version_packages: Generat
 def test__codegen_union_fields(generate_test_version_packages: GenerateTestVersionPackages):
     v2000_01_01, v2001_01_01 = generate_test_version_packages(
         schema(latest.SchemaWithUnionFields).field("baz").existed_with(type=int | latest.EmptySchema),
-        schema(latest.SchemaWithUnionFields).field("daz").existed_with(type=int | latest.EmptySchema),
+        schema(latest.SchemaWithUnionFields).field("daz").existed_with(type=Union[int, latest.EmptySchema]),
     )
 
     assert inspect.getsource(v2000_01_01.SchemaWithUnionFields) == (
