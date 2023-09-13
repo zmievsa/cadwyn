@@ -1,6 +1,13 @@
 SHELL := /bin/bash
 py_warn = PYTHONDEVMODE=1
 
+
+.DEFAULT_GOAL := pre-commit
+
+
+pre-commit:
+	pre-commit run --all-files
+
 format:
 	poetry run ruff . --fix; \
 	poetry run black .;

@@ -5,11 +5,13 @@ import typing
 import warnings
 from collections.abc import Callable, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from types import GenericAlias, MappingProxyType, ModuleType
 from typing import (
     Any,
+    Collection,
     TypeVar,
     _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
     cast,
@@ -35,7 +37,7 @@ from typing_extensions import Self, assert_never
 
 from universi._utils import Sentinel, UnionType, get_another_version_of_cls
 from universi.codegen import _get_package_path_from_module, _get_version_dir_path
-from universi.exceptions import RouterGenerationError
+from universi.exceptions import RouteAlreadyExistsError, RouterGenerationError
 from universi.structure import Version, VersionBundle
 from universi.structure.common import Endpoint
 from universi.structure.endpoints import (
@@ -46,7 +48,12 @@ from universi.structure.endpoints import (
 from universi.structure.versions import VersionChange
 
 _T = TypeVar("_T", bound=Callable[..., Any])
-AnnotationChanger = Callable[[Any, Path, "AnnotationChanger", frozenset[Path]], Any]
+
+
+@dataclass(slots=True, frozen=True, eq=True)
+class _EndpointInfo:
+    endpoint_path: str
+    endpoint_methods: frozenset[str]
 
 
 def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
@@ -120,11 +127,34 @@ class _EndpointTransformer:
         routes = cast(list[APIRoute], router.routes)
         for version_change in version.version_changes:
             for instruction in version_change.alter_endpoint_instructions:
-                original_routes = _get_routes(routes, instruction.endpoint_path, instruction.endpoint_methods)
+                original_routes = _get_routes(
+                    routes,
+                    instruction.endpoint_path,
+                    instruction.endpoint_methods,
+                    instruction.endpoint_func_name,
+                )
                 methods_to_which_we_applied_changes = set()
                 methods_we_should_have_applied_changes_to = set(instruction.endpoint_methods)
 
                 if isinstance(instruction, EndpointDidntExistInstruction):
+                    # TODO: Optimize me
+                    deleted_routes = _get_routes(
+                        router.deleted_routes,
+                        instruction.endpoint_path,
+                        instruction.endpoint_methods,
+                        instruction.endpoint_func_name,
+                    )
+                    if deleted_routes:
+                        method_union = set()
+                        for deleted_route in deleted_routes:
+                            method_union |= deleted_route.methods
+                        raise RouterGenerationError(
+                            f'Endpoint "{list(method_union)} {instruction.endpoint_path}" you tried to delete in '
+                            f'"{version_change.__name__}" was already deleted in a newer version. If you really have '
+                            f'two routes with the same paths and methods, please, use "endpoint(..., func_name=...)" '
+                            f"to distinguish between them. Function names of endpoints that were already deleted: "
+                            f"{[r.endpoint.__name__ for r in deleted_routes]}",
+                        )
                     for original_route in original_routes:
                         methods_to_which_we_applied_changes |= original_route.methods
                         router.routes.remove(original_route)
@@ -134,19 +164,34 @@ class _EndpointTransformer:
                         ' "{version_change_name}" doesn\'t exist in a newer version'
                     )
                 elif isinstance(instruction, EndpointExistedInstruction):
+                    # TODO: Optimize me
                     if original_routes:
                         method_union = set()
                         for original_route in original_routes:
                             method_union |= original_route.methods
                         raise RouterGenerationError(
                             f'Endpoint "{list(method_union)} {instruction.endpoint_path}" you tried to restore in'
-                            f' "{version_change.__name__}" already existed in a newer version',
+                            f' "{version_change.__name__}" already existed in a newer version. If you really have two '
+                            f'routes with the same paths and methods, please, use "endpoint(..., func_name=...)" to '
+                            f"distinguish between them. Function names of endpoints that already existed: "
+                            f"{[r.endpoint.__name__ for r in original_routes]}",
                         )
                     deleted_routes = _get_routes(
                         router.deleted_routes,
                         instruction.endpoint_path,
                         instruction.endpoint_methods,
+                        instruction.endpoint_func_name,
                     )
+                    try:
+                        _validate_no_repetitions_in_routes(deleted_routes)
+                    except RouteAlreadyExistsError as e:
+                        raise RouterGenerationError(
+                            f'Endpoint "{list(instruction.endpoint_methods)} {instruction.endpoint_path}" you tried '
+                            f'to restore in "{version_change.__name__}" has different applicable routes that could '
+                            f"be restored. If you really have two routes with the same paths and methods, please, use "
+                            f'"endpoint(..., func_name=...)" to distinguish between them. Function names of '
+                            f"endpoints that can be restored: {[r.endpoint.__name__ for r in e.routes]}",
+                        ) from e
                     for deleted_route in deleted_routes:
                         methods_to_which_we_applied_changes |= deleted_route.methods
                         router.deleted_routes.remove(deleted_route)
@@ -179,6 +224,16 @@ class _EndpointTransformer:
                             version_change_name=version_change.__name__,
                         ),
                     )
+
+
+def _validate_no_repetitions_in_routes(routes: list[APIRoute]):
+    route_map = {}
+
+    for route in routes:
+        route_info = _EndpointInfo(route.path, frozenset(route.methods))
+        if route_info in route_map:
+            raise RouteAlreadyExistsError(route, route_map[route_info])
+        route_map[route_info] = route
 
 
 class _AnnotationTransformer:
@@ -414,15 +469,17 @@ def _generate_signature(
 def _get_routes(
     routes: Sequence[BaseRoute | APIRoute],
     endpoint_path: str,
-    endpoint_methods: list[str],
+    endpoint_methods: Collection[str],
+    endpoint_func_name: str | None = None,
 ) -> list[APIRoute]:
     found_routes = []
     endpoint_method_set = set(endpoint_methods)
-    for _index, route in enumerate(routes):
+    for route in routes:
         if (
             isinstance(route, APIRoute)
             and route.path == endpoint_path
             and set(route.methods).issubset(endpoint_method_set)
+            and (endpoint_func_name is None or route.endpoint.__name__ == endpoint_func_name)
         ):
             found_routes.append(route)
     return found_routes

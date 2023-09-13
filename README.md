@@ -151,7 +151,7 @@ class ChangeAddressToList(VersionChange):
     @convert_response_to_previous_version_for(UserResource)
     def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
         data["address"] = data.pop("addresses")[0]
-    
+
     @schema(UserCreateRequest).had_property("addresses")
     def addresses_property(parsed_schema):
         return [parsed_schema.address]
@@ -278,6 +278,50 @@ class MyChange(VersionChange):
 
 ```
 
+#### Dealing with endpoint duplicates
+
+Sometimes, when you're doing some advanced changes in between versions, you will need to rewrite your endpoint function entirely. So essentially you'd have the following structure:
+
+```python
+from fastapi.params import Param
+from fastapi.headers import Header
+from typing import Annotated
+from universi import VersionedAPIRouter
+
+router = VersionedAPIRouter()
+
+
+@router.only_exists_in_older_versions
+@router.get("/users")
+def get_users_by_name_before_we_started_using_params(user_name: Annotated[str, Header()]):
+    """ Do some logic with user_name """
+
+@router.get("/users")
+def get_users_by_name(user_name: Annotated[str, Param()]):
+    """ Do some logic with user_name """
+```
+
+As you see, these two functions have the same methods and paths. And when you have many versions, you can have even more functions like these two. So how do we ask universi to restore only one of them and delete the other one?
+
+```python
+from universi.structure import VersionChange, endpoint
+
+class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
+    description = (
+        "Use params instead of headers for user name filtering in GET /users "
+        "because using headers is a bad API practice in such scenarios."
+    )
+    instructions_to_migrate_to_previous_version = (
+        # We don't have to specify the name here because there's only one such deleted endpoint
+        endpoint("/users", ["GET"]).existed,
+        # We do have to specify the name because we now have two existing endpoints after the instruction above
+        endpoint("/users", ["GET"], func_name="get_users_by_name").didnt_exist,
+    )
+
+```
+
+So by using a more concrete `func_name`, we are capable to distinguish between different functions that affect the same routes.
+
 ### Enums
 
 #### Adding enum members
@@ -403,6 +447,26 @@ class MyChange(VersionChange):
     )
 
 ```
+
+#### Rename a schema
+
+If you wish to rename your schema to make sure that its name is different in openapi.json:
+
+```python
+from universi.structure import VersionChange, schema
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        schema(MySchema).had(name="OtherSchema"),
+    )
+
+```
+
+which will replace all references to this schema with the new name. Note that this functionality is still experimental
+so minor issues can be expected. If you find any -- feel free to report it in issues.
+
+Note also that renaming a schema should not technically be a breaking change.
 
 ### Unions
 

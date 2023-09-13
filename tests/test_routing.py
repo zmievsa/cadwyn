@@ -297,24 +297,6 @@ def test__router_generation__changing_a_deleted_endpoint__error(
         create_versioned_copies(endpoint("/test", ["GET"]).had(description="Hewwo"))
 
 
-def test__router_generation__deleting_a_deleted_endpoint__error(
-    router: VersionedAPIRouter,
-    create_versioned_copies: CreateVersionedCopies,
-):
-    @router.only_exists_in_older_versions
-    @router.get("/test")
-    async def test():
-        raise NotImplementedError
-
-    with pytest.raises(
-        RouterGenerationError,
-        match=re.escape(
-            'Endpoint "[\'GET\'] /test" you tried to delete in "MyVersionChange" doesn\'t exist in a newer version',
-        ),
-    ):
-        create_versioned_copies(endpoint("/test", ["GET"]).didnt_exist)
-
-
 def test__router_generation__re_creating_an_existing_endpoint__error(
     test_endpoint: Endpoint,
     test_path: str,
@@ -405,6 +387,168 @@ def test__router_generation__editing_multiple_methods_of_multiple_endpoints__sho
 
     assert routes_2001[0].description == ""
     assert routes_2001[1].description == ""
+
+
+def test__router_generation__deleting_a_deleted_endpoint__error(
+    router: VersionedAPIRouter,
+    create_versioned_copies: CreateVersionedCopies,
+):
+    @router.only_exists_in_older_versions
+    @router.get("/test")
+    async def test():
+        raise NotImplementedError
+
+    # with insert_pytest_raises():
+    with pytest.raises(
+        RouterGenerationError,
+        match=re.escape(
+            'Endpoint "[\'GET\'] /test" you tried to delete in "MyVersionChange" was already deleted in a '
+            "newer version. If you really have two routes with the same paths and methods, please, use "
+            '"endpoint(..., func_name=...)" to distinguish between them. '
+            "Function names of endpoints that were already deleted: ['test']",
+        ),
+    ):
+        create_versioned_copies(endpoint("/test", ["GET"]).didnt_exist)
+
+
+@pytest.mark.parametrize("delete_first", [True, False])
+@pytest.mark.parametrize("route_index_to_delete_first", [0, 1])
+def test__router_generation__restoring_deleted_routes_for_same_path_with_func_name__should_restore_only_one_route(
+    router: VersionedAPIRouter,
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+    route_index_to_delete_first: int,
+    delete_first: bool,
+):
+    @router.get("/test")
+    async def test_get0():
+        raise NotImplementedError
+
+    @router.get("/test")
+    async def test_get1():
+        raise NotImplementedError
+
+    routes = [test_get0, test_get1]
+    route_to_delete_first = routes[route_index_to_delete_first]
+    route_to_delete_second = routes[route_index_to_delete_first - 1]
+    router.only_exists_in_older_versions(route_to_delete_first)
+    instructions = [
+        endpoint("/test", ["GET"], func_name=route_to_delete_first.__name__).existed,
+        endpoint("/test", ["GET"], func_name=route_to_delete_second.__name__).didnt_exist,
+    ]
+    if delete_first:
+        instructions = reversed(instructions)
+
+    routes_2000, routes_2001 = create_versioned_api_routes(*instructions)
+
+    assert len(routes_2000) == len(routes_2001) == 1
+    assert routes_2000[0].endpoint.func == routes[route_index_to_delete_first]
+    assert routes_2001[0].endpoint.func == routes[route_index_to_delete_first - 1]
+
+
+@pytest.mark.parametrize("route_index_to_delete_first", [0, 1])
+def test__router_generation__restoring_deleted_route_for_same_path_without_func_name__should_raise_error(
+    router: VersionedAPIRouter,
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+    route_index_to_delete_first: int,
+):
+    @router.get("/test")
+    async def test_get0():
+        raise NotImplementedError
+
+    @router.get("/test")
+    async def test_get1():
+        raise NotImplementedError
+
+    routes = [test_get0, test_get1]
+
+    router.only_exists_in_older_versions(routes[route_index_to_delete_first])
+
+    # with insert_pytest_raises():
+    with pytest.raises(
+        RouterGenerationError,
+        match=re.escape(
+            'Endpoint "[\'GET\'] /test" you tried to delete in "MyVersionChange" was already deleted in '
+            "a newer version. If you really have two routes with the same paths and methods, please, use "
+            '"endpoint(..., func_name=...)" to distinguish between them. '
+            f"Function names of endpoints that were already deleted: ['test_get{route_index_to_delete_first}']",
+        ),
+    ):
+        create_versioned_api_routes(
+            endpoint("/test", ["GET"]).didnt_exist,
+            endpoint("/test", ["GET"]).existed,
+        )
+
+
+@pytest.fixture()
+def two_deleted_routes(router: VersionedAPIRouter):
+    @router.only_exists_in_older_versions
+    @router.get("/test")
+    async def test_get0():
+        raise NotImplementedError
+
+    @router.only_exists_in_older_versions
+    @router.get("/test")
+    async def test_get1():
+        raise NotImplementedError
+
+    return test_get0, test_get1
+
+
+def test__router_generation__restoring_two_deleted_routes_for_same_path__should_raise_error(
+    two_deleted_routes: tuple[Endpoint, Endpoint],
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+):
+    with pytest.raises(
+        RouterGenerationError,
+        match=re.escape(
+            'Endpoint "[\'GET\'] /test" you tried to restore in "MyVersionChange" has different applicable routes that '
+            "could be restored. If you really have two routes with the same paths and methods, please, use "
+            '"endpoint(..., func_name=...)" to distinguish between them. '
+            "Function names of endpoints that can be restored: ['test_get1', 'test_get0']",
+        ),
+    ):
+        create_versioned_api_routes(endpoint("/test", ["GET"]).existed)
+
+
+@pytest.mark.parametrize("route_index_to_restore_first", [0, 1])
+def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpoint(
+    router: VersionedAPIRouter,
+    api_version_var: ContextVar[date | None],
+    two_deleted_routes: tuple[Endpoint, Endpoint],
+    route_index_to_restore_first: int,
+):
+    route_to_restore_first = two_deleted_routes[route_index_to_restore_first]
+    route_to_restore_second = two_deleted_routes[route_index_to_restore_first - 1]
+
+    class MyVersionChange2(VersionChange):
+        description = "..."
+        instructions_to_migrate_to_previous_version = [
+            endpoint("/test", ["GET"], func_name=route_to_restore_first.__name__).existed,
+        ]
+
+    class MyVersionChange1(VersionChange):
+        description = "..."
+        instructions_to_migrate_to_previous_version = [
+            endpoint("/test", ["GET"], func_name=route_to_restore_second.__name__).existed,
+        ]
+
+    routers = router.create_versioned_copies(
+        VersionBundle(
+            Version(date(2002, 1, 1), MyVersionChange2),
+            Version(date(2001, 1, 1), MyVersionChange1),
+            Version(date(2000, 1, 1)),
+            api_version_var=api_version_var,
+        ),
+        latest_schemas_module=None,
+    )
+
+    assert len(routers[date(2002, 1, 1)].routes) == 0
+    assert len(routers[date(2001, 1, 1)].routes) == 1
+    assert len(routers[date(2000, 1, 1)].routes) == 2
+
+    assert routers[date(2001, 1, 1)].routes[0].endpoint.func == route_to_restore_first
+    assert routers[date(2000, 1, 1)].routes[0].endpoint.func == route_to_restore_first
+    assert routers[date(2000, 1, 1)].routes[1].endpoint.func == route_to_restore_second
 
 
 def get_nested_field_type(annotation: Any) -> type[BaseModel]:

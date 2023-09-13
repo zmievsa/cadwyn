@@ -1,6 +1,6 @@
-from collections import defaultdict
 import datetime
 import functools
+from collections import defaultdict
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from enum import Enum
@@ -16,18 +16,20 @@ from universi.structure.enums import AlterEnumSubInstruction
 from .._utils import Sentinel
 from .common import Endpoint, VersionedModel
 from .data import AlterRequestInstruction, AlterResponseInstruction
-from .schemas import AlterSchemaSubInstruction, SchemaPropertyDefinitionInstruction
+from .schemas import AlterSchemaInstruction, AlterSchemaSubInstruction, SchemaPropertyDefinitionInstruction
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 VersionDate: TypeAlias = datetime.date
-PossibleInstructions: TypeAlias = AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction
+PossibleInstructions: TypeAlias = (
+    AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction | AlterSchemaInstruction
+)
 
 
 class VersionChange:
     description: ClassVar[str] = Sentinel
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
-    alter_schema_instructions: ClassVar[Sequence[AlterSchemaSubInstruction]] = Sentinel
+    alter_schema_instructions: ClassVar[Sequence[AlterSchemaSubInstruction | AlterSchemaInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[Sequence[AlterEnumSubInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[Sequence[AlterEndpointSubInstruction]] = Sentinel
     alter_response_instructions: ClassVar[dict[Any, AlterResponseInstruction]] = Sentinel
@@ -45,7 +47,7 @@ class VersionChange:
         cls.alter_response_instructions = {}
         cls.alter_request_instructions = defaultdict(list)
         for alter_instruction in cls.instructions_to_migrate_to_previous_version:
-            if isinstance(alter_instruction, AlterSchemaSubInstruction):
+            if isinstance(alter_instruction, AlterSchemaSubInstruction | AlterSchemaInstruction):
                 cls.alter_schema_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, AlterEnumSubInstruction):
                 cls.alter_enum_instructions.append(alter_instruction)
@@ -58,8 +60,6 @@ class VersionChange:
                 cls.alter_schema_instructions.append(instruction)
             elif isinstance(instruction, AlterResponseInstruction):
                 cls.alter_response_instructions[instruction.schema] = instruction
-            elif isinstance(instruction, AlterRequestInstruction):
-                cls.alter_request_instructions[instruction.path].append(instruction)
 
         cls._check_no_subclassing()
         cls._bound_versions = None
@@ -215,40 +215,7 @@ class VersionBundle:
                     version_change.alter_response_instructions[response_model](data)
         return data
 
-    def migrate_request(
-        self,
-        path: str,
-        methods: Sequence[str],
-        request: Any,
-        current_version: VersionDate,
-    ) -> dict[str, Any]:
-        for version in reversed(self.versions):
-            if version.value < current_version:
-                continue
-            if version.value >= current_version:
-                for version_change in version.version_changes:
-                    if path in version_change.alter_request_instructions:
-                        for instruction in version_change.alter_request_instructions[path]:
-                            instruction(request)
-        return request
-
     def migrate_responses_backward(self, response_model: Any) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]:
-        def wrapper(endpoint: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
-            @functools.wraps(endpoint)
-            async def decorator(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-                return await self._convert_endpoint_response_to_version(
-                    endpoint,
-                    response_model,
-                    args,
-                    kwargs,
-                )
-
-            decorator.func = endpoint  # pyright: ignore[reportGeneralTypeIssues]
-            return decorator
-
-        return wrapper
-
-    def migrate_requests_forward(self, response_model: Any) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]:
         def wrapper(endpoint: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
             @functools.wraps(endpoint)
             async def decorator(*args: _P.args, **kwargs: _P.kwargs) -> _R:

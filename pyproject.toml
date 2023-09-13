@@ -48,6 +48,7 @@ pytest-pretty = "^1.2.0"
 pytest-asyncio = "^0.21.0"
 httpx = "*"
 pytest-fixture-classes = "^1.0.3"
+pre-commit = "^3.4.0"
 
 
 [tool.pytest.ini_options]
@@ -80,9 +81,12 @@ exclude_lines = [
 omit = ["tests/test_tutorial/test_users_example003/*"]
 
 [tool.black]
+color = true
 line-length = 120
+target-version = ["py310"]
 
 [tool.ruff]
+target-version = "py310"
 line-length = 120
 select = [
     "F",       # pyflakes
@@ -118,7 +122,7 @@ select = [
     "PTH",     # flake8-use-pathlib
     "ERA",     # flake8-eradicate
     "PGH",     # pygrep-hooks
-    "PLC0414", # Import alias does not rename original package 
+    "PLC0414", # Import alias does not rename original package
     "PLE",     # Error
     "PLW",     # Warning
     "TRY",     # tryceratops
@@ -155,6 +159,8 @@ extend-exclude = ["migrations"]
     "ERA001", # Found commented-out code (it's not actually commented out. It's just comments)
 ]
 
+[tool.ruff.mccabe]
+max-complexity = 14
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

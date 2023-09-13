@@ -1,6 +1,6 @@
+from .data import convert_response_to_previous_version_for
 from .endpoints import endpoint
 from .enums import enum
-from .data import convert_response_to_previous_version_for
 from .schemas import schema
 from .versions import (
     Version,

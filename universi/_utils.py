@@ -11,7 +11,6 @@ from universi.exceptions import UniversiError
 Sentinel: Any = object()
 UnionType = type(int | str) | type(Union[int, str])
 
-
 class ModuleIsNotVersionedError(ValueError):
     pass
 

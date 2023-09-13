@@ -135,7 +135,7 @@ async def test__versioned_decorator__with_latest_version__response_is_unchanged(
         api_version_var=api_version_var,
     )
 
-    @versions.migrate_requests_forward(DummySchema)
+    @versions.migrate_responses_backward(DummySchema)
     async def test():
         return {"name": "HeliCorp", "vat_ids": ["Foo", "Bar"]}
 
