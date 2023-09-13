@@ -52,34 +52,46 @@ class EndpointAttributesPayload:
 @dataclass(slots=True)
 class EndpointHadInstruction:
     endpoint_path: str
-    endpoint_methods: list[str]
+    endpoint_methods: Sequence[str]
+    endpoint_func_name: str | None
     attributes: EndpointAttributesPayload
 
 
 @dataclass(slots=True)
 class EndpointExistedInstruction:
     endpoint_path: str
-    endpoint_methods: list[str]
+    endpoint_methods: Sequence[str]
+    endpoint_func_name: str | None
 
 
 @dataclass(slots=True)
 class EndpointDidntExistInstruction:
     endpoint_path: str
-    endpoint_methods: list[str]
+    endpoint_methods: Sequence[str]
+    endpoint_func_name: str | None
 
 
 @dataclass(slots=True)
 class EndpointInstructionFactory:
     endpoint_path: str
-    endpoint_methods: list[str]
+    endpoint_methods: Sequence[str]
+    endpoint_func_name: str | None
 
     @property
     def didnt_exist(self) -> EndpointDidntExistInstruction:
-        return EndpointDidntExistInstruction(self.endpoint_path, self.endpoint_methods)
+        return EndpointDidntExistInstruction(
+            self.endpoint_path,
+            self.endpoint_methods,
+            endpoint_func_name=self.endpoint_func_name,
+        )
 
     @property
     def existed(self) -> EndpointExistedInstruction:
-        return EndpointExistedInstruction(self.endpoint_path, self.endpoint_methods)
+        return EndpointExistedInstruction(
+            self.endpoint_path,
+            self.endpoint_methods,
+            endpoint_func_name=self.endpoint_func_name,
+        )
 
     def had(
         self,
@@ -104,6 +116,7 @@ class EndpointInstructionFactory:
         return EndpointHadInstruction(
             endpoint_path=self.endpoint_path,
             endpoint_methods=self.endpoint_methods,
+            endpoint_func_name=self.endpoint_func_name,
             attributes=EndpointAttributesPayload(
                 path=path,
                 status_code=status_code,
@@ -126,8 +139,8 @@ class EndpointInstructionFactory:
         )
 
 
-def endpoint(endpoint_path: str, endpoint_methods: list[str], /) -> EndpointInstructionFactory:
-    return EndpointInstructionFactory(endpoint_path, endpoint_methods)
+def endpoint(path: str, methods: list[str], /, *, func_name: str | None = None) -> EndpointInstructionFactory:
+    return EndpointInstructionFactory(path, methods, func_name)
 
 
 AlterEndpointSubInstruction = EndpointDidntExistInstruction | EndpointExistedInstruction | EndpointHadInstruction

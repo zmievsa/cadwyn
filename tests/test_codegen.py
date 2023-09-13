@@ -13,7 +13,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from tests._data import latest
-from tests._data.latest import weird_schemas
+from tests._data.latest import some_schema, weird_schemas
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schemas import UnversionedSchema3
 from tests.conftest import GenerateTestVersionPackages
@@ -686,3 +686,176 @@ def test__codegen_property__there_is_already_field_with_the_same_name__error(
         generate_test_version_packages(
             schema(latest.SchemaWithOneFloatField).property("foo")(baz),
         )
+
+
+def test__codegen_schema_had_name__dependent_schema_is_not_altered(api_version_var: ContextVar[date | None]):
+    class VersionChange2(VersionChange):
+        description = "..."
+        instructions_to_migrate_to_previous_version = [
+            schema(latest.SchemaWithOneFloatField).had(name="MyFloatySchema"),
+        ]
+
+    class VersionChange1(VersionChange):
+        description = "..."
+        instructions_to_migrate_to_previous_version = [
+            schema(latest.SchemaWithOneFloatField).had(name="MyFloatySchema2"),
+        ]
+
+    regenerate_dir_to_all_versions(
+        latest,
+        VersionBundle(
+            Version(date(2002, 1, 1), VersionChange2),
+            Version(date(2001, 1, 1), VersionChange1),
+            Version(date(2000, 1, 1)),
+            api_version_var=api_version_var,
+        ),
+    )
+
+    from tests._data import v2000_01_01, v2001_01_01, v2002_01_01  # pyright: ignore[reportGeneralTypeIssues]
+
+    assert inspect.getsource(v2000_01_01.MyFloatySchema2) == (
+        "class MyFloatySchema2(BaseModel):\n    foo: float = Field()\n"
+    )
+    assert inspect.getsource(v2001_01_01.MyFloatySchema) == (
+        "class MyFloatySchema(BaseModel):\n    foo: float = Field()\n"
+    )
+    assert inspect.getsource(v2002_01_01.SchemaWithOneFloatField) == (
+        "class SchemaWithOneFloatField(BaseModel):\n    foo: float = Field()\n"
+    )
+    assert inspect.getsource(v2000_01_01.SchemaThatDependsOnAnotherSchema) == (
+        "class SchemaThatDependsOnAnotherSchema(MyFloatySchema2):\n"
+        "    foo: MyFloatySchema2\n"
+        "    bat: MyFloatySchema2 | int = Field(default=MyFloatySchema2(foo=3.14))\n\n"
+        "    def baz(self, daz: MyFloatySchema2) -> MyFloatySchema2:\n"
+        "        return MyFloatySchema2(foo=3.14)\n"
+    )
+    assert inspect.getsource(v2001_01_01.SchemaThatDependsOnAnotherSchema) == (
+        "class SchemaThatDependsOnAnotherSchema(MyFloatySchema):\n"
+        "    foo: MyFloatySchema\n"
+        "    bat: MyFloatySchema | int = Field(default=MyFloatySchema(foo=3.14))\n\n"
+        "    def baz(self, daz: MyFloatySchema) -> MyFloatySchema:\n"
+        "        return MyFloatySchema(foo=3.14)\n"
+    )
+    assert inspect.getsource(v2002_01_01.SchemaThatDependsOnAnotherSchema) == (
+        "class SchemaThatDependsOnAnotherSchema(SchemaWithOneFloatField):\n"
+        "    foo: SchemaWithOneFloatField\n"
+        "    bat: SchemaWithOneFloatField | int = Field(default=SchemaWithOneFloatField(foo=3.14))\n\n"
+        "    def baz(self, daz: SchemaWithOneFloatField) -> SchemaWithOneFloatField:\n"
+        "        return SchemaWithOneFloatField(foo=3.14)\n"
+    )
+
+    from tests._data.v2000_01_01.some_schema import SchemaThatDependsOnAnotherSchema
+
+    assert inspect.getsource(SchemaThatDependsOnAnotherSchema) == (
+        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: MyFloatySchema2\n    bar: int\n"
+    )
+
+    from tests._data.v2001_01_01.some_schema import SchemaThatDependsOnAnotherSchema
+
+    assert inspect.getsource(SchemaThatDependsOnAnotherSchema) == (
+        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: MyFloatySchema\n    bar: int\n"
+    )
+    from tests._data.v2002_01_01.some_schema import SchemaThatDependsOnAnotherSchema
+
+    assert inspect.getsource(SchemaThatDependsOnAnotherSchema) == (
+        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: SchemaWithOneFloatField\n    bar: int\n"
+    )
+    from tests._data.unions import SchemaWithOneFloatField
+
+    assert str(SchemaWithOneFloatField) == (
+        "tests._data.latest.SchemaWithOneFloatField | "
+        "tests._data.v2002_01_01.SchemaWithOneFloatField | "
+        "tests._data.v2001_01_01.MyFloatySchema | "
+        "tests._data.v2000_01_01.MyFloatySchema2"
+    )
+
+
+def test__codegen_schema_had_name__dependent_schema_is_altered(api_version_var: ContextVar[date | None]):
+    class VersionChange2(VersionChange):
+        description = "..."
+        instructions_to_migrate_to_previous_version = [
+            schema(latest.SchemaWithOneFloatField).had(name="MyFloatySchema"),
+            schema(latest.SchemaThatDependsOnAnotherSchema).field("gaz").existed_with(type=int),
+            schema(some_schema.SchemaThatDependsOnAnotherSchema).field("bar").didnt_exist,
+        ]
+
+    class VersionChange1(VersionChange):
+        description = "..."
+        instructions_to_migrate_to_previous_version = [
+            schema(latest.SchemaWithOneFloatField).had(name="MyFloatySchema2"),
+            schema(latest.SchemaThatDependsOnAnotherSchema).field("gaz").didnt_exist,
+        ]
+
+    regenerate_dir_to_all_versions(
+        latest,
+        VersionBundle(
+            Version(date(2002, 1, 1), VersionChange2),
+            Version(date(2001, 1, 1), VersionChange1),
+            Version(date(2000, 1, 1)),
+            api_version_var=api_version_var,
+        ),
+    )
+
+    from tests._data import v2000_01_01, v2001_01_01, v2002_01_01  # pyright: ignore[reportGeneralTypeIssues]
+
+    assert inspect.getsource(v2000_01_01.MyFloatySchema2) == (
+        "class MyFloatySchema2(BaseModel):\n    foo: float = Field()\n"
+    )
+    assert inspect.getsource(v2001_01_01.MyFloatySchema) == (
+        "class MyFloatySchema(BaseModel):\n    foo: float = Field()\n"
+    )
+    assert inspect.getsource(v2002_01_01.SchemaWithOneFloatField) == (
+        "class SchemaWithOneFloatField(BaseModel):\n    foo: float = Field()\n"
+    )
+    assert (
+        inspect.getsource(v2000_01_01.SchemaThatDependsOnAnotherSchema)
+        == "class SchemaThatDependsOnAnotherSchema(MyFloatySchema2):\n"
+        "    foo: MyFloatySchema2 = Field()\n"
+        "    bat: typing.Union[MyFloatySchema2, int] = Field(default=MyFloatySchema2(foo=3.14))\n\n"
+        "    def baz(self, daz: MyFloatySchema2) -> MyFloatySchema2:\n"
+        "        return MyFloatySchema2(foo=3.14)\n"
+    )
+    assert (
+        inspect.getsource(v2001_01_01.SchemaThatDependsOnAnotherSchema)
+        == "class SchemaThatDependsOnAnotherSchema(MyFloatySchema):\n"
+        "    foo: MyFloatySchema = Field()\n"
+        "    bat: typing.Union[MyFloatySchema, int] = Field(default=MyFloatySchema(foo=3.14))\n"
+        "    gaz: int = Field()\n\n"
+        "    def baz(self, daz: MyFloatySchema) -> MyFloatySchema:\n"
+        "        return MyFloatySchema(foo=3.14)\n"
+    )
+    assert (
+        inspect.getsource(v2002_01_01.SchemaThatDependsOnAnotherSchema)
+        == "class SchemaThatDependsOnAnotherSchema(SchemaWithOneFloatField):\n"
+        "    foo: SchemaWithOneFloatField = Field()\n"
+        "    bat: typing.Union[SchemaWithOneFloatField, int] = Field(default=SchemaWithOneFloatField(foo=3.14))\n\n"
+        "    def baz(self, daz: SchemaWithOneFloatField) -> SchemaWithOneFloatField:\n"
+        "        return SchemaWithOneFloatField(foo=3.14)\n"
+    )
+    from tests._data.v2000_01_01.some_schema import SchemaThatDependsOnAnotherSchema
+
+    assert inspect.getsource(SchemaThatDependsOnAnotherSchema) == (
+        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: MyFloatySchema2 = Field()\n"
+    )
+
+    from tests._data.v2001_01_01.some_schema import SchemaThatDependsOnAnotherSchema
+
+    assert inspect.getsource(SchemaThatDependsOnAnotherSchema) == (
+        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: MyFloatySchema = Field()\n"
+    )
+    from tests._data.v2002_01_01.some_schema import SchemaThatDependsOnAnotherSchema
+
+    assert inspect.getsource(SchemaThatDependsOnAnotherSchema) == (
+        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n"
+        "    foo: SchemaWithOneFloatField = Field()\n"
+        "    bar: int = Field()\n"
+    )
+
+    from tests._data.unions import SchemaWithOneFloatField
+
+    assert str(SchemaWithOneFloatField) == (
+        "tests._data.latest.SchemaWithOneFloatField | "
+        "tests._data.v2002_01_01.SchemaWithOneFloatField | "
+        "tests._data.v2001_01_01.MyFloatySchema | "
+        "tests._data.v2000_01_01.MyFloatySchema2"
+    )

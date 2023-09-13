@@ -211,11 +211,20 @@ AlterSchemaSubInstruction = (
 
 
 @dataclass(slots=True)
+class AlterSchemaInstruction:
+    schema: type[BaseModel]
+    name: str
+
+
+@dataclass(slots=True)
 class AlterSchemaSubInstructionFactory:
     schema: type[BaseModel]
 
     def field(self, name: str, /) -> AlterFieldInstructionFactory:
         return AlterFieldInstructionFactory(self.schema, name)
+
+    def had(self, *, name: str) -> AlterSchemaInstruction:
+        return AlterSchemaInstruction(self.schema, name)
 
     def had_property(self, name: str, /) -> type[staticmethod]:
         return cast(

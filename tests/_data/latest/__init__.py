@@ -52,6 +52,14 @@ class SchemaWithOneFloatField(BaseModel):
     foo: float
 
 
+class SchemaThatDependsOnAnotherSchema(SchemaWithOneFloatField):
+    foo: SchemaWithOneFloatField
+    bat: SchemaWithOneFloatField | int = Field(default=SchemaWithOneFloatField(foo=3.14))
+
+    def baz(self, daz: SchemaWithOneFloatField) -> SchemaWithOneFloatField:
+        return SchemaWithOneFloatField(foo=3.14)  # pragma: no cover
+
+
 class SchemaWithOnePydanticField(BaseModel):
     foo: SchemaWithOneIntField
 

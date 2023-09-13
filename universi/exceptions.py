@@ -1,3 +1,6 @@
+from fastapi.routing import APIRoute
+
+
 class UniversiError(Exception):
     pass
 
@@ -16,6 +19,12 @@ class InvalidGenerationInstructionError(CodeGenerationError):
 
 class RouterGenerationError(UniversiError):
     pass
+
+
+class RouteAlreadyExistsError(RouterGenerationError):
+    def __init__(self, *routes: APIRoute):
+        self.routes = routes
+        super().__init__(f"The following routes are duplicates of each other: {routes}")
 
 
 class UniversiStructureError(UniversiError):

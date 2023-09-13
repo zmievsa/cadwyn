@@ -1,5 +1,6 @@
 import datetime
 import functools
+from collections import defaultdict
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from enum import Enum
@@ -14,22 +15,25 @@ from universi.structure.enums import AlterEnumSubInstruction
 
 from .._utils import Sentinel
 from .common import Endpoint, VersionedModel
-from .responses import AlterResponseInstruction
-from .schemas import AlterSchemaSubInstruction, SchemaPropertyDefinitionInstruction
+from .data import AlterRequestInstruction, AlterResponseInstruction
+from .schemas import AlterSchemaInstruction, AlterSchemaSubInstruction, SchemaPropertyDefinitionInstruction
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 VersionDate: TypeAlias = datetime.date
-PossibleInstructions: TypeAlias = AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction
+PossibleInstructions: TypeAlias = (
+    AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction | AlterSchemaInstruction
+)
 
 
 class VersionChange:
     description: ClassVar[str] = Sentinel
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
-    alter_schema_instructions: ClassVar[Sequence[AlterSchemaSubInstruction]] = Sentinel
+    alter_schema_instructions: ClassVar[Sequence[AlterSchemaSubInstruction | AlterSchemaInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[Sequence[AlterEnumSubInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[Sequence[AlterEndpointSubInstruction]] = Sentinel
     alter_response_instructions: ClassVar[dict[Any, AlterResponseInstruction]] = Sentinel
+    alter_request_instructions: ClassVar[dict[Any, list[AlterRequestInstruction]]] = Sentinel
     _bound_versions: "VersionBundle | None"
 
     def __init_subclass__(cls, _abstract: bool = False) -> None:
@@ -41,8 +45,9 @@ class VersionChange:
         cls.alter_enum_instructions = []
         cls.alter_endpoint_instructions = []
         cls.alter_response_instructions = {}
+        cls.alter_request_instructions = defaultdict(list)
         for alter_instruction in cls.instructions_to_migrate_to_previous_version:
-            if isinstance(alter_instruction, AlterSchemaSubInstruction):
+            if isinstance(alter_instruction, AlterSchemaSubInstruction | AlterSchemaInstruction):
                 cls.alter_schema_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, AlterEnumSubInstruction):
                 cls.alter_enum_instructions.append(alter_instruction)
@@ -185,11 +190,11 @@ class VersionBundle:
             version_change: version.value for version in self.versions for version_change in version.version_changes
         }
 
-    def data_to_version(
+    def migrate_response(
         self,
         response_model: Any,
-        data: dict[str, Any],
-        version: VersionDate,
+        data: Any,
+        current_version: VersionDate,
     ) -> dict[str, Any]:
         """Convert the data to a specific version by applying all version changes in reverse order.
 
@@ -203,14 +208,14 @@ class VersionBundle:
             Modified data
         """
         for v in self.versions:
-            if v.value <= version:
+            if v.value <= current_version:
                 break
             for version_change in v.version_changes:
                 if response_model in version_change.alter_response_instructions:
                     version_change.alter_response_instructions[response_model](data)
         return data
 
-    def versioned(self, response_model: Any) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]:
+    def migrate_responses_backward(self, response_model: Any) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]:
         def wrapper(endpoint: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
             @functools.wraps(endpoint)
             async def decorator(*args: _P.args, **kwargs: _P.kwargs) -> _R:
@@ -240,4 +245,4 @@ class VersionBundle:
         # TODO We probably need to call this in the same way as in fastapi instead of hardcoding exclude_unset.
         # We have such an ability if we force passing the route into this wrapper. Or maybe not... Important!
         response = _prepare_response_content(response, exclude_unset=False)
-        return self.data_to_version(response_model, response, api_version)
+        return self.migrate_response(response_model, response, api_version)

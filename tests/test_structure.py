@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from universi.exceptions import UniversiError, UniversiStructureError
 from universi.structure import VersionChange, VersionChangeWithSideEffects
-from universi.structure.responses import convert_response_to_previous_version_for
+from universi.structure.data import convert_response_to_previous_version_for
 from universi.structure.versions import Version, VersionBundle
 
 
