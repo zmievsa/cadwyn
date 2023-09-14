@@ -565,7 +565,7 @@ class ChangeAddressToList(VersionChange):
 
 ```
 
-It is done by applying `universi.VersionBundle.versioned(...)` decorator to each endpoint with the given `response_model` which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
+It is done by applying `universi.VersionBundle.migrate_responses_backward(...)` decorator to each endpoint with the given `response_model` which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
 
 If you want to convert a specific response to a specific version, you can use `universi.VersionBundle.data_to_version(...)`.
 
