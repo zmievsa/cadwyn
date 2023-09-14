@@ -170,38 +170,30 @@ def _get_unionized_version_of_module(
     ]
     parsed_file = _parse_python_module(original_module)
     body = ast.Module(
-        imports + [_get_union_of_node(node, imported_modules, schemas_per_version) for node in parsed_file.body],
+        imports
+        + [_get_union_of_versioned_name(node, imported_modules, schemas_per_version) for node in parsed_file.body],
         [],
     )
 
     return ast.unparse(body)
 
 
-def _get_union_of_node(
+def _get_union_of_versioned_name(
     node: ast.stmt,
     imported_modules: list[ImportedModule],
     schemas_per_version: list[dict[str, ModelInfo]],
 ):
     if isinstance(node, ast.ClassDef):
         # We add [schemas_per_version[0]] because imported_modules include "latest" and schemas_per_version do not
-
+        union = " | ".join(
+            f"{module.alias}.{_get_mod_name(node, module, schemas)}"
+            for module, schemas in zip(imported_modules, [schemas_per_version[0], *schemas_per_version])
+        )
         return ast.Name(
-            f"\n{node.name}: typing.TypeAlias = "
-            f"{_generate_union_of_subnode(node, imported_modules, schemas_per_version)}",
+            f"\n{node.name}: typing.TypeAlias = {union}",
         )
     else:
         return node
-
-
-def _generate_union_of_subnode(
-    node: ast.ClassDef,
-    imported_modules: list[ImportedModule],
-    schemas_per_version: list[dict[str, ModelInfo]],
-):
-    return " | ".join(
-        f"{module.alias}.{_get_mod_name(node, module, schemas)}"
-        for module, schemas in zip(imported_modules, [schemas_per_version[0], *schemas_per_version])
-    )
 
 
 def _get_mod_name(node: ast.ClassDef, module: ImportedModule, schemas: dict[str, ModelInfo]):

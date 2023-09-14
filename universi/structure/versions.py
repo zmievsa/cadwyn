@@ -14,13 +14,12 @@ from universi.structure.endpoints import AlterEndpointSubInstruction
 from universi.structure.enums import AlterEnumSubInstruction
 
 from .._utils import Sentinel
-from .common import Endpoint, VersionedModel
+from .common import Endpoint, VersionedModel, VersionDate
 from .data import AlterRequestInstruction, AlterResponseInstruction
 from .schemas import AlterSchemaInstruction, AlterSchemaSubInstruction, SchemaPropertyDefinitionInstruction
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
-VersionDate: TypeAlias = datetime.date
 PossibleInstructions: TypeAlias = (
     AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction | AlterSchemaInstruction
 )

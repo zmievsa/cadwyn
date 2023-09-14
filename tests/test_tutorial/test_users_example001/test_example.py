@@ -11,6 +11,7 @@ from universi import (
     get_universi_dependency,
     regenerate_dir_to_all_versions,
 )
+from universi.routing import generate_all_router_versions
 
 from ..utils import clean_versions
 from .schemas import latest
@@ -26,10 +27,10 @@ def get_app(router: APIRouter) -> FastAPI:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def routers() -> Generator[dict[date, VersionedAPIRouter], None, None]:
+def routers() -> Generator[dict[date, APIRouter], None, None]:
     regenerate_dir_to_all_versions(latest, versions)
     try:
-        yield router.create_versioned_copies(versions, latest_schemas_module=latest)
+        yield generate_all_router_versions(router, versions=versions, latest_schemas_module=latest)
     finally:
         clean_versions(Path(__file__).parent / "schemas")
 

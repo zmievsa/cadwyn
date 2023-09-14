@@ -1,3 +1,6 @@
+from universi.routing import generate_all_router_versions
+
+
 if __name__ == "__main__":
     from datetime import date
     from pathlib import Path
@@ -12,8 +15,9 @@ if __name__ == "__main__":
 
     try:
         regenerate_dir_to_all_versions(latest, versions)
-        router_versions = router.create_versioned_copies(
-            versions,
+        router_versions = generate_all_router_versions(
+            router,
+            versions=versions,
             latest_schemas_module=latest,
         )
         app = FastAPI()

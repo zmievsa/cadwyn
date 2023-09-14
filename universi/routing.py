@@ -1,6 +1,7 @@
 import datetime
 import functools
 import inspect
+import itertools
 import typing
 import warnings
 from collections.abc import Callable, Sequence
@@ -11,13 +12,24 @@ from pathlib import Path
 from types import GenericAlias, MappingProxyType, ModuleType
 from typing import (
     Any,
+    Callable,
     Collection,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Type,
     TypeVar,
     _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
+    Union,  # pyright: ignore[reportGeneralTypeIssues]
     cast,
     get_args,
     get_origin,
 )
+from fastapi import Response, params
+from fastapi.datastructures import Default, DefaultPlaceholder
+from fastapi.responses import JSONResponse
 
 import fastapi.routing
 from fastapi.dependencies.utils import (
@@ -27,19 +39,22 @@ from fastapi.dependencies.utils import (
 )
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
+from fastapi.utils import generate_unique_id
 from pydantic import BaseModel
-from starlette._utils import is_async_callable
+from starlette._utils import is_async_callable  # pyright: ignore[reportMissingImports]
+from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp
 from starlette.routing import (
     BaseRoute,
     request_response,
 )
-from typing_extensions import Self, assert_never
+from typing_extensions import Self, assert_never, deprecated
 
 from universi._utils import Sentinel, UnionType, get_another_version_of_cls
 from universi.codegen import _get_package_path_from_module, _get_version_dir_path
-from universi.exceptions import RouteAlreadyExistsError, RouterGenerationError
+from universi.exceptions import RouteAlreadyExistsError, RouterGenerationError, UniversiError
 from universi.structure import Version, VersionBundle
-from universi.structure.common import Endpoint
+from universi.structure.common import Endpoint, VersionDate
 from universi.structure.endpoints import (
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
@@ -48,6 +63,8 @@ from universi.structure.endpoints import (
 from universi.structure.versions import VersionChange
 
 _T = TypeVar("_T", bound=Callable[..., Any])
+# This is a hack we do because we can't guarantee how the user will use the router.
+_DELETED_ROUTE_TAG = "_UNIVERSI_DELETED_ROUTE"
 
 
 @dataclass(slots=True, frozen=True, eq=True)
@@ -56,33 +73,39 @@ class _EndpointInfo:
     endpoint_methods: frozenset[str]
 
 
-def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
-    def decorator(f: Callable) -> _T:
-        return f  # pyright: ignore[reportGeneralTypeIssues]
-
-    return decorator
+def generate_all_router_versions(
+    *routers: fastapi.routing.APIRouter,
+    versions: VersionBundle,
+    latest_schemas_module: ModuleType | None,
+) -> dict[VersionDate, fastapi.routing.APIRouter]:
+    for router in routers:
+        _add_data_migrations_to_all_routes(router, versions)
+    root_router = fastapi.routing.APIRouter()
+    for router in routers:
+        root_router.include_router(router)
+    return _EndpointTransformer(root_router, versions, latest_schemas_module).transform()
 
 
 class VersionedAPIRouter(fastapi.routing.APIRouter):
-    @same_definition_as_in(fastapi.routing.APIRouter.__init__)
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.deleted_routes: list[APIRoute] = []
-
     def only_exists_in_older_versions(self, endpoint: _T) -> _T:
         index, route = _get_index_and_route_from_func(self.routes, endpoint)
         if index is None or route is None:
-            raise LookupError(f"Route not found on endpoint: '{endpoint.__name__}'")
-        self.routes.pop(index)
-        self.deleted_routes.append(route)
+            raise LookupError(
+                f'Route not found on endpoint: "{endpoint.__name__}". '
+                "Are you sure it's a route and decorators are in the correct order?"
+            )
+        if _DELETED_ROUTE_TAG in route.tags:
+            raise UniversiError(f'The route "{endpoint.__name__}" was already deleted. You can\'t delete it again.')
+        route.tags.append(_DELETED_ROUTE_TAG)
         return endpoint
 
+    @deprecated("Use universi.generate_all_router_versions instead")
     def create_versioned_copies(
         self,
         versions: VersionBundle,
         *,
         latest_schemas_module: ModuleType | None,
-    ) -> dict[datetime.date, Self]:
+    ) -> dict[VersionDate, fastapi.routing.APIRouter]:
         _add_data_migrations_to_all_routes(self, versions)
         return _EndpointTransformer(self, versions, latest_schemas_module).transform()
 
@@ -90,7 +113,7 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
 class _EndpointTransformer:
     def __init__(
         self,
-        parent_router: VersionedAPIRouter,
+        parent_router: fastapi.routing.APIRouter,
         versions: VersionBundle,
         latest_schemas_module: ModuleType | None,
     ) -> None:
@@ -101,11 +124,13 @@ class _EndpointTransformer:
         else:
             self.annotation_transformer = None
 
-        self.routes_that_never_existed = parent_router.deleted_routes.copy()
+        self.routes_that_never_existed = [
+            route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
+        ]
 
     def transform(self):
         router = self.parent_router
-        routers = {}
+        routers: dict[VersionDate, fastapi.routing.APIRouter] = {}
         for version in self.versions:
             if self.annotation_transformer:
                 self.annotation_transformer.migrate_router_to_version(router, version)
@@ -113,6 +138,12 @@ class _EndpointTransformer:
             routers[version.value] = router
             router = deepcopy(router)
             self._apply_endpoint_changes_to_router(router, version)
+
+            routers[version.value].routes = [
+                route
+                for route in routers[version.value].routes
+                if not (isinstance(route, fastapi.routing.APIRoute) and _DELETED_ROUTE_TAG in route.tags)
+            ]
         if self.routes_that_never_existed:
             raise RouterGenerationError(
                 "Every route you mark with "
@@ -123,8 +154,8 @@ class _EndpointTransformer:
             )
         return routers
 
-    def _apply_endpoint_changes_to_router(self, router: VersionedAPIRouter, version: Version):  # noqa: C901
-        routes = cast(list[APIRoute], router.routes)
+    def _apply_endpoint_changes_to_router(self, router: fastapi.routing.APIRouter, version: Version):  # noqa: C901
+        routes = router.routes
         for version_change in version.version_changes:
             for instruction in version_change.alter_endpoint_instructions:
                 original_routes = _get_routes(
@@ -132,6 +163,7 @@ class _EndpointTransformer:
                     instruction.endpoint_path,
                     instruction.endpoint_methods,
                     instruction.endpoint_func_name,
+                    is_deleted=False,
                 )
                 methods_to_which_we_applied_changes = set()
                 methods_we_should_have_applied_changes_to = set(instruction.endpoint_methods)
@@ -139,10 +171,11 @@ class _EndpointTransformer:
                 if isinstance(instruction, EndpointDidntExistInstruction):
                     # TODO: Optimize me
                     deleted_routes = _get_routes(
-                        router.deleted_routes,
+                        routes,
                         instruction.endpoint_path,
                         instruction.endpoint_methods,
                         instruction.endpoint_func_name,
+                        is_deleted=True,
                     )
                     if deleted_routes:
                         method_union = set()
@@ -157,8 +190,7 @@ class _EndpointTransformer:
                         )
                     for original_route in original_routes:
                         methods_to_which_we_applied_changes |= original_route.methods
-                        router.routes.remove(original_route)
-                        router.deleted_routes.append(original_route)
+                        original_route.tags.append(_DELETED_ROUTE_TAG)
                     err = (
                         'Endpoint "{endpoint_methods} {endpoint_path}" you tried to delete in'
                         ' "{version_change_name}" doesn\'t exist in a newer version'
@@ -177,10 +209,11 @@ class _EndpointTransformer:
                             f"{[r.endpoint.__name__ for r in original_routes]}",
                         )
                     deleted_routes = _get_routes(
-                        router.deleted_routes,
+                        routes,
                         instruction.endpoint_path,
                         instruction.endpoint_methods,
                         instruction.endpoint_func_name,
+                        is_deleted=True,
                     )
                     try:
                         _validate_no_repetitions_in_routes(deleted_routes)
@@ -194,8 +227,7 @@ class _EndpointTransformer:
                         ) from e
                     for deleted_route in deleted_routes:
                         methods_to_which_we_applied_changes |= deleted_route.methods
-                        router.deleted_routes.remove(deleted_route)
-                        router.routes.append(deleted_route)
+                        deleted_route.tags.remove(_DELETED_ROUTE_TAG)
 
                         if deleted_route in self.routes_that_never_existed:
                             self.routes_that_never_existed.remove(deleted_route)
@@ -206,7 +238,6 @@ class _EndpointTransformer:
                 elif isinstance(instruction, EndpointHadInstruction):
                     for original_route in original_routes:
                         methods_to_which_we_applied_changes |= original_route.methods
-                        # OP
                         _apply_endpoint_had_instruction(version_change, instruction, original_route)
                     err = (
                         'Endpoint "{endpoint_methods} {endpoint_path}" you tried to change in'
@@ -226,7 +257,7 @@ class _EndpointTransformer:
                     )
 
 
-def _validate_no_repetitions_in_routes(routes: list[APIRoute]):
+def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
     route_map = {}
 
     for route in routes:
@@ -273,14 +304,14 @@ class _AnnotationTransformer:
             self._change_versions_of_a_non_container_annotation,
         )
 
-    def migrate_router_to_version(self, router: VersionedAPIRouter, version: Version):
+    def migrate_router_to_version(self, router: fastapi.routing.APIRouter, version: Version):
         version_dir = _get_version_dir_path(self.latest_schemas_module, version.value)
         if not version_dir.is_dir():
             raise RouterGenerationError(
                 f"Versioned schema directory '{version_dir}' does not exist.",
             )
         for route in router.routes:
-            if not isinstance(route, APIRoute):
+            if not isinstance(route, fastapi.routing.APIRoute):
                 continue
             if route.response_model is not None:
                 route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
@@ -407,9 +438,9 @@ class _AnnotationTransformer:
             return annotation
 
 
-def _add_data_migrations_to_all_routes(router: VersionedAPIRouter, versions: VersionBundle):
-    for route in router.routes + router.deleted_routes:
-        if isinstance(route, APIRoute):
+def _add_data_migrations_to_all_routes(router: fastapi.routing.APIRouter, versions: VersionBundle):
+    for route in router.routes:
+        if isinstance(route, fastapi.routing.APIRoute):
             if not is_async_callable(route.endpoint):
                 raise RouterGenerationError("All versioned endpoints must be asynchronous.")
             route.endpoint = versions.migrate_responses_backward(route.response_model)(route.endpoint)
@@ -467,30 +498,33 @@ def _generate_signature(
 
 
 def _get_routes(
-    routes: Sequence[BaseRoute | APIRoute],
+    routes: Sequence[BaseRoute],
     endpoint_path: str,
     endpoint_methods: Collection[str],
     endpoint_func_name: str | None = None,
-) -> list[APIRoute]:
+    *,
+    is_deleted: bool = False,
+) -> list[fastapi.routing.APIRoute]:
     found_routes = []
     endpoint_method_set = set(endpoint_methods)
     for route in routes:
         if (
-            isinstance(route, APIRoute)
+            isinstance(route, fastapi.routing.APIRoute)
             and route.path == endpoint_path
             and set(route.methods).issubset(endpoint_method_set)
             and (endpoint_func_name is None or route.endpoint.__name__ == endpoint_func_name)
+            and (_DELETED_ROUTE_TAG in route.tags) == is_deleted
         ):
             found_routes.append(route)
     return found_routes
 
 
 def _get_index_and_route_from_func(
-    routes: Sequence[BaseRoute | APIRoute],
+    routes: Sequence[BaseRoute],
     endpoint: Endpoint,
-) -> tuple[int, APIRoute] | tuple[None, None]:
+) -> tuple[int, fastapi.routing.APIRoute] | tuple[None, None]:
     for index, route in enumerate(routes):
-        if isinstance(route, APIRoute) and (
+        if isinstance(route, fastapi.routing.APIRoute) and (
             route.endpoint == endpoint or getattr(route.endpoint, "func", None) == endpoint
         ):
             return index, route

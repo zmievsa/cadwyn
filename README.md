@@ -184,11 +184,12 @@ That's it. You're done with describing things. Now you just gotta ask universi t
 
 ```python
 from versions import latest, api_version_var
-from universi import regenerate_dir_to_all_versions
+from universi import regenerate_dir_to_all_versions, generate_all_router_versions
 
 regenerate_dir_to_all_versions(latest, versions)
-router_versions = router.create_versioned_copies(
-    versions,
+router_versions = generate_all_router_versions(
+    router,
+    versions=versions,
     latest_schemas_module=latest,
 )
 api_version_var.set(date(2002, 1, 1))
