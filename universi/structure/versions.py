@@ -10,7 +10,7 @@ from fastapi.routing import _prepare_response_content
 from typing_extensions import assert_never
 
 from universi.exceptions import UniversiError, UniversiStructureError
-from universi.structure.endpoints import AlterEndpointSubInstruction
+from universi.structure.endpoints import AlterEndpointSubInstruction, EndpointWasInstruction
 from universi.structure.enums import AlterEnumSubInstruction
 
 from .._utils import Sentinel
@@ -30,7 +30,7 @@ class VersionChange:
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
     alter_schema_instructions: ClassVar[Sequence[AlterSchemaSubInstruction | AlterSchemaInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[Sequence[AlterEnumSubInstruction]] = Sentinel
-    alter_endpoint_instructions: ClassVar[Sequence[AlterEndpointSubInstruction]] = Sentinel
+    alter_endpoint_instructions: ClassVar[Sequence[AlterEndpointSubInstruction | EndpointWasInstruction]] = Sentinel
     alter_response_instructions: ClassVar[dict[Any, AlterResponseInstruction]] = Sentinel
     alter_request_instructions: ClassVar[dict[Any, list[AlterRequestInstruction]]] = Sentinel
     _bound_versions: "VersionBundle | None"
@@ -59,6 +59,8 @@ class VersionChange:
                 cls.alter_schema_instructions.append(instruction)
             elif isinstance(instruction, AlterResponseInstruction):
                 cls.alter_response_instructions[instruction.schema] = instruction
+            elif isinstance(instruction, EndpointWasInstruction):
+                cls.alter_endpoint_instructions.append(instruction)
 
         cls._check_no_subclassing()
         cls._bound_versions = None
@@ -86,7 +88,7 @@ class VersionChange:
         for attr_name, attr_value in cls.__dict__.items():
             if not isinstance(
                 attr_value,
-                AlterResponseInstruction | SchemaPropertyDefinitionInstruction,
+                AlterResponseInstruction | SchemaPropertyDefinitionInstruction | EndpointWasInstruction,
             ) and attr_name not in {
                 "description",
                 "side_effects",
