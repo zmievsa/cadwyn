@@ -1,7 +1,7 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Response
 from fastapi.params import Depends
@@ -72,6 +72,14 @@ class EndpointDidntExistInstruction:
 
 
 @dataclass(slots=True)
+class EndpointWasInstruction:
+    endpoint_path: str
+    endpoint_methods: Sequence[str]
+    endpoint_func_name: str | None
+    get_old_endpoint: Callable[..., Any]
+
+
+@dataclass(slots=True)
 class EndpointInstructionFactory:
     endpoint_path: str
     endpoint_methods: Sequence[str]
@@ -135,6 +143,17 @@ class EndpointInstructionFactory:
                 callbacks=callbacks,
                 openapi_extra=openapi_extra,
                 generate_unique_id_function=generate_unique_id_function,
+            ),
+        )
+
+    def was(self, get_old_endpoint: Callable[[], Any]) -> type[staticmethod]:
+        return cast(
+            type[staticmethod],
+            EndpointWasInstruction(
+                endpoint_path=self.endpoint_path,
+                endpoint_methods=self.endpoint_methods,
+                endpoint_func_name=self.endpoint_func_name,
+                get_old_endpoint=get_old_endpoint,
             ),
         )
 

@@ -1,7 +1,6 @@
 import datetime
 import functools
 import inspect
-import itertools
 import typing
 import warnings
 from collections.abc import Callable, Sequence
@@ -59,6 +58,7 @@ from universi.structure.endpoints import (
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
     EndpointHadInstruction,
+    EndpointWasInstruction,
 )
 from universi.structure.versions import VersionChange
 
@@ -243,6 +243,15 @@ class _EndpointTransformer:
                         'Endpoint "{endpoint_methods} {endpoint_path}" you tried to change in'
                         ' "{version_change_name}" doesn\'t exist'
                     )
+                elif isinstance(instruction, EndpointWasInstruction):
+                    for original_route in original_routes:
+                        methods_to_which_we_applied_changes |= original_route.methods
+                        original_route.endpoint = instruction.get_old_endpoint()
+                        _remake_endpoint_dependencies(original_route)
+                    err = (
+                        'Endpoint "{endpoint_methods} {endpoint_path}" whose handler you tried to change in'
+                        ' "{version_change_name}" doesn\'t exist'
+                    )
                 else:
                     assert_never(instruction)
                 method_diff = methods_we_should_have_applied_changes_to - methods_to_which_we_applied_changes
@@ -317,14 +326,7 @@ class _AnnotationTransformer:
                 route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
             route.dependencies = self._change_version_of_annotations(route.dependencies, version_dir)
             route.endpoint = self._change_version_of_annotations(route.endpoint, version_dir)
-            route.dependant = get_dependant(path=route.path_format, call=route.endpoint)
-            route.body_field = get_body_field(dependant=route.dependant, name=route.unique_id)
-            for depends in route.dependencies[::-1]:
-                route.dependant.dependencies.insert(
-                    0,
-                    get_parameterless_sub_dependant(depends=depends, path=route.path_format),
-                )
-            route.app = request_response(route.get_route_handler())
+            _remake_endpoint_dependencies(route)
 
     def _change_versions_of_a_non_container_annotation(self, annotation: Any, version_dir: Path) -> Any:
         if isinstance(annotation, _BaseGenericAlias | GenericAlias):
@@ -436,6 +438,17 @@ class _AnnotationTransformer:
             return get_another_version_of_cls(annotation, version_dir, self.version_dirs)
         else:
             return annotation
+
+
+def _remake_endpoint_dependencies(route: fastapi.routing.APIRoute):
+    route.dependant = get_dependant(path=route.path_format, call=route.endpoint)
+    route.body_field = get_body_field(dependant=route.dependant, name=route.unique_id)
+    for depends in route.dependencies[::-1]:
+        route.dependant.dependencies.insert(
+            0,
+            get_parameterless_sub_dependant(depends=depends, path=route.path_format),
+        )
+    route.app = request_response(route.get_route_handler())
 
 
 def _add_data_migrations_to_all_routes(router: fastapi.routing.APIRouter, versions: VersionBundle):

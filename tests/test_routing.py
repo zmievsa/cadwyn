@@ -5,7 +5,7 @@ from datetime import date
 from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
 
 import pytest
-from fastapi import APIRouter, Body, Depends, FastAPI
+from fastapi import APIRouter, Body, Depends, FastAPI, Header
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -38,14 +38,14 @@ def router() -> VersionedAPIRouter:
 
 @pytest.fixture()
 def test_path() -> str:
-    return "/test/{hewoo}"
+    return "/test/{hewwo}"
 
 
 @pytest.fixture()
 def test_endpoint(router: VersionedAPIRouter, test_path: str) -> Endpoint:
     @router.get(test_path)
     async def test(hewwo: int):
-        raise NotImplementedError
+        return hewwo
 
     return test
 
@@ -94,9 +94,6 @@ class CreateVersionedAPIRoutes:
         latest_schemas_module: Any = Default,
     ) -> tuple[list[APIRoute], list[APIRoute]]:
         routers = self.create_versioned_copies(*instructions, latest_schemas_module=latest_schemas_module)
-        for router in routers.values():
-            for route in router.routes:
-                assert isinstance(route, APIRoute)
         return cast(
             tuple[list[APIRoute], list[APIRoute]],
             (routers[date(2000, 1, 1)].routes, routers[date(2001, 1, 1)].routes),
@@ -310,7 +307,7 @@ def test__router_generation__re_creating_an_existing_endpoint__error(
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            "Endpoint \"['GET'] /test/{hewoo}\" you tried to restore in "
+            "Endpoint \"['GET'] /test/{hewwo}\" you tried to restore in "
             '"MyVersionChange" already existed in a newer version',
         ),
     ):
@@ -324,7 +321,7 @@ def test__router_generation__editing_an_endpoint_with_wrong_method__should_raise
 ):
     with pytest.raises(
         RouterGenerationError,
-        match=re.escape('Endpoint "[\'POST\'] /test/{hewoo}" you tried to change in "MyVersionChange" doesn\'t exist'),
+        match=re.escape('Endpoint "[\'POST\'] /test/{hewwo}" you tried to change in "MyVersionChange" doesn\'t exist'),
     ):
         create_versioned_copies(endpoint(test_path, ["POST"]).had(description="Hewwo"))
 
@@ -333,27 +330,27 @@ def test__router_generation__editing_an_endpoint_with_a_less_general_method__sho
     router: VersionedAPIRouter,
     create_versioned_copies: CreateVersionedCopies,
 ):
-    @router.route("/test/{hewoo}", methods=["GET", "POST"])
+    @router.route("/test/{hewwo}", methods=["GET", "POST"])
     async def test(hewwo: int):
         raise NotImplementedError
 
     with pytest.raises(
         RouterGenerationError,
-        match=re.escape('Endpoint "[\'GET\'] /test/{hewoo}" you tried to change in "MyVersionChange" doesn\'t exist'),
+        match=re.escape('Endpoint "[\'GET\'] /test/{hewwo}" you tried to change in "MyVersionChange" doesn\'t exist'),
     ):
-        create_versioned_copies(endpoint("/test/{hewoo}", ["GET"]).had(description="Hewwo"))
+        create_versioned_copies(endpoint("/test/{hewwo}", ["GET"]).had(description="Hewwo"))
 
 
 def test__router_generation__editing_multiple_endpoints_with_same_route(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
 ):
-    @router.api_route("/test/{hewoo}", methods=["GET", "POST"])
+    @router.api_route("/test/{hewwo}", methods=["GET", "POST"])
     async def test(hewwo: int):
         raise NotImplementedError
 
     routes_2000, routes_2001 = create_versioned_api_routes(
-        endpoint("/test/{hewoo}", ["GET", "POST"]).had(description="Meaw"),
+        endpoint("/test/{hewwo}", ["GET", "POST"]).had(description="Meaw"),
     )
     assert len(routes_2000) == len(routes_2001) == 1
     assert routes_2000[0].description == "Meaw"
@@ -367,7 +364,7 @@ def test__router_generation__editing_an_endpoint_with_a_more_general_method__sho
 ):
     with pytest.raises(
         RouterGenerationError,
-        match=re.escape('Endpoint "[\'POST\'] /test/{hewoo}" you tried to change in "MyVersionChange" doesn\'t exist'),
+        match=re.escape('Endpoint "[\'POST\'] /test/{hewwo}" you tried to change in "MyVersionChange" doesn\'t exist'),
     ):
         create_versioned_copies(endpoint(test_path, ["GET", "POST"]).had(description="Hewwo"))
 
@@ -582,7 +579,7 @@ def test__router_generation__changing_attribute_to_the_same_value__error(
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            'Expected attribute "path" of endpoint "[\'GET\'] /test/{hewoo}" to be different in "MyVersionChange", but '
+            'Expected attribute "path" of endpoint "[\'GET\'] /test/{hewwo}" to be different in "MyVersionChange", but '
             "it was the same. It means that your version change has no effect on the attribute and can be removed.",
         ),
     ):
@@ -993,3 +990,43 @@ def test__generate_all_router_versions__two_routers(
     }
     assert routers[date(2000, 1, 1)].routes[0].endpoint.func == test_endpoint2
     assert routers[date(2000, 1, 1)].routes[0].endpoint.func == test_endpoint2
+
+
+def test__router_generation__adding_request_header_using_hacks(
+    router: VersionedAPIRouter,
+    test_endpoint: Endpoint,
+    test_path: str,
+    api_version_var: ContextVar[date | None],
+):
+    class MyVersionChange(VersionChange):
+        description = "..."
+        instructions_to_migrate_to_previous_version = ()
+
+        @endpoint(test_path, ["GET"]).was
+        def get_old_endpoint():
+            from tests._data.utils import some_fastapi_dependency
+
+            async def test_endpoint(hewwo: int, header: str = Header(), dep: str = Depends(some_fastapi_dependency)):
+                return {"hewwo": hewwo, "header": header, "dep": dep}
+
+            return test_endpoint
+
+    versions = generate_all_router_versions(
+        router,
+        versions=VersionBundle(
+            Version(date(2001, 1, 1), MyVersionChange),
+            Version(date(2000, 1, 1)),
+            api_version_var=api_version_var,
+        ),
+        latest_schemas_module=None,
+    )
+
+    client_2000 = client(versions[date(2000, 1, 1)])
+    client_2001 = client(versions[date(2001, 1, 1)])
+
+    assert client_2000.get("/test/83", headers={"header": "11"}, params={"hi": "Mark"}).json() == {
+        "hewwo": 83,
+        "header": "11",
+        "dep": "Mark",
+    }
+    assert client_2001.get("/test/83", params={"header": 11, "hi": "Mark"}).json() == 83

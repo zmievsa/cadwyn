@@ -327,6 +327,32 @@ class MyChange(VersionChange):
 
 ```
 
+#### Changing endpoint logic (Experimental)
+
+Oftentimes you change some of the logic of your endpoint in a way that is incompatible with or not yet supported by Universi's migrations. In order to combat this, we have come up with an ugly hack that allows you to change any detail about your endpoint's arguments or logic:
+
+```python
+from fastapi.params import Param
+from fastapi import Header
+
+
+class MyVersionChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = ()
+
+    @endpoint("/users", ["GET"]).was
+    def get_old_endpoint():
+        from some_business_logic import SomeController
+         
+
+        async def get_users(some_old_parameter: str = Param(), some_new_required_header: str = Header()):
+            return SomeController(some_old_parameter, some_new_required_header)
+
+        return get_users
+```
+
+As you see, it's hacky in more ways than one. Any imports to your business logic must happen within the function to prevent circular dependencies and you have to have a function within a function as a result. It is therefore not advised to use this functionality unlesss absolutely required. I recommend to instead add an issue on our github. However, if Universi definitely cannot solve your problem -- this should be your "get out of jail free" card.
+
 #### Dealing with endpoint duplicates
 
 Sometimes, when you're doing some advanced changes in between versions, you will need to rewrite your endpoint function entirely. So essentially you'd have the following structure:
@@ -497,7 +523,7 @@ class MyChange(VersionChange):
 
 ```
 
-#### Rename a schema
+#### Rename a schema (Experimental)
 
 If you wish to rename your schema to make sure that its name is different in openapi.json:
 
@@ -512,8 +538,7 @@ class MyChange(VersionChange):
 
 ```
 
-which will replace all references to this schema with the new name. Note that this functionality is still experimental
-so minor issues can be expected. If you find any -- feel free to report it in issues.
+which will replace all references to this schema with the new name.
 
 Note also that renaming a schema should not technically be a breaking change.
 

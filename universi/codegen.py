@@ -186,7 +186,7 @@ def _get_union_of_versioned_name(
     if isinstance(node, ast.ClassDef):
         # We add [schemas_per_version[0]] because imported_modules include "latest" and schemas_per_version do not
         union = " | ".join(
-            f"{module.alias}.{_get_mod_name(node, module, schemas)}"
+            f"{module.alias}.{_get_modified_name_of_ast_node(node, module, schemas)}"
             for module, schemas in zip(imported_modules, [schemas_per_version[0], *schemas_per_version])
         )
         return ast.Name(
@@ -196,7 +196,7 @@ def _get_union_of_versioned_name(
         return node
 
 
-def _get_mod_name(node: ast.ClassDef, module: ImportedModule, schemas: dict[str, ModelInfo]):
+def _get_modified_name_of_ast_node(node: ast.ClassDef, module: ImportedModule, schemas: dict[str, ModelInfo]):
     node_python_path = f"{module.absolute_python_path_to_origin}.{node.name}"
     if node_python_path in schemas:
         return schemas[node_python_path].name
