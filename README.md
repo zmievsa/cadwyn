@@ -608,7 +608,7 @@ class ChangeAddressToList(VersionChange):
     description = "..."
 
     @convert_request_to_next_version_for(UserCreateRequest)
-    def change_addresses_to_single_item(cls, data: "UserCreateRequest2000") -> Any:
+    def change_addresses_to_single_item(cls, data: "UserCreateRequest2000") -> "UserCreateRequest2001":
         from my_schemas.v2000_01_01 import UserCreateRequest as UserCreateRequest2000
         from my_schemas.v2001_01_01 import UserCreateRequest as UserCreateRequest2001
 
