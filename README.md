@@ -612,7 +612,7 @@ class ChangeAddressToList(VersionChange):
         from my_schemas.v2000_01_01 import UserCreateRequest as UserCreateRequest2000
         from my_schemas.v2001_01_01 import UserCreateRequest as UserCreateRequest2001
 
-        original_reqest = UserCreateRequest2000.dict(by_alias=True)
+        original_reqest = data.dict(by_alias=True)
         original_request["addresses"] = [original_request.pop("address")]
         return UserCreateRequest2001(**original_request)
 ```
