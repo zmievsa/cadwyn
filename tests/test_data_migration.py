@@ -135,7 +135,7 @@ async def test__versioned_decorator__with_latest_version__response_is_unchanged(
         api_version_var=api_version_var,
     )
 
-    @versions.migrate_responses_backward(DummySchema)
+    @versions.versioned(DummySchema)
     async def test():
         return {"name": "HeliCorp", "vat_ids": ["Foo", "Bar"]}
 
@@ -153,7 +153,7 @@ async def test__versioned_decorator__with_earlier_version__response_is_migrated(
         api_version_var=api_version_var,
     )
 
-    @versions.migrate_responses_backward(DummySchema)
+    @versions.versioned(DummySchema)
     async def test():
         return {"name": "HeliCorp", "vat_ids": ["Foo", "Bar"]}
 

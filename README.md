@@ -576,6 +576,8 @@ Note that this feature only affects type checking and does not affect your funct
 
 ### Data conversion
 
+#### Response data conversion
+
 As described in the tutorial, universi can convert your response data into older versions. It does so by running your "migration" functions whenever it encounters a version change:
 
 ```python
@@ -591,9 +593,29 @@ class ChangeAddressToList(VersionChange):
 
 ```
 
-It is done by applying `universi.VersionBundle.migrate_responses_backward(...)` decorator to each endpoint with the given `response_model` which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
+It is done by applying `universi.VersionBundle.versioned(...)` decorator to each endpoint with the given `response_model` which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
 
-If you want to convert a specific response to a specific version, you can use `universi.VersionBundle.data_to_version(...)`.
+If you want to convert a specific response to a specific version, you can use `universi.VersionBundle.migrate_response(...)`.
+
+#### Request data conversion (Experimental)
+
+```python
+from universi.structure import VersionChange, convert_request_to_next_version_for
+from typing import Any
+from my_schemas.latest import UserCreateRequest
+
+class ChangeAddressToList(VersionChange):
+    description = "..."
+
+    @convert_request_to_next_version_for(UserCreateRequest)
+    def change_addresses_to_single_item(cls, data: "UserCreateRequest2000") -> Any:
+        from my_schemas.v2000_01_01 import UserCreateRequest as UserCreateRequest2000
+        from my_schemas.v2001_01_01 import UserCreateRequest as UserCreateRequest2001
+
+        original_reqest = UserCreateRequest2000.dict(by_alias=True)
+        original_request["addresses"] = [original_request.pop("address")]
+        return UserCreateRequest2001(**original_request)
+```
 
 ### Version changes with side effects
 
