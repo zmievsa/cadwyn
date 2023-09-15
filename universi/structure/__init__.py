@@ -1,4 +1,4 @@
-from .data import convert_response_to_previous_version_for
+from .data import convert_response_to_previous_version_for, convert_request_to_next_version_for
 from .endpoints import endpoint
 from .enums import enum
 from .schemas import schema
@@ -18,4 +18,5 @@ __all__ = [
     "schema",
     "enum",
     "convert_response_to_previous_version_for",
+    "convert_request_to_next_version_for",
 ]

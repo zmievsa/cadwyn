@@ -36,6 +36,7 @@ from fastapi.dependencies.utils import (
     get_dependant,
     get_parameterless_sub_dependant,
 )
+from fastapi.dependencies.models import Dependant
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from fastapi.utils import generate_unique_id
@@ -154,7 +155,11 @@ class _EndpointTransformer:
             )
         return routers
 
-    def _apply_endpoint_changes_to_router(self, router: fastapi.routing.APIRouter, version: Version):  # noqa: C901
+    def _apply_endpoint_changes_to_router(
+        self,
+        router: fastapi.routing.APIRouter,
+        version: Version,
+    ):  # noqa: C901
         routes = router.routes
         for version_change in version.version_changes:
             for instruction in version_change.alter_endpoint_instructions:
@@ -244,10 +249,26 @@ class _EndpointTransformer:
                         ' "{version_change_name}" doesn\'t exist'
                     )
                 elif isinstance(instruction, EndpointWasInstruction):
+                    # TODO: Add test for changing dependant and checking that the schemas used in the dependant have been migrated to the correct version
                     for original_route in original_routes:
                         methods_to_which_we_applied_changes |= original_route.methods
+                        original_response_model = original_route.endpoint.response_model
+
                         original_route.endpoint = instruction.get_old_endpoint()
                         _remake_endpoint_dependencies(original_route)
+                        original_dependant = original_route.dependant
+                        if self.annotation_transformer:
+                            version_dir = _get_version_dir_path(
+                                self.annotation_transformer.latest_schemas_module, version.value
+                            )
+                            self.annotation_transformer.migrate_route_to_version(
+                                original_route, version_dir, ignore_response_model=True
+                            )
+
+                        _add_data_migrations_to_route(
+                            original_route, original_response_model, original_dependant, self.versions
+                        )
+
                     err = (
                         'Endpoint "{endpoint_methods} {endpoint_path}" whose handler you tried to change in'
                         ' "{version_change_name}" doesn\'t exist'
@@ -322,11 +343,16 @@ class _AnnotationTransformer:
         for route in router.routes:
             if not isinstance(route, fastapi.routing.APIRoute):
                 continue
-            if route.response_model is not None:
-                route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
-            route.dependencies = self._change_version_of_annotations(route.dependencies, version_dir)
-            route.endpoint = self._change_version_of_annotations(route.endpoint, version_dir)
-            _remake_endpoint_dependencies(route)
+            self.migrate_route_to_version(route, version_dir)
+
+    def migrate_route_to_version(
+        self, route: fastapi.routing.APIRoute, version_dir: Path, *, ignore_response_model: bool = False
+    ):
+        if route.response_model is not None and not ignore_response_model:
+            route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
+        route.dependencies = self._change_version_of_annotations(route.dependencies, version_dir)
+        route.endpoint = self._change_version_of_annotations(route.endpoint, version_dir)
+        _remake_endpoint_dependencies(route)
 
     def _change_versions_of_a_non_container_annotation(self, annotation: Any, version_dir: Path) -> Any:
         if isinstance(annotation, _BaseGenericAlias | GenericAlias):
@@ -454,9 +480,14 @@ def _remake_endpoint_dependencies(route: fastapi.routing.APIRoute):
 def _add_data_migrations_to_all_routes(router: fastapi.routing.APIRouter, versions: VersionBundle):
     for route in router.routes:
         if isinstance(route, fastapi.routing.APIRoute):
-            if not is_async_callable(route.endpoint):
-                raise RouterGenerationError("All versioned endpoints must be asynchronous.")
-            route.endpoint = versions.migrate_responses_backward(route.response_model)(route.endpoint)
+            _add_data_migrations_to_route(route, route.response_model, route.dependant, versions)
+
+
+def _add_data_migrations_to_route(route: BaseRoute, response_model: Any, dependant: Dependant, versions: VersionBundle):
+    if isinstance(route, fastapi.routing.APIRoute):
+        if not is_async_callable(route.endpoint):
+            raise RouterGenerationError("All versioned endpoints must be asynchronous.")
+        route.endpoint = versions.versioned(response_model, body_params=dependant.body_params)(route.endpoint)
 
 
 def _apply_endpoint_had_instruction(

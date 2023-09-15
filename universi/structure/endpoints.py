@@ -6,6 +6,7 @@ from typing import Any, cast
 from fastapi import Response
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
+from pydantic import BaseModel
 from starlette.routing import BaseRoute
 
 from .._utils import Sentinel
@@ -26,6 +27,7 @@ class EndpointAttributesPayload:
     # * response_model_exclude_defaults: bool
     # * response_model_exclude_none: bool
     path: str
+    response_model: Any
     status_code: int
     tags: list[str | Enum]
     # Adding/removing dependencies between versions seems like a bad choice.
@@ -103,7 +105,9 @@ class EndpointInstructionFactory:
 
     def had(
         self,
+        *,
         path: str = Sentinel,
+        response_model: Any = Sentinel,
         status_code: int = Sentinel,
         tags: list[str | Enum] = Sentinel,
         dependencies: Sequence[Depends] = Sentinel,
@@ -127,6 +131,7 @@ class EndpointInstructionFactory:
             endpoint_func_name=self.endpoint_func_name,
             attributes=EndpointAttributesPayload(
                 path=path,
+                response_model=response_model,
                 status_code=status_code,
                 tags=tags,
                 dependencies=dependencies,

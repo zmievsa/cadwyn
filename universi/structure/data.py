@@ -34,13 +34,31 @@ class AlterResponseInstruction(_AlterDataInstruction):
 
 
 @dataclass
-class AlterRequestInstruction(_AlterDataInstruction):
-    path: str
-    methods: Sequence[str]
+class AlterRequestBodyInstruction(_AlterDataInstruction):
+    schema: Any
+
+    def __post_init__(self):
+        signature = inspect.signature(self.transformer)
+        if list(signature.parameters) != ["cls", "data"]:
+            raise ValueError(
+                f"Method '{self.transformer.__name__}' must have 2 parameters: cls and data",
+            )
+
+        functools.update_wrapper(self, self.transformer)
+
+    def __call__(self, data: Any) -> Any:
+        return self.transformer(self.owner, data)
 
 
 def convert_response_to_previous_version_for(schema: Any, /) -> "type[classmethod[Any, _P, None]]":
     def decorator(transformer: Callable[[object, Any], None]) -> Any:
         return AlterResponseInstruction(schema=schema, transformer=transformer)
+
+    return decorator  # pyright: ignore[reportGeneralTypeIssues]
+
+
+def convert_request_to_next_version_for(schema: Any, /) -> "type[classmethod[Any, _P, None]]":
+    def decorator(transformer: Callable[[object, Any], None]) -> Any:
+        return AlterRequestBodyInstruction(schema=schema, transformer=transformer)
 
     return decorator  # pyright: ignore[reportGeneralTypeIssues]
