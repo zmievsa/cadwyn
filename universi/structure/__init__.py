@@ -1,8 +1,8 @@
 from .data import (
-    convert_response_to_previous_version_for,
-    convert_request_to_next_version_for,
     RequestInfo,
     ResponseInfo,
+    convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
 )
 from .endpoints import endpoint
 from .enums import enum

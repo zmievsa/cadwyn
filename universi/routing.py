@@ -1,9 +1,9 @@
-from collections import defaultdict
 import functools
 import inspect
 import sys
 import typing
 import warnings
+from collections import defaultdict
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -12,45 +12,30 @@ from pathlib import Path
 from types import GenericAlias, MappingProxyType, ModuleType
 from typing import (
     Any,
-    Callable,
-    Collection,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Set,
-    Type,
     TypeAlias,
     TypeVar,
     _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
-    Union,  # pyright: ignore[reportGeneralTypeIssues]
     cast,
     get_args,
     get_origin,
 )
-from fastapi import Response, params
-from fastapi.datastructures import Default, DefaultPlaceholder
-from fastapi.responses import JSONResponse
 
 import fastapi.routing
+from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import (
     get_body_field,
     get_dependant,
     get_parameterless_sub_dependant,
 )
-from fastapi.dependencies.models import Dependant
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
-from fastapi.utils import generate_unique_id
 from pydantic import BaseModel
 from starlette._utils import is_async_callable  # pyright: ignore[reportMissingImports]
-from starlette.responses import JSONResponse, Response
-from starlette.types import ASGIApp
 from starlette.routing import (
     BaseRoute,
     request_response,
 )
-from typing_extensions import Self, assert_never
+from typing_extensions import assert_never
 
 from universi._utils import Sentinel, UnionType, get_another_version_of_module
 from universi.codegen import _get_package_path_from_module, _get_version_dir_path
@@ -62,8 +47,7 @@ from universi.structure.endpoints import (
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from universi.structure.versions import _UNIVERSI_RESPONSE_PARAM_NAME, VersionChange
-from universi.structure.versions import _UNIVERSI_REQUEST_PARAM_NAME
+from universi.structure.versions import _UNIVERSI_REQUEST_PARAM_NAME, _UNIVERSI_RESPONSE_PARAM_NAME, VersionChange
 
 _T = TypeVar("_T", bound=Callable[..., Any])
 # This is a hack we do because we can't guarantee how the user will use the router.
@@ -102,7 +86,7 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         if index is None or route is None:
             raise LookupError(
                 f'Route not found on endpoint: "{endpoint.__name__}". '
-                "Are you sure it's a route and decorators are in the correct order?"
+                "Are you sure it's a route and decorators are in the correct order?",
             )
         if _DELETED_ROUTE_TAG in route.tags:
             raise UniversiError(f'The route "{endpoint.__name__}" was already deleted. You can\'t delete it again.')
@@ -135,7 +119,9 @@ class _EndpointTransformer:
             self.annotation_transformer.migrate_router_to_version(router, version)
 
             router_infos[version.value] = _RouterInfo(
-                router, routes_with_migrated_requests, route_bodies_with_migrated_requests
+                router,
+                routes_with_migrated_requests,
+                route_bodies_with_migrated_requests,
             )
             # Applying changes for the next version
             routes_with_migrated_requests = _get_migrated_routes_by_path(version)
@@ -169,7 +155,7 @@ class _EndpointTransformer:
                 self.versions,
             )
             dependant = latest_route.dependant
-            for (api_version, newer_router_info), older_router_info in zip(
+            for (_api_version, newer_router_info), older_router_info in zip(
                 router_infos.items(),
                 list(router_infos.values())[1:],
                 strict=False,
@@ -182,7 +168,8 @@ class _EndpointTransformer:
                 newer_route, older_route = cast(APIRoute, newer_route), cast(APIRoute, older_route)
                 if older_route.body_field is not None and len(older_route.dependant.body_params) == 1:
                     template_older_body_model = self.annotation_transformer._change_version_of_annotations(
-                        older_route.body_field.type_, self.annotation_transformer.template_version_dir
+                        older_route.body_field.type_,
+                        self.annotation_transformer.template_version_dir,
                     )
                 else:
                     template_older_body_model = None
@@ -215,7 +202,7 @@ class _EndpointTransformer:
         self,
         router: fastapi.routing.APIRouter,
         version: Version,
-    ):  # noqa: C901
+    ):
         routes = router.routes
         for version_change in version.version_changes:
             for instruction in version_change.alter_endpoint_instructions:
@@ -309,7 +296,7 @@ class _EndpointTransformer:
                                 f"problems during version generation. Specifically, Universi won't be able to warn "
                                 f"you when you deleted a route and never restored it. Please, make sure that "
                                 f"functions for all these routes have different names: "
-                                f"{[f'{r.endpoint.__module__}.{r.endpoint.__name__}' for r in routes_that_never_existed]}"
+                                f"{[f'{r.endpoint.__module__}.{r.endpoint.__name__}' for r in routes_that_never_existed]}",
                             )
                     err = (
                         'Endpoint "{endpoint_methods} {endpoint_path}" you tried to restore in'
@@ -395,7 +382,11 @@ class _AnnotationTransformer:
             self.migrate_route_to_version(route, version_dir)
 
     def migrate_route_to_version(
-        self, route: fastapi.routing.APIRoute, version_dir: Path, *, ignore_response_model: bool = False
+        self,
+        route: fastapi.routing.APIRoute,
+        version_dir: Path,
+        *,
+        ignore_response_model: bool = False,
     ):
         if route.response_model is not None and not ignore_response_model:
             route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
@@ -488,7 +479,7 @@ class _AnnotationTransformer:
                 for key, value in annotation.items()
             }
 
-        elif isinstance(annotation, (list, tuple)):
+        elif isinstance(annotation, list | tuple):
             return type(annotation)(self._change_version_of_annotations(v, version_dir) for v in annotation)
         else:
             return self.change_versions_of_a_non_container_annotation(annotation, version_dir)
@@ -553,7 +544,7 @@ def _add_data_migrations_to_route(
 ):
     if not is_async_callable(route.endpoint):
         raise RouterGenerationError(
-            f'All versioned endpoints must be asynchronous. Endpoint "{route.endpoint}" is not.'
+            f'All versioned endpoints must be asynchronous. Endpoint "{route.endpoint}" is not.',
         )
     route.endpoint = versions._versioned(
         template_body_field,

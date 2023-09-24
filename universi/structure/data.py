@@ -6,6 +6,7 @@ from typing import Any, ClassVar, ParamSpec, overload
 
 from fastapi import Request, Response
 from starlette.datastructures import MutableHeaders
+
 from universi._utils import same_definition_as_in
 
 _P = ParamSpec("_P")
@@ -114,7 +115,9 @@ def convert_request_to_next_version_for(path: str, methods: set[str], /) -> "typ
 
 
 def convert_request_to_next_version_for(
-    schema_or_path: type | str, methods: set[str] | None = None, /
+    schema_or_path: type | str,
+    methods: set[str] | None = None,
+    /,
 ) -> "type[staticmethod[_P, None]]":
     _validate_decorator_args(schema_or_path, methods)
 
@@ -166,7 +169,9 @@ def convert_response_to_previous_version_for(path: str, methods: set[str], /) ->
 
 
 def convert_response_to_previous_version_for(
-    schema_or_path: type | str, methods: set[str] | None = None, /
+    schema_or_path: type | str,
+    methods: set[str] | None = None,
+    /,
 ) -> "type[staticmethod[_P, None]]":
     _validate_decorator_args(schema_or_path, methods)
 

@@ -1,10 +1,10 @@
 import functools
 import importlib
 import inspect
-import sys
+from collections.abc import Callable, Collection
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Collection, TypeVar, Union
+from typing import Any, TypeVar, Union
 
 from universi.exceptions import ModuleIsNotVersionedError, UniversiError
 

@@ -2,21 +2,19 @@ import importlib
 import random
 import shutil
 import string
-import sys
+import uuid
 from contextvars import ContextVar
 from datetime import date
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Sequence
-from typing_extensions import deprecated
-import uuid
-from fastapi import APIRouter, FastAPI
-from fastapi.testclient import TestClient
+from typing import Any
 
 import pytest
+from fastapi import APIRouter, FastAPI
+from fastapi.testclient import TestClient
 from pytest_fixture_classes import fixture_class
+from typing_extensions import deprecated
 
-from tests._data import latest
 from universi import VersionBundle, VersionedAPIRouter, generate_all_router_versions, regenerate_dir_to_all_versions
 from universi.structure import Version, VersionBundle, VersionChange
 from universi.structure.endpoints import AlterEndpointSubInstruction
@@ -100,11 +98,11 @@ class CreateVersionedSchemas:
                 [
                     importlib.import_module(
                         self.data_package_name
-                        + f".v{version.value.year}_{str(version.value.month).zfill(2)}_{str(version.value.day).zfill(2)}"
+                        + f".v{version.value.year}_{str(version.value.month).zfill(2)}_{str(version.value.day).zfill(2)}",
                     )
                     for version in created_versions
-                ]
-            )
+                ],
+            ),
         )
 
 
@@ -134,7 +132,9 @@ class TestClientWithAPIVersion(TestClient):
 
 
 def client(
-    router: APIRouter, api_version: Any = Undefined, api_version_var: ContextVar[date | None] | None = None
+    router: APIRouter,
+    api_version: Any = Undefined,
+    api_version_var: ContextVar[date | None] | None = None,
 ) -> TestClientWithAPIVersion:
     app = FastAPI()
     app.include_router(router)

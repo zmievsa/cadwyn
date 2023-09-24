@@ -81,8 +81,7 @@ exclude_lines = [
 ]
 omit = [
     "tests/test_tutorial/test_users_example003/*",
-    "tests/_data/latest/some_schema.py",
-    "tests/_data/latest/weird_schemas.py",
+    "tests/_data/latest/*",
     "tests/_temp/*",
     "tests/test_tutorial/*/schemas/*",
 ]

@@ -1,17 +1,21 @@
 import re
 from contextvars import ContextVar
 from datetime import date
-from types import ModuleType
 from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
 from universi.exceptions import UniversiError, UniversiStructureError
-from universi.structure import VersionChange, VersionChangeWithSideEffects
-from universi.structure import convert_request_to_next_version_for, convert_response_to_previous_version_for
-from universi.structure import schema
-from universi.structure import Version, VersionBundle
+from universi.structure import (
+    Version,
+    VersionBundle,
+    VersionChange,
+    VersionChangeWithSideEffects,
+    convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
+    schema,
+)
 
 
 class DummySubClass2000_001(VersionChangeWithSideEffects):  # noqa: N801
@@ -126,7 +130,8 @@ class TestVersionChange:
         [VersionChange, VersionChangeWithSideEffects],
     )
     def test__init_subclass__incorrect_subclass_hierarchy__should_raise_error(
-        self, version_change_type: type[VersionChange]
+        self,
+        version_change_type: type[VersionChange],
     ):
         class DummySubClass(version_change_type):
             description = "dummy description"
@@ -292,7 +297,7 @@ class TestVersionBundle:
         with pytest.raises(
             UniversiStructureError,
             match=re.escape(
-                "You tried to define two versions with the same value in the same VersionBundle: '2000-01-01'."
+                "You tried to define two versions with the same value in the same VersionBundle: '2000-01-01'.",
             ),
         ):
             VersionBundle(
@@ -311,7 +316,7 @@ class TestVersionBundle:
             match=re.escape(
                 'The first version "2000-01-01" cannot have any version changes. '
                 "Version changes are defined to migrate to/from a previous version "
-                "so you cannot define one for the very first version."
+                "so you cannot define one for the very first version.",
             ),
         ):
             VersionBundle(

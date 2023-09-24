@@ -2,8 +2,6 @@ import importlib
 import inspect
 import json
 import re
-import sys
-import time
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum, auto
@@ -21,7 +19,6 @@ from universi import regenerate_dir_to_all_versions
 from universi.exceptions import (
     CodeGenerationError,
     InvalidGenerationInstructionError,
-    UniversiStructureError,
 )
 from universi.structure import (
     Version,
@@ -70,7 +67,8 @@ def test__latest_enums_are_unchanged(latest_module: ModuleType):
 
 
 def test__enum_had__original_enum_is_empty(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
         enum(latest_module.EmptyEnum).had(b=auto()),
@@ -81,7 +79,8 @@ def test__enum_had__original_enum_is_empty(
 
 
 def test__enum_had__original_enum_is_nonempty(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
         enum(latest_module.EnumWithOneMember).had(b=7),
@@ -92,7 +91,8 @@ def test__enum_had__original_enum_is_nonempty(
 
 
 def test__enum_didnt_have__original_enum_has_one_member(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
         enum(latest_module.EnumWithOneMember).didnt_have("a"),
@@ -103,7 +103,8 @@ def test__enum_didnt_have__original_enum_has_one_member(
 
 
 def test__enum_didnt_have__original_enum_has_two_members(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
         enum(latest_module.EnumWithTwoMembers).didnt_have("a"),
@@ -114,7 +115,8 @@ def test__enum_didnt_have__original_enum_has_two_members(
 
 
 def test__enum_had__original_schema_is_empty(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
         enum(latest_module.EmptyEnum).had(b=7),
@@ -125,7 +127,8 @@ def test__enum_had__original_schema_is_empty(
 
 
 def test__field_existed_as__original_schema_is_empty(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
         schema(latest_module.EmptySchema).field("bar").existed_as(type=int, info=Field(description="hewwo")),
@@ -139,7 +142,8 @@ def test__field_existed_as__original_schema_is_empty(
 
 
 def test__field_existed_as__original_schema_has_a_field(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
         schema(latest_module.SchemaWithOneStrField).field("bar").existed_as(type=int, info=Field(description="hewwo")),
@@ -158,7 +162,8 @@ def test__field_existed_as__original_schema_has_a_field(
 
 
 def test__field_existed_as__extras_are_added__should_generate_properly(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
         schema(latest_module.SchemaWithExtras).field("bar").existed_as(type=int, info=Field(deflolt="hewwo")),
@@ -176,7 +181,8 @@ def test__field_existed_as__extras_are_added__should_generate_properly(
 
 
 def test__schema_field_didnt_exist(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
         schema(latest_module.SchemaWithOneStrField).field("foo").didnt_exist,
@@ -191,7 +197,8 @@ def test__schema_field_didnt_exist(
 
 
 def test__schema_field_didnt_exist__field_is_missing__should_raise_error(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -206,12 +213,13 @@ def test__schema_field_didnt_exist__field_is_missing__should_raise_error(
 
 
 def test__schema_field_didnt_exist__field_is_private(
-    create_versioned_schemas: CreateVersionedSchemas, latest_module: ModuleType
+    create_versioned_schemas: CreateVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000, v2001 = create_versioned_schemas(
         version_change(
             schema(latest_module.SchemaWithPrivateAttrs).field("_non_fillable_attr").didnt_exist,
-        )
+        ),
     )
     # insert_assert(inspect.getsource(v2000.SchemaWithPrivateAttrs))
     assert inspect.getsource(v2000.SchemaWithPrivateAttrs) == (
@@ -227,12 +235,13 @@ def test__schema_field_didnt_exist__field_is_private(
 
 
 def test__schema_field_didnt_exist__field_is_fillable_private(
-    create_versioned_schemas: CreateVersionedSchemas, latest_module: ModuleType
+    create_versioned_schemas: CreateVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000, v2001 = create_versioned_schemas(
         version_change(
             schema(latest_module.SchemaWithPrivateAttrs).field("_fillable_attr").didnt_exist,
-        )
+        ),
     )
     # insert_assert(inspect.getsource(v2000.SchemaWithPrivateAttrs))
     assert inspect.getsource(v2000.SchemaWithPrivateAttrs) == (
@@ -287,10 +296,17 @@ def test__field_had__int_field(
     ],
 )
 def test__field_had__str_field(
-    attr: str, attr_value: Any, create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    attr: str,
+    attr_value: Any,
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     assert_field_had_changes_apply(
-        latest_module.SchemaWithOneStrField, attr, attr_value, create_simple_versioned_schemas, latest_module
+        latest_module.SchemaWithOneStrField,
+        attr,
+        attr_value,
+        create_simple_versioned_schemas,
+        latest_module,
     )
 
 
@@ -302,16 +318,24 @@ def test__field_had__str_field(
     ],
 )
 def test__field_had__decimal_field(
-    attr: str, attr_value: Any, create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    attr: str,
+    attr_value: Any,
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     assert_field_had_changes_apply(
-        latest_module.SchemaWithOneDecimalField, attr, attr_value, create_simple_versioned_schemas, latest_module
+        latest_module.SchemaWithOneDecimalField,
+        attr,
+        attr_value,
+        create_simple_versioned_schemas,
+        latest_module,
     )
 
 
 # TODO: https://github.com/Ovsyanka83/universi/issues/3
 def test__field_had__constrained_field(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000, v2001 = create_simple_versioned_schemas(
         schema(latest_module.SchemaWithConstrainedInt).field("foo").had(alias="bar"),
@@ -330,7 +354,8 @@ def test__field_had__constrained_field(
 
 
 def test__field_had__default_factory(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(  # pragma: no cover
         schema(latest_module.SchemaWithOneIntField).field("foo").had(default_factory=lambda: 91),
@@ -366,7 +391,10 @@ def test__field_had__type(create_simple_versioned_schemas: CreateSimpleVersioned
     ],
 )
 def test__field_had__list_of_int_field(
-    attr: str, attr_value: Any, create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    attr: str,
+    attr_value: Any,
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     assert_field_had_changes_apply(
         latest_module.SchemaWithOneListOfIntField,
@@ -378,7 +406,8 @@ def test__field_had__list_of_int_field(
 
 
 def test__field_had__float_field(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     assert_field_had_changes_apply(
         latest_module.SchemaWithOneFloatField,
@@ -390,7 +419,8 @@ def test__field_had__float_field(
 
 
 def test__schema_field_had__change_to_the_same_field_type__should_raise_error(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -405,7 +435,8 @@ def test__schema_field_had__change_to_the_same_field_type__should_raise_error(
 
 
 def test__schema_field_had__change_attr_to_same_value__should_raise_error(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -420,7 +451,8 @@ def test__schema_field_had__change_attr_to_same_value__should_raise_error(
 
 
 def test__schema_field_had__nonexistent_field__should_raise_error(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -435,24 +467,26 @@ def test__schema_field_had__nonexistent_field__should_raise_error(
 
 
 def test__schema_field_had__trying_to_change_private_attr__should_raise_error(
-    create_versioned_schemas: CreateVersionedSchemas, latest_module: ModuleType
+    create_versioned_schemas: CreateVersionedSchemas,
+    latest_module: ModuleType,
 ):
     # with insert_pytest_raises():
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to change the type of field "_non_fillable_attr" from "SchemaWithPrivateAttrs" in "MyVersionChange" but it is a private attribute and private attributes cannot be edited.'
+            'You tried to change the type of field "_non_fillable_attr" from "SchemaWithPrivateAttrs" in "MyVersionChange" but it is a private attribute and private attributes cannot be edited.',
         ),
     ):
         create_versioned_schemas(
             version_change(
                 schema(latest_module.SchemaWithPrivateAttrs).field("_non_fillable_attr").had(type=int),
-            )
+            ),
         )
 
 
 def test__enum_had__same_name_as_other_value__error(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -465,7 +499,8 @@ def test__enum_had__same_name_as_other_value__error(
 
 
 def test__enum_didnt_have__nonexisting_name__error(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -502,7 +537,9 @@ def test__with_deleted_source_file__error(
 
 
 def test__non_python_files__copied_to_all_dirs(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType, data_dir: Path
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+    data_dir: Path,
 ):
     create_simple_versioned_schemas()
     assert json.loads(Path(data_dir / "v2000_01_01/json_files/foo.json").read_text()) == {"hello": "world"}
@@ -510,7 +547,9 @@ def test__non_python_files__copied_to_all_dirs(
 
 
 def test__non_pydantic_schema__error(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType, data_package_name
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+    data_package_name,
 ):
     with pytest.raises(
         CodeGenerationError,
@@ -524,7 +563,8 @@ def test__non_pydantic_schema__error(
 
 
 def test__schema_that_overrides_fields_from_mro(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
         schema(latest_module.SchemaThatOverridesField).field("bar").existed_as(type=int),
@@ -555,7 +595,8 @@ def test__schema_existed_as(create_simple_versioned_schemas: CreateSimpleVersion
 
 
 def test__schema_field_existed_as__already_existing_field__should_raise_error(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -570,7 +611,9 @@ def test__schema_field_existed_as__already_existing_field__should_raise_error(
 
 
 def test__schema_defined_in_a_non_init_file(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType, data_package_name: str
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+    data_package_name: str,
 ):
     module = importlib.import_module(data_package_name + ".latest.some_schema")
 
@@ -584,7 +627,9 @@ def test__schema_defined_in_a_non_init_file(
 
 
 def test__with_weird_data_types(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType, data_package_name: str
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+    data_package_name: str,
 ):
     weird_schemas = importlib.import_module(data_package_name + ".latest.weird_schemas")
     create_simple_versioned_schemas(
@@ -624,7 +669,7 @@ def test__union_fields(create_simple_versioned_schemas: CreateSimpleVersionedSch
         "    daz: typing.Union[int, EmptySchema] = Field()\n"
     )
     assert inspect.getsource(v2001_01_01.SchemaWithUnionFields) == (
-        "class SchemaWithUnionFields(BaseModel):\n" "    foo: int | str\n" "    bar: EmptySchema | None\n"
+        "class SchemaWithUnionFields(BaseModel):\n    foo: int | str\n    bar: EmptySchema | None\n"
     )
 
 
@@ -656,7 +701,9 @@ def test__imports_and_aliases(create_simple_versioned_schemas: CreateSimpleVersi
 
 
 def test__unions__init_file(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType, data_package_name
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+    data_package_name,
 ):
     create_simple_versioned_schemas()
     v2000, v2001 = (
@@ -675,7 +722,9 @@ def test__unions__init_file(
 
 
 def test__unions__regular_file(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType, data_package_name: str
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+    data_package_name: str,
 ):
     create_simple_versioned_schemas()
     latest = importlib.import_module(data_package_name + ".latest.some_schema")
@@ -747,7 +796,8 @@ def test__property(api_version_var: ContextVar[date | None], latest_module: Modu
 
 
 def test__delete_nonexistent_property(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -777,7 +827,8 @@ def test__lambda_property(create_simple_versioned_schemas: CreateSimpleVersioned
 
 
 def test__property__there_is_already_field_with_the_same_name__error(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
 ):
     def baz(hello: Any):
         raise NotImplementedError
@@ -795,7 +846,9 @@ def test__property__there_is_already_field_with_the_same_name__error(
 
 
 def test__schema_had_name__dependent_schema_is_not_altered(
-    api_version_var: ContextVar[date | None], latest_module, data_package_name
+    api_version_var: ContextVar[date | None],
+    latest_module,
+    data_package_name,
 ):
     class VersionChange2(VersionChange):
         description = "..."
@@ -881,7 +934,9 @@ def test__schema_had_name__dependent_schema_is_not_altered(
 
 
 def test__schema_had_name__dependent_schema_is_altered(
-    api_version_var: ContextVar[date | None], latest_module, data_package_name
+    api_version_var: ContextVar[date | None],
+    latest_module,
+    data_package_name,
 ):
     some_schema = importlib.import_module(data_package_name + ".latest.some_schema")
 
@@ -964,7 +1019,7 @@ def test__schema_had_name__dependent_schema_is_altered(
     )
 
     assert inspect.getsource(some_schema_v2002.SchemaThatDependsOnAnotherSchema) == (
-        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n" "    foo: SchemaWithOneFloatField\n" "    bar: int\n"
+        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: SchemaWithOneFloatField\n    bar: int\n"
     )
 
     assert str(unions.SchemaWithOneFloatField) == (
@@ -975,19 +1030,20 @@ def test__schema_had_name__dependent_schema_is_altered(
 
 
 def test__schema_had_name__trying_to_assign_to_the_same_name__should_raise_error(
-    create_versioned_schemas: CreateVersionedSchemas, latest_module: ModuleType
+    create_versioned_schemas: CreateVersionedSchemas,
+    latest_module: ModuleType,
 ):
     # with insert_pytest_raises():
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to change the name of "EmptySchema" in "MyVersionChange" but it already has the name you tried to assign.'
+            'You tried to change the name of "EmptySchema" in "MyVersionChange" but it already has the name you tried to assign.',
         ),
     ):
         create_versioned_schemas(
             version_change(
                 schema(latest_module.EmptySchema).had(name="EmptySchema"),
-            )
+            ),
         )
 
 
@@ -1025,7 +1081,9 @@ def test__union_generation__convert_request_to_next_version_for_one_schema__one_
 
 
 def test__union_generation__convert_request_to_next_version_for_all_schemas__all_schemas_are_skipped(
-    api_version_var: ContextVar[date | None], latest_module: ModuleType, data_package_name: str
+    api_version_var: ContextVar[date | None],
+    latest_module: ModuleType,
+    data_package_name: str,
 ):
     class VersionChange2(VersionChange):
         description = "..."

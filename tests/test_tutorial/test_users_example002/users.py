@@ -1,20 +1,19 @@
 from contextvars import ContextVar
 from datetime import date
-from typing import Any
 
 from pydantic import Field
 
 from universi import VersionedAPIRouter
 from universi.structure import (
+    RequestInfo,
+    ResponseInfo,
     Version,
     VersionBundle,
     VersionChange,
-    convert_response_to_previous_version_for,
     convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
     endpoint,
     schema,
-    RequestInfo,
-    ResponseInfo,
 )
 
 from .schemas.latest.users import (
@@ -33,7 +32,7 @@ async def create_user(user: UserCreateRequest):
     return {
         "id": 83,
         "_prefetched_addresses": [
-            {"id": i, "value": address} for i, address in enumerate([user.default_address] + user._addresses_to_create)
+            {"id": i, "value": address} for i, address in enumerate([user.default_address, *user._addresses_to_create])
         ],
     }
 

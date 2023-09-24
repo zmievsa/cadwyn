@@ -1,12 +1,11 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, cast
+from typing import Any
 
 from fastapi import Response
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
 from starlette.routing import BaseRoute
 
 from .._utils import Sentinel

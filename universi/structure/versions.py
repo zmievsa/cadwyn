@@ -1,25 +1,28 @@
-from dataclasses import dataclass
-import datetime
 import functools
+import inspect
+import json
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from enum import Enum
-import inspect
-import json
-from typing import Any, ClassVar, Generic, ParamSpec, Protocol, TypeAlias, TypeVar
-from collections.abc import Set
-from fastapi.routing import _prepare_response_content, serialize_response
-from typing_extensions import assert_never
+from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
 
+from fastapi import Request as FastapiRequest
+from fastapi import Response as FastapiResponse
+from fastapi._compat import ModelField, _normalize_errors
+from fastapi.dependencies.models import Dependant
+from fastapi.dependencies.utils import solve_dependencies
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import _prepare_response_content
 from pydantic import BaseModel
+from typing_extensions import assert_never
 
 from universi.exceptions import UniversiError, UniversiStructureError
 from universi.structure.endpoints import AlterEndpointSubInstruction
 from universi.structure.enums import AlterEnumSubInstruction
 
 from .._utils import Sentinel
-from .common import Endpoint, VersionedModel, VersionDate
+from .common import Endpoint, VersionDate, VersionedModel
 from .data import (
     AlterRequestByPathInstruction,
     AlterRequestBySchemaInstruction,
@@ -28,13 +31,7 @@ from .data import (
     RequestInfo,
     ResponseInfo,
 )
-from fastapi.dependencies.utils import solve_dependencies
-from fastapi.dependencies.models import Dependant
-from fastapi.exceptions import RequestValidationError
-from fastapi._compat import _normalize_errors
 from .schemas import AlterSchemaInstruction, AlterSchemaSubInstruction, SchemaPropertyDefinitionInstruction
-from fastapi._compat import ModelField
-from fastapi import Request as FastapiRequest, Response as FastapiResponse
 
 _UNIVERSI_REQUEST_PARAM_NAME = "universi_request_param"
 _UNIVERSI_RESPONSE_PARAM_NAME = "universi_response_param"
@@ -205,7 +202,7 @@ class VersionBundle:
             raise UniversiStructureError(
                 f'The first version "{versions[-1].value}" cannot have any version changes. '
                 "Version changes are defined to migrate to/from a previous version so you "
-                "cannot define one for the very first version."
+                "cannot define one for the very first version.",
             )
         version_values = set()
         for version in versions:
@@ -214,7 +211,7 @@ class VersionBundle:
             else:
                 raise UniversiStructureError(
                     f"You tried to define two versions with the same value in the same "
-                    f"{VersionBundle.__name__}: '{version.value}'."
+                    f"{VersionBundle.__name__}: '{version.value}'.",
                 )
             for version_change in version.version_changes:
                 if version_change._bound_version_bundle is not None:
@@ -483,13 +480,9 @@ def _add_keyword_only_parameter(
     signature = inspect.signature(func)
     func.__signature__ = signature.replace(
         parameters=(
-            list(signature.parameters.values())
-            + [
-                inspect.Parameter(
-                    param_name,
-                    kind=inspect._ParameterKind.KEYWORD_ONLY,
-                    annotation=param_annotation,
-                )
+            [
+                *list(signature.parameters.values()),
+                inspect.Parameter(param_name, kind=inspect._ParameterKind.KEYWORD_ONLY, annotation=param_annotation),
             ]
-        )
+        ),
     )

@@ -2,8 +2,8 @@ from decimal import Decimal
 from enum import Enum, auto
 from typing import Any
 
-from pydantic import BaseModel, Field, PrivateAttr
-from pydantic import Field as PydanticField, conint
+from pydantic import BaseModel, Field, PrivateAttr, conint
+from pydantic import Field as PydanticField
 
 from universi.fields import FillablePrivateAttr, FillablePrivateAttrMixin
 

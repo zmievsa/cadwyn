@@ -1,5 +1,6 @@
 from typing import Any
-from pydantic import BaseModel, Field, PrivateAttr
+
+from pydantic import BaseModel
 from pydantic.fields import ModelPrivateAttr, Undefined
 from pydantic.typing import NoArgAnyCallable
 
@@ -22,7 +23,8 @@ class FillablePrivateAttrMixin(BaseModel):
             fillable_private_fields = {}
             for name, value in data.copy().items():
                 if name in self.__private_attributes__ and isinstance(
-                    self.__private_attributes__[name], FillableModelPrivateAttr
+                    self.__private_attributes__[name],
+                    FillableModelPrivateAttr,
                 ):
                     fillable_private_fields[name] = value
                     data.pop(name)

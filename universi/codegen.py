@@ -1,13 +1,12 @@
 import ast
-from collections import defaultdict
 import importlib
 import inspect
 import os
 import re
 import shutil
-import sys
 import textwrap
-from collections.abc import Callable, Generator, Sequence
+from collections import defaultdict
+from collections.abc import Callable, Collection, Generator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -17,21 +16,17 @@ from pathlib import Path
 from types import GenericAlias, LambdaType, ModuleType, NoneType
 from typing import (
     Any,
-    Collection,
     TypeAlias,
     _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
     get_args,
     get_origin,
 )
-from fastapi import APIRouter
-
 
 from pydantic import BaseModel, Field, PrivateAttr
 from pydantic.fields import FieldInfo, ModelField, ModelPrivateAttr
 from typing_extensions import assert_never
-from universi.fields import FillableModelPrivateAttr, FillablePrivateAttr
-from universi.structure.data import AlterRequestByPathInstruction, AlterRequestBySchemaInstruction
 
+from universi.fields import FillableModelPrivateAttr
 from universi.structure.enums import (
     AlterEnumSubInstruction,
     EnumDidntHaveMembersInstruction,
@@ -47,7 +42,7 @@ from universi.structure.schemas import (
     SchemaPropertyDidntExistInstruction,
 )
 from universi.structure.versions import Version, VersionBundle
-from starlette.routing import BaseRoute
+
 from ._utils import Sentinel, UnionType, get_index_of_base_schema_dir_in_pythonpath
 from .exceptions import CodeGenerationError, InvalidGenerationInstructionError
 
@@ -170,7 +165,11 @@ def regenerate_dir_to_all_versions(
         migrated_body_schemas = _apply_migrations(version, schemas, enums)
 
     _generate_union_directory(
-        _UNION_DIR_NAME, template_module, version_list, schemas_per_version, schemas_to_skipped_versions
+        _UNION_DIR_NAME,
+        template_module,
+        version_list,
+        schemas_per_version,
+        schemas_to_skipped_versions,
     )
 
 
@@ -184,7 +183,9 @@ def _generate_latest_version_alias_directory(version: date, template_module):
     )
     for _, original_module, parallel_file in _generate_parallel_directory(template_module, version_dir):
         imports = _prepare_imports_from_version_dirs(
-            original_module, ["latest"], index_of_latest_schema_dir_in_pythonpath
+            original_module,
+            ["latest"],
+            index_of_latest_schema_dir_in_pythonpath,
         )
 
         parallel_file.write_text(_AUTO_GENERATION_WARNING + ast.unparse(imports[0].get_ast(star_import=True)))
@@ -863,7 +864,7 @@ class _AnnotationASTNodeTransformer(ast.NodeTransformer):
 
 
 class _AnnotationTransformer:
-    def visit(self, value: Any):  # noqa: C901
+    def visit(self, value: Any):
         if isinstance(value, list | tuple | set | frozenset):
             return self.transform_collection(value)
         if isinstance(value, dict):
@@ -916,7 +917,7 @@ class _AnnotationTransformer:
                         f"{key}={self.visit(val)}"
                         for key, val in value.__dict__.items()
                         if not key.startswith("__") and val is not None
-                    ]
+                    ],
                 )
                 + ")"
             )
@@ -997,7 +998,7 @@ def _find_a_lambda(source: str) -> str:
 def _get_all_names_defined_in_module(body: ast.Module, module_python_path: str) -> dict[str, str]:
     defined_names = {}
     for node in body.body:
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             defined_names[node.name] = module_python_path
         elif isinstance(node, ast.Assign):
             for target in node.targets:

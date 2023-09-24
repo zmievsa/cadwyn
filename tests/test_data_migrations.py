@@ -1,39 +1,29 @@
+import http.cookies
+import re
+from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from datetime import date
-import http.cookies
-import json
-import re
 from types import ModuleType
-from typing import Any, Callable, Coroutine, Literal
-from fastapi import Body, Cookie, FastAPI, Header, Query, Request, Response
-from fastapi.responses import JSONResponse
-from fastapi.testclient import TestClient
+from typing import Any, Literal
 
 import pytest
-from pydantic import BaseModel
+from dirty_equals import IsPartialDict, IsStr
+from fastapi import Body, Cookie, Header, Query, Request, Response
+from fastapi.responses import JSONResponse
+
 from tests.conftest import (
     CreateVersionedClients,
-    RunSchemaCodegen,
-    CreateSimpleVersionedSchemas,
-    CreateVersionedRouters,
     client,
-    router,
     version_change,
 )
 from universi import VersionedAPIRouter
 from universi.exceptions import UniversiStructureError
-
 from universi.structure import (
-    Version,
-    VersionBundle,
     VersionChange,
-    convert_response_to_previous_version_for,
     convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
 )
-from pytest_fixture_classes import fixture_class
-
 from universi.structure.data import RequestInfo, ResponseInfo
-from dirty_equals import IsPartialDict, IsStr
 
 
 @pytest.fixture()
@@ -173,7 +163,11 @@ class TestRequestMigrations:
         }
         # insert_assert(clients[date(2000, 1, 1)] .post(test_path, json={"1": "2"}, headers={"3": "4"}, cookies={"5": "6"}, params={"7": "8"}) .json())
         assert clients[date(2000, 1, 1)].post(
-            test_path, json={"1": "2"}, headers={"3": "4"}, cookies={"5": "6"}, params={"7": "8"}
+            test_path,
+            json={"1": "2"},
+            headers={"3": "4"},
+            cookies={"5": "6"},
+            params={"7": "8"},
         ).json() == {
             "body": {"1": "2", "hello": "hello"},
             "headers": IsPartialDict({"header_key": "header val 2", "3": "4"}),
@@ -211,7 +205,10 @@ class TestRequestMigrations:
         }
 
     def test__depends_gets_broken_after_migration__should_raise_422(
-        self, create_versioned_clients: CreateVersionedClients, router, test_path
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        router,
+        test_path,
     ):
         @router.get(test_path)
         async def get(my_header: str = Header()):
@@ -223,7 +220,7 @@ class TestRequestMigrations:
 
         clients = create_versioned_clients(version_change(migrator=migrator))
         assert clients[date(2000, 1, 1)].get(test_path, headers={"my-header": "wow"}).json() == {
-            "detail": [{"loc": ["header", "my-header"], "msg": "field required", "type": "value_error.missing"}]
+            "detail": [{"loc": ["header", "my-header"], "msg": "field required", "type": "value_error.missing"}],
         }
         assert clients[date(2001, 1, 1)].get(test_path, headers={"my-header": "wow"}).json() == 83
 
@@ -453,7 +450,9 @@ class TestHowAndWhenMigrationsApply:
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
         earlier_client = client(
-            clients[date(2000, 1, 1)].app.router, api_version=date(1998, 2, 10), api_version_var=api_version_var
+            clients[date(2000, 1, 1)].app.router,
+            api_version=date(1998, 2, 10),
+            api_version_var=api_version_var,
         )
         assert earlier_client.post(test_path, json=[]).json()["body"] == [
             "request change 1",
@@ -473,7 +472,9 @@ class TestHowAndWhenMigrationsApply:
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
         later_client = client(
-            clients[date(2000, 1, 1)].app.router, api_version=date(5000, 1, 1), api_version_var=api_version_var
+            clients[date(2000, 1, 1)].app.router,
+            api_version=date(5000, 1, 1),
+            api_version_var=api_version_var,
         )
         assert later_client.post(test_path, json=[]).json()["body"] == []
 
@@ -497,7 +498,7 @@ class TestHowAndWhenMigrationsApply:
                 version_change(
                     wrong_body_schema=convert_request_to_next_version_for(latest_module.AnyResponseSchema)(bad_req),
                     wrong_resp_schema=convert_response_to_previous_version_for(latest_module.AnyRequestSchema)(
-                        bad_resp
+                        bad_resp,
                     ),
                     wrong_req_path=convert_request_to_next_version_for("/wrong_path", {"POST"})(bad_req),
                     wrong_req_method=convert_request_to_next_version_for(test_path, {"GET"})(bad_req),

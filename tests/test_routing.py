@@ -4,11 +4,11 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from datetime import date
 from types import ModuleType
-from typing import Annotated, Any, NewType, Sequence, TypeAlias, cast, get_args
+from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
 from uuid import UUID
 
 import pytest
-from fastapi import Body, Depends, FastAPI, Header
+from fastapi import Body, Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -19,23 +19,17 @@ from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
 from tests.conftest import (
-    CreateVersionedRouters,
     CreateSimpleVersionedSchemas,
+    CreateVersionedRouters,
     RunSchemaCodegen,
     client,
-    router,
     version_change,
 )
 from universi import VersionBundle, VersionedAPIRouter
-from universi import regenerate_dir_to_all_versions
 from universi.exceptions import RouterGenerationError, UniversiError
 from universi.routing import generate_all_router_versions
 from universi.structure import Version, endpoint, schema
-from universi.structure import convert_response_to_previous_version_for
-from universi.structure.data import ResponseInfo, convert_request_to_next_version_for
-from universi.structure.endpoints import AlterEndpointSubInstruction
-from universi.structure.enums import AlterEnumSubInstruction, enum
-from universi.structure.schemas import AlterSchemaSubInstruction
+from universi.structure.enums import enum
 from universi.structure.versions import VersionChange
 
 Default = object()
@@ -133,7 +127,7 @@ def test__endpoint_existed(
     routes_2000, routes_2001 = create_versioned_api_routes(
         version_change(
             endpoint("/test", ["GET"]).existed,
-        )
+        ),
     )
 
     assert len(routes_2000) == 2
@@ -241,7 +235,7 @@ def test__endpoint_had(
     routes_2000, routes_2001 = create_versioned_api_routes(
         version_change(
             endpoint(test_path, ["GET"]).had(**{attr: attr_value}),
-        )
+        ),
     )
 
     assert len(routes_2000) == len(routes_2001) == 1
@@ -257,7 +251,7 @@ def test__endpoint_had_dependencies(
     routes_2000, routes_2001 = create_versioned_api_routes(
         version_change(
             endpoint(test_path, ["GET"]).had(dependencies=[Depends(lambda: "hewwo")]),
-        )
+        ),
     )
 
     assert len(routes_2000) == len(routes_2001) == 1
@@ -275,7 +269,7 @@ def test__only_exists_in_older_versions__endpoint_is_not_a_route__error(
     with pytest.raises(
         LookupError,
         match=re.escape(
-            'Route not found on endpoint: "test2". Are you sure it\'s a route and decorators are in the correct order?'
+            'Route not found on endpoint: "test2". Are you sure it\'s a route and decorators are in the correct order?',
         ),
     ):
 
@@ -290,7 +284,8 @@ def test__only_exists_in_older_versions__applied_twice__should_raise_error(
 ):
     # with insert_pytest_raises():
     with pytest.raises(
-        UniversiError, match=re.escape('The route "test_endpoint" was already deleted. You can\'t delete it again.')
+        UniversiError,
+        match=re.escape('The route "test_endpoint" was already deleted. You can\'t delete it again.'),
     ):
 
         @router.only_exists_in_older_versions
@@ -386,7 +381,7 @@ def test__router_generation__editing_multiple_endpoints_with_same_route(
     routes_2000, routes_2001 = create_versioned_api_routes(
         version_change(
             endpoint("/test/{hewwo}", ["GET", "POST"]).had(description="Meaw"),
-        )
+        ),
     )
     assert len(routes_2000) == len(routes_2001) == 1
     assert routes_2000[0].description == "Meaw"
@@ -420,7 +415,7 @@ def test__router_generation__editing_multiple_methods_of_multiple_endpoints__sho
     routes_2000, routes_2001 = create_versioned_api_routes(
         version_change(
             endpoint("/test", ["GET", "POST"]).had(description="Meaw"),
-        )
+        ),
     )
     assert routes_2000[0].description == "Meaw"
     assert routes_2000[1].description == "Meaw"
@@ -516,7 +511,7 @@ def test__router_generation__restoring_deleted_route_for_same_path_without_func_
             version_change(
                 endpoint("/test", ["GET"]).didnt_exist,
                 endpoint("/test", ["GET"]).existed,
-            )
+            ),
         )
 
 
@@ -662,7 +657,7 @@ def test__router_generation__updating_response_model_when_schema_is_defined_in_a
         raise NotImplementedError
 
     routes_2000, routes_2001 = create_versioned_api_routes(
-        version_change(schema(module.MySchema).field("foo").had(type=str))
+        version_change(schema(module.MySchema).field("foo").had(type=str)),
     )
     assert routes_2000[0].response_model.__fields__["foo"].annotation == str
     assert routes_2001[0].response_model.__fields__["foo"].annotation == int
@@ -682,7 +677,7 @@ def test__router_generation__updating_response_model(
         raise NotImplementedError
 
     routes_2000, routes_2001 = create_versioned_api_routes(
-        version_change(schema(latest_module.SchemaWithOneIntField).field("foo").had(type=list[str]))
+        version_change(schema(latest_module.SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
 
     assert len(routes_2000) == len(routes_2001) == 1
@@ -780,7 +775,7 @@ def test__router_generation__passing_a_package_with_wrong_name_instead_of_latest
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            f'The name of the latest schemas module must be "latest". Received "{data_package_name}" instead.'
+            f'The name of the latest schemas module must be "latest". Received "{data_package_name}" instead.',
         ),
     ):
         versions = VersionBundle(
@@ -809,7 +804,7 @@ def test__router_generation__updating_request_models(
         raise NotImplementedError
 
     routes_2000, routes_2001 = create_versioned_api_routes(
-        version_change(schema(latest_module.SchemaWithOneIntField).field("foo").had(type=list[str]))
+        version_change(schema(latest_module.SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
     schemas_2000, schemas_2001 = (
         importlib.import_module(data_package_name + ".v2000_01_01"),
@@ -847,7 +842,7 @@ def test__router_generation__using_unversioned_models(
         raise NotImplementedError
 
     routes_2000, routes_2001 = create_versioned_api_routes(
-        version_change(schema(latest_module.SchemaWithOneIntField).field("foo").had(type=list[str]))
+        version_change(schema(latest_module.SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
 
     assert len(routes_2000) == len(routes_2001) == 3
@@ -873,7 +868,7 @@ def test__router_generation__using_weird_typehints(
         raise NotImplementedError
 
     routes_2000, routes_2001 = create_versioned_api_routes(
-        version_change(schema(latest_module.SchemaWithOneIntField).field("foo").had(type=list[str]))
+        version_change(schema(latest_module.SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
     assert len(routes_2000) == len(routes_2001) == 1
 
