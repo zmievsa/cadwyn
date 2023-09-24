@@ -221,12 +221,12 @@ def test__schema_field_didnt_exist__field_is_private(
             schema(latest_module.SchemaWithPrivateAttrs).field("_non_fillable_attr").didnt_exist,
         ),
     )
-    # insert_assert(inspect.getsource(v2000.SchemaWithPrivateAttrs))
+
     assert inspect.getsource(v2000.SchemaWithPrivateAttrs) == (
         "class SchemaWithPrivateAttrs(FillablePrivateAttrMixin, BaseModel):\n"
         "    _fillable_attr: str = FillablePrivateAttr()\n"
     )
-    # insert_assert(inspect.getsource(v2001.SchemaWithPrivateAttrs))
+
     assert inspect.getsource(v2001.SchemaWithPrivateAttrs) == (
         "class SchemaWithPrivateAttrs(FillablePrivateAttrMixin, BaseModel):\n"
         '    _non_fillable_attr: str = PrivateAttr(default="hewwo")\n'
@@ -243,12 +243,12 @@ def test__schema_field_didnt_exist__field_is_fillable_private(
             schema(latest_module.SchemaWithPrivateAttrs).field("_fillable_attr").didnt_exist,
         ),
     )
-    # insert_assert(inspect.getsource(v2000.SchemaWithPrivateAttrs))
+
     assert inspect.getsource(v2000.SchemaWithPrivateAttrs) == (
         "class SchemaWithPrivateAttrs(FillablePrivateAttrMixin, BaseModel):\n"
         "    _non_fillable_attr: str = PrivateAttr(default='hewwo')\n"
     )
-    # insert_assert(inspect.getsource(v2001.SchemaWithPrivateAttrs))
+
     assert inspect.getsource(v2001.SchemaWithPrivateAttrs) == (
         "class SchemaWithPrivateAttrs(FillablePrivateAttrMixin, BaseModel):\n"
         '    _non_fillable_attr: str = PrivateAttr(default="hewwo")\n'
@@ -341,12 +341,11 @@ def test__field_had__constrained_field(
         schema(latest_module.SchemaWithConstrainedInt).field("foo").had(alias="bar"),
     )
 
-    # insert_assert(inspect.getsource(v2000.SchemaWithConstrainedInt))
     assert (
         inspect.getsource(v2000.SchemaWithConstrainedInt)
         == "class SchemaWithConstrainedInt(BaseModel):\n    foo: conint(strict=False, lt=10) = Field(alias='bar')\n"
     )
-    # insert_assert(inspect.getsource(v2001.SchemaWithConstrainedInt))
+
     assert (
         inspect.getsource(v2001.SchemaWithConstrainedInt)
         == "class SchemaWithConstrainedInt(BaseModel):\n    foo: conint(lt=CONINT_LT_ALIAS)\n"

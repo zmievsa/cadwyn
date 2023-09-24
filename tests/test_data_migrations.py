@@ -42,8 +42,6 @@ def _get_endpoint(test_path: str, router: VersionedAPIRouter, latest_module: Mod
             "query_params": request.query_params,
         }
 
-    return get_endpoint
-
 
 @pytest.fixture()
 def _post_endpoint(test_path: str, router: VersionedAPIRouter, latest_module: ModuleType):
@@ -55,8 +53,6 @@ def _post_endpoint(test_path: str, router: VersionedAPIRouter, latest_module: Mo
             "cookies": request.cookies,
             "query_params": request.query_params,
         }
-
-    return post_endpoint
 
 
 @pytest.fixture(params=["by path", "by schema"])
@@ -154,14 +150,13 @@ class TestRequestMigrations:
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
-        # insert_assert(clients[date(2000, 1, 1)].post(test_path, json={}).json())
         assert clients[date(2000, 1, 1)].post(test_path, json={}).json() == {
             "body": {"hello": "hello"},
             "headers": IsPartialDict({"header_key": "header val 2"}),
             "cookies": {"cookie_key": "cookie val 2"},
             "query_params": {"query_param_key": "query_param val 2"},
         }
-        # insert_assert(clients[date(2000, 1, 1)] .post(test_path, json={"1": "2"}, headers={"3": "4"}, cookies={"5": "6"}, params={"7": "8"}) .json())
+
         assert clients[date(2000, 1, 1)].post(
             test_path,
             json={"1": "2"},
@@ -264,7 +259,7 @@ class TestResponseMigrations:
         clients = create_versioned_clients(version_change(migrator=migrator))
 
         resp = clients[date(2000, 1, 1)].post(test_path, json={})
-        # insert_assert(resp.json())
+
         assert resp.json() == {
             "body": {},
             "headers": {
@@ -535,9 +530,8 @@ class TestHowAndWhenMigrationsApply:
         resp_2001 = clients[date(2001, 1, 1)].post(test_path, json={})
         # http.cookies.SimpleCookie(resp_2000.headers["set-cookie"])
 
-        # insert_assert(dict(resp_2000.cookies))
         assert dict(resp_2000.cookies) == {"cookie_key": "cookie_val"}
-        # insert_assert(dict(resp_2000.headers))
+
         assert dict(resp_2000.headers) == {
             "content-length": "2",
             "content-type": "application/json",

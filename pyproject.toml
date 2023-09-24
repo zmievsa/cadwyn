@@ -160,6 +160,10 @@ extend-exclude = ["migrations"]
     "B018",   # ignore useless expressions in tests
     "PT012",  # ignore complex with pytest.raises clauses
     "RUF012", # ignore mutable class attributes ClassVar typehint requirement
+    "ANN001", # Missing type annotation for function argument
+    "ANN002", # Missing type annotation for *args
+    "ANN003", # Missing type annotation for **kwargs
+    "PGH003", # Use specific rule codes when ignoring type issues
 ]
 "universi/_utils.py" = [
     "ERA001", # Found commented-out code (it's not actually commented out. It's just comments)
