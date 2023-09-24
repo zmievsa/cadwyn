@@ -525,7 +525,7 @@ def test__with_deleted_source_file__error(
 
     with pytest.raises(
         CodeGenerationError,
-        match=f'Module "{wrong_latest_module}" is not a package',
+        match=re.escape(f'Module "{wrong_latest_module}" is not a package'),
     ):
         regenerate_dir_to_all_versions(
             wrong_latest_module,
