@@ -1,6 +1,7 @@
-import datetime
+from collections import defaultdict
 import functools
 import inspect
+import sys
 import typing
 import warnings
 from collections.abc import Callable, Sequence
@@ -19,6 +20,7 @@ from typing import (
     Sequence,
     Set,
     Type,
+    TypeAlias,
     TypeVar,
     _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
     Union,  # pyright: ignore[reportGeneralTypeIssues]
@@ -48,24 +50,26 @@ from starlette.routing import (
     BaseRoute,
     request_response,
 )
-from typing_extensions import Self, assert_never, deprecated
+from typing_extensions import Self, assert_never
 
-from universi._utils import Sentinel, UnionType, get_another_version_of_cls
+from universi._utils import Sentinel, UnionType, get_another_version_of_module
 from universi.codegen import _get_package_path_from_module, _get_version_dir_path
-from universi.exceptions import RouteAlreadyExistsError, RouterGenerationError, UniversiError
+from universi.exceptions import ModuleIsNotVersionedError, RouteAlreadyExistsError, RouterGenerationError, UniversiError
 from universi.structure import Version, VersionBundle
 from universi.structure.common import Endpoint, VersionDate
 from universi.structure.endpoints import (
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
     EndpointHadInstruction,
-    EndpointWasInstruction,
 )
-from universi.structure.versions import VersionChange
+from universi.structure.versions import _UNIVERSI_RESPONSE_PARAM_NAME, VersionChange
+from universi.structure.versions import _UNIVERSI_REQUEST_PARAM_NAME
 
 _T = TypeVar("_T", bound=Callable[..., Any])
 # This is a hack we do because we can't guarantee how the user will use the router.
 _DELETED_ROUTE_TAG = "_UNIVERSI_DELETED_ROUTE"
+EndpointPath: TypeAlias = str
+EndpointMethod: TypeAlias = str
 
 
 @dataclass(slots=True, frozen=True, eq=True)
@@ -74,13 +78,18 @@ class _EndpointInfo:
     endpoint_methods: frozenset[str]
 
 
+@dataclass(slots=True)
+class _RouterInfo:
+    router: fastapi.routing.APIRouter
+    routes_with_migrated_requests: dict[EndpointPath, set[EndpointMethod]]
+    route_bodies_with_migrated_requests: set[type[BaseModel]]
+
+
 def generate_all_router_versions(
     *routers: fastapi.routing.APIRouter,
     versions: VersionBundle,
-    latest_schemas_module: ModuleType | None,
+    latest_schemas_module: ModuleType,
 ) -> dict[VersionDate, fastapi.routing.APIRouter]:
-    for router in routers:
-        _add_data_migrations_to_all_routes(router, versions)
     root_router = fastapi.routing.APIRouter()
     for router in routers:
         root_router.include_router(router)
@@ -100,30 +109,17 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         route.tags.append(_DELETED_ROUTE_TAG)
         return endpoint
 
-    @deprecated("Use universi.generate_all_router_versions instead")
-    def create_versioned_copies(
-        self,
-        versions: VersionBundle,
-        *,
-        latest_schemas_module: ModuleType | None,
-    ) -> dict[VersionDate, fastapi.routing.APIRouter]:
-        _add_data_migrations_to_all_routes(self, versions)
-        return _EndpointTransformer(self, versions, latest_schemas_module).transform()
-
 
 class _EndpointTransformer:
     def __init__(
         self,
         parent_router: fastapi.routing.APIRouter,
         versions: VersionBundle,
-        latest_schemas_module: ModuleType | None,
+        latest_schemas_module: ModuleType,
     ) -> None:
         self.parent_router = parent_router
         self.versions = versions
-        if latest_schemas_module is not None:
-            self.annotation_transformer = _AnnotationTransformer(latest_schemas_module, versions)
-        else:
-            self.annotation_transformer = None
+        self.annotation_transformer = _AnnotationTransformer(latest_schemas_module, versions)
 
         self.routes_that_never_existed = [
             route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
@@ -131,20 +127,24 @@ class _EndpointTransformer:
 
     def transform(self):
         router = self.parent_router
-        routers: dict[VersionDate, fastapi.routing.APIRouter] = {}
+        router_infos: dict[VersionDate, _RouterInfo] = {}
+        routes_with_migrated_requests = {}
+        route_bodies_with_migrated_requests: set[type[BaseModel]] = set()
         for version in self.versions:
-            if self.annotation_transformer:
-                self.annotation_transformer.migrate_router_to_version(router, version)
+            #
+            self.annotation_transformer.migrate_router_to_version(router, version)
 
-            routers[version.value] = router
+            router_infos[version.value] = _RouterInfo(
+                router, routes_with_migrated_requests, route_bodies_with_migrated_requests
+            )
+            # Applying changes for the next version
+            routes_with_migrated_requests = _get_migrated_routes_by_path(version)
+            route_bodies_with_migrated_requests = {
+                schema for change in version.version_changes for schema in change.alter_request_by_schema_instructions
+            }
             router = deepcopy(router)
             self._apply_endpoint_changes_to_router(router, version)
 
-            routers[version.value].routes = [
-                route
-                for route in routers[version.value].routes
-                if not (isinstance(route, fastapi.routing.APIRoute) and _DELETED_ROUTE_TAG in route.tags)
-            ]
         if self.routes_that_never_existed:
             raise RouterGenerationError(
                 "Every route you mark with "
@@ -153,7 +153,63 @@ class _EndpointTransformer:
                 "The following routes have been marked with that decorator but were never restored: "
                 f"{self.routes_that_never_existed}",
             )
-        return routers
+        latest_router_info = next(iter(router_infos.values()))
+
+        # BEWARE: We assume that the order of routes didn't change.
+        # TODO: Make a test suite checking that it doesn't change
+        for route_index, latest_route in enumerate(latest_router_info.router.routes):
+            if not isinstance(latest_route, APIRoute):
+                continue
+            _add_data_migrations_to_route(
+                latest_route,
+                latest_route.body_field.type_ if latest_route.body_field is not None else None,
+                latest_route.body_field.alias if latest_route.body_field is not None else None,
+                latest_route.dependant,
+                latest_route.response_model,
+                self.versions,
+            )
+            dependant = latest_route.dependant
+            for (api_version, newer_router_info), older_router_info in zip(
+                router_infos.items(),
+                list(router_infos.values())[1:],
+                strict=False,
+            ):
+                newer_route = newer_router_info.router.routes[route_index]
+                older_route = older_router_info.router.routes[route_index]
+
+                # We know they are APIRoutes because of the check at the very beginning of the top loop.
+                # I.e. Because latest_route is an APIRoute, both routes are  APIRoutes too
+                newer_route, older_route = cast(APIRoute, newer_route), cast(APIRoute, older_route)
+                if older_route.body_field is not None and len(older_route.dependant.body_params) == 1:
+                    template_older_body_model = self.annotation_transformer._change_version_of_annotations(
+                        older_route.body_field.type_, self.annotation_transformer.template_version_dir
+                    )
+                else:
+                    template_older_body_model = None
+                if (
+                    older_route.path in newer_router_info.routes_with_migrated_requests
+                    # TODO: Raise error if we get a partial match here such as: route.methods = GET, POST; migrated = GET. HIGH PRIORITY
+                    and older_route.methods <= newer_router_info.routes_with_migrated_requests[older_route.path]
+                ) or (template_older_body_model in older_router_info.route_bodies_with_migrated_requests):
+                    pass
+                else:
+                    dependant = older_route.dependant
+                _add_data_migrations_to_route(
+                    older_route,
+                    template_older_body_model,
+                    older_route.body_field.alias if older_route.body_field is not None else None,
+                    dependant,
+                    # NOTE: The fact that we're using latest here assumes that the route can never change its response schema
+                    latest_route.response_model,
+                    self.versions,
+                )
+        for version, router_info in router_infos.items():
+            router_info.router.routes = [
+                route
+                for route in router_info.router.routes
+                if not (isinstance(route, fastapi.routing.APIRoute) and _DELETED_ROUTE_TAG in route.tags)
+            ]
+        return {version: router_info.router for version, router_info in router_infos.items()}
 
     def _apply_endpoint_changes_to_router(
         self,
@@ -171,10 +227,10 @@ class _EndpointTransformer:
                     is_deleted=False,
                 )
                 methods_to_which_we_applied_changes = set()
-                methods_we_should_have_applied_changes_to = set(instruction.endpoint_methods)
+                methods_we_should_have_applied_changes_to = instruction.endpoint_methods.copy()
 
                 if isinstance(instruction, EndpointDidntExistInstruction):
-                    # TODO: Optimize me
+                    # TODO OPTIMIZATION:
                     deleted_routes = _get_routes(
                         routes,
                         instruction.endpoint_path,
@@ -201,7 +257,7 @@ class _EndpointTransformer:
                         ' "{version_change_name}" doesn\'t exist in a newer version'
                     )
                 elif isinstance(instruction, EndpointExistedInstruction):
-                    # TODO: Optimize me
+                    # TODO Optimization
                     if original_routes:
                         method_union = set()
                         for original_route in original_routes:
@@ -225,7 +281,7 @@ class _EndpointTransformer:
                     except RouteAlreadyExistsError as e:
                         raise RouterGenerationError(
                             f'Endpoint "{list(instruction.endpoint_methods)} {instruction.endpoint_path}" you tried '
-                            f'to restore in "{version_change.__name__}" has different applicable routes that could '
+                            f'to restore in "{version_change.__name__}" has {len(e.routes)} applicable routes that could '
                             f"be restored. If you really have two routes with the same paths and methods, please, use "
                             f'"endpoint(..., func_name=...)" to distinguish between them. Function names of '
                             f"endpoints that can be restored: {[r.endpoint.__name__ for r in e.routes]}",
@@ -234,8 +290,27 @@ class _EndpointTransformer:
                         methods_to_which_we_applied_changes |= deleted_route.methods
                         deleted_route.tags.remove(_DELETED_ROUTE_TAG)
 
-                        if deleted_route in self.routes_that_never_existed:
-                            self.routes_that_never_existed.remove(deleted_route)
+                        routes_that_never_existed = _get_routes(
+                            self.routes_that_never_existed,
+                            deleted_route.path,
+                            deleted_route.methods,
+                            deleted_route.endpoint.__name__,
+                            is_deleted=True,
+                        )
+                        if len(routes_that_never_existed) == 1:
+                            self.routes_that_never_existed.remove(routes_that_never_existed[0])
+                        elif len(routes_that_never_existed) > 1:
+                            # I am not sure if it's possible to get to this error but I also don't want
+                            # to remove it because I like its clarity very much
+                            raise RouterGenerationError(  # pragma: no cover
+                                f'Endpoint "{list(deleted_route.methods)} {deleted_route.path}" you tried to restore '
+                                f'in "{version_change.__name__}" has {len(routes_that_never_existed)} applicable '
+                                f"routes with the same function name and path that could be restored. This can cause "
+                                f"problems during version generation. Specifically, Universi won't be able to warn "
+                                f"you when you deleted a route and never restored it. Please, make sure that "
+                                f"functions for all these routes have different names: "
+                                f"{[f'{r.endpoint.__module__}.{r.endpoint.__name__}' for r in routes_that_never_existed]}"
+                            )
                     err = (
                         'Endpoint "{endpoint_methods} {endpoint_path}" you tried to restore in'
                         ' "{version_change_name}" wasn\'t among the deleted routes'
@@ -248,36 +323,10 @@ class _EndpointTransformer:
                         'Endpoint "{endpoint_methods} {endpoint_path}" you tried to change in'
                         ' "{version_change_name}" doesn\'t exist'
                     )
-                elif isinstance(instruction, EndpointWasInstruction):
-                    # TODO: Add test for changing dependant and checking that the schemas used in the dependant have been migrated to the correct version
-                    for original_route in original_routes:
-                        methods_to_which_we_applied_changes |= original_route.methods
-                        original_response_model = original_route.endpoint.response_model
-
-                        original_route.endpoint = instruction.get_old_endpoint()
-                        _remake_endpoint_dependencies(original_route)
-                        original_dependant = original_route.dependant
-                        if self.annotation_transformer:
-                            version_dir = _get_version_dir_path(
-                                self.annotation_transformer.latest_schemas_module, version.value
-                            )
-                            self.annotation_transformer.migrate_route_to_version(
-                                original_route, version_dir, ignore_response_model=True
-                            )
-
-                        _add_data_migrations_to_route(
-                            original_route, original_response_model, original_dependant, self.versions
-                        )
-
-                    err = (
-                        'Endpoint "{endpoint_methods} {endpoint_path}" whose handler you tried to change in'
-                        ' "{version_change_name}" doesn\'t exist'
-                    )
                 else:
                     assert_never(instruction)
                 method_diff = methods_we_should_have_applied_changes_to - methods_to_which_we_applied_changes
                 if method_diff:
-                    # ERR
                     raise RouterGenerationError(
                         err.format(
                             endpoint_methods=list(method_diff),
@@ -354,6 +403,15 @@ class _AnnotationTransformer:
         route.endpoint = self._change_version_of_annotations(route.endpoint, version_dir)
         _remake_endpoint_dependencies(route)
 
+    def get_another_version_of_cls(self, cls_from_old_version: type[Any], new_version_dir: Path):
+        # version_dir = /home/myuser/package/companies/v2021_01_01
+        module_from_old_version = sys.modules[cls_from_old_version.__module__]
+        try:
+            module = get_another_version_of_module(module_from_old_version, new_version_dir, self.version_dirs)
+        except ModuleIsNotVersionedError:
+            return cls_from_old_version
+        return getattr(module, cls_from_old_version.__name__)
+
     def _change_versions_of_a_non_container_annotation(self, annotation: Any, version_dir: Path) -> Any:
         if isinstance(annotation, _BaseGenericAlias | GenericAlias):
             return get_origin(annotation)[
@@ -374,6 +432,7 @@ class _AnnotationTransformer:
         elif isinstance(annotation, type):
             return self._change_version_of_type(annotation, version_dir)
         elif callable(annotation):
+            # TASK: https://github.com/Ovsyanka83/universi/issues/48
             if inspect.iscoroutinefunction(annotation):
 
                 @functools.wraps(annotation)
@@ -393,6 +452,7 @@ class _AnnotationTransformer:
                     return annotation(*args, **kwargs)
 
             # Otherwise it will have the same signature as __wrapped__
+            new_callable.__alt_wrapped__ = new_callable.__wrapped__
             del new_callable.__wrapped__
             old_params = inspect.signature(annotation).parameters
             callable_annotations = new_callable.__annotations__
@@ -444,30 +504,36 @@ class _AnnotationTransformer:
                         stacklevel=7,
                     )
                 else:
-                    template_dir = str(self.template_version_dir)
-                    dir_with_versions = str(self.template_version_dir.parent)
-
-                    # So if it is somewhere close to version dirs (either within them or next to them),
-                    # but not located in "latest",
-                    # but also not located in any other version dir
-                    if (
-                        source_file.startswith(dir_with_versions)
-                        and not source_file.startswith(template_dir)
-                        and any(source_file.startswith(str(d)) for d in self.version_dirs)
-                    ):
-                        raise RouterGenerationError(
-                            f'"{annotation}" is not defined in "{self.template_version_dir}" even though it must be. '
-                            f'It is defined in "{Path(source_file).parent}". '
-                            "It probably means that you used a specific version of the class in fastapi dependencies "
-                            'or pydantic schemas instead of "latest".',
-                        )
-            return get_another_version_of_cls(annotation, version_dir, self.version_dirs)
+                    self._validate_source_file_is_located_in_template_dir(annotation, source_file)
+            return self.get_another_version_of_cls(annotation, version_dir)
         else:
             return annotation
+
+    def _validate_source_file_is_located_in_template_dir(self, annotation: type, source_file: str):
+        template_dir = str(self.template_version_dir)
+        dir_with_versions = str(self.template_version_dir.parent)
+        # So if it is somewhere close to version dirs (either within them or next to them),
+        # but not located in "latest",
+        # but also not located in any other version dir
+        if (
+            source_file.startswith(dir_with_versions)
+            and not source_file.startswith(template_dir)
+            and any(source_file.startswith(str(d)) for d in self.version_dirs)
+        ):
+            raise RouterGenerationError(
+                f'"{annotation}" is not defined in "{self.template_version_dir}" even though it must be. '
+                f'It is defined in "{Path(source_file).parent}". '
+                "It probably means that you used a specific version of the class in fastapi dependencies "
+                'or pydantic schemas instead of "latest".',
+            )
 
 
 def _remake_endpoint_dependencies(route: fastapi.routing.APIRoute):
     route.dependant = get_dependant(path=route.path_format, call=route.endpoint)
+    if not route.dependant.request_param_name:
+        route.dependant.request_param_name = _UNIVERSI_REQUEST_PARAM_NAME
+    if not route.dependant.response_param_name:
+        route.dependant.response_param_name = _UNIVERSI_RESPONSE_PARAM_NAME
     route.body_field = get_body_field(dependant=route.dependant, name=route.unique_id)
     for depends in route.dependencies[::-1]:
         route.dependant.dependencies.insert(
@@ -477,17 +543,27 @@ def _remake_endpoint_dependencies(route: fastapi.routing.APIRoute):
     route.app = request_response(route.get_route_handler())
 
 
-def _add_data_migrations_to_all_routes(router: fastapi.routing.APIRouter, versions: VersionBundle):
-    for route in router.routes:
-        if isinstance(route, fastapi.routing.APIRoute):
-            _add_data_migrations_to_route(route, route.response_model, route.dependant, versions)
-
-
-def _add_data_migrations_to_route(route: BaseRoute, response_model: Any, dependant: Dependant, versions: VersionBundle):
-    if isinstance(route, fastapi.routing.APIRoute):
-        if not is_async_callable(route.endpoint):
-            raise RouterGenerationError("All versioned endpoints must be asynchronous.")
-        route.endpoint = versions.versioned(response_model, body_params=dependant.body_params)(route.endpoint)
+def _add_data_migrations_to_route(
+    route: APIRoute,
+    template_body_field: type[BaseModel] | None,
+    template_body_field_name: str | None,
+    dependant_for_request_migrations: Dependant,
+    latest_response_model: Any,
+    versions: VersionBundle,
+):
+    if not is_async_callable(route.endpoint):
+        raise RouterGenerationError(
+            f'All versioned endpoints must be asynchronous. Endpoint "{route.endpoint}" is not.'
+        )
+    route.endpoint = versions._versioned(
+        template_body_field,
+        template_body_field_name,
+        route.dependant.body_params,
+        dependant_for_request_migrations,
+        latest_response_model,
+        request_param_name=route.dependant.request_param_name,
+        response_param_name=route.dependant.response_param_name,
+    )(route.endpoint)
 
 
 def _apply_endpoint_had_instruction(
@@ -544,18 +620,17 @@ def _generate_signature(
 def _get_routes(
     routes: Sequence[BaseRoute],
     endpoint_path: str,
-    endpoint_methods: Collection[str],
+    endpoint_methods: set[str],
     endpoint_func_name: str | None = None,
     *,
     is_deleted: bool = False,
 ) -> list[fastapi.routing.APIRoute]:
     found_routes = []
-    endpoint_method_set = set(endpoint_methods)
     for route in routes:
         if (
             isinstance(route, fastapi.routing.APIRoute)
             and route.path == endpoint_path
-            and set(route.methods).issubset(endpoint_method_set)
+            and set(route.methods).issubset(endpoint_methods)
             and (endpoint_func_name is None or route.endpoint.__name__ == endpoint_func_name)
             and (_DELETED_ROUTE_TAG in route.tags) == is_deleted
         ):
@@ -568,8 +643,18 @@ def _get_index_and_route_from_func(
     endpoint: Endpoint,
 ) -> tuple[int, fastapi.routing.APIRoute] | tuple[None, None]:
     for index, route in enumerate(routes):
-        if isinstance(route, fastapi.routing.APIRoute) and (
-            route.endpoint == endpoint or getattr(route.endpoint, "func", None) == endpoint
-        ):
+        if isinstance(route, fastapi.routing.APIRoute) and (route.endpoint == endpoint):
             return index, route
     return None, None
+
+
+def _get_migrated_routes_by_path(version: Version) -> dict[EndpointPath, set[EndpointMethod]]:
+    request_by_path_migration_instructions = [
+        version_change.alter_request_by_path_instructions for version_change in version.version_changes
+    ]
+    migrated_routes = defaultdict(set)
+    for instruction_dict in request_by_path_migration_instructions:
+        for path, instruction_list in instruction_dict.items():
+            for instruction in instruction_list:
+                migrated_routes[path] |= instruction.methods
+    return migrated_routes

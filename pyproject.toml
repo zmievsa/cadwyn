@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "universi"
-version = "1.10.0"
+version = "2.0.0"
 description = "Modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -49,6 +49,7 @@ pytest-asyncio = "^0.21.0"
 httpx = "*"
 pytest-fixture-classes = "^1.0.3"
 pre-commit = "^3.4.0"
+dirty-equals = "^0.6.0"
 
 
 [tool.pytest.ini_options]
@@ -78,7 +79,13 @@ exclude_lines = [
     "__rich_repr__",
     "__repr__",
 ]
-omit = ["tests/test_tutorial/test_users_example003/*"]
+omit = [
+    "tests/test_tutorial/test_users_example003/*",
+    "tests/_data/latest/some_schema.py",
+    "tests/_data/latest/weird_schemas.py",
+    "tests/_temp/*",
+    "tests/test_tutorial/*/schemas/*",
+]
 
 [tool.black]
 color = true

@@ -143,16 +143,16 @@ class ChangeAddressToList(VersionChange):
     instructions_to_migrate_to_previous_version = (
         # You should use schema inheritance if you don't want to repeat yourself in such cases
         schema(UserCreateRequest).field("addresses").didnt_exist,
-        schema(UserCreateRequest).field("address").existed_with(type=str, info=Field()),
+        schema(UserCreateRequest).field("address").existed_as(type=str, info=Field()),
         schema(UserResource).field("addresses").didnt_exist,
-        schema(UserResource).field("address").existed_with(type=str, info=Field()),
+        schema(UserResource).field("address").existed_as(type=str, info=Field()),
     )
 
     @convert_response_to_previous_version_for(UserResource)
-    def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
+    def change_addresses_to_single_item(payload: dict[str, Any]) -> None:
         data["address"] = data.pop("addresses")[0]
 
-    @schema(UserCreateRequest).had_property("addresses")
+    @schema(UserCreateRequest).property("addresses").was
     def addresses_property(parsed_schema):
         return [parsed_schema.address]
 
@@ -255,6 +255,9 @@ Note that this approach actually has two important subtypes:
 
 ##### i. Duplication-based response building
 
+# TODO: Fix this link, move it somewhere
+
+[How it was done](https://habr.com/ru/companies/superjob/articles/577650/)
 The simplest possible builder: for each API version, we define a newr request/response builder that builds the full response for the altered API routes or migrates the user request to the latest version. It is incredibly simple to implement but is not scalable at all. Adding values to all builders will require going through all of them with the hope of not making mistakes or typos. Trying to support more than 8-12 versions with this approach will still be challenging.
 
 We might think of smart ways of automating this approach to support a larger number of versions. For example, to avoid duplicating the entire builder logic every time, we can pick a template builder and only define differences in child builders. Let's pick the latest-version builder as template because it will never be deprecated deleted and our developers will have the most familiarity with it. Then we need to figure out a format to define changes between builders. We can remove a field from response, add a field, change the value of a field somehow, and/or change the type of a field. We'll need some DSL to describe all possible changes.
@@ -266,6 +269,208 @@ Then we start thinking about API route differences. How do we describe them? Or 
 This is effectively an automated version of [approach i](#i-duplication-based-response-building). It has the minimal possible amount of duplication compared to all other approaches. Using a specialized DSL, we define schema migrations for changes in our request and response schemas, we define compatibility gates to migrate our data in accordance with schema changes, and we define route migrations to change/delete/add any routes.
 
 This is the method that [Stripe](https://stripe.com/blog/api-versioning) and [Linkedin](https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market) have picked and this is the method that **Universi** implements for you.
+
+### Classes of API breaking changes
+
+#### Data model changes
+
+##### Data type renaming
+
+Whenever your openapi data types are generated automatically from your code, you get a nasty side effect: whenever you rename the corresponding classes in your code, your openapi types get renamed as well. As a result, you can break the development environment of the frontend developers who are in the process of integration with your API.
+
+Thus, it makes sense to consider data type renaming a breaking change. Here's how you would rename a schema in Universi:
+
+Let's say we have a `CreateUserPayload` schema in version 1 and we want to rename it to `CreateUserRequest` in version 2.
+
+1. Rename `CreateUserPayload` to `CreateUserRequest` in your code
+2. Define a new migration that reverts these changes in the old version
+
+```python
+from versioned.latest import CreateUserRequest
+from universi.structure import VersionChange, schema
+
+class RenameCreateUserPayloadToCreateUserRequest(VersionChange):
+    description = "Rename 'CreateUserPayload' openapi type to 'CreateUserRequest' to improve API consistency."
+    instructions_to_migrate_to_previous_version = (
+        schema(CreateUserRequest).had(name="CreateUserPayload"),
+    )
+
+```
+
+[//]: # (# TODO: Add a link to VersionBundle in reference)
+[//]: # (# TODO: Add a CLI command to regenerate dir)
+
+3. Add this migration into Version 2 in your `VersionBundle`
+4. Regenerate your schemas using `universi.regenerate_dir_to_all_versions`
+
+##### Requests
+
+###### Addition of new constraints
+
+Let's say previously you allowed a user name to be of any length, which resulted in users creating enormous names which negatively affected frontends and allowed users to easily consume enormous amounts of space in your database.
+
+To prevent that, we can add a size constraint to user name in version 2:
+
+1. Add the size constraint to user name
+
+```python
+from pydantic import BaseModel
+
+class CreateUserRequest(BaseModel):
+    name: str = Field(max_length=50)
+```
+
+2. Define a new migration that reverts these changes in the old version
+
+```python
+from versioned.latest import CreateUserRequest
+from universi.structure import VersionChange, schema
+from pydantic.fields import Undefined
+
+class AddMaxSizeConstraintToUserName(VersionChange):
+    description = 'CreateUserRequest["name"] cannot be longer than 50 characters anymore.'
+    instructions_to_migrate_to_previous_version = (
+        schema(CreateUserRequest).field("name").had(max_length=Undefined),
+    )
+```
+
+[//]: # (# TODO: Add a link to VersionBundle in reference)
+[//]: # (# TODO: Add a CLI command to regenerate dir)
+
+3. Add this migration into Version 2 in your `VersionBundle`
+4. Regenerate your schemas using `universi.regenerate_dir_to_all_versions`
+
+###### Removal of old constraints (sometimes)
+
+For example, when user expected a 422 sometimes and used our service to effectively validate their own data.
+
+# TODO: LINK TO REMOVAL OF OLD CONSTRAINTS IN RESPONSES
+
+###### Data type field type narrowing
+
+####### Data type enum field narrowing
+
+Let's say that each user in our system has a role: Admin, editor, or moderator. One day we decided that the editor role is redundant. Here's how we would delete it:
+
+1. Delete the role from your `UserRole` enum. Note that if you use the same enum for requests and responses, you'll have to duplicate it. Otherwise your responses will be affected too.
+
+```python
+
+# Within versioned/latest/enums.py
+
+from enum import StrEnum, auto
+
+class UserRoleForCreation(StrEnum):
+    admin = auto()
+    moderator = auto()
+
+class UserRoleForResponse(StrEnum):
+    admin = auto()
+    editor = auto()
+    moderator = auto()
+
+```
+
+2. Define a new migration that reverts these changes in the old version
+
+```python
+from versioned.latest.enums import UserRoleForCreation
+from universi.structure import VersionChange, schema
+from enum import auto
+
+class AddMaxSizeConstraintToUserName(VersionChange):
+    description = (
+        'CreateUserRequest["role"] doesn\'t have the "editor" '
+        'option anymore. Use "admin" or "moderator" instead'
+    )
+    instructions_to_migrate_to_previous_version = (
+        enum(UserRoleForCreation).had(editor=auto()),
+    )
+```
+
+3. Add this migration into Version 2 in your `VersionBundle`
+4. Regenerate your schemas using `universi.regenerate_dir_to_all_versions`
+
+* Notice how we specifically left this value in responses. This is because existing users can still have this role so removing it from responses will cause a `ResponseValidationError` 500 responses for our users.
+* This kind of change is quite cumbersome to get to the next version via [request migrations]() because the `role` field from latest cannot contain the `editor` role. My suggestion here is to either:
+
+  * Rely on [request union]()
+  * Make a [`FillablePrivateAttr`]() in the latest version that would store the old role or None and [make a property]() that you will use to access the correct role -- for example, use the old role as priority and if it is None, use the new role. Then remove the private attr and property in the old versions. So your latest schema will look something like this:
+
+```python
+from universi import FillablePrivateAttr, FillablePrivateAttrMixin
+from pydantic import Field
+from .enums import UserRole
+
+class CreateUserRequest(FillablePrivateAttrMixin):
+    latest_role: UserRoleForCreation = Field(alias="role")
+    _role_with_editor: str | None = FillablePrivateAttr(default=None)
+
+    @property
+    def role(self):
+        return self._role_with_editor or self.latest_role
+
+```
+
+And then remove the property and the private attr in the previous version:
+
+```python
+from versioned.latest.enums import UserRoleForCreation, CreateUserRequest
+from universi.structure import VersionChange, schema
+from enum import auto
+
+class AddMaxSizeConstraintToUserName(VersionChange):
+    description = (
+        'CreateUserRequest["role"] doesn\'t have the "editor" '
+        'option anymore. Use "admin" or "moderator" instead'
+    )
+    instructions_to_migrate_to_previous_version = (
+        enum(UserRoleForCreation).had(editor=auto()),
+        schema(CreateUserRequest).property("role").didnt_exist,
+        schema(CreateUserRequest).field("_role_with_editor").didnt_exist,
+
+    )
+```
+
+It's ugly but it allows you to keep your business logic intact. I would only use this if you need [request migrations]() for some other reason in the same version. Otherwise I'd stick with [request unions]() for such complex cases.
+
+###### Data type required field addition
+
+###### Data type field removal (if API is strict about extra fields)
+
+# TODO: Description + link to the same article in responses
+
+##### Responses
+
+###### Addition of new constraints (data breaking change!)
+
+###### Removal of old constraints
+
+###### Data type field type narrowing (data breaking change!)
+
+###### Data type field type expansion (including enum expansion)
+
+###### Data type field removal
+
+#### Path changes
+
+##### Path deletion
+
+#### Behavior changes
+
+##### Calling endpoint causes unexpected data modificationsn
+
+##### Calling endpoint doesn't cause expected data modifications
+
+##### Calling endpoint doesn't cause expected additional actions (e.g. Webhooks)
+
+##### Errors
+
+###### Error status change
+
+###### Error message change?
+
+###### New error introduced
 
 ## Reference
 
@@ -326,32 +531,6 @@ class MyChange(VersionChange):
     )
 
 ```
-
-#### Changing endpoint logic (Experimental)
-
-Oftentimes you change some of the logic of your endpoint in a way that is incompatible with or not yet supported by Universi's migrations. In order to combat this, we have come up with an ugly hack that allows you to change any detail about your endpoint's arguments or logic:
-
-```python
-from fastapi.params import Param
-from fastapi import Header
-
-
-class MyVersionChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = ()
-
-    @endpoint("/users", ["GET"]).was
-    def get_old_endpoint():
-        from some_business_logic import SomeController
-         
-
-        async def get_users(some_old_parameter: str = Param(), some_new_required_header: str = Header()):
-            return SomeController(some_old_parameter, some_new_required_header)
-
-        return get_users
-```
-
-As you see, it's hacky in more ways than one. Any imports to your business logic must happen within the function to prevent circular dependencies and you have to have a function within a function as a result. It is therefore not advised to use this functionality unlesss absolutely required. I recommend to instead add an issue on our github. However, if Universi definitely cannot solve your problem -- this should be your "get out of jail free" card.
 
 #### Dealing with endpoint duplicates
 
@@ -441,7 +620,7 @@ from universi.structure import VersionChange, schema
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        schema(MySchema).field("foo").existed_with(type=list[str], info=Field(description="Foo")),
+        schema(MySchema).field("foo").existed_as(type=list[str], info=Field(description="Foo")),
     )
 
 ```
@@ -449,13 +628,13 @@ class MyChange(VersionChange):
 You can also specify any string in place of type:
 
 ```python
-schema(MySchema).field("foo").existed_with(type="AnythingHere")
+schema(MySchema).field("foo").existed_as(type="AnythingHere")
 ```
 
 It is often the case that you want to add a type that has not been imported in your schemas yet. You can use `import_from` and optionally `import_as` to do this:
 
 ```python
-schema(MySchema).field("foo").existed_with(type=MyOtherSchema, import_from="..some_module", import_as="Foo")
+schema(MySchema).field("foo").existed_as(type=MyOtherSchema, import_from="..some_module", import_as="Foo")
 ```
 
 Which will render as:
@@ -503,7 +682,7 @@ class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = ()
 
-    @schema(MySchema).had_property("foo")
+    @schema(MySchema).property("foo").was
     def any_name_here(parsed_schema):
         # Anything can be returned from here
         return parsed_schema.some_other_field
@@ -539,8 +718,6 @@ class MyChange(VersionChange):
 ```
 
 which will replace all references to this schema with the new name.
-
-Note also that renaming a schema should not technically be a breaking change.
 
 ### Unions
 
@@ -588,8 +765,8 @@ class ChangeAddressToList(VersionChange):
     description = "..."
 
     @convert_response_to_previous_version_for(MyEndpointResponseModel)
-    def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
-        data["address"] = data.pop("addresses")[0]
+    def change_addresses_to_single_item(response: ResponseInfo) -> None:
+        response.body["address"] = response.body.pop("addresses")[0]
 
 ```
 
@@ -597,7 +774,7 @@ It is done by applying `universi.VersionBundle.versioned(...)` decorator to each
 
 If you want to convert a specific response to a specific version, you can use `universi.VersionBundle.migrate_response(...)`.
 
-#### Request data conversion (Experimental)
+#### Request data conversion
 
 ```python
 from universi.structure import VersionChange, convert_request_to_next_version_for
@@ -608,13 +785,8 @@ class ChangeAddressToList(VersionChange):
     description = "..."
 
     @convert_request_to_next_version_for(UserCreateRequest)
-    def change_addresses_to_single_item(cls, data: "UserCreateRequest2000") -> "UserCreateRequest2001":
-        from my_schemas.v2000_01_01 import UserCreateRequest as UserCreateRequest2000
-        from my_schemas.v2001_01_01 import UserCreateRequest as UserCreateRequest2001
-
-        original_reqest = data.dict(by_alias=True)
-        original_request["addresses"] = [original_request.pop("address")]
-        return UserCreateRequest2001(**original_request)
+    def change_addresses_to_single_item(request: RequestInfo) -> None:
+        request.body["addresses"] = [request.body.pop("address")]
 ```
 
 ### Version changes with side effects
@@ -673,3 +845,4 @@ The following projects are trying to accomplish similar results with a lot more 
 * <https://github.com/phillbaker/gates>
 * <https://github.com/lukepolo/laravel-api-migrations>
 * <https://github.com/tomschlick/request-migrations>
+* <https://github.com/keygen-sh/request_migrations>

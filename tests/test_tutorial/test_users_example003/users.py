@@ -44,16 +44,16 @@ class ChangeAddressToList(VersionChange):
     description = "Change vat id to list"
     instructions_to_migrate_to_previous_version = (
         schema(UserCreateRequest).field("addresses").didnt_exist,
-        schema(UserCreateRequest).field("address").existed_with(type=str, info=Field()),
+        schema(UserCreateRequest).field("address").existed_as(type=str, info=Field()),
         schema(UserResource).field("addresses").didnt_exist,
-        schema(UserResource).field("address").existed_with(type=str, info=Field()),
+        schema(UserResource).field("address").existed_as(type=str, info=Field()),
     )
 
     @convert_response_to_previous_version_for(UserResource)
-    def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
-        data["address"] = data.pop("addresses")[0]
+    def change_addresses_to_single_item(cls, payload: dict[str, Any]) -> None:
+        payload["address"] = payload.pop("addresses")[0]
 
-    @schema(UserCreateRequest).had_property("addresses")
+    @schema(UserCreateRequest).property("addresses").was
     def addresses_property(parsed_schema):
         return [parsed_schema.address]  # pragma: no cover
 
@@ -61,17 +61,17 @@ class ChangeAddressToList(VersionChange):
 class ChangeAddressesToSubresource(VersionChange):
     description = "Change vat ids to subresource"
     instructions_to_migrate_to_previous_version = (
-        schema(UserCreateRequest).field("addresses").existed_with(type=list[str], info=Field()),
+        schema(UserCreateRequest).field("addresses").existed_as(type=list[str], info=Field()),
         schema(UserCreateRequest).field("default_address").didnt_exist,
-        schema(UserResource).field("addresses").existed_with(type=list[str], info=Field()),
+        schema(UserResource).field("addresses").existed_as(type=list[str], info=Field()),
         endpoint("/users/{user_id}/addresses", ["GET"]).didnt_exist,
     )
 
     @convert_response_to_previous_version_for(UserResource)
-    def change_addresses_to_list(cls, data: dict[str, Any]) -> None:
-        data["addresses"] = [id["value"] for id in data.pop("_prefetched_addresses")]
+    def change_addresses_to_list(cls, payload: dict[str, Any]) -> None:
+        payload["addresses"] = [id["value"] for id in payload.pop("_prefetched_addresses")]
 
-    @schema(UserCreateRequest).had_property("default_address")
+    @schema(UserCreateRequest).property("default_address").was
     def default_address_property(parsed_schema):
         return parsed_schema.addresses[0]  # pragma: no cover
 

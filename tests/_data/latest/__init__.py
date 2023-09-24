@@ -1,8 +1,11 @@
 from decimal import Decimal
 from enum import Enum, auto
+from typing import Any
 
-from pydantic import BaseModel, Field
-from pydantic import Field as PydanticField
+from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import Field as PydanticField, conint
+
+from universi.fields import FillablePrivateAttr, FillablePrivateAttrMixin
 
 
 class StrEnum(str, Enum):
@@ -24,6 +27,21 @@ class EmptyEnum(Enum):
 
 class EmptySchema(BaseModel):
     pass
+
+
+# TODO: If you don't type hint the private fields -- pydantic v1 (maybe v2 too) won't know they exist.
+# Make a note of this in docs
+class SchemaWithPrivateAttrs(FillablePrivateAttrMixin, BaseModel):
+    _non_fillable_attr: str = PrivateAttr(default="hewwo")
+    _fillable_attr: str = FillablePrivateAttr()
+
+
+class AnyRequestSchema(BaseModel):
+    __root__: Any
+
+
+class AnyResponseSchema(BaseModel):
+    __root__: Any
 
 
 class EmptySchemaWithArbitraryTypesAllowed(BaseModel, arbitrary_types_allowed=True):
@@ -83,3 +101,14 @@ class SchemaWithUnionFields(BaseModel):
 
 class SchemaWithExtras(BaseModel):
     foo: str = Field(lulz="foo")
+
+
+CONINT_LT = 10
+ANOTHER_VAR, CONINT_LT_ALIAS = 11, CONINT_LT
+
+
+class SchemaWithConstrainedInt(BaseModel):
+    foo: conint(lt=CONINT_LT_ALIAS)
+
+
+"Nothing to see here. Move along."

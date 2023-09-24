@@ -146,7 +146,7 @@ class AlterFieldInstructionFactory:
     def didnt_exist(self) -> OldSchemaFieldDidntExist:
         return OldSchemaFieldDidntExist(self.schema, field_name=self.name)
 
-    def existed_with(
+    def existed_as(
         self,
         *,
         type: Any,
@@ -192,9 +192,12 @@ class SchemaPropertyDefinitionInstruction:
 class AlterPropertyInstructionFactory:
     schema: type[BaseModel]
     name: str
+    if TYPE_CHECKING:
+        was = staticmethod
+    else:
 
-    def __call__(self, function: Callable) -> SchemaPropertyDefinitionInstruction:
-        return SchemaPropertyDefinitionInstruction(self.schema, self.name, function)
+        def was(self, function: Callable) -> SchemaPropertyDefinitionInstruction:
+            return SchemaPropertyDefinitionInstruction(self.schema, self.name, function)
 
     @property
     def didnt_exist(self) -> SchemaPropertyDidntExistInstruction:
@@ -225,12 +228,6 @@ class AlterSchemaSubInstructionFactory:
 
     def had(self, *, name: str) -> AlterSchemaInstruction:
         return AlterSchemaInstruction(self.schema, name)
-
-    def had_property(self, name: str, /) -> type[staticmethod]:
-        return cast(
-            type[staticmethod],
-            AlterPropertyInstructionFactory(self.schema, name),
-        )
 
     def property(self, name: str, /) -> AlterPropertyInstructionFactory:
         return AlterPropertyInstructionFactory(self.schema, name)
