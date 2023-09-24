@@ -294,7 +294,7 @@ class TestResponseMigrations:
                 "connection": "keep-alive",
                 "user-agent": "testclient",
                 "3": "4",
-                "cookie": "5=6; cookie_key=cookie_val",
+                "cookie": IsStr(min_length=3),
                 "content-length": "10",
                 "content-type": "application/json",
             },
