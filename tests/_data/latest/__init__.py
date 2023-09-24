@@ -29,8 +29,8 @@ class EmptySchema(BaseModel):
     pass
 
 
-# TODO: If you don't type hint the private fields -- pydantic v1 (maybe v2 too) won't know they exist.
-# Make a note of this in docs
+# TODO: If you don't type hint AND specify PrivateAttr for private fields -- pydantic v1 (maybe v2 too)
+# won't know they exist. Make a note of this in docs
 class SchemaWithPrivateAttrs(FillablePrivateAttrMixin, BaseModel):
     _non_fillable_attr: str = PrivateAttr(default="hewwo")
     _fillable_attr: str = FillablePrivateAttr()
