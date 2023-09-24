@@ -343,7 +343,7 @@ class MyVersionChange(VersionChange):
     @endpoint("/users", ["GET"]).was
     def get_old_endpoint():
         from some_business_logic import SomeController
-         
+
 
         async def get_users(some_old_parameter: str = Param(), some_new_required_header: str = Header()):
             return SomeController(some_old_parameter, some_new_required_header)
