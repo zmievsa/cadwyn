@@ -55,6 +55,7 @@ from pydantic import BaseModel
 class UserCreateRequest(BaseModel):
     address: str
 
+
 class UserResource(BaseModel):
     id: int
     address: str
@@ -68,12 +69,14 @@ from universi import VersionedAPIRouter
 
 router = VersionedAPIRouter()
 
+
 @router.post("/users", response_model=UserResource)
 async def create_user(payload: UserCreateRequest):
     return {
         "id": 83,
         "address": payload.address,
     }
+
 
 @router.get("/users/{user_id}", response_model=UserResource)
 async def get_user(user_id: int):
@@ -95,6 +98,7 @@ from pydantic import Field
 class UserCreateRequest(BaseModel):
     addresses: list[str] = Field(min_items=1)
 
+
 class UserResource(BaseModel):
     id: int
     addresses: list[str]
@@ -108,13 +112,13 @@ async def create_user(payload: UserCreateRequest):
         "addresses": payload.addresses,
     }
 
+
 @router.get("/users/{user_id}", response_model=UserResource)
 async def get_user(user_id: int):
     return {
         "id": user_id,
         "addresses": ["123 Example St", "456 Main St"],
     }
-
 ```
 
 But every user of ours will now have their API integration broken. To prevent that, we have to introduce API versioning. There aren't many methods of doing that. Most of them force you to either duplicate your schemas, your endpoints, or your entire app instance. And it makes sense, really: duplication is the only way to make sure that you will not break old versions with your new versions; the bigger the piece you duplicating -- the safer. Of course, the safest being duplicating the entire app instance and even having a separate database. But that is expensive and makes it either impossible to make breaking changes often or to support many versions. As a result, either you need infinite resources, very long development cycles, or your users will need to often migrate from version to version.
@@ -134,6 +138,7 @@ from universi.structure import (
     VersionChange,
     convert_response_to_previous_version_for,
 )
+
 
 class ChangeAddressToList(VersionChange):
     description = (
@@ -155,7 +160,6 @@ class ChangeAddressToList(VersionChange):
     @schema(UserCreateRequest).had_property("addresses")
     def addresses_property(parsed_schema):
         return [parsed_schema.address]
-
 ```
 
 See how we are popping the first address from the list? This is only guaranteed to be possible because we specified earlier that `min_items` for `addresses` must be `1`. If we didn't, then the user would be able to create a user in a newer version that would be impossible to represent in the older version. I.e. If anyone tried to get that user from the older version, they would get a `ResponseValidationError` because the user wouldn't have data for a mandatory `address` field. You need to always keep in mind tht API versioning is only for versioning your **API**, your interface. Your versions must still be completely compatible in terms of data. If they are not, then you are versioning your data and you should really go with a separate app instance. Otherwise, your users will have a hard time migrating back and forth between API versions and so many unexpected errors.
@@ -289,12 +293,12 @@ and then define it as existing in one of the older versions:
 ```python
 from universi.structure import VersionChange, endpoint
 
+
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         endpoint("/my_old_endpoint", ["GET"]).existed,
     )
-
 ```
 
 #### Defining endpoints that didn't exist in old versions
@@ -304,12 +308,12 @@ If you have an endpoint in your new version that must not exist in older version
 ```python
 from universi.structure import VersionChange, endpoint
 
+
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         endpoint("/my_new_endpoint", ["GET"]).didnt_exist,
     )
-
 ```
 
 #### Changing endpoint attributes
@@ -319,12 +323,12 @@ If you want to change any attribute of your endpoint in a new version, you can r
 ```python
 from universi.structure import VersionChange, endpoint
 
+
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         endpoint("/my_endpoint", ["GET"]).had(description="My old description"),
     )
-
 ```
 
 #### Changing endpoint logic (Experimental)
@@ -344,8 +348,9 @@ class MyVersionChange(VersionChange):
     def get_old_endpoint():
         from some_business_logic import SomeController
 
-
-        async def get_users(some_old_parameter: str = Param(), some_new_required_header: str = Header()):
+        async def get_users(
+            some_old_parameter: str = Param(), some_new_required_header: str = Header()
+        ):
             return SomeController(some_old_parameter, some_new_required_header)
 
         return get_users
@@ -368,18 +373,22 @@ router = VersionedAPIRouter()
 
 @router.only_exists_in_older_versions
 @router.get("/users")
-def get_users_by_name_before_we_started_using_params(user_name: Annotated[str, Header()]):
-    """ Do some logic with user_name """
+def get_users_by_name_before_we_started_using_params(
+    user_name: Annotated[str, Header()]
+):
+    """Do some logic with user_name"""
+
 
 @router.get("/users")
 def get_users_by_name(user_name: Annotated[str, Param()]):
-    """ Do some logic with user_name """
+    """Do some logic with user_name"""
 ```
 
 As you see, these two functions have the same methods and paths. And when you have many versions, you can have even more functions like these two. So how do we ask universi to restore only one of them and delete the other one?
 
 ```python
 from universi.structure import VersionChange, endpoint
+
 
 class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
     description = (
@@ -392,7 +401,6 @@ class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
         # We do have to specify the name because we now have two existing endpoints after the instruction above
         endpoint("/users", ["GET"], func_name="get_users_by_name").didnt_exist,
     )
-
 ```
 
 So by using a more concrete `func_name`, we are capable to distinguish between different functions that affect the same routes.
@@ -409,12 +417,12 @@ So I suggest adding enum members in new versions as well.
 from universi.structure import VersionChange, enum
 from enum import auto
 
+
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         enum(my_enum).had(foo="baz", bar=auto()),
     )
-
 ```
 
 #### Removing enum members
@@ -422,12 +430,12 @@ class MyChange(VersionChange):
 ```python
 from universi.structure import VersionChange, enum
 
+
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         enum(my_enum).didnt_have("foo", "bar"),
     )
-
 ```
 
 ### Schemas
@@ -438,12 +446,14 @@ class MyChange(VersionChange):
 from pydantic import Field
 from universi.structure import VersionChange, schema
 
+
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        schema(MySchema).field("foo").existed_with(type=list[str], info=Field(description="Foo")),
+        schema(MySchema)
+        .field("foo")
+        .existed_with(type=list[str], info=Field(description="Foo")),
     )
-
 ```
 
 You can also specify any string in place of type:
@@ -455,7 +465,9 @@ schema(MySchema).field("foo").existed_with(type="AnythingHere")
 It is often the case that you want to add a type that has not been imported in your schemas yet. You can use `import_from` and optionally `import_as` to do this:
 
 ```python
-schema(MySchema).field("foo").existed_with(type=MyOtherSchema, import_from="..some_module", import_as="Foo")
+schema(MySchema).field("foo").existed_with(
+    type=MyOtherSchema, import_from="..some_module", import_as="Foo"
+)
 ```
 
 Which will render as:
@@ -463,6 +475,7 @@ Which will render as:
 ```python
 from ..some_module import MyOtherSchema as Foo
 from pydantic import BaseModel, Field
+
 
 class MySchema(BaseModel):
     foo: Foo = Field()
@@ -473,12 +486,12 @@ class MySchema(BaseModel):
 ```python
 from universi.structure import VersionChange, schema
 
+
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").didnt_exist,
     )
-
 ```
 
 #### Change a field
@@ -486,18 +499,19 @@ class MyChange(VersionChange):
 ```python
 from universi.structure import VersionChange, schema
 
+
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").had(description="Foo"),
     )
-
 ```
 
 #### Add a property
 
 ```python
 from universi.structure import VersionChange, schema
+
 
 class MyChange(VersionChange):
     description = "..."
@@ -507,7 +521,6 @@ class MyChange(VersionChange):
     def any_name_here(parsed_schema):
         # Anything can be returned from here
         return parsed_schema.some_other_field
-
 ```
 
 #### Remove a property
@@ -515,12 +528,12 @@ class MyChange(VersionChange):
 ```python
 from universi.structure import VersionChange, schema
 
+
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).property("foo").didnt_exist,
     )
-
 ```
 
 #### Rename a schema (Experimental)
@@ -530,12 +543,12 @@ If you wish to rename your schema to make sure that its name is different in ope
 ```python
 from universi.structure import VersionChange, schema
 
+
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).had(name="OtherSchema"),
     )
-
 ```
 
 which will replace all references to this schema with the new name.
@@ -556,9 +569,9 @@ from ..v2000_01_01 import my_schema_module as v2000_01_01_my_schema_module
 from ..v2001_01_01 import my_schema_module as v2001_01_01_my_schema_module
 
 MySchema = (
-    latest_my_schema_module.MySchema |
-    v2000_01_01_my_schema_module.MySchema |
-    v2001_01_01_my_schema_module.MySchema
+    latest_my_schema_module.MySchema
+    | v2000_01_01_my_schema_module.MySchema
+    | v2001_01_01_my_schema_module.MySchema
 )
 ```
 
@@ -567,9 +580,9 @@ and you would be able to use it like so:
 ```python
 from src.schemas.unions.my_schema_module import MySchema
 
+
 async def the_entrypoint_of_my_business_logic(request_payload: MySchema):
     ...
-
 ```
 
 Note that this feature only affects type checking and does not affect your functionality.
@@ -584,13 +597,13 @@ As described in the tutorial, universi can convert your response data into older
 from universi.structure import VersionChange, convert_response_to_previous_version_for
 from typing import Any
 
+
 class ChangeAddressToList(VersionChange):
     description = "..."
 
     @convert_response_to_previous_version_for(MyEndpointResponseModel)
     def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
         data["address"] = data.pop("addresses")[0]
-
 ```
 
 It is done by applying `universi.VersionBundle.versioned(...)` decorator to each endpoint with the given `response_model` which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
@@ -604,11 +617,14 @@ from universi.structure import VersionChange, convert_request_to_next_version_fo
 from typing import Any
 from my_schemas.latest import UserCreateRequest
 
+
 class ChangeAddressToList(VersionChange):
     description = "..."
 
     @convert_request_to_next_version_for(UserCreateRequest)
-    def change_addresses_to_single_item(cls, data: "UserCreateRequest2000") -> "UserCreateRequest2001":
+    def change_addresses_to_single_item(
+        cls, data: "UserCreateRequest2000"
+    ) -> "UserCreateRequest2001":
         from my_schemas.v2000_01_01 import UserCreateRequest as UserCreateRequest2000
         from my_schemas.v2001_01_01 import UserCreateRequest as UserCreateRequest2001
 
@@ -624,6 +640,7 @@ Sometimes you will use API versioning to handle a breaking change in your **busi
 ```python
 if api_version_var.get() >= date(2022, 11, 11):
     # do new logic here
+    ...
 ```
 
 In universi, this approach is highly discouraged. It is recommended that you avoid side effects like this at any cost because each one makes your core logic harder to understand. But if you cannot, then I urge you to at least abstract away versions and versioning from your business logic which will make your code much easier to read.
@@ -635,12 +652,12 @@ As an example, let's use the tutorial section's case with the user and their add
 ```python
 from universi.structure import VersionChangeWithSideEffects
 
+
 class UserAddressIsCheckedInExternalService(VersionChangeWithSideEffects):
     description = (
         "User's address is now checked for existense in an external service. "
         "If it doesn't exist there, a 400 code is returned."
     )
-
 ```
 
 Then we will have the following check in our business logic:
