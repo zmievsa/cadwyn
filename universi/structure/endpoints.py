@@ -1,12 +1,11 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, cast
+from typing import Any
 
 from fastapi import Response
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
 from starlette.routing import BaseRoute
 
 from .._utils import Sentinel
@@ -54,7 +53,7 @@ class EndpointAttributesPayload:
 @dataclass(slots=True)
 class EndpointHadInstruction:
     endpoint_path: str
-    endpoint_methods: Sequence[str]
+    endpoint_methods: set[str]
     endpoint_func_name: str | None
     attributes: EndpointAttributesPayload
 
@@ -62,29 +61,21 @@ class EndpointHadInstruction:
 @dataclass(slots=True)
 class EndpointExistedInstruction:
     endpoint_path: str
-    endpoint_methods: Sequence[str]
+    endpoint_methods: set[str]
     endpoint_func_name: str | None
 
 
 @dataclass(slots=True)
 class EndpointDidntExistInstruction:
     endpoint_path: str
-    endpoint_methods: Sequence[str]
+    endpoint_methods: set[str]
     endpoint_func_name: str | None
-
-
-@dataclass(slots=True)
-class EndpointWasInstruction:
-    endpoint_path: str
-    endpoint_methods: Sequence[str]
-    endpoint_func_name: str | None
-    get_old_endpoint: Callable[..., Any]
 
 
 @dataclass(slots=True)
 class EndpointInstructionFactory:
     endpoint_path: str
-    endpoint_methods: Sequence[str]
+    endpoint_methods: set[str]
     endpoint_func_name: str | None
 
     @property
@@ -151,20 +142,9 @@ class EndpointInstructionFactory:
             ),
         )
 
-    def was(self, get_old_endpoint: Callable[[], Any]) -> type[staticmethod]:
-        return cast(
-            type[staticmethod],
-            EndpointWasInstruction(
-                endpoint_path=self.endpoint_path,
-                endpoint_methods=self.endpoint_methods,
-                endpoint_func_name=self.endpoint_func_name,
-                get_old_endpoint=get_old_endpoint,
-            ),
-        )
-
 
 def endpoint(path: str, methods: list[str], /, *, func_name: str | None = None) -> EndpointInstructionFactory:
-    return EndpointInstructionFactory(path, methods, func_name)
+    return EndpointInstructionFactory(path, set(methods), func_name)
 
 
 AlterEndpointSubInstruction = EndpointDidntExistInstruction | EndpointExistedInstruction | EndpointHadInstruction

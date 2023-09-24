@@ -1,6 +1,5 @@
 from universi.routing import generate_all_router_versions
 
-
 if __name__ == "__main__":
     from datetime import date
     from pathlib import Path

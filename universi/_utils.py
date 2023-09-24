@@ -1,29 +1,23 @@
 import functools
 import importlib
 import inspect
-import sys
+from collections.abc import Callable, Collection
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Collection, Union
+from typing import Any, TypeVar, Union
 
-from universi.exceptions import UniversiError
+from universi.exceptions import ModuleIsNotVersionedError, UniversiError
 
 Sentinel: Any = object()
 UnionType = type(int | str) | type(Union[int, str])
-
-class ModuleIsNotVersionedError(ValueError):
-    pass
+_T = TypeVar("_T", bound=Callable)
 
 
-def get_another_version_of_cls(cls_from_old_version: type[Any], new_version_dir: Path, version_dirs: frozenset[Path]):
-    # version_dir = /home/myuser/package/companies/v2021_01_01
+def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
+    def decorator(f: Callable) -> _T:
+        return f  # pyright: ignore[reportGeneralTypeIssues]
 
-    module_from_old_version = sys.modules[cls_from_old_version.__module__]
-    try:
-        module = get_another_version_of_module(module_from_old_version, new_version_dir, version_dirs)
-    except ModuleIsNotVersionedError:
-        return cls_from_old_version
-    return getattr(module, cls_from_old_version.__name__)
+    return decorator
 
 
 def get_another_version_of_module(

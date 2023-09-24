@@ -82,10 +82,10 @@ def test__2001(testclient_2001: TestClient):
 
     assert testclient_2001.post(
         "/users",
-        json={"name": "MyUser", "addresses": ["124"]},
+        json={"name": "MyUser", "addresses": ["124", "567"]},
     ).json() == {
         "id": 83,
-        "addresses": ["124"],
+        "addresses": ["124", "567"],
     }
 
 

@@ -29,3 +29,7 @@ class RouteAlreadyExistsError(RouterGenerationError):
 
 class UniversiStructureError(UniversiError):
     pass
+
+
+class ModuleIsNotVersionedError(ValueError):
+    pass
