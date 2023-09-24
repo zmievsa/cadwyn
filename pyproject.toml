@@ -165,6 +165,7 @@ extend-exclude = ["migrations"]
     "ANN002", # Missing type annotation for *args
     "ANN003", # Missing type annotation for **kwargs
     "PGH003", # Use specific rule codes when ignoring type issues
+    "B008",   # Do not perform function call in argument defaults
 ]
 "universi/_utils.py" = [
     "ERA001", # Found commented-out code (it's not actually commented out. It's just comments)

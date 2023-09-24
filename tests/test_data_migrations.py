@@ -227,7 +227,7 @@ class TestRequestMigrations:
         router,
     ):
         @router.post(test_path)
-        async def route(payload: latest_module.AnyRequestSchema | None = Body(None)):  # noqa: B008
+        async def route(payload: latest_module.AnyRequestSchema | None = Body(None)):
             return payload or {"hello": "world"}
 
         @convert_request_to_next_version_for(latest_module.AnyRequestSchema)

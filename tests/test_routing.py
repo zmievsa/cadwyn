@@ -865,7 +865,7 @@ def test__router_generation__using_weird_typehints(
     newtype = NewType("newtype", str)
 
     @router.get("/test")
-    async def test(param1: newtype = Body(), param2: str | int = Body()):  # noqa: B008
+    async def test(param1: newtype = Body(), param2: str | int = Body()):
         raise NotImplementedError
 
     routes_2000, routes_2001 = create_versioned_api_routes(
@@ -888,7 +888,7 @@ def test__router_generation__updating_request_depends(
     def sub_dependency1(my_enum: latest_module.StrEnum) -> latest_module.StrEnum:
         return my_enum
 
-    def dependency1(dep: latest_module.StrEnum = Depends(sub_dependency1)):  # noqa: B008
+    def dependency1(dep: latest_module.StrEnum = Depends(sub_dependency1)):
         return dep
 
     def sub_dependency2(my_enum: latest_module.StrEnum) -> latest_module.StrEnum:
@@ -901,11 +901,11 @@ def test__router_generation__updating_request_depends(
         return dep
 
     @router.get("/test1")
-    async def test_with_dep1(dep: latest_module.StrEnum = Depends(dependency1)):  # noqa: B008
+    async def test_with_dep1(dep: latest_module.StrEnum = Depends(dependency1)):
         return dep
 
     @router.get("/test2")
-    async def test_with_dep2(dep: latest_module.StrEnum = Depends(dependency2)):  # noqa: B008
+    async def test_with_dep2(dep: latest_module.StrEnum = Depends(dependency2)):
         return dep
 
     routers = create_versioned_routers(version_change(enum(latest_module.StrEnum).had(foo="bar")))
