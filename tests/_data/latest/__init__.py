@@ -108,7 +108,7 @@ ANOTHER_VAR, CONINT_LT_ALIAS = 11, CONINT_LT
 
 
 class SchemaWithConstrainedInt(BaseModel):
-    foo: conint(lt=CONINT_LT_ALIAS)
+    foo: conint(lt=CONINT_LT_ALIAS)  # pyright: ignore[reportGeneralTypeIssues]
 
 
 "Nothing to see here. Move along."

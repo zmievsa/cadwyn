@@ -346,9 +346,9 @@ def test__field_had__constrained_field(
         == "class SchemaWithConstrainedInt(BaseModel):\n    foo: conint(strict=False, lt=10) = Field(alias='bar')\n"
     )
 
-    assert (
-        inspect.getsource(v2001.SchemaWithConstrainedInt)
-        == "class SchemaWithConstrainedInt(BaseModel):\n    foo: conint(lt=CONINT_LT_ALIAS)\n"
+    assert inspect.getsource(v2001.SchemaWithConstrainedInt) == (
+        "class SchemaWithConstrainedInt(BaseModel):\n"
+        "    foo: conint(lt=CONINT_LT_ALIAS)  # pyright: ignore[reportGeneralTypeIssues]\n"
     )
 
 
@@ -473,7 +473,8 @@ def test__schema_field_had__trying_to_change_private_attr__should_raise_error(
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to change the type of field "_non_fillable_attr" from "SchemaWithPrivateAttrs" in "MyVersionChange" but it is a private attribute and private attributes cannot be edited.',
+            'You tried to change the type of field "_non_fillable_attr" from "SchemaWithPrivateAttrs" in '
+            '"MyVersionChange" but it is a private attribute and private attributes cannot be edited.',
         ),
     ):
         create_versioned_schemas(
@@ -817,7 +818,8 @@ def test__lambda_property(create_simple_versioned_schemas: CreateSimpleVersioned
             'Failed to migrate class "SchemaWithOneFloatField" to an older version because: '
             "You passed a lambda as a schema property. It is not supported yet. "
             "Please, use a regular function instead. The lambda you have passed: "
-            'schema(latest_module.SchemaWithOneFloatField).property("bar").was(lambda _: "Hewwo"),  # pragma: no cover\n',
+            'schema(latest_module.SchemaWithOneFloatField).property("bar").was(lambda _: "Hewwo"),  '
+            "# pragma: no cover\n",
         ),
     ):
         create_simple_versioned_schemas(
@@ -1036,12 +1038,13 @@ def test__schema_had_name__trying_to_assign_to_the_same_name__should_raise_error
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to change the name of "EmptySchema" in "MyVersionChange" but it already has the name you tried to assign.',
+            'You tried to change the name of "EmptySchema" in "MyVersionChange" '
+            "but it already has the name you tried to assign.",
         ),
     ):
         create_versioned_schemas(
             version_change(
-                schema(latest_module.EmptySchema).had(name="EmptySchema"),
+                schema(latest_module.EmptySchema).had(name="EmptySchema"),  # pyright: ignore[reportGeneralTypeIssues]
             ),
         )
 

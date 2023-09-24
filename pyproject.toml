@@ -151,6 +151,7 @@ ignore = [
     "SIM108", # Use ternary operator instead of if-else block (ternaries lie to coverage)
     "RET505", # Unnecessary `else` after `return` statement
     "N805",   # First argument of a method should be named `self`
+    "UP007",  # Use `X | Y` for type annotations (we need this for testing and our runtime logic)
 ]
 extend-exclude = ["migrations"]
 

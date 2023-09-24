@@ -58,8 +58,8 @@ def _post_endpoint(test_path: str, router: VersionedAPIRouter, latest_module: Mo
 @pytest.fixture(params=["by path", "by schema"])
 def version_change_1(request, test_path: str, latest_module):
     if request.param == "by path":
-        convert_request = convert_request_to_next_version_for(test_path, {"POST"})
-        convert_response = convert_response_to_previous_version_for(test_path, {"POST"})
+        convert_request = convert_request_to_next_version_for(test_path, ["POST"])
+        convert_response = convert_response_to_previous_version_for(test_path, ["POST"])
     else:
         convert_request = convert_request_to_next_version_for(latest_module.AnyRequestSchema)
         convert_response = convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
@@ -95,12 +95,12 @@ def version_change_2(latest_module):
 
 
 @pytest.fixture(params=["no request", "with request"])
-def _post_endpoint_with_extra_depends(
+def _post_endpoint_with_extra_depends(  # noqa: PT005
     request: pytest.FixtureRequest,
     router: VersionedAPIRouter,
     test_path: Literal["/test"],
     latest_module: ModuleType,
-    _post_endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
+    _post_endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],  # pyright: ignore[reportGeneralTypeIssues]
 ):
     if request.param == "no request":
         router.routes = []
@@ -185,7 +185,7 @@ class TestRequestMigrations:
                 "query_params": request.query_params,
             }
 
-        @convert_request_to_next_version_for(test_path, {"GET"})
+        @convert_request_to_next_version_for(test_path, ["GET"])
         def migrator(request: RequestInfo):
             request.headers["request2"] = "request2"
             request.cookies["request2"] = "request2"
@@ -209,7 +209,7 @@ class TestRequestMigrations:
         async def get(my_header: str = Header()):
             return 83
 
-        @convert_request_to_next_version_for(test_path, {"GET"})
+        @convert_request_to_next_version_for(test_path, ["GET"])
         def migrator(request: RequestInfo):
             del request.headers["my-header"]
 
@@ -227,7 +227,7 @@ class TestRequestMigrations:
         router,
     ):
         @router.post(test_path)
-        async def route(payload: latest_module.AnyRequestSchema | None = Body(None)):
+        async def route(payload: latest_module.AnyRequestSchema | None = Body(None)):  # noqa: B008
             return payload or {"hello": "world"}
 
         @convert_request_to_next_version_for(latest_module.AnyRequestSchema)
@@ -495,10 +495,10 @@ class TestHowAndWhenMigrationsApply:
                     wrong_resp_schema=convert_response_to_previous_version_for(latest_module.AnyRequestSchema)(
                         bad_resp,
                     ),
-                    wrong_req_path=convert_request_to_next_version_for("/wrong_path", {"POST"})(bad_req),
-                    wrong_req_method=convert_request_to_next_version_for(test_path, {"GET"})(bad_req),
-                    wrong_resp_path=convert_response_to_previous_version_for("/wrong_path", {"POST"})(bad_resp),
-                    wrong_resp_method=convert_response_to_previous_version_for(test_path, {"GET"})(bad_resp),
+                    wrong_req_path=convert_request_to_next_version_for("/wrong_path", ["POST"])(bad_req),
+                    wrong_req_method=convert_request_to_next_version_for(test_path, ["GET"])(bad_req),
+                    wrong_resp_path=convert_response_to_previous_version_for("/wrong_path", ["POST"])(bad_resp),
+                    wrong_resp_method=convert_response_to_previous_version_for(test_path, ["GET"])(bad_resp),
                 ),
             ],
         )
@@ -528,7 +528,6 @@ class TestHowAndWhenMigrationsApply:
         clients = create_versioned_clients(version_change(migration=migration))
         resp_2000 = clients[date(2000, 1, 1)].post(test_path, json={})
         resp_2001 = clients[date(2001, 1, 1)].post(test_path, json={})
-        # http.cookies.SimpleCookie(resp_2000.headers["set-cookie"])
 
         assert dict(resp_2000.cookies) == {"cookie_key": "cookie_val"}
 
@@ -561,7 +560,7 @@ def test__invalid_path_migration_syntax():
         ValueError,
         match=re.escape("If path was provided as a first argument, methods must be provided as a second argument"),
     ):
-        convert_request_to_next_version_for("/test")
+        convert_request_to_next_version_for("/test")  # pyright: ignore[reportGeneralTypeIssues]
 
 
 def test__invalid_schema_migration_syntax(latest_module):
@@ -569,7 +568,7 @@ def test__invalid_schema_migration_syntax(latest_module):
         ValueError,
         match=re.escape("If schema was provided as a first argument, methods argument should not be provided"),
     ):
-        convert_request_to_next_version_for(latest_module.AnyRequestSchema, {"POST"})
+        convert_request_to_next_version_for(latest_module.AnyRequestSchema, ["POST"])
 
 
 def test__defining_two_migrations_for_the_same_request(latest_module):

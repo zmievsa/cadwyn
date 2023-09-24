@@ -9,7 +9,7 @@ class FillableModelPrivateAttr(ModelPrivateAttr):
     pass
 
 
-def FillablePrivateAttr(
+def FillablePrivateAttr(  # noqa: N802
     default: Any = Undefined,
     *,
     default_factory: NoArgAnyCallable | None = None,

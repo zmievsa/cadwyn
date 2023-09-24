@@ -2,7 +2,7 @@ import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, ParamSpec, overload
+from typing import Any, ClassVar, ParamSpec, cast, overload
 
 from fastapi import Request, Response
 from starlette.datastructures import MutableHeaders
@@ -53,11 +53,11 @@ class ResponseInfo:
         return self._response.headers
 
     @same_definition_as_in(Response.set_cookie)
-    def set_cookie(self, *args, **kwargs):
+    def set_cookie(self, *args: Any, **kwargs: Any):
         return self._response.set_cookie(*args, **kwargs)
 
     @same_definition_as_in(Response.delete_cookie)
-    def delete_cookie(self, *args, **kwargs):
+    def delete_cookie(self, *args: Any, **kwargs: Any):
         return self._response.delete_cookie(*args, **kwargs)
 
 
@@ -110,23 +110,22 @@ def convert_request_to_next_version_for(schema: type, /) -> "type[staticmethod[_
 
 
 @overload
-def convert_request_to_next_version_for(path: str, methods: set[str], /) -> "type[staticmethod[_P, None]]":
+def convert_request_to_next_version_for(path: str, methods: list[str], /) -> "type[staticmethod[_P, None]]":
     ...
 
 
 def convert_request_to_next_version_for(
     schema_or_path: type | str,
-    methods: set[str] | None = None,
+    methods: list[str] | None = None,
     /,
 ) -> "type[staticmethod[_P, None]]":
     _validate_decorator_args(schema_or_path, methods)
 
     def decorator(transformer: Callable[[RequestInfo], None]) -> Any:
         if isinstance(schema_or_path, str):
-            assert methods
             return AlterRequestByPathInstruction(
                 path=schema_or_path,
-                methods=methods,
+                methods=set(cast(list, methods)),
                 transformer=transformer,
             )
         else:
@@ -164,28 +163,32 @@ def convert_response_to_previous_version_for(schema: type, /) -> "type[staticmet
 
 
 @overload
-def convert_response_to_previous_version_for(path: str, methods: set[str], /) -> "type[staticmethod[_P, None]]":
+def convert_response_to_previous_version_for(path: str, methods: list[str], /) -> "type[staticmethod[_P, None]]":
     ...
 
 
 def convert_response_to_previous_version_for(
     schema_or_path: type | str,
-    methods: set[str] | None = None,
+    methods: list[str] | None = None,
     /,
 ) -> "type[staticmethod[_P, None]]":
     _validate_decorator_args(schema_or_path, methods)
 
     def decorator(transformer: Callable[[ResponseInfo], None]) -> Any:
         if isinstance(schema_or_path, str):
-            assert methods
-            return AlterResponseByPathInstruction(path=schema_or_path, methods=methods, transformer=transformer)
+            # The validation above checks that methods is not None
+            return AlterResponseByPathInstruction(
+                path=schema_or_path,
+                methods=set(cast(list, methods)),
+                transformer=transformer,
+            )
         else:
             return AlterResponseBySchemaInstruction(schema=schema_or_path, transformer=transformer)
 
     return decorator  # pyright: ignore[reportGeneralTypeIssues]
 
 
-def _validate_decorator_args(schema_or_path: type | str, methods: set[str] | None):
+def _validate_decorator_args(schema_or_path: type | str, methods: list[str] | None):
     if isinstance(schema_or_path, str):
         if methods is None:
             raise ValueError("If path was provided as a first argument, methods must be provided as a second argument")

@@ -175,7 +175,8 @@ class _EndpointTransformer:
                     template_older_body_model = None
                 if (
                     older_route.path in newer_router_info.routes_with_migrated_requests
-                    # TODO: Raise error if we get a partial match here such as: route.methods = GET, POST; migrated = GET. HIGH PRIORITY
+                    # TODO: Raise error if we get a partial match here such as:
+                    # TODO  route.methods = GET, POST; migrated = GET.
                     and older_route.methods <= newer_router_info.routes_with_migrated_requests[older_route.path]
                 ) or (template_older_body_model in older_router_info.route_bodies_with_migrated_requests):
                     pass
@@ -186,11 +187,11 @@ class _EndpointTransformer:
                     template_older_body_model,
                     older_route.body_field.alias if older_route.body_field is not None else None,
                     dependant,
-                    # NOTE: The fact that we're using latest here assumes that the route can never change its response schema
+                    # NOTE: The fact that we use latest here assumes that the route can never change its response schema
                     latest_route.response_model,
                     self.versions,
                 )
-        for version, router_info in router_infos.items():
+        for _, router_info in router_infos.items():
             router_info.router.routes = [
                 route
                 for route in router_info.router.routes
@@ -198,7 +199,8 @@ class _EndpointTransformer:
             ]
         return {version: router_info.router for version, router_info in router_infos.items()}
 
-    def _apply_endpoint_changes_to_router(
+    # TODO: Simplify https://github.com/Ovsyanka83/universi/issues/28
+    def _apply_endpoint_changes_to_router(  # noqa: C901
         self,
         router: fastapi.routing.APIRouter,
         version: Version,
@@ -267,8 +269,8 @@ class _EndpointTransformer:
                         _validate_no_repetitions_in_routes(deleted_routes)
                     except RouteAlreadyExistsError as e:
                         raise RouterGenerationError(
-                            f'Endpoint "{list(instruction.endpoint_methods)} {instruction.endpoint_path}" you tried '
-                            f'to restore in "{version_change.__name__}" has {len(e.routes)} applicable routes that could '
+                            f'Endpoint "{list(instruction.endpoint_methods)} {instruction.endpoint_path}" you tried to '
+                            f'restore in "{version_change.__name__}" has {len(e.routes)} applicable routes that could '
                             f"be restored. If you really have two routes with the same paths and methods, please, use "
                             f'"endpoint(..., func_name=...)" to distinguish between them. Function names of '
                             f"endpoints that can be restored: {[r.endpoint.__name__ for r in e.routes]}",
@@ -286,17 +288,18 @@ class _EndpointTransformer:
                         )
                         if len(routes_that_never_existed) == 1:
                             self.routes_that_never_existed.remove(routes_that_never_existed[0])
-                        elif len(routes_that_never_existed) > 1:
+                        elif len(routes_that_never_existed) > 1:  # pragma: no cover
                             # I am not sure if it's possible to get to this error but I also don't want
                             # to remove it because I like its clarity very much
-                            raise RouterGenerationError(  # pragma: no cover
+                            routes = routes_that_never_existed
+                            raise RouterGenerationError(
                                 f'Endpoint "{list(deleted_route.methods)} {deleted_route.path}" you tried to restore '
                                 f'in "{version_change.__name__}" has {len(routes_that_never_existed)} applicable '
                                 f"routes with the same function name and path that could be restored. This can cause "
                                 f"problems during version generation. Specifically, Universi won't be able to warn "
                                 f"you when you deleted a route and never restored it. Please, make sure that "
                                 f"functions for all these routes have different names: "
-                                f"{[f'{r.endpoint.__module__}.{r.endpoint.__name__}' for r in routes_that_never_existed]}",
+                                f"{[f'{r.endpoint.__module__}.{r.endpoint.__name__}' for r in routes]}",
                             )
                     err = (
                         'Endpoint "{endpoint_methods} {endpoint_path}" you tried to restore in'
@@ -443,7 +446,7 @@ class _AnnotationTransformer:
                     return annotation(*args, **kwargs)
 
             # Otherwise it will have the same signature as __wrapped__
-            new_callable.__alt_wrapped__ = new_callable.__wrapped__
+            new_callable.__alt_wrapped__ = new_callable.__wrapped__  # pyright: ignore[reportGeneralTypeIssues]
             del new_callable.__wrapped__
             old_params = inspect.signature(annotation).parameters
             callable_annotations = new_callable.__annotations__
@@ -545,6 +548,11 @@ def _add_data_migrations_to_route(
     if not is_async_callable(route.endpoint):
         raise RouterGenerationError(
             f'All versioned endpoints must be asynchronous. Endpoint "{route.endpoint}" is not.',
+        )
+    if not (route.dependant.request_param_name and route.dependant.response_param_name):  # pragma: no cover
+        raise UniversiError(
+            f"{route.dependant.request_param_name=}, {route.dependant.response_param_name=} "
+            f"for route {list(route.methods)} {route.path} which should not be possible. Please, contact my author.",
         )
     route.endpoint = versions._versioned(
         template_body_field,

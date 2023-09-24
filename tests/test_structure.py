@@ -80,7 +80,8 @@ class TestVersionChange:
         with pytest.raises(
             UniversiStructureError,
             match=re.escape(
-                "Attribute 'instructions_to_migrate_to_previous_version' is not set on 'DummySubClass' but is required.",
+                "Attribute 'instructions_to_migrate_to_previous_version' "
+                "is not set on 'DummySubClass' but is required.",
             ),
         ):
 
@@ -216,7 +217,8 @@ class TestVersionChangeWithSideEffects:
         with pytest.raises(
             UniversiError,
             match=re.escape(
-                "You tried to check whether 'DummySubClassWithoutVersion' is active but it was never bound to any version.",
+                "You tried to check whether 'DummySubClassWithoutVersion' "
+                "is active but it was never bound to any version.",
             ),
         ):
             assert dummy_sub_class_without_version.is_applied
@@ -228,7 +230,8 @@ class TestVersionChangeWithSideEffects:
         with pytest.raises(
             UniversiError,
             match=re.escape(
-                "You tried to check whether 'DummySubClassWithoutVersion' is active but it was never bound to any version.",
+                "You tried to check whether 'DummySubClassWithoutVersion' "
+                "is active but it was never bound to any version.",
             ),
         ):
             assert dummy_sub_class_without_version.is_applied

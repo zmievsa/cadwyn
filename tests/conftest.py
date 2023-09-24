@@ -16,7 +16,8 @@ from pytest_fixture_classes import fixture_class
 from typing_extensions import deprecated
 
 from universi import VersionBundle, VersionedAPIRouter, generate_all_router_versions, regenerate_dir_to_all_versions
-from universi.structure import Version, VersionBundle, VersionChange
+from universi.codegen import _get_version_dir_name
+from universi.structure import Version, VersionChange
 from universi.structure.endpoints import AlterEndpointSubInstruction
 from universi.structure.enums import AlterEnumSubInstruction
 from universi.structure.schemas import AlterSchemaSubInstruction
@@ -97,8 +98,7 @@ class CreateVersionedSchemas:
             reversed(
                 [
                     importlib.import_module(
-                        self.data_package_name
-                        + f".v{version.value.year}_{str(version.value.month).zfill(2)}_{str(version.value.day).zfill(2)}",
+                        self.data_package_name + f".{_get_version_dir_name(version.value)}",
                     )
                     for version in created_versions
                 ],
@@ -180,7 +180,10 @@ class CreateVersionedClients:
     create_versioned_routers: CreateVersionedRouters
     api_version_var: ContextVar[date | None]
 
-    def __call__(self, *version_changes: type[VersionChange] | list[type[VersionChange]]) -> dict[date, TestClient]:
+    def __call__(
+        self,
+        *version_changes: type[VersionChange] | list[type[VersionChange]],
+    ) -> dict[date, TestClientWithAPIVersion]:
         return {
             version: client(router, api_version=version, api_version_var=self.api_version_var)
             for version, router in self.create_versioned_routers(*version_changes).items()

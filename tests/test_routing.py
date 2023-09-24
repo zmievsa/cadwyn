@@ -748,7 +748,8 @@ def test__router_generation__passing_a_module_instead_of_package_for_latest__sho
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            f'The latest schemas module must be a package. "{data_package_name}.latest.weird_schemas" is not a package.',
+            f"The latest schemas module must be a package. "
+            f'"{data_package_name}.latest.weird_schemas" is not a package.',
         ),
     ):
         versions = VersionBundle(

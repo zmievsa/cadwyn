@@ -49,9 +49,9 @@ PossibleInstructions: TypeAlias = (
 class VersionChange:
     description: ClassVar[str] = Sentinel
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
-    alter_schema_instructions: ClassVar[Sequence[AlterSchemaSubInstruction | AlterSchemaInstruction]] = Sentinel
-    alter_enum_instructions: ClassVar[Sequence[AlterEnumSubInstruction]] = Sentinel
-    alter_endpoint_instructions: ClassVar[Sequence[AlterEndpointSubInstruction]] = Sentinel
+    alter_schema_instructions: ClassVar[list[AlterSchemaSubInstruction | AlterSchemaInstruction]] = Sentinel
+    alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
+    alter_endpoint_instructions: ClassVar[list[AlterEndpointSubInstruction]] = Sentinel
     alter_request_by_schema_instructions: ClassVar[dict[type[BaseModel], AlterRequestBySchemaInstruction]] = Sentinel
     alter_request_by_path_instructions: ClassVar[dict[str, list[AlterRequestByPathInstruction]]] = Sentinel
     alter_response_by_schema_instructions: ClassVar[dict[type, AlterResponseBySchemaInstruction]] = Sentinel
@@ -62,7 +62,37 @@ class VersionChange:
         if _abstract:
             return
         cls._validate_subclass()
+        cls._extract_list_instructions_into_correct_containers()
+        cls._extract_body_instructions_into_correct_containers()
+        cls._check_no_subclassing()
+        cls._bound_version_bundle = None
 
+    @classmethod
+    def _extract_body_instructions_into_correct_containers(cls):
+        for instruction in cls.__dict__.values():
+            if isinstance(instruction, SchemaPropertyDefinitionInstruction):
+                cls.alter_schema_instructions.append(instruction)
+            elif isinstance(instruction, AlterRequestBySchemaInstruction):
+                if instruction.schema in cls.alter_request_by_schema_instructions:
+                    raise UniversiStructureError(
+                        f'There already exists a request migration for "{instruction.schema.__name__}" '
+                        f'in "{cls.__name__}".',
+                    )
+                cls.alter_request_by_schema_instructions[instruction.schema] = instruction
+            elif isinstance(instruction, AlterRequestByPathInstruction):
+                cls.alter_request_by_path_instructions[instruction.path].append(instruction)
+            elif isinstance(instruction, AlterResponseBySchemaInstruction):
+                if instruction.schema in cls.alter_response_by_schema_instructions:
+                    raise UniversiStructureError(
+                        f'There already exists a response migration for "{instruction.schema.__name__}" '
+                        f'in "{cls.__name__}".',
+                    )
+                cls.alter_response_by_schema_instructions[instruction.schema] = instruction
+            elif isinstance(instruction, AlterResponseByPathInstruction):
+                cls.alter_response_by_path_instructions[instruction.path].append(instruction)
+
+    @classmethod
+    def _extract_list_instructions_into_correct_containers(cls):
         cls.alter_schema_instructions = []
         cls.alter_enum_instructions = []
         cls.alter_endpoint_instructions = []
@@ -81,28 +111,6 @@ class VersionChange:
                 raise NotImplementedError(f'"{alter_instruction}" is an unacceptable version change instruction')
             else:
                 assert_never(alter_instruction)
-        for instruction in cls.__dict__.values():
-            if isinstance(instruction, SchemaPropertyDefinitionInstruction):
-                cls.alter_schema_instructions.append(instruction)
-            elif isinstance(instruction, AlterRequestBySchemaInstruction):
-                if instruction.schema in cls.alter_request_by_schema_instructions:
-                    raise UniversiStructureError(
-                        f'There already exists a request migration for "{instruction.schema.__name__}" in "{cls.__name__}".',
-                    )
-                cls.alter_request_by_schema_instructions[instruction.schema] = instruction
-            elif isinstance(instruction, AlterRequestByPathInstruction):
-                cls.alter_request_by_path_instructions[instruction.path].append(instruction)
-            elif isinstance(instruction, AlterResponseBySchemaInstruction):
-                if instruction.schema in cls.alter_response_by_schema_instructions:
-                    raise UniversiStructureError(
-                        f'There already exists a response migration for "{instruction.schema.__name__}" in "{cls.__name__}".',
-                    )
-                cls.alter_response_by_schema_instructions[instruction.schema] = instruction
-            elif isinstance(instruction, AlterResponseByPathInstruction):
-                cls.alter_response_by_path_instructions[instruction.path].append(instruction)
-
-        cls._check_no_subclassing()
-        cls._bound_version_bundle = None
 
     @classmethod
     def _validate_subclass(cls):
@@ -314,7 +322,10 @@ class VersionBundle:
             if v.value <= current_version:
                 break
             for version_change in v.version_changes:
-                if latest_response_model in version_change.alter_response_by_schema_instructions:
+                if (
+                    latest_response_model
+                    and latest_response_model in version_change.alter_response_by_schema_instructions
+                ):
                     version_change.alter_response_by_schema_instructions[latest_response_model](response_info)
                 if path in version_change.alter_response_by_path_instructions:
                     for instruction in version_change.alter_response_by_path_instructions[path]:
@@ -336,7 +347,7 @@ class VersionBundle:
     ) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]:
         def wrapper(endpoint: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
             @functools.wraps(endpoint)
-            async def decorator(*args, **kwargs) -> _R:
+            async def decorator(*args: Any, **kwargs: Any) -> _R:
                 request: FastapiRequest = kwargs[request_param_name]
                 response: FastapiResponse = kwargs[response_param_name]
                 path = request.scope["path"]
@@ -367,7 +378,7 @@ class VersionBundle:
             if response_param_name == _UNIVERSI_RESPONSE_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _UNIVERSI_RESPONSE_PARAM_NAME, FastapiResponse)
 
-            return decorator
+            return decorator  # pyright: ignore[reportGeneralTypeIssues]
 
         return wrapper
 

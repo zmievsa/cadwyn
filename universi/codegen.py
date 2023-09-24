@@ -173,7 +173,7 @@ def regenerate_dir_to_all_versions(
     )
 
 
-def _generate_latest_version_alias_directory(version: date, template_module):
+def _generate_latest_version_alias_directory(version: date, template_module: ModuleType):
     version_dir_name = _get_version_dir_name(version)
     template_dir = _get_package_path_from_module(template_module)
     version_dir = template_dir.with_name(version_dir_name)
@@ -260,7 +260,7 @@ def _get_union_of_versioned_name(
         if absolute_python_path_to_node in schemas_per_version[0].schemas:
             union = (
                 f"{module.alias}.{schema_bundle.schemas[absolute_python_path_to_node].name}"
-                for module, schema_bundle in zip(imported_modules, schemas_per_version)
+                for module, schema_bundle in zip(imported_modules, schemas_per_version, strict=True)
                 if schema_bundle.version not in schemas_to_skipped_versions[absolute_python_path_to_node]
             )
         else:
@@ -340,7 +340,8 @@ def _apply_alter_schema_instructions(  # noqa: C901
     alter_schema_instructions: Sequence[AlterSchemaSubInstruction | AlterSchemaInstruction],
     version_change_name: str,
 ):
-    # TODO: If we have a request migration for an endpoint instead of a schema and we haven't found that endpoint during codegen -- raise an error or maybe add an argument that controlls that. Or maybe this is overengineering.... I am not sure
+    # TODO: If we have a request migration for an endpoint instead of a schema and we haven't found that endpoint
+    # during codegen -- raise an error or maybe add an argument that controlls that. Or maybe this is overengineering..
     for alter_schema_instruction in alter_schema_instructions:
         schema = alter_schema_instruction.schema
         schema_path = _get_cls_pythonpath(schema)
