@@ -478,7 +478,29 @@ class MyChange(VersionChange):
 
 which will replace all references to this schema with the new name.
 
-### Unions
+#### Private fields
+
+The perfect Universi workflow consists of migrating all responses to earlier versions and all requests to latest version automatically. However, it is not always easily possible. For example, if there is more data in older requests than in newer requests, how do we push this data into newer request schemas? They don't have any field for it and we cannot add a field because we don't want our API users to see this field.
+
+[Private attrs](https://docs.pydantic.dev/latest/usage/models/#private-model-attributes) come to the rescue. They allow you to define fields that won't appear in openapi, won't be validated, and won't appear in `__init__` so our API clients won't be able to use them no matter how hard they try. However, now we have a problem: **we** also cannot use them to push information from old versions into new versions because these attrs don't appear in `__init__`. That's why we have `FillablePrivateAttr`. They are the same as private attrs except that you can set them in model's `__init__` automatically. Note that `FillablePrivateAttrMixin` is required to use them.
+
+```python
+from pydantic import BaseModel
+
+from universi.fields import FillablePrivateAttr, FillablePrivateAttrMixin
+
+
+class UserCreateRequest(FillablePrivateAttrMixin, BaseModel):
+    default_address: str
+    _addresses_to_create: list[str] = FillablePrivateAttr(default_factory=list)
+
+
+UserCreateRequest(
+    default_address="My street", _addresses_to_create=["My address 2", "My address 3"]
+)
+```
+
+#### Unions
 
 As you probably realize, when you have many versions with different request schemas and your business logic receives one of them -- you're in trouble. You could handle them all separately by checking the version of each schema and then using the correct logic for it but universi tries to offer something better.
 
