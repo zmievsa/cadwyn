@@ -1125,50 +1125,38 @@ def test__router_generation_body_migration(
     assert client_2001.post("/test", json={"foo": "211"}).json() == {"foo": 211}
 
 
-# Import the necessary modules and classes for your test
+#Adding a test that checks literal route dependencies
 
-def test_literal_migration_with_enum(
-    router: VersionedAPIRouter,
-    create_versioned_api_routes: CreateVersionedAPIRoutes,
-):
-    # Define a versioned enum
-    versioned_enum_2000 = enum("Value1", "Value2", "Value3")
-    versioned_enum_2001 = enum("Value1", "Value3")  # Value2 is removed
+from enum import Enum
+from fastapi import FastAPI, status
 
-    # Define a route that depends on the enum using Literal
-    @router.get("/test_enum")
-    async def test_enum_route(value: Literal["Value1", "Value2", "Value3"]):
-        return {"value": value}
+app = FastAPI()
 
-    # Generate the router with the route and the enum for two versions
-    routes_2000, routes_2001 = create_versioned_api_routes(
-        endpoint("/test_enum", ["GET"]).existed,
-        schema(versioned_enum_2000).existed,
-        schema(versioned_enum_2001).existed,
-    )
+class Color(str, Enum):
+    RED = 'red'
+    GREEN = 'green'
+    BLUE = 'blue'
 
-    # Ensure the route exists in both versions
-    assert len(routes_2000) == 1
-    assert len(routes_2001) == 1
+@app.get("/v1")
+def v1(color: Literal[Color.BLUE]):
+    return {"color": color}
 
-    # Test the route in version 2000 with an enum value that still exists
-    client_2000 = client(APIRouter(routes=routes_2000))
-    response_2000 = client_2000.get("/test_enum?value=Value1")
-    assert response_2000.status_code == 200
-    assert response_2000.json() == {"value": "Value1"}
+@app.get("/v2")
+def v2(color: Literal[Color.RED, Color.Green]):
+    return {"color": color}
 
-    # Test the route in version 2000 with an enum value that was removed
-    response_2000_invalid = client_2000.get("/test_enum?value=Value2")
-    assert response_2000_invalid.status_code == 422
-    assert "Enum value 'Value2' in route dependency does not exist" in response_2000_invalid.text
+class ColorV2(str, Enum):
+    RED = 'red'
+    GREEN = 'GREEN'
 
-    # Test the route in version 2001 with an enum value that still exists
-    client_2001 = client(APIRouter(routes=routes_2001))
-    response_2001 = client_2001.get("/test_enum?value=Value1")
-    assert response_2001.status_code == 200
-    assert response_2001.json() == {"value": "Value1"}
 
-    # Test the route in version 2001 with an enum value that was removed
-    response_2001_invalid = client_2001.get("/test_enum?value=Value2")
-    assert response_2001_invalid.status_code == 422
-    assert "Enum value 'Value2' in route dependency does not exist" in response_2001_invalid.text
+reponse = client.get("/v1?color=blue")
+assert response.status_code == 200
+
+
+response = client.get("/v2?color=blue")
+assert response.status_code == 422
+
+@app.exception_handler(Validation Error)
+def handle_error(request, exc):
+    return {"error": "Enum value was removed"}
