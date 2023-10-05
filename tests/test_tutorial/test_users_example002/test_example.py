@@ -1,60 +1,57 @@
 from collections.abc import Generator
-from datetime import date
 from pathlib import Path
 
 import pytest
-from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from fastapi_header_versioning.fastapi import HeaderRoutingFastAPI
+from fastapi_header_versioning.routing import HeaderVersionedAPIRouter
 
-from universi import (
-    VersionedAPIRouter,
-    get_universi_dependency,
-    regenerate_dir_to_all_versions,
-)
-from universi.routing import generate_all_router_versions
+from universi import get_universi_dependency, regenerate_dir_to_all_versions
+from universi.header_routing import get_versioned_router
 
 from ..utils import clean_versions
 from .schemas import latest
 from .users import api_version_var, router, versions
 
 
-def get_app(router: APIRouter) -> FastAPI:
-    app = FastAPI(
+def get_app(versioned_router: HeaderVersionedAPIRouter) -> HeaderRoutingFastAPI:
+    app = HeaderRoutingFastAPI(
+        version_header="x-api-version",
         dependencies=[get_universi_dependency(version_header_name="X-API-VERSION", api_version_var=api_version_var)],
     )
-    app.include_router(router)
+    app.include_router(versioned_router)
     return app
 
 
 @pytest.fixture(scope="module", autouse=True)
-def routers() -> Generator[dict[date, APIRouter], None, None]:
+def versioned_router() -> Generator[HeaderVersionedAPIRouter, None, None]:
     regenerate_dir_to_all_versions(latest, versions)
     try:
-        yield generate_all_router_versions(router, versions=versions, latest_schemas_module=latest)
+        yield get_versioned_router(router, versions=versions, latest_schemas_module=latest)
     finally:
         clean_versions(Path(__file__).parent / "schemas")
 
 
 @pytest.fixture()
-def testclient_2000(routers: dict[date, VersionedAPIRouter]) -> TestClient:
+def testclient_2000(versioned_router: HeaderVersionedAPIRouter) -> TestClient:
     return TestClient(
-        get_app(routers[date(2000, 1, 1)]),
+        get_app(versioned_router),
         headers={"X-API-VERSION": "2000-01-01"},
     )
 
 
 @pytest.fixture()
-def testclient_2001(routers: dict[date, VersionedAPIRouter]) -> TestClient:
+def testclient_2001(versioned_router: HeaderVersionedAPIRouter) -> TestClient:
     return TestClient(
-        get_app(routers[date(2001, 1, 1)]),
+        get_app(versioned_router),
         headers={"X-API-VERSION": "2001-01-01"},
     )
 
 
 @pytest.fixture()
-def testclient_2002(routers: dict[date, VersionedAPIRouter]) -> TestClient:
+def testclient_2002(versioned_router: HeaderVersionedAPIRouter) -> TestClient:
     return TestClient(
-        get_app(routers[date(2002, 1, 1)]),
+        get_app(versioned_router),
         headers={"X-API-VERSION": "2002-01-01"},
     )
 

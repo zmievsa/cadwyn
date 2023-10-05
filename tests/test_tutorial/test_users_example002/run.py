@@ -1,26 +1,24 @@
 if __name__ == "__main__":
-    from datetime import date
     from pathlib import Path
 
     import uvicorn
-    from fastapi import FastAPI
+    from fastapi_header_versioning.fastapi import HeaderRoutingFastAPI
 
     from tests.test_tutorial.test_users_example002.schemas import latest
     from tests.test_tutorial.test_users_example002.users import api_version_var, router, versions
     from tests.test_tutorial.utils import clean_versions
-    from universi import regenerate_dir_to_all_versions
-    from universi.routing import generate_all_router_versions
+    from universi import get_universi_dependency, regenerate_dir_to_all_versions
+    from universi.header_routing import get_versioned_router
 
     try:
         regenerate_dir_to_all_versions(latest, versions)
-        router_versions = generate_all_router_versions(
-            router,
-            versions=versions,
-            latest_schemas_module=latest,
+        VERSION_HEADER = "x-api-version"
+        app = HeaderRoutingFastAPI(
+            version_header=VERSION_HEADER,
+            dependencies=[get_universi_dependency(version_header_name=VERSION_HEADER, api_version_var=api_version_var)],
         )
-        app = FastAPI()
-        api_version_var.set(date(2000, 1, 1))
-        app.include_router(router_versions[date(2000, 1, 1)])
+        router = get_versioned_router(router, versions=versions, latest_schemas_module=latest)
+        app.include_router(router)
         uvicorn.run(app)
     finally:
         clean_versions(Path(__file__).parent / "schemas")
