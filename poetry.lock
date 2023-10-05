@@ -204,6 +204,19 @@ typing-extensions = ">=4.5.0"
 all = ["email-validator (>=2.0.0)", "httpx (>=0.23.0)", "itsdangerous (>=1.1.0)", "jinja2 (>=2.11.2)", "orjson (>=3.2.1)", "pydantic-extra-types (>=2.0.0)", "pydantic-settings (>=2.0.0)", "python-multipart (>=0.0.5)", "pyyaml (>=5.3.1)", "ujson (>=4.0.1,!=4.0.2,!=4.1.0,!=4.2.0,!=4.3.0,!=5.0.0,!=5.1.0)", "uvicorn[standard] (>=0.12.0)"]
 
 [[package]]
+name = "fastapi-header-versioning"
+version = "1.1.0"
+description = "API versioning based on header-provided data for FastAPI."
+category = "main"
+optional = false
+python-versions = ">=3.10,<4.0"
+
+[package.dependencies]
+fastapi = ">=0.96.1"
+pydantic = ">=1.10.0,<2.0.0"
+typing-extensions = "*"
+
+[[package]]
 name = "filelock"
 version = "3.12.3"
 description = "A platform independent file lock."
@@ -881,7 +894,7 @@ python-versions = "*"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "69b569ca35f479fc4e96622ac139a0af26d3be23ea7d29b83be44c391bec119d"
+content-hash = "c3b9f77a09c7471917c48e66f23d283b0416da5b095e6e8360bfce546dd2bab2"
 
 [metadata.files]
 anyio = [
@@ -1094,6 +1107,10 @@ fancycompleter = [
 fastapi = [
     {file = "fastapi-0.103.1-py3-none-any.whl", hash = "sha256:5e5f17e826dbd9e9b5a5145976c5cd90bcaa61f2bf9a69aca423f2bcebe44d83"},
     {file = "fastapi-0.103.1.tar.gz", hash = "sha256:345844e6a82062f06a096684196aaf96c1198b25c06b72c1311b882aa2d8a35d"},
+]
+fastapi-header-versioning = [
+    {file = "fastapi-header-versioning-1.1.0.tar.gz", hash = "sha256:f85200b110c27f7ca451ef650c34468f098d6962d130878cdc21e3419e399451"},
+    {file = "fastapi_header_versioning-1.1.0-py3-none-any.whl", hash = "sha256:72027ab6ae55790b1f6143eaf632ada666b1f9b2f5718da132dc161d1de43bea"},
 ]
 filelock = [
     {file = "filelock-3.12.3-py3-none-any.whl", hash = "sha256:f067e40ccc40f2b48395a80fcbd4728262fab54e232e090a4063ab804179efeb"},
