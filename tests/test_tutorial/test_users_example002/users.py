@@ -3,8 +3,8 @@ from datetime import date
 
 from pydantic import Field
 
-from universi import VersionedAPIRouter
-from universi.structure import (
+from cadwyn import VersionedAPIRouter
+from cadwyn.structure import (
     RequestInfo,
     ResponseInfo,
     Version,

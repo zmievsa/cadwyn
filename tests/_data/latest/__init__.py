@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import BaseModel, Field, PrivateAttr, conint
 from pydantic import Field as PydanticField
 
-from universi.fields import FillablePrivateAttr, FillablePrivateAttrMixin
+from cadwyn.fields import FillablePrivateAttr, FillablePrivateAttrMixin
 
 
 class StrEnum(str, Enum):

@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from universi.fields import FillablePrivateAttr, FillablePrivateAttrMixin
+from cadwyn.fields import FillablePrivateAttr, FillablePrivateAttrMixin
 
 
 class UserCreateRequest(FillablePrivateAttrMixin, BaseModel):

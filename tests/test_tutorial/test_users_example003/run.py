@@ -1,4 +1,4 @@
-from universi.routing import generate_all_router_versions
+from cadwyn.routing import generate_all_router_versions
 
 if __name__ == "__main__":
     from datetime import date
@@ -7,10 +7,10 @@ if __name__ == "__main__":
     import uvicorn
     from fastapi import FastAPI
 
+    from cadwyn import regenerate_dir_to_all_versions
     from tests.test_tutorial.test_users_example003.schemas import latest
     from tests.test_tutorial.test_users_example003.users import api_version_var, router, versions
     from tests.test_tutorial.utils import clean_versions
-    from universi import regenerate_dir_to_all_versions
 
     try:
         regenerate_dir_to_all_versions(latest, versions)

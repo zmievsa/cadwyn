@@ -15,12 +15,12 @@ from fastapi.testclient import TestClient
 from pytest_fixture_classes import fixture_class
 from typing_extensions import deprecated
 
-from universi import VersionBundle, VersionedAPIRouter, generate_all_router_versions, regenerate_dir_to_all_versions
-from universi.codegen import _get_version_dir_name
-from universi.structure import Version, VersionChange
-from universi.structure.endpoints import AlterEndpointSubInstruction
-from universi.structure.enums import AlterEnumSubInstruction
-from universi.structure.schemas import AlterSchemaSubInstruction
+from cadwyn import VersionBundle, VersionedAPIRouter, generate_all_router_versions, regenerate_dir_to_all_versions
+from cadwyn.codegen import _get_version_dir_name
+from cadwyn.structure import Version, VersionChange
+from cadwyn.structure.endpoints import AlterEndpointSubInstruction
+from cadwyn.structure.enums import AlterEnumSubInstruction
+from cadwyn.structure.schemas import AlterSchemaSubInstruction
 
 CURRENT_DIR = Path(__file__).parent
 Undefined = object()
