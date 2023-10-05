@@ -6,8 +6,8 @@ from fastapi.testclient import TestClient
 from fastapi_header_versioning.fastapi import HeaderRoutingFastAPI
 from fastapi_header_versioning.routing import HeaderVersionedAPIRouter
 
-from universi import get_universi_dependency, regenerate_dir_to_all_versions
-from universi.header_routing import get_versioned_router
+from cadwyn import get_cadwyn_dependency, regenerate_dir_to_all_versions
+from cadwyn.header_routing import get_versioned_router
 
 from ..utils import clean_versions
 from .schemas import latest
@@ -17,7 +17,7 @@ from .users import api_version_var, router, versions
 def get_app(versioned_router: HeaderVersionedAPIRouter) -> HeaderRoutingFastAPI:
     app = HeaderRoutingFastAPI(
         version_header="x-api-version",
-        dependencies=[get_universi_dependency(version_header_name="X-API-VERSION", api_version_var=api_version_var)],
+        dependencies=[get_cadwyn_dependency(version_header_name="X-API-VERSION", api_version_var=api_version_var)],
     )
     app.include_router(versioned_router)
     return app

@@ -12,22 +12,22 @@ from typing import Any, Union
 import pytest
 from pydantic import BaseModel, Field
 
-from tests._data.unversioned_schema_dir import UnversionedSchema2
-from tests._data.unversioned_schemas import UnversionedSchema3
-from tests.conftest import CreateSimpleVersionedSchemas, CreateVersionedSchemas, version_change
-from universi import regenerate_dir_to_all_versions
-from universi.exceptions import (
+from cadwyn import regenerate_dir_to_all_versions
+from cadwyn.exceptions import (
     CodeGenerationError,
     InvalidGenerationInstructionError,
 )
-from universi.structure import (
+from cadwyn.structure import (
     Version,
     VersionBundle,
     VersionChange,
     enum,
     schema,
 )
-from universi.structure.data import RequestInfo, convert_request_to_next_version_for
+from cadwyn.structure.data import RequestInfo, convert_request_to_next_version_for
+from tests._data.unversioned_schema_dir import UnversionedSchema2
+from tests._data.unversioned_schemas import UnversionedSchema3
+from tests.conftest import CreateSimpleVersionedSchemas, CreateVersionedSchemas, version_change
 
 
 def serialize(enum: type[Enum]) -> dict[str, Any]:
@@ -332,7 +332,7 @@ def test__field_had__decimal_field(
     )
 
 
-# TODO: https://github.com/Ovsyanka83/universi/issues/3
+# TODO: https://github.com/Ovsyanka83/cadwyn/issues/3
 def test__field_had__constrained_field(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,

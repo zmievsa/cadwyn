@@ -15,6 +15,12 @@ from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
 
+from cadwyn import VersionBundle, VersionedAPIRouter
+from cadwyn.exceptions import CadwynError, RouterGenerationError
+from cadwyn.routing import generate_all_router_versions
+from cadwyn.structure import Version, endpoint, schema
+from cadwyn.structure.enums import enum
+from cadwyn.structure.versions import VersionChange
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
@@ -25,12 +31,6 @@ from tests.conftest import (
     client,
     version_change,
 )
-from universi import VersionBundle, VersionedAPIRouter
-from universi.exceptions import RouterGenerationError, UniversiError
-from universi.routing import generate_all_router_versions
-from universi.structure import Version, endpoint, schema
-from universi.structure.enums import enum
-from universi.structure.versions import VersionChange
 
 Default = object()
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
@@ -284,7 +284,7 @@ def test__only_exists_in_older_versions__applied_twice__should_raise_error(
 ):
     # with insert_pytest_raises():
     with pytest.raises(
-        UniversiError,
+        CadwynError,
         match=re.escape('The route "test_endpoint" was already deleted. You can\'t delete it again.'),
     ):
 
@@ -894,7 +894,7 @@ def test__router_generation__updating_request_depends(
     def sub_dependency2(my_enum: latest_module.StrEnum) -> latest_module.StrEnum:
         return my_enum
 
-    # TASK: What if "a" gets deleted? https://github.com/Ovsyanka83/universi/issues/25
+    # TASK: What if "a" gets deleted? https://github.com/Ovsyanka83/cadwyn/issues/25
     def dependency2(
         dep: Annotated[latest_module.StrEnum, Depends(sub_dependency2)] = latest_module.StrEnum.a,
     ):

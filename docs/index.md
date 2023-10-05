@@ -1,33 +1,33 @@
-# Universi
+# Cadwyn
 
 Modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning in FastAPI
 
 ---
 
 <p align="center">
-<a href="https://github.com/ovsyanka83/universi/actions?query=workflow%3ATests+event%3Apush+branch%3Amain" target="_blank">
-    <img src="https://github.com/Ovsyanka83/universi/actions/workflows/test.yaml/badge.svg?branch=main&event=push" alt="Test">
+<a href="https://github.com/ovsyanka83/cadwyn/actions?query=workflow%3ATests+event%3Apush+branch%3Amain" target="_blank">
+    <img src="https://github.com/Ovsyanka83/cadwyn/actions/workflows/test.yaml/badge.svg?branch=main&event=push" alt="Test">
 </a>
-<a href="https://codecov.io/gh/ovsyanka83/universi" target="_blank">
-    <img src="https://img.shields.io/codecov/c/github/ovsyanka83/universi?color=%2334D058" alt="Coverage">
+<a href="https://codecov.io/gh/ovsyanka83/cadwyn" target="_blank">
+    <img src="https://img.shields.io/codecov/c/github/ovsyanka83/cadwyn?color=%2334D058" alt="Coverage">
 </a>
-<a href="https://pypi.org/project/universi/" target="_blank">
-    <img alt="PyPI" src="https://img.shields.io/pypi/v/universi?color=%2334D058&label=pypi%20package" alt="Package version">
+<a href="https://pypi.org/project/cadwyn/" target="_blank">
+    <img alt="PyPI" src="https://img.shields.io/pypi/v/cadwyn?color=%2334D058&label=pypi%20package" alt="Package version">
 </a>
-<a href="https://pypi.org/project/universi/" target="_blank">
-    <img src="https://img.shields.io/pypi/pyversions/universi?color=%2334D058" alt="Supported Python versions">
+<a href="https://pypi.org/project/cadwyn/" target="_blank">
+    <img src="https://img.shields.io/pypi/pyversions/cadwyn?color=%2334D058" alt="Supported Python versions">
 </a>
 </p>
 
 ## Installation
 
 ```bash
-pip install universi
+pip install cadwyn
 ```
 
 ## Who is this for?
 
-Universi allows you to support a single version of your code, auto-generating the code/routes for older versions. You keep versioning encapsulated in small and independent "version change" modules while your business logic knows nothing about versioning.
+Cadwyn allows you to support a single version of your code, auto-generating the code/routes for older versions. You keep versioning encapsulated in small and independent "version change" modules while your business logic knows nothing about versioning.
 
 Its approach will be useful if you want to:
 
@@ -38,7 +38,7 @@ Otherwise, more conventional methods of API versioning may be preferable.
 
 ## Tutorial
 
-This guide provides a step-by-step tutorial for setting up automatic API versioning using Universi library. I will illustrate this with an example of a User API, where we will be implementing changes to a User's address.
+This guide provides a step-by-step tutorial for setting up automatic API versioning using Cadwyn library. I will illustrate this with an example of a User API, where we will be implementing changes to a User's address.
 
 ### A dummy setup
 
@@ -65,7 +65,7 @@ And we create our file with routes:
 
 ```python
 from versions.latest.users import UserCreateRequest, UserResource
-from universi import VersionedAPIRouter
+from cadwyn import VersionedAPIRouter
 
 router = VersionedAPIRouter()
 
@@ -125,7 +125,7 @@ But every user of ours will now have their API integration broken. To prevent th
 
 Stripe has come up [with a solution](https://stripe.com/blog/api-versioning): let's have one latest app version whose responses get migrated to older versions and let's describe changes between these versions using migrations. This approach allows them to keep versions for **years** without dropping them. Obviously, each breaking change is still bad and each version still makes our system more complex and expensive, but their approach gives us a chance to minimize that. Additionally, it allows us backport features and bugfixes to older versions. However, you will also be backporting bugs, which is a sad consequence of eliminating duplication.
 
-Universi is heavily inspired by this approach so let's continue our tutorial and now try to combine the two versions we created using versioning.
+Cadwyn is heavily inspired by this approach so let's continue our tutorial and now try to combine the two versions we created using versioning.
 
 ### Creating the Migration
 
@@ -133,7 +133,7 @@ We need to create a migration to handle changes between these versions. For ever
 
 ```python
 from pydantic import Field
-from universi.structure import (
+from cadwyn.structure import (
     schema,
     VersionChange,
     convert_response_to_previous_version_for,
@@ -164,14 +164,14 @@ class ChangeAddressToList(VersionChange):
 
 See how we are popping the first address from the list? This is only guaranteed to be possible because we specified earlier that `min_items` for `addresses` must be `1`. If we didn't, then the user would be able to create a user in a newer version that would be impossible to represent in the older version. I.e. If anyone tried to get that user from the older version, they would get a `ResponseValidationError` because the user wouldn't have data for a mandatory `address` field. You need to always keep in mind tht API versioning is only for versioning your **API**, your interface. Your versions must still be completely compatible in terms of data. If they are not, then you are versioning your data and you should really go with a separate app instance. Otherwise, your users will have a hard time migrating back and forth between API versions and so many unexpected errors.
 
-See how we added the `addresses` property? This simple instruction will allow us to use `addresses` even from the old schema, which means that our api route will not need to know anything about versioning. The main goal of universi is to shift the logic of versioning away from your business logic and api endpoints which makes your project easier to navigate and which makes deleting versions a breeze.
+See how we added the `addresses` property? This simple instruction will allow us to use `addresses` even from the old schema, which means that our api route will not need to know anything about versioning. The main goal of cadwyn is to shift the logic of versioning away from your business logic and api endpoints which makes your project easier to navigate and which makes deleting versions a breeze.
 
 ### Grouping Version Changes
 
 Finally, we group the version changes in the `VersionBundle` class. This represents the different versions of your API and the changes between them. You can add any "version changes" to any version. For simplicity, let's use versions 2002 and 2001 which means that we had a single address in API in 2001 and added addresses as a list in 2002's version.
 
 ```python
-from universi.structure import Version, VersionBundle
+from cadwyn.structure import Version, VersionBundle
 from datetime import date
 from contextvars import ContextVar
 
@@ -184,11 +184,11 @@ versions = VersionBundle(
 )
 ```
 
-That's it. You're done with describing things. Now you just gotta ask universi to do the rest for you. We'll need the VersionedAPIRouter we used previously, our API versions, and the module representing the latest versions of our schemas.
+That's it. You're done with describing things. Now you just gotta ask cadwyn to do the rest for you. We'll need the VersionedAPIRouter we used previously, our API versions, and the module representing the latest versions of our schemas.
 
 ```python
 from versions import latest, api_version_var
-from universi import regenerate_dir_to_all_versions, generate_all_router_versions
+from cadwyn import regenerate_dir_to_all_versions, generate_all_router_versions
 
 regenerate_dir_to_all_versions(latest, versions)
 router_versions = generate_all_router_versions(
@@ -200,28 +200,28 @@ api_version_var.set(date(2002, 1, 1))
 uvicorn.run(router_versions[date(2002, 1, 1)])
 ```
 
-Universi has generated multiple things in this code:
+Cadwyn has generated multiple things in this code:
 
 * Three versions of our schemas: one for each API version and one that includes definitions of unions of all versions for each schema which will be useful when you want to type check that you are using requests of different versions correctly. For example, we'll have `UserCreateRequest` defined there which is a `TypeAlias` pointing to the union of 2002 version and 2001 version of `UserCreateRequest`.
 * Two versions of our API router: one for each API version
 
 You can now just pick a router by its version and run it separately or use a parent router/app to specify the logic by which you'd like to pick a version. I recommend using a header-based router with version dates as headers. And yes, that's how Stripe does it.
 
-Note that universi migrates your response data based on the `api_version_var` context variable so you must set it with each request. `universi.get_universi_dependency` does that for you automatically on every request based on header value.
+Note that cadwyn migrates your response data based on the `api_version_var` context variable so you must set it with each request. `cadwyn.get_cadwyn_dependency` does that for you automatically on every request based on header value.
 
-Obviously, this was just a simple example and universi has a lot more features so if you're interested -- take a look at the reference.
+Obviously, this was just a simple example and cadwyn has a lot more features so if you're interested -- take a look at the reference.
 
 ### Examples
 
-Please, see [tutorial examples](https://github.com/Ovsyanka83/universi/tree/main/tests/test_tutorial) for the fully working version of the project above.
+Please, see [tutorial examples](https://github.com/Ovsyanka83/cadwyn/tree/main/tests/test_tutorial) for the fully working version of the project above.
 
 ## Important warnings
 
-1. The goal of Universi is to **minimize** the impact of versioning on your business logic. It provides all necessary tools to prevent you from **ever** checking for a concrete version in your code. So please, if you are tempted to check something like `api_version_var.get() >= date(2022, 11, 11)` -- please, take another look into [reference](#version-changes-with-side-effects) section. I am confident that you will find a better solution there.
-2. Universi does not include a header-based router like FastAPI. We hope that soon a framework for header-based routing will surface which will allow universi to be a full versioning solution.
+1. The goal of Cadwyn is to **minimize** the impact of versioning on your business logic. It provides all necessary tools to prevent you from **ever** checking for a concrete version in your code. So please, if you are tempted to check something like `api_version_var.get() >= date(2022, 11, 11)` -- please, take another look into [reference](#version-changes-with-side-effects) section. I am confident that you will find a better solution there.
+2. Cadwyn does not include a header-based router like FastAPI. We hope that soon a framework for header-based routing will surface which will allow cadwyn to be a full versioning solution.
 3. I ask you to be very detailed in your descriptions for version changes. Spending these 5 extra minutes will potentially save you tens of hours in the future when everybody forgets when, how, and why the version change was made.
 4. We migrate responses backwards in versions from the latest version using data migration functions and requests forward in versions until the latest version using properties on pydantic models.
-5. Universi doesn't edit your imports when generating schemas so if you make any imports from versioned code to versioned code, I would suggest using [relative imports](https://docs.python.org/3/reference/import.html#package-relative-imports) to make sure that they will still work as expected after code generation.
+5. Cadwyn doesn't edit your imports when generating schemas so if you make any imports from versioned code to versioned code, I would suggest using [relative imports](https://docs.python.org/3/reference/import.html#package-relative-imports) to make sure that they will still work as expected after code generation.
 
 ## Theory
 
@@ -269,7 +269,7 @@ Then we start thinking about API route differences. How do we describe them? Or 
 
 This is effectively an automated version of [approach i](#i-duplication-based-response-building). It has the minimal possible amount of duplication compared to all other approaches. Using a specialized DSL, we define schema migrations for changes in our request and response schemas, we define compatibility gates to migrate our data in accordance with schema changes, and we define route migrations to change/delete/add any routes.
 
-This is the method that [Stripe](https://stripe.com/blog/api-versioning) and [Linkedin](https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market) have picked and this is the method that **Universi** implements for you.
+This is the method that [Stripe](https://stripe.com/blog/api-versioning) and [Linkedin](https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market) have picked and this is the method that **Cadwyn** implements for you.
 
 ## Reference
 
@@ -291,7 +291,7 @@ async def my_old_endpoint():
 and then define it as existing in one of the older versions:
 
 ```python
-from universi.structure import VersionChange, endpoint
+from cadwyn.structure import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
@@ -306,7 +306,7 @@ class MyChange(VersionChange):
 If you have an endpoint in your new version that must not exist in older versions, you define it as usual and then mark it as "non-existing" in old versions:
 
 ```python
-from universi.structure import VersionChange, endpoint
+from cadwyn.structure import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
@@ -321,7 +321,7 @@ class MyChange(VersionChange):
 If you want to change any attribute of your endpoint in a new version, you can return the attribute's value in all older versions like so:
 
 ```python
-from universi.structure import VersionChange, endpoint
+from cadwyn.structure import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
@@ -333,7 +333,7 @@ class MyChange(VersionChange):
 
 #### Changing endpoint logic (Experimental)
 
-Oftentimes you change some of the logic of your endpoint in a way that is incompatible with or not yet supported by Universi's migrations. In order to combat this, we have come up with an ugly hack that allows you to change any detail about your endpoint's arguments or logic:
+Oftentimes you change some of the logic of your endpoint in a way that is incompatible with or not yet supported by Cadwyn's migrations. In order to combat this, we have come up with an ugly hack that allows you to change any detail about your endpoint's arguments or logic:
 
 ```python
 from fastapi.params import Param
@@ -356,7 +356,7 @@ class MyVersionChange(VersionChange):
         return get_users
 ```
 
-As you see, it's hacky in more ways than one. Any imports to your business logic must happen within the function to prevent circular dependencies and you have to have a function within a function as a result. It is therefore not advised to use this functionality unlesss absolutely required. I recommend to instead add an issue on our github. However, if Universi definitely cannot solve your problem -- this should be your "get out of jail free" card.
+As you see, it's hacky in more ways than one. Any imports to your business logic must happen within the function to prevent circular dependencies and you have to have a function within a function as a result. It is therefore not advised to use this functionality unlesss absolutely required. I recommend to instead add an issue on our github. However, if Cadwyn definitely cannot solve your problem -- this should be your "get out of jail free" card.
 
 #### Dealing with endpoint duplicates
 
@@ -366,7 +366,7 @@ Sometimes, when you're doing some advanced changes in between versions, you will
 from fastapi.params import Param
 from fastapi.headers import Header
 from typing import Annotated
-from universi import VersionedAPIRouter
+from cadwyn import VersionedAPIRouter
 
 router = VersionedAPIRouter()
 
@@ -384,10 +384,10 @@ def get_users_by_name(user_name: Annotated[str, Param()]):
     """Do some logic with user_name"""
 ```
 
-As you see, these two functions have the same methods and paths. And when you have many versions, you can have even more functions like these two. So how do we ask universi to restore only one of them and delete the other one?
+As you see, these two functions have the same methods and paths. And when you have many versions, you can have even more functions like these two. So how do we ask cadwyn to restore only one of them and delete the other one?
 
 ```python
-from universi.structure import VersionChange, endpoint
+from cadwyn.structure import VersionChange, endpoint
 
 
 class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
@@ -414,7 +414,7 @@ Note that adding enum members **can** be a breaking change unlike adding optiona
 So I suggest adding enum members in new versions as well.
 
 ```python
-from universi.structure import VersionChange, enum
+from cadwyn.structure import VersionChange, enum
 from enum import auto
 
 
@@ -428,7 +428,7 @@ class MyChange(VersionChange):
 #### Removing enum members
 
 ```python
-from universi.structure import VersionChange, enum
+from cadwyn.structure import VersionChange, enum
 
 
 class MyChange(VersionChange):
@@ -444,7 +444,7 @@ class MyChange(VersionChange):
 
 ```python
 from pydantic import Field
-from universi.structure import VersionChange, schema
+from cadwyn.structure import VersionChange, schema
 
 
 class MyChange(VersionChange):
@@ -484,7 +484,7 @@ class MySchema(BaseModel):
 #### Remove a field
 
 ```python
-from universi.structure import VersionChange, schema
+from cadwyn.structure import VersionChange, schema
 
 
 class MyChange(VersionChange):
@@ -497,7 +497,7 @@ class MyChange(VersionChange):
 #### Change a field
 
 ```python
-from universi.structure import VersionChange, schema
+from cadwyn.structure import VersionChange, schema
 
 
 class MyChange(VersionChange):
@@ -510,7 +510,7 @@ class MyChange(VersionChange):
 #### Add a property
 
 ```python
-from universi.structure import VersionChange, schema
+from cadwyn.structure import VersionChange, schema
 
 
 class MyChange(VersionChange):
@@ -526,7 +526,7 @@ class MyChange(VersionChange):
 #### Remove a property
 
 ```python
-from universi.structure import VersionChange, schema
+from cadwyn.structure import VersionChange, schema
 
 
 class MyChange(VersionChange):
@@ -541,7 +541,7 @@ class MyChange(VersionChange):
 If you wish to rename your schema to make sure that its name is different in openapi.json:
 
 ```python
-from universi.structure import VersionChange, schema
+from cadwyn.structure import VersionChange, schema
 
 
 class MyChange(VersionChange):
@@ -557,9 +557,9 @@ Note also that renaming a schema should not technically be a breaking change.
 
 ### Unions
 
-As you probably realize, when you have many versions with different request schemas and your business logic receives one of them -- you're in trouble. You could handle them all separately by checking the version of each schema and then using the correct logic for it but universi tries to offer something better.
+As you probably realize, when you have many versions with different request schemas and your business logic receives one of them -- you're in trouble. You could handle them all separately by checking the version of each schema and then using the correct logic for it but cadwyn tries to offer something better.
 
-Instead, we take a union of all of our request schemas and write our business logic as if it receives that union. For example, if version 2000 had field "foo" of type `str` and then version 2001 changed that field to type `int`, then a union of these schemas will have foo as `str | int` so your type checker will protect you against incorrect usage. Same goes for added/deleted fields. Obviously, manually importing all your schemas and then taking a union of them is tough, especially if you have many versions, which is why Universi not only generates a directory for each of your versions, but it also generates a "unions" directory that contains unions of all your schemas and enums.
+Instead, we take a union of all of our request schemas and write our business logic as if it receives that union. For example, if version 2000 had field "foo" of type `str` and then version 2001 changed that field to type `int`, then a union of these schemas will have foo as `str | int` so your type checker will protect you against incorrect usage. Same goes for added/deleted fields. Obviously, manually importing all your schemas and then taking a union of them is tough, especially if you have many versions, which is why Cadwyn not only generates a directory for each of your versions, but it also generates a "unions" directory that contains unions of all your schemas and enums.
 
 For example, if we had a schema named `MySchema` and two versions of it: 2000 and 2001, then the union definition will look like the following:
 
@@ -591,10 +591,10 @@ Note that this feature only affects type checking and does not affect your funct
 
 #### Response data conversion
 
-As described in the tutorial, universi can convert your response data into older versions. It does so by running your "migration" functions whenever it encounters a version change:
+As described in the tutorial, cadwyn can convert your response data into older versions. It does so by running your "migration" functions whenever it encounters a version change:
 
 ```python
-from universi.structure import VersionChange, convert_response_to_previous_version_for
+from cadwyn.structure import VersionChange, convert_response_to_previous_version_for
 from typing import Any
 
 
@@ -606,14 +606,14 @@ class ChangeAddressToList(VersionChange):
         data["address"] = data.pop("addresses")[0]
 ```
 
-It is done by applying `universi.VersionBundle.versioned(...)` decorator to each endpoint with the given `response_model` which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
+It is done by applying `cadwyn.VersionBundle.versioned(...)` decorator to each endpoint with the given `response_model` which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
 
-If you want to convert a specific response to a specific version, you can use `universi.VersionBundle.migrate_response(...)`.
+If you want to convert a specific response to a specific version, you can use `cadwyn.VersionBundle.migrate_response(...)`.
 
 #### Request data conversion (Experimental)
 
 ```python
-from universi.structure import VersionChange, convert_request_to_next_version_for
+from cadwyn.structure import VersionChange, convert_request_to_next_version_for
 from typing import Any
 from my_schemas.latest import UserCreateRequest
 
@@ -643,14 +643,14 @@ if api_version_var.get() >= date(2022, 11, 11):
     ...
 ```
 
-In universi, this approach is highly discouraged. It is recommended that you avoid side effects like this at any cost because each one makes your core logic harder to understand. But if you cannot, then I urge you to at least abstract away versions and versioning from your business logic which will make your code much easier to read.
+In cadwyn, this approach is highly discouraged. It is recommended that you avoid side effects like this at any cost because each one makes your core logic harder to understand. But if you cannot, then I urge you to at least abstract away versions and versioning from your business logic which will make your code much easier to read.
 
-To simplify this, universi has a special `VersionChangeWithSideEffects` class. It makes finding dangerous versions that have side effects much easier and provides a nice abstraction for checking whether we are on a version where these side effects have been applied.
+To simplify this, cadwyn has a special `VersionChangeWithSideEffects` class. It makes finding dangerous versions that have side effects much easier and provides a nice abstraction for checking whether we are on a version where these side effects have been applied.
 
 As an example, let's use the tutorial section's case with the user and their address. Let's say that we use an external service to check whether user's address is listed in it and return 400 response if it is not. Let's also say that we only added this check in the newest version.
 
 ```python
-from universi.structure import VersionChangeWithSideEffects
+from cadwyn.structure import VersionChangeWithSideEffects
 
 
 class UserAddressIsCheckedInExternalService(VersionChangeWithSideEffects):
@@ -676,11 +676,11 @@ So this change can be contained in any version -- your business logic doesn't kn
 
 ### API Version header and context variables
 
-Universi automatically converts your data to a correct version and has "version checks" when dealing with side effects as described in [the section above](#version-changes-with-side-effects). It can only do so using a special [context variable](https://docs.python.org/3/library/contextvars.html) that stores the current API version.
+Cadwyn automatically converts your data to a correct version and has "version checks" when dealing with side effects as described in [the section above](#version-changes-with-side-effects). It can only do so using a special [context variable](https://docs.python.org/3/library/contextvars.html) that stores the current API version.
 
-Use `universi.get_universi_dependency` to get a `fastapi.Depends` that automatically sets this contextvar based on a header name that you pick.
+Use `cadwyn.get_cadwyn_dependency` to get a `fastapi.Depends` that automatically sets this contextvar based on a header name that you pick.
 
-You can also set the variable yourself or even pass a different compatible contextvar to your `universi.VersionBundle` constructor.
+You can also set the variable yourself or even pass a different compatible contextvar to your `cadwyn.VersionBundle` constructor.
 
 ## Similar projects
 

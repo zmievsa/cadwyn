@@ -17,9 +17,9 @@ from fastapi.routing import _prepare_response_content
 from pydantic import BaseModel
 from typing_extensions import assert_never
 
-from universi.exceptions import UniversiError, UniversiStructureError
-from universi.structure.endpoints import AlterEndpointSubInstruction
-from universi.structure.enums import AlterEnumSubInstruction
+from cadwyn.exceptions import CadwynError, CadwynStructureError
+from cadwyn.structure.endpoints import AlterEndpointSubInstruction
+from cadwyn.structure.enums import AlterEnumSubInstruction
 
 from .._utils import Sentinel
 from .common import Endpoint, VersionDate, VersionedModel
@@ -33,8 +33,8 @@ from .data import (
 )
 from .schemas import AlterSchemaInstruction, AlterSchemaSubInstruction, SchemaPropertyDefinitionInstruction
 
-_UNIVERSI_REQUEST_PARAM_NAME = "universi_request_param"
-_UNIVERSI_RESPONSE_PARAM_NAME = "universi_response_param"
+_UNIVERSI_REQUEST_PARAM_NAME = "cadwyn_request_param"
+_UNIVERSI_RESPONSE_PARAM_NAME = "cadwyn_response_param"
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 PossibleInstructions: TypeAlias = (
@@ -74,7 +74,7 @@ class VersionChange:
                 cls.alter_schema_instructions.append(instruction)
             elif isinstance(instruction, AlterRequestBySchemaInstruction):
                 if instruction.schema in cls.alter_request_by_schema_instructions:
-                    raise UniversiStructureError(
+                    raise CadwynStructureError(
                         f'There already exists a request migration for "{instruction.schema.__name__}" '
                         f'in "{cls.__name__}".',
                     )
@@ -83,7 +83,7 @@ class VersionChange:
                 cls.alter_request_by_path_instructions[instruction.path].append(instruction)
             elif isinstance(instruction, AlterResponseBySchemaInstruction):
                 if instruction.schema in cls.alter_response_by_schema_instructions:
-                    raise UniversiStructureError(
+                    raise CadwynStructureError(
                         f'There already exists a response migration for "{instruction.schema.__name__}" '
                         f'in "{cls.__name__}".',
                     )
@@ -115,21 +115,21 @@ class VersionChange:
     @classmethod
     def _validate_subclass(cls):
         if cls.description is Sentinel:
-            raise UniversiStructureError(
+            raise CadwynStructureError(
                 f"Version change description is not set on '{cls.__name__}' but is required.",
             )
         if cls.instructions_to_migrate_to_previous_version is Sentinel:
-            raise UniversiStructureError(
+            raise CadwynStructureError(
                 f"Attribute 'instructions_to_migrate_to_previous_version' is not set on '{cls.__name__}'"
                 " but is required.",
             )
         if not isinstance(cls.instructions_to_migrate_to_previous_version, Sequence):
-            raise UniversiStructureError(
+            raise CadwynStructureError(
                 f"Attribute 'instructions_to_migrate_to_previous_version' must be a sequence in '{cls.__name__}'.",
             )
         for instruction in cls.instructions_to_migrate_to_previous_version:
             if not isinstance(instruction, PossibleInstructions):
-                raise UniversiStructureError(
+                raise CadwynStructureError(
                     f"Instruction '{instruction}' is not allowed. Please, use the correct instruction types",
                 )
         for attr_name, attr_value in cls.__dict__.items():
@@ -147,7 +147,7 @@ class VersionChange:
                 "__module__",
                 "__doc__",
             }:
-                raise UniversiStructureError(
+                raise CadwynStructureError(
                     f"Found: '{attr_name}' attribute of type '{type(attr_value)}' in '{cls.__name__}'."
                     " Only migration instructions and schema properties are allowed in version change class body.",
                 )
@@ -180,7 +180,7 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
             cls._bound_version_bundle is None
             or cls not in cls._bound_version_bundle._version_changes_to_version_mapping
         ):
-            raise UniversiError(
+            raise CadwynError(
                 f"You tried to check whether '{cls.__name__}' is active but it was never bound to any version.",
             )
         api_version = cls._bound_version_bundle.api_version_var.get()
@@ -207,7 +207,7 @@ class VersionBundle:
                 "Versions are not sorted correctly. Please sort them in descending order.",
             )
         if versions[-1].version_changes:
-            raise UniversiStructureError(
+            raise CadwynStructureError(
                 f'The first version "{versions[-1].value}" cannot have any version changes. '
                 "Version changes are defined to migrate to/from a previous version so you "
                 "cannot define one for the very first version.",
@@ -217,13 +217,13 @@ class VersionBundle:
             if version.value not in version_values:
                 version_values.add(version.value)
             else:
-                raise UniversiStructureError(
+                raise CadwynStructureError(
                     f"You tried to define two versions with the same value in the same "
                     f"{VersionBundle.__name__}: '{version.value}'.",
                 )
             for version_change in version.version_changes:
                 if version_change._bound_version_bundle is not None:
-                    raise UniversiStructureError(
+                    raise CadwynStructureError(
                         f"You tried to bind version change '{version_change.__name__}' to two different versions. "
                         "It is prohibited.",
                     )
@@ -282,7 +282,7 @@ class VersionBundle:
                             instruction(request_info)
         # TODO: Consider finding all private attributes and automatically assigning them to body after
         # solving dependencies. Not sure if it's a good idea though.
-        # TASK: https://github.com/Ovsyanka83/universi/issues/51
+        # TASK: https://github.com/Ovsyanka83/cadwyn/issues/51
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
         new_kwargs, errors, _, _, _ = await solve_dependencies(

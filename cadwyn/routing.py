@@ -37,17 +37,17 @@ from starlette.routing import (
 )
 from typing_extensions import assert_never
 
-from universi._utils import Sentinel, UnionType, get_another_version_of_module
-from universi.codegen import _get_package_path_from_module, _get_version_dir_path
-from universi.exceptions import ModuleIsNotVersionedError, RouteAlreadyExistsError, RouterGenerationError, UniversiError
-from universi.structure import Version, VersionBundle
-from universi.structure.common import Endpoint, VersionDate
-from universi.structure.endpoints import (
+from cadwyn._utils import Sentinel, UnionType, get_another_version_of_module
+from cadwyn.codegen import _get_package_path_from_module, _get_version_dir_path
+from cadwyn.exceptions import CadwynError, ModuleIsNotVersionedError, RouteAlreadyExistsError, RouterGenerationError
+from cadwyn.structure import Version, VersionBundle
+from cadwyn.structure.common import Endpoint, VersionDate
+from cadwyn.structure.endpoints import (
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from universi.structure.versions import _UNIVERSI_REQUEST_PARAM_NAME, _UNIVERSI_RESPONSE_PARAM_NAME, VersionChange
+from cadwyn.structure.versions import _UNIVERSI_REQUEST_PARAM_NAME, _UNIVERSI_RESPONSE_PARAM_NAME, VersionChange
 
 _T = TypeVar("_T", bound=Callable[..., Any])
 # This is a hack we do because we can't guarantee how the user will use the router.
@@ -89,7 +89,7 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
                 "Are you sure it's a route and decorators are in the correct order?",
             )
         if _DELETED_ROUTE_TAG in route.tags:
-            raise UniversiError(f'The route "{endpoint.__name__}" was already deleted. You can\'t delete it again.')
+            raise CadwynError(f'The route "{endpoint.__name__}" was already deleted. You can\'t delete it again.')
         route.tags.append(_DELETED_ROUTE_TAG)
         return endpoint
 
@@ -199,7 +199,7 @@ class _EndpointTransformer:
             ]
         return {version: router_info.router for version, router_info in router_infos.items()}
 
-    # TODO: Simplify https://github.com/Ovsyanka83/universi/issues/28
+    # TODO: Simplify https://github.com/Ovsyanka83/cadwyn/issues/28
     def _apply_endpoint_changes_to_router(  # noqa: C901
         self,
         router: fastapi.routing.APIRouter,
@@ -296,7 +296,7 @@ class _EndpointTransformer:
                                 f'Endpoint "{list(deleted_route.methods)} {deleted_route.path}" you tried to restore '
                                 f'in "{version_change.__name__}" has {len(routes_that_never_existed)} applicable '
                                 f"routes with the same function name and path that could be restored. This can cause "
-                                f"problems during version generation. Specifically, Universi won't be able to warn "
+                                f"problems during version generation. Specifically, Cadwyn won't be able to warn "
                                 f"you when you deleted a route and never restored it. Please, make sure that "
                                 f"functions for all these routes have different names: "
                                 f"{[f'{r.endpoint.__module__}.{r.endpoint.__name__}' for r in routes]}",
@@ -426,7 +426,7 @@ class _AnnotationTransformer:
         elif isinstance(annotation, type):
             return self._change_version_of_type(annotation, version_dir)
         elif callable(annotation):
-            # TASK: https://github.com/Ovsyanka83/universi/issues/48
+            # TASK: https://github.com/Ovsyanka83/cadwyn/issues/48
             if inspect.iscoroutinefunction(annotation):
 
                 @functools.wraps(annotation)
@@ -550,7 +550,7 @@ def _add_data_migrations_to_route(
             f'All versioned endpoints must be asynchronous. Endpoint "{route.endpoint}" is not.',
         )
     if not (route.dependant.request_param_name and route.dependant.response_param_name):  # pragma: no cover
-        raise UniversiError(
+        raise CadwynError(
             f"{route.dependant.request_param_name=}, {route.dependant.response_param_name=} "
             f"for route {list(route.methods)} {route.path} which should not be possible. Please, contact my author.",
         )

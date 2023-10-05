@@ -7,12 +7,12 @@ from typing import Any, ClassVar, ParamSpec, cast, overload
 from fastapi import Request, Response
 from starlette.datastructures import MutableHeaders
 
-from universi._utils import same_definition_as_in
+from cadwyn._utils import same_definition_as_in
 
 _P = ParamSpec("_P")
 
 
-# TODO: Add form handling https://github.com/Ovsyanka83/universi/issues/49
+# TODO: Add form handling https://github.com/Ovsyanka83/cadwyn/issues/49
 class RequestInfo:
     __slots__ = ("body", "headers", "_cookies", "_query_params", "_request")
 

@@ -1,15 +1,15 @@
 from fastapi.routing import APIRoute
 
 
-class UniversiError(Exception):
+class CadwynError(Exception):
     pass
 
 
-class LintingError(UniversiError):
+class LintingError(CadwynError):
     pass
 
 
-class CodeGenerationError(UniversiError):
+class CodeGenerationError(CadwynError):
     pass
 
 
@@ -17,7 +17,7 @@ class InvalidGenerationInstructionError(CodeGenerationError):
     pass
 
 
-class RouterGenerationError(UniversiError):
+class RouterGenerationError(CadwynError):
     pass
 
 
@@ -27,7 +27,7 @@ class RouteAlreadyExistsError(RouterGenerationError):
         super().__init__(f"The following routes are duplicates of each other: {routes}")
 
 
-class UniversiStructureError(UniversiError):
+class CadwynStructureError(CadwynError):
     pass
 
 

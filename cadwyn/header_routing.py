@@ -3,8 +3,8 @@ from types import ModuleType
 from fastapi import APIRouter
 from fastapi_header_versioning.fastapi import HeaderVersionedAPIRouter
 
-from universi.routing import generate_all_router_versions
-from universi.structure import VersionBundle
+from cadwyn.routing import generate_all_router_versions
+from cadwyn.structure import VersionBundle
 
 
 def get_versioned_router(

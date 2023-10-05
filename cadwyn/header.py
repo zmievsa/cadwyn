@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import Depends, Header
 
 
-def get_universi_dependency(
+def get_cadwyn_dependency(
     *,
     version_header_name: str,
     default_version: datetime.date | None = None,

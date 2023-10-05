@@ -26,13 +26,13 @@ from pydantic import BaseModel, Field, PrivateAttr
 from pydantic.fields import FieldInfo, ModelField, ModelPrivateAttr
 from typing_extensions import assert_never
 
-from universi.fields import FillableModelPrivateAttr
-from universi.structure.enums import (
+from cadwyn.fields import FillableModelPrivateAttr
+from cadwyn.structure.enums import (
     AlterEnumSubInstruction,
     EnumDidntHaveMembersInstruction,
     EnumHadMembersInstruction,
 )
-from universi.structure.schemas import (
+from cadwyn.structure.schemas import (
     AlterSchemaInstruction,
     AlterSchemaSubInstruction,
     OldSchemaFieldDidntExist,
@@ -41,7 +41,7 @@ from universi.structure.schemas import (
     SchemaPropertyDefinitionInstruction,
     SchemaPropertyDidntExistInstruction,
 )
-from universi.structure.versions import Version, VersionBundle
+from cadwyn.structure.versions import Version, VersionBundle
 
 from ._utils import Sentinel, UnionType, get_index_of_base_schema_dir_in_pythonpath
 from .exceptions import CodeGenerationError, InvalidGenerationInstructionError
@@ -525,11 +525,11 @@ def _generate_parallel_directory(
         )
     dir = _get_package_path_from_module(template_module)
     parallel_dir.mkdir(exist_ok=True)
-    # >>> [universi, structure, schemas]
+    # >>> [cadwyn, structure, schemas]
     template_module_python_path_parts = template_module.__name__.split(".")
-    # >>> [home, foo, bar, universi, structure, schemas]
+    # >>> [home, foo, bar, cadwyn, structure, schemas]
     template_module_path_parts = Path(template_module.__file__).parent.parts
-    # >>> [home, foo, bar] = [home, foo, bar, universi, structure, schemas][:-3]
+    # >>> [home, foo, bar] = [home, foo, bar, cadwyn, structure, schemas][:-3]
     root_module_path = Path(
         *template_module_path_parts[: -len(template_module_python_path_parts)],
     )

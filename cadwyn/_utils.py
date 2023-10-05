@@ -6,7 +6,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, TypeVar, Union
 
-from universi.exceptions import ModuleIsNotVersionedError, UniversiError
+from cadwyn.exceptions import CadwynError, ModuleIsNotVersionedError
 
 Sentinel: Any = object()
 UnionType = type(int | str) | type(Union[int, str])
@@ -65,7 +65,7 @@ def get_index_of_base_schema_dir_in_pythonpath(
     file = inspect.getsourcefile(module_from_old_version)
     if file is None:
         # Seems quite unnecessary to cover
-        raise UniversiError(
+        raise CadwynError(
             f"Model {module_from_old_version} is not defined in a file",
         )  # pragma: no cover
     # /home/myuser/package/companies/latest/__init__.py

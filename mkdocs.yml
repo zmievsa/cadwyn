@@ -1,4 +1,4 @@
-site_name: universi
+site_name: cadwyn
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true

@@ -11,19 +11,19 @@ from dirty_equals import IsPartialDict, IsStr
 from fastapi import Body, Cookie, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
 
+from cadwyn import VersionedAPIRouter
+from cadwyn.exceptions import CadwynStructureError
+from cadwyn.structure import (
+    VersionChange,
+    convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
+)
+from cadwyn.structure.data import RequestInfo, ResponseInfo
 from tests.conftest import (
     CreateVersionedClients,
     client,
     version_change,
 )
-from universi import VersionedAPIRouter
-from universi.exceptions import UniversiStructureError
-from universi.structure import (
-    VersionChange,
-    convert_request_to_next_version_for,
-    convert_response_to_previous_version_for,
-)
-from universi.structure.data import RequestInfo, ResponseInfo
 
 
 @pytest.fixture()
@@ -573,7 +573,7 @@ def test__invalid_schema_migration_syntax(latest_module):
 
 def test__defining_two_migrations_for_the_same_request(latest_module):
     with pytest.raises(
-        UniversiStructureError,
+        CadwynStructureError,
         match=re.escape('There already exists a request migration for "AnyRequestSchema" in "MyVersionChange".'),
     ):
 
@@ -590,7 +590,7 @@ def test__defining_two_migrations_for_the_same_request(latest_module):
 
 def test__defining_two_migrations_for_the_same_response(latest_module):
     with pytest.raises(
-        UniversiStructureError,
+        CadwynStructureError,
         match=re.escape('There already exists a response migration for "AnyResponseSchema" in "MyVersionChange".'),
     ):
 

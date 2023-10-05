@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from universi.exceptions import UniversiError, UniversiStructureError
-from universi.structure import (
+from cadwyn.exceptions import CadwynError, CadwynStructureError
+from cadwyn.structure import (
     Version,
     VersionBundle,
     VersionChange,
@@ -67,7 +67,7 @@ def versions(api_version_var: ContextVar[date | None]):
 class TestVersionChange:
     def test__description__not_set__should_raise_error(self):
         with pytest.raises(
-            UniversiStructureError,
+            CadwynStructureError,
             match=re.escape(
                 "Version change description is not set on 'DummySubClass' but is required.",
             ),
@@ -78,7 +78,7 @@ class TestVersionChange:
 
     def test__instructions_to_migrate_to_previous_version__not_set__should_raise_error(self):
         with pytest.raises(
-            UniversiStructureError,
+            CadwynStructureError,
             match=re.escape(
                 "Attribute 'instructions_to_migrate_to_previous_version' "
                 "is not set on 'DummySubClass' but is required.",
@@ -90,7 +90,7 @@ class TestVersionChange:
 
     def test__instructions_to_migrate_to_previous_version__not_a_sequence__should_raise_error(self):
         with pytest.raises(
-            UniversiStructureError,
+            CadwynStructureError,
             match=re.escape(
                 "Attribute 'instructions_to_migrate_to_previous_version' must be a sequence in 'DummySubClass'.",
             ),
@@ -102,7 +102,7 @@ class TestVersionChange:
 
     def test__instructions_to_migrate_to_previous_version__non_instruction_specified_in_list__should_raise_error(self):
         with pytest.raises(
-            UniversiStructureError,
+            CadwynStructureError,
             match=re.escape(
                 "Instruction 'True' is not allowed. Please, use the correct instruction types",
             ),
@@ -114,7 +114,7 @@ class TestVersionChange:
 
     def test__non_instruction_attribute_set__should_raise_error(self):
         with pytest.raises(
-            UniversiStructureError,
+            CadwynStructureError,
             match=re.escape(
                 "Found: 'dummy_attribute' attribute of type '<class 'str'>' in 'DummySubClass'. "
                 "Only migration instructions and schema properties are allowed in version change class body.",
@@ -215,7 +215,7 @@ class TestVersionChangeWithSideEffects:
     ):
         api_version_var.set(date(1999, 3, 1))
         with pytest.raises(
-            UniversiError,
+            CadwynError,
             match=re.escape(
                 "You tried to check whether 'DummySubClassWithoutVersion' "
                 "is active but it was never bound to any version.",
@@ -228,7 +228,7 @@ class TestVersionChangeWithSideEffects:
         dummy_sub_class_without_version: type[VersionChangeWithSideEffects],
     ):
         with pytest.raises(
-            UniversiError,
+            CadwynError,
             match=re.escape(
                 "You tried to check whether 'DummySubClassWithoutVersion' "
                 "is active but it was never bound to any version.",
@@ -262,7 +262,7 @@ class TestVersionBundle:
             api_version_var=api_version_var,
         )
         with pytest.raises(
-            UniversiStructureError,
+            CadwynStructureError,
             match=re.escape(
                 "You tried to bind version change 'DummySubClassWithoutVersion' to two different versions."
                 " It is prohibited.",
@@ -280,7 +280,7 @@ class TestVersionBundle:
         api_version_var: ContextVar[date | None],
     ):
         with pytest.raises(
-            UniversiStructureError,
+            CadwynStructureError,
             match=re.escape(
                 "You tried to bind version change 'DummySubClassWithoutVersion' to two different versions. "
                 "It is prohibited.",
@@ -298,7 +298,7 @@ class TestVersionBundle:
         api_version_var: ContextVar[date | None],
     ):
         with pytest.raises(
-            UniversiStructureError,
+            CadwynStructureError,
             match=re.escape(
                 "You tried to define two versions with the same value in the same VersionBundle: '2000-01-01'.",
             ),
@@ -315,7 +315,7 @@ class TestVersionBundle:
         api_version_var: ContextVar[date | None],
     ):
         with pytest.raises(
-            UniversiStructureError,
+            CadwynStructureError,
             match=re.escape(
                 'The first version "2000-01-01" cannot have any version changes. '
                 "Version changes are defined to migrate to/from a previous version "
@@ -389,7 +389,7 @@ def test__schema_property_was__property_with_wrong_number_of_args__should_raise_
         raise NotImplementedError
 
     with pytest.raises(
-        UniversiStructureError,
+        CadwynStructureError,
         match=re.escape("Property 'baz' must have one argument and it has 2"),
     ):
         schema(SomeSchema).property("baz").was(baz)
@@ -397,7 +397,7 @@ def test__schema_property_was__property_with_wrong_number_of_args__should_raise_
 
 def test__schema_field_existed_as_import_as__without_import_from__should_raise_error():
     with pytest.raises(
-        UniversiStructureError,
+        CadwynStructureError,
         match=re.escape('Field "baz" has "import_as" but not "import_from" which is prohibited'),
     ):
         schema(SomeSchema).field("baz").existed_as(type=str, import_as="MyStr")

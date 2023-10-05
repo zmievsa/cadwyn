@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field
 from pydantic.fields import FieldInfo
 
-from universi.exceptions import UniversiStructureError
+from cadwyn.exceptions import CadwynStructureError
 
 from .._utils import Sentinel
 
@@ -69,7 +69,7 @@ class OldSchemaFieldExistedWith:
 
     def __post_init__(self):
         if self.import_from is None and self.import_as is not None:
-            raise UniversiStructureError(
+            raise CadwynStructureError(
                 f'Field "{self.field_name}" has "import_as" but not "import_from" which is prohibited',
             )
 
@@ -179,7 +179,7 @@ class SchemaPropertyDefinitionInstruction:
     def __post_init__(self):
         sig = inspect.signature(self.function)
         if len(sig.parameters) != 1:
-            raise UniversiStructureError(
+            raise CadwynStructureError(
                 f"Property '{self.name}' must have one argument and it has {len(sig.parameters)}",
             )
         functools.update_wrapper(self, self.function)
