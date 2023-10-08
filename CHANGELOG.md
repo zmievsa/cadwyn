@@ -5,8 +5,6 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
-## [1.0.0] - 2023-10-08
-
 ### Added
 
 - Command-line interface capable of running code-generation and outputting version info.
