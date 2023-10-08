@@ -1,4 +1,4 @@
-from cadwyn.routing import generate_all_router_versions
+from cadwyn.routing import generate_versioned_routers
 
 if __name__ == "__main__":
     from datetime import date
@@ -7,14 +7,14 @@ if __name__ == "__main__":
     import uvicorn
     from fastapi import FastAPI
 
-    from cadwyn import regenerate_dir_to_all_versions
+    from cadwyn import generate_code_for_versioned_packages
     from tests.test_tutorial.test_users_example003.schemas import latest
     from tests.test_tutorial.test_users_example003.users import api_version_var, router, versions
     from tests.test_tutorial.utils import clean_versions
 
     try:
-        regenerate_dir_to_all_versions(latest, versions)
-        router_versions = generate_all_router_versions(
+        generate_code_for_versioned_packages(latest, versions)
+        router_versions = generate_versioned_routers(
             router,
             versions=versions,
             latest_schemas_module=latest,

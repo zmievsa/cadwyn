@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from fastapi_header_versioning.fastapi import HeaderRoutingFastAPI
 from fastapi_header_versioning.routing import HeaderVersionedAPIRouter
 
-from cadwyn import get_cadwyn_dependency, regenerate_dir_to_all_versions
+from cadwyn import generate_code_for_versioned_packages, get_cadwyn_dependency
 from cadwyn.header_routing import get_versioned_router
 
 from ..utils import clean_versions
@@ -25,7 +25,7 @@ def get_app(versioned_router: HeaderVersionedAPIRouter) -> HeaderRoutingFastAPI:
 
 @pytest.fixture(scope="module", autouse=True)
 def versioned_router() -> Generator[HeaderVersionedAPIRouter, None, None]:
-    regenerate_dir_to_all_versions(latest, versions)
+    generate_code_for_versioned_packages(latest, versions)
     try:
         yield get_versioned_router(router, versions=versions, latest_schemas_module=latest)
     finally:

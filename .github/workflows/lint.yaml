@@ -34,7 +34,7 @@ jobs:
             poetry-version: 1.2.0
 
       - name: Install dependencies
-        run: poetry install
+        run: poetry install --all-extras
 
       - name: Run pre-commit hooks
         uses: pre-commit/action@v3.0.0

@@ -134,7 +134,7 @@ class _SchemaBundle:
     schemas: dict[str, ModelInfo]
 
 
-def regenerate_dir_to_all_versions(
+def generate_code_for_versioned_packages(
     template_module: ModuleType,
     versions: VersionBundle,
 ):

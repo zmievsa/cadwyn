@@ -3,7 +3,7 @@ from types import ModuleType
 from fastapi import APIRouter
 from fastapi_header_versioning.fastapi import HeaderVersionedAPIRouter
 
-from cadwyn.routing import generate_all_router_versions
+from cadwyn.routing import generate_versioned_routers
 from cadwyn.structure import VersionBundle
 
 
@@ -12,7 +12,7 @@ def get_versioned_router(
     versions: VersionBundle,
     latest_schemas_module: ModuleType,
 ) -> HeaderVersionedAPIRouter:
-    router_versions = generate_all_router_versions(
+    router_versions = generate_versioned_routers(
         *routers,
         versions=versions,
         latest_schemas_module=latest_schemas_module,
