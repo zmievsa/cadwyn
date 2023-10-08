@@ -69,7 +69,7 @@ class _RouterInfo:
     route_bodies_with_migrated_requests: set[type[BaseModel]]
 
 
-def generate_all_router_versions(
+def generate_versioned_routers(
     *routers: fastapi.routing.APIRouter,
     versions: VersionBundle,
     latest_schemas_module: ModuleType,

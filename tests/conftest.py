@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from pytest_fixture_classes import fixture_class
 from typing_extensions import deprecated
 
-from cadwyn import VersionBundle, VersionedAPIRouter, generate_all_router_versions, regenerate_dir_to_all_versions
+from cadwyn import VersionBundle, VersionedAPIRouter, generate_code_for_versioned_packages, generate_versioned_routers
 from cadwyn.codegen import _get_version_dir_name
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
@@ -55,13 +55,18 @@ def data_dir(temp_dir: Path):
 
 
 @pytest.fixture()
-def data_package_name(temp_dir: Path, data_dir: Path) -> str:
+def data_package_path(temp_dir: Path, data_dir: Path) -> str:
     return f"tests.{temp_dir.name}.{data_dir.name}"
 
 
 @pytest.fixture()
-def latest_module(data_package_name: str) -> ModuleType:
-    return importlib.import_module(f"{data_package_name}.latest")
+def latest_module_path(data_package_path: str) -> str:
+    return f"{data_package_path}.latest"
+
+
+@pytest.fixture()
+def latest_module(latest_module_path: str) -> ModuleType:
+    return importlib.import_module(latest_module_path)
 
 
 @pytest.fixture()
@@ -71,23 +76,23 @@ def random_uuid():
 
 @fixture_class(name="run_schema_codegen")
 class RunSchemaCodegen:
-    data_package_name: str
+    data_package_path: str
 
     def __call__(self, versions: VersionBundle) -> Any:
-        latest_module = importlib.import_module(self.data_package_name + ".latest")
-        regenerate_dir_to_all_versions(latest_module, versions)
+        latest_module = importlib.import_module(self.data_package_path + ".latest")
+        generate_code_for_versioned_packages(latest_module, versions)
         return latest_module
 
 
 @fixture_class(name="create_versioned_schemas")
 class CreateVersionedSchemas:
     api_version_var: ContextVar[date | None]
-    data_package_name: str
+    data_package_path: str
 
     def __call__(self, *version_changes: type[VersionChange] | list[type[VersionChange]]) -> tuple[ModuleType, ...]:
         created_versions = versions(version_changes)
-        regenerate_dir_to_all_versions(
-            importlib.import_module(self.data_package_name + ".latest"),
+        generate_code_for_versioned_packages(
+            importlib.import_module(self.data_package_path + ".latest"),
             VersionBundle(
                 *created_versions,
                 api_version_var=self.api_version_var,
@@ -98,7 +103,7 @@ class CreateVersionedSchemas:
             reversed(
                 [
                     importlib.import_module(
-                        self.data_package_name + f".{_get_version_dir_name(version.value)}",
+                        self.data_package_path + f".{_get_version_dir_name(version.value)}",
                     )
                     for version in created_versions
                 ],
@@ -111,7 +116,7 @@ class CreateVersionedSchemas:
 @fixture_class(name="create_simple_versioned_schemas")
 class CreateSimpleVersionedSchemas:
     api_version_var: ContextVar[date | None]
-    data_package_name: str
+    data_package_path: str
     create_versioned_schemas: CreateVersionedSchemas
 
     def __call__(self, *instructions: Any) -> tuple[ModuleType, ...]:
@@ -151,14 +156,14 @@ def router() -> VersionedAPIRouter:
 class CreateVersionedRouters:
     api_version_var: ContextVar[date | None]
     router: VersionedAPIRouter
-    data_package_name: str
+    data_package_path: str
     run_schema_codegen: RunSchemaCodegen
 
     def __call__(self, *version_changes: type[VersionChange] | list[type[VersionChange]]) -> dict[date, APIRouter]:
         bundle = VersionBundle(*versions(version_changes), api_version_var=self.api_version_var)
         latest_module = self.run_schema_codegen(bundle)
 
-        return generate_all_router_versions(
+        return generate_versioned_routers(
             self.router,
             versions=bundle,
             latest_schemas_module=latest_module,

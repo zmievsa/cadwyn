@@ -12,7 +12,7 @@ from typing import Any, Union
 import pytest
 from pydantic import BaseModel, Field
 
-from cadwyn import regenerate_dir_to_all_versions
+from cadwyn import generate_code_for_versioned_packages
 from cadwyn.exceptions import (
     CodeGenerationError,
     InvalidGenerationInstructionError,
@@ -515,19 +515,19 @@ def test__enum_didnt_have__nonexisting_name__error(
 def test__with_deleted_source_file__error(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
-    data_package_name: str,
+    data_package_path: str,
     data_dir: Path,
     api_version_var: ContextVar[date | None],
 ):
     (data_dir / "latest/another_temp1").mkdir(exist_ok=True)
     (data_dir / "latest/another_temp1/hello.py").touch()
-    wrong_latest_module = importlib.import_module(data_package_name + ".latest.another_temp1.hello")
+    wrong_latest_module = importlib.import_module(data_package_path + ".latest.another_temp1.hello")
 
     with pytest.raises(
         CodeGenerationError,
         match=re.escape(f'Module "{wrong_latest_module}" is not a package'),
     ):
-        regenerate_dir_to_all_versions(
+        generate_code_for_versioned_packages(
             wrong_latest_module,
             VersionBundle(
                 Version(date(2000, 1, 1)),
@@ -549,7 +549,7 @@ def test__non_python_files__copied_to_all_dirs(
 def test__non_pydantic_schema__error(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
-    data_package_name,
+    data_package_path,
 ):
     with pytest.raises(
         CodeGenerationError,
@@ -613,14 +613,14 @@ def test__schema_field_existed_as__already_existing_field__should_raise_error(
 def test__schema_defined_in_a_non_init_file(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
-    data_package_name: str,
+    data_package_path: str,
 ):
-    module = importlib.import_module(data_package_name + ".latest.some_schema")
+    module = importlib.import_module(data_package_path + ".latest.some_schema")
 
     create_simple_versioned_schemas(schema(module.MySchema).field("foo").didnt_exist)
 
-    v2000 = importlib.import_module(data_package_name + ".v2000_01_01.some_schema")
-    v2001 = importlib.import_module(data_package_name + ".v2001_01_01.some_schema")
+    v2000 = importlib.import_module(data_package_path + ".v2000_01_01.some_schema")
+    v2001 = importlib.import_module(data_package_path + ".v2001_01_01.some_schema")
 
     assert inspect.getsource(v2000.MySchema) == "class MySchema(BaseModel):\n    pass\n"
     assert inspect.getsource(v2001.MySchema) == "class MySchema(BaseModel):\n    foo: int\n"
@@ -629,15 +629,15 @@ def test__schema_defined_in_a_non_init_file(
 def test__with_weird_data_types(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
-    data_package_name: str,
+    data_package_path: str,
 ):
-    weird_schemas = importlib.import_module(data_package_name + ".latest.weird_schemas")
+    weird_schemas = importlib.import_module(data_package_path + ".latest.weird_schemas")
     create_simple_versioned_schemas(
         schema(weird_schemas.ModelWithWeirdFields).field("bad").existed_as(type=int),
     )
 
-    v2000 = importlib.import_module(data_package_name + ".v2000_01_01.weird_schemas")
-    v2001 = importlib.import_module(data_package_name + ".v2001_01_01.weird_schemas")
+    v2000 = importlib.import_module(data_package_path + ".v2000_01_01.weird_schemas")
+    v2001 = importlib.import_module(data_package_path + ".v2001_01_01.weird_schemas")
 
     assert inspect.getsource(v2000.ModelWithWeirdFields) == (
         "class ModelWithWeirdFields(BaseModel):\n"
@@ -703,14 +703,14 @@ def test__imports_and_aliases(create_simple_versioned_schemas: CreateSimpleVersi
 def test__unions__init_file(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
-    data_package_name,
+    data_package_path,
 ):
     create_simple_versioned_schemas()
     v2000, v2001 = (
-        importlib.import_module(data_package_name + ".v2000_01_01"),
-        importlib.import_module(data_package_name + ".v2001_01_01"),
+        importlib.import_module(data_package_path + ".v2000_01_01"),
+        importlib.import_module(data_package_path + ".v2001_01_01"),
     )
-    unions = importlib.import_module(data_package_name + ".unions")
+    unions = importlib.import_module(data_package_path + ".unions")
 
     assert (
         unions.EnumWithOneMember == v2000.EnumWithOneMember | v2001.EnumWithOneMember | latest_module.EnumWithOneMember
@@ -724,17 +724,17 @@ def test__unions__init_file(
 def test__unions__regular_file(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
-    data_package_name: str,
+    data_package_path: str,
 ):
     create_simple_versioned_schemas()
-    latest = importlib.import_module(data_package_name + ".latest.some_schema")
-    unions = importlib.import_module(data_package_name + ".unions.some_schema")
-    v2000 = importlib.import_module(data_package_name + ".v2000_01_01.some_schema")
+    latest = importlib.import_module(data_package_path + ".latest.some_schema")
+    unions = importlib.import_module(data_package_path + ".unions.some_schema")
+    v2000 = importlib.import_module(data_package_path + ".v2000_01_01.some_schema")
 
     assert unions.MySchema == latest.MySchema | v2000.MySchema
 
 
-def test__property(api_version_var: ContextVar[date | None], latest_module: ModuleType, data_package_name: str):
+def test__property(api_version_var: ContextVar[date | None], latest_module: ModuleType, data_package_path: str):
     def baz_property(hewwo: Any):
         raise NotImplementedError
 
@@ -756,7 +756,7 @@ def test__property(api_version_var: ContextVar[date | None], latest_module: Modu
 
     assert VersionChange2.bar_property([]) == 83
 
-    regenerate_dir_to_all_versions(
+    generate_code_for_versioned_packages(
         latest_module,
         VersionBundle(
             Version(date(2002, 1, 1), VersionChange2),
@@ -766,9 +766,9 @@ def test__property(api_version_var: ContextVar[date | None], latest_module: Modu
         ),
     )
     v2000_01_01, v2001_01_01, v2002_01_01 = (
-        importlib.import_module(data_package_name + ".v2000_01_01"),
-        importlib.import_module(data_package_name + ".v2001_01_01"),
-        importlib.import_module(data_package_name + ".v2002_01_01"),
+        importlib.import_module(data_package_path + ".v2000_01_01"),
+        importlib.import_module(data_package_path + ".v2001_01_01"),
+        importlib.import_module(data_package_path + ".v2002_01_01"),
     )
 
     assert inspect.getsource(v2000_01_01.SchemaWithOneFloatField) == (
@@ -849,7 +849,7 @@ def test__property__there_is_already_field_with_the_same_name__error(
 def test__schema_had_name__dependent_schema_is_not_altered(
     api_version_var: ContextVar[date | None],
     latest_module,
-    data_package_name,
+    data_package_path,
 ):
     class VersionChange2(VersionChange):
         description = "..."
@@ -863,7 +863,7 @@ def test__schema_had_name__dependent_schema_is_not_altered(
             schema(latest_module.SchemaWithOneFloatField).had(name="MyFloatySchema2"),
         ]
 
-    regenerate_dir_to_all_versions(
+    generate_code_for_versioned_packages(
         latest_module,
         VersionBundle(
             Version(date(2002, 1, 1), VersionChange2),
@@ -874,9 +874,9 @@ def test__schema_had_name__dependent_schema_is_not_altered(
     )
 
     v2000_01_01, v2001_01_01, v2002_01_01 = (
-        importlib.import_module(data_package_name + ".v2000_01_01"),
-        importlib.import_module(data_package_name + ".v2001_01_01"),
-        importlib.import_module(data_package_name + ".v2002_01_01"),
+        importlib.import_module(data_package_path + ".v2000_01_01"),
+        importlib.import_module(data_package_path + ".v2001_01_01"),
+        importlib.import_module(data_package_path + ".v2002_01_01"),
     )
 
     assert inspect.getsource(v2000_01_01.MyFloatySchema2) == (
@@ -910,10 +910,10 @@ def test__schema_had_name__dependent_schema_is_not_altered(
         "        return SchemaWithOneFloatField(foo=3.14)  # pragma: no cover\n"
     )
 
-    some_schema_v2000 = importlib.import_module(data_package_name + ".v2000_01_01.some_schema")
-    some_schema_v2001 = importlib.import_module(data_package_name + ".v2001_01_01.some_schema")
-    some_schema_v2002 = importlib.import_module(data_package_name + ".v2002_01_01.some_schema")
-    unions = importlib.import_module(data_package_name + ".unions")
+    some_schema_v2000 = importlib.import_module(data_package_path + ".v2000_01_01.some_schema")
+    some_schema_v2001 = importlib.import_module(data_package_path + ".v2001_01_01.some_schema")
+    some_schema_v2002 = importlib.import_module(data_package_path + ".v2002_01_01.some_schema")
+    unions = importlib.import_module(data_package_path + ".unions")
 
     assert inspect.getsource(some_schema_v2000.SchemaThatDependsOnAnotherSchema) == (
         "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: MyFloatySchema2\n    bar: int\n"
@@ -928,18 +928,18 @@ def test__schema_had_name__dependent_schema_is_not_altered(
     )
 
     assert str(unions.SchemaWithOneFloatField) == (
-        f"{data_package_name}.latest.SchemaWithOneFloatField | "
-        f"{data_package_name}.v2001_01_01.MyFloatySchema | "
-        f"{data_package_name}.v2000_01_01.MyFloatySchema2"
+        f"{data_package_path}.latest.SchemaWithOneFloatField | "
+        f"{data_package_path}.v2001_01_01.MyFloatySchema | "
+        f"{data_package_path}.v2000_01_01.MyFloatySchema2"
     )
 
 
 def test__schema_had_name__dependent_schema_is_altered(
     api_version_var: ContextVar[date | None],
     latest_module,
-    data_package_name,
+    data_package_path,
 ):
-    some_schema = importlib.import_module(data_package_name + ".latest.some_schema")
+    some_schema = importlib.import_module(data_package_path + ".latest.some_schema")
 
     class VersionChange2(VersionChange):
         description = "..."
@@ -956,7 +956,7 @@ def test__schema_had_name__dependent_schema_is_altered(
             schema(latest_module.SchemaThatDependsOnAnotherSchema).field("gaz").didnt_exist,
         ]
 
-    regenerate_dir_to_all_versions(
+    generate_code_for_versioned_packages(
         latest_module,
         VersionBundle(
             Version(date(2002, 1, 1), VersionChange2),
@@ -967,9 +967,9 @@ def test__schema_had_name__dependent_schema_is_altered(
     )
 
     v2000_01_01, v2001_01_01, v2002_01_01 = (
-        importlib.import_module(data_package_name + ".v2000_01_01"),
-        importlib.import_module(data_package_name + ".v2001_01_01"),
-        importlib.import_module(data_package_name + ".v2002_01_01"),
+        importlib.import_module(data_package_path + ".v2000_01_01"),
+        importlib.import_module(data_package_path + ".v2001_01_01"),
+        importlib.import_module(data_package_path + ".v2002_01_01"),
     )
 
     assert inspect.getsource(v2000_01_01.MyFloatySchema2) == (
@@ -1006,10 +1006,10 @@ def test__schema_had_name__dependent_schema_is_altered(
         "    def baz(self, daz: SchemaWithOneFloatField) -> SchemaWithOneFloatField:\n"
         "        return SchemaWithOneFloatField(foo=3.14)  # pragma: no cover\n"
     )
-    some_schema_v2000 = importlib.import_module(data_package_name + ".v2000_01_01.some_schema")
-    some_schema_v2001 = importlib.import_module(data_package_name + ".v2001_01_01.some_schema")
-    some_schema_v2002 = importlib.import_module(data_package_name + ".v2002_01_01.some_schema")
-    unions = importlib.import_module(data_package_name + ".unions")
+    some_schema_v2000 = importlib.import_module(data_package_path + ".v2000_01_01.some_schema")
+    some_schema_v2001 = importlib.import_module(data_package_path + ".v2001_01_01.some_schema")
+    some_schema_v2002 = importlib.import_module(data_package_path + ".v2002_01_01.some_schema")
+    unions = importlib.import_module(data_package_path + ".unions")
 
     assert inspect.getsource(some_schema_v2000.SchemaThatDependsOnAnotherSchema) == (
         "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: MyFloatySchema2 = Field()\n"
@@ -1024,9 +1024,9 @@ def test__schema_had_name__dependent_schema_is_altered(
     )
 
     assert str(unions.SchemaWithOneFloatField) == (
-        f"{data_package_name}.latest.SchemaWithOneFloatField | "
-        f"{data_package_name}.v2001_01_01.MyFloatySchema | "
-        f"{data_package_name}.v2000_01_01.MyFloatySchema2"
+        f"{data_package_path}.latest.SchemaWithOneFloatField | "
+        f"{data_package_path}.v2001_01_01.MyFloatySchema | "
+        f"{data_package_path}.v2000_01_01.MyFloatySchema2"
     )
 
 
@@ -1051,7 +1051,7 @@ def test__schema_had_name__trying_to_assign_to_the_same_name__should_raise_error
 
 def test__union_generation__convert_request_to_next_version_for_one_schema__one_schema_is_skipped(
     api_version_var: ContextVar[date | None],
-    data_package_name: str,
+    data_package_path: str,
     latest_module: ModuleType,
 ):
     class VersionChange2(VersionChange):
@@ -1066,7 +1066,7 @@ def test__union_generation__convert_request_to_next_version_for_one_schema__one_
         description = "..."
         instructions_to_migrate_to_previous_version = []
 
-    regenerate_dir_to_all_versions(
+    generate_code_for_versioned_packages(
         latest_module,
         VersionBundle(
             Version(date(2002, 1, 1), VersionChange2),
@@ -1076,8 +1076,8 @@ def test__union_generation__convert_request_to_next_version_for_one_schema__one_
         ),
     )
 
-    v2000 = importlib.import_module(data_package_name + ".v2000_01_01")
-    unions = importlib.import_module(data_package_name + ".unions")
+    v2000 = importlib.import_module(data_package_path + ".v2000_01_01")
+    unions = importlib.import_module(data_package_path + ".unions")
 
     assert unions.SchemaWithOneIntField == latest_module.SchemaWithOneIntField | v2000.SchemaWithOneIntField
 
@@ -1085,7 +1085,7 @@ def test__union_generation__convert_request_to_next_version_for_one_schema__one_
 def test__union_generation__convert_request_to_next_version_for_all_schemas__all_schemas_are_skipped(
     api_version_var: ContextVar[date | None],
     latest_module: ModuleType,
-    data_package_name: str,
+    data_package_path: str,
 ):
     class VersionChange2(VersionChange):
         description = "..."
@@ -1103,7 +1103,7 @@ def test__union_generation__convert_request_to_next_version_for_all_schemas__all
         def migrate(request: RequestInfo) -> None:
             raise NotImplementedError
 
-    regenerate_dir_to_all_versions(
+    generate_code_for_versioned_packages(
         latest_module,
         VersionBundle(
             Version(date(2002, 1, 1), VersionChange2),
@@ -1113,6 +1113,6 @@ def test__union_generation__convert_request_to_next_version_for_all_schemas__all
         ),
     )
 
-    unions = importlib.import_module(data_package_name + ".unions")
+    unions = importlib.import_module(data_package_path + ".unions")
 
     assert unions.SchemaWithOneIntField == latest_module.SchemaWithOneIntField

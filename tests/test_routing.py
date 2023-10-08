@@ -17,7 +17,7 @@ from starlette.responses import FileResponse
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn.exceptions import CadwynError, RouterGenerationError
-from cadwyn.routing import generate_all_router_versions
+from cadwyn.routing import generate_versioned_routers
 from cadwyn.structure import Version, endpoint, schema
 from cadwyn.structure.enums import enum
 from cadwyn.structure.versions import VersionChange
@@ -89,7 +89,7 @@ def test__router_generation__forgot_to_generate_schemas__error(
         RouterGenerationError,
         match="Versioned schema directory '.+' does not exist.",
     ):
-        generate_all_router_versions(
+        generate_versioned_routers(
             router,
             versions=VersionBundle(
                 Version(date(2000, 1, 1)),
@@ -190,7 +190,7 @@ def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
         api_version_var=api_version_var,
     )
     latest_module = run_schema_codegen(versions)
-    routers = generate_all_router_versions(
+    routers = generate_versioned_routers(
         router,
         versions=versions,
         latest_schemas_module=latest_module,
@@ -576,7 +576,7 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
         api_version_var=api_version_var,
     )
     latest_module = run_schema_codegen(versions)
-    routers = generate_all_router_versions(
+    routers = generate_versioned_routers(
         router,
         versions=versions,
         latest_schemas_module=latest_module,
@@ -648,9 +648,9 @@ def test__router_generation__non_api_route_added(
 def test__router_generation__updating_response_model_when_schema_is_defined_in_a_non_init_file(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
-    data_package_name: str,
+    data_package_path: str,
 ):
-    module = importlib.import_module(data_package_name + ".latest.some_schema")
+    module = importlib.import_module(data_package_path + ".latest.some_schema")
 
     @router.get("/test", response_model=module.MySchema)
     async def test():
@@ -666,7 +666,7 @@ def test__router_generation__updating_response_model_when_schema_is_defined_in_a
 def test__router_generation__updating_response_model(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
-    data_package_name: str,
+    data_package_path: str,
     latest_module: ModuleType,
 ):
     @router.get(
@@ -683,11 +683,11 @@ def test__router_generation__updating_response_model(
     assert len(routes_2000) == len(routes_2001) == 1
     assert (
         routes_2000[0].response_model
-        == dict[str, list[importlib.import_module(data_package_name + ".v2000_01_01").SchemaWithOnePydanticField]]
+        == dict[str, list[importlib.import_module(data_package_path + ".v2000_01_01").SchemaWithOnePydanticField]]
     )
     assert (
         routes_2001[0].response_model
-        == dict[str, list[importlib.import_module(data_package_name + ".v2001_01_01").SchemaWithOnePydanticField]]
+        == dict[str, list[importlib.import_module(data_package_path + ".v2001_01_01").SchemaWithOnePydanticField]]
     )
 
     assert get_nested_field_type(routes_2000[0].response_model) == list[str]
@@ -697,7 +697,7 @@ def test__router_generation__updating_response_model(
 def test__router_generation__using_non_latest_version_of_schema__should_raise_error(
     router: VersionedAPIRouter,
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
-    data_package_name: str,
+    data_package_path: str,
     latest_module: ModuleType,
     api_version_var,
 ):
@@ -709,12 +709,12 @@ def test__router_generation__using_non_latest_version_of_schema__should_raise_er
 
     with pytest.raises(
         RouterGenerationError,
-        match=f"\"<class \\'{data_package_name}.v2000_01_01\\.SchemaWithOnePydanticField\\'>\" "
+        match=f"\"<class \\'{data_package_path}.v2000_01_01\\.SchemaWithOnePydanticField\\'>\" "
         f'is not defined in ".+latest" even though it must be\\. It is defined in ".+v2000_01_01"\\. '
         "It probably means that you used a specific version of the class in "
         'fastapi dependencies or pydantic schemas instead of "latest"\\.',
     ):
-        generate_all_router_versions(
+        generate_versioned_routers(
             router,
             versions=VersionBundle(
                 Version(date(2001, 1, 1)),
@@ -727,10 +727,10 @@ def test__router_generation__using_non_latest_version_of_schema__should_raise_er
 
 def test__router_generation__using_unversioned_schema_from_versioned_base_dir__should_not_raise_error(
     router: VersionedAPIRouter,
-    data_package_name: str,
+    data_package_path: str,
     create_versioned_routers: CreateVersionedRouters,
 ):
-    module = importlib.import_module(f"{data_package_name}.unversioned_schema_dir")
+    module = importlib.import_module(f"{data_package_path}.unversioned_schema_dir")
 
     @router.post("/testik")
     async def testik(body: module.UnversionedSchema2):  # pyright: ignore
@@ -743,13 +743,13 @@ def test__router_generation__passing_a_module_instead_of_package_for_latest__sho
     api_version_var: ContextVar[date | None],
     run_schema_codegen: RunSchemaCodegen,
     router: VersionedAPIRouter,
-    data_package_name: str,
+    data_package_path: str,
 ):
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
             f"The latest schemas module must be a package. "
-            f'"{data_package_name}.latest.weird_schemas" is not a package.',
+            f'"{data_package_path}.latest.weird_schemas" is not a package.',
         ),
     ):
         versions = VersionBundle(
@@ -758,9 +758,9 @@ def test__router_generation__passing_a_module_instead_of_package_for_latest__sho
             api_version_var=api_version_var,
         )
         run_schema_codegen(versions)
-        module = importlib.import_module(data_package_name + ".latest.weird_schemas")
+        module = importlib.import_module(data_package_path + ".latest.weird_schemas")
 
-        generate_all_router_versions(
+        generate_versioned_routers(
             router,
             versions=versions,
             latest_schemas_module=module,
@@ -768,7 +768,7 @@ def test__router_generation__passing_a_module_instead_of_package_for_latest__sho
 
 
 def test__router_generation__passing_a_package_with_wrong_name_instead_of_latest__should_raise_error(
-    data_package_name: str,
+    data_package_path: str,
     api_version_var: ContextVar[date | None],
     run_schema_codegen: RunSchemaCodegen,
     router: VersionedAPIRouter,
@@ -776,7 +776,7 @@ def test__router_generation__passing_a_package_with_wrong_name_instead_of_latest
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            f'The name of the latest schemas module must be "latest". Received "{data_package_name}" instead.',
+            f'The name of the latest schemas module must be "latest". Received "{data_package_path}" instead.',
         ),
     ):
         versions = VersionBundle(
@@ -785,9 +785,9 @@ def test__router_generation__passing_a_package_with_wrong_name_instead_of_latest
             api_version_var=api_version_var,
         )
         run_schema_codegen(versions)
-        module = importlib.import_module(data_package_name)
+        module = importlib.import_module(data_package_path)
 
-        generate_all_router_versions(
+        generate_versioned_routers(
             router,
             versions=versions,
             latest_schemas_module=module,
@@ -798,7 +798,7 @@ def test__router_generation__updating_request_models(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
     latest_module: ModuleType,
-    data_package_name: str,
+    data_package_path: str,
 ):
     @router.get("/test")
     async def test(body: dict[str, list[latest_module.SchemaWithOnePydanticField]]):
@@ -808,8 +808,8 @@ def test__router_generation__updating_request_models(
         version_change(schema(latest_module.SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
     schemas_2000, schemas_2001 = (
-        importlib.import_module(data_package_name + ".v2000_01_01"),
-        importlib.import_module(data_package_name + ".v2001_01_01"),
+        importlib.import_module(data_package_path + ".v2000_01_01"),
+        importlib.import_module(data_package_path + ".v2001_01_01"),
     )
     assert len(routes_2000) == len(routes_2001) == 1
     assert (
@@ -993,7 +993,7 @@ def test__cascading_router_exists(
         api_version_var=api_version_var,
     )
     run_schema_codegen(versions)
-    routers = generate_all_router_versions(router, versions=versions, latest_schemas_module=latest_module)
+    routers = generate_versioned_routers(router, versions=versions, latest_schemas_module=latest_module)
 
     assert client(routers[date(2002, 1, 1)]).get("/test").json() == {
         "detail": "Not Found",
@@ -1027,7 +1027,7 @@ def test__cascading_router_didnt_exist(
         api_version_var=api_version_var,
     )
     run_schema_codegen(versions)
-    routers = generate_all_router_versions(router, versions=versions, latest_schemas_module=latest_module)
+    routers = generate_versioned_routers(router, versions=versions, latest_schemas_module=latest_module)
 
     assert client(routers[date(2002, 1, 1)]).get("/test").json() == 83
 
@@ -1067,7 +1067,7 @@ def test__generate_all_router_versions__two_routers(
         api_version_var=api_version_var,
     )
     run_schema_codegen(versions)
-    routers = generate_all_router_versions(router, router2, versions=versions, latest_schemas_module=latest_module)
+    routers = generate_versioned_routers(router, router2, versions=versions, latest_schemas_module=latest_module)
     assert len(routers[date(2001, 1, 1)].routes) == 2
     assert len(routers[date(2000, 1, 1)].routes) == 1
     assert {

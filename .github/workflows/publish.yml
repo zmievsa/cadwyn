@@ -19,7 +19,7 @@ jobs:
         with:
           poetry-version: 1.2.0
       - name: Install dependencies
-        run: poetry install
+        run: poetry install --all-extras
       - name: Build
         run: poetry build
       - name: Publish
