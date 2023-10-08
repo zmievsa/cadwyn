@@ -91,8 +91,7 @@ async def get_user(user_id: int):
 During our development, we have realized that the initial API design was wrong and that addresses should have always been a list because the user wants to have multiple addresses to choose from so now we have to change the type of the "address" field to the list of strings.
 
 ```python
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 
 class UserCreateRequest(BaseModel):
@@ -137,6 +136,8 @@ from cadwyn.structure import (
     schema,
     VersionChange,
     convert_response_to_previous_version_for,
+    RequestInfo,
+    ResponseInfo,
 )
 
 
@@ -153,19 +154,18 @@ class ChangeAddressToList(VersionChange):
         schema(UserResource).field("address").existed_as(type=str, info=Field()),
     ]
 
-    @convert_response_to_previous_version_for(UserResource)
-    def change_addresses_to_single_item(payload: dict[str, Any]) -> None:
-        data["address"] = data.pop("addresses")[0]
+    @convert_request_to_next_version_for(UserCreateRequest)
+    def change_address_to_multiple_items(request: RequestInfo):
+        request.body["addresses"] = [request.body.pop("address")]
 
-    # Note that this approach is outdated and it is now recommended to use request migrations
-    @schema(UserCreateRequest).property("addresses").was
-    def addresses_property(parsed_schema):
-        return [parsed_schema.address]
+    @convert_response_to_previous_version_for(UserResource)
+    def change_addresses_to_single_item(response: ResponseInfo) -> None:
+        response.body["address"] = response.body.pop("addresses")[0]
 ```
 
 See how we are popping the first address from the list? This is only guaranteed to be possible because we specified earlier that `min_items` for `addresses` must be `1`. If we didn't, then the user would be able to create a user in a newer version that would be impossible to represent in the older version. I.e. If anyone tried to get that user from the older version, they would get a `ResponseValidationError` because the user wouldn't have data for a mandatory `address` field. You need to always keep in mind tht API versioning is only for versioning your **API**, your interface. Your versions must still be completely compatible in terms of data. If they are not, then you are versioning your data and you should really go with a separate app instance. Otherwise, your users will have a hard time migrating back and forth between API versions and so many unexpected errors.
 
-See how we added the `addresses` property? This simple instruction will allow us to use `addresses` even from the old schema, which means that our api route will not need to know anything about versioning. The main goal of cadwyn is to shift the logic of versioning away from your business logic and api endpoints which makes your project easier to navigate and which makes deleting versions a breeze.
+See how we added a migration not only for response but also for request? This will allow our business logic to stay completely the same, no matter which version it was called from. Cadwyn will always give your business logic the request model from the latest version or from a custom schema [if you want to](#internal-request-schemas).
 
 ### Grouping Version Changes
 
@@ -203,7 +203,7 @@ uvicorn.run(router_versions[date(2002, 1, 1)])
 
 Cadwyn has generated multiple things in this code:
 
-* Three versions of our schemas: one for each API version and one that includes definitions of unions of all versions for each schema which will be useful when you want to type check that you are using requests of different versions correctly. For example, we'll have `UserCreateRequest` defined there which is a `TypeAlias` pointing to the union of 2002 version and 2001 version of `UserCreateRequest`.
+* Two versions of our schemas: one for each API version
 * Two versions of our API router: one for each API version
 
 You can now just pick a router by its version and run it separately or use a parent router/app to specify the logic by which you'd like to pick a version. I recommend using a header-based router with version dates as headers. And yes, that's how Stripe does it.
@@ -219,10 +219,8 @@ Please, see [tutorial examples](https://github.com/Ovsyanka83/cadwyn/tree/main/t
 ## Important warnings
 
 1. The goal of Cadwyn is to **minimize** the impact of versioning on your business logic. It provides all necessary tools to prevent you from **ever** checking for a concrete version in your code. So please, if you are tempted to check something like `api_version_var.get() >= date(2022, 11, 11)` -- please, take another look into [reference](#version-changes-with-side-effects) section. I am confident that you will find a better solution there.
-2. Cadwyn does not include a header-based router like FastAPI. We hope that soon a framework for header-based routing will surface which will allow cadwyn to be a full versioning solution.
-3. I ask you to be very detailed in your descriptions for version changes. Spending these 5 extra minutes will potentially save you tens of hours in the future when everybody forgets when, how, and why the version change was made.
-4. We migrate responses backwards in versions from the latest version using data migration functions and requests forward in versions until the latest version using properties on pydantic models.
-5. Cadwyn doesn't edit your imports when generating schemas so if you make any imports from versioned code to versioned code, I would suggest using [relative imports](https://docs.python.org/3/reference/import.html#package-relative-imports) to make sure that they will still work as expected after code generation.
+2. I ask you to be very detailed in your descriptions for version changes. Spending these 5 extra minutes will potentially save you tens of hours in the future when everybody forgets when, how, and why the version change was made.
+3. Cadwyn doesn't edit your imports when generating schemas so if you make any imports from versioned code to versioned code, I would suggest using [relative imports](https://docs.python.org/3/reference/import.html#package-relative-imports) to make sure that they will still work as expected after code generation.
 
 ## Reference
 
@@ -448,34 +446,6 @@ class MyChange(VersionChange):
     ]
 ```
 
-#### Add a property
-
-```python
-from cadwyn.structure import VersionChange, schema
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = []
-
-    @schema(MySchema).property("foo").was
-    def any_name_here(parsed_schema):
-        return parsed_schema.some_other_field
-```
-
-#### Remove a property
-
-```python
-from cadwyn.structure import VersionChange, schema
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = [
-        schema(MySchema).property("foo").didnt_exist,
-    ]
-```
-
 #### Rename a schema
 
 If you wish to rename your schema to make sure that its name is different in openapi.json:
@@ -492,60 +462,6 @@ class MyChange(VersionChange):
 ```
 
 which will replace all references to this schema with the new name.
-
-#### Private fields
-
-The perfect Cadwyn workflow consists of migrating all responses to earlier versions and all requests to latest version automatically. However, it is not always easily possible. For example, if there is more data in older requests than in newer requests, how do we push this data into newer request schemas? They don't have any field for it and we cannot add a field because we don't want our API users to see this field.
-
-[Private attrs](https://docs.pydantic.dev/latest/usage/models/#private-model-attributes) come to the rescue. They allow you to define fields that won't appear in openapi, won't be validated, and won't appear in `__init__` so our API clients won't be able to use them no matter how hard they try. However, now we have a problem: **we** also cannot use them to push information from old versions into new versions because these attrs don't appear in `__init__`. That's why we have `FillablePrivateAttr`. They are the same as private attrs except that you can set them in model's `__init__` automatically. Note that `FillablePrivateAttrMixin` is required to use them.
-
-```python
-from pydantic import BaseModel
-
-from cadwyn.fields import FillablePrivateAttr, FillablePrivateAttrMixin
-
-
-class UserCreateRequest(FillablePrivateAttrMixin, BaseModel):
-    default_address: str
-    _addresses_to_create: list[str] = FillablePrivateAttr(default_factory=list)
-
-
-UserCreateRequest(
-    default_address="My street", _addresses_to_create=["My address 2", "My address 3"]
-)
-```
-
-#### Unions
-
-As you probably realize, when you have many versions with different request schemas and your business logic receives one of them -- you're in trouble. You could handle them all separately by checking the version of each schema and then using the correct logic for it but cadwyn tries to offer something better.
-
-Instead, we take a union of all of our request schemas and write our business logic as if it receives that union. For example, if version 2000 had field "foo" of type `str` and then version 2001 changed that field to type `int`, then a union of these schemas will have foo as `str | int` so your type checker will protect you against incorrect usage. Same goes for added/deleted fields. Obviously, manually importing all your schemas and then taking a union of them is tough, especially if you have many versions, which is why Cadwyn not only generates a directory for each of your versions, but it also generates a "unions" directory that contains unions of all your schemas and enums.
-
-For example, if we had a schema named `MySchema` and two versions of it: 2000 and 2001, then the union definition will look like the following:
-
-```python
-from ..latest import my_schema_module as latest_my_schema_module
-from ..v2000_01_01 import my_schema_module as v2000_01_01_my_schema_module
-from ..v2001_01_01 import my_schema_module as v2001_01_01_my_schema_module
-
-MySchema = (
-    latest_my_schema_module.MySchema
-    | v2000_01_01_my_schema_module.MySchema
-    | v2001_01_01_my_schema_module.MySchema
-)
-```
-
-and you would be able to use it like so:
-
-```python
-from src.schemas.unions.my_schema_module import MySchema
-
-
-async def the_entrypoint_of_my_business_logic(request_payload: MySchema):
-    ...
-```
-
-Note that this feature only affects type checking and does not affect your functionality. Note also that every [request migration](#request-data-migration) that affects a specific body schema will automatically make Cadwyn omit the body schema from  that version in unions.
 
 ### Data migration
 
@@ -583,6 +499,26 @@ class ChangeAddressToList(VersionChange):
     def change_addresses_to_single_item(request: RequestInfo) -> None:
         request.body["addresses"] = [request.body.pop("address")]
 ```
+
+#### Internal request schemas
+
+Let's say our `CreateUserRequest` had a field `email` which was `str | None` in version 1 but became a required `str` in version 2. How do we migrate our request from version 1 to version 2? The schema from version 2 will simply raise an error if you try to put a `None` into the `email` field.
+
+That's because the understanding that you migrate your requests to the latest schema is incomplete. In reality, your goal is to migrate them to some schema that represents the union of all schemas. Latest schema is the best candidate because our business logic is closest to it and API changes are usually additive in nature. But as you see from the aforementioned situation, that's not always the case, which is why sometimes we need another schema: an internal representation of the request which not confined by our API and can have any structure we want. Now let's solve our email problem using an internal schema.
+
+```python
+from .versioned_schemas.latest import CreateUserRequest
+from cadwyn import internal_representation_of
+
+
+@internal_representation_of(CreateUserRequest)
+class InternalCreateUserRequest(CreateUserRequest):
+    email: str | None
+```
+
+Now cadwyn will always use `InternalCreateUserRequest` when pushing body field into your business logic instead of `CreateUserRequest`. Note that users will not be able to use any fields from the internal schema and their requests will still be validated by your regular schemas. So even if you added a field `foo` in an internal schema, and your user has passed this field in the body of the request, this field will not get to the internal schema because it will be removed at the moment of validation (or even an error will occur if you use `extra="ignore"`).
+
+I would, however, advise you put it in an unversioned directory and inherit it from your latest schema to minimize the chance of human errors.
 
 ### Version changes with side effects
 

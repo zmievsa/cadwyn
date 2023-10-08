@@ -31,10 +31,10 @@ from .data import (
     RequestInfo,
     ResponseInfo,
 )
-from .schemas import AlterSchemaInstruction, AlterSchemaSubInstruction, SchemaPropertyDefinitionInstruction
+from .schemas import AlterSchemaInstruction, AlterSchemaSubInstruction
 
-_UNIVERSI_REQUEST_PARAM_NAME = "cadwyn_request_param"
-_UNIVERSI_RESPONSE_PARAM_NAME = "cadwyn_response_param"
+_CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
+_CADWYN_RESPONSE_PARAM_NAME = "cadwyn_response_param"
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 PossibleInstructions: TypeAlias = (
@@ -70,9 +70,7 @@ class VersionChange:
     @classmethod
     def _extract_body_instructions_into_correct_containers(cls):
         for instruction in cls.__dict__.values():
-            if isinstance(instruction, SchemaPropertyDefinitionInstruction):
-                cls.alter_schema_instructions.append(instruction)
-            elif isinstance(instruction, AlterRequestBySchemaInstruction):
+            if isinstance(instruction, AlterRequestBySchemaInstruction):
                 if instruction.schema in cls.alter_request_by_schema_instructions:
                     raise CadwynStructureError(
                         f'There already exists a request migration for "{instruction.schema.__name__}" '
@@ -135,8 +133,7 @@ class VersionChange:
         for attr_name, attr_value in cls.__dict__.items():
             if not isinstance(
                 attr_value,
-                SchemaPropertyDefinitionInstruction
-                | AlterRequestBySchemaInstruction
+                AlterRequestBySchemaInstruction
                 | AlterRequestByPathInstruction
                 | AlterResponseBySchemaInstruction
                 | AlterResponseByPathInstruction,
@@ -280,11 +277,11 @@ class VersionBundle:
                     for instruction in version_change.alter_request_by_path_instructions[path]:
                         if method in instruction.methods:
                             instruction(request_info)
-        # TODO: Consider finding all private attributes and automatically assigning them to body after
-        # solving dependencies. Not sure if it's a good idea though.
+
         # TASK: https://github.com/Ovsyanka83/cadwyn/issues/51
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
+        # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
         new_kwargs, errors, _, _, _ = await solve_dependencies(
             request=request,
             response=response,
@@ -373,10 +370,10 @@ class VersionBundle:
                     response,
                 )
 
-            if request_param_name == _UNIVERSI_REQUEST_PARAM_NAME:
-                _add_keyword_only_parameter(decorator, _UNIVERSI_REQUEST_PARAM_NAME, FastapiRequest)
-            if response_param_name == _UNIVERSI_RESPONSE_PARAM_NAME:
-                _add_keyword_only_parameter(decorator, _UNIVERSI_RESPONSE_PARAM_NAME, FastapiResponse)
+            if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
+                _add_keyword_only_parameter(decorator, _CADWYN_REQUEST_PARAM_NAME, FastapiRequest)
+            if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
+                _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
 
             return decorator  # pyright: ignore[reportGeneralTypeIssues]
 
@@ -392,7 +389,7 @@ class VersionBundle:
         kwargs: dict[str, Any],
         fastapi_response_dependency: FastapiResponse,
     ) -> Any:
-        if response_param_name == _UNIVERSI_RESPONSE_PARAM_NAME:
+        if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
             kwargs.pop(response_param_name)
         # TODO: Verify that we handle fastapi.Response here
         # TODO: Verify that we handle fastapi.Response descendants
@@ -433,7 +430,7 @@ class VersionBundle:
         self,
         template_module_body_field_for_request_migrations: type[BaseModel] | None,
         body_field_alias: str | None,
-        dependant_of_version_to_which_we_ultimately_migrate_request: Dependant,
+        dependant_of_latest_version: Dependant,
         request_param_name: str,
         kwargs: dict[str, Any],
         response: FastapiResponse,
@@ -441,7 +438,7 @@ class VersionBundle:
         is_single_body_field: bool,
     ):
         request: FastapiRequest = kwargs[request_param_name]
-        if request_param_name == _UNIVERSI_REQUEST_PARAM_NAME:
+        if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
             kwargs.pop(request_param_name)
 
         api_version = self.api_version_var.get()
@@ -470,14 +467,14 @@ class VersionBundle:
         request_info = RequestInfo(request, body)
         new_kwargs = await self._migrate_request(
             template_module_body_field_for_request_migrations,
-            dependant_of_version_to_which_we_ultimately_migrate_request,
+            dependant_of_latest_version,
             request,
             response,
             request_info,
             api_version,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
-        if request_param_name == _UNIVERSI_REQUEST_PARAM_NAME:
+        if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
             new_kwargs.pop(request_param_name)
 
         return new_kwargs

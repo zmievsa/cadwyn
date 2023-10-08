@@ -2,14 +2,31 @@ import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, ParamSpec, cast, overload
+from typing import Any, ClassVar, ParamSpec, TypeVar, cast, overload
 
 from fastapi import Request, Response
+from pydantic import BaseModel
 from starlette.datastructures import MutableHeaders
 
 from cadwyn._utils import same_definition_as_in
 
 _P = ParamSpec("_P")
+_T_MODEL = TypeVar("_T_MODEL", bound=type[BaseModel])
+_SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING = {}
+
+
+def internal_body_representation_of(represents: type[BaseModel], /) -> Callable[[_T_MODEL], _T_MODEL]:
+    def inner(cls: _T_MODEL) -> _T_MODEL:
+        if represents in _SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING:
+            preexisting_representation = _SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING[represents]
+            raise TypeError(
+                f"{represents.__name__} already has an internal request body representation: "
+                f"{preexisting_representation.__module__}.{preexisting_representation.__name__}",
+            )
+        _SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING[represents] = cls
+        return cls
+
+    return inner
 
 
 # TODO: Add form handling https://github.com/Ovsyanka83/cadwyn/issues/49

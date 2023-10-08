@@ -16,6 +16,7 @@ from cadwyn.structure import (
     convert_response_to_previous_version_for,
     schema,
 )
+from cadwyn.structure.data import internal_body_representation_of
 
 
 class DummySubClass2000_001(VersionChangeWithSideEffects):  # noqa: N801
@@ -384,20 +385,27 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
             raise NotImplementedError
 
 
-def test__schema_property_was__property_with_wrong_number_of_args__should_raise_error():
-    def baz(hello: Any, world: Any):
-        raise NotImplementedError
-
-    with pytest.raises(
-        CadwynStructureError,
-        match=re.escape("Property 'baz' must have one argument and it has 2"),
-    ):
-        schema(SomeSchema).property("baz").was(baz)
-
-
 def test__schema_field_existed_as_import_as__without_import_from__should_raise_error():
     with pytest.raises(
         CadwynStructureError,
         match=re.escape('Field "baz" has "import_as" but not "import_from" which is prohibited'),
     ):
         schema(SomeSchema).field("baz").existed_as(type=str, import_as="MyStr")
+
+
+def test__internal_body_representation_of__specifying_schema_twice():
+    class A(BaseModel):
+        pass
+
+    @internal_body_representation_of(A)
+    class B(A):
+        pass
+
+    with pytest.raises(
+        TypeError,
+        match=re.escape("A already has an internal request body representation: tests.test_structure.B"),
+    ):
+
+        @internal_body_representation_of(A)
+        class C(A):
+            pass

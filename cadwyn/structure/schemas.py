@@ -1,5 +1,3 @@
-import functools
-import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -164,53 +162,7 @@ class AlterFieldInstructionFactory:
         )
 
 
-@dataclass(slots=True)
-class SchemaPropertyDidntExistInstruction:
-    schema: type[BaseModel]
-    name: str
-
-
-@dataclass
-class SchemaPropertyDefinitionInstruction:
-    schema: type[BaseModel]
-    name: str
-    function: Callable
-
-    def __post_init__(self):
-        sig = inspect.signature(self.function)
-        if len(sig.parameters) != 1:
-            raise CadwynStructureError(
-                f"Property '{self.name}' must have one argument and it has {len(sig.parameters)}",
-            )
-        functools.update_wrapper(self, self.function)
-
-    def __call__(self, __parsed_schema: BaseModel):
-        return self.function(__parsed_schema)
-
-
-@dataclass(slots=True)
-class AlterPropertyInstructionFactory:
-    schema: type[BaseModel]
-    name: str
-    if TYPE_CHECKING:
-        was = staticmethod
-    else:
-
-        def was(self, function: Callable) -> SchemaPropertyDefinitionInstruction:
-            return SchemaPropertyDefinitionInstruction(self.schema, self.name, function)
-
-    @property
-    def didnt_exist(self) -> SchemaPropertyDidntExistInstruction:
-        return SchemaPropertyDidntExistInstruction(self.schema, self.name)
-
-
-AlterSchemaSubInstruction = (
-    OldSchemaFieldHad
-    | OldSchemaFieldDidntExist
-    | OldSchemaFieldExistedWith
-    | SchemaPropertyDidntExistInstruction
-    | SchemaPropertyDefinitionInstruction
-)
+AlterSchemaSubInstruction = OldSchemaFieldHad | OldSchemaFieldDidntExist | OldSchemaFieldExistedWith
 
 
 @dataclass(slots=True)
@@ -228,9 +180,6 @@ class AlterSchemaSubInstructionFactory:
 
     def had(self, *, name: str) -> AlterSchemaInstruction:
         return AlterSchemaInstruction(self.schema, name)
-
-    def property(self, name: str, /) -> AlterPropertyInstructionFactory:
-        return AlterPropertyInstructionFactory(self.schema, name)
 
 
 def schema(model: type[BaseModel], /) -> AlterSchemaSubInstructionFactory:

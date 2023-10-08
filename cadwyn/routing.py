@@ -30,6 +30,7 @@ from fastapi.dependencies.utils import (
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
+from pydantic.fields import ModelField
 from starlette._utils import is_async_callable  # pyright: ignore[reportMissingImports]
 from starlette.routing import (
     BaseRoute,
@@ -42,16 +43,17 @@ from cadwyn.codegen import _get_package_path_from_module, _get_version_dir_path
 from cadwyn.exceptions import CadwynError, ModuleIsNotVersionedError, RouteAlreadyExistsError, RouterGenerationError
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionDate
+from cadwyn.structure.data import _SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING
 from cadwyn.structure.endpoints import (
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from cadwyn.structure.versions import _UNIVERSI_REQUEST_PARAM_NAME, _UNIVERSI_RESPONSE_PARAM_NAME, VersionChange
+from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionChange
 
 _T = TypeVar("_T", bound=Callable[..., Any])
 # This is a hack we do because we can't guarantee how the user will use the router.
-_DELETED_ROUTE_TAG = "_UNIVERSI_DELETED_ROUTE"
+_DELETED_ROUTE_TAG = "_CADWYN_DELETED_ROUTE"
 EndpointPath: TypeAlias = str
 EndpointMethod: TypeAlias = str
 
@@ -82,8 +84,8 @@ def generate_versioned_routers(
 
 class VersionedAPIRouter(fastapi.routing.APIRouter):
     def only_exists_in_older_versions(self, endpoint: _T) -> _T:
-        index, route = _get_index_and_route_from_func(self.routes, endpoint)
-        if index is None or route is None:
+        route = _get_route_from_func(self.routes, endpoint)
+        if route is None:
             raise LookupError(
                 f'Route not found on endpoint: "{endpoint.__name__}". '
                 "Are you sure it's a route and decorators are in the correct order?",
@@ -110,7 +112,7 @@ class _EndpointTransformer:
         ]
 
     def transform(self):
-        router = self.parent_router
+        router = deepcopy(self.parent_router)
         router_infos: dict[VersionDate, _RouterInfo] = {}
         routes_with_migrated_requests = {}
         route_bodies_with_migrated_requests: set[type[BaseModel]] = set()
@@ -139,33 +141,41 @@ class _EndpointTransformer:
                 "The following routes have been marked with that decorator but were never restored: "
                 f"{self.routes_that_never_existed}",
             )
-        latest_router_info = next(iter(router_infos.values()))
 
         # BEWARE: We assume that the order of routes didn't change.
         # TODO: Make a test suite checking that it doesn't change
-        for route_index, latest_route in enumerate(latest_router_info.router.routes):
+        for route_index, latest_route in enumerate(self.parent_router.routes):
             if not isinstance(latest_route, APIRoute):
                 continue
-            _add_data_migrations_to_route(
-                latest_route,
-                latest_route.body_field.type_ if latest_route.body_field is not None else None,
-                latest_route.body_field.alias if latest_route.body_field is not None else None,
-                latest_route.dependant,
-                latest_route.response_model,
-                self.versions,
-            )
-            dependant = latest_route.dependant
-            for (_api_version, newer_router_info), older_router_info in zip(
-                router_infos.items(),
-                list(router_infos.values())[1:],
-                strict=False,
-            ):
-                newer_route = newer_router_info.router.routes[route_index]
+            _add_request_and_response_params(latest_route)
+            copy_of_dependant = deepcopy(latest_route.dependant)
+            # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
+            if len(copy_of_dependant.body_params) == 1:
+                body_param: ModelField = cast(ModelField, copy_of_dependant.body_params[0])
+                body_schema = body_param.type_
+                # TODO: Verify that this doesn't break at pydantic 2
+                new_type = _SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING.get(body_schema, body_schema)
+                new_body_param = ModelField(
+                    name=body_param.name,
+                    type_=new_type,
+                    class_validators=body_param.class_validators,
+                    model_config=body_param.model_config,
+                    default=body_param.default,
+                    default_factory=body_param.default_factory,
+                    required=body_param.required,
+                    final=body_param.final,
+                    alias=body_param.alias if body_param.has_alias else None,
+                    field_info=body_param.field_info,
+                )
+                copy_of_dependant.body_params = [new_body_param]  # pyright: ignore[reportGeneralTypeIssues]
+
+            for older_router_info in list(router_infos.values()):
                 older_route = older_router_info.router.routes[route_index]
 
                 # We know they are APIRoutes because of the check at the very beginning of the top loop.
                 # I.e. Because latest_route is an APIRoute, both routes are  APIRoutes too
-                newer_route, older_route = cast(APIRoute, newer_route), cast(APIRoute, older_route)
+                older_route = cast(APIRoute, older_route)
+                # Wait.. Why do we need this code again?
                 if older_route.body_field is not None and len(older_route.dependant.body_params) == 1:
                     template_older_body_model = self.annotation_transformer._change_version_of_annotations(
                         older_route.body_field.type_,
@@ -173,20 +183,11 @@ class _EndpointTransformer:
                     )
                 else:
                     template_older_body_model = None
-                if (
-                    older_route.path in newer_router_info.routes_with_migrated_requests
-                    # TODO: Raise error if we get a partial match here such as:
-                    # TODO  route.methods = GET, POST; migrated = GET.
-                    and older_route.methods <= newer_router_info.routes_with_migrated_requests[older_route.path]
-                ) or (template_older_body_model in older_router_info.route_bodies_with_migrated_requests):
-                    pass
-                else:
-                    dependant = older_route.dependant
                 _add_data_migrations_to_route(
                     older_route,
                     template_older_body_model,
                     older_route.body_field.alias if older_route.body_field is not None else None,
-                    dependant,
+                    copy_of_dependant,
                     # NOTE: The fact that we use latest here assumes that the route can never change its response schema
                     latest_route.response_model,
                     self.versions,
@@ -524,10 +525,7 @@ class _AnnotationTransformer:
 
 def _remake_endpoint_dependencies(route: fastapi.routing.APIRoute):
     route.dependant = get_dependant(path=route.path_format, call=route.endpoint)
-    if not route.dependant.request_param_name:
-        route.dependant.request_param_name = _UNIVERSI_REQUEST_PARAM_NAME
-    if not route.dependant.response_param_name:
-        route.dependant.response_param_name = _UNIVERSI_RESPONSE_PARAM_NAME
+    _add_request_and_response_params(route)
     route.body_field = get_body_field(dependant=route.dependant, name=route.unique_id)
     for depends in route.dependencies[::-1]:
         route.dependant.dependencies.insert(
@@ -535,6 +533,13 @@ def _remake_endpoint_dependencies(route: fastapi.routing.APIRoute):
             get_parameterless_sub_dependant(depends=depends, path=route.path_format),
         )
     route.app = request_response(route.get_route_handler())
+
+
+def _add_request_and_response_params(route: APIRoute):
+    if not route.dependant.request_param_name:
+        route.dependant.request_param_name = _CADWYN_REQUEST_PARAM_NAME
+    if not route.dependant.response_param_name:
+        route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
 
 
 def _add_data_migrations_to_route(
@@ -637,14 +642,14 @@ def _get_routes(
     return found_routes
 
 
-def _get_index_and_route_from_func(
+def _get_route_from_func(
     routes: Sequence[BaseRoute],
     endpoint: Endpoint,
-) -> tuple[int, fastapi.routing.APIRoute] | tuple[None, None]:
-    for index, route in enumerate(routes):
+) -> fastapi.routing.APIRoute | None:
+    for route in routes:
         if isinstance(route, fastapi.routing.APIRoute) and (route.endpoint == endpoint):
-            return index, route
-    return None, None
+            return route
+    return None
 
 
 def _get_migrated_routes_by_path(version: Version) -> dict[EndpointPath, set[EndpointMethod]]:

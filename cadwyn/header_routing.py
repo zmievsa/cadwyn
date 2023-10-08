@@ -7,7 +7,7 @@ from cadwyn.routing import generate_versioned_routers
 from cadwyn.structure import VersionBundle
 
 
-def get_versioned_router(
+def _get_versioned_router(
     *routers: APIRouter,
     versions: VersionBundle,
     latest_schemas_module: ModuleType,

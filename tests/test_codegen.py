@@ -24,7 +24,6 @@ from cadwyn.structure import (
     enum,
     schema,
 )
-from cadwyn.structure.data import RequestInfo, convert_request_to_next_version_for
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schemas import UnversionedSchema3
 from tests.conftest import CreateSimpleVersionedSchemas, CreateVersionedSchemas, version_change
@@ -157,7 +156,7 @@ def test__field_existed_as__original_schema_has_a_field(
 
     assert (
         inspect.getsource(v2001_01_01.SchemaWithOneStrField)
-        == 'class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default="foo")\n'
+        == "class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default='foo')\n"
     )
 
 
@@ -176,7 +175,7 @@ def test__field_existed_as__extras_are_added__should_generate_properly(
     )
     assert (
         inspect.getsource(v2001_01_01.SchemaWithExtras)
-        == 'class SchemaWithExtras(BaseModel):\n    foo: str = Field(lulz="foo")\n'
+        == "class SchemaWithExtras(BaseModel):\n    foo: str = Field(lulz='foo')\n"
     )
 
 
@@ -192,7 +191,7 @@ def test__schema_field_didnt_exist(
 
     assert (
         inspect.getsource(v2001_01_01.SchemaWithOneStrField)
-        == 'class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default="foo")\n'
+        == "class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default='foo')\n"
     )
 
 
@@ -210,50 +209,6 @@ def test__schema_field_didnt_exist__field_is_missing__should_raise_error(
         create_simple_versioned_schemas(
             schema(latest_module.SchemaWithOneStrField).field("bar").didnt_exist,
         )
-
-
-def test__schema_field_didnt_exist__field_is_private(
-    create_versioned_schemas: CreateVersionedSchemas,
-    latest_module: ModuleType,
-):
-    v2000, v2001 = create_versioned_schemas(
-        version_change(
-            schema(latest_module.SchemaWithPrivateAttrs).field("_non_fillable_attr").didnt_exist,
-        ),
-    )
-
-    assert inspect.getsource(v2000.SchemaWithPrivateAttrs) == (
-        "class SchemaWithPrivateAttrs(FillablePrivateAttrMixin, BaseModel):\n"
-        "    _fillable_attr: str = FillablePrivateAttr()\n"
-    )
-
-    assert inspect.getsource(v2001.SchemaWithPrivateAttrs) == (
-        "class SchemaWithPrivateAttrs(FillablePrivateAttrMixin, BaseModel):\n"
-        '    _non_fillable_attr: str = PrivateAttr(default="hewwo")\n'
-        "    _fillable_attr: str = FillablePrivateAttr()\n"
-    )
-
-
-def test__schema_field_didnt_exist__field_is_fillable_private(
-    create_versioned_schemas: CreateVersionedSchemas,
-    latest_module: ModuleType,
-):
-    v2000, v2001 = create_versioned_schemas(
-        version_change(
-            schema(latest_module.SchemaWithPrivateAttrs).field("_fillable_attr").didnt_exist,
-        ),
-    )
-
-    assert inspect.getsource(v2000.SchemaWithPrivateAttrs) == (
-        "class SchemaWithPrivateAttrs(FillablePrivateAttrMixin, BaseModel):\n"
-        "    _non_fillable_attr: str = PrivateAttr(default='hewwo')\n"
-    )
-
-    assert inspect.getsource(v2001.SchemaWithPrivateAttrs) == (
-        "class SchemaWithPrivateAttrs(FillablePrivateAttrMixin, BaseModel):\n"
-        '    _non_fillable_attr: str = PrivateAttr(default="hewwo")\n'
-        "    _fillable_attr: str = FillablePrivateAttr()\n"
-    )
 
 
 @pytest.mark.parametrize(
@@ -347,8 +302,7 @@ def test__field_had__constrained_field(
     )
 
     assert inspect.getsource(v2001.SchemaWithConstrainedInt) == (
-        "class SchemaWithConstrainedInt(BaseModel):\n"
-        "    foo: conint(lt=CONINT_LT_ALIAS)  # pyright: ignore[reportGeneralTypeIssues]\n"
+        "class SchemaWithConstrainedInt(BaseModel):\n    foo: conint(strict=False, lt=10) = Field()\n"
     )
 
 
@@ -465,25 +419,6 @@ def test__schema_field_had__nonexistent_field__should_raise_error(
         )
 
 
-def test__schema_field_had__trying_to_change_private_attr__should_raise_error(
-    create_versioned_schemas: CreateVersionedSchemas,
-    latest_module: ModuleType,
-):
-    # with insert_pytest_raises():
-    with pytest.raises(
-        InvalidGenerationInstructionError,
-        match=re.escape(
-            'You tried to change the type of field "_non_fillable_attr" from "SchemaWithPrivateAttrs" in '
-            '"MyVersionChange" but it is a private attribute and private attributes cannot be edited.',
-        ),
-    ):
-        create_versioned_schemas(
-            version_change(
-                schema(latest_module.SchemaWithPrivateAttrs).field("_non_fillable_attr").had(type=int),
-            ),
-        )
-
-
 def test__enum_had__same_name_as_other_value__error(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
@@ -577,7 +512,7 @@ def test__schema_that_overrides_fields_from_mro(
 
     assert (
         inspect.getsource(v2001_01_01.SchemaThatOverridesField)
-        == "class SchemaThatOverridesField(SchemaWithOneIntField):\n    foo: bytes\n"
+        == "class SchemaThatOverridesField(SchemaWithOneIntField):\n    foo: bytes = Field()\n"
     )
 
 
@@ -623,7 +558,7 @@ def test__schema_defined_in_a_non_init_file(
     v2001 = importlib.import_module(data_package_path + ".v2001_01_01.some_schema")
 
     assert inspect.getsource(v2000.MySchema) == "class MySchema(BaseModel):\n    pass\n"
-    assert inspect.getsource(v2001.MySchema) == "class MySchema(BaseModel):\n    foo: int\n"
+    assert inspect.getsource(v2001.MySchema) == "class MySchema(BaseModel):\n    foo: int = Field()\n"
 
 
 def test__with_weird_data_types(
@@ -649,9 +584,9 @@ def test__with_weird_data_types(
 
     assert inspect.getsource(v2001.ModelWithWeirdFields) == (
         "class ModelWithWeirdFields(BaseModel):\n"
-        '    foo: dict = Field(default={"a": "b"})\n'
+        "    foo: dict = Field(default={'a': 'b'})\n"
         "    bar: list[int] = Field(default_factory=my_default_factory)\n"
-        "    baz: Literal[MyEnum.baz]\n"
+        "    baz: typing.Literal[MyEnum.baz] = Field()\n"
     )
 
 
@@ -669,7 +604,9 @@ def test__union_fields(create_simple_versioned_schemas: CreateSimpleVersionedSch
         "    daz: typing.Union[int, EmptySchema] = Field()\n"
     )
     assert inspect.getsource(v2001_01_01.SchemaWithUnionFields) == (
-        "class SchemaWithUnionFields(BaseModel):\n    foo: int | str\n    bar: EmptySchema | None\n"
+        "class SchemaWithUnionFields(BaseModel):\n"
+        "    foo: typing.Union[int, str] = Field()\n"
+        "    bar: typing.Union[EmptySchema, None] = Field()\n"
     )
 
 
@@ -698,152 +635,6 @@ def test__imports_and_aliases(create_simple_versioned_schemas: CreateSimpleVersi
     assert inspect.getsource(v2001_01_01.EmptySchemaWithArbitraryTypesAllowed) == (
         "class EmptySchemaWithArbitraryTypesAllowed(BaseModel, arbitrary_types_allowed=True):\n    pass\n"
     )
-
-
-def test__unions__init_file(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
-    latest_module: ModuleType,
-    data_package_path,
-):
-    create_simple_versioned_schemas()
-    v2000, v2001 = (
-        importlib.import_module(data_package_path + ".v2000_01_01"),
-        importlib.import_module(data_package_path + ".v2001_01_01"),
-    )
-    unions = importlib.import_module(data_package_path + ".unions")
-
-    assert (
-        unions.EnumWithOneMember == v2000.EnumWithOneMember | v2001.EnumWithOneMember | latest_module.EnumWithOneMember
-    )
-    assert (
-        unions.SchemaWithOneIntField
-        == v2000.SchemaWithOneIntField | v2001.SchemaWithOneIntField | latest_module.SchemaWithOneIntField
-    )
-
-
-def test__unions__regular_file(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
-    latest_module: ModuleType,
-    data_package_path: str,
-):
-    create_simple_versioned_schemas()
-    latest = importlib.import_module(data_package_path + ".latest.some_schema")
-    unions = importlib.import_module(data_package_path + ".unions.some_schema")
-    v2000 = importlib.import_module(data_package_path + ".v2000_01_01.some_schema")
-
-    assert unions.MySchema == latest.MySchema | v2000.MySchema
-
-
-def test__property(api_version_var: ContextVar[date | None], latest_module: ModuleType, data_package_path: str):
-    def baz_property(hewwo: Any):
-        raise NotImplementedError
-
-    class VersionChange2(VersionChange):
-        description = "..."
-        instructions_to_migrate_to_previous_version = (
-            schema(latest_module.SchemaWithOneFloatField).property("baz").was(baz_property),
-        )
-
-        @schema(latest_module.SchemaWithOneFloatField).property("bar").was
-        def bar_property(arg1: list[str]):
-            return 83
-
-    class VersionChange1(VersionChange):
-        description = "..."
-        instructions_to_migrate_to_previous_version = (
-            schema(latest_module.SchemaWithOneFloatField).property("bar").didnt_exist,
-        )
-
-    assert VersionChange2.bar_property([]) == 83
-
-    generate_code_for_versioned_packages(
-        latest_module,
-        VersionBundle(
-            Version(date(2002, 1, 1), VersionChange2),
-            Version(date(2001, 1, 1), VersionChange1),
-            Version(date(2000, 1, 1)),
-            api_version_var=api_version_var,
-        ),
-    )
-    v2000_01_01, v2001_01_01, v2002_01_01 = (
-        importlib.import_module(data_package_path + ".v2000_01_01"),
-        importlib.import_module(data_package_path + ".v2001_01_01"),
-        importlib.import_module(data_package_path + ".v2002_01_01"),
-    )
-
-    assert inspect.getsource(v2000_01_01.SchemaWithOneFloatField) == (
-        "class SchemaWithOneFloatField(BaseModel):\n"
-        "    foo: float = Field()\n\n"
-        "    @property\n"
-        "    def baz(hewwo):\n"
-        "        raise NotImplementedError\n"
-    )
-
-    assert inspect.getsource(v2001_01_01.SchemaWithOneFloatField) == (
-        "class SchemaWithOneFloatField(BaseModel):\n"
-        "    foo: float = Field()\n\n"
-        "    @property\n"
-        "    def baz(hewwo):\n"
-        "        raise NotImplementedError\n\n"
-        "    @property\n"
-        "    def bar(arg1):\n"
-        "        return 83\n"
-    )
-
-    assert inspect.getsource(v2002_01_01.SchemaWithOneFloatField) == (
-        "class SchemaWithOneFloatField(BaseModel):\n    foo: float\n"
-    )
-
-
-def test__delete_nonexistent_property(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
-    latest_module: ModuleType,
-):
-    with pytest.raises(
-        InvalidGenerationInstructionError,
-        match=re.escape(
-            'You tried to delete a property "bar" from "SchemaWithOneFloatField" in '
-            '"MyVersionChange" but there is no such property defined in any of the migrations.',
-        ),
-    ):
-        create_simple_versioned_schemas(
-            schema(latest_module.SchemaWithOneFloatField).property("bar").didnt_exist,
-        )
-
-
-def test__lambda_property(create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType):
-    with pytest.raises(
-        CodeGenerationError,
-        match=re.escape(
-            'Failed to migrate class "SchemaWithOneFloatField" to an older version because: '
-            "You passed a lambda as a schema property. It is not supported yet. "
-            "Please, use a regular function instead. The lambda you have passed: "
-            'schema(latest_module.SchemaWithOneFloatField).property("bar").was(lambda _: "Hewwo"),  '
-            "# pragma: no cover\n",
-        ),
-    ):
-        create_simple_versioned_schemas(
-            schema(latest_module.SchemaWithOneFloatField).property("bar").was(lambda _: "Hewwo"),  # pragma: no cover
-        )
-
-
-def test__property__there_is_already_field_with_the_same_name__error(
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
-    latest_module: ModuleType,
-):
-    def baz(hello: Any):
-        raise NotImplementedError
-
-    with pytest.raises(
-        InvalidGenerationInstructionError,
-        match=re.escape(
-            'You tried to define a property "foo" inside "SchemaWithOneFloatField" in '
-            '"MyVersionChange" but there is already a field with that name.',
-        ),
-    ):
-        create_simple_versioned_schemas(
-            schema(latest_module.SchemaWithOneFloatField).property("foo").was(baz),
-        )
 
 
 def test__schema_had_name__dependent_schema_is_not_altered(
@@ -886,7 +677,7 @@ def test__schema_had_name__dependent_schema_is_not_altered(
         "class MyFloatySchema(BaseModel):\n    foo: float = Field()\n"
     )
     assert inspect.getsource(v2002_01_01.SchemaWithOneFloatField) == (
-        "class SchemaWithOneFloatField(BaseModel):\n    foo: float\n"
+        "class SchemaWithOneFloatField(BaseModel):\n    foo: float = Field()\n"
     )
     assert inspect.getsource(v2000_01_01.SchemaThatDependsOnAnotherSchema) == (
         "class SchemaThatDependsOnAnotherSchema(MyFloatySchema2):\n"
@@ -907,13 +698,12 @@ def test__schema_had_name__dependent_schema_is_not_altered(
         "    foo: SchemaWithOneFloatField\n"
         "    bat: SchemaWithOneFloatField | int = Field(default=SchemaWithOneFloatField(foo=3.14))\n\n"
         "    def baz(self, daz: SchemaWithOneFloatField) -> SchemaWithOneFloatField:\n"
-        "        return SchemaWithOneFloatField(foo=3.14)  # pragma: no cover\n"
+        "        return SchemaWithOneFloatField(foo=3.14)\n"
     )
 
     some_schema_v2000 = importlib.import_module(data_package_path + ".v2000_01_01.some_schema")
     some_schema_v2001 = importlib.import_module(data_package_path + ".v2001_01_01.some_schema")
     some_schema_v2002 = importlib.import_module(data_package_path + ".v2002_01_01.some_schema")
-    unions = importlib.import_module(data_package_path + ".unions")
 
     assert inspect.getsource(some_schema_v2000.SchemaThatDependsOnAnotherSchema) == (
         "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: MyFloatySchema2\n    bar: int\n"
@@ -925,12 +715,6 @@ def test__schema_had_name__dependent_schema_is_not_altered(
 
     assert inspect.getsource(some_schema_v2002.SchemaThatDependsOnAnotherSchema) == (
         "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: SchemaWithOneFloatField\n    bar: int\n"
-    )
-
-    assert str(unions.SchemaWithOneFloatField) == (
-        f"{data_package_path}.latest.SchemaWithOneFloatField | "
-        f"{data_package_path}.v2001_01_01.MyFloatySchema | "
-        f"{data_package_path}.v2000_01_01.MyFloatySchema2"
     )
 
 
@@ -979,7 +763,7 @@ def test__schema_had_name__dependent_schema_is_altered(
         "class MyFloatySchema(BaseModel):\n    foo: float = Field()\n"
     )
     assert inspect.getsource(v2002_01_01.SchemaWithOneFloatField) == (
-        "class SchemaWithOneFloatField(BaseModel):\n    foo: float\n"
+        "class SchemaWithOneFloatField(BaseModel):\n    foo: float = Field()\n"
     )
     assert (
         inspect.getsource(v2000_01_01.SchemaThatDependsOnAnotherSchema)
@@ -1001,15 +785,14 @@ def test__schema_had_name__dependent_schema_is_altered(
     assert (
         inspect.getsource(v2002_01_01.SchemaThatDependsOnAnotherSchema)
         == "class SchemaThatDependsOnAnotherSchema(SchemaWithOneFloatField):\n"
-        "    foo: SchemaWithOneFloatField\n"
-        "    bat: SchemaWithOneFloatField | int = Field(default=SchemaWithOneFloatField(foo=3.14))\n\n"
+        "    foo: SchemaWithOneFloatField = Field()\n"
+        "    bat: typing.Union[SchemaWithOneFloatField, int] = Field(default=SchemaWithOneFloatField(foo=3.14))\n\n"
         "    def baz(self, daz: SchemaWithOneFloatField) -> SchemaWithOneFloatField:\n"
-        "        return SchemaWithOneFloatField(foo=3.14)  # pragma: no cover\n"
+        "        return SchemaWithOneFloatField(foo=3.14)\n"
     )
     some_schema_v2000 = importlib.import_module(data_package_path + ".v2000_01_01.some_schema")
     some_schema_v2001 = importlib.import_module(data_package_path + ".v2001_01_01.some_schema")
     some_schema_v2002 = importlib.import_module(data_package_path + ".v2002_01_01.some_schema")
-    unions = importlib.import_module(data_package_path + ".unions")
 
     assert inspect.getsource(some_schema_v2000.SchemaThatDependsOnAnotherSchema) == (
         "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: MyFloatySchema2 = Field()\n"
@@ -1020,13 +803,9 @@ def test__schema_had_name__dependent_schema_is_altered(
     )
 
     assert inspect.getsource(some_schema_v2002.SchemaThatDependsOnAnotherSchema) == (
-        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: SchemaWithOneFloatField\n    bar: int\n"
-    )
-
-    assert str(unions.SchemaWithOneFloatField) == (
-        f"{data_package_path}.latest.SchemaWithOneFloatField | "
-        f"{data_package_path}.v2001_01_01.MyFloatySchema | "
-        f"{data_package_path}.v2000_01_01.MyFloatySchema2"
+        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n"
+        "    foo: SchemaWithOneFloatField = Field()\n"
+        "    bar: int = Field()\n"
     )
 
 
@@ -1047,72 +826,3 @@ def test__schema_had_name__trying_to_assign_to_the_same_name__should_raise_error
                 schema(latest_module.EmptySchema).had(name="EmptySchema"),  # pyright: ignore[reportGeneralTypeIssues]
             ),
         )
-
-
-def test__union_generation__convert_request_to_next_version_for_one_schema__one_schema_is_skipped(
-    api_version_var: ContextVar[date | None],
-    data_package_path: str,
-    latest_module: ModuleType,
-):
-    class VersionChange2(VersionChange):
-        description = "..."
-        instructions_to_migrate_to_previous_version = []
-
-        @convert_request_to_next_version_for(latest_module.SchemaWithOneIntField)
-        def migrate(request: RequestInfo) -> None:
-            raise NotImplementedError
-
-    class VersionChange1(VersionChange):
-        description = "..."
-        instructions_to_migrate_to_previous_version = []
-
-    generate_code_for_versioned_packages(
-        latest_module,
-        VersionBundle(
-            Version(date(2002, 1, 1), VersionChange2),
-            Version(date(2001, 1, 1), VersionChange1),
-            Version(date(2000, 1, 1)),
-            api_version_var=api_version_var,
-        ),
-    )
-
-    v2000 = importlib.import_module(data_package_path + ".v2000_01_01")
-    unions = importlib.import_module(data_package_path + ".unions")
-
-    assert unions.SchemaWithOneIntField == latest_module.SchemaWithOneIntField | v2000.SchemaWithOneIntField
-
-
-def test__union_generation__convert_request_to_next_version_for_all_schemas__all_schemas_are_skipped(
-    api_version_var: ContextVar[date | None],
-    latest_module: ModuleType,
-    data_package_path: str,
-):
-    class VersionChange2(VersionChange):
-        description = "..."
-        instructions_to_migrate_to_previous_version = []
-
-        @convert_request_to_next_version_for(latest_module.SchemaWithOneIntField)
-        def migrate(request: RequestInfo) -> None:
-            raise NotImplementedError
-
-    class VersionChange1(VersionChange):
-        description = "..."
-        instructions_to_migrate_to_previous_version = []
-
-        @convert_request_to_next_version_for(latest_module.SchemaWithOneIntField)
-        def migrate(request: RequestInfo) -> None:
-            raise NotImplementedError
-
-    generate_code_for_versioned_packages(
-        latest_module,
-        VersionBundle(
-            Version(date(2002, 1, 1), VersionChange2),
-            Version(date(2001, 1, 1), VersionChange1),
-            Version(date(2000, 1, 1)),
-            api_version_var=api_version_var,
-        ),
-    )
-
-    unions = importlib.import_module(data_package_path + ".unions")
-
-    assert unions.SchemaWithOneIntField == latest_module.SchemaWithOneIntField

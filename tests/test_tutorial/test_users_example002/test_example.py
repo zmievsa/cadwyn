@@ -7,7 +7,7 @@ from fastapi_header_versioning.fastapi import HeaderRoutingFastAPI
 from fastapi_header_versioning.routing import HeaderVersionedAPIRouter
 
 from cadwyn import generate_code_for_versioned_packages, get_cadwyn_dependency
-from cadwyn.header_routing import get_versioned_router
+from cadwyn.header_routing import _get_versioned_router
 
 from ..utils import clean_versions
 from .schemas import latest
@@ -27,7 +27,7 @@ def get_app(versioned_router: HeaderVersionedAPIRouter) -> HeaderRoutingFastAPI:
 def versioned_router() -> Generator[HeaderVersionedAPIRouter, None, None]:
     generate_code_for_versioned_packages(latest, versions)
     try:
-        yield get_versioned_router(router, versions=versions, latest_schemas_module=latest)
+        yield _get_versioned_router(router, versions=versions, latest_schemas_module=latest)
     finally:
         clean_versions(Path(__file__).parent / "schemas")
 

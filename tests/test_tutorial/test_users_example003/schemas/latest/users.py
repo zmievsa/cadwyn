@@ -1,11 +1,9 @@
-from pydantic import BaseModel
-
-from cadwyn.fields import FillablePrivateAttr, FillablePrivateAttrMixin
+from pydantic import BaseModel, Field
 
 
-class UserCreateRequest(FillablePrivateAttrMixin, BaseModel):
+class UserCreateRequest(BaseModel):
     default_address: str
-    _addresses_to_create: list[str] = FillablePrivateAttr(default_factory=list)
+    _addresses_to_create: list[str] = Field(default_factory=list)
 
 
 class UserResource(BaseModel):

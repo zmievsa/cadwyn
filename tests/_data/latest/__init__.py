@@ -5,8 +5,6 @@ from typing import Any
 from pydantic import BaseModel, Field, PrivateAttr, conint
 from pydantic import Field as PydanticField
 
-from cadwyn.fields import FillablePrivateAttr, FillablePrivateAttrMixin
-
 
 class StrEnum(str, Enum):
     a = auto()
@@ -31,9 +29,8 @@ class EmptySchema(BaseModel):
 
 # TODO: If you don't type hint AND specify PrivateAttr for private fields -- pydantic v1 (maybe v2 too)
 # won't know they exist. Make a note of this in docs
-class SchemaWithPrivateAttrs(FillablePrivateAttrMixin, BaseModel):
-    _non_fillable_attr: str = PrivateAttr(default="hewwo")
-    _fillable_attr: str = FillablePrivateAttr()
+class SchemaWithPrivateAttr(BaseModel):
+    _private_attr: str = PrivateAttr(default="hewwo")
 
 
 class AnyRequestSchema(BaseModel):
@@ -109,6 +106,10 @@ ANOTHER_VAR, CONINT_LT_ALIAS = 11, CONINT_LT
 
 class SchemaWithConstrainedInt(BaseModel):
     foo: conint(lt=CONINT_LT_ALIAS)  # pyright: ignore[reportGeneralTypeIssues]
+
+
+class SchemaWithInternalRepresentation(BaseModel):
+    foo: int
 
 
 "Nothing to see here. Move along."

@@ -1,4 +1,5 @@
 import http.cookies
+import importlib
 import re
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
@@ -202,7 +203,7 @@ class TestRequestMigrations:
     def test__depends_gets_broken_after_migration__should_raise_422(
         self,
         create_versioned_clients: CreateVersionedClients,
-        router,
+        router: VersionedAPIRouter,
         test_path,
     ):
         @router.get(test_path)
@@ -224,7 +225,7 @@ class TestRequestMigrations:
         create_versioned_clients: CreateVersionedClients,
         latest_module: ModuleType,
         test_path: Literal["/test"],
-        router,
+        router: VersionedAPIRouter,
     ):
         @router.post(test_path)
         async def route(payload: latest_module.AnyRequestSchema | None = Body(None)):
@@ -238,6 +239,92 @@ class TestRequestMigrations:
 
         assert clients[date(2000, 1, 1)].post(test_path).json() == {"hello": "world"}
         assert clients[date(2001, 1, 1)].post(test_path).json() == {"hello": "world"}
+
+    def test__internal_schema_specified__with_no_migrations__body_gets_parsed_to_internal_request_schema(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        latest_module: ModuleType,
+        data_package_path: str,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path)
+        async def route(payload: latest_module.SchemaWithInternalRepresentation):
+            return {"type": type(payload).__name__, **payload.dict()}
+
+        # The schemas need to be imported in order to be considered.
+        # TODO: Make a note of this in the docs
+        importlib.import_module(data_package_path + ".unversioned_schemas")
+        clients = create_versioned_clients(version_change())
+
+        assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+            "type": "InternalSchema",
+            "foo": 1,
+            "bar": None,
+        }
+        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+            "type": "InternalSchema",
+            "foo": 1,
+            "bar": None,
+        }
+
+    def test__internal_schema_specified__with_migrations__body_gets_parsed_to_internal_request_schema(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        latest_module: ModuleType,
+        data_package_path: str,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path)
+        async def route(payload: latest_module.SchemaWithInternalRepresentation):
+            return {"type": type(payload).__name__, **payload.dict()}
+
+        @convert_request_to_next_version_for(latest_module.SchemaWithInternalRepresentation)
+        def migrator(request: RequestInfo):
+            request.body["bar"] = "world"
+
+        importlib.import_module(data_package_path + ".unversioned_schemas")
+        clients = create_versioned_clients(version_change(migrator=migrator))
+
+        assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+            "type": "InternalSchema",
+            "foo": 1,
+            "bar": "world",
+        }
+        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+            "type": "InternalSchema",
+            "foo": 1,
+            "bar": None,
+        }
+
+    def test__internal_schema_specified__with_invalid_migrations__internal_schema_validation_error(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        latest_module: ModuleType,
+        data_package_path: str,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path)
+        async def route(payload: latest_module.SchemaWithInternalRepresentation):
+            return {"type": type(payload).__name__, **payload.dict()}
+
+        @convert_request_to_next_version_for(latest_module.SchemaWithInternalRepresentation)
+        def migrator(request: RequestInfo):
+            request.body["bar"] = [1, 2, 3]
+
+        importlib.import_module(data_package_path + ".unversioned_schemas")
+        clients = create_versioned_clients(version_change(migrator=migrator))
+
+        assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+            "detail": [{"loc": ["body", "bar"], "msg": "str type expected", "type": "type_error.str"}],
+        }
+        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+            "type": "InternalSchema",
+            "foo": 1,
+            "bar": None,
+        }
 
 
 class TestResponseMigrations:

@@ -1,5 +1,6 @@
 from contextvars import ContextVar
 from datetime import date
+from typing import cast
 
 from pydantic import Field
 
@@ -21,6 +22,7 @@ from .schemas.latest.users import (
     UserCreateRequest,
     UserResource,
 )
+from .schemas.unversioned import InternalUserCreateRequest
 
 api_version_var = ContextVar("api_version_var")
 
@@ -29,10 +31,11 @@ router = VersionedAPIRouter()
 
 @router.post("/users", response_model=UserResource)
 async def create_user(user: UserCreateRequest):
+    user = cast(InternalUserCreateRequest, user)
     return {
         "id": 83,
         "_prefetched_addresses": [
-            {"id": i, "value": address} for i, address in enumerate([user.default_address, *user._addresses_to_create])
+            {"id": i, "value": address} for i, address in enumerate([user.default_address, *user.addresses_to_create])
         ],
     }
 
@@ -79,7 +82,6 @@ class ChangeAddressesToSubresource(VersionChange):
     instructions_to_migrate_to_previous_version = (
         schema(UserCreateRequest).field("addresses").existed_as(type=list[str], info=Field()),
         schema(UserCreateRequest).field("default_address").didnt_exist,
-        schema(UserCreateRequest).field("_addresses_to_create").didnt_exist,
         schema(UserResource).field("addresses").existed_as(type=list[str], info=Field()),
         endpoint("/users/{user_id}/addresses", ["GET"]).didnt_exist,
     )
@@ -88,7 +90,7 @@ class ChangeAddressesToSubresource(VersionChange):
     def change_addresses_to_default_address(request: RequestInfo):
         request.body["default_address"] = request.body["addresses"].pop(0)
         # Save data to still be able to keep the old behavior of creating addresses
-        request.body["_addresses_to_create"] = request.body.pop("addresses")
+        request.body["addresses_to_create"] = request.body.pop("addresses")
 
     @convert_response_to_previous_version_for(UserResource)
     def change_addresses_to_list(response: ResponseInfo) -> None:

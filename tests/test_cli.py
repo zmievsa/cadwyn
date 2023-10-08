@@ -16,7 +16,7 @@ def _assert_codegen_migrations_were_applied(data_package_path):
 
     assert (
         inspect.getsource(v2001_01_01.SchemaWithOneStrField)
-        == 'class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default="foo")\n'
+        == "class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default='foo')\n"
     )
 
 
