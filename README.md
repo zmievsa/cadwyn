@@ -189,10 +189,10 @@ That's it. You're done with describing things. Now you just gotta ask cadwyn to 
 
 ```python
 from versions import latest, api_version_var
-from cadwyn import regenerate_dir_to_all_versions, generate_all_router_versions
+from cadwyn import generate_code_for_versioned_packages, generate_versioned_routers
 
-regenerate_dir_to_all_versions(latest, versions)
-router_versions = generate_all_router_versions(
+generate_code_for_versioned_packages(latest, versions)
+router_versions = generate_versioned_routers(
     router,
     versions=versions,
     latest_schemas_module=latest,
@@ -225,6 +225,21 @@ Please, see [tutorial examples](https://github.com/Ovsyanka83/cadwyn/tree/main/t
 5. Cadwyn doesn't edit your imports when generating schemas so if you make any imports from versioned code to versioned code, I would suggest using [relative imports](https://docs.python.org/3/reference/import.html#package-relative-imports) to make sure that they will still work as expected after code generation.
 
 ## Reference
+
+### CLI
+
+Cadwyn has an optional CLI interface that can be installed with `pip install cadwyn[cli]`.
+
+#### Code generation
+
+You can essentially run `generate_code_for_versioned_packages` using this CLI instead of creating a script file.
+
+* `cadwyn generate-code-for-versioned-packages path.to.latest.package path.to.version.bundle:my_version_bundle`
+* `cadwyn generate-code-for-versioned-packages path.to.latest.package path.to.version.bundle:func_that_returns_version_bundle`
+
+#### Version checks
+
+Run  `cadwyn --version`  to check current version of Cadwyn
 
 ### Endpoints
 

@@ -145,19 +145,20 @@ class ChangeAddressToList(VersionChange):
         "Change user address to a list of strings to "
         "allow the user to specify multiple addresses"
     )
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         # You should use schema inheritance if you don't want to repeat yourself in such cases
         schema(UserCreateRequest).field("addresses").didnt_exist,
-        schema(UserCreateRequest).field("address").existed_with(type=str, info=Field()),
+        schema(UserCreateRequest).field("address").existed_as(type=str, info=Field()),
         schema(UserResource).field("addresses").didnt_exist,
-        schema(UserResource).field("address").existed_with(type=str, info=Field()),
-    )
+        schema(UserResource).field("address").existed_as(type=str, info=Field()),
+    ]
 
     @convert_response_to_previous_version_for(UserResource)
-    def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
+    def change_addresses_to_single_item(payload: dict[str, Any]) -> None:
         data["address"] = data.pop("addresses")[0]
 
-    @schema(UserCreateRequest).had_property("addresses")
+    # Note that this approach is outdated and it is now recommended to use request migrations
+    @schema(UserCreateRequest).property("addresses").was
     def addresses_property(parsed_schema):
         return [parsed_schema.address]
 ```
@@ -188,10 +189,10 @@ That's it. You're done with describing things. Now you just gotta ask cadwyn to 
 
 ```python
 from versions import latest, api_version_var
-from cadwyn import regenerate_dir_to_all_versions, generate_all_router_versions
+from cadwyn import generate_code_for_versioned_packages, generate_versioned_routers
 
-regenerate_dir_to_all_versions(latest, versions)
-router_versions = generate_all_router_versions(
+generate_code_for_versioned_packages(latest, versions)
+router_versions = generate_versioned_routers(
     router,
     versions=versions,
     latest_schemas_module=latest,
@@ -223,55 +224,22 @@ Please, see [tutorial examples](https://github.com/Ovsyanka83/cadwyn/tree/main/t
 4. We migrate responses backwards in versions from the latest version using data migration functions and requests forward in versions until the latest version using properties on pydantic models.
 5. Cadwyn doesn't edit your imports when generating schemas so if you make any imports from versioned code to versioned code, I would suggest using [relative imports](https://docs.python.org/3/reference/import.html#package-relative-imports) to make sure that they will still work as expected after code generation.
 
-## Theory
-
-### Types of API versioning
-
-There are three ([\[1\]](https://smartlogic.io/blog/2012-12-12-developing-an-api/), [\[2\]](https://thenewstack.io/tricks-api-versioning/)) main ways to version an API, each consequent being less safe but more convenient to both the API clients and maintainers. Essentially they can be classified by which layers of [MVC](https://en.wikipedia.org/wiki/Model%E2%80%93view%E2%80%93controller) they version.
-
-#### 1. Versioning proxy, which points requests to versioned apps
-
-This approach versions all three layers: separate data, separate business logic, separate representation. Essentially you create a completely different app for each version. Your versions are indepent and cannot in any way affect each other. You can make any sorts of changes in future versions without worrying about breaking the old ones.
-
-This approach is the most expensive to support but if breaking old functionality is unacceptable and if you need to support a small number of versions (1-3), then this option is viable.
-
-Note that this is essentially **data** or **application** versioning, not **API** versioning anymore. If it is impossible for your user to freely move between API versions (back and forth), then you are probably doing a bit of **data versioning** yourself. It can simplify your app's logic but will significantly inconvenience your users because they will not be able to easily switch API versions without waiting for your team to help. Additionally, a single client will never be able to use two versions at the same time. At least not easily.
-
-*Mostly used in older-style apps or in critical infrastructure where no mistakes are permitted*
-
-#### 2. One router, which points requests to versioned controllers
-
-This approach versions business logic and representation layers while leaving data layer the same. You still have to duplicate all of your business logic but now your clients will be able to migrate between versions easily and you will be able to share some of the code between versions, thus lowering the amount of things you would need to duplicate.
-
-The problem with this method is that any refactoring will most likely have to happen in all versions at once. Any changes in the libraries they depend on will also require a change in all versions. When the number of versions starts to rise (3-5), this becomes a significant problem for the performance and morale of API maintainers.
-
-*Popular in [.NET environment](https://github.com/dotnet/aspnet-api-versioning) and is likely the first choice of any API due to the simplicity of its implementation*
-
-#### 3. One router, shared controllers, which respond with versioned representations
-
-This approach versions only the API itself. The business logic and data below the API is the same for all versions (with rare exceptions) so API maintainers have the pleasure of maintaining only one API version while users have the added benefit that non-breaking featurees and bugfixes will automatically be ported to their version. This is the only method that allows you to support a large number of versions because it has the least amount of duplication of all methods. This is usually accomplished by adding a separate layer that builds responses out of the data that your service returns. It can be a separate service, a framework, or just a set of functions.
-
-Note that in this method, the usage of **data versioning** now becomes an inconvenience to **both** API users and maintainers. See, when you have a single business logic for all versions, you might need additional conditionals and checks for versions where data structure or data itself has changed. That is **in addition** to pre-existing incoveniences for the users. However, sometimes it might still happen so our goal is to minimize the frequency and impact of data versioning.
-
-*Popular in API-First tech giants that have to support backwards compatibility for a long time for a large number of clients*
-
-Note that this approach actually has two important subtypes:
-
-##### i. Duplication-based response building
-
-The simplest possible builder: for each API version, we define a newr request/response builder that builds the full response for the altered API routes or migrates the user request to the latest version. It is incredibly simple to implement but is not scalable at all. Adding values to all builders will require going through all of them with the hope of not making mistakes or typos. Trying to support more than 8-12 versions with this approach will still be challenging.
-
-We might think of smart ways of automating this approach to support a larger number of versions. For example, to avoid duplicating the entire builder logic every time, we can pick a template builder and only define differences in child builders. Let's pick the latest-version builder as template because it will never be deprecated deleted and our developers will have the most familiarity with it. Then we need to figure out a format to define changes between builders. We can remove a field from response, add a field, change the value of a field somehow, and/or change the type of a field. We'll need some DSL to describe all possible changes.
-
-Then we start thinking about API route differences. How do we describe them? Or do we just duplicate all routes? Do we maybe use inheritance? No matter what we do, we'll eventually also come to a DSL, which is why some tech giants have chosen [approach ii](#ii-migration-based-response-building).
-
-##### ii. Migration-based response building
-
-This is effectively an automated version of [approach i](#i-duplication-based-response-building). It has the minimal possible amount of duplication compared to all other approaches. Using a specialized DSL, we define schema migrations for changes in our request and response schemas, we define compatibility gates to migrate our data in accordance with schema changes, and we define route migrations to change/delete/add any routes.
-
-This is the method that [Stripe](https://stripe.com/blog/api-versioning) and [Linkedin](https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market) have picked and this is the method that **Cadwyn** implements for you.
-
 ## Reference
+
+### CLI
+
+Cadwyn has an optional CLI interface that can be installed with `pip install cadwyn[cli]`.
+
+#### Code generation
+
+You can essentially run `generate_code_for_versioned_packages` using this CLI instead of creating a script file.
+
+* `cadwyn generate-code-for-versioned-packages path.to.latest.package path.to.version.bundle:my_version_bundle`
+* `cadwyn generate-code-for-versioned-packages path.to.latest.package path.to.version.bundle:func_that_returns_version_bundle`
+
+#### Version checks
+
+Run  `cadwyn --version`  to check current version of Cadwyn
 
 ### Endpoints
 
@@ -296,9 +264,9 @@ from cadwyn.structure import VersionChange, endpoint
 
 class MyChange(VersionChange):
     description = "..."
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         endpoint("/my_old_endpoint", ["GET"]).existed,
-    )
+    ]
 ```
 
 #### Defining endpoints that didn't exist in old versions
@@ -311,9 +279,9 @@ from cadwyn.structure import VersionChange, endpoint
 
 class MyChange(VersionChange):
     description = "..."
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         endpoint("/my_new_endpoint", ["GET"]).didnt_exist,
-    )
+    ]
 ```
 
 #### Changing endpoint attributes
@@ -326,37 +294,10 @@ from cadwyn.structure import VersionChange, endpoint
 
 class MyChange(VersionChange):
     description = "..."
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         endpoint("/my_endpoint", ["GET"]).had(description="My old description"),
-    )
+    ]
 ```
-
-#### Changing endpoint logic (Experimental)
-
-Oftentimes you change some of the logic of your endpoint in a way that is incompatible with or not yet supported by Cadwyn's migrations. In order to combat this, we have come up with an ugly hack that allows you to change any detail about your endpoint's arguments or logic:
-
-```python
-from fastapi.params import Param
-from fastapi import Header
-
-
-class MyVersionChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = ()
-
-    @endpoint("/users", ["GET"]).was
-    def get_old_endpoint():
-        from some_business_logic import SomeController
-
-        async def get_users(
-            some_old_parameter: str = Param(), some_new_required_header: str = Header()
-        ):
-            return SomeController(some_old_parameter, some_new_required_header)
-
-        return get_users
-```
-
-As you see, it's hacky in more ways than one. Any imports to your business logic must happen within the function to prevent circular dependencies and you have to have a function within a function as a result. It is therefore not advised to use this functionality unlesss absolutely required. I recommend to instead add an issue on our github. However, if Cadwyn definitely cannot solve your problem -- this should be your "get out of jail free" card.
 
 #### Dealing with endpoint duplicates
 
@@ -395,12 +336,12 @@ class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
         "Use params instead of headers for user name filtering in GET /users "
         "because using headers is a bad API practice in such scenarios."
     )
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         # We don't have to specify the name here because there's only one such deleted endpoint
         endpoint("/users", ["GET"]).existed,
         # We do have to specify the name because we now have two existing endpoints after the instruction above
         endpoint("/users", ["GET"], func_name="get_users_by_name").didnt_exist,
-    )
+    ]
 ```
 
 So by using a more concrete `func_name`, we are capable to distinguish between different functions that affect the same routes.
@@ -420,9 +361,9 @@ from enum import auto
 
 class MyChange(VersionChange):
     description = "..."
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         enum(my_enum).had(foo="baz", bar=auto()),
-    )
+    ]
 ```
 
 #### Removing enum members
@@ -433,9 +374,9 @@ from cadwyn.structure import VersionChange, enum
 
 class MyChange(VersionChange):
     description = "..."
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         enum(my_enum).didnt_have("foo", "bar"),
-    )
+    ]
 ```
 
 ### Schemas
@@ -449,23 +390,23 @@ from cadwyn.structure import VersionChange, schema
 
 class MyChange(VersionChange):
     description = "..."
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         schema(MySchema)
         .field("foo")
-        .existed_with(type=list[str], info=Field(description="Foo")),
-    )
+        .existed_as(type=list[str], info=Field(description="Foo")),
+    ]
 ```
 
 You can also specify any string in place of type:
 
 ```python
-schema(MySchema).field("foo").existed_with(type="AnythingHere")
+schema(MySchema).field("foo").existed_as(type="AnythingHere")
 ```
 
 It is often the case that you want to add a type that has not been imported in your schemas yet. You can use `import_from` and optionally `import_as` to do this:
 
 ```python
-schema(MySchema).field("foo").existed_with(
+schema(MySchema).field("foo").existed_as(
     type=MyOtherSchema, import_from="..some_module", import_as="Foo"
 )
 ```
@@ -489,9 +430,9 @@ from cadwyn.structure import VersionChange, schema
 
 class MyChange(VersionChange):
     description = "..."
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         schema(MySchema).field("foo").didnt_exist,
-    )
+    ]
 ```
 
 #### Change a field
@@ -502,9 +443,9 @@ from cadwyn.structure import VersionChange, schema
 
 class MyChange(VersionChange):
     description = "..."
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         schema(MySchema).field("foo").had(description="Foo"),
-    )
+    ]
 ```
 
 #### Add a property
@@ -515,11 +456,10 @@ from cadwyn.structure import VersionChange, schema
 
 class MyChange(VersionChange):
     description = "..."
-    instructions_to_migrate_to_previous_version = ()
+    instructions_to_migrate_to_previous_version = []
 
-    @schema(MySchema).had_property("foo")
+    @schema(MySchema).property("foo").was
     def any_name_here(parsed_schema):
-        # Anything can be returned from here
         return parsed_schema.some_other_field
 ```
 
@@ -531,12 +471,12 @@ from cadwyn.structure import VersionChange, schema
 
 class MyChange(VersionChange):
     description = "..."
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         schema(MySchema).property("foo").didnt_exist,
-    )
+    ]
 ```
 
-#### Rename a schema (Experimental)
+#### Rename a schema
 
 If you wish to rename your schema to make sure that its name is different in openapi.json:
 
@@ -546,16 +486,36 @@ from cadwyn.structure import VersionChange, schema
 
 class MyChange(VersionChange):
     description = "..."
-    instructions_to_migrate_to_previous_version = (
+    instructions_to_migrate_to_previous_version = [
         schema(MySchema).had(name="OtherSchema"),
-    )
+    ]
 ```
 
 which will replace all references to this schema with the new name.
 
-Note also that renaming a schema should not technically be a breaking change.
+#### Private fields
 
-### Unions
+The perfect Cadwyn workflow consists of migrating all responses to earlier versions and all requests to latest version automatically. However, it is not always easily possible. For example, if there is more data in older requests than in newer requests, how do we push this data into newer request schemas? They don't have any field for it and we cannot add a field because we don't want our API users to see this field.
+
+[Private attrs](https://docs.pydantic.dev/latest/usage/models/#private-model-attributes) come to the rescue. They allow you to define fields that won't appear in openapi, won't be validated, and won't appear in `__init__` so our API clients won't be able to use them no matter how hard they try. However, now we have a problem: **we** also cannot use them to push information from old versions into new versions because these attrs don't appear in `__init__`. That's why we have `FillablePrivateAttr`. They are the same as private attrs except that you can set them in model's `__init__` automatically. Note that `FillablePrivateAttrMixin` is required to use them.
+
+```python
+from pydantic import BaseModel
+
+from cadwyn.fields import FillablePrivateAttr, FillablePrivateAttrMixin
+
+
+class UserCreateRequest(FillablePrivateAttrMixin, BaseModel):
+    default_address: str
+    _addresses_to_create: list[str] = FillablePrivateAttr(default_factory=list)
+
+
+UserCreateRequest(
+    default_address="My street", _addresses_to_create=["My address 2", "My address 3"]
+)
+```
+
+#### Unions
 
 As you probably realize, when you have many versions with different request schemas and your business logic receives one of them -- you're in trouble. You could handle them all separately by checking the version of each schema and then using the correct logic for it but cadwyn tries to offer something better.
 
@@ -585,11 +545,11 @@ async def the_entrypoint_of_my_business_logic(request_payload: MySchema):
     ...
 ```
 
-Note that this feature only affects type checking and does not affect your functionality.
+Note that this feature only affects type checking and does not affect your functionality. Note also that every [request migration](#request-data-migration) that affects a specific body schema will automatically make Cadwyn omit the body schema from  that version in unions.
 
-### Data conversion
+### Data migration
 
-#### Response data conversion
+#### Response data migration
 
 As described in the tutorial, cadwyn can convert your response data into older versions. It does so by running your "migration" functions whenever it encounters a version change:
 
@@ -602,15 +562,13 @@ class ChangeAddressToList(VersionChange):
     description = "..."
 
     @convert_response_to_previous_version_for(MyEndpointResponseModel)
-    def change_addresses_to_single_item(cls, data: dict[str, Any]) -> None:
-        data["address"] = data.pop("addresses")[0]
+    def change_addresses_to_single_item(response: ResponseInfo) -> None:
+        response.body["address"] = response.body.pop("addresses")[0]
 ```
 
-It is done by applying `cadwyn.VersionBundle.versioned(...)` decorator to each endpoint with the given `response_model` which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
+It is done by applying a versioning decorator to each endpoint with the given `response_model` which automatically detects the API version by getting it from the [contextvar](#api-version-header-and-context-variables) and applying all version changes until the selected version in reverse. Note that if the version is not set, then no changes will be applied.
 
-If you want to convert a specific response to a specific version, you can use `cadwyn.VersionBundle.migrate_response(...)`.
-
-#### Request data conversion (Experimental)
+#### Request data migration
 
 ```python
 from cadwyn.structure import VersionChange, convert_request_to_next_version_for
@@ -622,15 +580,8 @@ class ChangeAddressToList(VersionChange):
     description = "..."
 
     @convert_request_to_next_version_for(UserCreateRequest)
-    def change_addresses_to_single_item(
-        cls, data: "UserCreateRequest2000"
-    ) -> "UserCreateRequest2001":
-        from my_schemas.v2000_01_01 import UserCreateRequest as UserCreateRequest2000
-        from my_schemas.v2001_01_01 import UserCreateRequest as UserCreateRequest2001
-
-        original_reqest = data.dict(by_alias=True)
-        original_request["addresses"] = [original_request.pop("address")]
-        return UserCreateRequest2001(**original_request)
+    def change_addresses_to_single_item(request: RequestInfo) -> None:
+        request.body["addresses"] = [request.body.pop("address")]
 ```
 
 ### Version changes with side effects
@@ -690,3 +641,4 @@ The following projects are trying to accomplish similar results with a lot more 
 * <https://github.com/phillbaker/gates>
 * <https://github.com/lukepolo/laravel-api-migrations>
 * <https://github.com/tomschlick/request-migrations>
+* <https://github.com/keygen-sh/request_migrations>

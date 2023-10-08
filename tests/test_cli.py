@@ -32,7 +32,7 @@ def test__cli_codegen(data_package_path: str, latest_module_path: str, variable_
     result = CliRunner().invoke(
         cadwyn_typer_app,
         [
-            "generate-versioned-packages",
+            "generate-code-for-versioned-packages",
             latest_module_path,
             data_package_path + f".cli_utils:{variable_name_to_use}",
         ],
@@ -54,7 +54,7 @@ def test__cli_codegen__with_invalid_version_bundle_arg__should_raise_type_error(
     result = CliRunner(mix_stderr=False).invoke(
         cadwyn_typer_app,
         [
-            "generate-versioned-packages",
+            "generate-code-for-versioned-packages",
             latest_module_path,
             data_package_path + f".cli_utils:{variable_name_to_use}",
         ],

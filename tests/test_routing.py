@@ -1040,7 +1040,7 @@ def test__cascading_router_didnt_exist(
     }
 
 
-def test__generate_all_router_versions__two_routers(
+def test__generate_versioned_routers__two_routers(
     router: VersionedAPIRouter,
     test_endpoint: Endpoint,
     test_path: str,

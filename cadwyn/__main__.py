@@ -20,7 +20,7 @@ def version_callback(value: bool):
         raise typer.Exit
 
 
-@app.command(name="generate-versioned-packages")
+@app.command(name="generate-code-for-versioned-packages")
 def generate_versioned_packages(
     path_to_template_package: str = typer.Argument(
         help=(
