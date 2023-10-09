@@ -1,4 +1,6 @@
 import importlib
+import sys
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -39,6 +41,7 @@ def generate_versioned_packages(
     """For each version in the version bundle, generate a versioned package based on the template package"""
     from .codegen import generate_code_for_versioned_packages
 
+    sys.path.append(str(Path.cwd()))
     template_package = importlib.import_module(path_to_template_package)
     path_to_version_bundle, version_bundle_variable_name = full_path_to_version_bundle.split(":")
     version_bundle_module = importlib.import_module(path_to_version_bundle)

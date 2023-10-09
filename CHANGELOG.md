@@ -5,6 +5,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [1.0.2] - 2023-10-09
+
+### Fixed
+
+- Add current working dir to `sys.path` when running code generation through CLI
+- Use `exclude_unset` when migrating the body of a request to make sure that users' `exclude_unset` logic gets preserved
+
 ## [1.0.1] - 2023-10-09
 
 ### Fixed

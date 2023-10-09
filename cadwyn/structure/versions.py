@@ -456,7 +456,7 @@ class VersionBundle:
             if raw_body is None:
                 body = None
             else:
-                body = raw_body.dict(by_alias=True)
+                body = raw_body.dict(by_alias=True, exclude_unset=True)
                 if kwargs[body_field_alias].__custom_root_type__:
                     body = body["__root__"]
         else:
