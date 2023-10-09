@@ -23,6 +23,7 @@ def version_callback(value: bool):
 @app.command(name="generate-code-for-versioned-packages")
 def generate_versioned_packages(
     path_to_template_package: str = typer.Argument(
+        ...,
         help=(
             "The python path to the template package, from which we will generate the versioned packages. "
             "Format: 'path.to.template_package'"
@@ -30,6 +31,7 @@ def generate_versioned_packages(
         show_default=False,
     ),
     full_path_to_version_bundle: str = typer.Argument(
+        ...,
         help="The python path to the version bundle. Format: 'path.to.version_bundle:my_version_bundle_variable'",
         show_default=False,
     ),
