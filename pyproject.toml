@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cadwyn"
-version = "1.0.2"
+version = "1.0.3"
 description = "Modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -100,6 +100,27 @@ omit = [
 color = true
 line-length = 120
 target-version = ["py310"]
+
+[tool.pyright]
+reportMissingImports = true
+strictListInference = true
+strictDictionaryInference = true
+strictSetInference = true
+reportPropertyTypeMismatch = true
+reportImportCycles = true
+reportUntypedFunctionDecorator = "warning"
+reportUntypedClassDecorator = "warning"
+reportUntypedBaseClass = "warning"
+reportDeprecated = "warning"
+reportInvalidTypeVarUse = true
+reportUnnecessaryCast = true
+reportUnnecessaryComparison = true
+reportUnnecessaryContains = true
+reportAssertAlwaysTrue = true
+reportUnsupportedDunderAll = true
+reportUnnecessaryTypeIgnoreComment = true
+reportMissingSuperCall = true
+
 
 [tool.ruff]
 target-version = "py310"

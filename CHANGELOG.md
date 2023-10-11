@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [1.0.3] - 2023-10-10
+
+### Fixed
+
+- Add back the approach where the first version being an alias to latest in codegen
+
 ## [1.0.2] - 2023-10-09
 
 ### Fixed

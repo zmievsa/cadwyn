@@ -59,6 +59,8 @@ class VersionChange:
     _bound_version_bundle: "VersionBundle | None"
 
     def __init_subclass__(cls, _abstract: bool = False) -> None:
+        super().__init_subclass__()
+
         if _abstract:
             return
         cls._validate_subclass()
@@ -156,7 +158,7 @@ class VersionChange:
                 f"Can't subclass {cls.__name__} as it was never meant to be subclassed.",
             )
 
-    def __init__(self) -> None:
+    def __init__(self) -> None:  # pyright: ignore[reportMissingSuperCall]
         raise TypeError(
             f"Can't instantiate {self.__class__.__name__} as it was never meant to be instantiated.",
         )
@@ -188,6 +190,8 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
 
 class Version:
     def __init__(self, value: VersionDate, *version_changes: type[VersionChange]) -> None:
+        super().__init__()
+
         self.value = value
         self.version_changes = version_changes
 
@@ -197,6 +201,8 @@ class Version:
 
 class VersionBundle:
     def __init__(self, *versions: Version, api_version_var: ContextVar[VersionDate | None]) -> None:
+        super().__init__()
+
         self.versions = versions
         self.api_version_var = api_version_var
         if sorted(versions, key=lambda v: v.value, reverse=True) != list(versions):
@@ -361,7 +367,7 @@ class VersionBundle:
                 )
 
                 return await self._convert_endpoint_response_to_version(
-                    endpoint,  # pyright: ignore[reportGeneralTypeIssues]
+                    endpoint,
                     latest_response_model,
                     path,
                     method,

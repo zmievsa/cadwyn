@@ -34,6 +34,7 @@ class RequestInfo:
     __slots__ = ("body", "headers", "_cookies", "_query_params", "_request")
 
     def __init__(self, request: Request, body: Any):
+        super().__init__()
         self.body = body
         self.headers = request.headers.mutablecopy()
         self._cookies = request.cookies
@@ -54,6 +55,7 @@ class ResponseInfo:
     __slots__ = ("body", "_response")
 
     def __init__(self, response: Response, body: Any):
+        super().__init__()
         self.body = body
         self._response = response
 

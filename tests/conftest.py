@@ -13,7 +13,6 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from pytest_fixture_classes import fixture_class
-from typing_extensions import deprecated
 
 from cadwyn import VersionBundle, VersionedAPIRouter, generate_code_for_versioned_packages, generate_versioned_routers
 from cadwyn.codegen import _get_version_dir_name
@@ -111,8 +110,6 @@ class CreateVersionedSchemas:
         )
 
 
-# TODO: Get rid of this class
-@deprecated("Use create_versioned_schemas instead")
 @fixture_class(name="create_simple_versioned_schemas")
 class CreateSimpleVersionedSchemas:
     api_version_var: ContextVar[date | None]

@@ -89,6 +89,8 @@ def get_index_of_base_schema_dir_in_pythonpath(
 
 
 def _validate_that_module_is_versioned(file: Path, version_dirs: Collection[Path]):
+    if not version_dirs:
+        return
     for version_dir in version_dirs:
         try:
             file.relative_to(version_dir)

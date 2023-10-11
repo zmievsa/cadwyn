@@ -16,6 +16,7 @@ from typing import (
     TypeVar,
     _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
     cast,
+    final,
     get_args,
     get_origin,
 )
@@ -31,7 +32,7 @@ from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from pydantic.fields import ModelField
-from starlette._utils import is_async_callable  # pyright: ignore[reportMissingImports]
+from starlette._utils import is_async_callable
 from starlette.routing import (
     BaseRoute,
     request_response,
@@ -96,6 +97,7 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         return endpoint
 
 
+@final
 class _EndpointTransformer:
     def __init__(
         self,
@@ -337,6 +339,7 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
         route_map[route_info] = route
 
 
+@final
 class _AnnotationTransformer:
     __slots__ = (
         "latest_schemas_module",

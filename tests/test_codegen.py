@@ -46,7 +46,7 @@ def assert_field_had_changes_apply(
     )
 
     # For some reason it said that auto and Field were not defined, even though I was importing them
-    globals_2000 = {"auto": auto, "Field": Field, "__name__": v2000_01_01.__name__}
+    globals_2000: dict[str, Any] = {"auto": auto, "Field": Field, "__name__": v2000_01_01.__name__}
     # Otherwise, when re-importing and rewriting the same files many times, at some point python just starts
     # putting the module into a hardcore cache that cannot be updated by removing entry from sys.modules or
     # using importlib.reload -- only by waiting around 1.5 seconds in-between tests.
@@ -156,7 +156,7 @@ def test__field_existed_as__original_schema_has_a_field(
 
     assert (
         inspect.getsource(v2001_01_01.SchemaWithOneStrField)
-        == "class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default='foo')\n"
+        == 'class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default="foo")\n'
     )
 
 
@@ -175,7 +175,7 @@ def test__field_existed_as__extras_are_added__should_generate_properly(
     )
     assert (
         inspect.getsource(v2001_01_01.SchemaWithExtras)
-        == "class SchemaWithExtras(BaseModel):\n    foo: str = Field(lulz='foo')\n"
+        == 'class SchemaWithExtras(BaseModel):\n    foo: str = Field(lulz="foo")\n'
     )
 
 
@@ -191,7 +191,7 @@ def test__schema_field_didnt_exist(
 
     assert (
         inspect.getsource(v2001_01_01.SchemaWithOneStrField)
-        == "class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default='foo')\n"
+        == 'class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default="foo")\n'
     )
 
 
@@ -302,7 +302,8 @@ def test__field_had__constrained_field(
     )
 
     assert inspect.getsource(v2001.SchemaWithConstrainedInt) == (
-        "class SchemaWithConstrainedInt(BaseModel):\n    foo: conint(strict=False, lt=10) = Field()\n"
+        "class SchemaWithConstrainedInt(BaseModel):\n"
+        "    foo: conint(lt=CONINT_LT_ALIAS)  # pyright: ignore[reportGeneralTypeIssues]\n"
     )
 
 
@@ -512,7 +513,7 @@ def test__schema_that_overrides_fields_from_mro(
 
     assert (
         inspect.getsource(v2001_01_01.SchemaThatOverridesField)
-        == "class SchemaThatOverridesField(SchemaWithOneIntField):\n    foo: bytes = Field()\n"
+        == "class SchemaThatOverridesField(SchemaWithOneIntField):\n    foo: bytes\n"
     )
 
 
@@ -558,7 +559,7 @@ def test__schema_defined_in_a_non_init_file(
     v2001 = importlib.import_module(data_package_path + ".v2001_01_01.some_schema")
 
     assert inspect.getsource(v2000.MySchema) == "class MySchema(BaseModel):\n    pass\n"
-    assert inspect.getsource(v2001.MySchema) == "class MySchema(BaseModel):\n    foo: int = Field()\n"
+    assert inspect.getsource(v2001.MySchema) == "class MySchema(BaseModel):\n    foo: int\n"
 
 
 def test__with_weird_data_types(
@@ -584,9 +585,9 @@ def test__with_weird_data_types(
 
     assert inspect.getsource(v2001.ModelWithWeirdFields) == (
         "class ModelWithWeirdFields(BaseModel):\n"
-        "    foo: dict = Field(default={'a': 'b'})\n"
+        '    foo: dict = Field(default={"a": "b"})\n'
         "    bar: list[int] = Field(default_factory=my_default_factory)\n"
-        "    baz: typing.Literal[MyEnum.baz] = Field()\n"
+        "    baz: Literal[MyEnum.baz]\n"
     )
 
 
@@ -604,9 +605,7 @@ def test__union_fields(create_simple_versioned_schemas: CreateSimpleVersionedSch
         "    daz: typing.Union[int, EmptySchema] = Field()\n"
     )
     assert inspect.getsource(v2001_01_01.SchemaWithUnionFields) == (
-        "class SchemaWithUnionFields(BaseModel):\n"
-        "    foo: typing.Union[int, str] = Field()\n"
-        "    bar: typing.Union[EmptySchema, None] = Field()\n"
+        "class SchemaWithUnionFields(BaseModel):\n    foo: int | str\n    bar: EmptySchema | None\n"
     )
 
 
@@ -677,7 +676,7 @@ def test__schema_had_name__dependent_schema_is_not_altered(
         "class MyFloatySchema(BaseModel):\n    foo: float = Field()\n"
     )
     assert inspect.getsource(v2002_01_01.SchemaWithOneFloatField) == (
-        "class SchemaWithOneFloatField(BaseModel):\n    foo: float = Field()\n"
+        "class SchemaWithOneFloatField(BaseModel):\n    foo: float\n"
     )
     assert inspect.getsource(v2000_01_01.SchemaThatDependsOnAnotherSchema) == (
         "class SchemaThatDependsOnAnotherSchema(MyFloatySchema2):\n"
@@ -763,7 +762,7 @@ def test__schema_had_name__dependent_schema_is_altered(
         "class MyFloatySchema(BaseModel):\n    foo: float = Field()\n"
     )
     assert inspect.getsource(v2002_01_01.SchemaWithOneFloatField) == (
-        "class SchemaWithOneFloatField(BaseModel):\n    foo: float = Field()\n"
+        "class SchemaWithOneFloatField(BaseModel):\n    foo: float\n"
     )
     assert (
         inspect.getsource(v2000_01_01.SchemaThatDependsOnAnotherSchema)
@@ -785,8 +784,8 @@ def test__schema_had_name__dependent_schema_is_altered(
     assert (
         inspect.getsource(v2002_01_01.SchemaThatDependsOnAnotherSchema)
         == "class SchemaThatDependsOnAnotherSchema(SchemaWithOneFloatField):\n"
-        "    foo: SchemaWithOneFloatField = Field()\n"
-        "    bat: typing.Union[SchemaWithOneFloatField, int] = Field(default=SchemaWithOneFloatField(foo=3.14))\n\n"
+        "    foo: SchemaWithOneFloatField\n"
+        "    bat: SchemaWithOneFloatField | int = Field(default=SchemaWithOneFloatField(foo=3.14))\n\n"
         "    def baz(self, daz: SchemaWithOneFloatField) -> SchemaWithOneFloatField:\n"
         "        return SchemaWithOneFloatField(foo=3.14)\n"
     )
@@ -803,9 +802,7 @@ def test__schema_had_name__dependent_schema_is_altered(
     )
 
     assert inspect.getsource(some_schema_v2002.SchemaThatDependsOnAnotherSchema) == (
-        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n"
-        "    foo: SchemaWithOneFloatField = Field()\n"
-        "    bar: int = Field()\n"
+        "class SchemaThatDependsOnAnotherSchema(BaseModel):\n    foo: SchemaWithOneFloatField\n    bar: int\n"
     )
 
 

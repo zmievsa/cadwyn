@@ -354,7 +354,7 @@ def test__convert_response_to_previous_version_for__with_no_args__should_raise_e
         ),
     ):
 
-        @convert_response_to_previous_version_for(SomeSchema)  # pyright: ignore[reportGeneralTypeIssues]
+        @convert_response_to_previous_version_for(SomeSchema)
         def my_conversion_method2():
             raise NotImplementedError
 
@@ -380,7 +380,7 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
         ),
     ):
 
-        @convert_request_to_next_version_for(SomeSchema)  # pyright: ignore[reportGeneralTypeIssues]
+        @convert_request_to_next_version_for(SomeSchema)
         def my_conversion_method2():
             raise NotImplementedError
 
