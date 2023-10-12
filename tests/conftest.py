@@ -88,7 +88,11 @@ class CreateVersionedSchemas:
     api_version_var: ContextVar[date | None]
     data_package_path: str
 
-    def __call__(self, *version_changes: type[VersionChange] | list[type[VersionChange]]) -> tuple[ModuleType, ...]:
+    def __call__(
+        self,
+        *version_changes: type[VersionChange] | list[type[VersionChange]],
+        ignore_coverage_for_latest_aliases: bool = True,
+    ) -> tuple[ModuleType, ...]:
         created_versions = versions(version_changes)
         generate_code_for_versioned_packages(
             importlib.import_module(self.data_package_path + ".latest"),
@@ -96,6 +100,7 @@ class CreateVersionedSchemas:
                 *created_versions,
                 api_version_var=self.api_version_var,
             ),
+            ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
         )
 
         return tuple(
@@ -116,8 +121,11 @@ class CreateSimpleVersionedSchemas:
     data_package_path: str
     create_versioned_schemas: CreateVersionedSchemas
 
-    def __call__(self, *instructions: Any) -> tuple[ModuleType, ...]:
-        return self.create_versioned_schemas(version_change(*instructions))
+    def __call__(self, *instructions: Any, ignore_coverage_for_latest_aliases: bool = True) -> tuple[ModuleType, ...]:
+        return self.create_versioned_schemas(
+            version_change(*instructions),
+            ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
+        )
 
 
 class TestClientWithAPIVersion(TestClient):

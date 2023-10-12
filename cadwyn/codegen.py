@@ -124,7 +124,17 @@ class _SchemaBundle:
 def generate_code_for_versioned_packages(
     template_module: ModuleType,
     versions: VersionBundle,
+    *,
+    ignore_coverage_for_latest_aliases: bool = True,
 ):
+    """_summary_
+
+    Args:
+        template_module: The latest package from which we will generate the versioned packages
+        versions: Version bundle to generate versions from
+        ignore_coverage_for_latest_aliases: Add a pragma: no cover comment to the star imports in the generated
+        version of the latest module.
+    """
     schemas = {
         k: ModelInfo(v.__name__, _get_fields_for_model(v)) for k, v in deepcopy(versions.versioned_schemas).items()
     }
@@ -138,7 +148,11 @@ def generate_code_for_versioned_packages(
 
     schemas_per_version.append(_SchemaBundle(version_list[0].value, schemas))
     # Special casing for the first first because it is equivalent to latest
-    _generate_latest_version_alias_directory(version_list[0].value, template_module)
+    _generate_latest_version_alias_directory(
+        version_list[0].value,
+        template_module,
+        ignore_coverage_for_latest_aliases,
+    )
     schemas = deepcopy(schemas)
     _apply_migrations(version_list[0], schemas, enums)
     for version in version_list[1:]:
@@ -148,7 +162,11 @@ def generate_code_for_versioned_packages(
         _apply_migrations(version, schemas, enums)
 
 
-def _generate_latest_version_alias_directory(version: date, template_module: ModuleType):
+def _generate_latest_version_alias_directory(
+    version: date,
+    template_module: ModuleType,
+    ignore_coverage_for_latest_aliases: bool,
+):
     version_dir_name = _get_version_dir_name(version)
     template_dir = _get_package_path_from_module(template_module)
     version_dir = template_dir.with_name(version_dir_name)
@@ -163,7 +181,11 @@ def _generate_latest_version_alias_directory(version: date, template_module: Mod
             index_of_latest_schema_dir_in_pythonpath,
         )
 
-        parallel_file.write_text(_AUTO_GENERATION_WARNING + ast.unparse(imports[0].get_ast()) + " # noqa: F403")
+        import_text = _AUTO_GENERATION_WARNING + ast.unparse(imports[0].get_ast()) + " # noqa: F403"
+        if ignore_coverage_for_latest_aliases:
+            import_text += " # pragma: no cover"
+
+        parallel_file.write_text(import_text)
 
 
 def _prepare_imports_from_version_dirs(

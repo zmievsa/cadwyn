@@ -37,6 +37,10 @@ def generate_versioned_packages(
         help="The python path to the version bundle. Format: 'path.to.version_bundle:my_version_bundle_variable'",
         show_default=False,
     ),
+    ignore_coverage_for_latest_aliases: bool = typer.Option(
+        default=True,
+        help="Add a pragma: no cover comment to the star imports in the generated version of the latest module.",
+    ),
 ) -> None:
     """For each version in the version bundle, generate a versioned package based on the template package"""
     from .codegen import generate_code_for_versioned_packages
@@ -48,7 +52,11 @@ def generate_versioned_packages(
     possibly_version_bundle = getattr(version_bundle_module, version_bundle_variable_name)
     version_bundle = _get_version_bundle(possibly_version_bundle)
 
-    return generate_code_for_versioned_packages(template_package, version_bundle)
+    return generate_code_for_versioned_packages(
+        template_package,
+        version_bundle,
+        ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
+    )
 
 
 def _get_version_bundle(possibly_version_bundle: Any) -> VersionBundle:
