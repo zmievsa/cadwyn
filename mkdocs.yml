@@ -1,4 +1,4 @@
-site_name: cadwyn
+site_name: Cadwyn
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
