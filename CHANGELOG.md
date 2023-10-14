@@ -5,6 +5,14 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Added
+
+- `cadwyn.main._Cadwyn` experimental private class for automatically adding the header dependency and managing all objects related to versioning
+
+### Removed
+
+- `cadwyn.header_routing` which only had experimental private functions
+
 ## [1.1.0] - 2023-10-13
 
 ### Added

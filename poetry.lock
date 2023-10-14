@@ -224,7 +224,7 @@ all = ["email-validator (>=2.0.0)", "httpx (>=0.23.0)", "itsdangerous (>=1.1.0)"
 
 [[package]]
 name = "fastapi-header-versioning"
-version = "1.1.0"
+version = "1.2.0"
 description = "API versioning based on header-provided data for FastAPI."
 category = "main"
 optional = false
@@ -1172,8 +1172,8 @@ fastapi = [
     {file = "fastapi-0.103.2.tar.gz", hash = "sha256:75a11f6bfb8fc4d2bec0bd710c2d5f2829659c0e8c0afd5560fdda6ce25ec653"},
 ]
 fastapi-header-versioning = [
-    {file = "fastapi-header-versioning-1.1.0.tar.gz", hash = "sha256:f85200b110c27f7ca451ef650c34468f098d6962d130878cdc21e3419e399451"},
-    {file = "fastapi_header_versioning-1.1.0-py3-none-any.whl", hash = "sha256:72027ab6ae55790b1f6143eaf632ada666b1f9b2f5718da132dc161d1de43bea"},
+    {file = "fastapi-header-versioning-1.2.0.tar.gz", hash = "sha256:ee8a5a6850a38e0113f36d9831299f7296889fb2b3c2f48fcc06c37ff8f3a095"},
+    {file = "fastapi_header_versioning-1.2.0-py3-none-any.whl", hash = "sha256:6ba080a7ad8426250fd6e03aefd4c179cb69fd6ff913d1a64feb3bccf0582965"},
 ]
 filelock = [
     {file = "filelock-3.12.4-py3-none-any.whl", hash = "sha256:08c21d87ded6e2b9da6728c3dff51baf1dcecf973b768ef35bcbc3447edb9ad4"},

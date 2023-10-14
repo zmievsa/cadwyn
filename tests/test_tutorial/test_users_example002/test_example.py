@@ -1,59 +1,39 @@
-from collections.abc import Generator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from fastapi_header_versioning.fastapi import HeaderRoutingFastAPI
 from fastapi_header_versioning.routing import HeaderVersionedAPIRouter
 
-from cadwyn import generate_code_for_versioned_packages, get_cadwyn_dependency
-from cadwyn.header_routing import _get_versioned_router
+from cadwyn import generate_code_for_versioned_packages
 
 from ..utils import clean_versions
 from .schemas import latest
-from .users import api_version_var, router, versions
-
-
-def get_app(versioned_router: HeaderVersionedAPIRouter) -> HeaderRoutingFastAPI:
-    app = HeaderRoutingFastAPI(
-        version_header="x-api-version",
-        dependencies=[get_cadwyn_dependency(version_header_name="X-API-VERSION", api_version_var=api_version_var)],
-    )
-    app.include_router(versioned_router)
-    return app
+from .users import app, router
 
 
 @pytest.fixture(scope="module", autouse=True)
-def versioned_router() -> Generator[HeaderVersionedAPIRouter, None, None]:
-    generate_code_for_versioned_packages(latest, versions)
+def _prepare_versioned_schemas():
+    generate_code_for_versioned_packages(latest, app.versions)
+    app.include_versioned_routers(router)
     try:
-        yield _get_versioned_router(router, versions=versions, latest_schemas_module=latest)
+        yield
     finally:
         clean_versions(Path(__file__).parent / "schemas")
 
 
 @pytest.fixture()
-def testclient_2000(versioned_router: HeaderVersionedAPIRouter) -> TestClient:
-    return TestClient(
-        get_app(versioned_router),
-        headers={"X-API-VERSION": "2000-01-01"},
-    )
+def testclient_2000(_prepare_versioned_schemas: HeaderVersionedAPIRouter) -> TestClient:
+    return TestClient(app, headers={"X-API-VERSION": "2000-01-01"})
 
 
 @pytest.fixture()
-def testclient_2001(versioned_router: HeaderVersionedAPIRouter) -> TestClient:
-    return TestClient(
-        get_app(versioned_router),
-        headers={"X-API-VERSION": "2001-01-01"},
-    )
+def testclient_2001(_prepare_versioned_schemas: HeaderVersionedAPIRouter) -> TestClient:
+    return TestClient(app, headers={"X-API-VERSION": "2001-01-01"})
 
 
 @pytest.fixture()
-def testclient_2002(versioned_router: HeaderVersionedAPIRouter) -> TestClient:
-    return TestClient(
-        get_app(versioned_router),
-        headers={"X-API-VERSION": "2002-01-01"},
-    )
+def testclient_2002(_prepare_versioned_schemas: HeaderVersionedAPIRouter) -> TestClient:
+    return TestClient(app, headers={"X-API-VERSION": "2002-01-01"})
 
 
 def test__2000(testclient_2000: TestClient):
@@ -62,10 +42,7 @@ def test__2000(testclient_2000: TestClient):
         "address": "123 Example St",
     }
 
-    assert testclient_2000.post(
-        "/users",
-        json={"name": "MyUser", "address": "123"},
-    ).json() == {
+    assert testclient_2000.post("/users", json={"name": "MyUser", "address": "123"}).json() == {
         "id": 83,
         "address": "123",
     }
