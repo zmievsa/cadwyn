@@ -5,6 +5,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [1.2.0] - 2023-10-16
+
 ### Added
 
 - `cadwyn.main._Cadwyn` experimental private class for automatically adding the header dependency and managing all objects related to versioning
@@ -12,6 +14,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Removed
 
 - `cadwyn.header_routing` which only had experimental private functions
+
+### Fixed
+
+- Route callbacks didn't get migrated to versions with their parent routes
 
 ## [1.1.0] - 2023-10-13
 

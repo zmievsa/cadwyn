@@ -8,7 +8,7 @@ from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
 from uuid import UUID
 
 import pytest
-from fastapi import Body, Depends, FastAPI
+from fastapi import APIRouter, Body, Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -969,6 +969,41 @@ def test__router_generation__updating_unused_dependencies(
             },
         ],
     }
+
+
+def test__router_generation__updating_callbacks(
+    router: VersionedAPIRouter,
+    create_versioned_routers: CreateVersionedRouters,
+    latest_module: ModuleType,
+):
+    callback_router = APIRouter()
+
+    @callback_router.websocket_route("/{request}")
+    def useless_callback():
+        raise NotImplementedError
+
+    @callback_router.get("{request.body}")
+    def callback(body: latest_module.SchemaWithOneIntField):
+        raise NotImplementedError
+
+    @router.post("/test", callbacks=callback_router.routes)
+    async def test_with_callbacks(body: latest_module.SchemaWithOneIntField):
+        raise NotImplementedError
+
+    routers = create_versioned_routers(
+        version_change(schema(latest_module.SchemaWithOneIntField).field("bar").existed_as(type=str)),
+    )
+
+    assert (
+        routers[date(2000, 1, 1)]
+        .routes[0]
+        .callbacks[1]
+        .dependant.body_params[0]
+        .type_.__module__.endswith(".v2000_01_01")
+    )
+    assert (
+        routers[date(2001, 1, 1)].routes[0].callbacks[1].dependant.body_params[0].type_.__module__.endswith(".latest")
+    )
 
 
 def test__cascading_router_exists(

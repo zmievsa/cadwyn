@@ -399,6 +399,10 @@ class _AnnotationTransformer:
             route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
         route.dependencies = self._change_version_of_annotations(route.dependencies, version_dir)
         route.endpoint = self._change_version_of_annotations(route.endpoint, version_dir)
+        for callback in route.callbacks or []:
+            if not isinstance(callback, APIRoute):
+                continue
+            self.migrate_route_to_version(callback, version_dir, ignore_response_model=ignore_response_model)
         _remake_endpoint_dependencies(route)
 
     def get_another_version_of_cls(self, cls_from_old_version: type[Any], new_version_dir: Path):
