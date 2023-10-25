@@ -34,9 +34,9 @@ Otherwise, more conventional methods of API versioning may be preferable.
 
 The [documentation](https://docs.cadwyn.dev) has everything you need to get started. It is recommended to read it in the following order:
 
-1. Tutorial
-2. Recipes
-3. Reference (if needed)
+1. [Tutorial](https://docs.cadwyn.dev/tutorial/)
+2. [Recipes](https://docs.cadwyn.dev/recipes/)
+3. [Reference](https://docs.cadwyn.dev/reference/)
 <!--- 4. Theory (if you are interested) -->
 
 ## Similar projects

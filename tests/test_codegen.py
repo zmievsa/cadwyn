@@ -260,7 +260,7 @@ def test__schema_field_didnt_exist__field_is_missing__should_raise_error(
         ("repr", False),
     ],
 )
-def test__field_had__int_field(
+def test__schema_field_had__int_field(
     attr: str,
     attr_value: Any,
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
@@ -284,7 +284,7 @@ def test__field_had__int_field(
         ("regex", r"hewwo darkness"),
     ],
 )
-def test__field_had__str_field(
+def test__schema_field_had__str_field(
     attr: str,
     attr_value: Any,
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
@@ -306,7 +306,7 @@ def test__field_had__str_field(
         ("decimal_places", 15),
     ],
 )
-def test__field_had__decimal_field(
+def test__schema_field_had__decimal_field(
     attr: str,
     attr_value: Any,
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
@@ -322,7 +322,7 @@ def test__field_had__decimal_field(
 
 
 # TODO: https://github.com/Ovsyanka83/cadwyn/issues/3
-def test__field_had__constrained_field(
+def test__schema_field_had__constrained_field(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
 ):
@@ -341,7 +341,7 @@ def test__field_had__constrained_field(
     )
 
 
-def test__field_had__default_factory(
+def test__schema_field_had__default_factory(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
 ):
@@ -356,7 +356,10 @@ def test__field_had__default_factory(
     )
 
 
-def test__field_had__type(create_simple_versioned_schemas: CreateSimpleVersionedSchemas, latest_module: ModuleType):
+def test__schema_field_had__type(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
     v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
         schema(latest_module.SchemaWithOneIntField).field("foo").had(type=bytes),
     )
@@ -366,6 +369,38 @@ def test__field_had__type(create_simple_versioned_schemas: CreateSimpleVersioned
         v2001_01_01.SchemaWithOneIntField.__fields__["foo"].annotation
         is latest_module.SchemaWithOneIntField.__fields__["foo"].annotation
     )
+
+
+def test__schema_field_had_name(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v2000_01_01, v2001_01_01 = create_simple_versioned_schemas(
+        schema(latest_module.SchemaWithOneIntField).field("foo").had(name="doo"),
+    )
+
+    assert "foo" not in v2000_01_01.SchemaWithOneIntField.__fields__
+    assert v2000_01_01.SchemaWithOneIntField.__fields__["doo"].annotation is int
+    assert (
+        v2001_01_01.SchemaWithOneIntField.__fields__["foo"].annotation
+        is latest_module.SchemaWithOneIntField.__fields__["foo"].annotation
+    )
+
+
+def test__schema_field_had_name__name_is_the_same_as_before__should_raise_error(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            'You tried to change the name of field "foo" from "SchemaWithOneIntField" '
+            'in "MyVersionChange" but it already has that name.',
+        ),
+    ):
+        create_simple_versioned_schemas(
+            schema(latest_module.SchemaWithOneIntField).field("foo").had(name="foo"),
+        )
 
 
 @pytest.mark.parametrize(
@@ -378,7 +413,7 @@ def test__field_had__type(create_simple_versioned_schemas: CreateSimpleVersioned
         ("unique_items", True),
     ],
 )
-def test__field_had__list_of_int_field(
+def test__schema_field_had__list_of_int_field(
     attr: str,
     attr_value: Any,
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
@@ -393,7 +428,7 @@ def test__field_had__list_of_int_field(
     )
 
 
-def test__field_had__float_field(
+def test__schema_field_had__float_field(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
 ):

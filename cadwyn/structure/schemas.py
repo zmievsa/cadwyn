@@ -48,6 +48,7 @@ class OldSchemaFieldHad:
     field_name: str
     type: type
     field_changes: FieldChanges
+    new_name: str
 
 
 @dataclass(slots=True)
@@ -80,6 +81,7 @@ class AlterFieldInstructionFactory:
     def had(
         self,
         *,
+        name: str = Sentinel,
         type: Any = Sentinel,
         default: Any = Sentinel,
         default_factory: Callable = Sentinel,
@@ -111,6 +113,7 @@ class AlterFieldInstructionFactory:
             schema=self.schema,
             field_name=self.name,
             type=type,
+            new_name=name,
             field_changes=FieldChanges(
                 default=default,
                 default_factory=default_factory,

@@ -285,6 +285,16 @@ def _apply_alter_schema_instructions(  # noqa: C901
                         f'but it already has type "{model_field.annotation}"',
                     )
                 model_field.annotation = alter_schema_instruction.type
+            if alter_schema_instruction.new_name is not Sentinel:
+                if alter_schema_instruction.new_name == alter_schema_instruction.field_name:
+                    raise InvalidGenerationInstructionError(
+                        f'You tried to change the name of field "{alter_schema_instruction.field_name}" '
+                        f'from "{schema.__name__}" in "{version_change_name}" '
+                        "but it already has that name.",
+                    )
+                field_name_to_field_model[alter_schema_instruction.new_name] = field_name_to_field_model.pop(
+                    alter_schema_instruction.field_name,
+                )
             field_info = model_field.field_info
 
             dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
