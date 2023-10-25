@@ -36,7 +36,7 @@ The [documentation](https://docs.cadwyn.dev) has everything you need to get star
 
 1. [Tutorial](https://docs.cadwyn.dev/tutorial/)
 2. [Recipes](https://docs.cadwyn.dev/recipes/)
-3. [Reference](https://docs.cadwyn.dev/reference/) (if needed)
+3. [Reference](https://docs.cadwyn.dev/reference/)
 <!--- 4. Theory (if you are interested) -->
 
 ## Similar projects

@@ -31,3 +31,9 @@ theme:
       toggle:
         icon: material/brightness-4
         name: Switch to system preference
+
+nav:
+  - "Home": "index.md"
+  - "Tutorial": "tutorial.md"
+  - "Recipes": "recipes.md"
+  - "Reference": "reference.md"
