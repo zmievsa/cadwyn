@@ -46,4 +46,4 @@ A code generation yaml-based version of this approach [was used at SuperJob](htt
 
 This is effectively an automated version of [approach i](#i-duplication-based-response-building). It has the minimal possible amount of duplication compared to all other approaches. Using a specialized DSL, we define schema migrations for changes in our request and response schemas, we define compatibility gates to migrate our data in accordance with schema changes, and we define route migrations to change/delete/add any routes.
 
-This is the method that [Stripe](https://stripe.com/blog/api-versioning) and [Linkedin](https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market) have picked and this is the method that **Universi** implements for you.
+This is the method that [Stripe](https://stripe.com/blog/api-versioning) and [Linkedin](https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market) have picked and this is the method that **Cadwyn** implements for you.
