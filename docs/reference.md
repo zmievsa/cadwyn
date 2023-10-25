@@ -7,7 +7,15 @@ Cadwyn has an optional CLI interface that can be installed with `pip install cad
 
 ### Code generation
 
-You can essentially run `generate_code_for_versioned_packages` using this CLI instead of creating a script file.
+There are two methods of generating code: using a function and using the CLI:
+
+#### Function interface
+
+You can use `cadwyn.generate_code_for_versioned_packages` which accepts a `template_module` (a directory which contains the latest versions) and `versions` which is the `VersionBundle` from which to generate versions.
+
+#### CLI interface
+
+The interface is the same to the function one and is a shorthand for simple cases:
 
 * `cadwyn generate-code-for-versioned-packages path.to.latest.package path.to.version.bundle:my_version_bundle`
 * `cadwyn generate-code-for-versioned-packages path.to.latest.package path.to.version.bundle:func_that_returns_version_bundle`
@@ -123,6 +131,8 @@ So by using a more concrete `func_name`, we are capable to distinguish between d
 
 ## Enums
 
+All of the following instructions affect only code generation.
+
 ### Adding enum members
 
 Note that adding enum members **can** be a breaking change unlike adding optional fields to a schema. For example, if I return a list of entities, each of which has some type, and I add a new type -- then my client's code is likely to break.
@@ -155,6 +165,8 @@ class MyChange(VersionChange):
 ```
 
 ## Schemas
+
+All of the following instructions affect only code generation.
 
 ### Add a field
 

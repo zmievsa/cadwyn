@@ -2,13 +2,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from fastapi_header_versioning.routing import HeaderVersionedAPIRouter
 
 from cadwyn import generate_code_for_versioned_packages
 
 from ..utils import clean_versions
-from .schemas import latest
-from .users import app, router
+from .data import latest
+from .routes import app, router
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -18,21 +17,21 @@ def _prepare_versioned_schemas():
     try:
         yield
     finally:
-        clean_versions(Path(__file__).parent / "schemas")
+        clean_versions(Path(__file__).parent / "data")
 
 
 @pytest.fixture()
-def testclient_2000(_prepare_versioned_schemas: HeaderVersionedAPIRouter) -> TestClient:
+def testclient_2000(_prepare_versioned_schemas: None) -> TestClient:
     return TestClient(app, headers={"X-API-VERSION": "2000-01-01"})
 
 
 @pytest.fixture()
-def testclient_2001(_prepare_versioned_schemas: HeaderVersionedAPIRouter) -> TestClient:
+def testclient_2001(_prepare_versioned_schemas: None) -> TestClient:
     return TestClient(app, headers={"X-API-VERSION": "2001-01-01"})
 
 
 @pytest.fixture()
-def testclient_2002(_prepare_versioned_schemas: HeaderVersionedAPIRouter) -> TestClient:
+def testclient_2002(_prepare_versioned_schemas: None) -> TestClient:
     return TestClient(app, headers={"X-API-VERSION": "2002-01-01"})
 
 

@@ -3,13 +3,13 @@ from typing import cast
 from cadwyn import VersionedAPIRouter
 from cadwyn.main import _Cadwyn
 
-from .schemas import latest
-from .schemas.latest.users import (
+from .data import latest
+from .data.latest.users import (
     UserAddressResourceList,
     UserCreateRequest,
     UserResource,
 )
-from .schemas.unversioned import InternalUserCreateRequest
+from .data.unversioned import InternalUserCreateRequest
 from .versions import version_bundle
 
 router = VersionedAPIRouter()
