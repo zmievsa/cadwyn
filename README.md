@@ -37,14 +37,14 @@ The [documentation](https://docs.cadwyn.dev) has everything you need to get star
 1. [Tutorial](https://docs.cadwyn.dev/tutorial/)
 2. [Recipes](https://docs.cadwyn.dev/recipes/)
 3. [Reference](https://docs.cadwyn.dev/reference/)
-<!--- 4. Theory (if you are interested) -->
+4. [Theory](https://docs.cadwyn.dev/theory/)
 
 ## Similar projects
 
 The following projects are trying to accomplish similar results with a lot more simplistic functionality.
 
-* <https://github.com/sjkaliski/pinned>
-* <https://github.com/phillbaker/gates>
-* <https://github.com/lukepolo/laravel-api-migrations>
-* <https://github.com/tomschlick/request-migrations>
-* <https://github.com/keygen-sh/request_migrations>
+- <https://github.com/sjkaliski/pinned>
+- <https://github.com/phillbaker/gates>
+- <https://github.com/lukepolo/laravel-api-migrations>
+- <https://github.com/tomschlick/request-migrations>
+- <https://github.com/keygen-sh/request_migrations>
