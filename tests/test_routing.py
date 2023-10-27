@@ -1102,7 +1102,13 @@ def test__generate_versioned_routers__two_routers(
         api_version_var=api_version_var,
     )
     run_schema_codegen(versions)
-    routers = generate_versioned_routers(router, router2, versions=versions, latest_schemas_module=latest_module)
+
+    root_router = APIRouter()
+    root_router.include_router(router)
+    root_router.include_router(router2)
+
+    routers = generate_versioned_routers(root_router, versions=versions, latest_schemas_module=latest_module)
+    assert all(type(r) is APIRouter for r in routers.values())
     assert len(routers[date(2001, 1, 1)].routes) == 2
     assert len(routers[date(2000, 1, 1)].routes) == 1
     assert {
