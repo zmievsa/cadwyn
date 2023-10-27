@@ -53,7 +53,7 @@ from cadwyn.structure.endpoints import (
 from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionChange
 
 _T = TypeVar("_T", bound=Callable[..., Any])
-R = TypeVar("R", bound=fastapi.routing.APIRouter)
+_R = TypeVar("_R", bound=fastapi.routing.APIRouter)
 # This is a hack we do because we can't guarantee how the user will use the router.
 _DELETED_ROUTE_TAG = "_CADWYN_DELETED_ROUTE"
 EndpointPath: TypeAlias = str
@@ -74,10 +74,10 @@ class _RouterInfo:
 
 
 def generate_versioned_routers(
-    router: R,
+    router: _R,
     versions: VersionBundle,
     latest_schemas_module: ModuleType,
-) -> dict[VersionDate, R]:
+) -> dict[VersionDate, _R]:
     return _EndpointTransformer(router, versions, latest_schemas_module).transform()
 
 
