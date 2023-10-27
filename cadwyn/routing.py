@@ -22,6 +22,7 @@ from typing import (
 )
 
 import fastapi.routing
+import fastapi.utils
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import (
     get_body_field,
@@ -395,6 +396,12 @@ class _AnnotationTransformer:
     ):
         if route.response_model is not None and not ignore_response_model:
             route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
+            route.response_field = fastapi.utils.create_response_field(
+                name="Response_" + route.unique_id,
+                type_=route.response_model,
+                mode="serialization",
+            )
+            route.secure_cloned_response_field = fastapi.utils.create_cloned_field(route.response_field)
         route.dependencies = self._change_version_of_annotations(route.dependencies, version_dir)
         route.endpoint = self._change_version_of_annotations(route.endpoint, version_dir)
         for callback in route.callbacks or []:
@@ -564,6 +571,7 @@ def _add_data_migrations_to_route(
             f"{route.dependant.request_param_name=}, {route.dependant.response_param_name=} "
             f"for route {list(route.methods)} {route.path} which should not be possible. Please, contact my author.",
         )
+
     route.endpoint = versions._versioned(
         template_body_field,
         template_body_field_name,
@@ -573,6 +581,7 @@ def _add_data_migrations_to_route(
         request_param_name=route.dependant.request_param_name,
         response_param_name=route.dependant.response_param_name,
     )(route.endpoint)
+    route.dependant.call = route.endpoint
 
 
 def _apply_endpoint_had_instruction(
