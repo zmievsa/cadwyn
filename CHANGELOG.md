@@ -9,7 +9,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Changed
 
-- `generate_versioned_routers` now accepts one root router instead of a sequence of routers to meet typing requirements.
+- `generate_versioned_routers` now accepts only one router instead of a sequence of routers to give us the ability to guarantee that the type of generated routers is the same as the type of the passed router.
 
 
 ## [1.4.0]
