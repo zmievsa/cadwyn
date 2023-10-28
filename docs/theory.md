@@ -1,7 +1,5 @@
 # Theory
 
-Versioning is hard, very hard. It places a burden on both API producers and consumers. Cadwyn's approach can help you minimize this burden but you should still [think twice](https://www.infoq.com/presentations/api-evolution-versioning/) about applying versioning to your API.
-
 ## Types of API versioning
 
 There are three ([\[1\]](https://smartlogic.io/blog/2012-12-12-developing-an-api/), [\[2\]](https://thenewstack.io/tricks-api-versioning/)) main ways to version an API, each consequent being less safe but more convenient to both the API clients and maintainers. Essentially they can be classified by which layers of [MVC](https://en.wikipedia.org/wiki/Model%E2%80%93view%E2%80%93controller) they version.
