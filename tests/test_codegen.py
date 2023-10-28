@@ -321,7 +321,7 @@ def test__schema_field_had__decimal_field(
     )
 
 
-# TODO: https://github.com/Ovsyanka83/cadwyn/issues/3
+# TODO: https://github.com/zmievsa/cadwyn/issues/3
 def test__schema_field_had__constrained_field(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,

@@ -201,7 +201,7 @@ class _EndpointTransformer:
             ]
         return {version: router_info.router for version, router_info in router_infos.items()}
 
-    # TODO: Simplify https://github.com/Ovsyanka83/cadwyn/issues/28
+    # TODO: Simplify https://github.com/zmievsa/cadwyn/issues/28
     def _apply_endpoint_changes_to_router(  # noqa: C901
         self,
         router: fastapi.routing.APIRouter,
@@ -439,7 +439,7 @@ class _AnnotationTransformer:
         elif isinstance(annotation, type):
             return self._change_version_of_type(annotation, version_dir)
         elif callable(annotation):
-            # TASK: https://github.com/Ovsyanka83/cadwyn/issues/48
+            # TASK: https://github.com/zmievsa/cadwyn/issues/48
             if inspect.iscoroutinefunction(annotation):
 
                 @functools.wraps(annotation)

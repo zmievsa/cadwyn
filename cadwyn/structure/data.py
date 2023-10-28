@@ -29,7 +29,7 @@ def internal_body_representation_of(represents: type[BaseModel], /) -> Callable[
     return inner
 
 
-# TODO: Add form handling https://github.com/Ovsyanka83/cadwyn/issues/49
+# TODO: Add form handling https://github.com/zmievsa/cadwyn/issues/49
 class RequestInfo:
     __slots__ = ("body", "headers", "_cookies", "_query_params", "_request")
 

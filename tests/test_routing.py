@@ -894,7 +894,7 @@ def test__router_generation__updating_request_depends(
     def sub_dependency2(my_enum: latest_module.StrEnum) -> latest_module.StrEnum:
         return my_enum
 
-    # TASK: What if "a" gets deleted? https://github.com/Ovsyanka83/cadwyn/issues/25
+    # TASK: What if "a" gets deleted? https://github.com/zmievsa/cadwyn/issues/25
     def dependency2(
         dep: Annotated[latest_module.StrEnum, Depends(sub_dependency2)] = latest_module.StrEnum.a,
     ):

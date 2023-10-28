@@ -284,7 +284,7 @@ class VersionBundle:
                         if method in instruction.methods:
                             instruction(request_info)
 
-        # TASK: https://github.com/Ovsyanka83/cadwyn/issues/51
+        # TASK: https://github.com/zmievsa/cadwyn/issues/51
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]

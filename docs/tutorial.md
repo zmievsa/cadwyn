@@ -183,7 +183,7 @@ Obviously, this was just a simple example and cadwyn has a lot more features so 
 
 ## Examples
 
-Please, see [tutorial examples](https://github.com/Ovsyanka83/cadwyn/tree/main/tests/test_tutorial) for the fully working version of the project above.
+Please, see [tutorial examples](https://github.com/zmievsa/cadwyn/tree/main/tests/test_tutorial) for the fully working version of the project above.
 
 ## Important warnings
 
