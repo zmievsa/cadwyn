@@ -18,7 +18,9 @@ Note that this is essentially **data** or **application** versioning, not **API*
 
 This approach versions business logic and representation layers while leaving data layer the same. You still have to duplicate all of your business logic but now your clients will be able to migrate between versions easily and you will be able to share some of the code between versions, thus lowering the amount of things you would need to duplicate.
 
-The problem with this method is that any refactoring will most likely have to happen in all versions at once. Any changes in the libraries they depend on will also require a change in all versions. When the number of versions starts to rise (3-5), this becomes a significant problem for the performance and morale of API maintainers.
+The problem with this method is that any refactoring will most likely have to happen in all versions at once. Any changes in the libraries they depend on will also require a change in all versions. When the number of versions starts to rise (>2), this becomes a significant problem for the performance and morale of API maintainers.
+
+This is also the approach we have originally started with. It is likely the worst one out there due to its fake simplicity and actual complexity. In the long run, this approach is one of the hardest to support but most importantly: it's probably the **hardest to migrate from**.
 
 *Popular in [.NET environment](https://github.com/dotnet/aspnet-api-versioning) and is likely the first choice of any API due to the simplicity of its implementation*
 
@@ -34,7 +36,7 @@ Note that this approach actually has two important subtypes:
 
 #### i. Duplication-based response building
 
-The simplest possible builder: for each API version, we define a newr request/response builder that builds the full response for the altered API routes or migrates the user request to the latest version. It is incredibly simple to implement but is not scalable at all. Adding values to all builders will require going through all of them with the hope of not making mistakes or typos. Trying to support more than 8-12 versions with this approach will still be challenging.
+The simplest possible builder: for each API version, we define a new request/response builder that builds the full response for the altered API routes or migrates the user request to the latest version. It is incredibly simple to implement but is not scalable at all. Adding values to all builders will require going through all of them with the hope of not making mistakes or typos. Trying to support more than 8-12 versions with this approach will still be challenging.
 
 We might think of smart ways of automating this approach to support a larger number of versions. For example, to avoid duplicating the entire builder logic every time, we can pick a template builder and only define differences in child builders. Let's pick the latest-version builder as template because it will never be deprecated deleted and our developers will have the most familiarity with it. Then we need to figure out a format to define changes between builders. We can remove a field from response, add a field, change the value of a field somehow, and/or change the type of a field. We'll need some DSL to describe all possible changes.
 
@@ -46,4 +48,5 @@ A code generation yaml-based version of this approach [was used at SuperJob](htt
 
 This is effectively an automated version of [approach i](#i-duplication-based-response-building). It has the minimal possible amount of duplication compared to all other approaches. Using a specialized DSL, we define schema migrations for changes in our request and response schemas, we define compatibility gates to migrate our data in accordance with schema changes, and we define route migrations to change/delete/add any routes.
 
-This is the method that [Stripe](https://stripe.com/blog/api-versioning) and [Linkedin](https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market) have picked and this is the method that **Cadwyn** implements for you.
+This is the method that [Stripe](https://stripe.com/blog/api-versioning), [Linkedin](https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market), and [Intercom](
+https://www.intercom.com/blog/api-versioning/) have picked and this is the method that **Cadwyn** implements for you.

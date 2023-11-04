@@ -398,6 +398,7 @@ In a sense, extending an enum that has `USD` with `USD | EUR` is equivalent to t
 
 Additional resources:
 
+* <https://github.com/OAI/OpenAPI-Specification/issues/1552>
 * <https://users.rust-lang.org/t/solved-is-adding-an-enum-variant-a-breaking-change/26721/5>
 * <https://github.com/graphql/graphql-js/issues/968>
 * <https://medium.com/@jakob.fiegerl/java-jackson-enum-de-serialization-with-rest-backward-compatibility-9c3ec85ac13d>

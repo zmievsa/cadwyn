@@ -23,12 +23,10 @@ Modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning in F
 
 Cadwyn allows you to support a single version of your code, auto-generating the code/routes for older versions. You keep versioning encapsulated in small and independent "version change" modules while your business logic knows nothing about versioning.
 
-Its approach will be useful if you want to:
+Its [approach](./docs/theory.md#ii-migration-based-response-building) will be useful if you want to:
 
-1. Support many API versions for a long time
+1. Support many (>2) API versions for a long time
 2. Effortlessly backport features and bugfixes to older API versions
-
-Otherwise, more conventional methods of API versioning may be preferable.
 
 ## Get started
 
