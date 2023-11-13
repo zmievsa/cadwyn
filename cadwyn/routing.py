@@ -23,6 +23,7 @@ from typing import (
 
 import fastapi.routing
 import fastapi.utils
+from fastapi._compat import create_body_model
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import (
     get_body_field,
@@ -437,6 +438,11 @@ class _AnnotationTransformer:
         elif annotation is typing.Any or isinstance(annotation, typing.NewType):
             return annotation
         elif isinstance(annotation, type):
+            if annotation.__module__ == "pydantic.main" and issubclass(annotation, BaseModel):  # pragma: no cover
+                return create_body_model(
+                    fields=self._change_version_of_annotations(annotation.__fields__, version_dir).values(),
+                    model_name=annotation.__name__,
+                )
             return self._change_version_of_type(annotation, version_dir)
         elif callable(annotation):
             # TASK: https://github.com/zmievsa/cadwyn/issues/48

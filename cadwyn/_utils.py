@@ -63,11 +63,13 @@ def get_index_of_base_schema_dir_in_pythonpath(
 ) -> int:
     """If version_dirs have been passed, we will check if the module is versioned and raise an exception if it isn't"""
     file = inspect.getsourcefile(module_from_old_version)
-    if file is None:
-        # Seems quite unnecessary to cover
+    # Impossible to cover
+    if file is None:  # pragma: no cover
         raise CadwynError(
-            f"Model {module_from_old_version} is not defined in a file",
-        )  # pragma: no cover
+            f"Model {module_from_old_version} is not defined in a file. It is likely because it's a compiled module "
+            "which Cadwyn couldn't migrate to an older version. "
+            "If you are seeing this error -- you've encountered a bug in Cadwyn.",
+        )
     # /home/myuser/package/companies/latest/__init__.py
     file = Path(file)
     _validate_that_module_is_versioned(file, version_dirs)

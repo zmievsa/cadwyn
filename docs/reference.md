@@ -20,6 +20,11 @@ The interface is the same to the function one and is a shorthand for simple case
 * `cadwyn generate-code-for-versioned-packages path.to.latest.package path.to.version.bundle:my_version_bundle`
 * `cadwyn generate-code-for-versioned-packages path.to.latest.package path.to.version.bundle:func_that_returns_version_bundle`
 
+##### **Note**
+
+* You wouldn't use the system path style for both arguments. Instead, imagine that you are importing these modules in python -- that's the way you want to write down the paths.
+* Take a look at how we point to our version bundle. We use ":" to say that it's a variable within the specified module
+
 ### Version checks
 
 Run  `cadwyn --version`  to check current version of Cadwyn

@@ -5,6 +5,16 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [2.0.3]
+
+### Added
+
+* A note into reference docs about the paths specification in CLI
+
+### Fixed
+
+* Custom body fields created by fastapi caused an exception. Now they are ignored
+
 ## [2.0.2]
 
 ### Added
