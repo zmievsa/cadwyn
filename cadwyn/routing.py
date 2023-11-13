@@ -438,7 +438,7 @@ class _AnnotationTransformer:
         elif annotation is typing.Any or isinstance(annotation, typing.NewType):
             return annotation
         elif isinstance(annotation, type):
-            if annotation.__module__ == "pydantic.main" and issubclass(annotation, BaseModel):  # pragma: no cover
+            if annotation.__module__ == "pydantic.main" and issubclass(annotation, BaseModel):
                 return create_body_model(
                     fields=self._change_version_of_annotations(annotation.__fields__, version_dir).values(),
                     model_name=annotation.__name__,

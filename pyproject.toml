@@ -57,6 +57,7 @@ pre-commit = "^3.4.0"
 dirty-equals = "^0.6.0"
 mkdocs = "^1.5.2"
 mkdocs-material = "^9.3.1"
+python-multipart = "^0.0.6"
 
 [tool.poetry.scripts]
 cadwyn = "cadwyn.__main__:app"

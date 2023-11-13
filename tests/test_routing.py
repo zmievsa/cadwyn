@@ -8,7 +8,7 @@ from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
 from uuid import UUID
 
 import pytest
-from fastapi import APIRouter, Body, Depends, FastAPI
+from fastapi import APIRouter, Body, Depends, FastAPI, UploadFile
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -878,6 +878,24 @@ def test__router_generation__using_weird_typehints(
 
     assert routes_2000[0].dependant.body_params[1].annotation == str | int  # pyright: ignore
     assert routes_2001[0].dependant.body_params[1].annotation == str | int  # pyright: ignore
+
+
+def test__router_generation__using_oydantic_typehints(
+    router: VersionedAPIRouter,
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+    latest_module: ModuleType,
+):
+    """This is a very important test for verifying that pydantic's internal type hints work"""
+
+    @router.get("/test")
+    async def test(file: UploadFile):
+        raise NotImplementedError
+
+    routes_2000, routes_2001 = create_versioned_api_routes(
+        version_change(schema(latest_module.SchemaWithOneIntField).field("foo").had(type=list[str])),
+    )
+    assert len(routes_2000) == len(routes_2001) == 1
+    # We are intentionally not checking anything here. Our goal is to validate that there is no exception
 
 
 def test__router_generation__updating_request_depends(
