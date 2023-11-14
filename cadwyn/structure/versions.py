@@ -200,7 +200,11 @@ class Version:
 
 
 class VersionBundle:
-    def __init__(self, *versions: Version, api_version_var: ContextVar[VersionDate | None]) -> None:
+    def __init__(
+        self,
+        *versions: Version,
+        api_version_var: ContextVar[VersionDate | None] | ContextVar[VersionDate],
+    ) -> None:
         super().__init__()
 
         self.versions = versions

@@ -12,7 +12,7 @@ def get_cadwyn_dependency(
     version_header_name: str,
     default_version: datetime.date | None = None,
     extra_kwargs_to_header_constructor: Mapping[str, Any] = types.MappingProxyType({}),
-    api_version_var: ContextVar[datetime.date | None],
+    api_version_var: ContextVar[datetime.date | None] | ContextVar[datetime.date],
 ) -> Any:
     if default_version is None:
         extra_kwargs: Mapping[str, Any] = extra_kwargs_to_header_constructor
