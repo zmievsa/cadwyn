@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsPartialDict, IsStr
-from fastapi import Body, Cookie, Header, Query, Request, Response
+from fastapi import Body, Cookie, File, Header, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 
 from cadwyn import VersionedAPIRouter
@@ -690,3 +690,65 @@ def test__defining_two_migrations_for_the_same_response(latest_module):
             raise NotImplementedError
 
         version_change(migration1=migration1, migration2=migration2)
+
+
+def test__uploadfile_can_work(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    latest_module,
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+    async def endpoint(file: UploadFile = File(...)):
+        return file
+
+    clients = create_versioned_clients(version_change())
+    resp_2000 = clients[date(2000, 1, 1)].post(test_path, files={"file": b"Hewwo"})
+    resp_2001 = clients[date(2001, 1, 1)].post(test_path, files={"file": b"Hewwo"})
+
+    assert resp_2000.json() == {
+        "filename": "upload",
+        "file": {
+            "_file": {},
+            "_max_size": 1048576,
+            "_rolled": False,
+            "_TemporaryFileArgs": {
+                "mode": "w+b",
+                "buffering": -1,
+                "suffix": None,
+                "prefix": None,
+                "encoding": None,
+                "newline": None,
+                "dir": None,
+                "errors": None,
+            },
+        },
+        "size": 5,
+        "headers": {
+            "content-disposition": 'form-data; name="file"; filename="upload"',
+            "content-type": "application/octet-stream",
+        },
+    }
+    assert resp_2001.json() == {
+        "filename": "upload",
+        "file": {
+            "_file": {},
+            "_max_size": 1048576,
+            "_rolled": False,
+            "_TemporaryFileArgs": {
+                "mode": "w+b",
+                "buffering": -1,
+                "suffix": None,
+                "prefix": None,
+                "encoding": None,
+                "newline": None,
+                "dir": None,
+                "errors": None,
+            },
+        },
+        "size": 5,
+        "headers": {
+            "content-disposition": 'form-data; name="file"; filename="upload"',
+            "content-type": "application/octet-stream",
+        },
+    }
