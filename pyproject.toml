@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cadwyn"
-version = "2.0.4"
+version = "2.1.0.rc0"
 description = "Modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
