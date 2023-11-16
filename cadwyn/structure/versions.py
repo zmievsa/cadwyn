@@ -9,6 +9,7 @@ from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
 
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
+from fastapi import params
 from fastapi._compat import ModelField, _normalize_errors
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import solve_dependencies
@@ -367,7 +368,7 @@ class VersionBundle:
                     request_param_name,
                     kwargs,
                     response,
-                    is_single_body_field=len(body_params) == 1,
+                    body_params,
                 )
 
                 return await self._convert_endpoint_response_to_version(
@@ -444,9 +445,9 @@ class VersionBundle:
         request_param_name: str,
         kwargs: dict[str, Any],
         response: FastapiResponse,
-        *,
-        is_single_body_field: bool,
+        body_params: list[ModelField],
     ):
+        is_single_body_field = len(body_params) == 1
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
             kwargs.pop(request_param_name)
@@ -459,6 +460,7 @@ class VersionBundle:
             is_single_body_field
             and template_module_body_field_for_request_migrations is not None
             and body_field_alias is not None
+            and body_field_alias in kwargs
         ):
             # TODO: What if the user never edits it? We just add a round of (de)serialization
 
@@ -469,10 +471,11 @@ class VersionBundle:
                 body = raw_body.dict(by_alias=True, exclude_unset=True)
                 if kwargs[body_field_alias].__custom_root_type__:
                     body = body["__root__"]
+        # TODO: What if it's large? We need to also make ours a generator, then... But we can't because ours is
+        # synchronous. HMM... Or maybe just reading it later will solve the issue. Who knows...
+        elif any(isinstance(param.field_info, params.Form) for param in body_params):
+            body = await request.form()
         else:
-            # TODO: Add a test that checks that this is even possible with a form or a file.
-            # TODO: What if it's large? We need to also make ours a generator, then... But we can't because ours is
-            # synchronous. HMM... Or maybe just reading it later will solve the issue. Who knows...
             body = await request.body()
         request_info = RequestInfo(request, body)
         new_kwargs = await self._migrate_request(
