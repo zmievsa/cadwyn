@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from cadwyn.exceptions import CadwynError, CadwynStructureError
+from cadwyn.exceptions import CadwynError, CadwynStructureError, LintingError
 from cadwyn.structure import (
     Version,
     VersionBundle,
@@ -14,6 +14,7 @@ from cadwyn.structure import (
     VersionChangeWithSideEffects,
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
+    endpoint,
     schema,
 )
 from cadwyn.structure.data import internal_body_representation_of
@@ -409,3 +410,14 @@ def test__internal_body_representation_of__specifying_schema_twice():
         @internal_body_representation_of(A)
         class C(A):
             pass
+
+
+def test__endpoint_instruction_factory_interface__with_wrong_http_methods__should_raise_error():
+    with pytest.raises(
+        LintingError,
+        match=re.escape(
+            "The following HTTP methods are not valid: DEATH, STRAND."
+            "Please use valid HTTP methods such as GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD.",
+        ),
+    ):
+        endpoint("/test", ["DEATH", "STRAND"], func_name="Nofunc")
