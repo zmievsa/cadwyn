@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [2.0.5]
+
+### Fixed
+
+* `UploadFile` and forms have previously caused exceptions on request migration
+
 ## [2.0.4]
 
 ### Fixed
