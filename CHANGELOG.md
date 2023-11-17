@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Added
+
+* A prototype of AST-based code generation where we try to keep as much of the old field/annotation structure as possible
+
 ## [2.0.5]
 
 ### Fixed

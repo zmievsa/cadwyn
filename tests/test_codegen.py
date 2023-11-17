@@ -322,23 +322,80 @@ def test__schema_field_had__decimal_field(
 
 
 # TODO: https://github.com/zmievsa/cadwyn/issues/3
-def test__schema_field_had__constrained_field(
+def test__schema_field_had_constrained_field__constraints_have_not_been_modified(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
 ):
     v2000, v2001 = create_simple_versioned_schemas(
-        schema(latest_module.SchemaWithConstrainedInt).field("foo").had(alias="bar"),
+        schema(latest_module.SchemaWithConstraints).field("foo").had(alias="bar"),
     )
 
-    assert (
-        inspect.getsource(v2000.SchemaWithConstrainedInt)
-        == "class SchemaWithConstrainedInt(BaseModel):\n    foo: conint(strict=False, lt=10) = Field(alias='bar')\n"
+    assert inspect.getsource(v2000.SchemaWithConstraints) == (
+        "class SchemaWithConstraints(BaseModel):\n"
+        "    foo: int = Field(alias='bar', lt=10)\n"
+        "    bar: str = Field(max_length=CONINT_LT_ALIAS)\n"
     )
 
-    assert inspect.getsource(v2001.SchemaWithConstrainedInt) == (
-        "class SchemaWithConstrainedInt(BaseModel):\n"
+    assert inspect.getsource(v2001.SchemaWithConstraints) == (
+        "class SchemaWithConstraints(BaseModel):\n"
         "    foo: conint(lt=CONINT_LT_ALIAS)  # pyright: ignore[reportGeneralTypeIssues]\n"
+        "    bar: str = Field(max_length=CONINT_LT_ALIAS)\n"
     )
+
+
+def test__schema_field_had_constrained_field__constraints_have_been_modified(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v2000, v2001 = create_simple_versioned_schemas(
+        schema(latest_module.SchemaWithConstraints).field("foo").had(gt=8),
+        schema(latest_module.SchemaWithConstraints).field("bar").had(min_length=2),
+    )
+
+    assert inspect.getsource(v2000.SchemaWithConstraints) == (
+        "class SchemaWithConstraints(BaseModel):\n"
+        "    foo: int = Field(gt=8, lt=10)\n"
+        "    bar: str = Field(max_length=10, min_length=2)\n"
+    )
+
+    assert inspect.getsource(v2001.SchemaWithConstraints) == (
+        "class SchemaWithConstraints(BaseModel):\n"
+        "    foo: conint(lt=CONINT_LT_ALIAS)  # pyright: ignore[reportGeneralTypeIssues]\n"
+        "    bar: str = Field(max_length=CONINT_LT_ALIAS)\n"
+    )
+
+
+def test__schema_field_had_constrained_field__schema_has_special_constraints_and_constraints_have_been_modified(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v2000, v2001 = create_simple_versioned_schemas(
+        schema(latest_module.SchemaWithSpecialConstraints).field("foo").had(max_length=8),
+    )
+
+    assert inspect.getsource(v2000.SchemaWithSpecialConstraints) == (
+        "class SchemaWithSpecialConstraints(BaseModel):\n    foo: constr(to_upper=True, max_length=8) = Field()\n"
+    )
+
+    assert inspect.getsource(v2001.SchemaWithSpecialConstraints) == (
+        "class SchemaWithSpecialConstraints(BaseModel):\n"
+        "    foo: constr(to_upper=True)  # pyright: ignore[reportGeneralTypeIssues]\n"
+    )
+
+
+def test__schema_field_existed_as__default_none__renders_correctly(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v2000, v2001 = create_simple_versioned_schemas(
+        schema(latest_module.EmptySchema).field("foo").existed_as(type=str | None, info=Field(default=None)),
+    )
+
+    assert inspect.getsource(v2000.EmptySchema) == (
+        "class EmptySchema(BaseModel):\n    foo: typing.Union[str, None] = Field(default=None)\n"
+    )
+
+    assert inspect.getsource(v2001.EmptySchema) == ("class EmptySchema(BaseModel):\n    pass\n")
 
 
 def test__schema_field_had__default_factory(
@@ -648,8 +705,38 @@ def test__with_weird_data_types(
         "class ModelWithWeirdFields(BaseModel):\n"
         "    foo: dict = Field(default={'a': 'b'})\n"
         "    bar: list[int] = Field(default_factory=my_default_factory)\n"
-        "    baz: typing.Literal[MyEnum.baz] = Field()\n"
+        "    baz: Literal[MyEnum.baz] = Field()\n"
         "    bad: int = Field()\n"
+    )
+
+    assert inspect.getsource(v2001.ModelWithWeirdFields) == (
+        "class ModelWithWeirdFields(BaseModel):\n"
+        '    foo: dict = Field(default={"a": "b"})\n'
+        "    bar: list[int] = Field(default_factory=my_default_factory)\n"
+        "    baz: Literal[MyEnum.baz]\n"
+    )
+
+
+def test__with_weird_data_types__with_all_fields_modified(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+    data_package_path: str,
+):
+    weird_schemas = importlib.import_module(data_package_path + ".latest.weird_schemas")
+    create_simple_versioned_schemas(
+        schema(weird_schemas.ModelWithWeirdFields).field("foo").had(description="..."),
+        schema(weird_schemas.ModelWithWeirdFields).field("bar").had(description="..."),
+        schema(weird_schemas.ModelWithWeirdFields).field("baz").had(description="..."),
+    )
+
+    v2000 = importlib.import_module(data_package_path + ".v2000_01_01.weird_schemas")
+    v2001 = importlib.import_module(data_package_path + ".v2001_01_01.weird_schemas")
+
+    assert inspect.getsource(v2000.ModelWithWeirdFields) == (
+        "class ModelWithWeirdFields(BaseModel):\n"
+        "    foo: dict = Field(default={'a': 'b'}, description='...')\n"
+        "    bar: list[int] = Field(default_factory=my_default_factory, description='...')\n"
+        "    baz: typing.Literal[MyEnum.baz] = Field(description='...')\n"
     )
 
     assert inspect.getsource(v2001.ModelWithWeirdFields) == (
@@ -668,8 +755,8 @@ def test__union_fields(create_simple_versioned_schemas: CreateSimpleVersionedSch
 
     assert inspect.getsource(v2000_01_01.SchemaWithUnionFields) == (
         "class SchemaWithUnionFields(BaseModel):\n"
-        "    foo: typing.Union[int, str] = Field()\n"
-        "    bar: typing.Union[EmptySchema, None] = Field()\n"
+        "    foo: int | str = Field()\n"
+        "    bar: EmptySchema | None = Field()\n"
         "    baz: typing.Union[int, EmptySchema] = Field()\n"
         "    daz: typing.Union[int, EmptySchema] = Field()\n"
     )
@@ -837,7 +924,7 @@ def test__schema_had_name__dependent_schema_is_altered(
         inspect.getsource(v2000_01_01.SchemaThatDependsOnAnotherSchema)
         == "class SchemaThatDependsOnAnotherSchema(MyFloatySchema2):\n"
         "    foo: MyFloatySchema2 = Field()\n"
-        "    bat: typing.Union[MyFloatySchema2, int] = Field(default=MyFloatySchema2(foo=3.14))\n\n"
+        "    bat: MyFloatySchema2 | int = Field(default=MyFloatySchema2(foo=3.14))\n\n"
         "    def baz(self, daz: MyFloatySchema2) -> MyFloatySchema2:\n"
         "        return MyFloatySchema2(foo=3.14)\n"
     )
@@ -845,7 +932,7 @@ def test__schema_had_name__dependent_schema_is_altered(
         inspect.getsource(v2001_01_01.SchemaThatDependsOnAnotherSchema)
         == "class SchemaThatDependsOnAnotherSchema(MyFloatySchema):\n"
         "    foo: MyFloatySchema = Field()\n"
-        "    bat: typing.Union[MyFloatySchema, int] = Field(default=MyFloatySchema(foo=3.14))\n"
+        "    bat: MyFloatySchema | int = Field(default=MyFloatySchema(foo=3.14))\n"
         "    gaz: int = Field()\n\n"
         "    def baz(self, daz: MyFloatySchema) -> MyFloatySchema:\n"
         "        return MyFloatySchema(foo=3.14)\n"
