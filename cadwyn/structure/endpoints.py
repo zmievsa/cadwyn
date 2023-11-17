@@ -8,7 +8,11 @@ from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute
 
+from cadwyn.exceptions import LintingError
+
 from .._utils import Sentinel
+
+HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
 
 
 @dataclass(slots=True)
@@ -144,6 +148,14 @@ class EndpointInstructionFactory:
 
 
 def endpoint(path: str, methods: list[str], /, *, func_name: str | None = None) -> EndpointInstructionFactory:
+    invalid_methods = set(methods) - HTTP_METHODS
+    if invalid_methods:
+        invalid_methods = ", ".join(sorted(invalid_methods))
+        raise LintingError(
+            f"The following HTTP methods are not valid: {invalid_methods}. "
+            "Please use valid HTTP methods such as GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD.",
+        )
+
     return EndpointInstructionFactory(path, set(methods), func_name)
 
 
