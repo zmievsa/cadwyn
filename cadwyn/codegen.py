@@ -9,12 +9,14 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum, auto
+from functools import cache
 from pathlib import Path
 from types import GenericAlias, LambdaType, ModuleType, NoneType
 from typing import (
     Any,
     TypeAlias,
-    _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
+    _BaseGenericAlias,
+    cast,  # pyright: ignore[reportGeneralTypeIssues]
     final,
     get_args,
     get_origin,
@@ -109,16 +111,56 @@ class ModelPrivateAttrInfo:
     annotation: Any
 
 
+@dataclass
+class ModelFieldInfo:
+    cls: type[BaseModel]
+    _annotation: ast.expr | None
+    field: ModelField | ModelFieldLike
+    field_ast: ast.expr | None
+
+    def get_annotation(self):  # intentionally weird to not clash with ModelField
+        if self._annotation:
+            return PlainRepr(ast.unparse(self._annotation))
+        return self.field.annotation
+
+
 @dataclass(slots=True)
 class ModelInfo:
     name: str
-    fields: dict[_FieldName, tuple[type[BaseModel], ModelField | ModelFieldLike]]
+    fields: dict[_FieldName, ModelFieldInfo]
 
 
 @dataclass(slots=True)
 class _SchemaBundle:
     version: date
     schemas: dict[str, ModelInfo]
+
+
+@cache
+def _get_fields_from_model(cls: type):
+    mro_fields = [_get_fields_from_model(parent) for parent in cls.mro()[1:] if issubclass(parent, BaseModel)]
+    if not isinstance(cls, type) or not issubclass(cls, BaseModel):
+        raise CodeGenerationError(f"Model {cls} is not a subclass of BaseModel")
+    try:
+        source = inspect.getsource(cls)
+    except OSError:
+        current_field_defs = {
+            field_name: ModelFieldInfo(cls, None, field, None) for field_name, field in cls.__fields__.items()
+        }
+    else:
+        cls_ast = cast(ast.ClassDef, ast.parse(source).body[0])
+        current_field_defs = {
+            node.target.id: ModelFieldInfo(cls, node.annotation, cls.__fields__[node.target.id], node.value)
+            for node in cls_ast.body
+            if isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id in cls.__fields__
+        }
+
+    final_field_defs: dict[str, ModelFieldInfo] = {}
+    for attr in reversed(mro_fields):
+        final_field_defs |= attr
+    return final_field_defs | current_field_defs
 
 
 def generate_code_for_versioned_packages(
@@ -136,7 +178,7 @@ def generate_code_for_versioned_packages(
         version of the latest module.
     """
     schemas = {
-        k: ModelInfo(v.__name__, _get_fields_for_model(v)) for k, v in deepcopy(versions.versioned_schemas).items()
+        k: ModelInfo(v.__name__, _get_fields_from_model(v)) for k, v in deepcopy(versions.versioned_schemas).items()
     }
     enums = {k: (v, {member.name: member.value for member in v}) for k, v in deepcopy(versions.versioned_enums).items()}
     schemas_per_version: list[_SchemaBundle] = []
@@ -276,7 +318,7 @@ def _apply_alter_schema_instructions(  # noqa: C901
                     f'You tried to change the type of field "{alter_schema_instruction.field_name}" from '
                     f'"{schema.__name__}" in "{version_change_name}" but it doesn\'t have such a field.',
                 )
-            model_field = field_name_to_field_model[alter_schema_instruction.field_name][1]
+            model_field = field_name_to_field_model[alter_schema_instruction.field_name].field
             if alter_schema_instruction.type is not Sentinel:
                 if model_field.annotation == alter_schema_instruction.type:
                     raise InvalidGenerationInstructionError(
@@ -285,6 +327,8 @@ def _apply_alter_schema_instructions(  # noqa: C901
                         f'but it already has type "{model_field.annotation}"',
                     )
                 model_field.annotation = alter_schema_instruction.type
+                # TODO: Extend ast instead of removing it
+                field_name_to_field_model[alter_schema_instruction.field_name]._annotation = None
             if alter_schema_instruction.new_name is not Sentinel:
                 if alter_schema_instruction.new_name == alter_schema_instruction.field_name:
                     raise InvalidGenerationInstructionError(
@@ -311,7 +355,17 @@ def _apply_alter_schema_instructions(  # noqa: C901
                             f'from "{schema.__name__}" to {attr_value!r} in "{version_change_name}" '
                             "but it already has that value.",
                         )
-                    setattr(field_info, attr_name, attr_value)
+
+                    if attr_name in model_field.annotation.__dict__ and _is_pydantic_constrained_type(
+                        model_field.annotation,
+                    ):
+                        setattr(model_field.annotation, attr_name, attr_value)
+                    else:
+                        setattr(field_info, attr_name, attr_value)
+                        # TODO: Extend ast instead of removing it
+                    field_name_to_field_model[alter_schema_instruction.field_name]._annotation = None
+                    field_name_to_field_model[alter_schema_instruction.field_name].field_ast = None
+
         elif isinstance(alter_schema_instruction, OldSchemaFieldExistedWith):
             if alter_schema_instruction.field_name in field_name_to_field_model:
                 raise InvalidGenerationInstructionError(
@@ -322,9 +376,10 @@ def _apply_alter_schema_instructions(  # noqa: C901
                 annotation = alter_schema_instruction.import_as
             else:
                 annotation = alter_schema_instruction.type
-            field_name_to_field_model[alter_schema_instruction.field_name] = (
+            field_name_to_field_model[alter_schema_instruction.field_name] = ModelFieldInfo(
                 schema,
-                ModelFieldLike(
+                _annotation=None,  # TODO: Get this from migration
+                field=ModelFieldLike(
                     name=alter_schema_instruction.field_name,
                     original_type=alter_schema_instruction.type,
                     annotation=annotation,
@@ -332,6 +387,7 @@ def _apply_alter_schema_instructions(  # noqa: C901
                     import_from=alter_schema_instruction.import_from,
                     import_as=alter_schema_instruction.import_as,
                 ),
+                field_ast=None,  # TODO: Get this from migration
             )
         elif isinstance(alter_schema_instruction, AlterSchemaInstruction):
             # We only handle names right now so we just go ahead and check
@@ -459,21 +515,6 @@ def _generate_parallel_directory(
                 shutil.copyfile(original_file, parallel_file)
 
 
-def _get_fields_for_model(
-    model: type[BaseModel],
-) -> dict[_FieldName, tuple[type[BaseModel], ModelField | ModelFieldLike]]:
-    actual_fields: dict[_FieldName, tuple[type[BaseModel], ModelField | ModelFieldLike]] = {}
-    for cls in model.__mro__:
-        if cls is BaseModel:
-            return actual_fields
-        if not issubclass(cls, BaseModel):
-            continue
-        for field_name, field in cls.__fields__.items():
-            if field_name not in actual_fields and field_name in cls.__annotations__:
-                actual_fields[field_name] = (cls, field)
-    raise CodeGenerationError(f"Model {model} is not a subclass of BaseModel")
-
-
 def _parse_python_module(module: ModuleType) -> ast.Module:
     try:
         return ast.parse(inspect.getsource(module))
@@ -502,22 +543,37 @@ def _migrate_module_to_another_version(
     else:
         module_name = module.__name__
     all_names_in_file = _get_all_names_defined_in_module(parsed_file, module_name)
-
     # TODO: Does this play well with renaming?
     extra_field_imports = [
         ast.ImportFrom(
-            module=field.import_from,
-            names=[ast.alias(name=transformer.visit(field.original_type).strip("'"), asname=field.import_as)],
+            module=field.field.import_from,
+            names=[
+                ast.alias(name=transformer.visit(field.field.original_type).strip("'"), asname=field.field.import_as),
+            ],
             level=0,
         )
         for val in modified_schemas.values()
-        for _, field in val.fields.values()
-        if isinstance(field, ModelFieldLike) and field.import_from is not None
+        for field in val.fields.values()
+        if isinstance(field.field, ModelFieldLike) and field.field.import_from is not None
     ]
 
     body = ast.Module(
         [
-            ast.ImportFrom(module="pydantic", names=[ast.alias(name="Field")], level=0),
+            ast.ImportFrom(
+                module="pydantic",
+                names=[
+                    ast.alias(name="Field"),
+                    ast.alias(name="conbytes"),
+                    ast.alias(name="conlist"),
+                    ast.alias(name="conset"),
+                    ast.alias(name="constr"),
+                    ast.alias(name="conint"),
+                    ast.alias(name="confloat"),
+                    ast.alias(name="condecimal"),
+                    ast.alias(name="condate"),
+                ],
+                level=0,
+            ),
             ast.Import(names=[ast.alias(name="typing")], level=0),
             ast.ImportFrom(module="typing", names=[ast.alias(name="Any")], level=0),
         ]
@@ -606,49 +662,64 @@ def _modify_schema_cls(
     module_python_path: str,
     cls_python_path: str,
 ) -> ast.ClassDef:
-    annotation_transformer = _AnnotationTransformerWithSchemaRenaming(
+    object_renamer = _AnnotationTransformer()
+    ast_renamer = _AnnotationASTNodeTransformerWithSchemaRenaming(
         modified_schemas,
-        module_python_path,
         all_names_in_module,
+        module_python_path,
     )
-    ast_transformer = _AnnotationASTNodeTransformer(modified_schemas, all_names_in_module, module_python_path)
     if cls_python_path in modified_schemas:
         model_info = modified_schemas[cls_python_path]
+        # This is for possible schema renaming
         cls_node.name = model_info.name
+
         field_definitions = [
             ast.AnnAssign(
                 target=ast.Name(name, ctx=ast.Store()),
-                annotation=ast.Name(annotation_transformer.visit(field.annotation)),
-                value=_generate_field_ast(field, annotation_transformer),
+                annotation=ast.Name(object_renamer.visit(field.get_annotation())),
+                value=_generate_field_ast(field, object_renamer),
                 simple=1,
             )
-            for name, (_, field) in model_info.fields.items()
+            for name, field in model_info.fields.items()
         ]
     else:
         field_definitions = [field for field in cls_node.body if isinstance(field, ast.AnnAssign)]
-
     old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Pass | ast.Ellipsis)]
     docstring = _pop_docstring_from_cls_body(old_body)
     cls_node.body = docstring + field_definitions + old_body
-    return ast_transformer.visit(cls_node)
+    if not cls_node.body:
+        cls_node.body = [ast.Pass()]
+
+    return ast_renamer.visit(ast.parse(ast.unparse(cls_node)).body[0])
 
 
 def _generate_field_ast(
-    field: ModelField | ModelFieldLike,
-    annotation_transformer: "_AnnotationTransformerWithSchemaRenaming",
+    field: ModelFieldInfo,
+    annotation_transformer: "_AnnotationTransformer",
 ):
+    if field.field_ast is not None:
+        return field.field_ast
+    passed_attrs = {
+        attr: _get_attribute_from_field_info(field.field, attr)
+        for attr in _get_passed_attributes_to_field(field.field.field_info)
+    }
+    if _is_pydantic_constrained_type(field.field.annotation):
+        (
+            attrs_that_are_only_in_contype,
+            attrs_that_are_only_in_field,
+        ) = _get_attrs_that_are_not_from_field_and_that_are_from_field(field.field.annotation)
+        if not attrs_that_are_only_in_contype:
+            passed_attrs |= attrs_that_are_only_in_field
+
     return ast.Call(
         func=ast.Name("Field"),
         args=[],
         keywords=[
             ast.keyword(
                 arg=attr,
-                value=ast.parse(
-                    annotation_transformer.visit(_get_attribute_from_field_info(field, attr)),
-                    mode="eval",
-                ).body,
+                value=ast.parse(annotation_transformer.visit(attr_value), mode="eval").body,
             )
-            for attr in _get_passed_attributes_to_field(field.field_info)
+            for attr, attr_value in passed_attrs.items()
         ],
     )
 
@@ -701,7 +772,7 @@ def _get_passed_attributes_to_field(field_info: FieldInfo):
     yield from field_info.extra
 
 
-class _AnnotationASTNodeTransformer(ast.NodeTransformer):
+class _AnnotationASTNodeTransformerWithSchemaRenaming(ast.NodeTransformer):
     def __init__(
         self,
         modified_schemas: dict[str, ModelInfo],
@@ -724,6 +795,8 @@ class _AnnotationASTNodeTransformer(ast.NodeTransformer):
 
 
 class _AnnotationTransformer:
+    """Returns fancy and correct reprs of annotations"""
+
     def visit(self, value: Any):
         if isinstance(value, list | tuple | set | frozenset):
             return self.transform_collection(value)
@@ -765,22 +838,27 @@ class _AnnotationTransformer:
     def transform_type(self, value: type) -> Any:
         # NOTE: Be wary of this hack when migrating to pydantic v2
         # This is a hack for pydantic's Constrained types
-        if value.__name__.startswith("Constrained") and value.__name__.endswith("Value"):
-            # No, get_origin and get_args don't work here. No idea why
-            snake_case = _RE_CAMEL_TO_SNAKE.sub("_", value.__name__)
-            cls_name = "con" + "".join(snake_case.split("_")[1:-1])
-            return (
-                cls_name.lower()
-                + "("
-                + ", ".join(
-                    [
-                        f"{key}={self.visit(val)}"
-                        for key, val in value.__dict__.items()
-                        if not key.startswith("__") and val is not None
-                    ],
+        if _is_pydantic_constrained_type(value):
+            if _get_attrs_that_are_not_from_field_and_that_are_from_field(value)[0]:
+                # No, get_origin and get_args don't work here. No idea why
+                parent = value.mro()[1]
+                snake_case = _RE_CAMEL_TO_SNAKE.sub("_", value.__name__)
+                cls_name = "con" + "".join(snake_case.split("_")[1:-1])
+                return (
+                    cls_name.lower()
+                    + "("
+                    + ", ".join(
+                        [
+                            f"{key}={self.visit(val)}"
+                            for key, val in value.__dict__.items()
+                            if not key.startswith("_") and val is not None and val != parent.__dict__[key]
+                        ],
+                    )
+                    + ")"
                 )
-                + ")"
-            )
+            else:
+                value = value.mro()[-2]
+
         return value.__name__
 
     def transform_enum(self, value: Enum) -> Any:
@@ -804,36 +882,34 @@ class _AnnotationTransformer:
         return PlainRepr(repr(value))
 
 
+def _is_pydantic_constrained_type(value: object):
+    return isinstance(value, type) and value.__name__.startswith("Constrained") and value.__name__.endswith("Value")
+
+
+def _get_attrs_that_are_not_from_field_and_that_are_from_field(value: type):
+    parent_public_attrs = {k: v for k, v in value.mro()[1].__dict__.items() if not k.startswith("_")}
+    value_private_attrs = {k: v for k, v in value.__dict__.items() if not k.startswith("_")}
+    attrs_in_value_different_from_parent = {
+        k: v for k, v in value_private_attrs.items() if k in parent_public_attrs and parent_public_attrs[k] != v
+    }
+    attrs_in_value_different_from_parent_that_are_not_in_field_def = {
+        k: v for k, v in attrs_in_value_different_from_parent.items() if k not in _dict_of_empty_field_info
+    }
+    attrs_in_value_different_from_parent_that_are_in_field_def = {
+        k: v for k, v in attrs_in_value_different_from_parent.items() if k in _dict_of_empty_field_info
+    }
+
+    return (
+        attrs_in_value_different_from_parent_that_are_not_in_field_def,
+        attrs_in_value_different_from_parent_that_are_in_field_def,
+    )
+
+
 class PlainRepr(str):
-    """
-    String class where repr doesn't include quotes.
-    """
+    """String class where repr doesn't include quotes"""
 
     def __repr__(self) -> str:
         return str(self)
-
-
-class _AnnotationTransformerWithSchemaRenaming(_AnnotationTransformer):
-    def __init__(
-        self,
-        modified_schemas: dict[str, ModelInfo],
-        module_python_path: str,
-        all_names_in_module: dict[str, str],
-    ):
-        super().__init__()
-
-        self.modified_schemas = modified_schemas
-        self.module_python_path = module_python_path
-        self.all_names_in_module = all_names_in_module
-
-    def transform_type(self, value: type) -> Any:
-        model_info = self.modified_schemas.get(
-            f"{self.all_names_in_module.get(value.__name__, self.module_python_path)}.{value.__name__}",
-        )
-        if model_info is not None:
-            return model_info.name
-        else:
-            return super().transform_type(value)
 
 
 def _find_a_lambda(source: str) -> str:

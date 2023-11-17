@@ -2,7 +2,7 @@ from decimal import Decimal
 from enum import Enum, auto
 from typing import Any
 
-from pydantic import BaseModel, Field, PrivateAttr, conint
+from pydantic import BaseModel, Field, PrivateAttr, conint, constr
 from pydantic import Field as PydanticField
 
 
@@ -104,8 +104,13 @@ CONINT_LT = 10
 ANOTHER_VAR, CONINT_LT_ALIAS = 11, CONINT_LT
 
 
-class SchemaWithConstrainedInt(BaseModel):
+class SchemaWithConstraints(BaseModel):
     foo: conint(lt=CONINT_LT_ALIAS)  # pyright: ignore[reportGeneralTypeIssues]
+    bar: str = Field(max_length=CONINT_LT_ALIAS)
+
+
+class SchemaWithSpecialConstraints(BaseModel):
+    foo: constr(to_upper=True)  # pyright: ignore[reportGeneralTypeIssues]
 
 
 class SchemaWithInternalRepresentation(BaseModel):

@@ -5,9 +5,15 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [2.2.0]
+
+* Validation for the spelling of HTTP methods in `cadwyn.structure.endpoint`.
+
+## [2.1.0]
+
 ### Added
 
-* Checks for misspelled HTTP methods in EndpointInstructionFactory interface function.
+* A prototype of AST-based code generation where we try to keep as much of the old field/annotation structure as possible
 
 ## [2.0.5]
 
