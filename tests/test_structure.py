@@ -416,8 +416,8 @@ def test__endpoint_instruction_factory_interface__with_wrong_http_methods__shoul
     with pytest.raises(
         LintingError,
         match=re.escape(
-            "The following HTTP methods are not valid: DEATH, STRAND."
+            "The following HTTP methods are not valid: DEATH, STRAND. "
             "Please use valid HTTP methods such as GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD.",
         ),
     ):
-        endpoint("/test", ["DEATH", "STRAND"], func_name="Nofunc")
+        endpoint("/test", ["DEATH", "STRAND"])

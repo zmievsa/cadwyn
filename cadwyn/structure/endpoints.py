@@ -150,8 +150,9 @@ class EndpointInstructionFactory:
 def endpoint(path: str, methods: list[str], /, *, func_name: str | None = None) -> EndpointInstructionFactory:
     invalid_methods = set(methods) - HTTP_METHODS
     if invalid_methods:
+        invalid_methods = ", ".join(sorted(invalid_methods))
         raise LintingError(
-            f"The following HTTP methods are not valid: {', '.join(invalid_methods)}."
+            f"The following HTTP methods are not valid: {invalid_methods}. "
             "Please use valid HTTP methods such as GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD.",
         )
 

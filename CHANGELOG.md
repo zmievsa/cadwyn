@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Added
+
+* Checks for misspelled HTTP methods in EndpointInstructionFactory interface function.
+
 ## [2.0.5]
 
 ### Fixed
