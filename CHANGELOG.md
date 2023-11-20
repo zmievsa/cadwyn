@@ -7,6 +7,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [2.2.0]
 
+### Added
+
 * Validation for the spelling of HTTP methods in `cadwyn.structure.endpoint`.
 
 ## [2.1.0]
