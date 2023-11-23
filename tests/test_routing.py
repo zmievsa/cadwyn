@@ -4,11 +4,11 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from datetime import date
 from types import ModuleType
-from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
+from typing import Annotated, Any, NewType, TypeAlias, get_args
 from uuid import UUID
 
 import pytest
-from fastapi import APIRouter, Body, Depends, FastAPI, UploadFile
+from fastapi import APIRouter, Body, Depends, UploadFile
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -26,7 +26,7 @@ from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSc
 from tests._data.unversioned_schemas import UnversionedSchema3
 from tests.conftest import (
     CreateSimpleVersionedSchemas,
-    CreateVersionedRouters,
+    CreateVersionedApp,
     RunSchemaCodegen,
     client,
     version_change,
@@ -66,16 +66,16 @@ def test_endpoint(router: VersionedAPIRouter, test_path: str, random_uuid: UUID)
 
 @fixture_class(name="create_versioned_api_routes")
 class CreateVersionedAPIRoutes:
-    create_versioned_routers: CreateVersionedRouters
+    create_versioned_app: CreateVersionedApp
 
     def __call__(
         self,
         *version_changes: type[VersionChange],
     ) -> tuple[list[APIRoute], list[APIRoute]]:
-        routers = self.create_versioned_routers(*version_changes)
-        return cast(
-            tuple[list[APIRoute], list[APIRoute]],
-            (routers[date(2000, 1, 1)].routes, routers[date(2001, 1, 1)].routes),
+        app = self.create_versioned_app(*version_changes)
+        return (
+            app.router.versioned_routes.get(date(2000, 1, 1), []),
+            app.router.versioned_routes.get(date(2001, 1, 1), []),
         )
 
 
@@ -216,7 +216,7 @@ def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
         ("name", "my name"),
         ("openapi_extra", {"my_openapi_extra": "openapi_extra"}),
         ("responses", {405: {"description": "hewwo"}, 500: {"description": "hewwo1"}}),
-        ("methods", ["GET", "POST"]),
+        ("methods", {"GET", "POST"}),
         ("operation_id", "my_operation_id"),
         ("response_class", FileResponse),
         (
@@ -255,11 +255,12 @@ def test__endpoint_had_dependencies(
     )
 
     assert len(routes_2000) == len(routes_2001) == 1
-    dependency = routes_2000[0].dependencies[0].dependency
+    assert len(routes_2000[0].dependencies) == 2
+    dependency = routes_2000[0].dependencies[1].dependency
     assert dependency is not None
     assert dependency() == "hewwo"
 
-    assert len(routes_2001[0].dependencies) == 0
+    assert len(routes_2001[0].dependencies) == 1
 
 
 def test__only_exists_in_older_versions__endpoint_is_not_a_route__error(
@@ -297,7 +298,7 @@ def test__only_exists_in_older_versions__applied_twice__should_raise_error(
 
 def test__router_generation__creating_a_synchronous_endpoint__error(
     router: VersionedAPIRouter,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
 ):
     @router.get("/test")
     def test():
@@ -307,12 +308,12 @@ def test__router_generation__creating_a_synchronous_endpoint__error(
         RouterGenerationError,
         match=re.escape("All versioned endpoints must be asynchronous."),
     ):
-        create_versioned_routers(version_change(endpoint("/test", ["GET"]).didnt_exist))
+        create_versioned_app(version_change(endpoint("/test", ["GET"]).didnt_exist))
 
 
 def test__router_generation__changing_a_deleted_endpoint__error(
     router: VersionedAPIRouter,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
 ):
     @router.only_exists_in_older_versions
     @router.get("/test")
@@ -325,13 +326,13 @@ def test__router_generation__changing_a_deleted_endpoint__error(
             'Endpoint "[\'GET\'] /test" you tried to change in "MyVersionChange" doesn\'t exist',
         ),
     ):
-        create_versioned_routers(version_change(endpoint("/test", ["GET"]).had(description="Hewwo")))
+        create_versioned_app(version_change(endpoint("/test", ["GET"]).had(description="Hewwo")))
 
 
 def test__router_generation__re_creating_an_existing_endpoint__error(
     test_endpoint: Endpoint,
     test_path: str,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
 ):
     with pytest.raises(
         RouterGenerationError,
@@ -340,24 +341,24 @@ def test__router_generation__re_creating_an_existing_endpoint__error(
             '"MyVersionChange" already existed in a newer version',
         ),
     ):
-        create_versioned_routers(version_change(endpoint(test_path, ["GET"]).existed))
+        create_versioned_app(version_change(endpoint(test_path, ["GET"]).existed))
 
 
 def test__router_generation__editing_an_endpoint_with_wrong_method__should_raise_error(
     test_endpoint: Endpoint,
     test_path: str,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
 ):
     with pytest.raises(
         RouterGenerationError,
         match=re.escape('Endpoint "[\'POST\'] /test/{hewwo}" you tried to change in "MyVersionChange" doesn\'t exist'),
     ):
-        create_versioned_routers(version_change(endpoint(test_path, ["POST"]).had(description="Hewwo")))
+        create_versioned_app(version_change(endpoint(test_path, ["POST"]).had(description="Hewwo")))
 
 
 def test__router_generation__editing_an_endpoint_with_a_less_general_method__should_raise_error(
     router: VersionedAPIRouter,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
 ):
     @router.route("/test/{hewwo}", methods=["GET", "POST"])
     async def test(hewwo: int):
@@ -367,7 +368,7 @@ def test__router_generation__editing_an_endpoint_with_a_less_general_method__sho
         RouterGenerationError,
         match=re.escape('Endpoint "[\'GET\'] /test/{hewwo}" you tried to change in "MyVersionChange" doesn\'t exist'),
     ):
-        create_versioned_routers(version_change(endpoint("/test/{hewwo}", ["GET"]).had(description="Hewwo")))
+        create_versioned_app(version_change(endpoint("/test/{hewwo}", ["GET"]).had(description="Hewwo")))
 
 
 def test__router_generation__editing_multiple_endpoints_with_same_route(
@@ -391,13 +392,13 @@ def test__router_generation__editing_multiple_endpoints_with_same_route(
 def test__router_generation__editing_an_endpoint_with_a_more_general_method__should_raise_error(
     test_endpoint: Endpoint,
     test_path: str,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
 ):
     with pytest.raises(
         RouterGenerationError,
         match=re.escape('Endpoint "[\'POST\'] /test/{hewwo}" you tried to change in "MyVersionChange" doesn\'t exist'),
     ):
-        create_versioned_routers(version_change(endpoint(test_path, ["GET", "POST"]).had(description="Hewwo")))
+        create_versioned_app(version_change(endpoint(test_path, ["GET", "POST"]).had(description="Hewwo")))
 
 
 def test__router_generation__editing_multiple_methods_of_multiple_endpoints__should_edit_both_methods(
@@ -426,7 +427,7 @@ def test__router_generation__editing_multiple_methods_of_multiple_endpoints__sho
 
 def test__router_generation__deleting_a_deleted_endpoint__error(
     router: VersionedAPIRouter,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
 ):
     @router.only_exists_in_older_versions
     @router.get("/test")
@@ -443,7 +444,7 @@ def test__router_generation__deleting_a_deleted_endpoint__error(
             "Function names of endpoints that were already deleted: ['test']",
         ),
     ):
-        create_versioned_routers(version_change(endpoint("/test", ["GET"]).didnt_exist))
+        create_versioned_app(version_change(endpoint("/test", ["GET"]).didnt_exist))
 
 
 @pytest.mark.parametrize("delete_first", [True, False])
@@ -601,7 +602,7 @@ def get_nested_field_type(annotation: Any) -> type[BaseModel]:
 
 
 def test__router_generation__re_creating_a_non_endpoint__error(
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
 ):
     with pytest.raises(
         RouterGenerationError,
@@ -609,13 +610,13 @@ def test__router_generation__re_creating_a_non_endpoint__error(
             'Endpoint "[\'GET\'] /test" you tried to restore in "MyVersionChange" wasn\'t among the deleted routes',
         ),
     ):
-        create_versioned_routers(version_change(endpoint("/test", ["GET"]).existed))
+        create_versioned_app(version_change(endpoint("/test", ["GET"]).existed))
 
 
 def test__router_generation__changing_attribute_to_the_same_value__error(
     test_endpoint: Endpoint,
     test_path: str,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
 ):
     with pytest.raises(
         RouterGenerationError,
@@ -624,23 +625,23 @@ def test__router_generation__changing_attribute_to_the_same_value__error(
             "it was the same. It means that your version change has no effect on the attribute and can be removed.",
         ),
     ):
-        create_versioned_routers(version_change(endpoint(test_path, ["GET"]).had(path=test_path)))
+        create_versioned_app(version_change(endpoint(test_path, ["GET"]).had(path=test_path)))
 
 
 def test__router_generation__non_api_route_added(
     router: VersionedAPIRouter,
     test_endpoint: Endpoint,
     test_path: str,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
 ):
     @router.websocket("/test2")
     async def test_websocket():
         raise NotImplementedError
 
-    routers = create_versioned_routers(version_change(endpoint(test_path, ["GET"]).didnt_exist))
-    assert len(routers[date(2000, 1, 1)].routes) == 1
-    assert len(routers[date(2001, 1, 1)].routes) == 2
-    route = routers[date(2001, 1, 1)].routes[0]
+    app = create_versioned_app(version_change(endpoint(test_path, ["GET"]).didnt_exist))
+    assert len(app.router.versioned_routes[date(2000, 1, 1)]) == 1
+    assert len(app.router.versioned_routes[date(2001, 1, 1)]) == 2
+    route = app.router.versioned_routes[date(2001, 1, 1)][0]
     assert isinstance(route, APIRoute)
     assert endpoints_equal(route.endpoint, test_endpoint)
 
@@ -728,7 +729,7 @@ def test__router_generation__using_non_latest_version_of_schema__should_raise_er
 def test__router_generation__using_unversioned_schema_from_versioned_base_dir__should_not_raise_error(
     router: VersionedAPIRouter,
     data_package_path: str,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
 ):
     module = importlib.import_module(f"{data_package_path}.unversioned_schema_dir")
 
@@ -736,7 +737,7 @@ def test__router_generation__using_unversioned_schema_from_versioned_base_dir__s
     async def testik(body: module.UnversionedSchema2):  # pyright: ignore
         raise NotImplementedError
 
-    create_versioned_routers()
+    create_versioned_app()
 
 
 def test__router_generation__passing_a_module_instead_of_package_for_latest__should_raise_error(
@@ -900,7 +901,7 @@ def test__router_generation__using_oydantic_typehints(
 
 def test__router_generation__updating_request_depends(
     router: VersionedAPIRouter,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
     latest_module: ModuleType,
 ):
     def sub_dependency1(my_enum: latest_module.StrEnum) -> latest_module.StrEnum:
@@ -926,13 +927,10 @@ def test__router_generation__updating_request_depends(
     async def test_with_dep2(dep: latest_module.StrEnum = Depends(dependency2)):
         return dep
 
-    routers = create_versioned_routers(version_change(enum(latest_module.StrEnum).had(foo="bar")))
-    app_2000 = FastAPI()
-    app_2001 = FastAPI()
-    app_2000.include_router(routers[date(2000, 1, 1)])
-    app_2001.include_router(routers[date(2001, 1, 1)])
-    client_2000 = TestClient(app_2000)
-    client_2001 = TestClient(app_2001)
+    app = create_versioned_app(version_change(enum(latest_module.StrEnum).had(foo="bar")))
+
+    client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
     assert client_2000.get("/test1", params={"my_enum": "bar"}).json() == "bar"
     assert client_2000.get("/test2", params={"my_enum": "bar"}).json() == "bar"
 
@@ -961,7 +959,7 @@ def test__router_generation__updating_request_depends(
 
 def test__router_generation__updating_unused_dependencies(
     router: VersionedAPIRouter,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
     latest_module: ModuleType,
 ):
     def dependency(my_enum: latest_module.StrEnum):
@@ -971,10 +969,10 @@ def test__router_generation__updating_unused_dependencies(
     async def test_with_dep():
         pass
 
-    routers = create_versioned_routers(version_change(enum(latest_module.StrEnum).had(foo="bar")))
+    app = create_versioned_app(version_change(enum(latest_module.StrEnum).had(foo="bar")))
 
-    client_2000 = client(routers[date(2000, 1, 1)])
-    client_2001 = client(routers[date(2001, 1, 1)])
+    client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
     assert client_2000.get("/test", params={"my_enum": "bar"}).json() is None
 
     assert client_2001.get("/test", params={"my_enum": "bar"}).json() == {
@@ -991,7 +989,7 @@ def test__router_generation__updating_unused_dependencies(
 
 def test__router_generation__updating_callbacks(
     router: VersionedAPIRouter,
-    create_versioned_routers: CreateVersionedRouters,
+    create_versioned_app: CreateVersionedApp,
     latest_module: ModuleType,
 ):
     callback_router = APIRouter()
@@ -1008,19 +1006,21 @@ def test__router_generation__updating_callbacks(
     async def test_with_callbacks(body: latest_module.SchemaWithOneIntField):
         raise NotImplementedError
 
-    routers = create_versioned_routers(
+    app = create_versioned_app(
         version_change(schema(latest_module.SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
 
     assert (
-        routers[date(2000, 1, 1)]
-        .routes[0]
+        app.router.versioned_routes[date(2000, 1, 1)][0]
         .callbacks[1]
         .dependant.body_params[0]
         .type_.__module__.endswith(".v2000_01_01")
     )
     assert (
-        routers[date(2001, 1, 1)].routes[0].callbacks[1].dependant.body_params[0].type_.__module__.endswith(".latest")
+        app.router.versioned_routes[date(2001, 1, 1)][0]
+        .callbacks[1]
+        .dependant.body_params[0]
+        .type_.__module__.endswith(".latest")
     )
 
 

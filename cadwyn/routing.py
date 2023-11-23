@@ -12,6 +12,7 @@ from pathlib import Path
 from types import GenericAlias, MappingProxyType, ModuleType
 from typing import (
     Any,
+    Generic,
     TypeAlias,
     TypeVar,
     _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
@@ -69,8 +70,8 @@ class _EndpointInfo:
 
 
 @dataclass(slots=True)
-class _RouterInfo:
-    router: fastapi.routing.APIRouter
+class _RouterInfo(Generic[_R]):
+    router: _R
     routes_with_migrated_requests: dict[EndpointPath, set[EndpointMethod]]
     route_bodies_with_migrated_requests: set[type[BaseModel]]
 
@@ -97,14 +98,14 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         return endpoint
 
 
-@final
-class _EndpointTransformer:
+class _EndpointTransformer(Generic[_R]):
     def __init__(
         self,
-        parent_router: fastapi.routing.APIRouter,
+        parent_router: _R,
         versions: VersionBundle,
         latest_schemas_module: ModuleType,
     ) -> None:
+        super().__init__()
         self.parent_router = parent_router
         self.versions = versions
         self.annotation_transformer = _AnnotationTransformer(latest_schemas_module, versions)
@@ -113,7 +114,7 @@ class _EndpointTransformer:
             route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
         ]
 
-    def transform(self):
+    def transform(self) -> dict[VersionDate, _R]:
         router = deepcopy(self.parent_router)
         router_infos: dict[VersionDate, _RouterInfo] = {}
         routes_with_migrated_requests = {}

@@ -13,7 +13,7 @@ from .routes import app, router
 @pytest.fixture(scope="module", autouse=True)
 def _prepare_versioned_schemas():
     generate_code_for_versioned_packages(latest, app.versions)
-    app.include_versioned_routers(router)
+    app.generate_and_include_versioned_routers(router)
     try:
         yield
     finally:

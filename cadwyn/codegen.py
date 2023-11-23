@@ -15,8 +15,8 @@ from types import GenericAlias, LambdaType, ModuleType, NoneType
 from typing import (
     Any,
     TypeAlias,
-    _BaseGenericAlias,
-    cast,  # pyright: ignore[reportGeneralTypeIssues]
+    _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
+    cast,
     final,
     get_args,
     get_origin,

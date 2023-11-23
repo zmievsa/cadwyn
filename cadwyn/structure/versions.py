@@ -45,6 +45,7 @@ PossibleInstructions: TypeAlias = (
     | AlterSchemaInstruction
     | staticmethod
 )
+APIVersionVarType: TypeAlias = ContextVar[VersionDate | None] | ContextVar[VersionDate]
 
 
 class VersionChange:
@@ -204,7 +205,7 @@ class VersionBundle:
     def __init__(
         self,
         *versions: Version,
-        api_version_var: ContextVar[VersionDate | None] | ContextVar[VersionDate],
+        api_version_var: APIVersionVarType,
     ) -> None:
         super().__init__()
 
