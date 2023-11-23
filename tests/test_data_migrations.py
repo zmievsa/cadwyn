@@ -5,15 +5,16 @@ from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from datetime import date
 from types import ModuleType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from dirty_equals import IsPartialDict, IsStr
-from fastapi import Body, Cookie, File, Header, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Body, Cookie, File, Header, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.exceptions import CadwynStructureError
+from cadwyn.main import _Cadwyn
 from cadwyn.structure import (
     VersionChange,
     convert_request_to_next_version_for,
@@ -523,7 +524,6 @@ class TestHowAndWhenMigrationsApply:
         ]
         assert clients[date(2002, 1, 1)].post(test_path, json=[]).json()["body"] == []
 
-    @pytest.mark.skip("Rewrite this test using a custom routing approach so that we can simulate the none-version")
     def test__try_migrating_when_version_is_none__no_migrations_get_applied(
         self,
         create_versioned_clients: CreateVersionedClients,
@@ -534,12 +534,22 @@ class TestHowAndWhenMigrationsApply:
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
-        none_client = client(clients[date(2000, 1, 1)].app.router, api_version=None, api_version_var=api_version_var)
-        assert none_client.post(test_path, json=[]).json()["body"] == []
+        app = cast(_Cadwyn, clients[date(2000, 1, 1)].app)
+        none_client = client(
+            APIRouter(routes=app.router.versioned_routes[date(2000, 1, 1)]),
+            api_version=None,
+            api_version_var=api_version_var,
+        )
+        # The version below is not actually used anywhere, but it's required so we pass a dummy one
+        assert (
+            none_client.post(
+                test_path,
+                json=[],
+                headers={app.router.api_version_header_name: "2000-11-11"},
+            ).json()["body"]
+            == []
+        )
 
-    @pytest.mark.skip(
-        "Rewrite this test using a custom routing approach so that we can simulate the earlier-than-earliest-version",
-    )
     def test__try_migrating_to_version_below_earliest__undefined_behaior(
         self,
         create_versioned_clients: CreateVersionedClients,
@@ -550,12 +560,17 @@ class TestHowAndWhenMigrationsApply:
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
+        app = cast(_Cadwyn, clients[date(2000, 1, 1)].app)
         earlier_client = client(
-            clients[date(2000, 1, 1)].app.router,
+            APIRouter(routes=app.router.versioned_routes[date(2000, 1, 1)]),
             api_version=date(1998, 2, 10),
             api_version_var=api_version_var,
         )
-        assert earlier_client.post(test_path, json=[]).json()["body"] == [
+        assert earlier_client.post(
+            test_path,
+            json=[],
+            headers={app.router.api_version_header_name: "2000-01-01"},
+        ).json()["body"] == [
             "request change 1",
             "request change 2",
             "response change 2",

@@ -904,57 +904,49 @@ def test__router_generation__updating_request_depends(
     create_versioned_app: CreateVersionedApp,
     latest_module: ModuleType,
 ):
-    def sub_dependency1(my_enum: latest_module.StrEnum) -> latest_module.StrEnum:
-        return my_enum
+    def sub_dependency1(my_schema: latest_module.EmptySchema) -> latest_module.EmptySchema:
+        return my_schema
 
-    def dependency1(dep: latest_module.StrEnum = Depends(sub_dependency1)):
+    def dependency1(dep: latest_module.EmptySchema = Depends(sub_dependency1)):
         return dep
 
-    def sub_dependency2(my_enum: latest_module.StrEnum) -> latest_module.StrEnum:
-        return my_enum
+    def sub_dependency2(my_schema: latest_module.EmptySchema) -> latest_module.EmptySchema:
+        return my_schema
 
     # TASK: What if "a" gets deleted? https://github.com/zmievsa/cadwyn/issues/25
     def dependency2(
-        dep: Annotated[latest_module.StrEnum, Depends(sub_dependency2)] = latest_module.StrEnum.a,
+        dep: Annotated[latest_module.EmptySchema, Depends(sub_dependency2)] = None,
     ):
+        if dep is None:
+            dep = {}
         return dep
 
-    @router.get("/test1")
-    async def test_with_dep1(dep: latest_module.StrEnum = Depends(dependency1)):
+    @router.post("/test1")
+    async def test_with_dep1(dep: latest_module.EmptySchema = Depends(dependency1)):
         return dep
 
-    @router.get("/test2")
-    async def test_with_dep2(dep: latest_module.StrEnum = Depends(dependency2)):
+    @router.post("/test2")
+    async def test_with_dep2(dep: latest_module.EmptySchema = Depends(dependency2)):
         return dep
 
-    app = create_versioned_app(version_change(enum(latest_module.StrEnum).had(foo="bar")))
+    app = create_versioned_app(version_change(schema(latest_module.EmptySchema).field("foo").existed_as(type=str)))
 
     client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
     client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
-    assert client_2000.get("/test1", params={"my_enum": "bar"}).json() == "bar"
-    assert client_2000.get("/test2", params={"my_enum": "bar"}).json() == "bar"
-
-    assert client_2001.get("/test1", params={"my_enum": "bar"}).json() == {
-        "detail": [
-            {
-                "loc": ["query", "my_enum"],
-                "msg": "value is not a valid enumeration member; permitted: '1'",
-                "type": "type_error.enum",
-                "ctx": {"enum_values": ["1"]},
-            },
-        ],
+    assert client_2000.post("/test1", json={}).json() == {
+        "detail": [{"loc": ["body", "foo"], "msg": "field required", "type": "value_error.missing"}],
     }
-
-    assert client_2001.get("/test2", params={"my_enum": "bar"}).json() == {
-        "detail": [
-            {
-                "loc": ["query", "my_enum"],
-                "msg": "value is not a valid enumeration member; permitted: '1'",
-                "type": "type_error.enum",
-                "ctx": {"enum_values": ["1"]},
-            },
-        ],
+    assert client_2000.post("/test1", json={"foo": "bar"}).json() == {}
+    assert client_2000.post("/test2", json={}).json() == {
+        "detail": [{"loc": ["body", "foo"], "msg": "field required", "type": "value_error.missing"}],
     }
+    assert client_2000.post("/test2", json={"foo": "bar"}).json() == {}
+
+    assert client_2001.post("/test1", json={}).json() == {}
+    assert client_2001.post("/test1", json={"my_schema": {"foo": "bar"}}).json() == {}
+
+    assert client_2001.post("/test2", json={}).json() == {}
+    assert client_2001.post("/test2", json={"my_schema": {"foo": "bar"}}).json() == {}
 
 
 def test__router_generation__updating_unused_dependencies(
@@ -962,29 +954,37 @@ def test__router_generation__updating_unused_dependencies(
     create_versioned_app: CreateVersionedApp,
     latest_module: ModuleType,
 ):
-    def dependency(my_enum: latest_module.StrEnum):
-        return my_enum
+    saved_enum_names = []
+
+    async def dependency(my_enum: latest_module.StrEnum):
+        saved_enum_names.append(my_enum.name)
 
     @router.get("/test", dependencies=[Depends(dependency)])
     async def test_with_dep():
         pass
 
-    app = create_versioned_app(version_change(enum(latest_module.StrEnum).had(foo="bar")))
+    app = create_versioned_app(
+        version_change(
+            enum(latest_module.StrEnum).didnt_have("a"),
+            enum(latest_module.StrEnum).had(b="1"),
+        ),
+    )
 
     client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
     client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
-    assert client_2000.get("/test", params={"my_enum": "bar"}).json() is None
 
-    assert client_2001.get("/test", params={"my_enum": "bar"}).json() == {
-        "detail": [
-            {
-                "loc": ["query", "my_enum"],
-                "msg": "value is not a valid enumeration member; permitted: '1'",
-                "type": "type_error.enum",
-                "ctx": {"enum_values": ["1"]},
-            },
-        ],
-    }
+    resp = client_2000.get("/test", params={"my_enum": "1"})
+    assert resp.status_code == 200
+
+    resp = client_2001.get("/test", params={"my_enum": "1"})
+    assert resp.status_code == 200
+
+    assert saved_enum_names == [
+        "b",  # Fastapi called our dependency and got b in 2000
+        "a",  # We called our dependency and got a in 2001
+        "a",  # Fastapi called our dependency and got a in 2001
+        "a",  # We called our dependency and got a in 2001
+    ]
 
 
 def test__router_generation__updating_callbacks(

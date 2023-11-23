@@ -582,7 +582,7 @@ def _add_data_migrations_to_route(
     route.endpoint = versions._versioned(
         template_body_field,
         template_body_field_name,
-        route.dependant.body_params,
+        route,
         dependant_for_request_migrations,
         latest_response_model,
         request_param_name=route.dependant.request_param_name,
