@@ -1,7 +1,7 @@
 from typing import cast
 
 from cadwyn import VersionedAPIRouter
-from cadwyn.main import _Cadwyn
+from cadwyn.main import Cadwyn
 
 from .data import latest
 from .data.latest.users import (
@@ -44,4 +44,4 @@ async def get_user_addresses(user_id: int):
     }
 
 
-app = _Cadwyn(latest_schemas_module=latest, versions=version_bundle)
+app = Cadwyn(latest_schemas_module=latest, versions=version_bundle)

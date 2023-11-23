@@ -18,7 +18,7 @@ from cadwyn.routing import generate_versioned_routers
 from cadwyn.structure import VersionBundle
 
 
-class _Cadwyn(HeaderRoutingFastAPI):
+class Cadwyn(HeaderRoutingFastAPI):
     def __init__(
         self,
         *,
@@ -37,7 +37,6 @@ class _Cadwyn(HeaderRoutingFastAPI):
         default_response_class: type[Response] = Default(JSONResponse),  # noqa: B008
         redirect_slashes: bool = True,
         docs_url: str | None = "/docs",
-        redoc_url: str | None = "/redoc",
         swagger_ui_oauth2_redirect_url: str | None = "/docs/oauth2-redirect",
         swagger_ui_init_oauth: dict[str, Any] | None = None,
         middleware: Sequence[Middleware] | None = None,
@@ -77,7 +76,6 @@ class _Cadwyn(HeaderRoutingFastAPI):
             default_response_class=default_response_class,
             redirect_slashes=redirect_slashes,
             docs_url=docs_url,
-            redoc_url=redoc_url,
             swagger_ui_oauth2_redirect_url=swagger_ui_oauth2_redirect_url,
             swagger_ui_init_oauth=swagger_ui_init_oauth,
             middleware=middleware,

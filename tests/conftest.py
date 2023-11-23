@@ -16,7 +16,7 @@ from pytest_fixture_classes import fixture_class
 
 from cadwyn import VersionBundle, VersionedAPIRouter, generate_code_for_versioned_packages
 from cadwyn.codegen import _get_version_dir_name
-from cadwyn.main import _Cadwyn
+from cadwyn.main import Cadwyn
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
@@ -165,10 +165,10 @@ class CreateVersionedApp:
     data_package_path: str
     run_schema_codegen: RunSchemaCodegen
 
-    def __call__(self, *version_changes: type[VersionChange] | list[type[VersionChange]]) -> _Cadwyn:
+    def __call__(self, *version_changes: type[VersionChange] | list[type[VersionChange]]) -> Cadwyn:
         bundle = VersionBundle(*versions(version_changes), api_version_var=self.api_version_var)
         latest_module = self.run_schema_codegen(bundle)
-        app = _Cadwyn(versions=bundle, latest_schemas_module=latest_module)
+        app = Cadwyn(versions=bundle, latest_schemas_module=latest_module)
         app.generate_and_include_versioned_routers(self.router)
         return app
 

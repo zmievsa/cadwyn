@@ -1,7 +1,7 @@
 from contextvars import ContextVar
 from datetime import date
 
-from cadwyn.main import _Cadwyn
+from cadwyn.main import Cadwyn
 from cadwyn.structure import Version, VersionBundle
 from tests._data import latest
 from tests.test_tutorial.test_users_example002.versions.v2001_1_1 import ChangeAddressToList
@@ -14,4 +14,4 @@ version_bundle = VersionBundle(
     api_version_var=ContextVar("cadwyn_api_version"),
 )
 
-app = _Cadwyn(latest_schemas_module=latest, versions=version_bundle)
+app = Cadwyn(latest_schemas_module=latest, versions=version_bundle)

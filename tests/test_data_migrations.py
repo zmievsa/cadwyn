@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.exceptions import CadwynStructureError
-from cadwyn.main import _Cadwyn
+from cadwyn.main import Cadwyn
 from cadwyn.structure import (
     VersionChange,
     convert_request_to_next_version_for,
@@ -534,7 +534,7 @@ class TestHowAndWhenMigrationsApply:
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
-        app = cast(_Cadwyn, clients[date(2000, 1, 1)].app)
+        app = cast(Cadwyn, clients[date(2000, 1, 1)].app)
         none_client = client(
             APIRouter(routes=app.router.versioned_routes[date(2000, 1, 1)]),
             api_version=None,
@@ -560,7 +560,7 @@ class TestHowAndWhenMigrationsApply:
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
-        app = cast(_Cadwyn, clients[date(2000, 1, 1)].app)
+        app = cast(Cadwyn, clients[date(2000, 1, 1)].app)
         earlier_client = client(
             APIRouter(routes=app.router.versioned_routes[date(2000, 1, 1)]),
             api_version=date(1998, 2, 10),
