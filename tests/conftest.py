@@ -146,7 +146,7 @@ def client(
     router: APIRouter,
     api_version: Any = Undefined,
     api_version_var: ContextVar[date | None] | None = None,
-) -> TestClientWithAPIVersion:
+):
     app = FastAPI()
     app.include_router(router)
 

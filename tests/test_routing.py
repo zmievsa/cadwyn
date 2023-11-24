@@ -1009,19 +1009,10 @@ def test__router_generation__updating_callbacks(
     app = create_versioned_app(
         version_change(schema(latest_module.SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
-
-    assert (
-        app.router.versioned_routes[date(2000, 1, 1)][0]
-        .callbacks[1]
-        .dependant.body_params[0]
-        .type_.__module__.endswith(".v2000_01_01")
-    )
-    assert (
-        app.router.versioned_routes[date(2001, 1, 1)][0]
-        .callbacks[1]
-        .dependant.body_params[0]
-        .type_.__module__.endswith(".latest")
-    )
+    generated_callback = app.router.versioned_routes[date(2000, 1, 1)][0].callbacks[1]
+    assert generated_callback.dependant.body_params[0].type_.__module__.endswith(".v2000_01_01")
+    generated_callback = app.router.versioned_routes[date(2001, 1, 1)][0].callbacks[1]
+    assert generated_callback.dependant.body_params[0].type_.__module__.endswith(".latest")
 
 
 def test__cascading_router_exists(

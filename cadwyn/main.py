@@ -37,6 +37,7 @@ class Cadwyn(HeaderRoutingFastAPI):
         default_response_class: type[Response] = Default(JSONResponse),  # noqa: B008
         redirect_slashes: bool = True,
         docs_url: str | None = "/docs",
+        redoc_url: None = None,
         swagger_ui_oauth2_redirect_url: str | None = "/docs/oauth2-redirect",
         swagger_ui_init_oauth: dict[str, Any] | None = None,
         middleware: Sequence[Middleware] | None = None,

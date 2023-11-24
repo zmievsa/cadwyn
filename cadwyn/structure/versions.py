@@ -207,25 +207,26 @@ class Version:
 class VersionBundle:
     def __init__(
         self,
-        *versions: Version,
+        latest_version: Version,
+        *other_versions: Version,
         api_version_var: APIVersionVarType,
     ) -> None:
         super().__init__()
 
-        self.versions = versions
+        self.versions = (latest_version, *other_versions)
         self.api_version_var = api_version_var
-        if sorted(versions, key=lambda v: v.value, reverse=True) != list(versions):
-            raise ValueError(
+        if sorted(self.versions, key=lambda v: v.value, reverse=True) != list(self.versions):
+            raise CadwynStructureError(
                 "Versions are not sorted correctly. Please sort them in descending order.",
             )
-        if versions[-1].version_changes:
+        if self.versions[-1].version_changes:
             raise CadwynStructureError(
-                f'The first version "{versions[-1].value}" cannot have any version changes. '
+                f'The first version "{self.versions[-1].value}" cannot have any version changes. '
                 "Version changes are defined to migrate to/from a previous version so you "
                 "cannot define one for the very first version.",
             )
         version_values = set()
-        for version in versions:
+        for version in self.versions:
             if version.value not in version_values:
                 version_values.add(version.value)
             else:
