@@ -5,15 +5,16 @@ from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from datetime import date
 from types import ModuleType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from dirty_equals import IsPartialDict, IsStr
-from fastapi import Body, Cookie, File, Header, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Body, Cookie, File, Header, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.exceptions import CadwynStructureError
+from cadwyn.main import Cadwyn
 from cadwyn.structure import (
     VersionChange,
     convert_request_to_next_version_for,
@@ -357,16 +358,18 @@ class TestResponseMigrations:
                 "user-agent": "testclient",
                 "content-length": "2",
                 "content-type": "application/json",
+                "x-api-version": "2000-01-01",
             },
             "cookies": {},
             "query_params": {},
             "body_key": "body_val",
         }
         assert dict(resp.headers) == {
-            "content-length": "252",
+            "content-length": "281",
             "content-type": "application/json",
             "header": "header_val",
             "set-cookie": "cookie_key=cookie_val; Max-Age=83; Path=/; SameSite=lax",
+            "x-api-version": "2000-01-01",
         }
         assert dict(resp.cookies) == {"cookie_key": "cookie_val"}
         assert resp.status_code == 300
@@ -384,16 +387,18 @@ class TestResponseMigrations:
                 "cookie": IsStr(min_length=3),
                 "content-length": "10",
                 "content-type": "application/json",
+                "x-api-version": "2000-01-01",
             },
             "cookies": {"5": "6", "cookie_key": "cookie_val"},
             "query_params": {},
             "body_key": "body_val",
         }
         assert dict(resp.headers) == {
-            "content-length": "339",
+            "content-length": "368",
             "content-type": "application/json",
             "header": "header_val",
             "set-cookie": "cookie_key=cookie_val; Max-Age=83; Path=/; SameSite=lax",
+            "x-api-version": "2000-01-01",
         }
         assert dict(resp.cookies) == {"cookie_key": "cookie_val"}
         assert resp.status_code == 300
@@ -414,10 +419,11 @@ class TestResponseMigrations:
         clients = create_versioned_clients(version_change(migrator=migrator))
         resp = clients[date(2000, 1, 1)].get(test_path)
         assert dict(resp.headers) == {
-            "content-length": "175",
+            "content-length": "204",
             "content-type": "application/json",
             "header_key": "header-val",
             "set-cookie": "cookie_key=cookie_val; Max-Age=83; Path=/; SameSite=lax",
+            "x-api-version": "2000-01-01",
         }
         assert dict(resp.cookies) == {"cookie_key": "cookie_val"}
         assert resp.status_code == 300
@@ -445,7 +451,12 @@ class TestResponseMigrations:
         resp = clients[date(2000, 1, 1)].post(test_path, json={})
         assert resp.json() == {"hewwo": "darkness", "migration": "body"}
         assert dict(resp.headers) == (
-            {"header-key": "header-val2", "content-length": "20", "content-type": "application/json"}
+            {
+                "header-key": "header-val2",
+                "content-length": "20",
+                "content-type": "application/json",
+                "x-api-version": "2000-01-01",
+            }
         )
         assert resp.status_code == 201
         assert dict(resp.cookies) == {}
@@ -453,7 +464,12 @@ class TestResponseMigrations:
         resp = clients[date(2001, 1, 1)].post(test_path, json={})
         assert resp.json() == {"hewwo": "darkness"}
         assert dict(resp.headers) == (
-            {"header-key": "header-val", "content-length": "20", "content-type": "application/json"}
+            {
+                "header-key": "header-val",
+                "content-length": "20",
+                "content-type": "application/json",
+                "x-api-version": "2001-01-01",
+            }
         )
         assert resp.status_code == 301
 
@@ -518,8 +534,21 @@ class TestHowAndWhenMigrationsApply:
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
-        none_client = client(clients[date(2000, 1, 1)].app.router, api_version=None, api_version_var=api_version_var)
-        assert none_client.post(test_path, json=[]).json()["body"] == []
+        app = cast(Cadwyn, clients[date(2000, 1, 1)].app)
+        none_client = client(
+            APIRouter(routes=app.router.versioned_routes[date(2000, 1, 1)]),
+            api_version=None,
+            api_version_var=api_version_var,
+        )
+        # The version below is not actually used anywhere, but it's required so we pass a dummy one
+        assert (
+            none_client.post(
+                test_path,
+                json=[],
+                headers={app.router.api_version_header_name: "2000-11-11"},
+            ).json()["body"]
+            == []
+        )
 
     def test__try_migrating_to_version_below_earliest__undefined_behaior(
         self,
@@ -531,12 +560,17 @@ class TestHowAndWhenMigrationsApply:
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
+        app = cast(Cadwyn, clients[date(2000, 1, 1)].app)
         earlier_client = client(
-            clients[date(2000, 1, 1)].app.router,
+            APIRouter(routes=app.router.versioned_routes[date(2000, 1, 1)]),
             api_version=date(1998, 2, 10),
             api_version_var=api_version_var,
         )
-        assert earlier_client.post(test_path, json=[]).json()["body"] == [
+        assert earlier_client.post(
+            test_path,
+            json=[],
+            headers={app.router.api_version_header_name: "2000-01-01"},
+        ).json()["body"] == [
             "request change 1",
             "request change 2",
             "response change 2",
@@ -553,12 +587,13 @@ class TestHowAndWhenMigrationsApply:
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
-        later_client = client(
-            clients[date(2000, 1, 1)].app.router,
-            api_version=date(5000, 1, 1),
-            api_version_var=api_version_var,
+        app = clients[date(2000, 1, 1)].app
+        assert (
+            clients[date(2000, 1, 1)]
+            .post(test_path, json=[], headers={app.router.api_version_header_name: "2050-01-01"})
+            .json()["body"]
+            == []
         )
-        assert later_client.post(test_path, json=[]).json()["body"] == []
 
     def test__migrate_one_version_down__with_inapplicable_migrations__result_is_only_affected_by_applicable_migrations(
         self,
@@ -622,6 +657,7 @@ class TestHowAndWhenMigrationsApply:
             "content-length": "2",
             "content-type": "application/json",
             "set-cookie": IsStr(),
+            "x-api-version": "2000-01-01",
         }
         assert dict(http.cookies.SimpleCookie(resp_2000.headers["set-cookie"])["cookie_key"]) == {
             "expires": IsStr(),
@@ -639,6 +675,7 @@ class TestHowAndWhenMigrationsApply:
             "content-length": "2",
             "content-type": "application/json",
             "set-cookie": "cookie_key=cookie_val; Path=/; SameSite=lax",
+            "x-api-version": "2001-01-01",
         }
 
 

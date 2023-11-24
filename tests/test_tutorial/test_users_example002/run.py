@@ -12,8 +12,10 @@ if __name__ == "__main__":
 
     try:
         generate_code_for_versioned_packages(latest, version_bundle)
-        from tests.test_tutorial.test_users_example002.routes import app
+        from tests.test_tutorial.test_users_example002.routes import app, router
+
+        app.generate_and_include_versioned_routers(router)
 
         uvicorn.run(app)
     finally:
-        clean_versions(Path(__file__).parent / "schemas")
+        clean_versions(Path(__file__).parent / "data")
