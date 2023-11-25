@@ -917,8 +917,6 @@ def test__router_generation__updating_request_depends(
     def dependency2(
         dep: Annotated[latest_module.EmptySchema, Depends(sub_dependency2)] = None,
     ):
-        if dep is None:
-            dep = {}
         return dep
 
     @router.post("/test1")

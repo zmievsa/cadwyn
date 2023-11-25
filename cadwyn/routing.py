@@ -447,41 +447,23 @@ class _AnnotationTransformer:
             return self._change_version_of_type(annotation, version_dir)
         elif callable(annotation):
             # TASK: https://github.com/zmievsa/cadwyn/issues/48
-            if inspect.iscoroutinefunction(annotation):
-
-                @functools.wraps(annotation)
-                async def new_callable(  # pyright: ignore[reportGeneralTypeIssues]
-                    *args: Any,
-                    **kwargs: Any,
-                ) -> Any:
-                    return await annotation(*args, **kwargs)
-
-            else:
-
-                @functools.wraps(annotation)
-                def new_callable(  # pyright: ignore[reportGeneralTypeIssues]
-                    *args: Any,
-                    **kwargs: Any,
-                ) -> Any:
-                    return annotation(*args, **kwargs)
-
-            # Otherwise it will have the same signature as __wrapped__
-            new_callable.__alt_wrapped__ = new_callable.__wrapped__  # pyright: ignore[reportGeneralTypeIssues]
-            del new_callable.__wrapped__
+            annotation_modifying_decorator = _copy_function(annotation)
             old_params = inspect.signature(annotation).parameters
-            callable_annotations = new_callable.__annotations__
+            callable_annotations = annotation_modifying_decorator.__annotations__
 
-            new_callable: Any = cast(Any, new_callable)
-            new_callable.__annotations__ = self._change_version_of_annotations(
+            annotation_modifying_decorator.__annotations__ = self._change_version_of_annotations(
                 callable_annotations,
                 version_dir,
             )
-            new_callable.__defaults__ = self._change_version_of_annotations(
+            annotation_modifying_decorator.__defaults__ = self._change_version_of_annotations(
                 tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
                 version_dir,
             )
-            new_callable.__signature__ = _generate_signature(new_callable, old_params)
-            return new_callable
+            annotation_modifying_decorator.__signature__ = _generate_signature(
+                annotation_modifying_decorator,
+                old_params,
+            )
+            return annotation_modifying_decorator
         else:
             return annotation
 
@@ -683,3 +665,34 @@ def _get_migrated_routes_by_path(version: Version) -> dict[EndpointPath, set[End
             for instruction in instruction_list:
                 migrated_routes[path] |= instruction.methods
     return migrated_routes
+
+
+def _copy_function(function: _T) -> _T:
+    while hasattr(function, "__alt_wrapped__"):
+        function = function.__alt_wrapped__
+
+    if inspect.iscoroutinefunction(function):
+
+        @functools.wraps(function)
+        async def annotation_modifying_decorator(  # pyright: ignore[reportGeneralTypeIssues]
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            return await function(*args, **kwargs)
+
+    else:
+
+        @functools.wraps(function)
+        def annotation_modifying_decorator(
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            return function(*args, **kwargs)
+
+    # Otherwise it will have the same signature as __wrapped__ due to how inspect module works
+    annotation_modifying_decorator.__alt_wrapped__ = (  # pyright: ignore[reportGeneralTypeIssues]
+        annotation_modifying_decorator.__wrapped__
+    )
+    del annotation_modifying_decorator.__wrapped__
+
+    return cast(_T, annotation_modifying_decorator)

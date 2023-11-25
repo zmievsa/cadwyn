@@ -5,6 +5,25 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [2.3.0]
+
+### Fixed
+
+* Previously whenever we generated routes, we wrapped all endpoints and callbacks in decorators for every version which caused stacktraces to be unnecessarily huge. Now there is only one wrapper for all versions
+
+### Added
+
+* `cadwyn.Cadwyn` class similar to `fastapi.FastAPI` that provides header routing and encapsulates all information about versioned routes
+* Migrated from `fastapi-header-routing` to `verselect`
+
+### Changed
+
+* `*versions` argument in `cadwyn.VersionBundle` is now split into a required positional-only `latest_version` and `*other_versions` to make it possible to see an invalid versionless definition statically. Note that it is not a breaking change because the presence of at least one version was also implicitly required before and would produce a failure at runtime
+
+### Removed
+
+* `cadwyn.get_cadwyn_dependency` and `cadwyn.header` because it is fully replaced with `verselect`
+
 ## [2.2.0]
 
 ### Added
