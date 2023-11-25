@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from datetime import date
 from types import ModuleType
-from typing import Annotated, Any, NewType, TypeAlias, get_args
+from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
 from uuid import UUID
 
 import pytest
@@ -74,8 +74,8 @@ class CreateVersionedAPIRoutes:
     ) -> tuple[list[APIRoute], list[APIRoute]]:
         app = self.create_versioned_app(*version_changes)
         return (
-            app.router.versioned_routes.get(date(2000, 1, 1), []),
-            app.router.versioned_routes.get(date(2001, 1, 1), []),
+            cast(list[APIRoute], app.router.versioned_routes.get(date(2000, 1, 1), [])),
+            cast(list[APIRoute], app.router.versioned_routes.get(date(2001, 1, 1), [])),
         )
 
 
@@ -917,8 +917,6 @@ def test__router_generation__updating_request_depends(
     def dependency2(
         dep: Annotated[latest_module.EmptySchema, Depends(sub_dependency2)] = None,
     ):
-        if dep is None:
-            dep = {}
         return dep
 
     @router.post("/test1")
@@ -1009,6 +1007,8 @@ def test__router_generation__updating_callbacks(
     app = create_versioned_app(
         version_change(schema(latest_module.SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
+    generated_callback: APIRoute
+
     generated_callback = app.router.versioned_routes[date(2000, 1, 1)][0].callbacks[1]
     assert generated_callback.dependant.body_params[0].type_.__module__.endswith(".v2000_01_01")
     generated_callback = app.router.versioned_routes[date(2001, 1, 1)][0].callbacks[1]

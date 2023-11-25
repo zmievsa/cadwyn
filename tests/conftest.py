@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from pytest_fixture_classes import fixture_class
 
 from cadwyn import VersionBundle, VersionedAPIRouter, generate_code_for_versioned_packages
+from cadwyn._utils import same_definition_as_in
 from cadwyn.codegen import _get_version_dir_name
 from cadwyn.main import Cadwyn
 from cadwyn.structure import Version, VersionChange
@@ -129,12 +130,24 @@ class CreateSimpleVersionedSchemas:
         )
 
 
-class TestClientWithAPIVersion(TestClient):
-    def __init__(self, *args, **kwargs):
-        self.api_version_var = kwargs.pop("api_version_var", None)
-        self.api_version = kwargs.pop("api_version", Undefined)
+class CadwynTestClient(TestClient):
+    @same_definition_as_in(TestClient.__init__)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.app: FastAPI
+        self.app: Cadwyn
+
+
+class TestClientWithHardcodedAPIVersion(CadwynTestClient):
+    def __init__(
+        self,
+        *args,
+        api_version_var: ContextVar | None = None,
+        api_version: date | object = Undefined,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.api_version_var = api_version_var
+        self.api_version = api_version
 
     def request(self, *args, **kwargs):
         if self.api_version is not Undefined and self.api_version_var:
@@ -150,7 +163,7 @@ def client(
     app = FastAPI()
     app.include_router(router)
 
-    return TestClientWithAPIVersion(app, api_version=api_version, api_version_var=api_version_var)
+    return TestClientWithHardcodedAPIVersion(app, api_version=api_version, api_version_var=api_version_var)
 
 
 @pytest.fixture()
@@ -191,10 +204,10 @@ class CreateVersionedClients:
     def __call__(
         self,
         *version_changes: type[VersionChange] | list[type[VersionChange]],
-    ) -> dict[date, TestClient]:
+    ) -> dict[date, CadwynTestClient]:
         app = self.create_versioned_app(*version_changes)
         return {
-            version: TestClient(app, headers={app.router.api_version_header_name: version.isoformat()})
+            version: CadwynTestClient(app, headers={app.router.api_version_header_name: version.isoformat()})
             for version in app.router.versioned_routes
         }
 

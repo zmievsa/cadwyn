@@ -208,6 +208,7 @@ class VersionBundle:
     def __init__(
         self,
         latest_version: Version,
+        /,
         *other_versions: Version,
         api_version_var: APIVersionVarType,
     ) -> None:
