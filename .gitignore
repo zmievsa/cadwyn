@@ -129,3 +129,6 @@ dmypy.json
 .pyre/
 
 .mutmut-cache
+
+.vscode
+.idea
