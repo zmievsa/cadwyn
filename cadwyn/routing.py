@@ -41,6 +41,7 @@ from starlette.routing import (
     request_response,
 )
 from typing_extensions import assert_never
+from verselect.routing import VERSION_HEADER_FORMAT
 
 from cadwyn._utils import Sentinel, UnionType, get_another_version_of_module
 from cadwyn.codegen import _get_package_path_from_module, _get_version_dir_path
@@ -55,12 +56,18 @@ from cadwyn.structure.endpoints import (
 )
 from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionChange
 
+__all__ = [
+    "generate_versioned_routers",
+    "VersionedAPIRouter",
+    "VERSION_HEADER_FORMAT",
+]
+
 _T = TypeVar("_T", bound=Callable[..., Any])
 _R = TypeVar("_R", bound=fastapi.routing.APIRouter)
 # This is a hack we do because we can't guarantee how the user will use the router.
 _DELETED_ROUTE_TAG = "_CADWYN_DELETED_ROUTE"
-EndpointPath: TypeAlias = str
-EndpointMethod: TypeAlias = str
+_EndpointPath: TypeAlias = str
+_EndpointMethod: TypeAlias = str
 
 
 @dataclass(slots=True, frozen=True, eq=True)
@@ -72,7 +79,7 @@ class _EndpointInfo:
 @dataclass(slots=True)
 class _RouterInfo(Generic[_R]):
     router: _R
-    routes_with_migrated_requests: dict[EndpointPath, set[EndpointMethod]]
+    routes_with_migrated_requests: dict[_EndpointPath, set[_EndpointMethod]]
     route_bodies_with_migrated_requests: set[type[BaseModel]]
 
 
@@ -655,7 +662,7 @@ def _get_route_from_func(
     return None
 
 
-def _get_migrated_routes_by_path(version: Version) -> dict[EndpointPath, set[EndpointMethod]]:
+def _get_migrated_routes_by_path(version: Version) -> dict[_EndpointPath, set[_EndpointMethod]]:
     request_by_path_migration_instructions = [
         version_change.alter_request_by_path_instructions for version_change in version.version_changes
     ]

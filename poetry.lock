@@ -895,7 +895,7 @@ standard = ["colorama (>=0.4)", "httptools (>=0.5.0)", "python-dotenv (>=0.13)",
 
 [[package]]
 name = "verselect-zmievsa"
-version = "0.0.5"
+version = "0.0.6"
 description = ""
 category = "main"
 optional = false
@@ -1638,8 +1638,8 @@ uvicorn = [
     {file = "uvicorn-0.24.0.post1.tar.gz", hash = "sha256:09c8e5a79dc466bdf28dead50093957db184de356fcdc48697bad3bde4c2588e"},
 ]
 verselect-zmievsa = [
-    {file = "verselect_zmievsa-0.0.5-py3-none-any.whl", hash = "sha256:289fc9058487cf883b046763f729d9ba24dc32c6d82b6081ef8f353e1e818567"},
-    {file = "verselect_zmievsa-0.0.5.tar.gz", hash = "sha256:e0288f398c0c9bfa3074a1779d3a0500c4618a65ba610bca0cd96c1d1474a1d6"},
+    {file = "verselect_zmievsa-0.0.6-py3-none-any.whl", hash = "sha256:b38d659b1d525025f4d1800853f65c2477374abffbf40f42298f25625c0068c1"},
+    {file = "verselect_zmievsa-0.0.6.tar.gz", hash = "sha256:4ad645091f44adc221a301f52df3d9223d443510844f5d35c9b91c6d3d2d4ad6"},
 ]
 virtualenv = [
     {file = "virtualenv-20.24.7-py3-none-any.whl", hash = "sha256:a18b3fd0314ca59a2e9f4b556819ed07183b3e9a3702ecfe213f593d44f7b3fd"},

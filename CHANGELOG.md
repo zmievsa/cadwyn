@@ -15,6 +15,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 * `cadwyn.Cadwyn` class similar to `fastapi.FastAPI` that provides header routing and encapsulates all information about versioned routes
 * Migrated from `fastapi-header-routing` to `verselect`
+* `cadwyn.routing.VERSION_HEADER_FORMAT` from `verselect.routing`
+* `cadwyn.exceptions.AppCreationError` from `verselect.exceptions`
 
 ### Changed
 
