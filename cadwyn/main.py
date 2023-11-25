@@ -6,29 +6,26 @@ from fastapi import APIRouter, routing
 from fastapi.datastructures import Default
 from fastapi.params import Depends
 from fastapi.utils import generate_unique_id
-from fastapi_header_versioning import HeaderRoutingFastAPI
-from fastapi_header_versioning.fastapi import HeaderVersionedAPIRouter
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute
 from starlette.types import Lifespan
 from typing_extensions import Self
+from verselect import HeaderRoutingFastAPI
 
-from cadwyn.header import get_cadwyn_dependency
 from cadwyn.routing import generate_versioned_routers
 from cadwyn.structure import VersionBundle
 
 
-class _Cadwyn(HeaderRoutingFastAPI):
+class Cadwyn(HeaderRoutingFastAPI):
     def __init__(
         self,
         *,
         versions: VersionBundle,
         latest_schemas_module: ModuleType,
-        version_header: str = "x-api-version",
+        api_version_header_name: str = "x-api-version",
         debug: bool = False,
-        routes: list[BaseRoute] | None = None,
         title: str = "FastAPI",
         summary: str | None = None,
         description: str = "",
@@ -40,7 +37,7 @@ class _Cadwyn(HeaderRoutingFastAPI):
         default_response_class: type[Response] = Default(JSONResponse),  # noqa: B008
         redirect_slashes: bool = True,
         docs_url: str | None = "/docs",
-        redoc_url: str | None = "/redoc",
+        redoc_url: None = None,
         swagger_ui_oauth2_redirect_url: str | None = "/docs/oauth2-redirect",
         swagger_ui_init_oauth: dict[str, Any] | None = None,
         middleware: Sequence[Middleware] | None = None,
@@ -66,9 +63,9 @@ class _Cadwyn(HeaderRoutingFastAPI):
         **extra: Any,
     ) -> None:
         super().__init__(
-            version_header=version_header,
+            api_version_header_name=api_version_header_name,
+            api_version_var=versions.api_version_var,
             debug=debug,
-            routes=routes,
             title=title,
             summary=summary,
             description=description,
@@ -80,7 +77,6 @@ class _Cadwyn(HeaderRoutingFastAPI):
             default_response_class=default_response_class,
             redirect_slashes=redirect_slashes,
             docs_url=docs_url,
-            redoc_url=redoc_url,
             swagger_ui_oauth2_redirect_url=swagger_ui_oauth2_redirect_url,
             swagger_ui_init_oauth=swagger_ui_init_oauth,
             middleware=middleware,
@@ -106,21 +102,15 @@ class _Cadwyn(HeaderRoutingFastAPI):
         )
         self.versions = versions
         self.latest_schemas_module = latest_schemas_module
-        self.version_header = version_header
-        self.cadwyn_header_dependency = get_cadwyn_dependency(
-            version_header_name=version_header,
-            api_version_var=self.versions.api_version_var,
-        )
 
-    def include_versioned_routers(self, *routers: APIRouter) -> None:
+    def generate_and_include_versioned_routers(self, *routers: APIRouter) -> None:
+        root_router = APIRouter()
+        for router in routers:
+            root_router.include_router(router)
         router_versions = generate_versioned_routers(
-            *routers,
+            root_router,
             versions=self.versions,
             latest_schemas_module=self.latest_schemas_module,
         )
-        root_router = HeaderVersionedAPIRouter()
-
         for version, router in router_versions.items():
-            root_router.include_router(router, version=str(version))
-
-        self.include_router(root_router, dependencies=[self.cadwyn_header_dependency])
+            self.add_header_versioned_routers(router, header_value=version.isoformat())

@@ -242,7 +242,7 @@ class TestVersionChangeWithSideEffects:
 class TestVersionBundle:
     def test__init__incorrectly_sorted_versions(self, api_version_var: ContextVar[date | None]):
         with pytest.raises(
-            ValueError,
+            CadwynStructureError,
             match=re.escape(
                 "Versions are not sorted correctly. Please sort them in descending order.",
             ),

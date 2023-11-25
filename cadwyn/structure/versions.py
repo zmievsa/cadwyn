@@ -1,21 +1,24 @@
+import email.message
 import functools
 import inspect
 import json
 from collections import defaultdict
 from collections.abc import Callable, Sequence
+from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from enum import Enum
-from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
+from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, cast
 
+from fastapi import HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
-from fastapi import params
 from fastapi._compat import ModelField, _normalize_errors
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import solve_dependencies
 from fastapi.exceptions import RequestValidationError
-from fastapi.routing import _prepare_response_content
+from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
+from pydantic.fields import Undefined
 from typing_extensions import assert_never
 
 from cadwyn.exceptions import CadwynError, CadwynStructureError
@@ -45,6 +48,7 @@ PossibleInstructions: TypeAlias = (
     | AlterSchemaInstruction
     | staticmethod
 )
+APIVersionVarType: TypeAlias = ContextVar[VersionDate | None] | ContextVar[VersionDate]
 
 
 class VersionChange:
@@ -203,25 +207,27 @@ class Version:
 class VersionBundle:
     def __init__(
         self,
-        *versions: Version,
-        api_version_var: ContextVar[VersionDate | None] | ContextVar[VersionDate],
+        latest_version: Version,
+        /,
+        *other_versions: Version,
+        api_version_var: APIVersionVarType,
     ) -> None:
         super().__init__()
 
-        self.versions = versions
+        self.versions = (latest_version, *other_versions)
         self.api_version_var = api_version_var
-        if sorted(versions, key=lambda v: v.value, reverse=True) != list(versions):
-            raise ValueError(
+        if sorted(self.versions, key=lambda v: v.value, reverse=True) != list(self.versions):
+            raise CadwynStructureError(
                 "Versions are not sorted correctly. Please sort them in descending order.",
             )
-        if versions[-1].version_changes:
+        if self.versions[-1].version_changes:
             raise CadwynStructureError(
-                f'The first version "{versions[-1].value}" cannot have any version changes. '
+                f'The first version "{self.versions[-1].value}" cannot have any version changes. '
                 "Version changes are defined to migrate to/from a previous version so you "
                 "cannot define one for the very first version.",
             )
         version_values = set()
-        for version in versions:
+        for version in self.versions:
             if version.value not in version_values:
                 version_values.add(version.value)
             else:
@@ -293,6 +299,7 @@ class VersionBundle:
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
+
         new_kwargs, errors, _, _, _ = await solve_dependencies(
             request=request,
             response=response,
@@ -301,7 +308,6 @@ class VersionBundle:
             # TODO: Take it from route
             dependency_overrides_provider=None,
         )
-
         if errors:
             raise RequestValidationError(_normalize_errors(errors), body=request_info.body)
         return new_kwargs
@@ -346,7 +352,7 @@ class VersionBundle:
         self,
         template_module_body_field_for_request_migrations: type[BaseModel] | None,
         module_body_field_name: str | None,
-        body_params: list[ModelField],
+        route: APIRoute,
         dependant_for_request_migrations: Dependant,
         latest_response_model: Any,
         *,
@@ -368,7 +374,7 @@ class VersionBundle:
                     request_param_name,
                     kwargs,
                     response,
-                    body_params,
+                    route,
                 )
 
                 return await self._convert_endpoint_response_to_version(
@@ -445,9 +451,8 @@ class VersionBundle:
         request_param_name: str,
         kwargs: dict[str, Any],
         response: FastapiResponse,
-        body_params: list[ModelField],
+        route: APIRoute,
     ):
-        is_single_body_field = len(body_params) == 1
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
             kwargs.pop(request_param_name)
@@ -456,14 +461,13 @@ class VersionBundle:
         if api_version is None:
             return kwargs
 
+        # TODO: What if the user never edits it? We just add a round of (de)serialization
         if (
-            is_single_body_field
+            len(route.dependant.body_params) == 1
             and template_module_body_field_for_request_migrations is not None
             and body_field_alias is not None
             and body_field_alias in kwargs
         ):
-            # TODO: What if the user never edits it? We just add a round of (de)serialization
-
             raw_body = kwargs[body_field_alias]
             if raw_body is None:
                 body = None
@@ -471,12 +475,8 @@ class VersionBundle:
                 body = raw_body.dict(by_alias=True, exclude_unset=True)
                 if kwargs[body_field_alias].__custom_root_type__:
                     body = body["__root__"]
-        # TODO: What if it's large? We need to also make ours a generator, then... But we can't because ours is
-        # synchronous. HMM... Or maybe just reading it later will solve the issue. Who knows...
-        elif any(isinstance(param.field_info, params.Form) for param in body_params):
-            body = await request.form()
         else:
-            body = await request.body()
+            body = await _get_body(request, route.body_field)
         request_info = RequestInfo(request, body)
         new_kwargs = await self._migrate_request(
             template_module_body_field_for_request_migrations,
@@ -491,6 +491,53 @@ class VersionBundle:
             new_kwargs.pop(request_param_name)
 
         return new_kwargs
+
+
+async def _get_body(request: FastapiRequest, body_field: ModelField | None):  # pragma: no cover # This is from fastapi
+    is_body_form = body_field and isinstance(body_field.field_info, params.Form)
+    try:
+        body: Any = None
+        if body_field:
+            if is_body_form:
+                body = await request.form()
+                stack = cast(AsyncExitStack, request.scope.get("fastapi_astack"))
+                stack.push_async_callback(body.close)
+            else:
+                body_bytes = await request.body()
+                if body_bytes:
+                    json_body: Any = Undefined
+                    content_type_value = request.headers.get("content-type")
+                    if not content_type_value:
+                        json_body = await request.json()
+                    else:
+                        message = email.message.Message()
+                        message["content-type"] = content_type_value
+                        if message.get_content_maintype() == "application":
+                            subtype = message.get_content_subtype()
+                            if subtype == "json" or subtype.endswith("+json"):
+                                json_body = await request.json()
+                    if json_body != Undefined:
+                        body = json_body
+                    else:
+                        body = body_bytes
+    except json.JSONDecodeError as e:
+        raise RequestValidationError(
+            [
+                {
+                    "type": "json_invalid",
+                    "loc": ("body", e.pos),
+                    "msg": "JSON decode error",
+                    "input": {},
+                    "ctx": {"error": e.msg},
+                },
+            ],
+            body=e.doc,
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="There was an error parsing the body") from e
+    return body
 
 
 def _add_keyword_only_parameter(

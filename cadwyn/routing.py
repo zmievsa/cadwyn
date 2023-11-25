@@ -12,6 +12,7 @@ from pathlib import Path
 from types import GenericAlias, MappingProxyType, ModuleType
 from typing import (
     Any,
+    Generic,
     TypeAlias,
     TypeVar,
     _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
@@ -40,6 +41,7 @@ from starlette.routing import (
     request_response,
 )
 from typing_extensions import assert_never
+from verselect.routing import VERSION_HEADER_FORMAT
 
 from cadwyn._utils import Sentinel, UnionType, get_another_version_of_module
 from cadwyn.codegen import _get_package_path_from_module, _get_version_dir_path
@@ -54,12 +56,18 @@ from cadwyn.structure.endpoints import (
 )
 from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionChange
 
+__all__ = [
+    "generate_versioned_routers",
+    "VersionedAPIRouter",
+    "VERSION_HEADER_FORMAT",
+]
+
 _T = TypeVar("_T", bound=Callable[..., Any])
 _R = TypeVar("_R", bound=fastapi.routing.APIRouter)
 # This is a hack we do because we can't guarantee how the user will use the router.
 _DELETED_ROUTE_TAG = "_CADWYN_DELETED_ROUTE"
-EndpointPath: TypeAlias = str
-EndpointMethod: TypeAlias = str
+_EndpointPath: TypeAlias = str
+_EndpointMethod: TypeAlias = str
 
 
 @dataclass(slots=True, frozen=True, eq=True)
@@ -69,9 +77,9 @@ class _EndpointInfo:
 
 
 @dataclass(slots=True)
-class _RouterInfo:
-    router: fastapi.routing.APIRouter
-    routes_with_migrated_requests: dict[EndpointPath, set[EndpointMethod]]
+class _RouterInfo(Generic[_R]):
+    router: _R
+    routes_with_migrated_requests: dict[_EndpointPath, set[_EndpointMethod]]
     route_bodies_with_migrated_requests: set[type[BaseModel]]
 
 
@@ -97,14 +105,14 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         return endpoint
 
 
-@final
-class _EndpointTransformer:
+class _EndpointTransformer(Generic[_R]):
     def __init__(
         self,
-        parent_router: fastapi.routing.APIRouter,
+        parent_router: _R,
         versions: VersionBundle,
         latest_schemas_module: ModuleType,
     ) -> None:
+        super().__init__()
         self.parent_router = parent_router
         self.versions = versions
         self.annotation_transformer = _AnnotationTransformer(latest_schemas_module, versions)
@@ -113,7 +121,7 @@ class _EndpointTransformer:
             route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
         ]
 
-    def transform(self):
+    def transform(self) -> dict[VersionDate, _R]:
         router = deepcopy(self.parent_router)
         router_infos: dict[VersionDate, _RouterInfo] = {}
         routes_with_migrated_requests = {}
@@ -446,41 +454,23 @@ class _AnnotationTransformer:
             return self._change_version_of_type(annotation, version_dir)
         elif callable(annotation):
             # TASK: https://github.com/zmievsa/cadwyn/issues/48
-            if inspect.iscoroutinefunction(annotation):
-
-                @functools.wraps(annotation)
-                async def new_callable(  # pyright: ignore[reportGeneralTypeIssues]
-                    *args: Any,
-                    **kwargs: Any,
-                ) -> Any:
-                    return await annotation(*args, **kwargs)
-
-            else:
-
-                @functools.wraps(annotation)
-                def new_callable(  # pyright: ignore[reportGeneralTypeIssues]
-                    *args: Any,
-                    **kwargs: Any,
-                ) -> Any:
-                    return annotation(*args, **kwargs)
-
-            # Otherwise it will have the same signature as __wrapped__
-            new_callable.__alt_wrapped__ = new_callable.__wrapped__  # pyright: ignore[reportGeneralTypeIssues]
-            del new_callable.__wrapped__
+            annotation_modifying_decorator = _copy_function(annotation)
             old_params = inspect.signature(annotation).parameters
-            callable_annotations = new_callable.__annotations__
+            callable_annotations = annotation_modifying_decorator.__annotations__
 
-            new_callable: Any = cast(Any, new_callable)
-            new_callable.__annotations__ = self._change_version_of_annotations(
+            annotation_modifying_decorator.__annotations__ = self._change_version_of_annotations(
                 callable_annotations,
                 version_dir,
             )
-            new_callable.__defaults__ = self._change_version_of_annotations(
+            annotation_modifying_decorator.__defaults__ = self._change_version_of_annotations(
                 tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
                 version_dir,
             )
-            new_callable.__signature__ = _generate_signature(new_callable, old_params)
-            return new_callable
+            annotation_modifying_decorator.__signature__ = _generate_signature(
+                annotation_modifying_decorator,
+                old_params,
+            )
+            return annotation_modifying_decorator
         else:
             return annotation
 
@@ -581,7 +571,7 @@ def _add_data_migrations_to_route(
     route.endpoint = versions._versioned(
         template_body_field,
         template_body_field_name,
-        route.dependant.body_params,
+        route,
         dependant_for_request_migrations,
         latest_response_model,
         request_param_name=route.dependant.request_param_name,
@@ -672,7 +662,7 @@ def _get_route_from_func(
     return None
 
 
-def _get_migrated_routes_by_path(version: Version) -> dict[EndpointPath, set[EndpointMethod]]:
+def _get_migrated_routes_by_path(version: Version) -> dict[_EndpointPath, set[_EndpointMethod]]:
     request_by_path_migration_instructions = [
         version_change.alter_request_by_path_instructions for version_change in version.version_changes
     ]
@@ -682,3 +672,34 @@ def _get_migrated_routes_by_path(version: Version) -> dict[EndpointPath, set[End
             for instruction in instruction_list:
                 migrated_routes[path] |= instruction.methods
     return migrated_routes
+
+
+def _copy_function(function: _T) -> _T:
+    while hasattr(function, "__alt_wrapped__"):
+        function = function.__alt_wrapped__
+
+    if inspect.iscoroutinefunction(function):
+
+        @functools.wraps(function)
+        async def annotation_modifying_decorator(  # pyright: ignore[reportGeneralTypeIssues]
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            return await function(*args, **kwargs)
+
+    else:
+
+        @functools.wraps(function)
+        def annotation_modifying_decorator(
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            return function(*args, **kwargs)
+
+    # Otherwise it will have the same signature as __wrapped__ due to how inspect module works
+    annotation_modifying_decorator.__alt_wrapped__ = (  # pyright: ignore[reportGeneralTypeIssues]
+        annotation_modifying_decorator.__wrapped__
+    )
+    del annotation_modifying_decorator.__wrapped__
+
+    return cast(_T, annotation_modifying_decorator)
