@@ -1,6 +1,6 @@
 site_name: Cadwyn
 
-# Repository settings similar to Pydantic's configuration
+# Repository settings
 repo_name: Cadwyn
 repo_url: https://github.com/zmievsa/cadwyn
 
