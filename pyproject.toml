@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cadwyn"
-version = "2.3.0"
+version = "2.3.1"
 description = "Modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -36,7 +36,7 @@ typing-extensions = "*"
 fastapi = ">=0.96.1"
 pydantic = "^1.10.0"
 typer = {version = ">=0.7.0", optional = true}
-verselect-zmievsa = ">=0.0.5"
+verselect = ">=0.0.6"
 
 [tool.poetry.extras]
 cli = ["typer"]

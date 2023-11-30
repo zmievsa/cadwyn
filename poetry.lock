@@ -894,7 +894,7 @@ typing-extensions = {version = ">=4.0", markers = "python_version < \"3.11\""}
 standard = ["colorama (>=0.4)", "httptools (>=0.5.0)", "python-dotenv (>=0.13)", "pyyaml (>=5.1)", "uvloop (>=0.14.0,!=0.15.0,!=0.15.1)", "watchfiles (>=0.13)", "websockets (>=10.4)"]
 
 [[package]]
-name = "verselect-zmievsa"
+name = "verselect"
 version = "0.0.6"
 description = ""
 category = "main"
@@ -954,7 +954,7 @@ cli = ["typer"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "bedb621a7761660e8cf50c480eed99c453d527444a59e33b6b5962ec0617090a"
+content-hash = "d5ea76c8d7df70a7f60670c7185df159a6b121bc2dc61fb2f3ded4f221d9a685"
 
 [metadata.files]
 anyio = [
@@ -1637,9 +1637,9 @@ uvicorn = [
     {file = "uvicorn-0.24.0.post1-py3-none-any.whl", hash = "sha256:7c84fea70c619d4a710153482c0d230929af7bcf76c7bfa6de151f0a3a80121e"},
     {file = "uvicorn-0.24.0.post1.tar.gz", hash = "sha256:09c8e5a79dc466bdf28dead50093957db184de356fcdc48697bad3bde4c2588e"},
 ]
-verselect-zmievsa = [
-    {file = "verselect_zmievsa-0.0.6-py3-none-any.whl", hash = "sha256:b38d659b1d525025f4d1800853f65c2477374abffbf40f42298f25625c0068c1"},
-    {file = "verselect_zmievsa-0.0.6.tar.gz", hash = "sha256:4ad645091f44adc221a301f52df3d9223d443510844f5d35c9b91c6d3d2d4ad6"},
+verselect = [
+    {file = "verselect-0.0.6-py3-none-any.whl", hash = "sha256:7ee29bd424bca89875997c1348bf500fdd3b589f749d51db0c560af10976f8b3"},
+    {file = "verselect-0.0.6.tar.gz", hash = "sha256:28af344795afe89f7bc25972e66b94e17c2f82a18a9847d8460607e30acf830e"},
 ]
 virtualenv = [
     {file = "virtualenv-20.24.7-py3-none-any.whl", hash = "sha256:a18b3fd0314ca59a2e9f4b556819ed07183b3e9a3702ecfe213f593d44f7b3fd"},
