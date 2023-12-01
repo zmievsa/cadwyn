@@ -23,6 +23,14 @@ class EmptyEnum(Enum):
     pass
 
 
+class ParentSchema(BaseModel):
+    foo: str
+
+
+class ChildSchema(ParentSchema):
+    pass
+
+
 class EmptySchema(BaseModel):
     pass
 

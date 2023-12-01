@@ -229,6 +229,20 @@ def test__schema_field_didnt_exist(
     )
 
 
+def test__schema_field_didnt_exist__with_inheritance(
+    create_versioned_schemas: CreateVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v1, v2, v3 = create_versioned_schemas(
+        version_change(schema(latest_module.ParentSchema).field("foo").didnt_exist),
+        version_change(schema(latest_module.ChildSchema).field("bar").existed_as(type=int)),
+    )
+
+    assert "foo" not in v1.ChildSchema.__fields__
+    assert "foo" in v2.ChildSchema.__fields__
+    assert "foo" in v3.ChildSchema.__fields__
+
+
 def test__schema_field_didnt_exist__field_is_missing__should_raise_error(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
