@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [2.3.2]
+
+### Fixed
+
+* The bug where fields from parent schemas also appeared in child schemas
+
 ## [2.3.1]
 
 ### Changed
