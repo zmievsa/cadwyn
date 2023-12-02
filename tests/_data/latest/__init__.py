@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field, PrivateAttr, conint, constr
 from pydantic import Field as PydanticField
 
 
+def my_default_factory():
+    return [1]
+
+
 class StrEnum(str, Enum):
     a = auto()
 
@@ -121,8 +125,23 @@ class SchemaWithSpecialConstraints(BaseModel):
     foo: constr(to_upper=True)  # pyright: ignore[reportGeneralTypeIssues]
 
 
+class SchemaWithConstraintsAndField(BaseModel):
+    foo: constr(max_length=5) = Field(default="s")  # pyright: ignore
+
+
 class SchemaWithInternalRepresentation(BaseModel):
     foo: int
+
+
+MY_VAR = 11
+
+
+class SchemaWithVar(BaseModel):
+    foo: int = Field(default=MY_VAR, description="Hello darkness my old friend")
+
+
+class SchemaWithVarInsteadOfField(BaseModel):
+    foo: int = MY_VAR
 
 
 "Nothing to see here. Move along."
