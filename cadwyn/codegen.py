@@ -109,13 +109,13 @@ class _ModelFieldLike:
 @dataclass
 class _ModelFieldWrapper:
     cls: type[BaseModel]
-    _annotation: ast.expr | None
+    annotation_ast: ast.expr | None
     field: ModelField | _ModelFieldLike
     field_ast: ast.expr | None
 
     def get_annotation(self):  # intentionally weird to not clash with ModelField
-        if self._annotation:
-            return PlainRepr(ast.unparse(self._annotation))
+        if self.annotation_ast:
+            return PlainRepr(ast.unparse(self.annotation_ast))
         return self.field.annotation
 
 
@@ -175,7 +175,7 @@ class _ModelWrapper:
             annotation = alter_schema_instruction.type
         self.fields[alter_schema_instruction.field_name] = _ModelFieldWrapper(
             alter_schema_instruction.schema,
-            _annotation=None,  # TODO: Get this from migration
+            annotation_ast=None,  # TODO: Get this from migration
             field=_ModelFieldLike(
                 name=alter_schema_instruction.field_name,
                 original_type=alter_schema_instruction.type,
@@ -192,6 +192,7 @@ class _ModelWrapper:
         schemas: "dict[str, _ModelWrapper]",
         alter_schema_instruction: OldSchemaFieldHad,
         version_change_name: str,
+        annotation_transformer: "_AnnotationTransformer",
     ):
         defined_fields = self._get_defined_fields(schemas)
         if alter_schema_instruction.field_name not in defined_fields:
@@ -203,6 +204,8 @@ class _ModelWrapper:
         model_field_wrapper = defined_fields[alter_schema_instruction.field_name]
         model_field = model_field_wrapper.field
         self.fields[alter_schema_instruction.field_name] = model_field_wrapper
+
+        current_field_is_constrained_type = _is_pydantic_constrained_type(model_field.annotation)
         if alter_schema_instruction.type is not Sentinel:
             if model_field.annotation == alter_schema_instruction.type:
                 raise InvalidGenerationInstructionError(
@@ -211,8 +214,11 @@ class _ModelWrapper:
                     f'but it already has type "{model_field.annotation}"',
                 )
             model_field.annotation = alter_schema_instruction.type
-            # TODO: Extend ast instead of removing it
-            self.fields[alter_schema_instruction.field_name]._annotation = None
+
+            model_field_wrapper.annotation_ast = None
+            if current_field_is_constrained_type:
+                model_field_wrapper.field_ast = None
+
         if alter_schema_instruction.new_name is not Sentinel:
             if alter_schema_instruction.new_name == alter_schema_instruction.field_name:
                 raise InvalidGenerationInstructionError(
@@ -240,15 +246,21 @@ class _ModelWrapper:
                         "but it already has that value.",
                     )
 
-                if attr_name in model_field.annotation.__dict__ and _is_pydantic_constrained_type(
-                    model_field.annotation,
-                ):
+                if attr_name in model_field.annotation.__dict__ and current_field_is_constrained_type:
                     setattr(model_field.annotation, attr_name, attr_value)
+                    ann_ast = model_field_wrapper.annotation_ast
+                    if ann_ast is not None and isinstance(ann_ast, ast.Call):
+                        _add_keyword_to_call(annotation_transformer, attr_name, attr_value, ann_ast)
+                    else:
+                        model_field_wrapper.field_ast = None
+                        model_field_wrapper.annotation_ast = None
                 else:
                     setattr(field_info, attr_name, attr_value)
-                    # TODO: Extend ast instead of removing it
-                self.fields[alter_schema_instruction.field_name]._annotation = None
-                self.fields[alter_schema_instruction.field_name].field_ast = None
+                    field_ast = model_field_wrapper.field_ast
+                    if isinstance(field_ast, ast.Call):
+                        _add_keyword_to_call(annotation_transformer, attr_name, attr_value, field_ast)
+                    else:
+                        model_field_wrapper.field_ast = None
 
     def delete_field(self, field_name: str, version_change_name: str):
         if field_name not in self.fields:
@@ -295,7 +307,6 @@ def generate_code_for_versioned_packages(
     ignore_coverage_for_latest_aliases: bool = True,
 ):
     """
-
     Args:
         template_module: The latest package from which we will generate the versioned packages
         versions: Version bundle to generate versions from
@@ -423,6 +434,7 @@ def _apply_alter_schema_instructions(
     alter_schema_instructions: Sequence[AlterSchemaSubInstruction | AlterSchemaInstruction],
     version_change_name: str,
 ):
+    annotation_transformer = _AnnotationTransformer()
     # TODO: If we have a request migration for an endpoint instead of a schema and we haven't found that endpoint
     # during codegen -- raise an error or maybe add an argument that controlls that. Or maybe this is overengineering..
     for alter_schema_instruction in alter_schema_instructions:
@@ -432,7 +444,12 @@ def _apply_alter_schema_instructions(
         if isinstance(alter_schema_instruction, OldSchemaFieldDidntExist):
             mutable_schema_info.delete_field(alter_schema_instruction.field_name, version_change_name)
         elif isinstance(alter_schema_instruction, OldSchemaFieldHad):
-            mutable_schema_info.change_field(modified_schemas, alter_schema_instruction, version_change_name)
+            mutable_schema_info.change_field(
+                modified_schemas,
+                alter_schema_instruction,
+                version_change_name,
+                annotation_transformer,
+            )
         elif isinstance(alter_schema_instruction, OldSchemaFieldExistedWith):
             mutable_schema_info.add_field(modified_schemas, alter_schema_instruction, version_change_name)
         elif isinstance(alter_schema_instruction, AlterSchemaInstruction):
@@ -743,7 +760,8 @@ def _generate_field_ast(
         attr: _get_attribute_from_field_info(field.field, attr)
         for attr in _get_passed_attributes_to_field(field.field.field_info)
     }
-    if _is_pydantic_constrained_type(field.field.annotation):
+    # TODO: This is None check feels buggy
+    if _is_pydantic_constrained_type(field.field.annotation) and field.annotation_ast is None:
         (
             attrs_that_are_only_in_contype,
             attrs_that_are_only_in_field,
@@ -755,13 +773,32 @@ def _generate_field_ast(
         func=ast.Name("Field"),
         args=[],
         keywords=[
-            ast.keyword(
-                arg=attr,
-                value=ast.parse(annotation_transformer.visit(attr_value), mode="eval").body,
-            )
+            _get_ast_keyword_from_field_arg(attr, attr_value, annotation_transformer)
             for attr, attr_value in passed_attrs.items()
         ],
     )
+
+
+def _get_ast_keyword_from_field_arg(attr_name: str, attr_value: Any, annotation_transformer: "_AnnotationTransformer"):
+    return ast.keyword(
+        arg=attr_name,
+        value=ast.parse(annotation_transformer.visit(attr_value), mode="eval").body,
+    )
+
+
+def _add_keyword_to_call(
+    annotation_transformer: "_AnnotationTransformer",
+    attr_name: str,
+    attr_value: Any,
+    field_ast: ast.Call,
+):
+    new_keyword = _get_ast_keyword_from_field_arg(attr_name, attr_value, annotation_transformer)
+    for i, keyword in enumerate(field_ast.keywords):
+        if keyword.arg == attr_name:
+            field_ast.keywords[i] = new_keyword
+            break
+    else:
+        field_ast.keywords.append(new_keyword)
 
 
 def _get_attribute_from_field_info(field: ModelField | _ModelFieldLike, attr: str) -> Any:
