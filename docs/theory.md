@@ -50,3 +50,9 @@ This is effectively an automated version of [approach i](#i-duplication-based-re
 
 This is the method that [Stripe](https://stripe.com/blog/api-versioning), [Linkedin](https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market), and [Intercom](
 https://www.intercom.com/blog/api-versioning/) have picked and this is the method that **Cadwyn** implements for you.
+
+1. How easy it is to create a version? If it is too easy: it is probably a trap. The framework is probably hiding too much complexity from you and will shoot you in the back later. For example, early on we have tried a simple "copy entire business logic into a separate directory" approach which made it so simple to add new versions that we added too many of them -- at the end, maintaining and getting rid of these versions has gotten hellishly hard.
+2. How easy is it to delete an old version? Your framework must make it as simple as possible to make sure that you can clean up versions cheaply whenever you need to. For example, if your framework tries to minimize the amount of code duplication in your repository by having new routes include old routes within them and new business logic inherit from classes from old business logic, then deleting an old version is going to be painful; oftentimes even dangerous as versions can quickly start interacting with each other in all sorts of ways, turning a single small application into a set of interconnected applications.
+3. How easy is it to see the differences between versions?
+4. What exactly do you need to duplicate in order to create a new version?
+5. How easy is it to notice accidental data versioning?
