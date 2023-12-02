@@ -35,7 +35,6 @@ from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from pydantic.fields import ModelField
-from starlette._utils import is_async_callable
 from starlette.routing import (
     BaseRoute,
     request_response,
@@ -558,10 +557,6 @@ def _add_data_migrations_to_route(
     latest_response_model: Any,
     versions: VersionBundle,
 ):
-    if not is_async_callable(route.endpoint):
-        raise RouterGenerationError(
-            f'All versioned endpoints must be asynchronous. Endpoint "{route.endpoint}" is not.',
-        )
     if not (route.dependant.request_param_name and route.dependant.response_param_name):  # pragma: no cover
         raise CadwynError(
             f"{route.dependant.request_param_name=}, {route.dependant.response_param_name=} "

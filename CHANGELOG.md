@@ -9,6 +9,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 * Field ASTs not preserving the original structure when constrained fields were changed
 
+### Added
+
+* Support for synchronous endpoints
+
 ## [2.3.2]
 
 ### Fixed
