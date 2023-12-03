@@ -1,5 +1,4 @@
 import http.cookies
-import importlib
 import re
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
@@ -22,6 +21,7 @@ from cadwyn.structure import (
 from cadwyn.structure.data import RequestInfo, ResponseInfo
 from tests.conftest import (
     CreateVersionedClients,
+    LatestModuleFor,
     client,
     version_change,
 )
@@ -30,6 +30,34 @@ from tests.conftest import (
 @pytest.fixture()
 def test_path():
     return "/test"
+
+
+@pytest.fixture(autouse=True)
+def latest_module(latest_module_for: LatestModuleFor):
+    return latest_module_for(
+        """
+from pydantic import BaseModel, Field
+from typing import Any
+from cadwyn.structure import internal_body_representation_of
+
+class AnyRequestSchema(BaseModel):
+    __root__: Any
+
+
+class AnyResponseSchema(BaseModel):
+    __root__: Any
+
+class SchemaWithInternalRepresentation(BaseModel):
+    foo: int
+
+# TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
+@internal_body_representation_of(SchemaWithInternalRepresentation)
+class InternalSchema(SchemaWithInternalRepresentation):
+    bar: str | None = Field(default=None)
+
+
+        """,
+    )
 
 
 @pytest.fixture(params=["is_async", "is_sync"])
@@ -278,9 +306,6 @@ class TestRequestMigrations:
         async def route(payload: latest_module.SchemaWithInternalRepresentation):
             return {"type": type(payload).__name__, **payload.dict()}
 
-        # The schemas need to be imported in order to be considered.
-        # TODO: Make a note of this in the docs
-        importlib.import_module(data_package_path + ".unversioned_schemas")
         clients = create_versioned_clients(version_change())
 
         assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
@@ -310,7 +335,6 @@ class TestRequestMigrations:
         def migrator(request: RequestInfo):
             request.body["bar"] = "world"
 
-        importlib.import_module(data_package_path + ".unversioned_schemas")
         clients = create_versioned_clients(version_change(migrator=migrator))
 
         assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
@@ -340,7 +364,6 @@ class TestRequestMigrations:
         def migrator(request: RequestInfo):
             request.body["bar"] = [1, 2, 3]
 
-        importlib.import_module(data_package_path + ".unversioned_schemas")
         clients = create_versioned_clients(version_change(migrator=migrator))
 
         assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
