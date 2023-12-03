@@ -768,15 +768,16 @@ def _generate_field_ast(
         ) = _get_attrs_that_are_not_from_field_and_that_are_from_field(field.field.annotation)
         if not attrs_that_are_only_in_contype:
             passed_attrs |= attrs_that_are_only_in_field
-
-    return ast.Call(
-        func=ast.Name("Field"),
-        args=[],
-        keywords=[
-            _get_ast_keyword_from_field_arg(attr, attr_value, annotation_transformer)
-            for attr, attr_value in passed_attrs.items()
-        ],
-    )
+    if passed_attrs:
+        return ast.Call(
+            func=ast.Name("Field"),
+            args=[],
+            keywords=[
+                _get_ast_keyword_from_field_arg(attr, attr_value, annotation_transformer)
+                for attr, attr_value in passed_attrs.items()
+            ],
+        )
+    return None
 
 
 def _get_ast_keyword_from_field_arg(attr_name: str, attr_value: Any, annotation_transformer: "_AnnotationTransformer"):

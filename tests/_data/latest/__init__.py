@@ -18,11 +18,6 @@ class EnumWithOneMember(Enum):
     a = auto()
 
 
-class EnumWithTwoMembers(Enum):
-    a = auto()
-    b = auto()
-
-
 class EmptyEnum(Enum):
     pass
 

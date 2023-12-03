@@ -2,9 +2,11 @@ import importlib
 import random
 import shutil
 import string
+import textwrap
 import uuid
 from contextvars import ContextVar
 from datetime import date
+from enum import Enum
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -12,6 +14,7 @@ from typing import Any
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
 
 from cadwyn import VersionBundle, VersionedAPIRouter, generate_code_for_versioned_packages
@@ -21,7 +24,7 @@ from cadwyn.main import Cadwyn
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
-from cadwyn.structure.schemas import AlterSchemaSubInstruction
+from cadwyn.structure.schemas import AlterSchemaInstruction, AlterSchemaSubInstruction
 
 CURRENT_DIR = Path(__file__).parent
 Undefined = object()
@@ -34,9 +37,9 @@ def api_version_var():
     return api_version_var
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def temp_dir():
-    temp_dir = CURRENT_DIR / "_temp"
+    temp_dir = CURRENT_DIR / "_data/_temp"
     temp_dir.mkdir(exist_ok=True)
     try:
         yield temp_dir
@@ -45,34 +48,14 @@ def temp_dir():
 
 
 @pytest.fixture()
-def data_dir(temp_dir: Path):
-    random_dir_name = "".join(random.choices(string.ascii_letters, k=10))
-    random_dir = temp_dir / random_dir_name
-    shutil.copytree(CURRENT_DIR / "_data", CURRENT_DIR / random_dir)
-    try:
-        yield random_dir
-    finally:
-        shutil.rmtree(random_dir)
-
-
-@pytest.fixture()
-def data_package_path(temp_dir: Path, data_dir: Path) -> str:
-    return f"tests.{temp_dir.name}.{data_dir.name}"
-
-
-@pytest.fixture()
-def latest_module_path(data_package_path: str) -> str:
-    return f"{data_package_path}.latest"
-
-
-@pytest.fixture()
-def latest_module(latest_module_path: str) -> ModuleType:
-    return importlib.import_module(latest_module_path)
-
-
-@pytest.fixture()
 def random_uuid():
     return uuid.uuid4()
+
+
+@pytest.fixture()
+def created_modules():
+    # This a really-really bad pattern! I am very lazy and evil for doing this
+    return []
 
 
 @fixture_class(name="run_schema_codegen")
@@ -96,16 +79,17 @@ class CreateVersionedSchemas:
         ignore_coverage_for_latest_aliases: bool = True,
     ) -> tuple[ModuleType, ...]:
         created_versions = versions(version_changes)
+        latest = importlib.import_module(self.data_package_path + ".latest")
         generate_code_for_versioned_packages(
-            importlib.import_module(self.data_package_path + ".latest"),
+            latest,
             VersionBundle(
                 *created_versions,
                 api_version_var=self.api_version_var,
             ),
             ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
         )
-
-        return tuple(
+        importlib.invalidate_caches()
+        schemas = tuple(
             reversed(
                 [
                     importlib.import_module(
@@ -115,6 +99,74 @@ class CreateVersionedSchemas:
                 ],
             ),
         )
+        assert {k: v for k, v in schemas[-1].__dict__.items() if not k.startswith("__")} == {
+            k: v for k, v in latest.__dict__.items() if not k.startswith("__")
+        }
+        return schemas
+
+
+@pytest.fixture()
+def data_dir(temp_dir: Path) -> Path:
+    data_dir_name = "".join(random.choices(string.ascii_letters, k=15))
+    data_dir = temp_dir / data_dir_name
+    data_dir.mkdir()
+    return data_dir
+
+
+@pytest.fixture()
+def data_package_path(temp_dir: Path, data_dir: Path) -> str:
+    return f"tests._data.{temp_dir.name}.{data_dir.name}"
+
+
+@pytest.fixture()
+def latest_dir(data_dir: Path):
+    latest = data_dir.joinpath("latest")
+    latest.mkdir(parents=True)
+    return latest
+
+
+@pytest.fixture()
+def latest_package_path(latest_dir: Path, data_package_path: str) -> str:
+    return f"{data_package_path}.{latest_dir.name}"
+
+
+@fixture_class(name="latest_module_for")
+class LatestModuleFor:
+    temp_dir: Path
+    latest_dir: Path
+    latest_package_path: str
+    created_modules: list[ModuleType]
+
+    def __call__(self, source: str) -> Any:
+        source = textwrap.dedent(source).strip()
+        self.latest_dir.joinpath("__init__.py").write_text(source)
+        importlib.invalidate_caches()
+        latest = importlib.import_module(self.latest_package_path)
+        if self.created_modules:
+            raise NotImplementedError("You cannot write latest twice")
+        self.created_modules.append(latest)
+        return latest
+
+
+class _FakeModuleWithEmptyClasses:
+    EmptyEnum: type[Enum]
+    EmptySchema: type[BaseModel]
+
+
+@pytest.fixture()
+def latest_with_empty_classes(latest_module_for: LatestModuleFor) -> _FakeModuleWithEmptyClasses:
+    return latest_module_for(
+        """
+        from enum import Enum, auto
+        import pydantic
+
+        class EmptyEnum(Enum):
+            pass
+
+        class EmptySchema(pydantic.BaseModel):
+            pass
+        """,
+    )
 
 
 @fixture_class(name="create_simple_versioned_schemas")
@@ -128,6 +180,61 @@ class CreateSimpleVersionedSchemas:
             version_change(*instructions),
             ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
         )
+
+
+@fixture_class(name="create_local_versioned_schemas")
+class CreateLocalVersionedSchemas:
+    api_version_var: ContextVar[date | None]
+    temp_dir: Path
+    created_modules: list[ModuleType]
+    latest_package_path: str
+
+    def __call__(
+        self,
+        *version_changes: type[VersionChange] | list[type[VersionChange]],
+        ignore_coverage_for_latest_aliases: bool = True,
+    ) -> tuple[ModuleType, ...]:
+        latest = self.created_modules[0]
+        created_versions = versions(version_changes)
+
+        generate_code_for_versioned_packages(
+            importlib.import_module(self.latest_package_path),
+            VersionBundle(
+                *created_versions,
+                api_version_var=self.api_version_var,
+            ),
+            ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
+        )
+        importlib.invalidate_caches()
+
+        schemas = tuple(
+            reversed(
+                [
+                    importlib.import_module(
+                        self.latest_package_path.removesuffix("latest") + f"{_get_version_dir_name(version.value)}",
+                    )
+                    for version in created_versions
+                ],
+            ),
+        )
+
+        # Validate that latest version is always equivalent to the template version
+        assert {k: v for k, v in schemas[-1].__dict__.items() if not k.startswith("__")} == {
+            k: v for k, v in latest.__dict__.items() if not k.startswith("__")
+        }
+        return schemas
+
+
+@fixture_class(name="create_local_simple_versioned_schemas")
+class CreateLocalSimpleVersionedSchemas:
+    api_version_var: ContextVar[date | None]
+    create_local_versioned_schemas: CreateLocalVersionedSchemas
+
+    def __call__(self, *instructions: Any, ignore_coverage_for_latest_aliases: bool = True) -> ModuleType:
+        return self.create_local_versioned_schemas(
+            version_change(*instructions),
+            ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
+        )[0]
 
 
 class CadwynTestClient(TestClient):
@@ -213,7 +320,10 @@ class CreateVersionedClients:
 
 
 def version_change(
-    *instructions: AlterSchemaSubInstruction | AlterEndpointSubInstruction | AlterEnumSubInstruction,
+    *instructions: AlterSchemaInstruction
+    | AlterSchemaSubInstruction
+    | AlterEndpointSubInstruction
+    | AlterEnumSubInstruction,
     **body_items: Any,
 ):
     return type(VersionChange)(
@@ -225,3 +335,7 @@ def version_change(
             **body_items,
         },
     )
+
+
+def serialize(enum: type[Enum]) -> dict[str, Any]:
+    return {member.name: member.value for member in enum}
