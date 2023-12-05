@@ -463,6 +463,30 @@ def test__schema_field_had_constrained_field__only_non_constraint_field_args_wer
     )
 
 
+def test__schema_field_had_constrained_field__only_non_constraint_field_args_were_modifiedsdsd(
+    create_local_simple_versioned_schemas: CreateLocalSimpleVersionedSchemas,
+    latest_module_for: LatestModuleFor,
+):
+    latest = latest_module_for(
+        """
+from pydantic import BaseModel, Field
+
+class Schema(BaseModel):
+    foo: int | None = Field(default=None)
+
+                      """,
+    )
+    v1 = create_local_simple_versioned_schemas(
+        schema(latest.Schema).field("foo").had(ge=0),
+    )
+
+    assert inspect.getsource(v1.Schema) == (
+        "class SchemaWithConstraints(BaseModel):\n"
+        "    foo: conint(lt=MY_VAR) = Field(alias='foo1')\n"
+        "    bar: str = Field(max_length=MY_VAR, alias='bar1')\n"
+    )
+
+
 def test__schema_field_had_constrained_field__constraints_have_been_modified(
     create_local_simple_versioned_schemas: CreateLocalSimpleVersionedSchemas,
     latest_with_constraints,

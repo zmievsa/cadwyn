@@ -6,6 +6,7 @@ from datetime import date
 from types import ModuleType
 from typing import Any, Literal
 
+import pydantic
 import pytest
 from dirty_equals import IsPartialDict, IsStr
 from fastapi import APIRouter, Body, Cookie, File, Header, Query, Request, Response, UploadFile
@@ -34,30 +35,52 @@ def test_path():
 
 @pytest.fixture(autouse=True)
 def latest_module(latest_module_for: LatestModuleFor):
-    return latest_module_for(
-        """
-from pydantic import BaseModel, Field
-from typing import Any
-from cadwyn.structure import internal_body_representation_of
+    if pydantic.__version__ < "2":
+        return latest_module_for(
+            """
+    from pydantic import BaseModel, Field
+    from typing import Any
+    from cadwyn.structure import internal_body_representation_of
 
-class AnyRequestSchema(BaseModel):
-    __root__: Any
-
-
-class AnyResponseSchema(BaseModel):
-    __root__: Any
-
-class SchemaWithInternalRepresentation(BaseModel):
-    foo: int
-
-# TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
-@internal_body_representation_of(SchemaWithInternalRepresentation)
-class InternalSchema(SchemaWithInternalRepresentation):
-    bar: str | None = Field(default=None)
+    class AnyRequestSchema(BaseModel):
+        __root__: Any
 
 
-        """,
-    )
+    class AnyResponseSchema(BaseModel):
+        __root__: Any
+
+    class SchemaWithInternalRepresentation(BaseModel):
+        foo: int
+
+    # TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
+    @internal_body_representation_of(SchemaWithInternalRepresentation)
+    class InternalSchema(SchemaWithInternalRepresentation):
+        bar: str | None = Field(default=None)
+
+
+            """,
+        )
+    else:
+        return latest_module_for(
+            """
+    from pydantic import BaseModel, Field, RootModel
+    from typing import Any
+    from cadwyn.structure import internal_body_representation_of
+
+    AnyRequestSchema = RootModel[Any]
+    AnyResponseSchema = RootModel[Any]
+
+    class SchemaWithInternalRepresentation(BaseModel):
+        foo: int
+
+    # TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
+    @internal_body_representation_of(SchemaWithInternalRepresentation)
+    class InternalSchema(SchemaWithInternalRepresentation):
+        bar: str | None = Field(default=None)
+
+
+            """,
+        )
 
 
 @pytest.fixture(params=["is_async", "is_sync"])
@@ -298,7 +321,7 @@ class TestRequestMigrations:
         self,
         create_versioned_clients: CreateVersionedClients,
         latest_module: ModuleType,
-        data_package_path: str,
+        temp_data_package_path: str,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
     ):
@@ -323,7 +346,7 @@ class TestRequestMigrations:
         self,
         create_versioned_clients: CreateVersionedClients,
         latest_module: ModuleType,
-        data_package_path: str,
+        temp_data_package_path: str,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
     ):
@@ -352,7 +375,7 @@ class TestRequestMigrations:
         self,
         create_versioned_clients: CreateVersionedClients,
         latest_module: ModuleType,
-        data_package_path: str,
+        temp_data_package_path: str,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
     ):

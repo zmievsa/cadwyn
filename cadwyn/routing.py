@@ -34,7 +34,6 @@ from fastapi.dependencies.utils import (
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
-from pydantic.fields import ModelField
 from starlette.routing import (
     BaseRoute,
     request_response,
@@ -42,6 +41,7 @@ from starlette.routing import (
 from typing_extensions import assert_never
 from verselect.routing import VERSION_HEADER_FORMAT
 
+from cadwyn._compat import ModelField
 from cadwyn._utils import Sentinel, UnionType, get_another_version_of_module
 from cadwyn.codegen import _get_package_path_from_module, _get_version_dir_path
 from cadwyn.exceptions import CadwynError, ModuleIsNotVersionedError, RouteAlreadyExistsError, RouterGenerationError

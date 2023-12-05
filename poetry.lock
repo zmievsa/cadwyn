@@ -954,7 +954,7 @@ cli = ["typer"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "d5ea76c8d7df70a7f60670c7185df159a6b121bc2dc61fb2f3ded4f221d9a685"
+content-hash = "651fbd59f94a7850526ae87499c931c86f2f7b2e764d036bde456c509fb13ac4"
 
 [metadata.files]
 anyio = [

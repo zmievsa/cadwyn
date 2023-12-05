@@ -60,10 +60,10 @@ def created_modules():
 
 @fixture_class(name="run_schema_codegen")
 class RunSchemaCodegen:
-    data_package_path: str
+    temp_data_package_path: str
 
     def __call__(self, versions: VersionBundle) -> Any:
-        latest_module = importlib.import_module(self.data_package_path + ".latest")
+        latest_module = importlib.import_module(self.temp_data_package_path + ".latest")
         generate_code_for_versioned_packages(latest_module, versions)
         return latest_module
 
@@ -71,7 +71,7 @@ class RunSchemaCodegen:
 @fixture_class(name="create_versioned_schemas")
 class CreateVersionedSchemas:
     api_version_var: ContextVar[date | None]
-    data_package_path: str
+    temp_data_package_path: str
 
     def __call__(
         self,
@@ -79,7 +79,7 @@ class CreateVersionedSchemas:
         ignore_coverage_for_latest_aliases: bool = True,
     ) -> tuple[ModuleType, ...]:
         created_versions = versions(version_changes)
-        latest = importlib.import_module(self.data_package_path + ".latest")
+        latest = importlib.import_module(self.temp_data_package_path + ".latest")
         generate_code_for_versioned_packages(
             latest,
             VersionBundle(
@@ -93,7 +93,7 @@ class CreateVersionedSchemas:
             reversed(
                 [
                     importlib.import_module(
-                        self.data_package_path + f".{_get_version_dir_name(version.value)}",
+                        self.temp_data_package_path + f".{_get_version_dir_name(version.value)}",
                     )
                     for version in created_versions
                 ],
@@ -106,7 +106,7 @@ class CreateVersionedSchemas:
 
 
 @pytest.fixture()
-def data_dir(temp_dir: Path) -> Path:
+def temp_data_dir(temp_dir: Path) -> Path:
     data_dir_name = "".join(random.choices(string.ascii_letters, k=15))
     data_dir = temp_dir / data_dir_name
     data_dir.mkdir()
@@ -114,20 +114,25 @@ def data_dir(temp_dir: Path) -> Path:
 
 
 @pytest.fixture()
-def data_package_path(temp_dir: Path, data_dir: Path) -> str:
-    return f"tests._data.{temp_dir.name}.{data_dir.name}"
+def data_package_path() -> str:
+    return "tests._data"
 
 
 @pytest.fixture()
-def latest_dir(data_dir: Path):
-    latest = data_dir.joinpath("latest")
+def temp_data_package_path(data_package_path: str, temp_dir: Path, temp_data_dir: Path) -> str:
+    return f"{data_package_path}.{temp_dir.name}.{temp_data_dir.name}"
+
+
+@pytest.fixture()
+def latest_dir(temp_data_dir: Path):
+    latest = temp_data_dir.joinpath("latest")
     latest.mkdir(parents=True)
     return latest
 
 
 @pytest.fixture()
-def latest_package_path(latest_dir: Path, data_package_path: str) -> str:
-    return f"{data_package_path}.{latest_dir.name}"
+def latest_package_path(latest_dir: Path, temp_data_package_path: str) -> str:
+    return f"{temp_data_package_path}.{latest_dir.name}"
 
 
 @fixture_class(name="latest_module_for")
@@ -172,7 +177,7 @@ def latest_with_empty_classes(latest_module_for: LatestModuleFor) -> _FakeModule
 @fixture_class(name="create_simple_versioned_schemas")
 class CreateSimpleVersionedSchemas:
     api_version_var: ContextVar[date | None]
-    data_package_path: str
+    temp_data_package_path: str
     create_versioned_schemas: CreateVersionedSchemas
 
     def __call__(self, *instructions: Any, ignore_coverage_for_latest_aliases: bool = True) -> tuple[ModuleType, ...]:
@@ -282,7 +287,7 @@ def router() -> VersionedAPIRouter:
 class CreateVersionedApp:
     api_version_var: ContextVar[date | None]
     router: VersionedAPIRouter
-    data_package_path: str
+    temp_data_package_path: str
     run_schema_codegen: RunSchemaCodegen
 
     def __call__(self, *version_changes: type[VersionChange] | list[type[VersionChange]]) -> Cadwyn:

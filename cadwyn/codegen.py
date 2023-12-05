@@ -24,9 +24,9 @@ from typing import (
 )
 
 from pydantic import BaseModel, Field
-from pydantic.fields import FieldInfo, ModelField
 from typing_extensions import Self, assert_never
 
+from cadwyn._compat import FieldInfo, ModelField
 from cadwyn.structure.enums import (
     AlterEnumSubInstruction,
     EnumDidntHaveMembersInstruction,
@@ -246,7 +246,7 @@ class _ModelWrapper:
                         "but it already has that value.",
                     )
 
-                if attr_name in model_field.annotation.__dict__ and current_field_is_constrained_type:
+                if hasattr(model_field.annotation, attr_name) and current_field_is_constrained_type:
                     setattr(model_field.annotation, attr_name, attr_value)
                     ann_ast = model_field_wrapper.annotation_ast
                     if ann_ast is not None and isinstance(ann_ast, ast.Call):

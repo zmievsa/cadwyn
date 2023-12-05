@@ -77,15 +77,15 @@ def test__non_python_files__copied_to_all_dirs(
     create_local_simple_versioned_schemas: CreateLocalSimpleVersionedSchemas,
     latest_with_empty_classes: _FakeModuleWithEmptyClasses,
     latest_dir: Path,
-    data_dir: Path,
+    temp_data_dir: Path,
 ):
     json_file_dir = latest_dir / "json_files"
     json_file_dir.mkdir()
     json_file_dir.joinpath("foo.json").write_text('{"hello":"world"}')
 
     create_local_simple_versioned_schemas()
-    assert json.loads(Path(data_dir / "v2000_01_01/json_files/foo.json").read_text()) == {"hello": "world"}
-    assert json.loads(Path(data_dir / "v2001_01_01/json_files/foo.json").read_text()) == {"hello": "world"}
+    assert json.loads(Path(temp_data_dir / "v2000_01_01/json_files/foo.json").read_text()) == {"hello": "world"}
+    assert json.loads(Path(temp_data_dir / "v2001_01_01/json_files/foo.json").read_text()) == {"hello": "world"}
 
 
 def test__non_pydantic_schema__error(
@@ -114,8 +114,8 @@ def test__schema_defined_in_non_init_nested_files(
     latest_with_empty_classes: _FakeModuleWithEmptyClasses,
     latest_dir: Path,
     latest_package_path: str,
-    data_dir: Path,
-    data_package_path: str,
+    temp_data_dir: Path,
+    temp_data_package_path: str,
 ):
     latest_dir.joinpath("level0.py").write_text(
         textwrap.dedent(
@@ -183,11 +183,11 @@ def test__schema_defined_in_non_init_nested_files(
         schema(latest_level2.Level2).field("foo").didnt_exist,
     )
 
-    latest_level0 = importlib.import_module(data_package_path + ".v2000_01_01.level0")
-    latest_level1_root = importlib.import_module(data_package_path + ".v2000_01_01.level1_dir")
-    latest_level1 = importlib.import_module(data_package_path + ".v2000_01_01.level1_dir.level1")
-    latest_level2_root = importlib.import_module(data_package_path + ".v2000_01_01.level1_dir.level2_dir")
-    latest_level2 = importlib.import_module(data_package_path + ".v2000_01_01.level1_dir.level2_dir.level2")
+    latest_level0 = importlib.import_module(temp_data_package_path + ".v2000_01_01.level0")
+    latest_level1_root = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir")
+    latest_level1 = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir.level1")
+    latest_level2_root = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir.level2_dir")
+    latest_level2 = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir.level2_dir.level2")
 
     assert inspect.getsource(latest_level0.Level0) == "class Level0(BaseModel):\n    pass\n"
     assert inspect.getsource(latest_level1_root.Level1Root) == "class Level1Root(BaseModel):\n    pass\n"
@@ -198,7 +198,7 @@ def test__schema_defined_in_non_init_nested_files(
 
 @pytest.fixture()
 def latest_with_dependent_schemas(
-    data_package_path: str,
+    temp_data_package_path: str,
     create_local_versioned_schemas: CreateLocalVersionedSchemas,
     latest_module_for: LatestModuleFor,
     latest_dir: Path,
@@ -224,7 +224,7 @@ class SchemaThatDependsOnAnotherSchema(SchemaWithOneFloatField):
 
 
 def test__schema_had_name__with_dependent_schema_not_altered(
-    data_package_path: str,
+    temp_data_package_path: str,
     create_local_versioned_schemas: CreateLocalVersionedSchemas,
     latest_with_dependent_schemas,
 ):
@@ -232,8 +232,8 @@ def test__schema_had_name__with_dependent_schema_not_altered(
         version_change(schema(latest_with_dependent_schemas.SchemaWithOneFloatField).had(name="MyFloatySchema2")),
         version_change(schema(latest_with_dependent_schemas.SchemaWithOneFloatField).had(name="MyFloatySchema")),
     )
-    another_file_v1 = importlib.import_module(data_package_path + ".v2000_01_01.another_file")
-    another_file_v2 = importlib.import_module(data_package_path + ".v2001_01_01.another_file")
+    another_file_v1 = importlib.import_module(temp_data_package_path + ".v2000_01_01.another_file")
+    another_file_v2 = importlib.import_module(temp_data_package_path + ".v2001_01_01.another_file")
 
     assert inspect.getsource(v1.SchemaThatDependsOnAnotherSchema) == (
         "class SchemaThatDependsOnAnotherSchema(MyFloatySchema2):\n"
@@ -267,7 +267,7 @@ def test__schema_had_name__with_dependent_schema_not_altered(
 
 
 def test__schema_had_name__with_dependent_schema_altered(
-    data_package_path: str,
+    temp_data_package_path: str,
     create_local_versioned_schemas: CreateLocalVersionedSchemas,
     latest_module_for: LatestModuleFor,
     latest_dir: Path,
@@ -287,8 +287,8 @@ def test__schema_had_name__with_dependent_schema_altered(
         ),
     )
 
-    another_file_v1 = importlib.import_module(data_package_path + ".v2000_01_01.another_file")
-    another_file_v2 = importlib.import_module(data_package_path + ".v2001_01_01.another_file")
+    another_file_v1 = importlib.import_module(temp_data_package_path + ".v2000_01_01.another_file")
+    another_file_v2 = importlib.import_module(temp_data_package_path + ".v2001_01_01.another_file")
 
     assert (
         inspect.getsource(v1.SchemaThatDependsOnAnotherSchema)
@@ -341,3 +341,32 @@ def test__schema_had_name__trying_to_assign_to_the_same_name__should_raise_error
                 schema(latest_with_empty_classes.EmptySchema).had(name="EmptySchema"),
             ),
         )
+
+
+def test__codegen_variable_and_random_expression_migration(
+    create_local_simple_versioned_schemas: CreateLocalSimpleVersionedSchemas,
+    latest_module_for: LatestModuleFor,
+) -> None:
+    latest_module_for("a, b = 1, 2")
+    v1 = create_local_simple_versioned_schemas()
+    assert inspect.getsource(v1).endswith("(a, b) = (1, 2)\n")
+
+
+def test__codegen_correct_docstring_handling(
+    create_local_simple_versioned_schemas: CreateLocalSimpleVersionedSchemas,
+    latest_module_for: LatestModuleFor,
+) -> None:
+    latest = latest_module_for(
+        """
+from pydantic import BaseModel
+class MyClass(BaseModel):
+    ''' Hewwo
+    Darkness my old friend I've come to talk with you again''' """,
+    )
+    v1 = create_local_simple_versioned_schemas(schema(latest.MyClass).field("foo").existed_as(type=str))
+    assert inspect.getsource(v1.MyClass) == (
+        "class MyClass(BaseModel):\n"
+        '    """ Hewwo \n'
+        '    Darkness my old friend I\'ve come to talk with you again"""\n'
+        "    foo: str\n"
+    )

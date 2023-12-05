@@ -108,6 +108,8 @@ Let's say that we previously allowed users to have a name of arbitrary length bu
     ```python
     from cadwyn.structure import VersionChange, schema
     from data.latest.users import UserCreateRequest
+
+    # Note that in pydantic v2 this would be `from pydantic_core import PydanticUndefined`
     from pydantic.fields import Undefined
 
 

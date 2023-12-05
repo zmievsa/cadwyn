@@ -19,10 +19,10 @@ from fastapi.dependencies.utils import solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
-from pydantic.fields import Undefined
 from starlette._utils import is_async_callable
 from typing_extensions import assert_never
 
+from cadwyn._compat import Undefined
 from cadwyn.exceptions import CadwynError, CadwynStructureError
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction

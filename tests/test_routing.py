@@ -658,7 +658,7 @@ def test__router_generation__non_api_route_added(
 def test__router_generation__updating_response_model(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
-    data_package_path: str,
+    temp_data_package_path: str,
     latest: ModuleType,
 ):
     @router.get(
@@ -675,11 +675,11 @@ def test__router_generation__updating_response_model(
     assert len(routes_2000) == len(routes_2001) == 1
     assert (
         routes_2000[0].response_model
-        == dict[str, list[importlib.import_module(data_package_path + ".v2000_01_01").SchemaWithOnePydanticField]]
+        == dict[str, list[importlib.import_module(temp_data_package_path + ".v2000_01_01").SchemaWithOnePydanticField]]
     )
     assert (
         routes_2001[0].response_model
-        == dict[str, list[importlib.import_module(data_package_path + ".v2001_01_01").SchemaWithOnePydanticField]]
+        == dict[str, list[importlib.import_module(temp_data_package_path + ".v2001_01_01").SchemaWithOnePydanticField]]
     )
 
     assert get_nested_field_type(routes_2000[0].response_model) == list[str]
@@ -689,7 +689,7 @@ def test__router_generation__updating_response_model(
 def test__router_generation__using_non_latest_version_of_schema__should_raise_error(
     router: VersionedAPIRouter,
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
-    data_package_path: str,
+    temp_data_package_path: str,
     latest: ModuleType,
     api_version_var,
 ):
@@ -701,7 +701,7 @@ def test__router_generation__using_non_latest_version_of_schema__should_raise_er
 
     with pytest.raises(
         RouterGenerationError,
-        match=f"\"<class \\'{data_package_path}.v2000_01_01\\.SchemaWithOnePydanticField\\'>\" "
+        match=f"\"<class \\'{temp_data_package_path}.v2000_01_01\\.SchemaWithOnePydanticField\\'>\" "
         f'is not defined in ".+latest" even though it must be\\. It is defined in ".+v2000_01_01"\\. '
         "It probably means that you used a specific version of the class in "
         'fastapi dependencies or pydantic schemas instead of "latest"\\.',
@@ -719,7 +719,7 @@ def test__router_generation__using_non_latest_version_of_schema__should_raise_er
 
 def test__router_generation__using_unversioned_schema_from_versioned_base_dir__should_not_raise_error(
     router: VersionedAPIRouter,
-    data_package_path: str,
+    temp_data_package_path: str,
     create_versioned_app: CreateVersionedApp,
 ):
     module = importlib.import_module("tests._data.unversioned_schema_dir")
@@ -735,13 +735,13 @@ def test__router_generation__passing_a_module_instead_of_package_for_latest__sho
     api_version_var: ContextVar[date | None],
     run_schema_codegen: RunSchemaCodegen,
     router: VersionedAPIRouter,
-    data_package_path: str,
+    temp_data_package_path: str,
     latest_dir: Path,
 ):
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            f'The latest schemas module must be a package. "{data_package_path}.latest.hewwo" is not a package.',
+            f'The latest schemas module must be a package. "{temp_data_package_path}.latest.hewwo" is not a package.',
         ),
     ):
         versions = VersionBundle(
@@ -751,7 +751,7 @@ def test__router_generation__passing_a_module_instead_of_package_for_latest__sho
         )
         latest_dir.joinpath("hewwo.py").touch()
         run_schema_codegen(versions)
-        module = importlib.import_module(data_package_path + ".latest.hewwo")
+        module = importlib.import_module(temp_data_package_path + ".latest.hewwo")
 
         generate_versioned_routers(
             router,
@@ -761,7 +761,7 @@ def test__router_generation__passing_a_module_instead_of_package_for_latest__sho
 
 
 def test__router_generation__passing_a_package_with_wrong_name_instead_of_latest__should_raise_error(
-    data_package_path: str,
+    temp_data_package_path: str,
     api_version_var: ContextVar[date | None],
     run_schema_codegen: RunSchemaCodegen,
     router: VersionedAPIRouter,
@@ -769,7 +769,7 @@ def test__router_generation__passing_a_package_with_wrong_name_instead_of_latest
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(
-            f'The name of the latest schemas module must be "latest". Received "{data_package_path}" instead.',
+            f'The name of the latest schemas module must be "latest". Received "{temp_data_package_path}" instead.',
         ),
     ):
         versions = VersionBundle(
@@ -778,7 +778,7 @@ def test__router_generation__passing_a_package_with_wrong_name_instead_of_latest
             api_version_var=api_version_var,
         )
         run_schema_codegen(versions)
-        module = importlib.import_module(data_package_path)
+        module = importlib.import_module(temp_data_package_path)
 
         generate_versioned_routers(
             router,
@@ -791,7 +791,7 @@ def test__router_generation__updating_request_models(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
     latest: ModuleType,
-    data_package_path: str,
+    temp_data_package_path: str,
 ):
     @router.get("/test")
     async def test(body: dict[str, list[latest.SchemaWithOnePydanticField]]):
@@ -801,8 +801,8 @@ def test__router_generation__updating_request_models(
         version_change(schema(latest.SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
     schemas_2000, schemas_2001 = (
-        importlib.import_module(data_package_path + ".v2000_01_01"),
-        importlib.import_module(data_package_path + ".v2001_01_01"),
+        importlib.import_module(temp_data_package_path + ".v2000_01_01"),
+        importlib.import_module(temp_data_package_path + ".v2001_01_01"),
     )
     assert len(routes_2000) == len(routes_2001) == 1
     assert (
@@ -937,6 +937,39 @@ def test__router_generation__updating_request_depends(
 
     assert client_2001.post("/test2", json={}).json() == {}
     assert client_2001.post("/test2", json={"my_schema": {"foo": "bar"}}).json() == {}
+
+
+# TODO: This test is written extremely poorly. Rewrite it
+def test__router_generation__using_unversioned_schema_in_body(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+    latest,
+    temp_data_dir,
+    temp_data_package_path,
+    created_modules,
+):
+    temp_data_dir.joinpath("other_module.py").write_text(
+        """
+from pydantic import BaseModel
+
+class MySchema(BaseModel):
+    bar: str
+    """,
+    )
+    importlib.invalidate_caches()
+    # TODO: This is bad practice. Just do something else
+    other_module = importlib.import_module(temp_data_package_path + ".other_module")
+
+    @router.post("/test")
+    async def test_with_dep1(dep: other_module.MySchema):
+        return dep
+
+    app = create_versioned_app(version_change())
+
+    client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
+    assert client_2000.post("/test", json={"bar": "hello"}).json() == {"bar": "hello"}
+    assert client_2001.post("/test", json={"bar": "hello"}).json() == {"bar": "hello"}
 
 
 def test__router_generation__updating_unused_dependencies(
