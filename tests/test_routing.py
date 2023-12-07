@@ -38,6 +38,11 @@ from tests.conftest import (
 Default = object()
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
 
+if PYDANTIC_V2:
+    TYPE_ATTR, ANNOTATION_ATTR = "type_", "annotation"
+else:
+    TYPE_ATTR, ANNOTATION_ATTR = "annotation", "type_"
+
 
 def get_wrapped_endpoint(endpoint: Endpoint) -> Endpoint:
     while hasattr(endpoint, "__wrapped__"):
@@ -824,11 +829,14 @@ def test__router_generation__updating_request_models(
         importlib.import_module(temp_data_package_path + ".v2001_01_01"),
     )
     assert len(routes_2000) == len(routes_2001) == 1
-    assert routes_2000[0].dependant.body_params[0].type_ == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
-    assert routes_2001[0].dependant.body_params[0].type_ == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
 
-    assert get_nested_field_type(routes_2000[0].dependant.body_params[0].type_) == list[str]
-    assert get_nested_field_type(routes_2001[0].dependant.body_params[0].type_) == int
+    body_param_2000 = routes_2000[0].dependant.body_params[0]
+    body_param_2001 = routes_2001[0].dependant.body_params[0]
+    assert getattr(body_param_2000, TYPE_ATTR) == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
+    assert getattr(body_param_2001, TYPE_ATTR) == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
+
+    assert get_nested_field_type(getattr(routes_2000[0].dependant.body_params[0], TYPE_ATTR)) == list[str]
+    assert get_nested_field_type(getattr(routes_2001[0].dependant.body_params[0], TYPE_ATTR)) == int
 
 
 def test__router_generation__using_unversioned_models(
@@ -879,11 +887,11 @@ def test__router_generation__using_weird_typehints(
     )
     assert len(routes_2000) == len(routes_2001) == 1
 
-    assert routes_2000[0].dependant.body_params[0].type_ is newtype
-    assert routes_2001[0].dependant.body_params[0].type_ is newtype
+    assert getattr(routes_2000[0].dependant.body_params[0], TYPE_ATTR) is newtype
+    assert getattr(routes_2001[0].dependant.body_params[0], TYPE_ATTR) is newtype
 
-    assert routes_2000[0].dependant.body_params[1].type_ == str | int
-    assert routes_2001[0].dependant.body_params[1].type_ == str | int
+    assert getattr(routes_2000[0].dependant.body_params[1], TYPE_ATTR) == str | int
+    assert getattr(routes_2001[0].dependant.body_params[1], TYPE_ATTR) == str | int
 
 
 def test__router_generation__using_oydantic_typehints(

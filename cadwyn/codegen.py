@@ -290,7 +290,7 @@ class _ModelWrapper:
             )
             model_field_wrapper.name = alter_schema_instruction.new_name
 
-            if isinstance(model_field_wrapper.field_info, _ModelFieldLike) or not PYDANTIC_V2:
+            if isinstance(model_field_wrapper.field_info, _ModelFieldLike | ModelField):
                 model_field_wrapper.field_info.name = alter_schema_instruction.new_name
         field_info = model_field_wrapper.field_info
 

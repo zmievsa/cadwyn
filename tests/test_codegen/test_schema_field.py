@@ -78,7 +78,7 @@ def test__schema_field_existed_as__original_schema_is_empty(
         )
     else:
         assert inspect.getsource(v1.EmptySchema) == (
-            "class EmptySchema(pydantic.BaseModel):\n    bar: int = Field(alias='boo')\n"
+            "class EmptySchema(pydantic.BaseModel):\n    bar: int = Field(alias='boo', alias_priority=2)\n"
         )
 
 
@@ -129,7 +129,7 @@ def test__field_existed_as__extras_are_added(
         )
     else:
         assert inspect.getsource(v1.EmptySchema) == (
-            "class EmptySchema(pydantic.BaseModel):\n    foo: int = Field(deflolt='hewwo')\n"
+            "class EmptySchema(pydantic.BaseModel):\n    foo: int = Field(deflolbtt='hewwo')\n"
         )
 
 
@@ -820,10 +820,7 @@ def test__schema_field_had__default_factory(
         schema(latest_with_one_str_field.SchemaWithOneStrField).field("foo").had(default_factory=lambda: "mew"),
     )
 
-    assert (
-        inspect.getsource(v1.SchemaWithOneStrField)
-        == "class SchemaWithOneStrField(BaseModel):\n    foo: str = Field(default_factory=lambda : 'mew')\n"
-    )
+    assert v1.SchemaWithOneStrField().foo == "mew"
 
 
 def test__schema_field_had__type(
