@@ -24,6 +24,7 @@ from typing import (
 
 import fastapi.routing
 import fastapi.utils
+from fastapi._compat import ModelField as FastAPIModelField
 from fastapi._compat import create_body_model
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import (
@@ -41,7 +42,7 @@ from starlette.routing import (
 from typing_extensions import assert_never
 from verselect.routing import VERSION_HEADER_FORMAT
 
-from cadwyn._compat import ModelField
+from cadwyn._compat import PYDANTIC_V2
 from cadwyn._utils import Sentinel, UnionType, get_another_version_of_module
 from cadwyn.codegen import _get_package_path_from_module, _get_version_dir_path
 from cadwyn.exceptions import CadwynError, ModuleIsNotVersionedError, RouteAlreadyExistsError, RouterGenerationError
@@ -160,23 +161,27 @@ class _EndpointTransformer(Generic[_R]):
             copy_of_dependant = deepcopy(latest_route.dependant)
             # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
             if len(copy_of_dependant.body_params) == 1:
-                body_param: ModelField = cast(ModelField, copy_of_dependant.body_params[0])
+                body_param: FastAPIModelField = copy_of_dependant.body_params[0]
                 body_schema = body_param.type_
                 # TODO: Verify that this doesn't break at pydantic 2
                 new_type = _SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING.get(body_schema, body_schema)
-                new_body_param = ModelField(
-                    name=body_param.name,
-                    type_=new_type,
-                    class_validators=body_param.class_validators,
-                    model_config=body_param.model_config,
-                    default=body_param.default,
-                    default_factory=body_param.default_factory,
-                    required=body_param.required,
-                    final=body_param.final,
-                    alias=body_param.alias if body_param.has_alias else None,
-                    field_info=body_param.field_info,
-                )
-                copy_of_dependant.body_params = [new_body_param]  # pyright: ignore[reportGeneralTypeIssues]
+                kwargs: dict[str, Any] = {"name": body_param.name, "field_info": body_param.field_info}
+                if PYDANTIC_V2:
+                    body_param.field_info.annotation = new_type
+                    kwargs.update({"mode": body_param.mode})
+                else:
+                    kwargs.update(
+                        {
+                            "type_": new_type,
+                            "class_validators": body_param.class_validators,
+                            "default": body_param.default,
+                            "required": body_param.required,
+                            "model_config": body_param.model_config,
+                            "alias": body_param.alias,
+                        },
+                    )
+                new_body_param = FastAPIModelField(**kwargs)
+                copy_of_dependant.body_params = [new_body_param]
 
             for older_router_info in list(router_infos.values()):
                 older_route = older_router_info.router.routes[route_index]

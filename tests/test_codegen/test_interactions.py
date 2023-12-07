@@ -366,7 +366,7 @@ class MyClass(BaseModel):
     v1 = create_local_simple_versioned_schemas(schema(latest.MyClass).field("foo").existed_as(type=str))
     assert inspect.getsource(v1.MyClass) == (
         "class MyClass(BaseModel):\n"
-        '    """ Hewwo \n'
+        '    """ Hewwo\n'
         '    Darkness my old friend I\'ve come to talk with you again"""\n'
         "    foo: str\n"
     )

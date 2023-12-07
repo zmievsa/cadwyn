@@ -17,6 +17,7 @@ from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
 
 from cadwyn import VersionBundle, VersionedAPIRouter
+from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import CadwynError, RouterGenerationError
 from cadwyn.routing import generate_versioned_routers
 from cadwyn.structure import Version, endpoint, schema
@@ -490,6 +491,24 @@ def test__router_generation__restoring_deleted_routes_for_same_path_with_func_na
     assert endpoints_equal(routes_2001[0].endpoint, routes[route_index_to_delete_first - 1])
 
 
+def test__router_generation__changing_status_code_of_endpoint(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    @router.post("/test", status_code=201)
+    async def test_get():
+        return {"hello": "world"}
+
+    app = create_versioned_app(
+        version_change(
+            endpoint("/test", ["POST"]).had(status_code=200),
+        ),
+    )
+    client = TestClient(app)
+    assert client.post("/test", headers={app.router.api_version_header_name: "2000-01-01"}).status_code == 200
+    assert client.post("/test", headers={app.router.api_version_header_name: "2001-01-01"}).status_code == 201
+
+
 @pytest.mark.parametrize("route_index_to_delete_first", [0, 1])
 def test__router_generation__restoring_deleted_route_for_same_path_without_func_name__should_raise_error(
     router: VersionedAPIRouter,
@@ -607,7 +626,7 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
 
 
 def get_nested_field_type(annotation: Any) -> type[BaseModel]:
-    return get_args(get_args(annotation)[1])[0].__fields__["foo"].type_.__fields__["foo"].annotation
+    return get_args(get_args(annotation)[1])[0].__fields__["foo"].annotation.__fields__["foo"].annotation
 
 
 def test__router_generation__re_creating_a_non_endpoint__error(
@@ -691,7 +710,7 @@ def test__router_generation__using_non_latest_version_of_schema__should_raise_er
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     temp_data_package_path: str,
     latest: ModuleType,
-    api_version_var,
+    api_version_var: ContextVar[Any],
 ):
     schemas_2000, _ = create_simple_versioned_schemas()
 
@@ -805,17 +824,11 @@ def test__router_generation__updating_request_models(
         importlib.import_module(temp_data_package_path + ".v2001_01_01"),
     )
     assert len(routes_2000) == len(routes_2001) == 1
-    assert (
-        routes_2000[0].dependant.body_params[0].annotation  # pyright: ignore
-        == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
-    )
-    assert (
-        routes_2001[0].dependant.body_params[0].annotation  # pyright: ignore
-        == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
-    )
+    assert routes_2000[0].dependant.body_params[0].type_ == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
+    assert routes_2001[0].dependant.body_params[0].type_ == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
 
-    assert get_nested_field_type(routes_2000[0].dependant.body_params[0].annotation) == list[str]  # pyright: ignore
-    assert get_nested_field_type(routes_2001[0].dependant.body_params[0].annotation) == int  # pyright: ignore
+    assert get_nested_field_type(routes_2000[0].dependant.body_params[0].type_) == list[str]
+    assert get_nested_field_type(routes_2001[0].dependant.body_params[0].type_) == int
 
 
 def test__router_generation__using_unversioned_models(
@@ -866,11 +879,11 @@ def test__router_generation__using_weird_typehints(
     )
     assert len(routes_2000) == len(routes_2001) == 1
 
-    assert routes_2000[0].dependant.body_params[0].annotation is newtype  # pyright: ignore
-    assert routes_2001[0].dependant.body_params[0].annotation is newtype  # pyright: ignore
+    assert routes_2000[0].dependant.body_params[0].type_ is newtype
+    assert routes_2001[0].dependant.body_params[0].type_ is newtype
 
-    assert routes_2000[0].dependant.body_params[1].annotation == str | int  # pyright: ignore
-    assert routes_2001[0].dependant.body_params[1].annotation == str | int  # pyright: ignore
+    assert routes_2000[0].dependant.body_params[1].type_ == str | int
+    assert routes_2001[0].dependant.body_params[1].type_ == str | int
 
 
 def test__router_generation__using_oydantic_typehints(
@@ -923,13 +936,39 @@ def test__router_generation__updating_request_depends(
 
     client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
     client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
-    assert client_2000.post("/test1", json={}).json() == {
-        "detail": [{"loc": ["body", "foo"], "msg": "field required", "type": "value_error.missing"}],
-    }
+    resp_from_test1 = client_2000.post("/test1", json={}).json()
+    resp_from_test2 = client_2000.post("/test2", json={}).json()
+    if PYDANTIC_V2:
+        assert resp_from_test1 == {
+            "detail": [
+                {
+                    "type": "missing",
+                    "loc": ["body", "foo"],
+                    "msg": "Field required",
+                    "input": {},
+                    "url": "https://errors.pydantic.dev/2.5/v/missing",
+                },
+            ],
+        }
+        assert resp_from_test2 == {
+            "detail": [
+                {
+                    "type": "missing",
+                    "loc": ["body", "foo"],
+                    "msg": "Field required",
+                    "input": {},
+                    "url": "https://errors.pydantic.dev/2.5/v/missing",
+                },
+            ],
+        }
+    else:
+        assert resp_from_test1 == {
+            "detail": [{"loc": ["body", "foo"], "msg": "field required", "type": "value_error.missing"}],
+        }
+        assert resp_from_test2 == {
+            "detail": [{"loc": ["body", "foo"], "msg": "field required", "type": "value_error.missing"}],
+        }
     assert client_2000.post("/test1", json={"foo": "bar"}).json() == {}
-    assert client_2000.post("/test2", json={}).json() == {
-        "detail": [{"loc": ["body", "foo"], "msg": "field required", "type": "value_error.missing"}],
-    }
     assert client_2000.post("/test2", json={"foo": "bar"}).json() == {}
 
     assert client_2001.post("/test1", json={}).json() == {}
@@ -943,10 +982,10 @@ def test__router_generation__updating_request_depends(
 def test__router_generation__using_unversioned_schema_in_body(
     router: VersionedAPIRouter,
     create_versioned_app: CreateVersionedApp,
-    latest,
-    temp_data_dir,
-    temp_data_package_path,
-    created_modules,
+    latest: Any,
+    temp_data_dir: Path,
+    temp_data_package_path: str,
+    created_modules: list[Any],
 ):
     temp_data_dir.joinpath("other_module.py").write_text(
         """

@@ -6,13 +6,13 @@ from datetime import date
 from types import ModuleType
 from typing import Any, Literal
 
-import pydantic
 import pytest
 from dirty_equals import IsPartialDict, IsStr
 from fastapi import APIRouter, Body, Cookie, File, Header, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 
 from cadwyn import VersionedAPIRouter
+from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.structure import (
     VersionChange,
@@ -35,7 +35,34 @@ def test_path():
 
 @pytest.fixture(autouse=True)
 def latest_module(latest_module_for: LatestModuleFor):
-    if pydantic.__version__ < "2":
+    if PYDANTIC_V2:
+        return latest_module_for(
+            """
+    from pydantic import BaseModel, Field, RootModel
+    from typing import Any
+    from cadwyn.structure import internal_body_representation_of
+
+    # TODO: Make a note in cadwyn docs that RootModel instances are CACHED at instantiation time
+        # so `RootModel[Any] is RootModel[Any]`. This causes dire consequences if you try to make "different"
+        # request and response root models with the same definitions
+    class AnyRequestSchema(RootModel[Any]):
+        pass
+
+    class AnyResponseSchema(RootModel[Any]):
+        pass
+
+    class SchemaWithInternalRepresentation(BaseModel):
+        foo: int
+
+    # TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
+    @internal_body_representation_of(SchemaWithInternalRepresentation)
+    class InternalSchema(SchemaWithInternalRepresentation):
+        bar: str | None = Field(default=None)
+
+
+            """,
+        )
+    else:
         return latest_module_for(
             """
     from pydantic import BaseModel, Field
@@ -60,27 +87,6 @@ def latest_module(latest_module_for: LatestModuleFor):
 
             """,
         )
-    else:
-        return latest_module_for(
-            """
-    from pydantic import BaseModel, Field, RootModel
-    from typing import Any
-    from cadwyn.structure import internal_body_representation_of
-
-    AnyRequestSchema = RootModel[Any]
-    AnyResponseSchema = RootModel[Any]
-
-    class SchemaWithInternalRepresentation(BaseModel):
-        foo: int
-
-    # TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
-    @internal_body_representation_of(SchemaWithInternalRepresentation)
-    class InternalSchema(SchemaWithInternalRepresentation):
-        bar: str | None = Field(default=None)
-
-
-            """,
-        )
 
 
 @pytest.fixture(params=["is_async", "is_sync"])
@@ -92,9 +98,9 @@ def _get_endpoint(
 ):
     def _get_response_data(request: Request):
         return {
-            "headers": request.headers,
+            "headers": dict(request.headers),
             "cookies": request.cookies,
-            "query_params": request.query_params,
+            "query_params": dict(request.query_params),
         }
 
     if request.param == "is_async":
@@ -113,11 +119,13 @@ def _get_endpoint(
 @pytest.fixture(params=["is_async", "is_sync"])
 def _post_endpoint(request, test_path: str, router: VersionedAPIRouter, latest_module: ModuleType):
     def _get_request_data(request: Request, body: latest_module.AnyRequestSchema):
+        if not PYDANTIC_V2:
+            body = body.__root__
         return {
-            "body": body.__root__,
-            "headers": request.headers,
+            "body": body,
+            "headers": dict(request.headers),
             "cookies": request.cookies,
-            "query_params": request.query_params,
+            "query_params": dict(request.query_params),
         }
 
     if request.param == "is_async":
@@ -201,11 +209,13 @@ def _post_endpoint_with_extra_depends(  # noqa: PT005
                 headers["3"] = n_header
                 cookies["5"] = n_cookie
                 query_params["7"] = n_query
+            if not PYDANTIC_V2:
+                body = body.__root__
             return {
-                "body": body.__root__,
-                "headers": headers,
+                "body": body,
+                "headers": dict(headers),
                 "cookies": cookies,
-                "query_params": query_params,
+                "query_params": dict(query_params),
             }
 
     return _post_endpoint
@@ -258,9 +268,9 @@ class TestRequestMigrations:
         async def get(request: Request):
             return {
                 "body": await request.body(),
-                "headers": request.headers,
+                "headers": dict(request.headers),
                 "cookies": request.cookies,
-                "query_params": request.query_params,
+                "query_params": dict(request.query_params),
             }
 
         @convert_request_to_next_version_for(test_path, ["GET"])
@@ -292,9 +302,30 @@ class TestRequestMigrations:
             del request.headers["my-header"]
 
         clients = create_versioned_clients(version_change(migrator=migrator))
-        assert clients[date(2000, 1, 1)].get(test_path, headers={"my-header": "wow"}).json() == {
-            "detail": [{"loc": ["header", "my-header"], "msg": "field required", "type": "value_error.missing"}],
-        }
+
+        response = clients[date(2000, 1, 1)].get(test_path, headers={"my-header": "wow"}).json()
+        if PYDANTIC_V2:
+            assert response == {
+                "detail": [
+                    {
+                        "type": "missing",
+                        "loc": ["header", "my-header"],
+                        "msg": "Field required",
+                        "input": None,
+                        "url": "https://errors.pydantic.dev/2.5/v/missing",
+                    },
+                ],
+            }
+        else:
+            assert response == {
+                "detail": [
+                    {
+                        "loc": ["header", "my-header"],
+                        "msg": "field required",
+                        "type": "value_error.missing",
+                    },
+                ],
+            }
         assert clients[date(2001, 1, 1)].get(test_path, headers={"my-header": "wow"}).json() == 83
 
     def test__optional_body_field(
@@ -388,10 +419,23 @@ class TestRequestMigrations:
             request.body["bar"] = [1, 2, 3]
 
         clients = create_versioned_clients(version_change(migrator=migrator))
-
-        assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
-            "detail": [{"loc": ["body", "bar"], "msg": "str type expected", "type": "type_error.str"}],
-        }
+        response = clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json()
+        if PYDANTIC_V2:
+            assert response == {
+                "detail": [
+                    {
+                        "type": "string_type",
+                        "loc": ["body", "bar"],
+                        "msg": "Input should be a valid string",
+                        "input": [1, 2, 3],
+                        "url": "https://errors.pydantic.dev/2.5/v/string_type",
+                    },
+                ],
+            }
+        else:
+            assert response == {
+                "detail": [{"loc": ["body", "bar"], "msg": "str type expected", "type": "type_error.str"}],
+            }
         assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
             "type": "InternalSchema",
             "foo": 1,
@@ -808,7 +852,10 @@ def test__uploadfile_can_work(
 ):
     @router.post(test_path, response_model=latest_module.AnyResponseSchema)
     async def endpoint(file: UploadFile = File(...)):
-        return file
+        # PydanticV2 can no longer serialize files directly like it could in v1
+        file_dict = {k: v for k, v in file.__dict__.items() if not k.startswith("_") and k != "file"}
+        file_dict["headers"] = dict(file_dict["headers"])
+        return file_dict
 
     clients = create_versioned_clients(version_change())
     resp_2000 = clients[date(2000, 1, 1)].post(test_path, files={"file": b"Hewwo"})
@@ -816,21 +863,6 @@ def test__uploadfile_can_work(
 
     assert resp_2000.json() == {
         "filename": "upload",
-        "file": {
-            "_file": {},
-            "_max_size": 1048576,
-            "_rolled": False,
-            "_TemporaryFileArgs": {
-                "mode": "w+b",
-                "buffering": -1,
-                "suffix": None,
-                "prefix": None,
-                "encoding": None,
-                "newline": None,
-                "dir": None,
-                "errors": None,
-            },
-        },
         "size": 5,
         "headers": {
             "content-disposition": 'form-data; name="file"; filename="upload"',
@@ -839,21 +871,6 @@ def test__uploadfile_can_work(
     }
     assert resp_2001.json() == {
         "filename": "upload",
-        "file": {
-            "_file": {},
-            "_max_size": 1048576,
-            "_rolled": False,
-            "_TemporaryFileArgs": {
-                "mode": "w+b",
-                "buffering": -1,
-                "suffix": None,
-                "prefix": None,
-                "encoding": None,
-                "newline": None,
-                "dir": None,
-                "errors": None,
-            },
-        },
         "size": 5,
         "headers": {
             "content-disposition": 'form-data; name="file"; filename="upload"',
