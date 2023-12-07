@@ -349,7 +349,8 @@ def test__codegen_variable_and_random_expression_migration(
 ) -> None:
     latest_module_for("a, b = 1, 2")
     v1 = create_local_simple_versioned_schemas()
-    assert inspect.getsource(v1).endswith("(a, b) = (1, 2)\n")
+    assert v1.a == 1
+    assert v1.b == 2
 
 
 def test__codegen_correct_docstring_handling(
