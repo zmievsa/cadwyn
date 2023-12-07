@@ -58,6 +58,7 @@ def _resources(temp_data_dir, latest_with_empty_classes: _FakeModuleWithEmptyCla
 
 
 def _assert_codegen_migrations_were_applied(data_package_path):
+    importlib.invalidate_caches()
     v2000_01_01 = importlib.import_module(data_package_path + ".v2000_01_01")
     v2001_01_01 = importlib.import_module(data_package_path + ".v2001_01_01")
 
