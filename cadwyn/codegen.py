@@ -290,8 +290,6 @@ class _ModelWrapper:
             )
             model_field_wrapper.name = alter_schema_instruction.new_name
 
-            if isinstance(model_field_wrapper.field_info, _ModelFieldLike | ModelField):
-                model_field_wrapper.field_info.name = alter_schema_instruction.new_name
         field_info = model_field_wrapper.field_info
 
         dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
