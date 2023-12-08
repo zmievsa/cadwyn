@@ -13,12 +13,14 @@ from fastapi import HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
 from fastapi._compat import ModelField, _normalize_errors
+from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
 from pydantic.fields import Undefined
+from starlette._utils import is_async_callable
 from typing_extensions import assert_never
 
 from cadwyn.exceptions import CadwynError, CadwynStructureError
@@ -385,6 +387,7 @@ class VersionBundle:
                     response_param_name,
                     kwargs,
                     response,
+                    is_async_callable(endpoint),
                 )
 
             if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
@@ -405,12 +408,19 @@ class VersionBundle:
         response_param_name: str,
         kwargs: dict[str, Any],
         fastapi_response_dependency: FastapiResponse,
+        endpoint_is_async_callable: bool,
     ) -> Any:
         if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
             kwargs.pop(response_param_name)
         # TODO: Verify that we handle fastapi.Response here
         # TODO: Verify that we handle fastapi.Response descendants
-        response_or_response_body: FastapiResponse | object = await func_to_get_response_from(**kwargs)
+        if endpoint_is_async_callable:
+            response_or_response_body: FastapiResponse | object = await func_to_get_response_from(**kwargs)
+        else:
+            response_or_response_body: FastapiResponse | object = await run_in_threadpool(
+                func_to_get_response_from,
+                **kwargs,
+            )
         api_version = self.api_version_var.get()
         if api_version is None:
             return response_or_response_body

@@ -7,10 +7,10 @@ from datetime import date
 from enum import Enum, auto
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Union
+from typing import Any, Literal, Union
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, constr
 
 from cadwyn import generate_code_for_versioned_packages
 from cadwyn.exceptions import (
@@ -229,6 +229,20 @@ def test__schema_field_didnt_exist(
     )
 
 
+def test__schema_field_didnt_exist__with_inheritance(
+    create_versioned_schemas: CreateVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v1, v2, v3 = create_versioned_schemas(
+        version_change(schema(latest_module.ParentSchema).field("foo").didnt_exist),
+        version_change(schema(latest_module.ChildSchema).field("bar").existed_as(type=int)),
+    )
+
+    assert "foo" not in v1.ChildSchema.__fields__
+    assert "foo" in v2.ChildSchema.__fields__
+    assert "foo" in v3.ChildSchema.__fields__
+
+
 def test__schema_field_didnt_exist__field_is_missing__should_raise_error(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
@@ -322,7 +336,7 @@ def test__schema_field_had__decimal_field(
 
 
 # TODO: https://github.com/zmievsa/cadwyn/issues/3
-def test__schema_field_had_constrained_field__constraints_have_not_been_modified(
+def test__schema_field_had_constrained_field__only_non_constraint_field_args_were_modified(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
 ):
@@ -332,7 +346,7 @@ def test__schema_field_had_constrained_field__constraints_have_not_been_modified
 
     assert inspect.getsource(v2000.SchemaWithConstraints) == (
         "class SchemaWithConstraints(BaseModel):\n"
-        "    foo: int = Field(alias='bar', lt=10)\n"
+        "    foo: conint(lt=CONINT_LT_ALIAS) = Field(alias='bar')\n"
         "    bar: str = Field(max_length=CONINT_LT_ALIAS)\n"
     )
 
@@ -340,6 +354,43 @@ def test__schema_field_had_constrained_field__constraints_have_not_been_modified
         "class SchemaWithConstraints(BaseModel):\n"
         "    foo: conint(lt=CONINT_LT_ALIAS)  # pyright: ignore[reportGeneralTypeIssues]\n"
         "    bar: str = Field(max_length=CONINT_LT_ALIAS)\n"
+    )
+
+
+def test__schema_field_had_constrained_field__constraint_field_args_were_modified_in_type(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v2000, v2001 = create_simple_versioned_schemas(
+        schema(latest_module.SchemaWithConstraintsAndField).field("foo").had(type=constr(max_length=6)),
+    )
+
+    assert inspect.getsource(v2000.SchemaWithConstraintsAndField) == (
+        "class SchemaWithConstraintsAndField(BaseModel):\n    foo: str = Field(default='s', max_length=6)\n"
+    )
+    assert inspect.getsource(v2001.SchemaWithConstraintsAndField) == (
+        "class SchemaWithConstraintsAndField(BaseModel):\n"
+        '    foo: constr(max_length=5) = Field(default="s")  # pyright: ignore\n'
+    )
+
+
+def test__schema_field_had_constrained_field__constraint_field_args_were_modified_in_type__(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v2000, v2001 = create_simple_versioned_schemas(
+        schema(latest_module.SchemaWithConstraintsAndField)
+        .field("foo")
+        .had(type=constr(max_length=6, strip_whitespace=True)),
+    )
+
+    assert inspect.getsource(v2000.SchemaWithConstraintsAndField) == (
+        "class SchemaWithConstraintsAndField(BaseModel):\n"
+        "    foo: constr(strip_whitespace=True, max_length=6) = Field(default='s')\n"
+    )
+    assert inspect.getsource(v2001.SchemaWithConstraintsAndField) == (
+        "class SchemaWithConstraintsAndField(BaseModel):\n"
+        '    foo: constr(max_length=5) = Field(default="s")  # pyright: ignore\n'
     )
 
 
@@ -354,7 +405,7 @@ def test__schema_field_had_constrained_field__constraints_have_been_modified(
 
     assert inspect.getsource(v2000.SchemaWithConstraints) == (
         "class SchemaWithConstraints(BaseModel):\n"
-        "    foo: int = Field(gt=8, lt=10)\n"
+        "    foo: conint(lt=CONINT_LT_ALIAS, gt=8) = Field()\n"
         "    bar: str = Field(max_length=10, min_length=2)\n"
     )
 
@@ -380,6 +431,92 @@ def test__schema_field_had_constrained_field__schema_has_special_constraints_and
     assert inspect.getsource(v2001.SchemaWithSpecialConstraints) == (
         "class SchemaWithSpecialConstraints(BaseModel):\n"
         "    foo: constr(to_upper=True)  # pyright: ignore[reportGeneralTypeIssues]\n"
+    )
+
+
+def test__schema_field_had__field_has_var_in_ast_and_keyword_was_added(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v2000, v2001 = create_simple_versioned_schemas(
+        schema(latest_module.SchemaWithVar).field("foo").had(alias="bar"),
+    )
+
+    assert inspect.getsource(v2000.SchemaWithVar) == (
+        "class SchemaWithVar(BaseModel):\n"
+        "    foo: int = Field(default=MY_VAR, description='Hello darkness my old friend', alias='bar')\n"
+    )
+    assert inspect.getsource(v2001.SchemaWithVar) == (
+        "class SchemaWithVar(BaseModel):\n"
+        '    foo: int = Field(default=MY_VAR, description="Hello darkness my old friend")\n'
+    )
+
+
+def test__schema_field_had__field_has_var_in_ast_and_existing_keyword_was_changed(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v2000, v2001 = create_simple_versioned_schemas(
+        schema(latest_module.SchemaWithVar).field("foo").had(description="Hello sunshine my old friend"),
+    )
+
+    assert inspect.getsource(v2000.SchemaWithVar) == (
+        "class SchemaWithVar(BaseModel):\n"
+        "    foo: int = Field(default=MY_VAR, description='Hello sunshine my old friend')\n"
+    )
+    assert inspect.getsource(v2001.SchemaWithVar) == (
+        "class SchemaWithVar(BaseModel):\n"
+        '    foo: int = Field(default=MY_VAR, description="Hello darkness my old friend")\n'
+    )
+
+
+def test__schema_field_had__field_has_var_in_ast_and_keyword_with_var_was_changed(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v2000, v2001 = create_simple_versioned_schemas(
+        schema(latest_module.SchemaWithVar).field("foo").had(default=83),
+    )
+
+    assert inspect.getsource(v2000.SchemaWithVar) == (
+        "class SchemaWithVar(BaseModel):\n"
+        "    foo: int = Field(default=83, description='Hello darkness my old friend')\n"
+    )
+    assert inspect.getsource(v2001.SchemaWithVar) == (
+        "class SchemaWithVar(BaseModel):\n"
+        '    foo: int = Field(default=MY_VAR, description="Hello darkness my old friend")\n'
+    )
+
+
+def test__schema_field_had__field_has_var_instead_of_field_and_keyword_was_added(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v2000, v2001 = create_simple_versioned_schemas(
+        schema(latest_module.SchemaWithVarInsteadOfField).field("foo").had(description="Hello darkness my old friend"),
+    )
+    assert inspect.getsource(v2000.SchemaWithVarInsteadOfField) == (
+        "class SchemaWithVarInsteadOfField(BaseModel):\n"
+        "    foo: int = Field(default=11, description='Hello darkness my old friend')\n"
+    )
+    assert inspect.getsource(v2001.SchemaWithVarInsteadOfField) == (
+        "class SchemaWithVarInsteadOfField(BaseModel):\n    foo: int = MY_VAR\n"
+    )
+
+
+def test__schema_field_had__field_has_var_instead_of_field_and_keyword_with_var_was_changed(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v2000, v2001 = create_simple_versioned_schemas(
+        schema(latest_module.SchemaWithVarInsteadOfField).field("foo").had(default=83),
+    )
+
+    assert inspect.getsource(v2000.SchemaWithVarInsteadOfField) == (
+        "class SchemaWithVarInsteadOfField(BaseModel):\n    foo: int = Field(default=83)\n"
+    )
+    assert inspect.getsource(v2001.SchemaWithVarInsteadOfField) == (
+        "class SchemaWithVarInsteadOfField(BaseModel):\n    foo: int = MY_VAR\n"
     )
 
 
@@ -611,7 +748,6 @@ def test__non_python_files__copied_to_all_dirs(
 def test__non_pydantic_schema__error(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
-    data_package_path,
 ):
     with pytest.raises(
         CodeGenerationError,
@@ -688,7 +824,7 @@ def test__schema_defined_in_a_non_init_file(
     assert inspect.getsource(v2001.MySchema) == "class MySchema(BaseModel):\n    foo: int\n"
 
 
-def test__with_weird_data_types(
+def test__schema_field_had__with_pre_existing_weird_data_types(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
     data_package_path: str,
@@ -717,6 +853,40 @@ def test__with_weird_data_types(
     )
 
 
+def test__schema_field_had__with_new_weird_data_types(
+    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    latest_module: ModuleType,
+):
+    v1, v2 = create_simple_versioned_schemas(
+        schema(latest_module.EmptySchema)
+        .field("foo")
+        .existed_as(
+            type=dict[str, int],
+            info=Field(default={"a": "b"}),
+        ),
+        schema(latest_module.EmptySchema)
+        .field("bar")
+        .existed_as(
+            type=list[int],
+            info=Field(default_factory=latest_module.my_default_factory),
+        ),
+        schema(latest_module.EmptySchema)
+        .field("baz")
+        .existed_as(
+            type=Literal[latest_module.EnumWithOneMember.a],  # pyright: ignore
+        ),
+    )
+
+    assert inspect.getsource(v1.EmptySchema) == (
+        "class EmptySchema(BaseModel):\n"
+        "    foo: dict[str, int] = Field(default={'a': 'b'})\n"
+        "    bar: list[int] = Field(default_factory=my_default_factory)\n"
+        "    baz: typing.Literal[EnumWithOneMember.a] = Field()\n"
+    )
+
+    assert inspect.getsource(v2.EmptySchema) == "class EmptySchema(BaseModel):\n    pass\n"
+
+
 def test__with_weird_data_types__with_all_fields_modified(
     create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
     latest_module: ModuleType,
@@ -736,7 +906,7 @@ def test__with_weird_data_types__with_all_fields_modified(
         "class ModelWithWeirdFields(BaseModel):\n"
         "    foo: dict = Field(default={'a': 'b'}, description='...')\n"
         "    bar: list[int] = Field(default_factory=my_default_factory, description='...')\n"
-        "    baz: typing.Literal[MyEnum.baz] = Field(description='...')\n"
+        "    baz: Literal[MyEnum.baz] = Field(description='...')\n"
     )
 
     assert inspect.getsource(v2001.ModelWithWeirdFields) == (

@@ -5,6 +5,34 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [2.3.4]
+
+### Fixed
+
+* `schema(...).field(...).had(ge=...)` for union fields previously raised an `AttributeError` on code generation
+
+## [2.3.3]
+
+### Fixed
+
+* Field ASTs not preserving the original structure when constrained fields were changed
+
+### Added
+
+* Support for synchronous endpoints
+
+## [2.3.2]
+
+### Fixed
+
+* The bug where fields from parent schemas also appeared in child schemas
+
+## [2.3.1]
+
+### Changed
+
+* Migrate from external verselect to stable verselect
+
 ## [2.3.0]
 
 ### Fixed
@@ -16,7 +44,6 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 * `cadwyn.Cadwyn` class similar to `fastapi.FastAPI` that provides header routing and encapsulates all information about versioned routes
 * Migrated from `fastapi-header-routing` to `verselect`
 * `cadwyn.routing.VERSION_HEADER_FORMAT` from `verselect.routing`
-* `cadwyn.exceptions.AppCreationError` from `verselect.exceptions`
 
 ### Changed
 

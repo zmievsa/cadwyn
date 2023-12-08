@@ -32,28 +32,54 @@ def test_path():
     return "/test"
 
 
-@pytest.fixture()
-def _get_endpoint(test_path: str, router: VersionedAPIRouter, latest_module: ModuleType):
-    @router.get(test_path, response_model=latest_module.AnyResponseSchema)
-    async def get_endpoint(request: Request):
+@pytest.fixture(params=["is_async", "is_sync"])
+def _get_endpoint(
+    request: pytest.FixtureRequest,
+    test_path: str,
+    router: VersionedAPIRouter,
+    latest_module: ModuleType,
+):
+    def _get_response_data(request: Request):
         return {
-            "body": await request.body(),
             "headers": request.headers,
             "cookies": request.cookies,
             "query_params": request.query_params,
         }
 
+    if request.param == "is_async":
 
-@pytest.fixture()
-def _post_endpoint(test_path: str, router: VersionedAPIRouter, latest_module: ModuleType):
-    @router.post(test_path, response_model=latest_module.AnyResponseSchema)
-    async def post_endpoint(request: Request, body: latest_module.AnyRequestSchema):
+        @router.get(test_path, response_model=latest_module.AnyResponseSchema)
+        async def get_async_endpoint(request: Request):
+            return _get_response_data(request)
+
+    else:
+
+        @router.get(test_path, response_model=latest_module.AnyResponseSchema)
+        def get_sync_endpoint(request: Request):
+            return _get_response_data(request)
+
+
+@pytest.fixture(params=["is_async", "is_sync"])
+def _post_endpoint(request, test_path: str, router: VersionedAPIRouter, latest_module: ModuleType):
+    def _get_request_data(request: Request, body: latest_module.AnyRequestSchema):
         return {
             "body": body.__root__,
             "headers": request.headers,
             "cookies": request.cookies,
             "query_params": request.query_params,
         }
+
+    if request.param == "is_async":
+
+        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        async def post_async_endpoint(request: Request, body: latest_module.AnyRequestSchema):
+            return _get_request_data(request, body)
+
+    else:
+
+        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        def post_sync_endpoint(request: Request, body: latest_module.AnyRequestSchema):
+            return _get_request_data(request, body)
 
 
 @pytest.fixture(params=["by path", "by schema"])
@@ -418,7 +444,7 @@ class TestResponseMigrations:
         clients = create_versioned_clients(version_change(migrator=migrator))
         resp = clients[date(2000, 1, 1)].get(test_path)
         assert dict(resp.headers) == {
-            "content-length": "204",
+            "content-length": "194",
             "content-type": "application/json",
             "header_key": "header-val",
             "set-cookie": "cookie_key=cookie_val; Max-Age=83; Path=/; SameSite=lax",

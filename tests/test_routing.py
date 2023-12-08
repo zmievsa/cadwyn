@@ -296,21 +296,6 @@ def test__only_exists_in_older_versions__applied_twice__should_raise_error(
             raise NotImplementedError
 
 
-def test__router_generation__creating_a_synchronous_endpoint__error(
-    router: VersionedAPIRouter,
-    create_versioned_app: CreateVersionedApp,
-):
-    @router.get("/test")
-    def test():
-        raise NotImplementedError
-
-    with pytest.raises(
-        RouterGenerationError,
-        match=re.escape("All versioned endpoints must be asynchronous."),
-    ):
-        create_versioned_app(version_change(endpoint("/test", ["GET"]).didnt_exist))
-
-
 def test__router_generation__changing_a_deleted_endpoint__error(
     router: VersionedAPIRouter,
     create_versioned_app: CreateVersionedApp,

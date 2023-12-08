@@ -1,4 +1,5 @@
 import ast
+import dataclasses
 import importlib
 import inspect
 import os
@@ -23,8 +24,8 @@ from typing import (
 )
 
 from pydantic import BaseModel, Field
-from pydantic.fields import FieldInfo, ModelField, ModelPrivateAttr
-from typing_extensions import assert_never
+from pydantic.fields import FieldInfo, ModelField
+from typing_extensions import Self, assert_never
 
 from cadwyn.structure.enums import (
     AlterEnumSubInstruction,
@@ -96,7 +97,7 @@ class _ImportedModule:
 
 
 @dataclass(slots=True)
-class ModelFieldLike:
+class _ModelFieldLike:
     name: str
     original_type: Any
     annotation: Any
@@ -105,62 +106,198 @@ class ModelFieldLike:
     import_as: str | None
 
 
-@dataclass(slots=True)
-class ModelPrivateAttrInfo:
-    attr: ModelPrivateAttr
-    annotation: Any
-
-
 @dataclass
-class ModelFieldInfo:
+class _ModelFieldWrapper:
     cls: type[BaseModel]
-    _annotation: ast.expr | None
-    field: ModelField | ModelFieldLike
+    annotation_ast: ast.expr | None
+    field: ModelField | _ModelFieldLike
     field_ast: ast.expr | None
 
     def get_annotation(self):  # intentionally weird to not clash with ModelField
-        if self._annotation:
-            return PlainRepr(ast.unparse(self._annotation))
+        if self.annotation_ast:
+            return PlainRepr(ast.unparse(self.annotation_ast))
         return self.field.annotation
 
 
 @dataclass(slots=True)
-class ModelInfo:
+class _ModelWrapper:
+    schema: type[BaseModel]
     name: str
-    fields: dict[_FieldName, ModelFieldInfo]
+    fields: dict[_FieldName, _ModelFieldWrapper]
+    _parents: list[Self] | None = dataclasses.field(init=False, default=None)
+
+    def _get_parents(self, schemas: "dict[str, _ModelWrapper]"):
+        if self._parents is not None:
+            return self._parents
+        parents = []
+        for base in self.schema.mro()[1:]:
+            schema_path = f"{base.__module__}.{base.__name__}"
+
+            if schema_path in schemas:
+                parents.append(schemas[schema_path])
+            elif issubclass(base, BaseModel):
+                parents.append(type(self)(base, base.__name__, _get_fields_from_model(base)))
+        self._parents = parents
+        return parents
+
+    def _get_defined_fields(self, schemas: "dict[str, _ModelWrapper]") -> dict[str, _ModelFieldWrapper]:
+        fields = {}
+
+        for parent in reversed(self._get_parents(schemas)):
+            fields |= parent.fields
+
+        return fields | self.fields
+
+    def change(self, alter_schema_instruction: AlterSchemaInstruction, version_change_name: str):
+        # We only handle names right now so we just go ahead and check
+        if alter_schema_instruction.name == self.name:
+            raise InvalidGenerationInstructionError(
+                f'You tried to change the name of "{self.name}" in "{version_change_name}" '
+                "but it already has the name you tried to assign.",
+            )
+        self.name = alter_schema_instruction.name
+
+    def add_field(
+        self,
+        schemas: "dict[str, _ModelWrapper]",
+        alter_schema_instruction: OldSchemaFieldExistedWith,
+        version_change_name: str,
+    ):
+        defined_fields = self._get_defined_fields(schemas)
+        if alter_schema_instruction.field_name in defined_fields:
+            raise InvalidGenerationInstructionError(
+                f'You tried to add a field "{alter_schema_instruction.field_name}" to "{self.name}" '
+                f'in "{version_change_name}" but there is already a field with that name.',
+            )
+        if alter_schema_instruction.import_as is not None:
+            annotation = alter_schema_instruction.import_as
+        else:
+            annotation = alter_schema_instruction.type
+        self.fields[alter_schema_instruction.field_name] = _ModelFieldWrapper(
+            alter_schema_instruction.schema,
+            annotation_ast=None,  # TODO: Get this from migration
+            field=_ModelFieldLike(
+                name=alter_schema_instruction.field_name,
+                original_type=alter_schema_instruction.type,
+                annotation=annotation,
+                field_info=alter_schema_instruction.field,
+                import_from=alter_schema_instruction.import_from,
+                import_as=alter_schema_instruction.import_as,
+            ),
+            field_ast=None,  # TODO: Get this from migration
+        )
+
+    def change_field(
+        self,
+        schemas: "dict[str, _ModelWrapper]",
+        alter_schema_instruction: OldSchemaFieldHad,
+        version_change_name: str,
+        annotation_transformer: "_AnnotationTransformer",
+    ):
+        defined_fields = self._get_defined_fields(schemas)
+        if alter_schema_instruction.field_name not in defined_fields:
+            raise InvalidGenerationInstructionError(
+                f'You tried to change the type of field "{alter_schema_instruction.field_name}" from '
+                f'"{self.name}" in "{version_change_name}" but it doesn\'t have such a field.',
+            )
+
+        model_field_wrapper = defined_fields[alter_schema_instruction.field_name]
+        model_field = model_field_wrapper.field
+        self.fields[alter_schema_instruction.field_name] = model_field_wrapper
+
+        current_field_is_constrained_type = _is_pydantic_constrained_type(model_field.annotation)
+        if alter_schema_instruction.type is not Sentinel:
+            if model_field.annotation == alter_schema_instruction.type:
+                raise InvalidGenerationInstructionError(
+                    f'You tried to change the type of field "{alter_schema_instruction.field_name}" to '
+                    f'"{alter_schema_instruction.type}" from "{self.name}" in "{version_change_name}" '
+                    f'but it already has type "{model_field.annotation}"',
+                )
+            model_field.annotation = alter_schema_instruction.type
+
+            model_field_wrapper.annotation_ast = None
+            if current_field_is_constrained_type:
+                model_field_wrapper.field_ast = None
+
+        if alter_schema_instruction.new_name is not Sentinel:
+            if alter_schema_instruction.new_name == alter_schema_instruction.field_name:
+                raise InvalidGenerationInstructionError(
+                    f'You tried to change the name of field "{alter_schema_instruction.field_name}" '
+                    f'from "{self.name}" in "{version_change_name}" '
+                    "but it already has that name.",
+                )
+            self.fields[alter_schema_instruction.new_name] = self.fields.pop(
+                alter_schema_instruction.field_name,
+            )
+        field_info = model_field.field_info
+
+        dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
+        if dict_of_field_info == _dict_of_empty_field_info:
+            field_info = FieldInfo()
+            model_field.field_info = field_info
+        for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
+            attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
+            if attr_value is not Sentinel:
+                if getattr(field_info, attr_name) == attr_value:
+                    raise InvalidGenerationInstructionError(
+                        f'You tried to change the attribute "{attr_name}" of field '
+                        f'"{alter_schema_instruction.field_name}" '
+                        f'from "{self.name}" to {attr_value!r} in "{version_change_name}" '
+                        "but it already has that value.",
+                    )
+
+                if hasattr(model_field.annotation, attr_name) and current_field_is_constrained_type:
+                    setattr(model_field.annotation, attr_name, attr_value)
+                    ann_ast = model_field_wrapper.annotation_ast
+                    if ann_ast is not None and isinstance(ann_ast, ast.Call):
+                        _add_keyword_to_call(annotation_transformer, attr_name, attr_value, ann_ast)
+                    else:
+                        model_field_wrapper.field_ast = None
+                        model_field_wrapper.annotation_ast = None
+                else:
+                    setattr(field_info, attr_name, attr_value)
+                    field_ast = model_field_wrapper.field_ast
+                    if isinstance(field_ast, ast.Call):
+                        _add_keyword_to_call(annotation_transformer, attr_name, attr_value, field_ast)
+                    else:
+                        model_field_wrapper.field_ast = None
+
+    def delete_field(self, field_name: str, version_change_name: str):
+        if field_name not in self.fields:
+            raise InvalidGenerationInstructionError(
+                f'You tried to delete a field "{field_name}" from "{self.name}" '
+                f'in "{version_change_name}" but it doesn\'t have such a field.',
+            )
+        self.fields.pop(field_name)
 
 
 @dataclass(slots=True)
 class _SchemaBundle:
     version: date
-    schemas: dict[str, ModelInfo]
+    schemas: dict[str, _ModelWrapper]
 
 
 @cache
 def _get_fields_from_model(cls: type):
-    mro_fields = [_get_fields_from_model(parent) for parent in cls.mro()[1:] if issubclass(parent, BaseModel)]
     if not isinstance(cls, type) or not issubclass(cls, BaseModel):
         raise CodeGenerationError(f"Model {cls} is not a subclass of BaseModel")
     try:
         source = inspect.getsource(cls)
     except OSError:
         current_field_defs = {
-            field_name: ModelFieldInfo(cls, None, field, None) for field_name, field in cls.__fields__.items()
+            field_name: _ModelFieldWrapper(cls, None, field, None) for field_name, field in cls.__fields__.items()
         }
     else:
         cls_ast = cast(ast.ClassDef, ast.parse(source).body[0])
         current_field_defs = {
-            node.target.id: ModelFieldInfo(cls, node.annotation, cls.__fields__[node.target.id], node.value)
+            node.target.id: _ModelFieldWrapper(cls, node.annotation, cls.__fields__[node.target.id], node.value)
             for node in cls_ast.body
             if isinstance(node, ast.AnnAssign)
             and isinstance(node.target, ast.Name)
             and node.target.id in cls.__fields__
         }
 
-    final_field_defs: dict[str, ModelFieldInfo] = {}
-    for attr in reversed(mro_fields):
-        final_field_defs |= attr
-    return final_field_defs | current_field_defs
+    return current_field_defs
 
 
 def generate_code_for_versioned_packages(
@@ -169,8 +306,7 @@ def generate_code_for_versioned_packages(
     *,
     ignore_coverage_for_latest_aliases: bool = True,
 ):
-    """_summary_
-
+    """
     Args:
         template_module: The latest package from which we will generate the versioned packages
         versions: Version bundle to generate versions from
@@ -178,7 +314,8 @@ def generate_code_for_versioned_packages(
         version of the latest module.
     """
     schemas = {
-        k: ModelInfo(v.__name__, _get_fields_from_model(v)) for k, v in deepcopy(versions.versioned_schemas).items()
+        k: _ModelWrapper(v, v.__name__, _get_fields_from_model(v))
+        for k, v in deepcopy(versions.versioned_schemas).items()
     }
     enums = {k: (v, {member.name: member.value for member in v}) for k, v in deepcopy(versions.versioned_enums).items()}
     schemas_per_version: list[_SchemaBundle] = []
@@ -275,7 +412,7 @@ def _apply_migrations(
     version: Version,
     schemas: dict[
         str,
-        ModelInfo,
+        _ModelWrapper,
     ],
     enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ):
@@ -292,111 +429,31 @@ def _apply_migrations(
         )
 
 
-def _apply_alter_schema_instructions(  # noqa: C901
-    schema_infos: dict[str, ModelInfo],
+def _apply_alter_schema_instructions(
+    modified_schemas: dict[str, _ModelWrapper],
     alter_schema_instructions: Sequence[AlterSchemaSubInstruction | AlterSchemaInstruction],
     version_change_name: str,
 ):
+    annotation_transformer = _AnnotationTransformer()
     # TODO: If we have a request migration for an endpoint instead of a schema and we haven't found that endpoint
     # during codegen -- raise an error or maybe add an argument that controlls that. Or maybe this is overengineering..
     for alter_schema_instruction in alter_schema_instructions:
         schema = alter_schema_instruction.schema
         schema_path = _get_cls_pythonpath(schema)
-        mutable_schema_info = schema_infos[schema_path]
-        field_name_to_field_model = mutable_schema_info.fields
+        mutable_schema_info = modified_schemas[schema_path]
         if isinstance(alter_schema_instruction, OldSchemaFieldDidntExist):
-            if alter_schema_instruction.field_name not in field_name_to_field_model:
-                raise InvalidGenerationInstructionError(
-                    f'You tried to delete a field "{alter_schema_instruction.field_name}" from "{schema.__name__}" '
-                    f'in "{version_change_name}" but it doesn\'t have such a field.',
-                )
-            field_name_to_field_model.pop(alter_schema_instruction.field_name)
-
+            mutable_schema_info.delete_field(alter_schema_instruction.field_name, version_change_name)
         elif isinstance(alter_schema_instruction, OldSchemaFieldHad):
-            if alter_schema_instruction.field_name not in field_name_to_field_model:
-                raise InvalidGenerationInstructionError(
-                    f'You tried to change the type of field "{alter_schema_instruction.field_name}" from '
-                    f'"{schema.__name__}" in "{version_change_name}" but it doesn\'t have such a field.',
-                )
-            model_field = field_name_to_field_model[alter_schema_instruction.field_name].field
-            if alter_schema_instruction.type is not Sentinel:
-                if model_field.annotation == alter_schema_instruction.type:
-                    raise InvalidGenerationInstructionError(
-                        f'You tried to change the type of field "{alter_schema_instruction.field_name}" to '
-                        f'"{alter_schema_instruction.type}" from "{schema.__name__}" in "{version_change_name}" '
-                        f'but it already has type "{model_field.annotation}"',
-                    )
-                model_field.annotation = alter_schema_instruction.type
-                # TODO: Extend ast instead of removing it
-                field_name_to_field_model[alter_schema_instruction.field_name]._annotation = None
-            if alter_schema_instruction.new_name is not Sentinel:
-                if alter_schema_instruction.new_name == alter_schema_instruction.field_name:
-                    raise InvalidGenerationInstructionError(
-                        f'You tried to change the name of field "{alter_schema_instruction.field_name}" '
-                        f'from "{schema.__name__}" in "{version_change_name}" '
-                        "but it already has that name.",
-                    )
-                field_name_to_field_model[alter_schema_instruction.new_name] = field_name_to_field_model.pop(
-                    alter_schema_instruction.field_name,
-                )
-            field_info = model_field.field_info
-
-            dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
-            if dict_of_field_info == _dict_of_empty_field_info:
-                field_info = FieldInfo()
-                model_field.field_info = field_info
-            for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
-                attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
-                if attr_value is not Sentinel:
-                    if getattr(field_info, attr_name) == attr_value:
-                        raise InvalidGenerationInstructionError(
-                            f'You tried to change the attribute "{attr_name}" of field '
-                            f'"{alter_schema_instruction.field_name}" '
-                            f'from "{schema.__name__}" to {attr_value!r} in "{version_change_name}" '
-                            "but it already has that value.",
-                        )
-
-                    if attr_name in model_field.annotation.__dict__ and _is_pydantic_constrained_type(
-                        model_field.annotation,
-                    ):
-                        setattr(model_field.annotation, attr_name, attr_value)
-                    else:
-                        setattr(field_info, attr_name, attr_value)
-                        # TODO: Extend ast instead of removing it
-                    field_name_to_field_model[alter_schema_instruction.field_name]._annotation = None
-                    field_name_to_field_model[alter_schema_instruction.field_name].field_ast = None
-
-        elif isinstance(alter_schema_instruction, OldSchemaFieldExistedWith):
-            if alter_schema_instruction.field_name in field_name_to_field_model:
-                raise InvalidGenerationInstructionError(
-                    f'You tried to add a field "{alter_schema_instruction.field_name}" to "{schema.__name__}" '
-                    f'in "{version_change_name}" but there is already a field with that name.',
-                )
-            if alter_schema_instruction.import_as is not None:
-                annotation = alter_schema_instruction.import_as
-            else:
-                annotation = alter_schema_instruction.type
-            field_name_to_field_model[alter_schema_instruction.field_name] = ModelFieldInfo(
-                schema,
-                _annotation=None,  # TODO: Get this from migration
-                field=ModelFieldLike(
-                    name=alter_schema_instruction.field_name,
-                    original_type=alter_schema_instruction.type,
-                    annotation=annotation,
-                    field_info=alter_schema_instruction.field,
-                    import_from=alter_schema_instruction.import_from,
-                    import_as=alter_schema_instruction.import_as,
-                ),
-                field_ast=None,  # TODO: Get this from migration
+            mutable_schema_info.change_field(
+                modified_schemas,
+                alter_schema_instruction,
+                version_change_name,
+                annotation_transformer,
             )
+        elif isinstance(alter_schema_instruction, OldSchemaFieldExistedWith):
+            mutable_schema_info.add_field(modified_schemas, alter_schema_instruction, version_change_name)
         elif isinstance(alter_schema_instruction, AlterSchemaInstruction):
-            # We only handle names right now so we just go ahead and check
-            if alter_schema_instruction.name == mutable_schema_info.name:
-                raise InvalidGenerationInstructionError(
-                    f'You tried to change the name of "{schema.__name__}" in "{version_change_name}" '
-                    "but it already has the name you tried to assign.",
-                )
-            mutable_schema_info.name = alter_schema_instruction.name
+            mutable_schema_info.change(alter_schema_instruction, version_change_name)
         else:
             assert_never(alter_schema_instruction)
 
@@ -454,7 +511,7 @@ def _get_package_path_from_module(template_module: ModuleType) -> Path:
 
 def _generate_versioned_directory(
     template_module: ModuleType,
-    schemas: dict[str, ModelInfo],
+    schemas: dict[str, _ModelWrapper],
     enums: dict[str, tuple[type[Enum], dict[str, Any]]],
     version: date,
 ):
@@ -533,7 +590,7 @@ def _parse_python_module(module: ModuleType) -> ast.Module:
 
 def _migrate_module_to_another_version(
     module: ModuleType,
-    modified_schemas: dict[str, ModelInfo],
+    modified_schemas: dict[str, _ModelWrapper],
     modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ) -> str:
     transformer = _AnnotationTransformer()
@@ -554,7 +611,7 @@ def _migrate_module_to_another_version(
         )
         for val in modified_schemas.values()
         for field in val.fields.values()
-        if isinstance(field.field, ModelFieldLike) and field.field.import_from is not None
+        if isinstance(field.field, _ModelFieldLike) and field.field.import_from is not None
     ]
 
     body = ast.Module(
@@ -598,7 +655,7 @@ def _migrate_ast_node_to_another_version(
     all_names_in_module: dict[str, str],
     node: ast.stmt,
     module_python_path: str,
-    modified_schemas: dict[str, ModelInfo],
+    modified_schemas: dict[str, _ModelWrapper],
     modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ):
     if isinstance(node, ast.ClassDef):
@@ -635,7 +692,7 @@ def _migrate_cls_to_another_version(
     all_names_in_module: dict[str, str],
     cls_node: ast.ClassDef,
     module_python_path: str,
-    modified_schemas: dict[str, ModelInfo],
+    modified_schemas: dict[str, _ModelWrapper],
     modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
 ) -> ast.ClassDef:
     cls_python_path = f"{module_python_path}.{cls_node.name}"
@@ -658,7 +715,7 @@ def _migrate_cls_to_another_version(
 def _modify_schema_cls(
     all_names_in_module: dict[str, str],
     cls_node: ast.ClassDef,
-    modified_schemas: dict[str, ModelInfo],
+    modified_schemas: dict[str, _ModelWrapper],
     module_python_path: str,
     cls_python_path: str,
 ) -> ast.ClassDef:
@@ -694,7 +751,7 @@ def _modify_schema_cls(
 
 
 def _generate_field_ast(
-    field: ModelFieldInfo,
+    field: _ModelFieldWrapper,
     annotation_transformer: "_AnnotationTransformer",
 ):
     if field.field_ast is not None:
@@ -703,7 +760,8 @@ def _generate_field_ast(
         attr: _get_attribute_from_field_info(field.field, attr)
         for attr in _get_passed_attributes_to_field(field.field.field_info)
     }
-    if _is_pydantic_constrained_type(field.field.annotation):
+    # TODO: This is None check feels buggy
+    if _is_pydantic_constrained_type(field.field.annotation) and field.annotation_ast is None:
         (
             attrs_that_are_only_in_contype,
             attrs_that_are_only_in_field,
@@ -715,16 +773,35 @@ def _generate_field_ast(
         func=ast.Name("Field"),
         args=[],
         keywords=[
-            ast.keyword(
-                arg=attr,
-                value=ast.parse(annotation_transformer.visit(attr_value), mode="eval").body,
-            )
+            _get_ast_keyword_from_field_arg(attr, attr_value, annotation_transformer)
             for attr, attr_value in passed_attrs.items()
         ],
     )
 
 
-def _get_attribute_from_field_info(field: ModelField | ModelFieldLike, attr: str) -> Any:
+def _get_ast_keyword_from_field_arg(attr_name: str, attr_value: Any, annotation_transformer: "_AnnotationTransformer"):
+    return ast.keyword(
+        arg=attr_name,
+        value=ast.parse(annotation_transformer.visit(attr_value), mode="eval").body,
+    )
+
+
+def _add_keyword_to_call(
+    annotation_transformer: "_AnnotationTransformer",
+    attr_name: str,
+    attr_value: Any,
+    field_ast: ast.Call,
+):
+    new_keyword = _get_ast_keyword_from_field_arg(attr_name, attr_value, annotation_transformer)
+    for i, keyword in enumerate(field_ast.keywords):
+        if keyword.arg == attr_name:
+            field_ast.keywords[i] = new_keyword
+            break
+    else:
+        field_ast.keywords.append(new_keyword)
+
+
+def _get_attribute_from_field_info(field: ModelField | _ModelFieldLike, attr: str) -> Any:
     field_value = getattr(field.field_info, attr, Sentinel)
     if field_value is Sentinel:
         field_value = field.field_info.extra.get(attr, Sentinel)
@@ -775,7 +852,7 @@ def _get_passed_attributes_to_field(field_info: FieldInfo):
 class _AnnotationASTNodeTransformerWithSchemaRenaming(ast.NodeTransformer):
     def __init__(
         self,
-        modified_schemas: dict[str, ModelInfo],
+        modified_schemas: dict[str, _ModelWrapper],
         all_names_in_module: dict[str, str],
         module_python_path: str,
     ):
