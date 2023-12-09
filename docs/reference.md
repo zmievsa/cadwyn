@@ -16,7 +16,7 @@ You define your database, business logic, routes, and schemas only once. Then, w
 
 ### Service structure
 
-The service structure with Cadwyn is fairly straighforward. See the [example service](https://github.com/zmievsa/cadwyn/tree/main/tests/test_tutorial) or follow the steps above:
+The service structure with Cadwyn is fairly straighforward. See the [example service](https://github.com/zmievsa/cadwyn/tree/main/tests/tutorial) or follow the steps above:
 
 1. Define a [VersionBundle](#versionbundle) where you add your first version.
 2. Create a `data/latest` directory and add your latest version of schemas there. This will serve as a template directory for future code generation.

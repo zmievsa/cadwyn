@@ -1,7 +1,7 @@
 
 # Tutorial
 
-This guide provides a step-by-step tutorial for setting up automatic API versioning using Cadwyn. I will illustrate this with an example of a User API, where we will be implementing changes to a User's address.
+This guide provides a step-by-step tutorial for setting up automatic API versioning using Cadwyn. I will illustrate this with an example of a User API, where we will be implementing changes to a User's address. You can also see the advanced version of the service from this tutorial [here](https://github.com/zmievsa/cadwyn/tree/main/tests/tutorial).
 
 ## Installation
 
@@ -251,7 +251,3 @@ Let's run code generation, run our app, and then take a look at the generated da
 The endpoint above is from the `2001-01-01` version. As you see, our routes and business logic are for the latest version but our openapi has all information about all API versions which is the main goal of cadwyn: a large number of long-living API versions without placing any burden on your business logic.
 
 Obviously, this was just a simple example and cadwyn has a lot more features so if you're interested -- take a look at the [reference](./reference.md) and [recipes](./recipes.md) sections.
-
-## Examples
-
-Please, see [tutorial examples](https://github.com/zmievsa/cadwyn/tree/main/tests/test_tutorial) for the fully working and extended version of the project above.
