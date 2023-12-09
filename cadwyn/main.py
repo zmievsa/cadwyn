@@ -23,7 +23,7 @@ class Cadwyn(HeaderRoutingFastAPI):
         self,
         *,
         versions: VersionBundle,
-        latest_schemas_module: ModuleType,
+        latest_schemas_package: ModuleType,
         api_version_header_name: str = "x-api-version",
         debug: bool = False,
         title: str = "FastAPI",
@@ -101,7 +101,7 @@ class Cadwyn(HeaderRoutingFastAPI):
             **extra,
         )
         self.versions = versions
-        self.latest_schemas_module = latest_schemas_module
+        self.latest_schemas_package = latest_schemas_package
 
     def generate_and_include_versioned_routers(self, *routers: APIRouter) -> None:
         root_router = APIRouter()
@@ -110,7 +110,7 @@ class Cadwyn(HeaderRoutingFastAPI):
         router_versions = generate_versioned_routers(
             root_router,
             versions=self.versions,
-            latest_schemas_module=self.latest_schemas_module,
+            latest_schemas_package=self.latest_schemas_package,
         )
         for version, router in router_versions.items():
             self.add_header_versioned_routers(router, header_value=version.isoformat())

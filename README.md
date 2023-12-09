@@ -1,6 +1,6 @@
 # Cadwyn
 
-Modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning in FastAPI
+Production-ready modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning in FastAPI
 
 ---
 
@@ -23,19 +23,20 @@ Modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning in F
 
 Cadwyn allows you to support a single version of your code, auto-generating the code/routes for older versions. You keep versioning encapsulated in small and independent "version change" modules while your business logic knows nothing about versioning.
 
-Its [approach](./docs/theory.md#ii-migration-based-response-building) will be useful if you want to:
+Its [approach](https://docs.cadwyn.dev/theory/#ii-migration-based-response-building) will be useful if you want to:
 
-1. Support many (>2) API versions for a long time
+1. Support many API versions for a long time
 2. Effortlessly backport features and bugfixes to older API versions
 
 ## Get started
 
 The [documentation](https://docs.cadwyn.dev) has everything you need to get started. It is recommended to read it in the following order:
 
-1. [Tutorial](./tutorial.md)
-2. [Recipes](./recipes.md)
-3. [Reference](./reference.md)
-4. [Theory](./theory.md) <!-- TODO: Move section about cadwyn's approach to the beginning and move other approaches and "how we got here" to another article  -->
+1. [Tutorial](https://docs.cadwyn.dev/tutorial/)
+2. [Recipes](https://docs.cadwyn.dev/recipes/)
+3. [Reference](https://docs.cadwyn.dev/reference/)
+4. [Theory](https://docs.cadwyn.dev/theory/)
+<!-- TODO: Move section about cadwyn's approach to the beginning and move other approaches and "how we got here" to another article  -->
 
 ## Similar projects
 

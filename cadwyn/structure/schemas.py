@@ -7,6 +7,7 @@ from pydantic.fields import FieldInfo
 
 from cadwyn.exceptions import CadwynStructureError
 
+from .._compat import PYDANTIC_V2
 from .._utils import Sentinel
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ class FieldChanges:
     max_length: int
     allow_mutation: bool
     regex: str
+    pattern: str
     discriminator: str
     repr: bool
 
@@ -106,9 +108,27 @@ class AlterFieldInstructionFactory:
         max_length: int = Sentinel,
         allow_mutation: bool = Sentinel,
         regex: str = Sentinel,
+        pattern: str = Sentinel,
         discriminator: str = Sentinel,
         repr: bool = Sentinel,
     ) -> OldSchemaFieldHad:
+        if PYDANTIC_V2:
+            if regex is not Sentinel:
+                raise CadwynStructureError("`regex` was removed in Pydantic 2. Use `pattern` instead")
+            if include is not Sentinel:
+                raise CadwynStructureError("`include` was removed in Pydantic 2. Use `exclude` instead")
+            if min_items is not Sentinel:
+                raise CadwynStructureError("`min_items` was removed in Pydantic 2. Use `min_length` instead")
+            if max_items is not Sentinel:
+                raise CadwynStructureError("`max_items` was removed in Pydantic 2. Use `max_length` instead")
+            if unique_items is not Sentinel:
+                raise CadwynStructureError(
+                    "`unique_items` was removed in Pydantic 2. Use `Set` type annotation instead"
+                    "(this feature is discussed in https://github.com/pydantic/pydantic-core/issues/296)",
+                )
+        else:
+            if pattern is not Sentinel:
+                raise CadwynStructureError("`pattern` is only available in Pydantic 2. use `regex` instead")
         return OldSchemaFieldHad(
             schema=self.schema,
             field_name=self.name,
@@ -138,6 +158,7 @@ class AlterFieldInstructionFactory:
                 max_length=max_length,
                 allow_mutation=allow_mutation,
                 regex=regex,
+                pattern=pattern,
                 discriminator=discriminator,
                 repr=repr,
             ),

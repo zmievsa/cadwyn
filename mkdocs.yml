@@ -15,7 +15,16 @@ markdown_extensions:
 theme:
   name: 'material'
   features:
-    - content.code.copy
+  - search.suggest
+  - search.highlight
+  - content.tabs.link
+  - navigation.indexes
+  - content.tooltips
+  - navigation.path
+  - content.code.annotate
+  - content.code.copy
+  - content.code.select
+  - navigation.tabs
   palette:
     # Palette toggle for automatic mode
     - media: "(prefers-color-scheme)"

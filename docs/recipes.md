@@ -83,9 +83,9 @@ Let's say that we had a "summary" field before but now we want to rename it to "
 
     class RenameSummaryIntoBioInUser(VersionChange):
         description = "Rename 'summary' field into 'bio' to keep up with industry standards"
-        instructions_to_migrate_to_previous_version = [
-            schema(User).field("bio").had(name="summary")
-        ]
+        instructions_to_migrate_to_previous_version = (
+            schema(User).field("bio").had(name="summary"),
+        )
 
         @convert_request_to_next_version_for(UserCreateRequest)
         def rename_bio_to_summary(request: RequestInfo):
@@ -108,6 +108,8 @@ Let's say that we previously allowed users to have a name of arbitrary length bu
     ```python
     from cadwyn.structure import VersionChange, schema
     from data.latest.users import UserCreateRequest
+
+    # Note that in pydantic v2 this would be `from pydantic_core import PydanticUndefined`
     from pydantic.fields import Undefined
 
 
@@ -116,9 +118,9 @@ Let's say that we previously allowed users to have a name of arbitrary length bu
             "Add a max length of 250 to user names when creating new users "
             "to prevent overly large names from being used."
         )
-        instructions_to_migrate_to_previous_version = [
-            schema(UserCreateRequest).field("name").had(max_length=Undefined)
-        ]
+        instructions_to_migrate_to_previous_version = (
+            schema(UserCreateRequest).field("name").had(max_length=Undefined),
+        )
     ```
 
 3. [Regenerate](./reference.md#code-generation) the versioned schemas
@@ -154,46 +156,58 @@ However, sometimes it can be considered a breaking change if a large portion of 
 
 ##### Schema optional field removal
 
-Let's say that we had a nullable `middle_name` field but we decided that it does not make sense anymore and want to remove it now from both requests and responses.
+Let's say that we had a nullable `middle_name` field but we decided that it does not make sense anymore and want to remove it now from both requests and responses. We can solve this with [internal body request schemas](./reference.md#internal-request-schemas).
 
 1. Remove `middle_name` field from `data.latest.users.User`
-2. Add a `data.unversioned.users.UserInternalCreateRequest` which will tell Cadwyn to always turn requests of type `UserCreateRequest` into `UserInternalCreateRequest`. Note that `UserInternalCreateRequest` needs to be imported somewhere for this to work. This schema will allow us to keep `middle_name` information from older versions without allowing users in new versions to provide it. This allows us to guarantee that old requests function in the same manner as before while new requests have the default value.
+2. Add a `data.unversioned.users.UserInternalCreateRequest` that we will use later to wrap migrated data instead of the latest request schema.
 
     ```python
     from pydantic import Field
-    from cadwyn import internal_body_representation_of
     from ..latest.users import UserCreateRequest
 
 
-    @internal_body_representation_of(UserCreateRequest)
     class UserInternalCreateRequest(UserCreateRequest):
         middle_name: str | None = Field(default=None)
     ```
 
-3. Add the following migration to `versions.v2001_01_01`:
+3. Replace `UserCreateRequest` in your routes with `Annotated[UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]]`:
+
+    ```python
+    from data.latest.users import UserCreateRequest, UserResource
+    from cadwyn import InternalRepresentationOf
+    from typing import Annotated
+
+
+    @router.post("/users", response_model=UserResource)
+    async def create_user(
+        user: Annotated[
+            InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]
+        ]
+    ):
+        ...
+    ```
+
+4. Add the following migration to `versions.v2001_01_01`:
 
     ```python
     from cadwyn.structure import (
         VersionChange,
         schema,
-        convert_request_to_next_version_for,
         RequestInfo,
     )
     from data.latest.users import User
 
 
     class RemoveMiddleNameFromUser(VersionChange):
-        description = (
-            "Remove 'User.middle_name' field because it was unnecessary " "in our system."
-        )
-        instructions_to_migrate_to_previous_version = [
+        description = "Remove 'User.middle_name' field."
+        instructions_to_migrate_to_previous_version = (
             schema(User)
             .field("middle_name")
-            .existed_as(type=str | None, description="User's Middle Name", default=None)
-        ]
+            .existed_as(type=str | None, description="User's Middle Name", default=None),
+        )
     ```
 
-4. [Regenerate](./reference.md#code-generation) the versioned schemas
+5. [Regenerate](./reference.md#code-generation) the versioned schemas
 
 Note that in order for this to work, you would still have to store `middle_name` in your database and return it with your responses.
 
@@ -229,24 +243,39 @@ The recommended approach:
 
 #### Schema required field addition
 
-Let's say that we want to add a required field `phone` to our users.
+Let's say that we want to add a required field `phone` to our users. We can solve this with [internal body request schemas](./reference.md#internal-request-schemas).
 
 1. Add `phone` field of type `str` to `data.latest.users.UserCreateRequest`
 2. Add `phone` field of type `str | None` with a `default=None` to `data.latest.users.UserResource` because all users created with older versions of our API won't have phone numbers.
-3. Add a `data.unversioned.users.UserInternalCreateRequest` which will tell Cadwyn to always turn requests of type `UserCreateRequest` into `UserInternalCreateRequest`. Note that `UserInternalCreateRequest` needs to be imported somewhere for this to work. This schema will allow us to pass a `None` to `phone` from older versions while also guaranteeing that it is non-nullable in our latest version.
+3. Add a `data.unversioned.users.UserInternalCreateRequest` that we will use later to wrap migrated data instead of the latest request schema. It will allow us to pass a `None` to `phone` from older versions while also guaranteeing that it is non-nullable in our latest version.
 
     ```python
     from pydantic import Field
-    from cadwyn import internal_body_representation_of
     from ..latest.users import UserCreateRequest
 
 
-    @internal_body_representation_of(UserCreateRequest)
     class UserInternalCreateRequest(UserCreateRequest):
         phone: str | None = Field(default=None)
     ```
 
-4. Add the following migration to `versions.v2001_01_01`:
+4. Replace `UserCreateRequest` in your routes with `Annotated[UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]]`:
+
+    ```python
+    from data.latest.users import UserCreateRequest, UserResource
+    from cadwyn import InternalRepresentationOf
+    from typing import Annotated
+
+
+    @router.post("/users", response_model=UserResource)
+    async def create_user(
+        user: Annotated[
+            InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]
+        ]
+    ):
+        ...
+    ```
+
+5. Add the following migration to `versions.v2001_01_01`:
 
     ```python
     from cadwyn.structure import (
@@ -261,17 +290,17 @@ Let's say that we want to add a required field `phone` to our users.
             "Add a required phone field to User to allow us to do 2fa and to "
             "make it possible to verify new user accounts using an sms."
         )
-        instructions_to_migrate_to_previous_version = [
+        instructions_to_migrate_to_previous_version = (
             schema(UserCreateRequest)
             .field("phone")
             .had(
                 type=str | None,
                 default=None,
             ),
-        ]
+        )
     ```
 
-5. [Regenerate](./reference.md#code-generation) the versioned schemas
+6. [Regenerate](./reference.md#code-generation) the versioned schemas
 
 See how we didn't remove the `phone` field from old versions? Instead, we allowed a nullable `phone` field to be passed into both old `UserResource` and old `UserCreateRequest`. This gives our users new functionality without needing to update their API version! It is one of the best parts of Cadwyn's approach: our users can get years worth of updates without switching their API version and without their integration getting broken.
 
@@ -281,25 +310,40 @@ See how we didn't remove the `phone` field from old versions? Instead, we allowe
 
 ##### Compatible narrowing
 
-Let's say that previously users could specify their date of birth as a datetime instead of a date. We wish to rectify that.
+Let's say that previously users could specify their date of birth as a datetime instead of a date. We wish to rectify that. We can solve this with [internal body request schemas](./reference.md#internal-request-schemas).
 
 0. Continue storing `date_of_birth` as a datetime in your database to avoid breaking any old behavior
 1. Change the type of `date_of_birth` field to `datetime.date` in `data.latest.users.User`
-2. Add a `data.unversioned.users.UserInternalCreateRequest` which will essentially tell Cadwyn to always turn requests of type `UserCreateRequest` into `UserInternalCreateRequest`. Note that `UserInternalCreateRequest` needs to be imported somewhere for this to work. This schema will allow us to keep time information from older versions without allowing users in new versions to provide it. This allows us to guarantee that old requests function in the same manner as before while new requests have the narrowed types.
+2. Add a `data.unversioned.users.UserInternalCreateRequest` that we will use later to wrap migrated data instead of the latest request schema. This schema will allow us to keep time information from older versions without allowing users in new versions to provide it. This allows us to guarantee that old requests function in the same manner as before while new requests have the narrowed types.
 
     ```python
     from pydantic import Field
-    from cadwyn import internal_body_representation_of
     from ..latest.users import UserCreateRequest
     import datetime
 
 
-    @internal_body_representation_of(UserCreateRequest)
     class UserInternalCreateRequest(UserCreateRequest):
         time_of_birth: datetime.time = Field(default=datetime.time(0, 0, 0))
     ```
 
-3. Add the following migration to `versions.v2001_01_01`:
+3. Replace `UserCreateRequest` in your routes with `Annotated[UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]]`:
+
+    ```python
+    from data.latest.users import UserCreateRequest, UserResource
+    from cadwyn import InternalRepresentationOf
+    from typing import Annotated
+
+
+    @router.post("/users", response_model=UserResource)
+    async def create_user(
+        user: Annotated[
+            InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]
+        ]
+    ):
+        ...
+    ```
+
+4. Add the following migration to `versions.v2001_01_01`:
 
     ```python
     from cadwyn.structure import (
@@ -317,19 +361,19 @@ Let's say that previously users could specify their date of birth as a datetime 
             "Change 'User.date_of_birth' field type to date instead of "
             "a datetime because storing the exact time is unnecessary."
         )
-        instructions_to_migrate_to_previous_version = [
-            schema(User).field("date_of_birth").had(type=datetime.datetime)
-        ]
+        instructions_to_migrate_to_previous_version = (
+            schema(User).field("date_of_birth").had(type=datetime.datetime),
+        )
 
         @convert_request_to_next_version_for(UserCreateRequest)
         def add_time_field_to_request(request: RequestInfo):
             request.body["time_of_birth"] = request.body["date_of_birth"].time()
     ```
 
-4. [Regenerate](./reference.md#code-generation) the versioned schemas
-5. Within your business logic, create the datetime that you will put into the database by combining `date_of_birth` field and `time_of_birth` field
+5. [Regenerate](./reference.md#code-generation) the versioned schemas
+6. Within your business logic, create the datetime that you will put into the database by combining `date_of_birth` field and `time_of_birth` field
 
-See how we did not need to use [convert_response_to_previous_version_for](./reference#response-data-migration)? We do not need to migrate anything because moving from `datetime` to `date` is easy: our database data already contains datetimes so pydantic will automatically narrow them to dates for responses if necessary. We also do not need to change anything about `date_of_birth` in the requests of older versions because our schema of the new version will automatically cast `datetime` to `date`.
+See how we did not need to use [convert_response_to_previous_version_for](./reference.md#data-migrations)? We do not need to migrate anything because moving from `datetime` to `date` is easy: our database data already contains datetimes so pydantic will automatically narrow them to dates for responses if necessary. We also do not need to change anything about `date_of_birth` in the requests of older versions because our schema of the new version will automatically cast `datetime` to `date`.
 
 This whole process was a bit complex so let us break it down a little:
 
@@ -373,9 +417,9 @@ So if you do consider it a breaking change in terms of responses, you should do 
             "cannot create or remove other admins. This allows for a "
             "finer-grained permission control."
         )
-        instructions_to_migrate_to_previous_version = [
+        instructions_to_migrate_to_previous_version = (
             enum(UserRoleEnum).didnt_have("moderator"),
-        ]
+        )
 
         @convert_response_to_previous_version_for(UserResource)
         def change_moderator_to_regular(response: ResponseInfo):
@@ -437,11 +481,11 @@ Let's say that our API has a mandatory `UserResource.date_of_birth` field. Let's
             "it can be inferred from user's date of birth and because "
             "only a small number of users has utilized it."
         )
-        instructions_to_migrate_to_previous_version = [
+        instructions_to_migrate_to_previous_version = (
             schema(UserResource)
             .field("zodiac_sign")
-            .existed_as(type=str, info=Field(description="User's magical sign"))
-        ]
+            .existed_as(type=str, info=Field(description="User's magical sign")),
+        )
     ```
 
 3. [Regenerate](./reference.md#code-generation) the versioned schemas
