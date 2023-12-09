@@ -3,12 +3,13 @@ if __name__ == "__main__":
 
     import uvicorn
 
-    from tests.test_tutorial.routes import app, router
-    from tests.test_tutorial.utils import clean_versions
+    from tests.tutorial.routes import app, router
+    from tests.tutorial.utils import clean_versions
 
     try:
         app.generate_and_include_versioned_routers(router)
 
         uvicorn.run(app)
     finally:
+        # This is only here for testing purposes. In reality, you wouldn't do that.
         clean_versions(Path(__file__).parent / "data")

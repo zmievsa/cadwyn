@@ -125,7 +125,7 @@ def test__router_generation__forgot_to_generate_schemas__error(
                 Version(date(2000, 1, 1)),
                 api_version_var=api_version_var,
             ),
-            latest_schemas_module=latest,
+            latest_schemas_package=latest,
         )
 
 
@@ -223,7 +223,7 @@ def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
     routers = generate_versioned_routers(
         router,
         versions=versions,
-        latest_schemas_module=latest_module,
+        latest_schemas_package=latest_module,
     )
 
     assert len(routers[date(2003, 1, 1)].routes) == 0
@@ -613,7 +613,7 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
     routers = generate_versioned_routers(
         router,
         versions=versions,
-        latest_schemas_module=latest_module,
+        latest_schemas_package=latest_module,
     )
 
     assert len(routers[date(2002, 1, 1)].routes) == 0
@@ -737,7 +737,7 @@ def test__router_generation__using_non_latest_version_of_schema__should_raise_er
                 Version(date(2000, 1, 1)),
                 api_version_var=api_version_var,
             ),
-            latest_schemas_module=latest,
+            latest_schemas_package=latest,
         )
 
 
@@ -780,7 +780,7 @@ def test__router_generation__passing_a_module_instead_of_package_for_latest__sho
         generate_versioned_routers(
             router,
             versions=versions,
-            latest_schemas_module=module,
+            latest_schemas_package=module,
         )
 
 
@@ -807,7 +807,7 @@ def test__router_generation__passing_a_package_with_wrong_name_instead_of_latest
         generate_versioned_routers(
             router,
             versions=versions,
-            latest_schemas_module=module,
+            latest_schemas_package=module,
         )
 
 
@@ -1109,7 +1109,7 @@ def test__cascading_router_exists(
         api_version_var=api_version_var,
     )
     run_schema_codegen(versions)
-    routers = generate_versioned_routers(router, versions=versions, latest_schemas_module=latest)
+    routers = generate_versioned_routers(router, versions=versions, latest_schemas_package=latest)
 
     assert client(routers[date(2002, 1, 1)]).get("/test").json() == {
         "detail": "Not Found",
@@ -1143,7 +1143,7 @@ def test__cascading_router_didnt_exist(
         api_version_var=api_version_var,
     )
     run_schema_codegen(versions)
-    routers = generate_versioned_routers(router, versions=versions, latest_schemas_module=latest)
+    routers = generate_versioned_routers(router, versions=versions, latest_schemas_package=latest)
 
     assert client(routers[date(2002, 1, 1)]).get("/test").json() == 83
 
@@ -1188,7 +1188,7 @@ def test__generate_versioned_routers__two_routers(
     root_router.include_router(router)
     root_router.include_router(router2)
 
-    routers = generate_versioned_routers(root_router, versions=versions, latest_schemas_module=latest)
+    routers = generate_versioned_routers(root_router, versions=versions, latest_schemas_package=latest)
     assert all(type(r) is APIRouter for r in routers.values())
     assert len(routers[date(2001, 1, 1)].routes) == 2
     assert len(routers[date(2000, 1, 1)].routes) == 1

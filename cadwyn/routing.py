@@ -83,7 +83,7 @@ class _RouterInfo(Generic[_R]):
     route_bodies_with_migrated_requests: set[type[BaseModel]]
 
 
-class InternalBodyRequestFrom:
+class InternalRepresentationOf:
     def __class_getitem__(cls, original_schema: type, /) -> type[Self]:
         return type("InternalBodyRequest", (cls, original_schema), {})
 
@@ -91,9 +91,9 @@ class InternalBodyRequestFrom:
 def generate_versioned_routers(
     router: _R,
     versions: VersionBundle,
-    latest_schemas_module: ModuleType,
+    latest_schemas_package: ModuleType,
 ) -> dict[VersionDate, _R]:
-    return _EndpointTransformer(router, versions, latest_schemas_module).transform()
+    return _EndpointTransformer(router, versions, latest_schemas_package).transform()
 
 
 class VersionedAPIRouter(fastapi.routing.APIRouter):
@@ -115,12 +115,12 @@ class _EndpointTransformer(Generic[_R]):
         self,
         parent_router: _R,
         versions: VersionBundle,
-        latest_schemas_module: ModuleType,
+        latest_schemas_package: ModuleType,
     ) -> None:
         super().__init__()
         self.parent_router = parent_router
         self.versions = versions
-        self.annotation_transformer = _AnnotationTransformer(latest_schemas_module, versions)
+        self.annotation_transformer = _AnnotationTransformer(latest_schemas_package, versions)
 
         self.routes_that_never_existed = [
             route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
@@ -353,7 +353,7 @@ def _extract_internal_request_schemas_from_router(router: fastapi.routing.APIRou
         for key, annotation in annotations.items():
             if isinstance(annotation, type(Annotated[int, int])):
                 args = get_args(annotation)
-                if isinstance(args[1], type) and issubclass(args[1], InternalBodyRequestFrom):  # pragma: no branch
+                if isinstance(args[1], type) and issubclass(args[1], InternalRepresentationOf):  # pragma: no branch
                     internal_schema = args[0]
                     original_schema = args[1].mro()[2]
                     schema_to_internal_request_body_representation[original_schema] = internal_schema
@@ -385,30 +385,30 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
 @final
 class _AnnotationTransformer:
     __slots__ = (
-        "latest_schemas_module",
+        "latest_schemas_package",
         "version_dirs",
         "template_version_dir",
         "latest_version_dir",
         "change_versions_of_a_non_container_annotation",
     )
 
-    def __init__(self, latest_schemas_module: ModuleType, versions: VersionBundle) -> None:
-        if not hasattr(latest_schemas_module, "__path__"):
+    def __init__(self, latest_schemas_package: ModuleType, versions: VersionBundle) -> None:
+        if not hasattr(latest_schemas_package, "__path__"):
             raise RouterGenerationError(
-                f'The latest schemas module must be a package. "{latest_schemas_module.__name__}" is not a package.',
+                f'The latest schemas module must be a package. "{latest_schemas_package.__name__}" is not a package.',
             )
-        if not latest_schemas_module.__name__.endswith(".latest"):
+        if not latest_schemas_package.__name__.endswith(".latest"):
             raise RouterGenerationError(
                 'The name of the latest schemas module must be "latest". '
-                f'Received "{latest_schemas_module.__name__}" instead.',
+                f'Received "{latest_schemas_package.__name__}" instead.',
             )
-        self.latest_schemas_module = latest_schemas_module
+        self.latest_schemas_package = latest_schemas_package
         self.version_dirs = frozenset(
-            [_get_package_path_from_module(latest_schemas_module)]
-            + [_get_version_dir_path(latest_schemas_module, version.value) for version in versions],
+            [_get_package_path_from_module(latest_schemas_package)]
+            + [_get_version_dir_path(latest_schemas_package, version.value) for version in versions],
         )
         # Okay, the naming is confusing, I know. Essentially template_version_dir is a dir of
-        # latest_schemas_module while latest_version_dir is a version equivalent to latest but
+        # latest_schemas_package while latest_version_dir is a version equivalent to latest but
         # with its own directory. Pick a better naming and make a PR, I am at your mercy.
         self.template_version_dir = min(self.version_dirs)  # "latest" < "v0000_00_00"
         self.latest_version_dir = max(self.version_dirs)  # "v2005_11_11" > "v2000_11_11"
@@ -421,7 +421,7 @@ class _AnnotationTransformer:
         )
 
     def migrate_router_to_version(self, router: fastapi.routing.APIRouter, version: Version):
-        version_dir = _get_version_dir_path(self.latest_schemas_module, version.value)
+        version_dir = _get_version_dir_path(self.latest_schemas_package, version.value)
         if not version_dir.is_dir():
             raise RouterGenerationError(
                 f"Versioned schema directory '{version_dir}' does not exist.",
@@ -679,10 +679,11 @@ def _get_routes(
     is_deleted: bool = False,
 ) -> list[fastapi.routing.APIRoute]:
     found_routes = []
+    endpoint_path = endpoint_path.rstrip("/")
     for route in routes:
         if (
             isinstance(route, fastapi.routing.APIRoute)
-            and route.path == endpoint_path
+            and route.path.rstrip("/") == endpoint_path
             and set(route.methods).issubset(endpoint_methods)
             and (endpoint_func_name is None or route.endpoint.__name__ == endpoint_func_name)
             and (_DELETED_ROUTE_TAG in route.tags) == is_deleted

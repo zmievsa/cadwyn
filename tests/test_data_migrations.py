@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from cadwyn import VersionedAPIRouter
 from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import CadwynStructureError
-from cadwyn.routing import InternalBodyRequestFrom
+from cadwyn.routing import InternalRepresentationOf
 from cadwyn.structure import (
     VersionChange,
     convert_request_to_next_version_for,
@@ -357,7 +357,7 @@ class TestRequestMigrations:
         async def route(
             payload: Annotated[
                 latest_module.InternalSchema,
-                InternalBodyRequestFrom[latest_module.SchemaWithInternalRepresentation],
+                InternalRepresentationOf[latest_module.SchemaWithInternalRepresentation],
                 str,
             ],
         ):
@@ -391,7 +391,7 @@ class TestRequestMigrations:
         async def route(
             payload: Annotated[
                 latest_module.InternalSchema,
-                InternalBodyRequestFrom[latest_module.SchemaWithInternalRepresentation],
+                InternalRepresentationOf[latest_module.SchemaWithInternalRepresentation],
             ],
         ):
             return {"type": type(payload).__name__, **payload.dict()}
@@ -425,7 +425,7 @@ class TestRequestMigrations:
         async def route(
             payload: Annotated[
                 latest_module.InternalSchema,
-                InternalBodyRequestFrom[latest_module.SchemaWithInternalRepresentation],
+                InternalRepresentationOf[latest_module.SchemaWithInternalRepresentation],
             ],
         ):
             return {"type": type(payload).__name__, **payload.dict()}

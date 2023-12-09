@@ -294,7 +294,7 @@ class CreateVersionedApp:
     def __call__(self, *version_changes: type[VersionChange] | list[type[VersionChange]]) -> Cadwyn:
         bundle = VersionBundle(*versions(version_changes), api_version_var=self.api_version_var)
         latest_module = self.run_schema_codegen(bundle)
-        app = Cadwyn(versions=bundle, latest_schemas_module=latest_module)
+        app = Cadwyn(versions=bundle, latest_schemas_package=latest_module)
         app.generate_and_include_versioned_routers(self.router)
         return app
 

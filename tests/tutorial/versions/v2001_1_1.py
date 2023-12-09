@@ -8,20 +8,18 @@ from cadwyn.structure import (
     convert_response_to_previous_version_for,
     schema,
 )
-from tests.test_tutorial.data.latest.users import UserCreateRequest, UserResource
+from tests.tutorial.data.latest.users import BaseUser, UserCreateRequest, UserResource
 
 
 class ChangeAddressToList(VersionChange):
     description = "Change vat id to list"
     instructions_to_migrate_to_previous_version = (
-        schema(UserCreateRequest).field("addresses").didnt_exist,
-        schema(UserCreateRequest).field("address").existed_as(type=str, info=Field()),
-        schema(UserResource).field("addresses").didnt_exist,
-        schema(UserResource).field("address").existed_as(type=str, info=Field()),
+        schema(BaseUser).field("addresses").didnt_exist,
+        schema(BaseUser).field("address").existed_as(type=str, info=Field()),
     )
 
     @convert_request_to_next_version_for(UserCreateRequest)
-    def change_address_to_multiple_items(request: RequestInfo):
+    def change_address_to_multiple_items(request: RequestInfo) -> None:
         request.body["addresses"] = [request.body.pop("address")]
 
     @convert_response_to_previous_version_for(UserResource)

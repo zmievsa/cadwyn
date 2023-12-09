@@ -974,7 +974,7 @@ cli = ["typer"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "14472bba2918b57567945936efb0c1c4d54201b6ec8835ae42a777fbc68bdb75"
+content-hash = "7de5313323b42fcf6edfba86fc2c8f2cd0e0e36639baceda8c5dceaeb8b598fa"
 
 [metadata.files]
 annotated-types = [
