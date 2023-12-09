@@ -1,7 +1,8 @@
-from typing import cast
+from typing import Annotated
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.main import Cadwyn
+from cadwyn.routing import InternalBodyRequestFrom
 
 from .data import latest
 from .data.latest.users import (
@@ -16,8 +17,7 @@ router = VersionedAPIRouter()
 
 
 @router.post("/users", response_model=UserResource)
-async def create_user(user: UserCreateRequest):
-    user = cast(InternalUserCreateRequest, user)
+async def create_user(user: Annotated[InternalUserCreateRequest, InternalBodyRequestFrom[UserCreateRequest]]):
     return {
         "id": 83,
         "_prefetched_addresses": [

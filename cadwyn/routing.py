@@ -11,6 +11,7 @@ from enum import Enum
 from pathlib import Path
 from types import GenericAlias, MappingProxyType, ModuleType
 from typing import (
+    Annotated,
     Any,
     Generic,
     TypeAlias,
@@ -39,7 +40,7 @@ from starlette.routing import (
     BaseRoute,
     request_response,
 )
-from typing_extensions import assert_never
+from typing_extensions import Self, assert_never
 from verselect.routing import VERSION_HEADER_FORMAT
 
 from cadwyn._compat import PYDANTIC_V2
@@ -48,7 +49,6 @@ from cadwyn.codegen import _get_package_path_from_module, _get_version_dir_path
 from cadwyn.exceptions import CadwynError, ModuleIsNotVersionedError, RouteAlreadyExistsError, RouterGenerationError
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionDate
-from cadwyn.structure.data import _SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING
 from cadwyn.structure.endpoints import (
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
@@ -81,6 +81,11 @@ class _RouterInfo(Generic[_R]):
     router: _R
     routes_with_migrated_requests: dict[_EndpointPath, set[_EndpointMethod]]
     route_bodies_with_migrated_requests: set[type[BaseModel]]
+
+
+class InternalBodyRequestFrom:
+    def __class_getitem__(cls, original_schema: type, /) -> type[Self]:
+        return type("InternalBodyRequest", (cls, original_schema), {})
 
 
 def generate_versioned_routers(
@@ -123,11 +128,11 @@ class _EndpointTransformer(Generic[_R]):
 
     def transform(self) -> dict[VersionDate, _R]:
         router = deepcopy(self.parent_router)
+        schema_to_internal_request_body_representation = _extract_internal_request_schemas_from_router(router)
         router_infos: dict[VersionDate, _RouterInfo] = {}
         routes_with_migrated_requests = {}
         route_bodies_with_migrated_requests: set[type[BaseModel]] = set()
         for version in self.versions:
-            #
             self.annotation_transformer.migrate_router_to_version(router, version)
 
             router_infos[version.value] = _RouterInfo(
@@ -163,8 +168,7 @@ class _EndpointTransformer(Generic[_R]):
             if len(copy_of_dependant.body_params) == 1:
                 body_param: FastAPIModelField = copy_of_dependant.body_params[0]
                 body_schema = body_param.type_
-                # TODO: Verify that this doesn't break at pydantic 2
-                new_type = _SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING.get(body_schema, body_schema)
+                new_type = schema_to_internal_request_body_representation.get(body_schema, body_schema)
                 kwargs: dict[str, Any] = {"name": body_param.name, "field_info": body_param.field_info}
                 if PYDANTIC_V2:
                     body_param.field_info.annotation = new_type
@@ -341,6 +345,33 @@ class _EndpointTransformer(Generic[_R]):
                     )
 
 
+def _extract_internal_request_schemas_from_router(router: fastapi.routing.APIRouter):
+    """Please note that this functon replaces internal bodies with original bodies in the router"""
+    schema_to_internal_request_body_representation = {}
+
+    def _extract_internal_request_schemas_from_annotations(annotations: dict[str, Any]):
+        for key, annotation in annotations.items():
+            if isinstance(annotation, type(Annotated[int, int])):
+                args = get_args(annotation)
+                if isinstance(args[1], type) and issubclass(args[1], InternalBodyRequestFrom):  # pragma: no branch
+                    internal_schema = args[0]
+                    original_schema = args[1].mro()[2]
+                    schema_to_internal_request_body_representation[original_schema] = internal_schema
+                    if len(args[2:]) != 0:
+                        annotations[key] = Annotated[(original_schema, *args[2:])]
+                    else:
+                        annotations[key] = original_schema
+        return annotations
+
+    for route in router.routes:
+        if isinstance(route, APIRoute):  # pragma: no branch
+            route.endpoint = _modify_callable(
+                route.endpoint,
+                modify_annotations=_extract_internal_request_schemas_from_annotations,
+            )
+    return schema_to_internal_request_body_representation
+
+
 def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
     route_map = {}
 
@@ -457,24 +488,11 @@ class _AnnotationTransformer:
                 )
             return self._change_version_of_type(annotation, version_dir)
         elif callable(annotation):
-            # TASK: https://github.com/zmievsa/cadwyn/issues/48
-            annotation_modifying_decorator = _copy_function(annotation)
-            old_params = inspect.signature(annotation).parameters
-            callable_annotations = annotation_modifying_decorator.__annotations__
 
-            annotation_modifying_decorator.__annotations__ = self._change_version_of_annotations(
-                callable_annotations,
-                version_dir,
-            )
-            annotation_modifying_decorator.__defaults__ = self._change_version_of_annotations(
-                tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
-                version_dir,
-            )
-            annotation_modifying_decorator.__signature__ = _generate_signature(
-                annotation_modifying_decorator,
-                old_params,
-            )
-            return annotation_modifying_decorator
+            def modifier(annotation: Any):
+                return self._change_version_of_annotations(annotation, version_dir)
+
+            return _modify_callable(annotation, modifier, modifier)
         else:
             return annotation
 
@@ -533,6 +551,27 @@ class _AnnotationTransformer:
                 "It probably means that you used a specific version of the class in fastapi dependencies "
                 'or pydantic schemas instead of "latest".',
             )
+
+
+def _modify_callable(
+    call: Callable,
+    modify_annotations: Callable[[dict[str, Any]], dict[str, Any]] = lambda a: a,
+    modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,
+):
+    annotation_modifying_decorator = _copy_function(call)
+    old_params = inspect.signature(call).parameters
+    callable_annotations = annotation_modifying_decorator.__annotations__
+
+    annotation_modifying_decorator.__annotations__ = modify_annotations(callable_annotations)
+    annotation_modifying_decorator.__defaults__ = modify_defaults(
+        tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
+    )
+    annotation_modifying_decorator.__signature__ = _generate_signature(
+        annotation_modifying_decorator,
+        old_params,
+    )
+
+    return annotation_modifying_decorator
 
 
 def _remake_endpoint_dependencies(route: fastapi.routing.APIRoute):

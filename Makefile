@@ -13,4 +13,10 @@ format:
 	poetry run black .;
 
 test:
-	poetry run pytest --cov=. --cov-report=term-missing:skip-covered --cov-branch --cov-report=xml tests;
+	poetry run pytest --cov=. --cov-report=term-missing:skip-covered --cov-branch --cov-append --cov-report=xml tests;
+
+supertest:
+	poetry add 'pydantic@^1.0.0' || exit 1; \
+	make test || exit 1; \
+	poetry add 'pydantic@^2.0.0' || exit 1; \
+	make test;  \

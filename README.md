@@ -32,10 +32,10 @@ Its [approach](./docs/theory.md#ii-migration-based-response-building) will be us
 
 The [documentation](https://docs.cadwyn.dev) has everything you need to get started. It is recommended to read it in the following order:
 
-1. [Tutorial](./tutorial.md)
-2. [Recipes](./recipes.md)
-3. [Reference](./reference.md)
-4. [Theory](./theory.md) <!-- TODO: Move section about cadwyn's approach to the beginning and move other approaches and "how we got here" to another article  -->
+1. [Tutorial](https://docs.cadwyn.dev/tutorial/)
+2. [Recipes](https://docs.cadwyn.dev/recipes/)
+3. [Reference](https://docs.cadwyn.dev/reference/)
+4. [Theory](https://docs.cadwyn.dev/theory/) <!-- TODO: Move section about cadwyn's approach to the beginning and move other approaches and "how we got here" to another article  -->
 
 ## Similar projects
 

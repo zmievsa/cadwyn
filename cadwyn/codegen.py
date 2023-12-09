@@ -303,7 +303,8 @@ class _ModelWrapper:
                 if (hasattr(field_info, attr_name) and getattr(field_info, attr_name) == attr_value) or (
                     PYDANTIC_V2
                     and attr_name in FieldInfo.metadata_lookup
-                    and str(attr_value) in {str(a) for a in field_info.metadata}
+                    and str(FieldInfo._collect_metadata({attr_name: attr_value})[0])
+                    in {str(a) for a in field_info.metadata}
                 ):
                     raise InvalidGenerationInstructionError(
                         f'You tried to change the attribute "{attr_name}" of field '
@@ -677,7 +678,7 @@ def _migrate_module_to_another_version(
         module_name = module.__name__.removesuffix(".__init__")
     else:
         module_name = module.__name__
-    all_names_in_file = _get_all_names_defined_in_module(parsed_file, module_name)
+    all_names_defined_on_toplevel_of_file = _get_all_names_defined_on_toplevel_of_module(parsed_file, module_name)
     # TODO: Does this play well with renaming?
     extra_field_imports = [
         ast.ImportFrom(
@@ -696,7 +697,7 @@ def _migrate_module_to_another_version(
         extra_field_imports
         + [
             _migrate_ast_node_to_another_version(
-                all_names_in_file,
+                all_names_defined_on_toplevel_of_file,
                 n,
                 module_name,
                 modified_schemas,
@@ -708,7 +709,11 @@ def _migrate_module_to_another_version(
     )
 
     modified_source = ast.unparse(body)
-    extra_lib_imports = [import_ for seek_str, import_ in _extra_imports if seek_str not in all_names_in_file]
+    extra_lib_imports = [
+        import_
+        for seek_str, import_ in _extra_imports
+        if seek_str in modified_source and seek_str not in all_names_defined_on_toplevel_of_file
+    ]
     return "\n".join(extra_lib_imports) + "\n" + modified_source
 
 
@@ -925,9 +930,8 @@ def _get_passed_attributes_to_field(field_info: FieldInfo):
                 continue
             if getattr(field_info, attr_name) != attr_val:
                 yield attr_name
-        extras = getattr(field_info, EXTRA_FIELD_NAME)
-        if extras is not None:
-            yield from extras
+        extras = getattr(field_info, EXTRA_FIELD_NAME) or []
+        yield from extras
 
 
 class _AnnotationASTNodeTransformerWithSchemaRenaming(ast.NodeTransformer):
@@ -1110,7 +1114,7 @@ def _find_a_lambda(source: str) -> str:
 
 
 # Some day we will want to use this to auto-add imports for new symbols in versions. Some day...
-def _get_all_names_defined_in_module(body: ast.Module, module_python_path: str) -> dict[str, str]:
+def _get_all_names_defined_on_toplevel_of_module(body: ast.Module, module_python_path: str) -> dict[str, str]:
     defined_names = {}
     for node in body.body:
         if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):

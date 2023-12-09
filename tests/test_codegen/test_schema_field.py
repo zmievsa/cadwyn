@@ -527,7 +527,6 @@ def test__schema_field_had_constrained_field__only_non_constraint_field_args_wer
     )
 
 
-# TODO
 def test__schema_field_had_constrained_field__field_is_an_unconstrained_union(
     create_local_simple_versioned_schemas: CreateLocalSimpleVersionedSchemas,
     latest_module_for: LatestModuleFor,
@@ -897,6 +896,30 @@ def test__schema_field_had__change_attr_to_same_value__should_raise_error(
     ):
         create_local_simple_versioned_schemas(
             schema(latest.SchemaWithOneStrField).field("foo").had(default="wow"),
+        )
+
+
+def test__schema_field_had__change_metadata_attr_to_same_value__should_raise_error(
+    create_local_versioned_schemas: CreateLocalVersionedSchemas,
+    latest_with_empty_classes,
+):
+    if not PYDANTIC_V2:
+        return
+
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            'You tried to change the attribute "gt" of field "foo" from "EmptySchema" to 8 '
+            'in "MyVersionChange" but it already has that value.',
+        ),
+    ):
+        create_local_versioned_schemas(
+            version_change(schema(latest_with_empty_classes.EmptySchema).field("foo").had(gt=8)),
+            version_change(
+                schema(latest_with_empty_classes.EmptySchema)
+                .field("foo")
+                .existed_as(type=int, info=Field(gt=8, lt=12)),
+            ),
         )
 
 

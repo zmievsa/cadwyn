@@ -123,7 +123,7 @@ class AlterFieldInstructionFactory:
                 raise CadwynStructureError("`max_items` was removed in Pydantic 2. Use `max_length` instead")
             if unique_items is not Sentinel:
                 raise CadwynStructureError(
-                    "`unique_items` was removed in Pydantic 2, use `Set` type annotation instead"
+                    "`unique_items` was removed in Pydantic 2. Use `Set` type annotation instead"
                     "(this feature is discussed in https://github.com/pydantic/pydantic-core/issues/296)",
                 )
         else:

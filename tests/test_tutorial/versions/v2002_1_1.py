@@ -9,7 +9,7 @@ from cadwyn.structure import (
     endpoint,
     schema,
 )
-from tests.test_tutorial.test_users_example002.data.latest.users import UserCreateRequest, UserResource
+from tests.test_tutorial.data.latest.users import UserCreateRequest, UserResource
 
 
 class ChangeAddressesToSubresource(VersionChange):

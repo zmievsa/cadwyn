@@ -1,33 +1,40 @@
 
 # Reference
 
+Cadwyn aims to be the most accurate API Versioning model out there. First of all, you maintain **zero** duplicated code yourself. Usually, in API versioning you [would need to](./theory.md) duplicate and maintain at least some layer of your applicaton. It could be the database, business logic, schemas, and endpoints. Cadwyn only duplicates your:
+
+* schemas but you do not maintain the duplicates -- you only regenerate it when necessary
+* endpoints but only in runtime so you do not need to maintain the duplicates
+
+The workflow is fairly straighforward:
+
+1. Define a [VersionBundle](...) where you add your first version
+2. Create a `data` directory with your latest schemas
+
 ## CLI
 
 Cadwyn has an optional CLI interface that can be installed with `pip install cadwyn[cli]`.
+Run `cadwyn --version` to check current version of Cadwyn.
 
-### Code generation
+## Code generation
 
-There are two methods of generating code: using a function and using the CLI:
+Cadwyn generates versioned schemas and everything related to them from latest version. These versioned schemas will be automatically used in requests and responses for [versioned API routes](...). There are two methods of generating code: using a function and using the CLI:
 
-#### Function interface
+### Function interface
 
 You can use `cadwyn.generate_code_for_versioned_packages` which accepts a `template_module` (a directory which contains the latest versions) and `versions` which is the `VersionBundle` from which to generate versions.
 
-#### CLI interface
+### CLI interface
 
 The interface is the same to the function one and is a shorthand for simple cases:
 
 * `cadwyn generate-code-for-versioned-packages path.to.latest.package path.to.version.bundle:my_version_bundle`
 * `cadwyn generate-code-for-versioned-packages path.to.latest.package path.to.version.bundle:func_that_returns_version_bundle`
 
-##### **Note**
+#### **Note**
 
 * You wouldn't use the system path style for both arguments. Instead, imagine that you are importing these modules in python -- that's the way you want to write down the paths.
 * Take a look at how we point to our version bundle. We use ":" to say that it's a variable within the specified module
-
-### Version checks
-
-Run  `cadwyn --version`  to check current version of Cadwyn
 
 ## Endpoints
 

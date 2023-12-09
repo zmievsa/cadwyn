@@ -5,9 +5,9 @@ from fastapi.testclient import TestClient
 
 from cadwyn import generate_code_for_versioned_packages
 
-from ..utils import clean_versions
 from .data import latest
 from .routes import app, router
+from .utils import clean_versions
 
 
 @pytest.fixture(scope="module", autouse=True)

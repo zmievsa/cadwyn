@@ -4,7 +4,7 @@ from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from datetime import date
 from types import ModuleType
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 import pytest
 from dirty_equals import IsPartialDict, IsStr
@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from cadwyn import VersionedAPIRouter
 from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import CadwynStructureError
+from cadwyn.routing import InternalBodyRequestFrom
 from cadwyn.structure import (
     VersionChange,
     convert_request_to_next_version_for,
@@ -40,7 +41,6 @@ def latest_module(latest_module_for: LatestModuleFor):
             """
     from pydantic import BaseModel, Field, RootModel
     from typing import Any
-    from cadwyn.structure import internal_body_representation_of
 
     # TODO: Make a note in cadwyn docs that RootModel instances are CACHED at instantiation time
         # so `RootModel[Any] is RootModel[Any]`. This causes dire consequences if you try to make "different"
@@ -55,7 +55,6 @@ def latest_module(latest_module_for: LatestModuleFor):
         foo: int
 
     # TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
-    @internal_body_representation_of(SchemaWithInternalRepresentation)
     class InternalSchema(SchemaWithInternalRepresentation):
         bar: str | None = Field(default=None)
 
@@ -67,7 +66,6 @@ def latest_module(latest_module_for: LatestModuleFor):
             """
     from pydantic import BaseModel, Field
     from typing import Any
-    from cadwyn.structure import internal_body_representation_of
 
     class AnyRequestSchema(BaseModel):
         __root__: Any
@@ -80,7 +78,6 @@ def latest_module(latest_module_for: LatestModuleFor):
         foo: int
 
     # TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
-    @internal_body_representation_of(SchemaWithInternalRepresentation)
     class InternalSchema(SchemaWithInternalRepresentation):
         bar: str | None = Field(default=None)
 
@@ -357,10 +354,19 @@ class TestRequestMigrations:
         router: VersionedAPIRouter,
     ):
         @router.post(test_path)
-        async def route(payload: latest_module.SchemaWithInternalRepresentation):
+        async def route(
+            payload: Annotated[
+                latest_module.InternalSchema,
+                InternalBodyRequestFrom[latest_module.SchemaWithInternalRepresentation],
+                str,
+            ],
+        ):
             return {"type": type(payload).__name__, **payload.dict()}
 
         clients = create_versioned_clients(version_change())
+
+        payload_arg = clients[date(2000, 1, 1)].app.routes[-1].endpoint.__annotations__["payload"]
+        assert get_args(payload_arg)[1] == str
 
         assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
             "type": "InternalSchema",
@@ -382,7 +388,12 @@ class TestRequestMigrations:
         router: VersionedAPIRouter,
     ):
         @router.post(test_path)
-        async def route(payload: latest_module.SchemaWithInternalRepresentation):
+        async def route(
+            payload: Annotated[
+                latest_module.InternalSchema,
+                InternalBodyRequestFrom[latest_module.SchemaWithInternalRepresentation],
+            ],
+        ):
             return {"type": type(payload).__name__, **payload.dict()}
 
         @convert_request_to_next_version_for(latest_module.SchemaWithInternalRepresentation)
@@ -411,7 +422,12 @@ class TestRequestMigrations:
         router: VersionedAPIRouter,
     ):
         @router.post(test_path)
-        async def route(payload: latest_module.SchemaWithInternalRepresentation):
+        async def route(
+            payload: Annotated[
+                latest_module.InternalSchema,
+                InternalBodyRequestFrom[latest_module.SchemaWithInternalRepresentation],
+            ],
+        ):
             return {"type": type(payload).__name__, **payload.dict()}
 
         @convert_request_to_next_version_for(latest_module.SchemaWithInternalRepresentation)
@@ -424,10 +440,10 @@ class TestRequestMigrations:
             assert response == {
                 "detail": [
                     {
-                        "type": "string_type",
+                        "input": [1, 2, 3],
                         "loc": ["body", "bar"],
                         "msg": "Input should be a valid string",
-                        "input": [1, 2, 3],
+                        "type": "string_type",
                         "url": "https://errors.pydantic.dev/2.5/v/string_type",
                     },
                 ],

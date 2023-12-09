@@ -8,7 +8,7 @@ from cadwyn.structure import (
     convert_response_to_previous_version_for,
     schema,
 )
-from tests.test_tutorial.test_users_example002.data.latest.users import UserCreateRequest, UserResource
+from tests.test_tutorial.data.latest.users import UserCreateRequest, UserResource
 
 
 class ChangeAddressToList(VersionChange):
