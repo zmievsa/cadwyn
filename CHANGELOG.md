@@ -5,6 +5,21 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.0.0]
+
+### Added
+
+* Pydantic 2 support
+* Expanded reference section to docs
+* Contributor docs
+* Expanded makefile commands
+
+### Changed
+
+* internal request representation is now done using [an annotation](docs.cadwyn.org/reference#internal-request-body-representations)
+* `latest_schemas_module` was renamed to `latest_schemas_package` everywhere
+* `api_version_var` in `VersionBundle` is now an optional argument instead of a required one
+
 ## [2.3.4]
 
 ### Fixed

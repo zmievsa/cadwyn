@@ -1,16 +1,22 @@
+import uuid
+
 from pydantic import BaseModel
 
 
-class UserCreateRequest(BaseModel):
+class BaseUser(BaseModel):
+    pass
+
+
+class UserCreateRequest(BaseUser):
     default_address: str
 
 
-class UserResource(BaseModel):
-    id: int
+class UserResource(BaseUser):
+    id: uuid.UUID
 
 
 class UserAddressResource(BaseModel):
-    id: int
+    id: uuid.UUID
     value: str
 
 

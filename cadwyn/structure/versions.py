@@ -19,10 +19,10 @@ from fastapi.dependencies.utils import solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
-from pydantic.fields import Undefined
 from starlette._utils import is_async_callable
 from typing_extensions import assert_never
 
+from cadwyn._compat import PYDANTIC_V2, Undefined
 from cadwyn.exceptions import CadwynError, CadwynStructureError
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
@@ -212,11 +212,13 @@ class VersionBundle:
         latest_version: Version,
         /,
         *other_versions: Version,
-        api_version_var: APIVersionVarType,
+        api_version_var: APIVersionVarType | None = None,
     ) -> None:
         super().__init__()
 
         self.versions = (latest_version, *other_versions)
+        if api_version_var is None:
+            api_version_var = ContextVar("cadwyn_api_version")
         self.api_version_var = api_version_var
         if sorted(self.versions, key=lambda v: v.value, reverse=True) != list(self.versions):
             raise CadwynStructureError(
@@ -483,7 +485,7 @@ class VersionBundle:
                 body = None
             else:
                 body = raw_body.dict(by_alias=True, exclude_unset=True)
-                if kwargs[body_field_alias].__custom_root_type__:
+                if not PYDANTIC_V2 and kwargs[body_field_alias].__custom_root_type__:
                     body = body["__root__"]
         else:
             body = await _get_body(request, route.body_field)

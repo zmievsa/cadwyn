@@ -9,15 +9,14 @@ from cadwyn.structure import (
     endpoint,
     schema,
 )
-from tests.test_tutorial.test_users_example002.data.latest.users import UserCreateRequest, UserResource
+from tests.tutorial.data.latest.users import BaseUser, UserCreateRequest, UserResource
 
 
 class ChangeAddressesToSubresource(VersionChange):
     description = "Change vat ids to subresource"
     instructions_to_migrate_to_previous_version = (
-        schema(UserCreateRequest).field("addresses").existed_as(type=list[str], info=Field()),
+        schema(BaseUser).field("addresses").existed_as(type=list[str], info=Field()),
         schema(UserCreateRequest).field("default_address").didnt_exist,
-        schema(UserResource).field("addresses").existed_as(type=list[str], info=Field()),
         endpoint("/users/{user_id}/addresses", ["GET"]).didnt_exist,
     )
 

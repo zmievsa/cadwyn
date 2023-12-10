@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
+from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import CadwynError, CadwynStructureError, LintingError
 from cadwyn.structure import (
     Version,
@@ -17,7 +18,6 @@ from cadwyn.structure import (
     endpoint,
     schema,
 )
-from cadwyn.structure.data import internal_body_representation_of
 
 
 class DummySubClass2000_001(VersionChangeWithSideEffects):  # noqa: N801
@@ -394,22 +394,28 @@ def test__schema_field_existed_as_import_as__without_import_from__should_raise_e
         schema(SomeSchema).field("baz").existed_as(type=str, import_as="MyStr")
 
 
-def test__internal_body_representation_of__specifying_schema_twice():
-    class A(BaseModel):
-        pass
+@pytest.mark.parametrize(
+    ("attr_name", "attr_value"),
+    [
+        ("regex", r"hewwo"),
+        ("include", ["a", "b"]),
+        ("min_items", 3),
+        ("max_items", 4),
+        ("unique_items", True),
+    ],
+)
+def test__schema_field_had_pydantic_1_field_in_pydantic_2__should_raise_error(attr_name: str, attr_value: Any):
+    if not PYDANTIC_V2:
+        return
+    with pytest.raises(CadwynStructureError, match=f"`{attr_name}` was removed in Pydantic 2. Use `"):
+        schema(SomeSchema).field("foo").had(**{attr_name: attr_value})
 
-    @internal_body_representation_of(A)
-    class B(A):
-        pass
 
-    with pytest.raises(
-        TypeError,
-        match=re.escape("A already has an internal request body representation: tests.test_structure.B"),
-    ):
-
-        @internal_body_representation_of(A)
-        class C(A):
-            pass
+def test__schema_field_had_pydantic_2_field_in_pydantic_1__should_raise_error():
+    if PYDANTIC_V2:
+        return
+    with pytest.raises(CadwynStructureError, match="`pattern` is only available in Pydantic 2. use `regex` instead"):
+        schema(SomeSchema).field("foo").had(pattern=r"rawr")
 
 
 def test__endpoint_instruction_factory_interface__with_wrong_http_methods__should_raise_error():
