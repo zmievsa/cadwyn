@@ -1,6 +1,6 @@
 # Cadwyn
 
-Production-ready modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning in FastAPI
+Production-ready community-driven modern [Stripe-like](https://stripe.com/blog/api-versioning) API versioning in FastAPI
 
 ---
 
