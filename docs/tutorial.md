@@ -57,10 +57,14 @@ Then we create our version bundle which will keep track of our API versions:
 # versions/__init__.py
 from cadwyn.structure import Version, VersionBundle
 from datetime import date
+from contextvars import ContextVar
+
+api_version_var = ContextVar("api_version", default=None)
 
 
 version_bundle = VersionBundle(
     Version(date(2001, 1, 1)),
+    api_version_var=api_version_var
 )
 ```
 
@@ -109,7 +113,7 @@ async def get_user(user_id: uuid.UUID):
     return database_parody[user_id]
 
 
-app = Cadwyn(versions=version_bundle, latest_schemas_package=latest)
+app = Cadwyn(versions=version_bundle, latest_schemas_module=latest)
 app.generate_and_include_versioned_routers(router)
 
 uvicorn.run(app)
