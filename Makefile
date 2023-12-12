@@ -16,7 +16,7 @@ pre-commit:
 
 format:
 	poetry run ruff . --fix; \
-	poetry run black .;
+	poetry run ruff format .;
 
 test:
 	poetry run pytest --cov=. --cov-report=term-missing:skip-covered --cov-branch --cov-append --cov-report=xml tests;

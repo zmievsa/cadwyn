@@ -5,6 +5,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.1.0]
+
+### Changed
+
+* remove black from poetry.lock, pyproject.toml, pre-commit, makefile
+* add ruff in upper files
+
 ## [3.0.0]
 
 ### Added
