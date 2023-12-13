@@ -5,6 +5,14 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.0.2]
+
+### Fixed
+
+* do not json.dumps the body while converting endpoint response to version if body is empty
+
+## [Unreleased]
+
 ## [3.0.0]
 
 ### Added
