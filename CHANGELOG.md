@@ -3,7 +3,11 @@
 All notable changes to this project will be documented in this file.
 Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [2.3.5]
+
+### Fixed
+
+* If a user returned a FastAPI/Starlette Response with an empty body, we still tried to serialize it which caused an invalid response body
 
 ## [2.3.4]
 
