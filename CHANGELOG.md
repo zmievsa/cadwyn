@@ -7,7 +7,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-* do not json.dumps the body while converting endpoint response to version if body is empty
+* If a user returned a FastAPI/Starlette Response with an empty body, we still tried to serialize it which caused an invalid response body
 
 ## [2.3.4]
 
