@@ -159,18 +159,18 @@ However, sometimes it can be considered a breaking change if a large portion of 
 Let's say that we had a nullable `middle_name` field but we decided that it does not make sense anymore and want to remove it now from both requests and responses. We can solve this with [internal body request schemas](./reference.md#internal-request-schemas).
 
 1. Remove `middle_name` field from `data.latest.users.User`
-2. Add a `data.unversioned.users.InternalUserCreateRequest` that we will use later to wrap migrated data instead of the latest request schema.
+2. Add a `data.unversioned.users.UserInternalCreateRequest` that we will use later to wrap migrated data instead of the latest request schema.
 
     ```python
     from pydantic import Field
     from ..latest.users import UserCreateRequest
 
 
-    class InternalUserCreateRequest(UserCreateRequest):
+    class UserInternalCreateRequest(UserCreateRequest):
         middle_name: str | None = Field(default=None)
     ```
 
-3. Replace `UserCreateRequest` in your routes with `Annotated[InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]]`:
+3. Replace `UserCreateRequest` in your routes with `Annotated[UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]]`:
 
     ```python
     from data.latest.users import UserCreateRequest, UserResource
@@ -181,7 +181,7 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
     @router.post("/users", response_model=UserResource)
     async def create_user(
         user: Annotated[
-            InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]
+            UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]
         ]
     ):
         ...
@@ -220,7 +220,7 @@ There are two main cases with required fields:
 1. Remove a required field with a simple fake default (created_at)
 2. Remove a required field with an impossible default (tax id)
 
-The first one is simple to solve: just use the approach [above](#schema-optional-field-removal) but use a `default_factory=datetime.datetime.now` instead of `default=None` within `InternalUserCreateRequest`.
+The first one is simple to solve: just use the approach [above](#schema-optional-field-removal) but use a `default_factory=datetime.datetime.now` instead of `default=None` within `UserInternalCreateRequest`.
 
 Now what about case 2?
 
@@ -247,18 +247,18 @@ Let's say that we want to add a required field `phone` to our users. We can solv
 
 1. Add `phone` field of type `str` to `data.latest.users.UserCreateRequest`
 2. Add `phone` field of type `str | None` with a `default=None` to `data.latest.users.UserResource` because all users created with older versions of our API won't have phone numbers.
-3. Add a `data.unversioned.users.InternalUserCreateRequest` that we will use later to wrap migrated data instead of the latest request schema. It will allow us to pass a `None` to `phone` from older versions while also guaranteeing that it is non-nullable in our latest version.
+3. Add a `data.unversioned.users.UserInternalCreateRequest` that we will use later to wrap migrated data instead of the latest request schema. It will allow us to pass a `None` to `phone` from older versions while also guaranteeing that it is non-nullable in our latest version.
 
     ```python
     from pydantic import Field
     from ..latest.users import UserCreateRequest
 
 
-    class InternalUserCreateRequest(UserCreateRequest):
+    class UserInternalCreateRequest(UserCreateRequest):
         phone: str | None = Field(default=None)
     ```
 
-4. Replace `UserCreateRequest` in your routes with `Annotated[InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]]`:
+4. Replace `UserCreateRequest` in your routes with `Annotated[UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]]`:
 
     ```python
     from data.latest.users import UserCreateRequest, UserResource
@@ -269,7 +269,7 @@ Let's say that we want to add a required field `phone` to our users. We can solv
     @router.post("/users", response_model=UserResource)
     async def create_user(
         user: Annotated[
-            InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]
+            UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]
         ]
     ):
         ...
@@ -314,7 +314,7 @@ Let's say that previously users could specify their date of birth as a datetime 
 
 0. Continue storing `date_of_birth` as a datetime in your database to avoid breaking any old behavior
 1. Change the type of `date_of_birth` field to `datetime.date` in `data.latest.users.User`
-2. Add a `data.unversioned.users.InternalUserCreateRequest` that we will use later to wrap migrated data instead of the latest request schema. This schema will allow us to keep time information from older versions without allowing users in new versions to provide it. This allows us to guarantee that old requests function in the same manner as before while new requests have the narrowed types.
+2. Add a `data.unversioned.users.UserInternalCreateRequest` that we will use later to wrap migrated data instead of the latest request schema. This schema will allow us to keep time information from older versions without allowing users in new versions to provide it. This allows us to guarantee that old requests function in the same manner as before while new requests have the narrowed types.
 
     ```python
     from pydantic import Field
@@ -322,11 +322,11 @@ Let's say that previously users could specify their date of birth as a datetime 
     import datetime
 
 
-    class InternalUserCreateRequest(UserCreateRequest):
+    class UserInternalCreateRequest(UserCreateRequest):
         time_of_birth: datetime.time = Field(default=datetime.time(0, 0, 0))
     ```
 
-3. Replace `UserCreateRequest` in your routes with `Annotated[InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]]`:
+3. Replace `UserCreateRequest` in your routes with `Annotated[UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]]`:
 
     ```python
     from data.latest.users import UserCreateRequest, UserResource
@@ -337,7 +337,7 @@ Let's say that previously users could specify their date of birth as a datetime 
     @router.post("/users", response_model=UserResource)
     async def create_user(
         user: Annotated[
-            InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]
+            UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]
         ]
     ):
         ...
