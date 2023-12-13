@@ -448,13 +448,17 @@ class VersionBundle:
             path,
             method,
         )
-        if isinstance(response_or_response_body, FastapiResponse) and response_info.body:
-            # None is a valid response body, when a user returns just a status code
-            # dumping it will result in a 'null' string, which doesnt correlate with the content-length
-
-            # TODO: Give user the ability to specify their own renderer
-            # TODO: Only do this if there are migrations
-            response_info._response.body = json.dumps(response_info.body).encode()
+        if isinstance(response_or_response_body, FastapiResponse):
+            # a webserver (uvicorn for instance) calculates the body at the endpoint level.
+            # if an endpoint returns no "body", its content-length will be set to 0
+            # json.dums(None) results into "null", and content-length should be 4,
+            # but it was already calculated to 0 which causes
+            # `RuntimeError: Response content longer than Content-Length` or
+            # `Too much data for declared Content-Length`, based on the protocol
+            if response_info.body is not None:
+                # TODO: Give user the ability to specify their own renderer
+                # TODO: Only do this if there are migrations
+                response_info._response.body = json.dumps(response_info.body).encode()
             return response_info._response
         return response_info.body
 
