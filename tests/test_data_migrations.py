@@ -604,6 +604,76 @@ class TestResponseMigrations:
         )
         assert resp.status_code == 301
 
+    def test__fastapi_response_migration__response_only_has_status_code_and_there_is_a_migration(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        latest_module: ModuleType,
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        async def post_endpoint(request: Request):
+            return Response(status_code=200)
+
+        @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
+        def migrator(response: ResponseInfo):
+            response.status_code = 201
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        resp = clients[date(2000, 1, 1)].post(test_path, json={})
+        assert resp.content == b""
+        assert dict(resp.headers) == (
+            {
+                "content-length": "0",
+                "x-api-version": "2000-01-01",
+            }
+        )
+        assert resp.status_code == 201
+        assert dict(resp.cookies) == {}
+
+        resp = clients[date(2001, 1, 1)].post(test_path, json={})
+        assert resp.content == b""
+        assert dict(resp.headers) == (
+            {
+                "content-length": "0",
+                "x-api-version": "2001-01-01",
+            }
+        )
+        assert resp.status_code == 200
+
+    def test__fastapi_response_migration__response_only_has_status_code_and_there_is_no_migration(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        latest_module: ModuleType,
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        async def post_endpoint(request: Request):
+            return Response(status_code=200)
+
+        clients = create_versioned_clients(version_change())
+        resp = clients[date(2000, 1, 1)].post(test_path, json={})
+        assert resp.content == b""
+        assert dict(resp.headers) == (
+            {
+                "content-length": "0",
+                "x-api-version": "2000-01-01",
+            }
+        )
+        assert resp.status_code == 200
+        assert dict(resp.cookies) == {}
+
+        resp = clients[date(2001, 1, 1)].post(test_path, json={})
+        assert resp.content == b""
+        assert dict(resp.headers) == (
+            {
+                "content-length": "0",
+                "x-api-version": "2001-01-01",
+            }
+        )
+        assert resp.status_code == 200
+
 
 class TestHowAndWhenMigrationsApply:
     def test__migrate__with_no_migrations__should_not_raise_error(
