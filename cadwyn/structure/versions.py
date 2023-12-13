@@ -446,7 +446,10 @@ class VersionBundle:
             path,
             method,
         )
-        if isinstance(response_or_response_body, FastapiResponse):
+        if isinstance(response_or_response_body, FastapiResponse) and response_info.body:
+            # None is a valid response body, when a user returns just a status code
+            # dumping it will result in a 'null' string, which doesnt correlate with the content-length
+
             # TODO: Give user the ability to specify their own renderer
             # TODO: Only do this if there are migrations
             response_info._response.body = json.dumps(response_info.body).encode()
