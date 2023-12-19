@@ -605,6 +605,22 @@ class MyChange(VersionChange):
     )
 ```
 
+#### **DEFAULTS WARNING**
+
+If you add `default` or `default_factory` into the old version of a schema -- it will not manifest in code automatically. Instead, you should add both the `default` or `default_factory`, and then also add the default value using a request migration.
+
+This happens because of how Cadwyn works with pydantic and sadly cannot be changed:
+
+Cadwyn:
+
+1. Receives the request of some version `V`
+2. Validates the request using the schemas from `V`
+3. Marshalls the unmarshalled request body into a raw data structure using `BaseModel.dict` (`BaseModel.model_dump` in Pydantic v2) using **exclude_unset=True**
+4. Passes the request through all request migrations from `V` to `latest`
+5. Validates the request using `latest` schemas
+
+The part that causes the aforementioned problem is our usage of `exclude_unset=True`. Sadly, when we use it, all default fields do not get set so `latest` does not receive them. And if `latest` does not have the same defaults (for example, if the field has no default and is required in `latest`), then an error will occur. If we used `exclude_unset=False`, then `exclude_unset` would lose all its purpose for the users of our library so we cannot abandon it. Instead, you should set all extra on step 4 in your request migrations.
+
 ### Rename a schema
 
 If you wish to rename your schema to make sure that its name is different in openapi.json:
