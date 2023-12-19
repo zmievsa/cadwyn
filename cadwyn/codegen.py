@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import Self, assert_never
 
 from cadwyn._compat import PYDANTIC_V2, FieldInfo, ModelField
+from cadwyn._package_utils import _get_absolute_python_path_of_import
 from cadwyn.structure.enums import (
     AlterEnumSubInstruction,
     EnumDidntHaveMembersInstruction,
@@ -742,16 +743,6 @@ def _migrate_ast_node_to_another_version(
         ]
 
     return node
-
-
-def _get_absolute_python_path_of_import(node: ast.ImportFrom, module_python_path: str):
-    python_path = ".".join(module_python_path.split(".")[0 : -node.level])
-    result = []
-    if node.module:
-        result.append(node.module)
-    if python_path:
-        result.append(python_path)
-    return ".".join(result)
 
 
 def _migrate_cls_to_another_version(
