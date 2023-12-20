@@ -44,8 +44,8 @@ from typing_extensions import Self, assert_never
 from verselect.routing import VERSION_HEADER_FORMAT
 
 from cadwyn._compat import model_fields, rebuild_fastapi_body_param
+from cadwyn._package_utils import get_package_path_from_module, get_version_dir_path
 from cadwyn._utils import Sentinel, UnionType, get_another_version_of_module
-from cadwyn.codegen import _get_package_path_from_module, _get_version_dir_path
 from cadwyn.exceptions import CadwynError, ModuleIsNotVersionedError, RouteAlreadyExistsError, RouterGenerationError
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionDate
@@ -389,8 +389,8 @@ class _AnnotationTransformer:
             )
         self.latest_schemas_package = latest_schemas_package
         self.version_dirs = frozenset(
-            [_get_package_path_from_module(latest_schemas_package)]
-            + [_get_version_dir_path(latest_schemas_package, version.value) for version in versions],
+            [get_package_path_from_module(latest_schemas_package)]
+            + [get_version_dir_path(latest_schemas_package, version.value) for version in versions],
         )
         # Okay, the naming is confusing, I know. Essentially template_version_dir is a dir of
         # latest_schemas_package while latest_version_dir is a version equivalent to latest but
@@ -406,7 +406,7 @@ class _AnnotationTransformer:
         )
 
     def migrate_router_to_version(self, router: fastapi.routing.APIRouter, version: Version):
-        version_dir = _get_version_dir_path(self.latest_schemas_package, version.value)
+        version_dir = get_version_dir_path(self.latest_schemas_package, version.value)
         if not version_dir.is_dir():
             raise RouterGenerationError(
                 f"Versioned schema directory '{version_dir}' does not exist.",

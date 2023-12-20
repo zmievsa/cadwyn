@@ -22,7 +22,14 @@ from typing import (
 from pydantic import BaseModel
 from typing_extensions import Self, assert_never
 
-from cadwyn._codegen.asts import get_all_names_defined_on_toplevel_of_module, get_fancy_repr, parse_python_module
+from cadwyn._codegen.asts import (
+    add_keyword_to_call,
+    get_all_names_defined_on_toplevel_of_module,
+    get_ast_keyword_from_argument_name_and_value,
+    get_fancy_repr,
+    parse_python_module,
+    pop_docstring_from_cls_body,
+)
 from cadwyn._compat import (
     PYDANTIC_V2,
     FieldInfo,
@@ -32,7 +39,13 @@ from cadwyn._compat import (
     is_pydantic_constrained_type,
     model_fields,
 )
-from cadwyn._package_utils import get_absolute_python_path_of_import, get_pythonpath
+from cadwyn._package_utils import (
+    get_absolute_python_path_of_import,
+    get_package_path_from_module,
+    get_pythonpath,
+    get_version_dir_name,
+    get_version_dir_path,
+)
 from cadwyn.structure.enums import (
     AlterEnumSubInstruction,
     EnumDidntHaveMembersInstruction,
@@ -255,7 +268,7 @@ class _PydanticModelWrapper:
                     setattr(field.annotation, attr_name, attr_value)
                     ann_ast = field.annotation_ast
                     if ann_ast is not None and isinstance(ann_ast, ast.Call):
-                        _add_keyword_to_call(attr_name, attr_value, ann_ast)
+                        add_keyword_to_call(attr_name, attr_value, ann_ast)
                     else:
                         field.field_ast = None
                         field.annotation_ast = None
@@ -263,7 +276,7 @@ class _PydanticModelWrapper:
                     field.update_attribute(name=attr_name, value=attr_value)
                     field_ast = field.field_ast
                     if isinstance(field_ast, ast.Call):
-                        _add_keyword_to_call(attr_name, attr_value, field_ast)
+                        add_keyword_to_call(attr_name, attr_value, field_ast)
                     else:
                         field.field_ast = None
 
@@ -291,7 +304,7 @@ def _get_fields_from_model(cls: type):
     try:
         source = inspect.getsource(cls)
     except OSError:
-        current_field_defs = {
+        return {
             field_name: PydanticFieldWrapper(
                 annotation=field.annotation,
                 init_model_field=field,
@@ -300,7 +313,7 @@ def _get_fields_from_model(cls: type):
         }
     else:
         cls_ast = cast(ast.ClassDef, ast.parse(source).body[0])
-        current_field_defs = {
+        return {
             node.target.id: PydanticFieldWrapper(
                 annotation=fields[node.target.id].annotation,
                 init_model_field=fields[node.target.id],
@@ -310,8 +323,6 @@ def _get_fields_from_model(cls: type):
             for node in cls_ast.body
             if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id in fields
         }
-
-    return current_field_defs
 
 
 def generate_code_for_versioned_packages(
@@ -363,8 +374,8 @@ def _generate_latest_version_alias_directory(
     template_module: ModuleType,
     ignore_coverage_for_latest_aliases: bool,
 ):
-    version_dir_name = _get_version_dir_name(version)
-    template_dir = _get_package_path_from_module(template_module)
+    version_dir_name = get_version_dir_name(version)
+    template_dir = get_package_path_from_module(template_module)
     version_dir = template_dir.with_name(version_dir_name)
     index_of_latest_schema_dir_in_pythonpath = get_index_of_base_schema_dir_in_pythonpath(
         template_module,
@@ -502,35 +513,14 @@ def _apply_alter_enum_instructions(
             assert_never(alter_enum_instruction)
 
 
-def _get_version_dir_path(template_module: ModuleType, version: date) -> Path:
-    template_dir = _get_package_path_from_module(template_module)
-    return template_dir.with_name(_get_version_dir_name(version))
-
-
-def _get_version_dir_name(version: date):
-    return "v" + version.isoformat().replace("-", "_")
-
-
 # TODO OPTIMIZATION: This is called way too many times. Make it so we call it only once
-def _get_package_path_from_module(template_module: ModuleType) -> Path:
-    file = inspect.getsourcefile(template_module)
-
-    # I am too lazy to reproduce this error correctly
-    if file is None:  # pragma: no cover
-        raise CodeGenerationError(f'Module "{template_module}" has no source file')
-    file = Path(file)
-    if not file.name == "__init__.py":
-        raise CodeGenerationError(f'Module "{template_module}" is not a package')
-    return file.parent
-
-
 def _generate_versioned_directory(
     template_module: ModuleType,
     schemas: dict[str, _PydanticModelWrapper],
     enums: dict[str, _EnumWrapper],
     version: date,
 ):
-    version_dir = _get_version_dir_path(template_module, version)
+    version_dir = get_version_dir_path(template_module, version)
     for (
         _relative_path_to_file,
         original_module,
@@ -556,7 +546,7 @@ def _generate_parallel_directory(
             f"You passed a {template_module=} but it doesn't have a file "
             "so it is impossible to generate its counterpart.",
         )
-    dir = _get_package_path_from_module(template_module)
+    dir = get_package_path_from_module(template_module)
     parallel_dir.mkdir(exist_ok=True)
     # >>> [cadwyn, structure, schemas]
     template_module_python_path_parts = template_module.__name__.split(".")
@@ -712,7 +702,7 @@ def _modify_schema_cls(
         field_definitions = [field for field in cls_node.body if isinstance(field, ast.AnnAssign)]
 
     old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)]
-    docstring = _pop_docstring_from_cls_body(old_body)
+    docstring = pop_docstring_from_cls_body(old_body)
     cls_node.body = docstring + field_definitions + old_body
     if not cls_node.body:
         cls_node.body = [ast.Pass()]
@@ -735,26 +725,12 @@ def _generate_field_ast(field: PydanticFieldWrapper):
         return ast.Call(
             func=ast.Name("Field"),
             args=[],
-            keywords=[_get_ast_keyword_from_field_arg(attr, attr_value) for attr, attr_value in passed_attrs.items()],
+            keywords=[
+                get_ast_keyword_from_argument_name_and_value(attr, attr_value)
+                for attr, attr_value in passed_attrs.items()
+            ],
         )
     return None
-
-
-def _get_ast_keyword_from_field_arg(attr_name: str, attr_value: Any):
-    return ast.keyword(
-        arg=attr_name,
-        value=ast.parse(get_fancy_repr(attr_value), mode="eval").body,
-    )
-
-
-def _add_keyword_to_call(attr_name: str, attr_value: Any, field_ast: ast.Call):
-    new_keyword = _get_ast_keyword_from_field_arg(attr_name, attr_value)
-    for i, keyword in enumerate(field_ast.keywords):
-        if keyword.arg == attr_name:
-            field_ast.keywords[i] = new_keyword
-            break
-    else:
-        field_ast.keywords.append(new_keyword)
 
 
 def _modify_enum_cls(cls_node: ast.ClassDef, enum: _EnumWrapper) -> ast.ClassDef:
@@ -768,22 +744,10 @@ def _modify_enum_cls(cls_node: ast.ClassDef, enum: _EnumWrapper) -> ast.ClassDef
     ]
 
     old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)]
-    docstring = _pop_docstring_from_cls_body(old_body)
+    docstring = pop_docstring_from_cls_body(old_body)
 
     cls_node.body = docstring + new_body + old_body
     return cls_node
-
-
-def _pop_docstring_from_cls_body(old_body: list[ast.stmt]) -> list[ast.stmt]:
-    if (
-        len(old_body) > 0
-        and isinstance(old_body[0], ast.Expr)
-        and isinstance(old_body[0].value, ast.Constant)
-        and isinstance(old_body[0].value.value, str)
-    ):
-        return [old_body.pop(0)]
-    else:
-        return []
 
 
 class _AnnotationASTNodeTransformerWithSchemaRenaming(ast.NodeTransformer):

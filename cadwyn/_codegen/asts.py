@@ -5,9 +5,10 @@ from collections.abc import Callable
 from enum import Enum, auto
 from pathlib import Path
 from types import GenericAlias, LambdaType, ModuleType, NoneType
-from typing import (
+from typing import (  # noqa: UP035
     TYPE_CHECKING,
     Any,
+    List,
     get_args,
     get_origin,
 )
@@ -29,7 +30,7 @@ _RE_CAMEL_TO_SNAKE = re.compile(r"(?<!^)(?=[A-Z])")
 
 
 # A parent type of typing._GenericAlias
-_BaseGenericAlias = type(list[int]).mro()[1]
+_BaseGenericAlias = type(List[int]).mro()[1]  # noqa: UP006
 
 # type(list[int]) and type(List[int]) are different which is why we have to do this.
 # Please note that this problem is much wider than just lists which is why we use typing._BaseGenericAlias
@@ -49,7 +50,7 @@ def get_fancy_repr(value: Any):
         return transform_collection(value)
     if isinstance(value, dict):
         return transform_dict(value)
-    if isinstance(value, _BaseGenericAlias | GenericAlias):
+    if isinstance(value, GenericAliasUnion):
         return transform_generic_alias(value)
     if value is None or value is NoneType:
         return transform_none(value)
@@ -95,7 +96,7 @@ def transform_dict(value: dict) -> Any:
     )
 
 
-def transform_generic_alias(value: _BaseGenericAlias | GenericAlias) -> Any:
+def transform_generic_alias(value: GenericAliasUnion) -> Any:
     return f"{get_fancy_repr(get_origin(value))}[{', '.join(get_fancy_repr(a) for a in get_args(value))}]"
 
 
@@ -215,3 +216,32 @@ def get_all_names_defined_on_toplevel_of_module(body: ast.Module, module_python_
             for name in node.names:
                 defined_names[name.name] = name.name
     return defined_names
+
+
+def add_keyword_to_call(attr_name: str, attr_value: Any, call: ast.Call):
+    new_keyword = get_ast_keyword_from_argument_name_and_value(attr_name, attr_value)
+    for i, keyword in enumerate(call.keywords):
+        if keyword.arg == attr_name:
+            call.keywords[i] = new_keyword
+            break
+    else:
+        call.keywords.append(new_keyword)
+
+
+def get_ast_keyword_from_argument_name_and_value(name: str, value: Any):
+    return ast.keyword(
+        arg=name,
+        value=ast.parse(get_fancy_repr(value), mode="eval").body,
+    )
+
+
+def pop_docstring_from_cls_body(cls_body: list[ast.stmt]) -> list[ast.stmt]:
+    if (
+        len(cls_body) > 0
+        and isinstance(cls_body[0], ast.Expr)
+        and isinstance(cls_body[0].value, ast.Constant)
+        and isinstance(cls_body[0].value.value, str)
+    ):
+        return [cls_body.pop(0)]
+    else:
+        return []

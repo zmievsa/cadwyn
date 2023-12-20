@@ -18,8 +18,8 @@ from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
 
 from cadwyn import VersionBundle, VersionedAPIRouter, generate_code_for_versioned_packages
+from cadwyn._package_utils import get_version_dir_name
 from cadwyn._utils import same_definition_as_in
-from cadwyn.codegen import _get_version_dir_name
 from cadwyn.main import Cadwyn
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
@@ -94,7 +94,7 @@ class CreateVersionedSchemas:
             reversed(
                 [
                     importlib.import_module(
-                        self.temp_data_package_path + f".{_get_version_dir_name(version.value)}",
+                        self.temp_data_package_path + f".{get_version_dir_name(version.value)}",
                     )
                     for version in created_versions
                 ],
@@ -217,7 +217,7 @@ class CreateLocalVersionedSchemas:
             reversed(
                 [
                     importlib.import_module(
-                        self.latest_package_path.removesuffix("latest") + f"{_get_version_dir_name(version.value)}",
+                        self.latest_package_path.removesuffix("latest") + f"{get_version_dir_name(version.value)}",
                     )
                     for version in created_versions
                 ],
