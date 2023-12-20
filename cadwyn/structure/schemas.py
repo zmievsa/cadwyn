@@ -75,6 +75,7 @@ class OldSchemaFieldExistedWith:
             )
 
 
+# TODO: Add an ability to add extras (use only pydanticV2 syntax everywhere)
 @dataclass(slots=True)
 class AlterFieldInstructionFactory:
     schema: type[BaseModel]
