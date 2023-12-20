@@ -17,7 +17,7 @@ from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
 
 from cadwyn import VersionBundle, VersionedAPIRouter
-from cadwyn._compat import PYDANTIC_V2
+from cadwyn._compat import PYDANTIC_V2, model_fields
 from cadwyn.exceptions import CadwynError, RouterGenerationError
 from cadwyn.routing import generate_versioned_routers
 from cadwyn.structure import Version, endpoint, schema
@@ -630,8 +630,13 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
     }
 
 
-def get_nested_field_type(annotation: Any) -> type[BaseModel]:
-    return get_args(get_args(annotation)[1])[0].__fields__["foo"].annotation.__fields__["foo"].annotation
+def get_nested_field_type(annotation: Any) -> type[BaseModel] | None:
+    get_args(annotation)[1]
+    first_generic_arg_of_second_generic_arg = get_args(get_args(annotation)[1])[0]
+    its_fields = model_fields(first_generic_arg_of_second_generic_arg)
+    annotation_of_its_foo_field = its_fields["foo"].annotation
+    assert annotation_of_its_foo_field is not None
+    return model_fields(annotation_of_its_foo_field)["foo"].annotation
 
 
 def test__router_generation__re_creating_a_non_endpoint__error(
@@ -1008,7 +1013,7 @@ class MySchema(BaseModel):
     other_module = importlib.import_module(temp_data_package_path + ".other_module")
 
     @router.post("/test")
-    async def test_with_dep1(dep: other_module.MySchema):
+    async def test_with_dep1(dep: other_module.MySchema):  # pyright: ignore[reportGeneralTypeIssues]
         return dep
 
     app = create_versioned_app(version_change())
@@ -1079,11 +1084,18 @@ def test__router_generation__updating_callbacks(
     app = create_versioned_app(
         version_change(schema(latest.SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
-    generated_callback: APIRoute
 
-    generated_callback = app.router.versioned_routes[date(2000, 1, 1)][0].callbacks[1]
+    route = app.router.versioned_routes[date(2000, 1, 1)][0]
+    assert isinstance(route, APIRoute)
+    assert route.callbacks is not None
+    generated_callback = route.callbacks[1]
+    assert isinstance(generated_callback, APIRoute)
     assert generated_callback.dependant.body_params[0].type_.__module__.endswith(".v2000_01_01")
-    generated_callback = app.router.versioned_routes[date(2001, 1, 1)][0].callbacks[1]
+    route = app.router.versioned_routes[date(2001, 1, 1)][0]
+    assert isinstance(route, APIRoute)
+    assert route.callbacks is not None
+    generated_callback = route.callbacks[1]
+    assert isinstance(generated_callback, APIRoute)
     assert generated_callback.dependant.body_params[0].type_.__module__.endswith(".latest")
 
 

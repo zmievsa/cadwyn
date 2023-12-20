@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from starlette._utils import is_async_callable
 from typing_extensions import assert_never
 
-from cadwyn._compat import PYDANTIC_V2, Undefined
+from cadwyn._compat import PYDANTIC_V2, Undefined, model_dump
 from cadwyn.exceptions import CadwynError, CadwynStructureError
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
@@ -487,11 +487,11 @@ class VersionBundle:
             and body_field_alias is not None
             and body_field_alias in kwargs
         ):
-            raw_body = kwargs[body_field_alias]
+            raw_body: BaseModel | None = kwargs[body_field_alias]
             if raw_body is None:
                 body = None
             else:
-                body = raw_body.dict(by_alias=True, exclude_unset=True)
+                body = model_dump(raw_body, by_alias=True, exclude_unset=True)
                 if not PYDANTIC_V2 and kwargs[body_field_alias].__custom_root_type__:
                     body = body["__root__"]
         else:

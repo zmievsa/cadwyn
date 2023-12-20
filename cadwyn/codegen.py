@@ -6,7 +6,7 @@ import os
 import shutil
 from collections.abc import Collection, Generator, Sequence
 from copy import deepcopy
-from dataclasses import InitVar, dataclass
+from dataclasses import dataclass
 from datetime import date
 from enum import Enum
 from functools import cache
@@ -19,20 +19,20 @@ from typing import (
     final,
 )
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing_extensions import Self, assert_never
 
-from cadwyn._codegen.asts import _get_all_names_defined_on_toplevel_of_module
-from cadwyn._codegen.reprs import PlainRepr, get_fancy_repr
+from cadwyn._codegen.asts import get_all_names_defined_on_toplevel_of_module, get_fancy_repr, parse_python_module
 from cadwyn._compat import (
     PYDANTIC_V2,
     FieldInfo,
-    ModelField,
+    PydanticFieldWrapper,
     dict_of_empty_field_info,
     get_attrs_that_are_not_from_field_and_that_are_from_field,
     is_pydantic_constrained_type,
+    model_fields,
 )
-from cadwyn._package_utils import _get_absolute_python_path_of_import
+from cadwyn._package_utils import get_absolute_python_path_of_import, get_pythonpath
 from cadwyn.structure.enums import (
     AlterEnumSubInstruction,
     EnumDidntHaveMembersInstruction,
@@ -81,18 +81,6 @@ if PYDANTIC_V2:
             ("StrictStr", "from pydantic import StrictStr"),
         ],
     )
-    _all_field_arg_names = sorted(
-        [
-            name
-            for name, param in inspect.signature(Field).parameters.items()
-            if param.kind in {inspect._ParameterKind.KEYWORD_ONLY, inspect._ParameterKind.POSITIONAL_OR_KEYWORD}
-        ],
-    )
-
-    EXTRA_FIELD_NAME = "json_schema_extra"
-else:
-    _all_field_arg_names = []
-    EXTRA_FIELD_NAME = "extra"
 
 
 @final
@@ -140,83 +128,23 @@ class _ImportedModule:
 
 
 @dataclass(slots=True)
-class _PydanticFieldWrapper:
-    parent_model: type[BaseModel]  # TODO: Delete me. I am useless
-
-    # TODO: What's the difference between these two? I keep forgetting
-    annotation: Any
-
-    init_model_field: InitVar[ModelField]
-    field_info: FieldInfo = dataclasses.field(init=False)
-
-    annotation_ast: ast.expr | None = None
-    field_ast: ast.expr | None = None
-    import_from: str | None = None
-    import_as: str | None = None
-
-    def __post_init__(self, init_model_field: ModelField):
-        if PYDANTIC_V2:
-            self.field_info = init_model_field
-        else:
-            self.field_info = init_model_field.field_info
-
-    def render_annotation(self):
-        if self.annotation_ast:
-            return PlainRepr(ast.unparse(self.annotation_ast))
-        elif self.import_as is not None:
-            return self.import_as
-        else:
-            return self.annotation
-
-    def update_attribute(self, *, name: str, value: Any):
-        if PYDANTIC_V2:
-            if name in FieldInfo.metadata_lookup:
-                self.field_info.metadata.extend(FieldInfo._collect_metadata({name: value}))
-            self.field_info._attributes_set[name] = value
-        else:
-            setattr(self.field_info, name, value)
-
-    # FIXME: If anyone tries to edit it, they will fail silently. FIX IT BY DESIGN
-    @property
-    def passed_field_attributes(self):
-        if PYDANTIC_V2:
-            attributes = {
-                attr_name: self.field_info._attributes_set[attr_name]
-                for attr_name in _all_field_arg_names
-                if attr_name in self.field_info._attributes_set
-            }
-            # PydanticV2 always adds frozen to _attributes_set but we don't want it if it wasn't explicitly set
-            if attributes.get("frozen", ...) is None:
-                attributes.pop("frozen")
-            return attributes
-
-        else:
-            attributes = {
-                attr_name: attr_val
-                for attr_name, default_attr_val in dict_of_empty_field_info.items()
-                if attr_name != EXTRA_FIELD_NAME
-                and (attr_val := getattr(self.field_info, attr_name)) != default_attr_val
-            }
-            extras = getattr(self.field_info, EXTRA_FIELD_NAME) or {}
-            return attributes | extras
-
-    @property
-    def metadata(self):
-        return self.field_info.metadata
+class _EnumWrapper:
+    cls: type[Enum]
+    members: dict[_FieldName, Any]
 
 
 @dataclass(slots=True)
-class _ModelWrapper:
-    schema: type[BaseModel]
+class _PydanticModelWrapper:
+    cls: type[BaseModel]
     name: str
-    fields: dict[_FieldName, _PydanticFieldWrapper]
+    fields: dict[_FieldName, PydanticFieldWrapper]
     _parents: list[Self] | None = dataclasses.field(init=False, default=None)
 
-    def _get_parents(self, schemas: "dict[str, _ModelWrapper]"):
+    def _get_parents(self, schemas: "dict[str, _PydanticModelWrapper]"):
         if self._parents is not None:
             return self._parents
         parents = []
-        for base in self.schema.mro()[1:]:
+        for base in self.cls.mro()[1:]:
             schema_path = f"{base.__module__}.{base.__name__}"
 
             if schema_path in schemas:
@@ -226,7 +154,7 @@ class _ModelWrapper:
         self._parents = parents
         return parents
 
-    def _get_defined_fields(self, schemas: "dict[str, _ModelWrapper]") -> dict[str, _PydanticFieldWrapper]:
+    def _get_defined_fields(self, schemas: "dict[str, _PydanticModelWrapper]") -> dict[str, PydanticFieldWrapper]:
         fields = {}
 
         for parent in reversed(self._get_parents(schemas)):
@@ -245,7 +173,7 @@ class _ModelWrapper:
 
     def add_field(
         self,
-        schemas: "dict[str, _ModelWrapper]",
+        schemas: "dict[str, _PydanticModelWrapper]",
         alter_schema_instruction: OldSchemaFieldExistedWith,
         version_change_name: str,
     ):
@@ -256,8 +184,7 @@ class _ModelWrapper:
                 f'in "{version_change_name}" but there is already a field with that name.',
             )
 
-        self.fields[alter_schema_instruction.field_name] = _PydanticFieldWrapper(
-            alter_schema_instruction.schema,
+        self.fields[alter_schema_instruction.field_name] = PydanticFieldWrapper(
             annotation_ast=None,  # TODO: Get this from migration
             annotation=alter_schema_instruction.type,
             init_model_field=alter_schema_instruction.field,
@@ -268,7 +195,7 @@ class _ModelWrapper:
 
     def change_field(
         self,
-        schemas: "dict[str, _ModelWrapper]",
+        schemas: "dict[str, _PydanticModelWrapper]",
         alter_schema_instruction: OldSchemaFieldHad,
         version_change_name: str,
     ):
@@ -314,11 +241,9 @@ class _ModelWrapper:
             field_info = FieldInfo()
             field.field_info = field_info
         for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
-            passed_field_attributes = field.passed_field_attributes
-
             attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
             if attr_value is not Sentinel:
-                if passed_field_attributes.get(attr_name, Sentinel) == attr_value:
+                if field.passed_field_attributes.get(attr_name, Sentinel) == attr_value:
                     raise InvalidGenerationInstructionError(
                         f'You tried to change the attribute "{attr_name}" of field '
                         f'"{alter_schema_instruction.field_name}" '
@@ -354,38 +279,36 @@ class _ModelWrapper:
 @dataclass(slots=True)
 class _SchemaBundle:
     version: date
-    schemas: dict[str, _ModelWrapper]
+    schemas: dict[str, _PydanticModelWrapper]
 
 
 @cache
 def _get_fields_from_model(cls: type):
     if not isinstance(cls, type) or not issubclass(cls, BaseModel):
         raise CodeGenerationError(f"Model {cls} is not a subclass of BaseModel")
+
+    fields = model_fields(cls)
     try:
         source = inspect.getsource(cls)
     except OSError:
         current_field_defs = {
-            field_name: _PydanticFieldWrapper(
-                cls,
+            field_name: PydanticFieldWrapper(
                 annotation=field.annotation,
                 init_model_field=field,
             )
-            for field_name, field in cls.__fields__.items()
+            for field_name, field in fields.items()
         }
     else:
         cls_ast = cast(ast.ClassDef, ast.parse(source).body[0])
         current_field_defs = {
-            node.target.id: _PydanticFieldWrapper(
-                cls,
-                annotation=cls.__fields__[node.target.id].annotation,
-                init_model_field=cls.__fields__[node.target.id],
+            node.target.id: PydanticFieldWrapper(
+                annotation=fields[node.target.id].annotation,
+                init_model_field=fields[node.target.id],
                 annotation_ast=node.annotation,
                 field_ast=node.value,
             )
             for node in cls_ast.body
-            if isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id in cls.__fields__
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id in fields
         }
 
     return current_field_defs
@@ -405,10 +328,13 @@ def generate_code_for_versioned_packages(
         version of the latest module.
     """
     schemas = {
-        k: _ModelWrapper(v, v.__name__, _get_fields_from_model(v))
+        k: _PydanticModelWrapper(v, v.__name__, _get_fields_from_model(v))
         for k, v in deepcopy(versions.versioned_schemas).items()
     }
-    enums = {k: (v, {member.name: member.value for member in v}) for k, v in deepcopy(versions.versioned_enums).items()}
+    enums = {
+        k: _EnumWrapper(v, {member.name: member.value for member in v})
+        for k, v in deepcopy(versions.versioned_enums).items()
+    }
     schemas_per_version: list[_SchemaBundle] = []
     version_list = list(versions)
 
@@ -503,9 +429,9 @@ def _apply_migrations(
     version: Version,
     schemas: dict[
         str,
-        _ModelWrapper,
+        _PydanticModelWrapper,
     ],
-    enums: dict[str, tuple[type[Enum], dict[str, Any]]],
+    enums: dict[str, _EnumWrapper],
 ):
     for version_change in version.version_changes:
         _apply_alter_schema_instructions(
@@ -521,7 +447,7 @@ def _apply_migrations(
 
 
 def _apply_alter_schema_instructions(
-    modified_schemas: dict[str, _ModelWrapper],
+    modified_schemas: dict[str, _PydanticModelWrapper],
     alter_schema_instructions: Sequence[AlterSchemaSubInstruction | AlterSchemaInstruction],
     version_change_name: str,
 ):
@@ -529,7 +455,7 @@ def _apply_alter_schema_instructions(
     # during codegen -- raise an error or maybe add an argument that controlls that. Or maybe this is overengineering..
     for alter_schema_instruction in alter_schema_instructions:
         schema = alter_schema_instruction.schema
-        schema_path = _get_cls_pythonpath(schema)
+        schema_path = get_pythonpath(schema)
         mutable_schema_info = modified_schemas[schema_path]
         if isinstance(alter_schema_instruction, OldSchemaFieldDidntExist):
             mutable_schema_info.delete_field(alter_schema_instruction.field_name, version_change_name)
@@ -548,30 +474,30 @@ def _apply_alter_schema_instructions(
 
 
 def _apply_alter_enum_instructions(
-    enums: dict[str, tuple[type[Enum], dict[str, Any]]],
+    enums: dict[str, _EnumWrapper],
     alter_enum_instructions: Sequence[AlterEnumSubInstruction],
     version_change_name: str,
 ):
     for alter_enum_instruction in alter_enum_instructions:
         enum = alter_enum_instruction.enum
-        enum_path = _get_cls_pythonpath(enum)
-        enum_member_to_value = enums[enum_path]
+        enum_path = get_pythonpath(enum)
+        enum = enums[enum_path]
         if isinstance(alter_enum_instruction, EnumDidntHaveMembersInstruction):
             for member in alter_enum_instruction.members:
-                if member not in enum_member_to_value[1]:
+                if member not in enum.members:
                     raise InvalidGenerationInstructionError(
-                        f'You tried to delete a member "{member}" from "{enum.__name__}" '
+                        f'You tried to delete a member "{member}" from "{enum.cls.__name__}" '
                         f'in "{version_change_name}" but it doesn\'t have such a member.',
                     )
-                enum_member_to_value[1].pop(member)
+                enum.members.pop(member)
         elif isinstance(alter_enum_instruction, EnumHadMembersInstruction):
             for member, member_value in alter_enum_instruction.members.items():
-                if member in enum_member_to_value[1] and enum_member_to_value[1][member] == member_value:
+                if member in enum.members and enum.members[member] == member_value:
                     raise InvalidGenerationInstructionError(
-                        f'You tried to add a member "{member}" to "{enum.__name__}" '
+                        f'You tried to add a member "{member}" to "{enum.cls.__name__}" '
                         f'in "{version_change_name}" but there is already a member with that name and value.',
                     )
-                enum_member_to_value[1][member] = member_value
+                enum.members[member] = member_value
         else:
             assert_never(alter_enum_instruction)
 
@@ -600,8 +526,8 @@ def _get_package_path_from_module(template_module: ModuleType) -> Path:
 
 def _generate_versioned_directory(
     template_module: ModuleType,
-    schemas: dict[str, _ModelWrapper],
-    enums: dict[str, tuple[type[Enum], dict[str, Any]]],
+    schemas: dict[str, _PydanticModelWrapper],
+    enums: dict[str, _EnumWrapper],
     version: date,
 ):
     version_dir = _get_version_dir_path(template_module, version)
@@ -661,34 +587,17 @@ def _generate_parallel_directory(
                 shutil.copyfile(original_file, parallel_file)
 
 
-def _parse_python_module(module: ModuleType) -> tuple[ast.Module, str]:
-    try:
-        source = inspect.getsource(module)
-        return ast.parse(source), source
-    except OSError as e:
-        if module.__file__ is None:  # pragma: no cover
-            raise CodeGenerationError("Failed to get file path to the module") from e
-
-        path = Path(module.__file__)
-        if path.is_file() and path.read_text() == "":
-            return ast.Module([]), ""
-        # Not sure how to get here so this is just a precaution
-        raise CodeGenerationError(
-            "Failed to get source code for module",
-        ) from e  # pragma: no cover
-
-
 def _migrate_module_to_another_version(
     module: ModuleType,
-    modified_schemas: dict[str, _ModelWrapper],
-    modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
+    modified_schemas: dict[str, _PydanticModelWrapper],
+    modified_enums: dict[str, _EnumWrapper],
 ) -> str:
-    parsed_file, original_source = _parse_python_module(module)
+    parsed_file = parse_python_module(module)
     if module.__name__.endswith(".__init__"):
         module_name = module.__name__.removesuffix(".__init__")
     else:
         module_name = module.__name__
-    all_names_defined_on_toplevel_of_file = _get_all_names_defined_on_toplevel_of_module(parsed_file, module_name)
+    all_names_defined_on_toplevel_of_file = get_all_names_defined_on_toplevel_of_module(parsed_file, module_name)
     # TODO: Does this play well with renaming?
     extra_field_imports = [
         ast.ImportFrom(
@@ -731,8 +640,8 @@ def _migrate_ast_node_to_another_version(
     all_names_in_module: dict[str, str],
     node: ast.stmt,
     module_python_path: str,
-    modified_schemas: dict[str, _ModelWrapper],
-    modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
+    modified_schemas: dict[str, _PydanticModelWrapper],
+    modified_enums: dict[str, _EnumWrapper],
 ):
     if isinstance(node, ast.ClassDef):
         return _migrate_cls_to_another_version(
@@ -743,7 +652,7 @@ def _migrate_ast_node_to_another_version(
             modified_enums,
         )
     elif isinstance(node, ast.ImportFrom):
-        python_path = _get_absolute_python_path_of_import(node, module_python_path)
+        python_path = get_absolute_python_path_of_import(node, module_python_path)
         node.names = [
             name
             if (name_path := f"{python_path}.{name.name}") not in modified_schemas
@@ -758,38 +667,33 @@ def _migrate_cls_to_another_version(
     all_names_in_module: dict[str, str],
     cls_node: ast.ClassDef,
     module_python_path: str,
-    modified_schemas: dict[str, _ModelWrapper],
-    modified_enums: dict[str, tuple[type[Enum], dict[str, Any]]],
+    modified_schemas: dict[str, _PydanticModelWrapper],
+    modified_enums: dict[str, _EnumWrapper],
 ) -> ast.ClassDef:
     cls_python_path = f"{module_python_path}.{cls_node.name}"
-    cls_node = _modify_schema_cls(
-        all_names_in_module,
-        cls_node,
-        modified_schemas,
-        module_python_path,
-        cls_python_path,
-    )
-    if cls_python_path in modified_enums:
-        cls_node = _modify_enum_cls(cls_node, modified_enums[cls_python_path][1])
+
+    if cls_python_path in modified_schemas:
+        cls_node = _modify_schema_cls(cls_node, modified_schemas, cls_python_path)
+    elif cls_python_path in modified_enums:
+        cls_node = _modify_enum_cls(cls_node, modified_enums[cls_python_path])
 
     if not cls_node.body:
         cls_node.body = [ast.Pass()]
-    return cls_node
 
-
-# TODO: Make sure that cadwyn doesn't remove OLD property definitions
-def _modify_schema_cls(
-    all_names_in_module: dict[str, str],
-    cls_node: ast.ClassDef,
-    modified_schemas: dict[str, _ModelWrapper],
-    module_python_path: str,
-    cls_python_path: str,
-) -> ast.ClassDef:
     ast_renamer = _AnnotationASTNodeTransformerWithSchemaRenaming(
         modified_schemas,
         all_names_in_module,
         module_python_path,
     )
+    return ast_renamer.visit(ast.parse(ast.unparse(cls_node)).body[0])
+
+
+# TODO: Make sure that cadwyn doesn't remove OLD property definitions
+def _modify_schema_cls(
+    cls_node: ast.ClassDef,
+    modified_schemas: dict[str, _PydanticModelWrapper],
+    cls_python_path: str,
+) -> ast.ClassDef:
     if cls_python_path in modified_schemas:
         model_info = modified_schemas[cls_python_path]
         # This is for possible schema renaming
@@ -799,23 +703,23 @@ def _modify_schema_cls(
             ast.AnnAssign(
                 target=ast.Name(name, ctx=ast.Store()),
                 annotation=ast.Name(get_fancy_repr(field.render_annotation())),
-                value=_generate_field_ast(name, field),
+                value=_generate_field_ast(field),
                 simple=1,
             )
             for name, field in model_info.fields.items()
         ]
     else:
         field_definitions = [field for field in cls_node.body if isinstance(field, ast.AnnAssign)]
-    old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Pass | ast.Ellipsis)]
+
+    old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)]
     docstring = _pop_docstring_from_cls_body(old_body)
     cls_node.body = docstring + field_definitions + old_body
     if not cls_node.body:
         cls_node.body = [ast.Pass()]
+    return cls_node
 
-    return ast_renamer.visit(ast.parse(ast.unparse(cls_node)).body[0])
 
-
-def _generate_field_ast(field_name: str, field: _PydanticFieldWrapper):
+def _generate_field_ast(field: PydanticFieldWrapper):
     if field.field_ast is not None:
         return field.field_ast
     passed_attrs = field.passed_field_attributes
@@ -853,17 +757,17 @@ def _add_keyword_to_call(attr_name: str, attr_value: Any, field_ast: ast.Call):
         field_ast.keywords.append(new_keyword)
 
 
-def _modify_enum_cls(cls_node: ast.ClassDef, enum_info: dict[str, Any]) -> ast.ClassDef:
+def _modify_enum_cls(cls_node: ast.ClassDef, enum: _EnumWrapper) -> ast.ClassDef:
     new_body = [
         ast.Assign(
             targets=[ast.Name(member, ctx=ast.Store())],
             value=ast.Name(get_fancy_repr(member_value)),
             lineno=0,
         )
-        for member, member_value in enum_info.items()
+        for member, member_value in enum.members.items()
     ]
 
-    old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Ellipsis)]
+    old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)]
     docstring = _pop_docstring_from_cls_body(old_body)
 
     cls_node.body = docstring + new_body + old_body
@@ -885,7 +789,7 @@ def _pop_docstring_from_cls_body(old_body: list[ast.stmt]) -> list[ast.stmt]:
 class _AnnotationASTNodeTransformerWithSchemaRenaming(ast.NodeTransformer):
     def __init__(
         self,
-        modified_schemas: dict[str, _ModelWrapper],
+        modified_schemas: dict[str, _PydanticModelWrapper],
         all_names_in_module: dict[str, str],
         module_python_path: str,
     ):
@@ -902,7 +806,3 @@ class _AnnotationASTNodeTransformerWithSchemaRenaming(ast.NodeTransformer):
         if model_info is not None:
             return ast.Name(model_info.name)
         return node
-
-
-def _get_cls_pythonpath(cls: type):
-    return f"{cls.__module__}.{cls.__name__}"

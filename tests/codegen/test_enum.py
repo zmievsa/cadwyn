@@ -1,3 +1,4 @@
+import inspect
 import re
 from enum import auto
 from typing import Any
@@ -41,6 +42,40 @@ def test__enum_had__original_enum_is_empty(
     v1 = create_local_simple_versioned_schemas(enum(latest_with_empty_classes.EmptyEnum).had(b=auto()))
 
     assert serialize(v1.EmptyEnum) == {"b": 1}
+
+
+def test__enum_had__original_enum_has_methods__all_methods_are_preserved(
+    latest_module_for: LatestModuleFor,
+    create_local_simple_versioned_schemas: CreateLocalSimpleVersionedSchemas,
+):
+    latest = latest_module_for(
+        """
+    from enum import Enum
+
+    class EnumWithOneMemberAndMethods(Enum):
+        foo = 83
+
+        def _hello(self):
+            pass
+
+        def world(self, num: str) -> int:
+            return int(num)
+
+    """,
+    )
+    v1 = create_local_simple_versioned_schemas(
+        enum(latest.EnumWithOneMemberAndMethods).had(b=7),
+    )
+
+    assert inspect.getsource(v1.EnumWithOneMemberAndMethods) == (
+        "class EnumWithOneMemberAndMethods(Enum):\n"
+        "    foo = 83\n"
+        "    b = 7\n\n"
+        "    def _hello(self):\n"
+        "        pass\n\n"
+        "    def world(self, num: str) -> int:\n"
+        "        return int(num)\n"
+    )
 
 
 def test__enum_had__original_enum_is_nonempty(

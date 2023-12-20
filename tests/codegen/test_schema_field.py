@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel, Field, ValidationError, constr
 from pydantic.fields import FieldInfo
 
-from cadwyn._compat import PYDANTIC_V2
+from cadwyn._compat import PYDANTIC_V2, model_fields
 from cadwyn.exceptions import (
     InvalidGenerationInstructionError,
 )
@@ -120,7 +120,14 @@ def test__field_existed_as__extras_are_added(
     latest_with_empty_classes: _FakeModuleWithEmptyClasses,
 ):
     v1 = create_local_simple_versioned_schemas(
-        schema(latest_with_empty_classes.EmptySchema).field("foo").existed_as(type=int, info=Field(deflolbtt="hewwo")),
+        schema(latest_with_empty_classes.EmptySchema)
+        .field("foo")
+        .existed_as(
+            type=int,
+            info=Field(
+                deflolbtt="hewwo",  # pyright: ignore[reportGeneralTypeIssues]
+            ),
+        ),
     )
     if PYDANTIC_V2:
         assert inspect.getsource(v1.EmptySchema) == (
@@ -267,9 +274,9 @@ def test__schema_field_didnt_exist__with_inheritance(
         version_change(schema(latest.ChildSchema).field("bar").existed_as(type=int)),
     )
 
-    assert "foo" not in v1.ChildSchema.__fields__
-    assert "foo" in v2.ChildSchema.__fields__
-    assert "foo" in v3.ChildSchema.__fields__
+    assert "foo" not in model_fields(v1.ChildSchema)
+    assert "foo" in model_fields(v2.ChildSchema)
+    assert "foo" in model_fields(v3.ChildSchema)
 
 
 def test__schema_field_didnt_exist__field_is_missing__should_raise_error(
@@ -303,9 +310,9 @@ def assert_field_had_changes_apply(
     v1 = create_local_simple_versioned_schemas(
         schema(getattr(latest, model.__name__)).field("foo").had(**{attr: attr_value}),
     )
-    field_info = getattr(v1, model.__name__).__fields__["foo"]
+    field_info = model_fields(getattr(v1, model.__name__))["foo"]
     if not PYDANTIC_V2:
-        field_info = field_info.field_info
+        field_info = field_info.field_info  # pyright: ignore[reportGeneralTypeIssues]
     if PYDANTIC_V2 and attr in FieldInfo.metadata_lookup:
         # We do this because _PydanticGeneralMetadata does not have a proper `__eq__`
         # TODO: Check type here too.

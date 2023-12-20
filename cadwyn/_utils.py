@@ -13,6 +13,13 @@ UnionType = type(int | str) | type(Union[int, str])
 _T = TypeVar("_T", bound=Callable)
 
 
+class PlainRepr(str):
+    """String class where repr doesn't include quotes"""
+
+    def __repr__(self) -> str:
+        return str(self)
+
+
 def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
     def decorator(f: Callable) -> _T:
         return f  # pyright: ignore[reportGeneralTypeIssues]
