@@ -10,9 +10,10 @@ import pytest
 from dirty_equals import IsPartialDict, IsStr
 from fastapi import APIRouter, Body, Cookie, File, Header, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 
 from cadwyn import VersionedAPIRouter
-from cadwyn._compat import PYDANTIC_V2
+from cadwyn._compat import PYDANTIC_V2, model_dump
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.routing import InternalRepresentationOf
 from cadwyn.structure import (
@@ -361,11 +362,13 @@ class TestRequestMigrations:
                 str,
             ],
         ):
-            return {"type": type(payload).__name__, **payload.dict()}
+            return {"type": type(payload).__name__, **model_dump(payload)}
 
         clients = create_versioned_clients(version_change())
 
-        payload_arg = clients[date(2000, 1, 1)].app.routes[-1].endpoint.__annotations__["payload"]
+        last_route = clients[date(2000, 1, 1)].app.routes[-1]
+        assert isinstance(last_route, APIRoute)
+        payload_arg = last_route.endpoint.__annotations__["payload"]
         assert get_args(payload_arg)[1] == str
 
         assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
@@ -394,7 +397,7 @@ class TestRequestMigrations:
                 InternalRepresentationOf[latest_module.SchemaWithInternalRepresentation],
             ],
         ):
-            return {"type": type(payload).__name__, **payload.dict()}
+            return {"type": type(payload).__name__, **model_dump(payload)}
 
         @convert_request_to_next_version_for(latest_module.SchemaWithInternalRepresentation)
         def migrator(request: RequestInfo):
@@ -428,7 +431,7 @@ class TestRequestMigrations:
                 InternalRepresentationOf[latest_module.SchemaWithInternalRepresentation],
             ],
         ):
-            return {"type": type(payload).__name__, **payload.dict()}
+            return {"type": type(payload).__name__, **model_dump(payload)}
 
         @convert_request_to_next_version_for(latest_module.SchemaWithInternalRepresentation)
         def migrator(request: RequestInfo):

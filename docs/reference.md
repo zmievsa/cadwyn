@@ -162,7 +162,7 @@ Now let's discuss what each of these parts does and why:
 
 #### VersionChange.\_\_name\_\_
 
-The name of the version change, `RemoveTaxIDEndpoints`, describes what breaking change has happened. It must be a verb and it is the best resource for your new developers to quickly understand what happened between the versions. Do not be shy to use really long names -- it is better to have a long name than to create a misunderstanding. Avoid generic names such as `RefactorUserFields`. Better have an ugly name such as `RenameCreationDatetimeAndUpdateDatetimeInfoCreatedAtAndUpdatedAt` then to have a generic name such as `RefactorFields`. Because after just a few of such version changes, your versioning structure can become completely unreadable:
+The name of the version change, `RemoveTaxIDEndpoints`, describes what breaking change has happened. It must be a verb and it is the best resource for your new developers to quickly understand what happened between the versions. Do not be shy to use really long names -- it is better to have a long name than to create a misunderstanding. Avoid generic names such as `RefactorUserFields`. Better have an ugly name such as `RenameCreationDatetimeAndUpdateDatetimeToCreatedAtAndUpdatedAt` then to have a generic name such as `RefactorFields`. Because after just a few of such version changes, your versioning structure can become completely unreadable:
 
 ```python
 versions = VersionBundle(
@@ -189,7 +189,7 @@ Changes:
 * Changed schema for 'POST /v1/tax_ids' endpoint
 ```
 
-* Its first line, `Migration from first version (2022-11-16) to 2023-09-01 version.`, duplicates the already-known information -- your developers will know which version `VersionChange` migrates to and from by its location in [VersionBundle]() and most likely by its file name. Your clients will also know that because you can automatically infer this information from  So it is simply standing in the way of actually useful parts of the documentation
+* Its first line, `Migration from first version (2022-11-16) to 2023-09-01 version.`, duplicates the already-known information -- your developers will know which version `VersionChange` migrates to and from by its location in [VersionBundle](#versionbundle) and most likely by its file name. Your clients will also know that because you can automatically infer this information from  So it is simply standing in the way of actually useful parts of the documentation
 * Its second line, `Changes:`, does not make any sense as well because description of a `VersionChange` cannot describe anything but changes. So again, it's stating the obvious and making it harder for our readers to understand the crux of the change
 * Its third line, `Changed schema for 'POST /v1/tax_ids' endpoint`, gives both too much and too little information. First of all, it talks about changing schema but it never mentions what exactly changed. Remember: we are doing this to make it easy for our clients to migrate from one version to another. Insteaad, it is much better to mention the openapi model name that you changed, the fields you changed, and why you changed them
 
@@ -560,24 +560,7 @@ You can also specify any string in place of type:
 schema(MySchema).field("foo").existed_as(type="AnythingHere")
 ```
 
-It is often the case that you want to add a type that has not been imported in your schemas yet. You can use `import_from` and optionally `import_as` to do this:
-
-```python
-schema(MySchema).field("foo").existed_as(
-    type=MyOtherSchema, import_from="..some_module", import_as="Foo"
-)
-```
-
-Which will render as:
-
-```python
-from ..some_module import MyOtherSchema as Foo
-from pydantic import BaseModel, Field
-
-
-class MySchema(BaseModel):
-    foo: Foo = Field()
-```
+It is often the case that you want to add a type that has not been imported in your schemas yet. You can use [module import adding](#modules) to solve this issue.
 
 ### Remove a field
 
@@ -637,6 +620,24 @@ class MyChange(VersionChange):
 ```
 
 which will replace all references to this schema with the new name.
+
+## Modules
+
+Oftentimes you start depending on new types in-between versions. For example, let's say that you depended on `Invoice` schema within your `data.latest.users` in older versions but now you do not. This means that once we run code generation and this type gets back into some annotation of some schema in `data.latest.users` -- it will not be imported because it was not imported in `latest`. To solve problems like this one, we have `module` instructions:
+
+```python
+from cadwyn.structure import VersionChange, module
+import data.latest.users
+
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        module(data.latest.users).had(import_="from .invoices import Invoice"),
+    )
+```
+
+Which will add-in this import at the top of `users` file in all versions before this version change.
 
 ## Version changes with side effects
 

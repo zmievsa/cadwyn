@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from enum import Enum
+from types import ModuleType
 from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, cast
 
 from fastapi import HTTPException, params
@@ -22,10 +23,9 @@ from pydantic import BaseModel
 from starlette._utils import is_async_callable
 from typing_extensions import assert_never
 
-from cadwyn._compat import PYDANTIC_V2, Undefined
+from cadwyn._compat import PYDANTIC_V2, Undefined, model_dump
+from cadwyn._package_utils import IdentifierPythonPath, get_cls_pythonpath
 from cadwyn.exceptions import CadwynError, CadwynStructureError
-from cadwyn.structure.endpoints import AlterEndpointSubInstruction
-from cadwyn.structure.enums import AlterEnumSubInstruction
 
 from .._utils import Sentinel
 from .common import Endpoint, VersionDate, VersionedModel
@@ -37,6 +37,9 @@ from .data import (
     RequestInfo,
     ResponseInfo,
 )
+from .endpoints import AlterEndpointSubInstruction
+from .enums import AlterEnumSubInstruction
+from .modules import AlterModuleInstruction
 from .schemas import AlterSchemaInstruction, AlterSchemaSubInstruction
 
 _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
@@ -48,6 +51,7 @@ PossibleInstructions: TypeAlias = (
     | AlterEndpointSubInstruction
     | AlterEnumSubInstruction
     | AlterSchemaInstruction
+    | AlterModuleInstruction
     | staticmethod
 )
 APIVersionVarType: TypeAlias = ContextVar[VersionDate | None] | ContextVar[VersionDate]
@@ -58,6 +62,7 @@ class VersionChange:
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
     alter_schema_instructions: ClassVar[list[AlterSchemaSubInstruction | AlterSchemaInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
+    alter_module_instructions: ClassVar[list[AlterModuleInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[list[AlterEndpointSubInstruction]] = Sentinel
     alter_request_by_schema_instructions: ClassVar[dict[type[BaseModel], AlterRequestBySchemaInstruction]] = Sentinel
     alter_request_by_path_instructions: ClassVar[dict[str, list[AlterRequestByPathInstruction]]] = Sentinel
@@ -102,16 +107,19 @@ class VersionChange:
     def _extract_list_instructions_into_correct_containers(cls):
         cls.alter_schema_instructions = []
         cls.alter_enum_instructions = []
+        cls.alter_module_instructions = []
         cls.alter_endpoint_instructions = []
         cls.alter_request_by_schema_instructions = {}
         cls.alter_request_by_path_instructions = defaultdict(list)
         cls.alter_response_by_schema_instructions = {}
         cls.alter_response_by_path_instructions = defaultdict(list)
         for alter_instruction in cls.instructions_to_migrate_to_previous_version:
-            if isinstance(alter_instruction, AlterSchemaSubInstruction | AlterSchemaInstruction):
+            if isinstance(alter_instruction, AlterSchemaInstruction | AlterSchemaSubInstruction):
                 cls.alter_schema_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, AlterEnumSubInstruction):
                 cls.alter_enum_instructions.append(alter_instruction)
+            elif isinstance(alter_instruction, AlterModuleInstruction):
+                cls.alter_module_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, AlterEndpointSubInstruction):
                 cls.alter_endpoint_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, staticmethod):  # pragma: no cover
@@ -251,9 +259,9 @@ class VersionBundle:
         yield from self.versions
 
     @functools.cached_property
-    def versioned_schemas(self) -> dict[str, type[VersionedModel]]:
+    def versioned_schemas(self) -> dict[IdentifierPythonPath, type[VersionedModel]]:
         return {
-            f"{instruction.schema.__module__}.{instruction.schema.__name__}": instruction.schema
+            get_cls_pythonpath(instruction.schema): instruction.schema
             for version in self.versions
             for version_change in version.version_changes
             for instruction in list(version_change.alter_schema_instructions)
@@ -261,12 +269,24 @@ class VersionBundle:
         }
 
     @functools.cached_property
-    def versioned_enums(self) -> dict[str, type[Enum]]:
+    def versioned_enums(self) -> dict[IdentifierPythonPath, type[Enum]]:
         return {
-            f"{instruction.enum.__module__}.{instruction.enum.__name__}": instruction.enum
+            get_cls_pythonpath(instruction.enum): instruction.enum
             for version in self.versions
             for version_change in version.version_changes
             for instruction in version_change.alter_enum_instructions
+        }
+
+    @functools.cached_property
+    def versioned_modules(self) -> dict[IdentifierPythonPath, ModuleType]:
+        return {
+            # We do this because when users import their modules, they might import
+            # the __init__.py file directly instead of the package itself
+            # which results in this extra `.__init__` suffix in the name
+            instruction.module.__name__.removesuffix(".__init__"): instruction.module
+            for version in self.versions
+            for version_change in version.version_changes
+            for instruction in version_change.alter_module_instructions
         }
 
     @functools.cached_property
@@ -487,11 +507,11 @@ class VersionBundle:
             and body_field_alias is not None
             and body_field_alias in kwargs
         ):
-            raw_body = kwargs[body_field_alias]
+            raw_body: BaseModel | None = kwargs[body_field_alias]
             if raw_body is None:
                 body = None
             else:
-                body = raw_body.dict(by_alias=True, exclude_unset=True)
+                body = model_dump(raw_body, by_alias=True, exclude_unset=True)
                 if not PYDANTIC_V2 and kwargs[body_field_alias].__custom_root_type__:
                     body = body["__root__"]
         else:

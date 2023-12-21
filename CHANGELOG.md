@@ -5,6 +5,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.1.0]
+
+### Added
+
+* `module(...).had(import_=...)` construct for adding imports in older versions
+* Codegen plugin system that allows easily customizing code generation for any purpose. It also significantly simplifies the core code of code generation
+
 ## [3.0.2]
 
 ### Fixed
@@ -27,6 +34,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 * internal request representation is now done using [an annotation](docs.cadwyn.org/reference#internal-request-body-representations)
 * `latest_schemas_module` was renamed to `latest_schemas_package` everywhere
 * `api_version_var` in `VersionBundle` is now an optional argument instead of a required one
+
+### Removed
+
+* `cadwyn.internal_representation_of` because it is now done using [an annotation](docs.cadwyn.org/reference#internal-request-body-representations)
 
 ## [2.3.4]
 
