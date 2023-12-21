@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from cadwyn import generate_code_for_versioned_packages
+from cadwyn._codegen.main import generate_code_for_versioned_packages
 from cadwyn.exceptions import (
     CodeGenerationError,
     InvalidGenerationInstructionError,

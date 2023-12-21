@@ -1,5 +1,5 @@
 if __name__ == "__main__":
-    from cadwyn import generate_code_for_versioned_packages
+    from cadwyn._codegen.main import generate_code_for_versioned_packages
     from tests.tutorial.data import latest
     from tests.tutorial.versions import version_bundle
 

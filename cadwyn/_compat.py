@@ -6,8 +6,6 @@ from typing import Any, TypeAlias
 from fastapi._compat import ModelField as FastAPIModelField
 from pydantic import BaseModel, Field
 
-from cadwyn._utils import PlainRepr
-
 ModelField: TypeAlias = Any  # pyright: ignore[reportGeneralTypeIssues]
 Undefined: TypeAlias = Any
 
@@ -82,9 +80,9 @@ class PydanticFieldWrapper:
         else:
             self.field_info = init_model_field.field_info
 
-    def render_annotation(self):
+    def get_annotation_for_rendering(self):
         if self.annotation_ast:
-            return PlainRepr(ast.unparse(self.annotation_ast))
+            return self.annotation_ast
         elif self.import_as is not None:
             return self.import_as
         else:

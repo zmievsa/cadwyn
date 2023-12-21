@@ -17,7 +17,8 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
 
-from cadwyn import VersionBundle, VersionedAPIRouter, generate_code_for_versioned_packages
+from cadwyn import VersionBundle, VersionedAPIRouter
+from cadwyn._codegen.main import generate_code_for_versioned_packages
 from cadwyn._package_utils import get_version_dir_name
 from cadwyn._utils import same_definition_as_in
 from cadwyn.main import Cadwyn

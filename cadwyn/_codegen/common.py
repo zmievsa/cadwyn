@@ -6,7 +6,7 @@ from enum import Enum
 from functools import cache
 from pathlib import Path
 from types import ModuleType
-from typing import Any, TypeAlias, cast
+from typing import Any, Generic, Protocol, TypeAlias, TypeVar, cast
 
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -17,36 +17,7 @@ from cadwyn.exceptions import CodeGenerationError
 from cadwyn.structure.versions import Version
 
 _FieldName: TypeAlias = str
-
-
-@cache
-def get_fields_from_model(cls: type) -> dict[str, PydanticFieldWrapper]:
-    if not isinstance(cls, type) or not issubclass(cls, BaseModel):
-        raise CodeGenerationError(f"Model {cls} is not a subclass of BaseModel")
-
-    fields = model_fields(cls)
-    try:
-        source = inspect.getsource(cls)
-    except OSError:
-        return {
-            field_name: PydanticFieldWrapper(
-                annotation=field.annotation,
-                init_model_field=field,
-            )
-            for field_name, field in fields.items()
-        }
-    else:
-        cls_ast = cast(ast.ClassDef, ast.parse(source).body[0])
-        return {
-            node.target.id: PydanticFieldWrapper(
-                annotation=fields[node.target.id].annotation,
-                init_model_field=fields[node.target.id],
-                annotation_ast=node.annotation,
-                field_ast=node.value,
-            )
-            for node in cls_ast.body
-            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id in fields
-        }
+_CodegenPluginASTType = TypeVar("_CodegenPluginASTType", bound=ast.AST)
 
 
 @dataclasses.dataclass(slots=True)
@@ -77,6 +48,36 @@ class PydanticModelWrapper:
             fields |= parent.fields
 
         return fields | self.fields
+
+
+@cache
+def get_fields_from_model(cls: type) -> dict[str, PydanticFieldWrapper]:
+    if not isinstance(cls, type) or not issubclass(cls, BaseModel):
+        raise CodeGenerationError(f"Model {cls} is not a subclass of BaseModel")
+
+    fields = model_fields(cls)
+    try:
+        source = inspect.getsource(cls)
+    except OSError:
+        return {
+            field_name: PydanticFieldWrapper(
+                annotation=field.annotation,
+                init_model_field=field,
+            )
+            for field_name, field in fields.items()
+        }
+    else:
+        cls_ast = cast(ast.ClassDef, ast.parse(source).body[0])
+        return {
+            node.target.id: PydanticFieldWrapper(
+                annotation=fields[node.target.id].annotation,
+                init_model_field=fields[node.target.id],
+                annotation_ast=node.annotation,
+                field_ast=node.value,
+            )
+            for node in cls_ast.body
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id in fields
+        }
 
 
 @dataclass(slots=True)
@@ -110,3 +111,19 @@ class CodegenContext(GlobalCodegenContext):
     module_path: Path
     template_module: ModuleType
     all_names_defined_on_toplevel_of_file: dict[IdentifierPythonPath, str]
+
+
+class CodegenPlugin(Protocol, Generic[_CodegenPluginASTType]):
+    @property
+    def node_type(self) -> type[_CodegenPluginASTType]:
+        raise NotImplementedError
+
+    @staticmethod
+    def __call__(node: _CodegenPluginASTType, context: CodegenContext) -> _CodegenPluginASTType:
+        raise NotImplementedError
+
+
+class MigrationPlugin(Protocol):
+    @staticmethod
+    def __call__(context: GlobalCodegenContext) -> None:
+        raise NotImplementedError
