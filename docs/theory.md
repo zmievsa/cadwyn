@@ -50,3 +50,14 @@ This is effectively an automated version of [approach i](#i-duplication-based-re
 
 This is the method that [Stripe](https://stripe.com/blog/api-versioning), [Linkedin](https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market), and [Intercom](
 https://www.intercom.com/blog/api-versioning/) have picked and this is the method that **Cadwyn** implements for you.
+
+## Projects like Cadwyn
+
+The following projects are trying to accomplish similar results with a lot more limited functionality.
+
+* <https://github.com/sjkaliski/pinned>
+* <https://github.com/phillbaker/gates>
+* <https://github.com/lukepolo/laravel-api-migrations>
+* <https://github.com/tomschlick/request-migrations>
+* <https://github.com/keygen-sh/request_migrations>
+* <https://github.com/binnev/djangorestframework_versioning>
