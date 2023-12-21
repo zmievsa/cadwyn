@@ -43,8 +43,8 @@ def generate_versioned_directories(
     # TODO: An alternative structure for module python path: An object similar to pathlib.Path with .name, etc
     for version in versions:
         global_context = GlobalCodegenContext(
-            version=version,
-            version_is_latest=max(versions, key=lambda v: v.value) == version,
+            current_version=version,
+            versions=versions,
             schemas=schemas,
             enums=enums,
             extra=extra_context,
@@ -87,8 +87,8 @@ def _generate_directory_for_version(
             version_dir,
         )
         context: CodegenContext = CodegenContext(
-            version=global_context.version,
-            version_is_latest=global_context.version_is_latest,
+            current_version=global_context.current_version,
+            versions=global_context.versions,
             schemas=global_context.schemas,
             enums=global_context.enums,
             extra=global_context.extra,

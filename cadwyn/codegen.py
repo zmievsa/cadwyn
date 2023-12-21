@@ -296,7 +296,7 @@ def _migrate_module_to_another_version(
     template_module: ast.Module,
     context: CodegenContext,
 ):
-    if context.version_is_latest:
+    if context.current_version_is_latest:
         return _get_alias_of_template_module(template_module, context)
     else:
         return _get_template_package_migrated_to_concrete_non_latest_version(template_module, context)
@@ -391,7 +391,7 @@ def _prepare_imports_from_version_dirs(
 
 
 def _apply_migrations(context: GlobalCodegenContext):
-    for version_change in context.version.version_changes:
+    for version_change in context.current_version.version_changes:
         _apply_alter_schema_instructions(
             context.schemas,
             version_change.alter_schema_instructions,

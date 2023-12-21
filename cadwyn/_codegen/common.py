@@ -87,11 +87,19 @@ class _EnumWrapper:
 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class GlobalCodegenContext:
-    version: Version
-    version_is_latest: bool
+    current_version: Version
+    latest_version: Version = dataclasses.field(init=False)
+    versions: list[Version]
     schemas: dict[IdentifierPythonPath, PydanticModelWrapper] = dataclasses.field(repr=False)
     enums: dict[IdentifierPythonPath, _EnumWrapper] = dataclasses.field(repr=False)
     extra: dict[str, Any]
+
+    def __post_init__(self):
+        self.latest_version = max(self.versions, key=lambda v: v.value)
+
+    @property
+    def current_version_is_latest(self):
+        return self.latest_version == self.current_version
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
