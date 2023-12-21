@@ -5,7 +5,7 @@ from typing import final
 
 import ast_comments
 
-from cadwyn._codegen.common import CodegenContext
+from cadwyn.codegen._common import CodegenContext
 
 
 class LatestVersionAliasingPlugin:

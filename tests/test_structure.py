@@ -386,14 +386,6 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
             raise NotImplementedError
 
 
-def test__schema_field_existed_as_import_as__without_import_from__should_raise_error():
-    with pytest.raises(
-        CadwynStructureError,
-        match=re.escape('Field "baz" has "import_as" but not "import_from" which is prohibited'),
-    ):
-        schema(SomeSchema).field("baz").existed_as(type=str, import_as="MyStr")
-
-
 @pytest.mark.parametrize(
     ("attr_name", "attr_value"),
     [

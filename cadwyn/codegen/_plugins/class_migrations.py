@@ -3,11 +3,11 @@ from collections.abc import Sequence
 
 from typing_extensions import assert_never
 
-from cadwyn._codegen.asts import add_keyword_to_call
-from cadwyn._codegen.common import GlobalCodegenContext, PydanticModelWrapper, _EnumWrapper
 from cadwyn._compat import FieldInfo, PydanticFieldWrapper, dict_of_empty_field_info, is_pydantic_constrained_type
 from cadwyn._package_utils import IdentifierPythonPath, get_cls_pythonpath
 from cadwyn._utils import Sentinel
+from cadwyn.codegen._asts import add_keyword_to_call
+from cadwyn.codegen._common import GlobalCodegenContext, PydanticModelWrapper, _EnumWrapper
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
 from cadwyn.structure.schemas import (
@@ -121,8 +121,6 @@ def _add_field_to_model(
         annotation_ast=None,  # TODO: Get this from migration
         annotation=alter_schema_instruction.type,
         init_model_field=alter_schema_instruction.field,
-        import_from=alter_schema_instruction.import_from,
-        import_as=alter_schema_instruction.import_as,
         field_ast=None,  # TODO: Get this from migration
     )
 

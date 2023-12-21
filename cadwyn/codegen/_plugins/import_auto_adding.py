@@ -1,7 +1,7 @@
 import ast
 
-from cadwyn._codegen.common import CodegenContext
 from cadwyn._compat import PYDANTIC_V2
+from cadwyn.codegen._common import CodegenContext
 
 _extra_imports: list[tuple[str, str]] = [
     ("typing", "import typing"),
@@ -39,10 +39,7 @@ class ImportAutoAddingPlugin:
     node_type = ast.Module
 
     @staticmethod
-    def __call__(
-        node: ast.Module,
-        context: CodegenContext,
-    ):
+    def __call__(node: ast.Module, context: CodegenContext):
         if context.current_version_is_latest:
             return node
         source = ast.unparse(node)
@@ -51,7 +48,14 @@ class ImportAutoAddingPlugin:
             for seek_str, import_ in _rendered_extra_imports
             if seek_str in source and seek_str not in context.all_names_defined_on_toplevel_of_file
         ]
+        # We do this because when we import our module, we import not the package but
+        # the __init__.py file directly which produces this extra `.__init__` suffix in the name
+        module_name = context.template_module.__name__.removesuffix(".__init__")
+        if module_name in context.modules:
+            manual_imports = context.modules[module_name].extra_imports
+        else:
+            manual_imports = []
 
-        node.body = extra_lib_imports + node.body
+        node.body = extra_lib_imports + manual_imports + node.body
 
         return node

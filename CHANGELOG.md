@@ -5,6 +5,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.1.0]
+
+### Added
+
+* `module(...).had(import_=...)` construct for adding imports in older versions
+* Codegen plugin system that allows easily customizing code generation for any purpose. It also significantly simplifies the core code of code generation
+
 ## [3.0.2]
 
 ### Fixed

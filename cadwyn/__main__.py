@@ -43,7 +43,7 @@ def generate_versioned_packages(
     ),
 ) -> None:
     """For each version in the version bundle, generate a versioned package based on the template package"""
-    from ._codegen.main import generate_code_for_versioned_packages
+    from .codegen._main import generate_code_for_versioned_packages
 
     sys.path.append(str(Path.cwd()))
     template_package = importlib.import_module(path_to_template_package)

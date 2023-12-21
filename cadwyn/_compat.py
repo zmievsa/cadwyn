@@ -71,8 +71,6 @@ class PydanticFieldWrapper:
 
     annotation_ast: ast.expr | None = None
     field_ast: ast.expr | None = None
-    import_from: str | None = None
-    import_as: str | None = None
 
     def __post_init__(self, init_model_field: ModelField):  # pyright: ignore[reportGeneralTypeIssues]
         if isinstance(init_model_field, FieldInfo):
@@ -83,8 +81,6 @@ class PydanticFieldWrapper:
     def get_annotation_for_rendering(self):
         if self.annotation_ast:
             return self.annotation_ast
-        elif self.import_as is not None:
-            return self.import_as
         else:
             return self.annotation
 

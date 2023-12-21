@@ -4,7 +4,7 @@ import pytest
 from dirty_equals import IsUUID
 from fastapi.testclient import TestClient
 
-from cadwyn._codegen.main import generate_code_for_versioned_packages
+from cadwyn.codegen._main import generate_code_for_versioned_packages
 
 from .data import latest
 from .routes import app, router

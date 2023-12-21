@@ -560,24 +560,7 @@ You can also specify any string in place of type:
 schema(MySchema).field("foo").existed_as(type="AnythingHere")
 ```
 
-It is often the case that you want to add a type that has not been imported in your schemas yet. You can use `import_from` and optionally `import_as` to do this:
-
-```python
-schema(MySchema).field("foo").existed_as(
-    type=MyOtherSchema, import_from="..some_module", import_as="Foo"
-)
-```
-
-Which will render as:
-
-```python
-from ..some_module import MyOtherSchema as Foo
-from pydantic import BaseModel, Field
-
-
-class MySchema(BaseModel):
-    foo: Foo = Field()
-```
+It is often the case that you want to add a type that has not been imported in your schemas yet. You can use [module import adding](#modules) to solve this issue.
 
 ### Remove a field
 
@@ -637,6 +620,24 @@ class MyChange(VersionChange):
 ```
 
 which will replace all references to this schema with the new name.
+
+## Modules
+
+Oftentimes you start depending on new types in-between versions. For example, let's say that you depended on `Invoice` schema within your `data.latest.users` in older versions but now you do not. This means that once we run code generation and this type gets back into some annotation of some schema in `data.latest.users` -- it will not be imported because it was not imported in `latest`. To solve problems like this one, we have `module` instructions:
+
+```python
+from cadwyn.structure import VersionChange, module
+import data.latest.users
+
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        module(data.latest.users).had(import_="from .invoices import Invoice"),
+    )
+```
+
+Which will add-in this import at the top of `users` file in all versions before this version change.
 
 ## Version changes with side effects
 

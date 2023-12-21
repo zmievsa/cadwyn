@@ -2,18 +2,18 @@ import ast
 import copy
 from typing import Any
 
-from cadwyn._codegen.asts import (
-    get_ast_keyword_from_argument_name_and_value,
-    get_fancy_repr,
-    pop_docstring_from_cls_body,
-)
-from cadwyn._codegen.common import CodegenContext, PydanticModelWrapper, _EnumWrapper
 from cadwyn._compat import (
     PydanticFieldWrapper,
     get_attrs_that_are_not_from_field_and_that_are_from_field,
     is_pydantic_constrained_type,
 )
 from cadwyn._package_utils import IdentifierPythonPath, get_absolute_python_path_of_import
+from cadwyn.codegen._asts import (
+    get_ast_keyword_from_argument_name_and_value,
+    get_fancy_repr,
+    pop_docstring_from_cls_body,
+)
+from cadwyn.codegen._common import CodegenContext, PydanticModelWrapper, _EnumWrapper
 
 
 class ClassRebuildingPlugin:
@@ -23,22 +23,10 @@ class ClassRebuildingPlugin:
     def __call__(node: ast.Module, context: CodegenContext) -> Any:
         if context.current_version_is_latest:
             return node
-        # TODO: Get rid of import as. Instead, add a separate instruction for it
-        extra_field_imports = [
-            ast.ImportFrom(
-                module=field.import_from,
-                names=[ast.alias(name=get_fancy_repr(field.annotation).strip("'"), asname=field.import_as)],
-                level=0,
-            )
-            for val in context.schemas.values()
-            for field in val.fields.values()
-            if field.import_from is not None
-        ]
 
-        return ast.Module(
-            extra_field_imports + [_migrate_ast_node_to_another_version(n, context) for n in node.body],
-            type_ignores=[],
-        )
+        node.body = [_migrate_ast_node_to_another_version(n, context) for n in node.body]
+
+        return node
 
 
 def _migrate_ast_node_to_another_version(

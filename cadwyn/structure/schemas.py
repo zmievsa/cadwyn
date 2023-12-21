@@ -65,14 +65,6 @@ class OldSchemaFieldExistedWith:
     field_name: str
     type: type
     field: FieldInfo
-    import_from: str | None = None
-    import_as: str | None = None
-
-    def __post_init__(self):
-        if self.import_from is None and self.import_as is not None:
-            raise CadwynStructureError(
-                f'Field "{self.field_name}" has "import_as" but not "import_from" which is prohibited',
-            )
 
 
 # TODO: Add an ability to add extras (use only pydanticV2 syntax everywhere)
@@ -174,16 +166,12 @@ class AlterFieldInstructionFactory:
         *,
         type: Any,
         info: FieldInfo | None = None,
-        import_from: str | None = None,
-        import_as: str | None = None,
     ) -> OldSchemaFieldExistedWith:
         return OldSchemaFieldExistedWith(
             self.schema,
             field_name=self.name,
             type=type,
             field=info or Field(),
-            import_from=import_from,
-            import_as=import_as,
         )
 
 
@@ -197,7 +185,7 @@ class AlterSchemaInstruction:
 
 
 @dataclass(slots=True)
-class AlterSchemaSubInstructionFactory:
+class AlterSchemaInstructionFactory:
     schema: type[BaseModel]
 
     def field(self, name: str, /) -> AlterFieldInstructionFactory:
@@ -207,5 +195,5 @@ class AlterSchemaSubInstructionFactory:
         return AlterSchemaInstruction(self.schema, name)
 
 
-def schema(model: type[BaseModel], /) -> AlterSchemaSubInstructionFactory:
-    return AlterSchemaSubInstructionFactory(model)
+def schema(model: type[BaseModel], /) -> AlterSchemaInstructionFactory:
+    return AlterSchemaInstructionFactory(model)

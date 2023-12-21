@@ -4,6 +4,7 @@ import shutil
 import string
 import textwrap
 import uuid
+from collections.abc import Sequence
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum
@@ -18,13 +19,19 @@ from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
 
 from cadwyn import VersionBundle, VersionedAPIRouter
-from cadwyn._codegen.main import generate_code_for_versioned_packages
 from cadwyn._package_utils import get_version_dir_name
 from cadwyn._utils import same_definition_as_in
+from cadwyn.codegen import (
+    DEFAULT_CODEGEN_MIGRATION_PLUGINS,
+    DEFAULT_CODEGEN_PLUGINS,
+)
+from cadwyn.codegen._common import CodegenPlugin, MigrationPlugin
+from cadwyn.codegen._main import generate_code_for_versioned_packages
 from cadwyn.main import Cadwyn
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
+from cadwyn.structure.modules import AlterModuleInstruction
 from cadwyn.structure.schemas import AlterSchemaInstruction, AlterSchemaSubInstruction
 
 CURRENT_DIR = Path(__file__).parent
@@ -70,8 +77,8 @@ class RunSchemaCodegen:
         return latest_module
 
 
-@fixture_class(name="create_versioned_schemas")
-class CreateVersionedSchemas:
+@fixture_class(name="create_versioned_packages")
+class CreateVersionedPackages:
     api_version_var: ContextVar[date | None]
     temp_data_package_path: str
 
@@ -176,21 +183,21 @@ def latest_with_empty_classes(latest_module_for: LatestModuleFor) -> _FakeModule
     )
 
 
-@fixture_class(name="create_simple_versioned_schemas")
-class CreateSimpleVersionedSchemas:
+@fixture_class(name="create_simple_versioned_packages")
+class CreateSimpleVersionedPackages:
     api_version_var: ContextVar[date | None]
     temp_data_package_path: str
-    create_versioned_schemas: CreateVersionedSchemas
+    create_versioned_packages: CreateVersionedPackages
 
     def __call__(self, *instructions: Any, ignore_coverage_for_latest_aliases: bool = True) -> tuple[ModuleType, ...]:
-        return self.create_versioned_schemas(
+        return self.create_versioned_packages(
             version_change(*instructions),
             ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
         )
 
 
-@fixture_class(name="create_local_versioned_schemas")
-class CreateLocalVersionedSchemas:
+@fixture_class(name="create_local_versioned_packages")
+class CreateLocalVersionedPackages:
     api_version_var: ContextVar[date | None]
     temp_dir: Path
     created_modules: list[ModuleType]
@@ -200,6 +207,9 @@ class CreateLocalVersionedSchemas:
         self,
         *version_changes: type[VersionChange] | list[type[VersionChange]],
         ignore_coverage_for_latest_aliases: bool = True,
+        codegen_plugins: Sequence[CodegenPlugin] = DEFAULT_CODEGEN_PLUGINS,
+        migration_plugins: Sequence[MigrationPlugin] = DEFAULT_CODEGEN_MIGRATION_PLUGINS,
+        extra_context: dict[str, Any] | None = None,
     ) -> tuple[ModuleType, ...]:
         latest = self.created_modules[0]
         created_versions = versions(version_changes)
@@ -211,6 +221,9 @@ class CreateLocalVersionedSchemas:
                 api_version_var=self.api_version_var,
             ),
             ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
+            codegen_plugins=codegen_plugins,
+            migration_plugins=migration_plugins,
+            extra_context=extra_context,
         )
         importlib.invalidate_caches()
 
@@ -232,15 +245,25 @@ class CreateLocalVersionedSchemas:
         return schemas
 
 
-@fixture_class(name="create_local_simple_versioned_schemas")
-class CreateLocalSimpleVersionedSchemas:
+@fixture_class(name="create_local_simple_versioned_packages")
+class CreateLocalSimpleVersionedPackages:
     api_version_var: ContextVar[date | None]
-    create_local_versioned_schemas: CreateLocalVersionedSchemas
+    create_local_versioned_packages: CreateLocalVersionedPackages
 
-    def __call__(self, *instructions: Any, ignore_coverage_for_latest_aliases: bool = True) -> ModuleType:
-        return self.create_local_versioned_schemas(
+    def __call__(
+        self,
+        *instructions: Any,
+        ignore_coverage_for_latest_aliases: bool = True,
+        codegen_plugins: Sequence[CodegenPlugin] = DEFAULT_CODEGEN_PLUGINS,
+        migration_plugins: Sequence[MigrationPlugin] = DEFAULT_CODEGEN_MIGRATION_PLUGINS,
+        extra_context: dict[str, Any] | None = None,
+    ) -> ModuleType:
+        return self.create_local_versioned_packages(
             version_change(*instructions),
             ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
+            codegen_plugins=codegen_plugins,
+            migration_plugins=migration_plugins,
+            extra_context=extra_context,
         )[0]
 
 
@@ -330,7 +353,8 @@ def version_change(
     *instructions: AlterSchemaInstruction
     | AlterSchemaSubInstruction
     | AlterEndpointSubInstruction
-    | AlterEnumSubInstruction,
+    | AlterEnumSubInstruction
+    | AlterModuleInstruction,
     **body_items: Any,
 ):
     return type(VersionChange)(

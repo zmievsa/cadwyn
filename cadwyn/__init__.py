@@ -1,6 +1,6 @@
 import importlib.metadata
 
-from ._codegen import generate_code_for_versioned_packages
+from .codegen import generate_code_for_versioned_packages
 from .main import Cadwyn
 from .routing import InternalRepresentationOf, VersionedAPIRouter, generate_versioned_routers
 from .structure import VersionBundle

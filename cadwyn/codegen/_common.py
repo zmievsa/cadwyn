@@ -86,6 +86,12 @@ class _EnumWrapper:
     members: dict[_FieldName, Any]
 
 
+@dataclass(slots=True)
+class _ModuleWrapper:
+    value: ModuleType
+    extra_imports: list[ast.Import | ast.ImportFrom] = dataclasses.field(default_factory=list)
+
+
 @dataclasses.dataclass(slots=True, kw_only=True)
 class GlobalCodegenContext:
     current_version: Version
@@ -93,6 +99,7 @@ class GlobalCodegenContext:
     versions: list[Version]
     schemas: dict[IdentifierPythonPath, PydanticModelWrapper] = dataclasses.field(repr=False)
     enums: dict[IdentifierPythonPath, _EnumWrapper] = dataclasses.field(repr=False)
+    modules: dict[IdentifierPythonPath, _ModuleWrapper] = dataclasses.field(repr=False)
     extra: dict[str, Any]
 
     def __post_init__(self):

@@ -27,7 +27,7 @@ from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
 from tests.conftest import (
-    CreateSimpleVersionedSchemas,
+    CreateSimpleVersionedPackages,
     CreateVersionedApp,
     LatestModuleFor,
     RunSchemaCodegen,
@@ -717,12 +717,12 @@ def test__router_generation__updating_response_model(
 
 def test__router_generation__using_non_latest_version_of_schema__should_raise_error(
     router: VersionedAPIRouter,
-    create_simple_versioned_schemas: CreateSimpleVersionedSchemas,
+    create_simple_versioned_packages: CreateSimpleVersionedPackages,
     temp_data_package_path: str,
     latest: ModuleType,
     api_version_var: ContextVar[Any],
 ):
-    schemas_2000, _ = create_simple_versioned_schemas()
+    schemas_2000, _ = create_simple_versioned_packages()
 
     @router.post("/testik")
     async def testik(body: schemas_2000.SchemaWithOnePydanticField):  # pyright: ignore
