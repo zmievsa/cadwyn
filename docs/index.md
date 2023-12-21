@@ -32,9 +32,4 @@ Whether you are a newbie in API versioning, a pro looking for a sophisticated to
 
 ## Get started
 
-It is recommended to read the docs in the following order:
-
-1. [Tutorial](https://docs.cadwyn.dev/tutorial/)
-2. [Recipes](https://docs.cadwyn.dev/recipes/)
-3. [Reference](https://docs.cadwyn.dev/reference/)
-4. [Theory](https://docs.cadwyn.dev/theory/)
+It is recommended to read the [tutorial](https://docs.cadwyn.dev/tutorial/) first to get your feet wet with Cadwyn's approach
