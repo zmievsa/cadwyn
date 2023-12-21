@@ -77,7 +77,7 @@ class PydanticFieldWrapper:
     import_as: str | None = None
 
     def __post_init__(self, init_model_field: ModelField):  # pyright: ignore[reportGeneralTypeIssues]
-        if PYDANTIC_V2:
+        if isinstance(init_model_field, FieldInfo):
             self.field_info = init_model_field
         else:
             self.field_info = init_model_field.field_info
@@ -121,10 +121,6 @@ class PydanticFieldWrapper:
             }
             extras = getattr(self.field_info, EXTRA_FIELD_NAME) or {}
             return attributes | extras
-
-    @property
-    def metadata(self) -> list[Any]:
-        return self.field_info.metadata
 
 
 def model_fields(model: type[BaseModel]) -> dict[str, FieldInfo]:

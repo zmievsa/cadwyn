@@ -23,6 +23,7 @@ from starlette._utils import is_async_callable
 from typing_extensions import assert_never
 
 from cadwyn._compat import PYDANTIC_V2, Undefined, model_dump
+from cadwyn._package_utils import IdentifierPythonPath, get_cls_pythonpath
 from cadwyn.exceptions import CadwynError, CadwynStructureError
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
@@ -251,9 +252,9 @@ class VersionBundle:
         yield from self.versions
 
     @functools.cached_property
-    def versioned_schemas(self) -> dict[str, type[VersionedModel]]:
+    def versioned_schemas(self) -> dict[IdentifierPythonPath, type[VersionedModel]]:
         return {
-            f"{instruction.schema.__module__}.{instruction.schema.__name__}": instruction.schema
+            get_cls_pythonpath(instruction.schema): instruction.schema
             for version in self.versions
             for version_change in version.version_changes
             for instruction in list(version_change.alter_schema_instructions)
@@ -261,9 +262,9 @@ class VersionBundle:
         }
 
     @functools.cached_property
-    def versioned_enums(self) -> dict[str, type[Enum]]:
+    def versioned_enums(self) -> dict[IdentifierPythonPath, type[Enum]]:
         return {
-            f"{instruction.enum.__module__}.{instruction.enum.__name__}": instruction.enum
+            get_cls_pythonpath(instruction.enum): instruction.enum
             for version in self.versions
             for version_change in version.version_changes
             for instruction in version_change.alter_enum_instructions

@@ -18,7 +18,9 @@ from cadwyn._compat import (
     get_attrs_that_are_not_from_field_and_that_are_from_field,
     is_pydantic_constrained_type,
 )
-from cadwyn._package_utils import get_absolute_python_path_of_import
+from cadwyn._package_utils import (
+    get_absolute_python_path_of_import,
+)
 from cadwyn._utils import PlainRepr, UnionType
 from cadwyn.exceptions import CodeGenerationError, InvalidGenerationInstructionError, ModuleIsNotAvailableAsTextError
 
@@ -178,16 +180,16 @@ def _get_lambda_source_from_default_factory(source: str) -> str:
         )
 
 
-def parse_python_module(module: ModuleType) -> ast.Module:
+def read_python_module(module: ModuleType) -> str:
     try:
-        source = inspect.getsource(module)
+        return inspect.getsource(module)
     except OSError as e:
         if module.__file__ is None:  # pragma: no cover
             raise CodeGenerationError(f"Failed to get file path to the module {module}") from e
         path = Path(module.__file__)
         if path.is_file() and path.read_text() == "":
-            return ast.Module([])
-        raise ModuleIsNotAvailableAsTextError(
+            return ""
+        raise ModuleIsNotAvailableAsTextError(  # pragma: no cover
             f"Failed to get source code for module {module}. "
             "This is likely because this module is not available as code "
             "(it could be a compiled C extension or even a .pyc file). "
@@ -195,11 +197,9 @@ def parse_python_module(module: ModuleType) -> ast.Module:
             "Please, open an issue on Cadwyn's issue tracker if you believe that your use case is valid "
             "and if you believe that it is possible for Cadwyn to support it.",
         ) from e
-    else:
-        return ast.parse(source)
 
 
-def get_all_names_defined_on_toplevel_of_module(body: ast.Module, module_python_path: str) -> dict[str, str]:
+def get_all_names_defined_at_toplevel_of_module(body: ast.Module, module_python_path: str) -> dict[str, str]:
     """Some day we will want to use this to auto-add imports for new symbols in versions. Some day..."""
     defined_names = {}
     for node in body.body:
