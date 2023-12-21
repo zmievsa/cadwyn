@@ -1,7 +1,7 @@
 # Contributor Covenant Code of Conduct
 
 > [!NOTE]
-> All Cadwyn repositories and community spaces are governed by our code of conduct below,
+> All Cadwyn's community spaces are governed by our code of conduct below,
 > as well as the Python Software Foundation's [Code of Conduct](https://www.python.org/psf/conduct/).
 
 ## Our Pledge
