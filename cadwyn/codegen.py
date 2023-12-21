@@ -7,9 +7,9 @@ from typing import (
     final,
 )
 
+import ast_comments
 from typing_extensions import assert_never
 
-from cadwyn._codegen import ast_comments
 from cadwyn._codegen.asts import (
     add_keyword_to_call,
     get_ast_keyword_from_argument_name_and_value,

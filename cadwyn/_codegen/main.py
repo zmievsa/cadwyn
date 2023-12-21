@@ -8,7 +8,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
-from cadwyn._codegen import ast_comments
+import ast_comments
+
 from cadwyn._codegen.asts import get_all_names_defined_at_toplevel_of_module, read_python_module
 from cadwyn._codegen.common import CodegenContext, GlobalCodegenContext, PydanticModelWrapper, _EnumWrapper
 from cadwyn._package_utils import IdentifierPythonPath, get_package_path_from_module, get_version_dir_path
