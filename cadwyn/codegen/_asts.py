@@ -182,6 +182,7 @@ def _get_lambda_source_from_default_factory(source: str) -> str:
 
 
 def read_python_module(module: ModuleType) -> str:
+    # Can be cached in the future to gain some speedups
     try:
         return inspect.getsource(module)
     except OSError as e:

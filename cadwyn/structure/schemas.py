@@ -67,7 +67,7 @@ class OldSchemaFieldExistedWith:
     field: FieldInfo
 
 
-# TODO: Add an ability to add extras (use only pydanticV2 syntax everywhere)
+# TODO (https://github.com/zmievsa/cadwyn/issues/112): Add an ability to add extras
 @dataclass(slots=True)
 class AlterFieldInstructionFactory:
     schema: type[BaseModel]

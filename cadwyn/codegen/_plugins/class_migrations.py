@@ -38,8 +38,6 @@ def _apply_alter_schema_instructions(
     alter_schema_instructions: Sequence[AlterSchemaSubInstruction | AlterSchemaInstruction],
     version_change_name: str,
 ):
-    # TODO: If we have a request migration for an endpoint instead of a schema and we haven't found that endpoint
-    # during codegen -- raise an error or maybe add an argument that controlls that. Or maybe this is overengineering..
     for alter_schema_instruction in alter_schema_instructions:
         schema = alter_schema_instruction.schema
         schema_path = get_cls_pythonpath(schema)
@@ -118,10 +116,10 @@ def _add_field_to_model(
         )
 
     model.fields[alter_schema_instruction.field_name] = PydanticFieldWrapper(
-        annotation_ast=None,  # TODO: Get this from migration
+        annotation_ast=None,
         annotation=alter_schema_instruction.type,
         init_model_field=alter_schema_instruction.field,
-        field_ast=None,  # TODO: Get this from migration
+        field_ast=None,
     )
 
 

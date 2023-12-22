@@ -269,6 +269,56 @@ Now our request comes, Cadwyn migrates it to the latest version using our reques
 
 **Notice** how we used the **latest** versions of our schemas in our migration -- this pattern can be found everywhere in Cadwyn. You use the latest version of your schemas to describe what happened to all other versions because other versions might not exist when you are defining migrations for them.
 
+##### Path-based migration specification
+
+Oftentimes you will need to migrate not based on the request body or response model but based on the path of the endpoint. This happens when, for example, endpoint does not have a request body or its response model is used in other places that we do not want to migrate. Let's pick the example [above](#data-migrations) and use paths instead of schemas:
+
+```python
+from cadwyn.structure import (
+    VersionChange,
+    schema,
+    convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
+)
+from data.latest.invoices import BaseInvoice
+
+
+class RemoveTaxIDEndpoints(VersionChange):
+    description = "Rename `Invoice.creation_date` into `Invoice.created_at`."
+    instructions_to_migrate_to_previous_version = (
+        schema(BaseInvoice).field("creation_date").had(name="created_at"),
+    )
+
+    @convert_request_to_next_version_for("/v1/invoices", ["POST"])
+    def rename_creation_date_into_created_at(request: RequestInfo):
+        request.body["created_at"] = request.body.pop("creation_date")
+
+    @convert_response_to_previous_version_for("/v1/invoices", ["GET"])
+    def rename_created_at_into_creation_date(response: ResponseInfo):
+        response.body["creation_date"] = response.body.pop("created_at")
+```
+
+Though I highly recommend you to stick to schemas as it is much easier to introduce inconsistencies when using paths; for example, when you have 10 endpoints with the same response body schema but you forgot to add migrations for 3 of them because you use paths instead of schemas.
+
+##### Migration of non-body attributes
+
+Cadwyn has an ability to migrate more than just request bodies.
+
+`RequestInfo` has the the following interfaces to migrate requests:
+
+* `body: Any`
+* `headers: starlette.datastructures.MutableHeaders`
+* `cookies: dict[str, str]`
+* `query_params: dict[str, str]`
+
+`ResponseInfo` has the the following interfaces to migrate responses:
+
+* `body: Any`
+* `status_code: int`
+* `headers: starlette.datastructures.MutableHeaders`
+* [set_cookie](https://www.starlette.io/responses/#set-cookie)
+* [delete_cookie](https://www.starlette.io/responses/#delete-cookie)
+
 ##### Internal representations
 
 We have only reviewed simplistic cases so far. But what happens when you cannot just migrate your data that easily? It can happen because your earlier versions had **more data** than your newer versions. Or that data had more formats.
@@ -321,12 +371,7 @@ return {"address": user.addresses[0] if user.addresses else None, **user}
 So now your migration will look like the following:
 
 ```python
-from cadwyn.structure import (
-    VersionChange,
-    schema,
-    convert_request_to_next_version_for,
-    convert_response_to_previous_version_for,
-)
+from cadwyn.structure import VersionChange, schema
 from data.latest.users import User
 
 
@@ -386,6 +431,42 @@ def create_user(
 ```
 
 This type hint will tell Cadwyn that this route has public-facing schema of `User` that Cadwyn will use for validating all requests. Cadwyn will always use `InternalUserCreateRequest` when pushing body field into your business logic instead of `User`. Note that users will not be able to use any fields from the internal representation and their requests will still be validated by your regular schemas. So even if you added a field `foo` in an internal representation, and your user has passed this field in the body of the request, this field will not get to the internal representation because it will be removed at the moment of request validation (or even an error will occur if you use `extra="ignore"`). OpenAPI will also only use the public schemas, not the internal ones.
+
+### Pydantic 2 RootModel migration warning
+
+Pydantic 2 has an interesting implementation detail: `pydantic.RootModel` instances are memoized. So the following code is going to output `True`:
+
+```python
+from data.latest.users import User
+from pydantic import RootModel
+
+BulkCreateUsersRequestBody = RootModel[list[User]]
+BulkCreateUsersResponseBody = RootModel[list[User]]
+
+print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # True
+```
+
+So if you make a migration that should only affect one of these schemas -- it will automatically affect both. A recommended alternative is to either use subclassing:
+
+```python
+from data.latest.users import User
+from pydantic import RootModel
+
+UserList = RootModel[list[User]]
+
+
+class BulkCreateUsersRequestBody(UserList):
+    pass
+
+
+class BulkCreateUsersResponseBody(UserList):
+    pass
+
+
+print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # False
+```
+
+or to specify migrations using [endpoint path](#path-based-migration-specification) instead of a schema.
 
 ### VersionBundle
 
@@ -507,11 +588,13 @@ class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
         # We don't have to specify the name here because there's only one such deleted endpoint
         endpoint("/users", ["GET"]).existed,
         # We do have to specify the name because we now have two existing endpoints after the instruction above
-        endpoint("/users", ["GET"], func_name="get_users_by_name").didnt_exist,
+        endpoint(
+            "/users", ["GET"], endpoint_func_name="get_users_by_name"
+        ).didnt_exist,
     )
 ```
 
-So by using a more concrete `func_name`, we are capable to distinguish between different functions that affect the same routes.
+So by using a more concrete `endpoint_func_name`, we are capable to distinguish between different functions that affect the same routes.
 
 ## Enums
 

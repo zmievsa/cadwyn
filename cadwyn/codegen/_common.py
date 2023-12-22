@@ -113,7 +113,7 @@ class GlobalCodegenContext:
 @dataclasses.dataclass(slots=True, kw_only=True)
 class CodegenContext(GlobalCodegenContext):
     # This attribute is extremely useful for calculating relative imports
-    index_of_latest_schema_dir_in_module_python_path: int
+    index_of_latest_package_dir_in_module_python_path: int
     module_python_path: str
     module_path: Path
     template_module: ModuleType

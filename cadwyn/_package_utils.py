@@ -29,6 +29,7 @@ def get_version_dir_path(template_package: ModuleType, version: date) -> Path:
 
 
 def get_package_path_from_module(template_package: ModuleType) -> Path:
+    # Can be cached in the future to gain some speedups
     file = inspect.getsourcefile(template_package)
 
     # I am too lazy to reproduce this error correctly

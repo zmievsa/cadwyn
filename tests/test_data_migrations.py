@@ -43,7 +43,6 @@ def latest_module(latest_module_for: LatestModuleFor):
     from pydantic import BaseModel, Field, RootModel
     from typing import Any
 
-    # TODO: Make a note in cadwyn docs that RootModel instances are CACHED at instantiation time
         # so `RootModel[Any] is RootModel[Any]`. This causes dire consequences if you try to make "different"
         # request and response root models with the same definitions
     class AnyRequestSchema(RootModel[Any]):
@@ -55,7 +54,6 @@ def latest_module(latest_module_for: LatestModuleFor):
     class SchemaWithInternalRepresentation(BaseModel):
         foo: int
 
-    # TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
     class InternalSchema(SchemaWithInternalRepresentation):
         bar: str | None = Field(default=None)
 
@@ -78,7 +76,6 @@ def latest_module(latest_module_for: LatestModuleFor):
     class SchemaWithInternalRepresentation(BaseModel):
         foo: int
 
-    # TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
     class InternalSchema(SchemaWithInternalRepresentation):
         bar: str | None = Field(default=None)
 

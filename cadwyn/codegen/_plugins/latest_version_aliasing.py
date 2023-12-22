@@ -21,7 +21,7 @@ class LatestVersionAliasingPlugin:
         imports = _prepare_imports_from_version_dirs(
             context.template_module,
             ["latest"],
-            context.index_of_latest_schema_dir_in_module_python_path,
+            context.index_of_latest_package_dir_in_module_python_path,
         )
 
         import_text = ast.unparse(imports[0].get_ast()) + " # noqa: F403"
@@ -64,7 +64,6 @@ class _ImportedModule:
         module = f"{self.path}.{self.name}"
         name = ast.alias(name="*")
         level = self.how_far_up_is_base_schema_dir_from_current_module
-        # TODO: Add a testcase where is_package == True and level == 3
         if self.is_package and level == 2:
             level -= 1
         return ast.ImportFrom(
@@ -77,7 +76,7 @@ class _ImportedModule:
 def _prepare_imports_from_version_dirs(
     original_module: ModuleType,
     version_dir_names: Collection[str],
-    index_of_latest_schema_dir_in_pythonpath: int,
+    index_of_latest_package_dir_in_pythonpath: int,
 ) -> list[_ImportedModule]:
     # package.latest                     -> from .. import latest
     # package.latest.module              -> from ...latest import module
@@ -90,16 +89,16 @@ def _prepare_imports_from_version_dirs(
     # package.latest.subpackage.module  -> from ...latest.subpackage.module import *
 
     original_module_parts = original_module.__name__.split(".")
-    original_module_parts[index_of_latest_schema_dir_in_pythonpath] = "{}"
+    original_module_parts[index_of_latest_package_dir_in_pythonpath] = "{}"
     how_far_up_is_base_schema_dir_from_current_module = (
-        len(original_module_parts) - index_of_latest_schema_dir_in_pythonpath
+        len(original_module_parts) - index_of_latest_package_dir_in_pythonpath
     )
     is_package = original_module_parts[-1] == "__init__"
     if is_package:
         original_module_parts.pop(-1)
 
     package_name = original_module_parts[-1]
-    package_path = original_module_parts[index_of_latest_schema_dir_in_pythonpath:-1]
+    package_path = original_module_parts[index_of_latest_package_dir_in_pythonpath:-1]
     import_pythonpath_template = ".".join(package_path)
     absolute_python_path_template = ".".join(original_module_parts)
     return [

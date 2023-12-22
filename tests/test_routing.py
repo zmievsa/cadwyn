@@ -991,7 +991,6 @@ def test__router_generation__updating_request_depends(
     assert client_2001.post("/test2", json={"my_schema": {"foo": "bar"}}).json() == {}
 
 
-# TODO: This test is written extremely poorly. Rewrite it
 def test__router_generation__using_unversioned_schema_in_body(
     router: VersionedAPIRouter,
     create_versioned_app: CreateVersionedApp,
@@ -1009,7 +1008,6 @@ class MySchema(BaseModel):
     """,
     )
     importlib.invalidate_caches()
-    # TODO: This is bad practice. Just do something else
     other_module = importlib.import_module(temp_data_package_path + ".other_module")
 
     @router.post("/test")

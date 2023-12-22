@@ -305,6 +305,7 @@ class VersionBundle:
         response: FastapiResponse,
         request_info: RequestInfo,
         current_version: VersionDate,
+        latest_route: APIRoute,
     ):
         path = request.scope["path"]
         method = request.method
@@ -329,8 +330,7 @@ class VersionBundle:
             response=response,
             dependant=dependant,
             body=request_info.body,
-            # TODO: Take it from route
-            dependency_overrides_provider=None,
+            dependency_overrides_provider=latest_route.dependency_overrides_provider,
         )
         if errors:
             raise RequestValidationError(_normalize_errors(errors), body=request_info.body)
@@ -340,7 +340,7 @@ class VersionBundle:
         self,
         response_info: ResponseInfo,
         current_version: VersionDate,
-        latest_response_model: Any | None,
+        latest_route: APIRoute,
         path: str,
         method: str,
     ) -> ResponseInfo:
@@ -361,24 +361,24 @@ class VersionBundle:
                 break
             for version_change in v.version_changes:
                 if (
-                    latest_response_model
-                    and latest_response_model in version_change.alter_response_by_schema_instructions
+                    latest_route.response_model
+                    and latest_route.response_model in version_change.alter_response_by_schema_instructions
                 ):
-                    version_change.alter_response_by_schema_instructions[latest_response_model](response_info)
+                    version_change.alter_response_by_schema_instructions[latest_route.response_model](response_info)
                 if path in version_change.alter_response_by_path_instructions:
                     for instruction in version_change.alter_response_by_path_instructions[path]:
                         if method in instruction.methods:
                             instruction(response_info)
         return response_info
 
-    # TODO: This function is all over the place. Refactor it and all functions it calls.
+    # TODO (https://github.com/zmievsa/cadwyn/issues/113): Refactor this function and all functions it calls.
     def _versioned(
         self,
         template_module_body_field_for_request_migrations: type[BaseModel] | None,
         module_body_field_name: str | None,
         route: APIRoute,
+        latest_route: APIRoute,
         dependant_for_request_migrations: Dependant,
-        latest_response_model: Any,
         *,
         request_param_name: str,
         response_param_name: str,
@@ -399,11 +399,12 @@ class VersionBundle:
                     kwargs,
                     response,
                     route,
+                    latest_route,
                 )
 
                 return await self._convert_endpoint_response_to_version(
                     endpoint,
-                    latest_response_model,
+                    latest_route,
                     path,
                     method,
                     response_param_name,
@@ -424,7 +425,7 @@ class VersionBundle:
     async def _convert_endpoint_response_to_version(
         self,
         func_to_get_response_from: Endpoint,
-        latest_response_model: Any,
+        latest_route: APIRoute,
         path: str,
         method: str,
         response_param_name: str,
@@ -434,8 +435,6 @@ class VersionBundle:
     ) -> Any:
         if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
             kwargs.pop(response_param_name)
-        # TODO: Verify that we handle fastapi.Response here
-        # TODO: Verify that we handle fastapi.Response descendants
         if endpoint_is_async_callable:
             response_or_response_body: FastapiResponse | object = await func_to_get_response_from(**kwargs)
         else:
@@ -449,22 +448,24 @@ class VersionBundle:
         if isinstance(response_or_response_body, FastapiResponse):
             response_info = ResponseInfo(
                 response_or_response_body,
-                # TODO: Give user the ability to specify their own renderer
-                # TODO: Only do this if there are migrations
+                # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
                 json.loads(response_or_response_body.body) if response_or_response_body.body else None,
             )
         else:
-            # TODO: We probably need to call this in the same way as in fastapi instead of hardcoding exclude_unset.
-            # We have such an ability if we force passing the route into this wrapper. Or maybe not... Important!
             response_info = ResponseInfo(
                 fastapi_response_dependency,
-                _prepare_response_content(response_or_response_body, exclude_unset=False),
+                _prepare_response_content(
+                    response_or_response_body,
+                    exclude_unset=latest_route.response_model_exclude_unset,
+                    exclude_defaults=latest_route.response_model_exclude_defaults,
+                    exclude_none=latest_route.response_model_exclude_none,
+                ),
             )
 
         response_info = self._migrate_response(
             response_info,
             api_version,
-            latest_response_model,
+            latest_route,
             path,
             method,
         )
@@ -476,8 +477,7 @@ class VersionBundle:
             # `RuntimeError: Response content longer than Content-Length` or
             # `Too much data for declared Content-Length`, based on the protocol
             if response_info.body is not None:
-                # TODO: Give user the ability to specify their own renderer
-                # TODO: Only do this if there are migrations
+                # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
                 response_info._response.body = json.dumps(response_info.body).encode()
             return response_info._response
         return response_info.body
@@ -491,6 +491,7 @@ class VersionBundle:
         kwargs: dict[str, Any],
         response: FastapiResponse,
         route: APIRoute,
+        latest_route: APIRoute,
     ):
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
@@ -500,7 +501,7 @@ class VersionBundle:
         if api_version is None:
             return kwargs
 
-        # TODO: What if the user never edits it? We just add a round of (de)serialization
+        # TODO (https://github.com/zmievsa/cadwyn/issues/51): Make this zero-cost for migration-less cases
         if (
             len(route.dependant.body_params) == 1
             and template_module_body_field_for_request_migrations is not None
@@ -524,6 +525,7 @@ class VersionBundle:
             response,
             request_info,
             api_version,
+            latest_route,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:

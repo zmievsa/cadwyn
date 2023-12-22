@@ -157,11 +157,10 @@ class _EndpointTransformer(Generic[_R]):
             copy_of_dependant = deepcopy(latest_route.dependant)
             # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
             if len(copy_of_dependant.body_params) == 1:
-                body_param: FastAPIModelField = copy_of_dependant.body_params[0]
-                body_schema = body_param.type_
-                new_type = schema_to_internal_request_body_representation.get(body_schema, body_schema)
-                new_body_param = rebuild_fastapi_body_param(body_param, new_type)
-                copy_of_dependant.body_params = [new_body_param]
+                self._replace_internal_representation_with_the_versioned_schema(
+                    copy_of_dependant,
+                    schema_to_internal_request_body_representation,
+                )
 
             for older_router_info in list(router_infos.values()):
                 older_route = older_router_info.router.routes[route_index]
@@ -179,11 +178,11 @@ class _EndpointTransformer(Generic[_R]):
                     template_older_body_model = None
                 _add_data_migrations_to_route(
                     older_route,
+                    latest_route,
                     template_older_body_model,
                     older_route.body_field.alias if older_route.body_field is not None else None,
                     copy_of_dependant,
                     # NOTE: The fact that we use latest here assumes that the route can never change its response schema
-                    latest_route.response_model,
                     self.versions,
                 )
         for _, router_info in router_infos.items():
@@ -194,7 +193,18 @@ class _EndpointTransformer(Generic[_R]):
             ]
         return {version: router_info.router for version, router_info in router_infos.items()}
 
-    # TODO: Simplify https://github.com/zmievsa/cadwyn/issues/28
+    def _replace_internal_representation_with_the_versioned_schema(
+        self,
+        copy_of_dependant: Dependant,
+        schema_to_internal_request_body_representation: dict[type[BaseModel], type[BaseModel]],
+    ):
+        body_param: FastAPIModelField = copy_of_dependant.body_params[0]
+        body_schema = body_param.type_
+        new_type = schema_to_internal_request_body_representation.get(body_schema, body_schema)
+        new_body_param = rebuild_fastapi_body_param(body_param, new_type)
+        copy_of_dependant.body_params = [new_body_param]
+
+    # TODO (https://github.com/zmievsa/cadwyn/issues/28): Simplify
     def _apply_endpoint_changes_to_router(  # noqa: C901
         self,
         router: fastapi.routing.APIRouter,
@@ -319,7 +329,9 @@ class _EndpointTransformer(Generic[_R]):
                     )
 
 
-def _extract_internal_request_schemas_from_router(router: fastapi.routing.APIRouter):
+def _extract_internal_request_schemas_from_router(
+    router: fastapi.routing.APIRouter,
+) -> dict[type[BaseModel], type[BaseModel]]:
     """Please note that this functon replaces internal bodies with original bodies in the router"""
     schema_to_internal_request_body_representation = {}
 
@@ -569,10 +581,10 @@ def _add_request_and_response_params(route: APIRoute):
 
 def _add_data_migrations_to_route(
     route: APIRoute,
+    latest_route: Any,
     template_body_field: type[BaseModel] | None,
     template_body_field_name: str | None,
     dependant_for_request_migrations: Dependant,
-    latest_response_model: Any,
     versions: VersionBundle,
 ):
     if not (route.dependant.request_param_name and route.dependant.response_param_name):  # pragma: no cover
@@ -585,8 +597,8 @@ def _add_data_migrations_to_route(
         template_body_field,
         template_body_field_name,
         route,
+        latest_route,
         dependant_for_request_migrations,
-        latest_response_model,
         request_param_name=route.dependant.request_param_name,
         response_param_name=route.dependant.response_param_name,
     )(route.endpoint)
