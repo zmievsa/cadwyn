@@ -26,7 +26,6 @@ Schemas, enums, and any other versioned data are inside the `data.latest` packag
 You can assume that we already have a version **2000-01-01** and we are making a new version **2001-01-01** with the changes from our scenarios.
 
 Versioning is a complex topic with more pitfalls than you'd expect so please: **do not try to skip this guide**. Otherwise, your code will quickly get unmaintainable. Please also note that any of these scenarios can be combined in any way even within a single version change, though it's recommended to keep the version changes atomic as described in [methodology](#methodology) section.
-<!--TODO: Add a section on people forgetting to regenerate their schemas-->
 
 ## Methodology
 
@@ -140,8 +139,6 @@ Note, however, that users will still be able to use arbitrary length names in ol
 8. [Regenerate](./reference.md#code-generation) the versioned schemas
 
 This process seems quite complex but it's not Cadwyn-specific: if you want to safely and nicely version for your users, you will have to follow such a process even if you don't use any versioning framework at all.
-
-<!-- TODO: Add a section on adding/changing validators -->
 
 #### Removal or Expansion of constraints
 
@@ -343,8 +340,6 @@ See how we didn't remove the `phone` field from old versions? Instead, we allowe
 
 #### Schema field type change or narrowing
 
-<!-- TODO: Come up with a non-narrowing type change example -->
-
 ##### Compatible narrowing
 
 Let's say that previously users could specify their date of birth as a datetime instead of a date. We wish to rectify that. We can solve this with [internal body request schemas](./reference.md#internal-request-schemas).
@@ -539,7 +534,7 @@ It is not a breaking change so it's recommended to simply add it to all versions
 
 ### Path deletion
 
-[TODO](./reference.md#defining-endpoints-that-didnt-exist-in-new-versions)
+See [reference](./reference.md#defining-endpoints-that-didnt-exist-in-new-versions)
 
 ## Behavior
 

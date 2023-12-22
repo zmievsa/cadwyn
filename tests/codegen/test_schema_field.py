@@ -279,7 +279,6 @@ def assert_field_had_changes_apply(
         field_info = field_info.field_info  # pyright: ignore[reportGeneralTypeIssues]
     if PYDANTIC_V2 and attr in FieldInfo.metadata_lookup:
         # We do this because _PydanticGeneralMetadata does not have a proper `__eq__`
-        # TODO: Check type here too.
         assert repr(FieldInfo._collect_metadata({attr: attr_value})[0]) in [repr(obj) for obj in field_info.metadata]
     else:
         assert getattr(field_info, attr) == attr_value

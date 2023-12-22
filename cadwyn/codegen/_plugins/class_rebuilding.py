@@ -114,13 +114,11 @@ def _render_annotation(annotation: Any):
 
 
 def _generate_field_ast(field: PydanticFieldWrapper):
-    # TODO: Make sure that cadwyn doesn't remove OLD property definitions
     if field.field_ast is not None:
         # We do this because next plugins **might** use a transformer which will edit the ast within the field
         # and break rendering
         return copy.deepcopy(field.field_ast)
     passed_attrs = field.passed_field_attributes
-    # TODO: This is None check feels buggy
     if is_pydantic_constrained_type(field.annotation) and field.annotation_ast is None:
         (
             attrs_that_are_only_in_contype,

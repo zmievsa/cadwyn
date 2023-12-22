@@ -92,7 +92,6 @@ def _generate_versioned_directories(
     codegen_plugins: Collection[CodegenPlugin],
     migration_plugins: Collection[MigrationPlugin],
 ):
-    # TODO: An alternative structure for module python path: An object similar to pathlib.Path with .name, etc
     for version in versions:
         global_context = GlobalCodegenContext(
             current_version=version,
@@ -113,7 +112,6 @@ def _generate_directory_for_version(
     version: Version,
     global_context: GlobalCodegenContext,
 ):
-    # TODO: This call can be optimized
     template_dir = get_package_path_from_module(template_package)
     version_dir = get_version_dir_path(template_package, version.value)
     for (
@@ -178,26 +176,23 @@ def _build_context(
         parsed_file,
         module_python_path,
     )
-    version_dir = template_dir.with_name(version_dir.name)
-    index_of_latest_schema_dir_in_module_python_path = get_index_of_latest_schema_dir_in_module_python_path(
+    index_of_latest_package_dir_in_module_python_path = get_index_of_latest_schema_dir_in_module_python_path(
         template_module,
-        version_dir,
+        template_dir.with_name(version_dir.name),
     )
-    context: CodegenContext = CodegenContext(
+    return CodegenContext(
         current_version=global_context.current_version,
         versions=global_context.versions,
         schemas=global_context.schemas,
         enums=global_context.enums,
         modules=global_context.modules,
         extra=global_context.extra,
-        index_of_latest_schema_dir_in_module_python_path=index_of_latest_schema_dir_in_module_python_path,
+        index_of_latest_package_dir_in_module_python_path=index_of_latest_package_dir_in_module_python_path,
         module_python_path=module_python_path,
         all_names_defined_on_toplevel_of_file=all_names_defined_at_toplevel_of_file,
         template_module=template_module,
         module_path=parallel_file,
     )
-
-    return context
 
 
 def _generate_parallel_directory(
