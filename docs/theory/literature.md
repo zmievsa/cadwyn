@@ -6,6 +6,7 @@
 
 * <https://stripe.com/blog/api-versioning>
 * <https://www.intercom.com/blog/api-versioning/>
+* <https://keygen.sh/blog/breaking-things-without-breaking-things/>
 * <https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market>
 * <https://rescale.com/blog/api-versioning-with-the-django-rest-framework/>
 
