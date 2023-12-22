@@ -41,7 +41,6 @@ from starlette.routing import (
     request_response,
 )
 from typing_extensions import Self, assert_never
-from verselect.routing import VERSION_HEADER_FORMAT
 
 from cadwyn._compat import model_fields, rebuild_fastapi_body_param
 from cadwyn._package_utils import get_package_path_from_module, get_version_dir_path
@@ -55,12 +54,6 @@ from cadwyn.structure.endpoints import (
     EndpointHadInstruction,
 )
 from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionChange
-
-__all__ = [
-    "generate_versioned_routers",
-    "VersionedAPIRouter",
-    "VERSION_HEADER_FORMAT",
-]
 
 _T = TypeVar("_T", bound=Callable[..., Any])
 _R = TypeVar("_R", bound=fastapi.routing.APIRouter)
@@ -157,8 +150,6 @@ class _EndpointTransformer(Generic[_R]):
                 f"{self.routes_that_never_existed}",
             )
 
-        # BEWARE: We assume that the order of routes didn't change.
-        # TODO: Make a test suite checking that it doesn't change
         for route_index, latest_route in enumerate(self.parent_router.routes):
             if not isinstance(latest_route, APIRoute):
                 continue
@@ -223,7 +214,6 @@ class _EndpointTransformer(Generic[_R]):
                 methods_we_should_have_applied_changes_to = instruction.endpoint_methods.copy()
 
                 if isinstance(instruction, EndpointDidntExistInstruction):
-                    # TODO OPTIMIZATION:
                     deleted_routes = _get_routes(
                         routes,
                         instruction.endpoint_path,
@@ -250,7 +240,6 @@ class _EndpointTransformer(Generic[_R]):
                         ' "{version_change_name}" doesn\'t exist in a newer version'
                     )
                 elif isinstance(instruction, EndpointExistedInstruction):
-                    # TODO Optimization
                     if original_routes:
                         method_union = set()
                         for original_route in original_routes:

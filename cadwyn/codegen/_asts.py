@@ -126,9 +126,10 @@ def transform_type(value: type) -> Any:
                 + ")"
             )
         else:
-            # TODO: Finish this comment :D
             # In pydantic V1:
-            # MRO of conint looks like: []
+            # MRO of constr looks like: [ConstrainedStrValue, pydantic.types.ConstrainedStr, str, object]
+            #                                                                                -2     -1
+            #                                                                                ^^^
             value = value.mro()[-2]
 
     return value.__name__

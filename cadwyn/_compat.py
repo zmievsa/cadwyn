@@ -63,7 +63,6 @@ def get_attrs_that_are_not_from_field_and_that_are_from_field(value: type):
 
 @dataclasses.dataclass(slots=True)
 class PydanticFieldWrapper:
-    # TODO: What's the difference between these two? I keep forgetting
     annotation: Any
 
     init_model_field: dataclasses.InitVar[ModelField]  # pyright: ignore[reportGeneralTypeIssues]
@@ -92,7 +91,6 @@ class PydanticFieldWrapper:
         else:
             setattr(self.field_info, name, value)
 
-    # TODO: If we ever have performance issues  with this -- it makes sense to cache and update it in update_attribute
     @property
     def passed_field_attributes(self):
         if PYDANTIC_V2:
