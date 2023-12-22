@@ -2,16 +2,10 @@ SHELL := /bin/bash
 py_warn = PYTHONDEVMODE=1
 
 
-.DEFAULT_GOAL := pre-commit
-
-
 install:
 	poetry install --all-extras
 
-docs:
-	mkdocs serve
-
-pre-commit:
+lint:
 	pre-commit run --all-files
 
 format:

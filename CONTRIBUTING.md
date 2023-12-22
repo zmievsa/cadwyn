@@ -69,7 +69,7 @@ We welcome contributions that enhance / improve the appearance and usability of 
 
 ### Running the docs locally
 
-Then you can serve the documentation with `make docs`
+Then you can serve the documentation with `mkdocs serve`
 
 ### Writing and editing docs
 

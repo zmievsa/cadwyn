@@ -7,7 +7,7 @@ Cadwyn supports both Pydantic 1 and Pydantic 2 so you can pick your preferred ve
 
 ## Cadwyn's flow
 
-Cadwyn aims to be the most accurate and sophisticated API Versioning model out there. First of all, you maintain **zero** duplicated code yourself. Usually, in API versioning you [would need to](./theory.md) duplicate and maintain at least some layer of your applicaton. It could be the database, business logic, schemas, and endpoints. Cadwyn only duplicates your:
+Cadwyn aims to be the most accurate and sophisticated API Versioning model out there. First of all, you maintain **zero** duplicated code yourself. Usually, in API versioning you [would need to](./theory/how_we_got_here.md) duplicate and maintain at least some layer of your applicaton. It could be the database, business logic, schemas, and endpoints. Cadwyn only duplicates your:
 
 * schemas but you do not maintain the duplicates -- you only regenerate it when necessary
 * endpoints but only in runtime so you do not need to maintain the duplicates

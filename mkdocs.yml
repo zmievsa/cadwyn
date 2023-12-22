@@ -59,8 +59,14 @@ theme:
     code: Roboto Mono
 
 nav:
-  - "Home": "index.md"
-  - "Tutorial": "tutorial.md"
-  - "Recipes": "recipes.md"
-  - "Reference": "reference.md"
-  - "Theory": "theory.md"
+  - "Home":
+    - "index.md"
+  - "Tutorial":
+    - "tutorial.md"
+  - "Recipes":
+    - "recipes.md"
+  - "Reference":
+    - "reference.md"
+  - "Theory":
+    - How we got here: "theory/how_we_got_here.md"
+    - More literature: "theory/literature.md"
