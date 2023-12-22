@@ -1,5 +1,7 @@
 # Literature
 
+During Cadwyn's development, I went through countless resources on API Versioning. The following are the most unique and effective ones I could find.
+
 ## Cadwyn-like API Versioning
 
 ### Articles
@@ -27,6 +29,9 @@
 
 ## Other articles on API Versioning
 
+* <https://www.postman.com/api-platform/api-versioning/>.
+* <https://www.xmatters.com/blog/blog-four-rest-api-versioning-strategies>
+* <https://www.opslevel.com/resources/the-ultimate-guide-to-microservices-versioning-best-practices>
 * <https://github.com/dotnet/aspnet-api-versioning>
 * <https://habr.com/ru/companies/superjob/articles/577650/>
 * <https://mikehelmick.medium.com/django-rest-framework-better-api-versioning-with-semantic-versioning-d93908613dea>
