@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: python3 -m pip install mkdocs-material
 
-      - run: mkdocs build --config-file ./mkdocs-sample.yml
+      - run: mkdocs build --config-file ./mkdocs.yml
 
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main'
