@@ -82,7 +82,9 @@ Let's say that we had a "summary" field before but now we want to rename it to "
 
 
     class RenameSummaryIntoBioInUser(VersionChange):
-        description = "Rename 'summary' field into 'bio' to keep up with industry standards"
+        description = (
+            "Rename 'summary' field into 'bio' to keep up with industry standards"
+        )
         instructions_to_migrate_to_previous_version = (
             schema(User).field("bio").had(name="summary"),
         )
@@ -203,7 +205,9 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
         instructions_to_migrate_to_previous_version = (
             schema(User)
             .field("middle_name")
-            .existed_as(type=str | None, description="User's Middle Name", default=None),
+            .existed_as(
+                type=str | None, description="User's Middle Name", default=None
+            ),
         )
     ```
 

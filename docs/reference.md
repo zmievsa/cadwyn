@@ -150,7 +150,8 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 
 
 versions = VersionBundle(
-    Version(date(2023, 2, 10), RemoveTaxIDEndpoints), Version(date(2022, 11, 16))
+    Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
+    Version(date(2022, 11, 16)),
 )
 ```
 
@@ -204,14 +205,20 @@ This approach of *maintaining the present and describing the past* might appear 
 Let's say that we renamed the field `creation_date` into `created_at`. We have altered our schemas -- that's great! But when our clients send us requests using the old versions of our API -- we will still get the data where we have `creation_date` instead of `created_at`. How do we solve this? Well, in Cadwyn your business logic never receives requests of the old versions. Instead, it receives only the requests of the latest version. So when you define a version change that renames a field, you need to also define how to convert the request body from the old version to the newer version. For example:
 
 ```python
-from cadwyn.structure import VersionChange, schema, convert_request_to_next_version_for
+from cadwyn.structure import (
+    VersionChange,
+    schema,
+    convert_request_to_next_version_for,
+)
 from data.latest.invoices import InvoiceCreateRequest
 
 
 class RemoveTaxIDEndpoints(VersionChange):
     description = "Rename `Invoice.creation_date` into `Invoice.created_at`."
     instructions_to_migrate_to_previous_version = (
-        schema(InvoiceCreateRequest).field("creation_date").had(name="created_at"),
+        schema(InvoiceCreateRequest)
+        .field("creation_date")
+        .had(name="created_at"),
     )
 
     @convert_request_to_next_version_for(InvoiceCreateRequest)
@@ -232,7 +239,11 @@ from cadwyn.structure import (
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
 )
-from data.latest.invoices import BaseInvoice, InvoiceCreateRequest, InvoiceResource
+from data.latest.invoices import (
+    BaseInvoice,
+    InvoiceCreateRequest,
+    InvoiceResource,
+)
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -367,7 +378,9 @@ router = VersionedAPIRouter(prefix="/v1/users")
 
 @router.post("", response_model=User)
 def create_user(
-    payload: Annotated[InternalUserCreateRequest, InternalRepresentationOf[User]]
+    payload: Annotated[
+        InternalUserCreateRequest, InternalRepresentationOf[User]
+    ]
 ):
     ...
 ```
@@ -388,7 +401,8 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 
 
 versions = VersionBundle(
-    Version(date(2023, 2, 10), RemoveTaxIDEndpoints), Version(date(2022, 11, 16))
+    Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
+    Version(date(2022, 11, 16)),
 )
 ```
 
