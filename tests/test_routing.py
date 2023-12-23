@@ -305,7 +305,7 @@ def test__only_exists_in_older_versions__endpoint_is_not_a_route__error(
     ):
 
         @router.only_exists_in_older_versions
-        async def test2():
+        async def test2():  # pragma: no branch
             raise NotImplementedError
 
 
@@ -319,10 +319,10 @@ def test__only_exists_in_older_versions__applied_twice__should_raise_error(
         match=re.escape('The route "test_endpoint" was already deleted. You can\'t delete it again.'),
     ):
 
-        @router.only_exists_in_older_versions
+        @router.only_exists_in_older_versions  # pragma: no branch
         @router.only_exists_in_older_versions
         @router.get("/test")
-        async def test_endpoint():
+        async def test_endpoint():  # pragma: no branch
             raise NotImplementedError
 
 

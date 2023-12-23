@@ -240,11 +240,11 @@ class TestRequestMigrations:
             "query_params": {"query_param_key": "query_param val 2"},
         }
 
+        clients[date(2000, 1, 1)].cookies["5"] = "6"
         assert clients[date(2000, 1, 1)].post(
             test_path,
             json={"1": "2"},
             headers={"3": "4"},
-            cookies={"5": "6"},
             params={"7": "8"},
         ).json() == {
             "body": {"1": "2", "hello": "hello"},
@@ -505,7 +505,8 @@ class TestResponseMigrations:
         assert dict(resp.cookies) == {"cookie_key": "cookie_val"}
         assert resp.status_code == 300
 
-        resp = clients[date(2000, 1, 1)].post(test_path, json={"1": "2"}, headers={"3": "4"}, cookies={"5": "6"})
+        clients[date(2000, 1, 1)].cookies["5"] = "6"
+        resp = clients[date(2000, 1, 1)].post(test_path, json={"1": "2"}, headers={"3": "4"})
         assert resp.json() == {
             "body": {"1": "2"},
             "headers": {

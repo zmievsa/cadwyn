@@ -343,7 +343,7 @@ def test__convert_response_to_previous_version_for__with_incorrect_args__should_
     ):
 
         @convert_response_to_previous_version_for(SomeSchema)
-        def my_conversion_method(cls: Any, payload: Any):
+        def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
             raise NotImplementedError
 
 
@@ -356,7 +356,7 @@ def test__convert_response_to_previous_version_for__with_no_args__should_raise_e
     ):
 
         @convert_response_to_previous_version_for(SomeSchema)
-        def my_conversion_method2():
+        def my_conversion_method2():  # pragma: no branch
             raise NotImplementedError
 
 
@@ -369,7 +369,7 @@ def test__convert_request_to_next_version_for__with_incorrect_args__should_raise
     ):
 
         @convert_request_to_next_version_for(SomeSchema)
-        def my_conversion_method(cls: Any, payload: Any):
+        def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
             raise NotImplementedError
 
 
@@ -382,7 +382,7 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
     ):
 
         @convert_request_to_next_version_for(SomeSchema)
-        def my_conversion_method2():
+        def my_conversion_method2():  # pragma: no branch
             raise NotImplementedError
 
 

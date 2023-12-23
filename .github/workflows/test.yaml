@@ -35,4 +35,4 @@ jobs:
       - name: Install dependencies
         run: poetry install --all-extras
       - name: Test
-        run: make supertest
+        run: make ci_supertest
