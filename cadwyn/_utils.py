@@ -13,6 +13,13 @@ UnionType = type(int | str) | type(Union[int, str])
 _T = TypeVar("_T", bound=Callable)
 
 
+class PlainRepr(str):
+    """String class where repr doesn't include quotes"""
+
+    def __repr__(self) -> str:
+        return str(self)
+
+
 def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
     def decorator(f: Callable) -> _T:
         return f  # pyright: ignore[reportGeneralTypeIssues]
@@ -41,7 +48,7 @@ def get_pythonpath_to_another_version_of_module(
     # ['package', 'companies', 'latest', 'schemas']
     #                           ^^^^^^
     #                           index = 2
-    index_of_base_schema_dir = get_index_of_base_schema_dir_in_pythonpath(
+    index_of_base_schema_dir = get_index_of_latest_schema_dir_in_module_python_path(
         module_from_old_version,
         new_version_dir,
         version_dirs,
@@ -56,7 +63,7 @@ def get_pythonpath_to_another_version_of_module(
 
 
 @functools.cache
-def get_index_of_base_schema_dir_in_pythonpath(
+def get_index_of_latest_schema_dir_in_module_python_path(
     module_from_old_version: ModuleType,
     parallel_dir: Path,
     version_dirs: frozenset[Path] = frozenset(),

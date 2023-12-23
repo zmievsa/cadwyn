@@ -25,6 +25,14 @@ test = ["anyio[trio]", "coverage[toml] (>=4.5)", "hypothesis (>=4.0)", "mock (>=
 trio = ["trio (<0.22)"]
 
 [[package]]
+name = "ast-comments"
+version = "1.2.0"
+description = ""
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
+
+[[package]]
 name = "asttokens"
 version = "2.4.1"
 description = "Annotate AST trees with source code positions"
@@ -951,7 +959,7 @@ cli = ["typer"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "7de5313323b42fcf6edfba86fc2c8f2cd0e0e36639baceda8c5dceaeb8b598fa"
+content-hash = "f98b2edd9f847dafd78cd1f4adc6d65cf376c6e0ffc2fb33aee7df0a6a4a79eb"
 
 [metadata.files]
 annotated-types = [
@@ -961,6 +969,10 @@ annotated-types = [
 anyio = [
     {file = "anyio-3.7.1-py3-none-any.whl", hash = "sha256:91dee416e570e92c64041bd18b900d1d6fa78dff7048769ce5ac5ddad004fbb5"},
     {file = "anyio-3.7.1.tar.gz", hash = "sha256:44a3c9aba0f5defa43261a8b3efb97891f2bd7d804e0e1f56419befa1adfc780"},
+]
+ast-comments = [
+    {file = "ast_comments-1.2.0-py3-none-any.whl", hash = "sha256:b76e3fbf7dfabad244ca543ccdb27dcadbde860408dadc7d4dc944f0fbb6dab0"},
+    {file = "ast_comments-1.2.0.tar.gz", hash = "sha256:9f8a0194ae560e9407a4ce5b46c9e67ab02e2266d27c6305f0d4c4585229b5ad"},
 ]
 asttokens = [
     {file = "asttokens-2.4.1-py2.py3-none-any.whl", hash = "sha256:051ed49c3dcae8913ea7cd08e46a606dba30b79993209636c4875bc1d637bc24"},

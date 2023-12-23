@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cadwyn"
-version = "3.0.1"
+version = "3.1.1"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -37,6 +37,7 @@ fastapi = ">=0.96.1"
 pydantic = ">=1.0.0"
 typer = {version = ">=0.7.0", optional = true}
 verselect = ">=0.0.6"
+ast-comments = "~1.2.0"
 
 [tool.poetry.extras]
 cli = ["typer"]
@@ -113,6 +114,7 @@ reportAssertAlwaysTrue = true
 reportUnsupportedDunderAll = true
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingSuperCall = true
+ignore=["cadwyn/_codegen/ast_comments.py"]
 
 
 [tool.ruff]

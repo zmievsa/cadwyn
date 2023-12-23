@@ -26,7 +26,6 @@ Schemas, enums, and any other versioned data are inside the `data.latest` packag
 You can assume that we already have a version **2000-01-01** and we are making a new version **2001-01-01** with the changes from our scenarios.
 
 Versioning is a complex topic with more pitfalls than you'd expect so please: **do not try to skip this guide**. Otherwise, your code will quickly get unmaintainable. Please also note that any of these scenarios can be combined in any way even within a single version change, though it's recommended to keep the version changes atomic as described in [methodology](#methodology) section.
-<!--TODO: Add a section on people forgetting to regenerate their schemas-->
 
 ## Methodology
 
@@ -82,7 +81,9 @@ Let's say that we had a "summary" field before but now we want to rename it to "
 
 
     class RenameSummaryIntoBioInUser(VersionChange):
-        description = "Rename 'summary' field into 'bio' to keep up with industry standards"
+        description = (
+            "Rename 'summary' field into 'bio' to keep up with industry standards"
+        )
         instructions_to_migrate_to_previous_version = (
             schema(User).field("bio").had(name="summary"),
         )
@@ -138,8 +139,6 @@ Note, however, that users will still be able to use arbitrary length names in ol
 8. [Regenerate](./reference.md#code-generation) the versioned schemas
 
 This process seems quite complex but it's not Cadwyn-specific: if you want to safely and nicely version for your users, you will have to follow such a process even if you don't use any versioning framework at all.
-
-<!-- TODO: Add a section on adding/changing validators -->
 
 #### Removal or Expansion of constraints
 
@@ -203,7 +202,9 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
         instructions_to_migrate_to_previous_version = (
             schema(User)
             .field("middle_name")
-            .existed_as(type=str | None, description="User's Middle Name", default=None),
+            .existed_as(
+                type=str | None, description="User's Middle Name", default=None
+            ),
         )
     ```
 
@@ -243,7 +244,40 @@ The recommended approach:
 
 #### Schema required field addition
 
-Let's say that we want to add a required field `phone` to our users. We can solve this with [internal body request schemas](./reference.md#internal-request-schemas).
+##### With compatible default value in older versions
+
+Let's say that our users had a field `country` that defaulted to `USA` but our product is now used well beyond United States so we want to make this field required in the `latest` version.
+
+1. Remove `default="US"` from `data.latest.users.UserCreateRequest`
+2. Add the following migration to `versions.v2001_01_01`:
+
+    ```python
+    from cadwyn.structure import (
+        VersionChange,
+        schema,
+        convert_request_to_next_version_for,
+    )
+    from data.latest.users import UserCreateRequest, UserResource
+
+
+    class MakeUserCountryRequired(VersionChange):
+        description = 'Make user country required instead of the "USA" default'
+        instructions_to_migrate_to_previous_version = (
+            schema(UserCreateRequest).field("country").had(default="USA"),
+        )
+
+        @convert_request_to_next_version_for(UserCreateRequest)
+        def add_time_field_to_request(request: RequestInfo):
+            request.body["country"] = request.body.get("country", "USA")
+    ```
+
+3. [Regenerate](./reference.md#code-generation) the versioned schemas
+
+That's it! Our old schemas will now contain a default but in `latest` country will be required. You might notice a weirdness: if we set a default in the old version, why would we also write a migration? That's because of a sad implementation detail of pydantic that [prevents us](./reference.md#defaults-warning) from using defaults from old versions.
+
+##### With incompatible default value in older versions
+
+Let's say that we want to add a required field `phone` to our users. However, older versions did not have such a field at all. This means that the field is going to be nullable in the old versions but required in the latest version. This also means that older versions contain a wider type (`str | None`) than the latest version (`str`). So when we try to migrate request bodies from the older versions to latest -- we might receive a `ValidationError` because `None` is not an acceptable value for `phone` field in the new version. Whenever we have a problem like this, when older version contains more data or a wider type set of data,  we use [internal body request schemas](./reference.md#internal-request-schemas).
 
 1. Add `phone` field of type `str` to `data.latest.users.UserCreateRequest`
 2. Add `phone` field of type `str | None` with a `default=None` to `data.latest.users.UserResource` because all users created with older versions of our API won't have phone numbers.
@@ -305,8 +339,6 @@ Let's say that we want to add a required field `phone` to our users. We can solv
 See how we didn't remove the `phone` field from old versions? Instead, we allowed a nullable `phone` field to be passed into both old `UserResource` and old `UserCreateRequest`. This gives our users new functionality without needing to update their API version! It is one of the best parts of Cadwyn's approach: our users can get years worth of updates without switching their API version and without their integration getting broken.
 
 #### Schema field type change or narrowing
-
-<!-- TODO: Come up with a non-narrowing type change example -->
 
 ##### Compatible narrowing
 
@@ -502,7 +534,7 @@ It is not a breaking change so it's recommended to simply add it to all versions
 
 ### Path deletion
 
-[TODO](./reference.md#defining-endpoints-that-didnt-exist-in-new-versions)
+See [reference](./reference.md#defining-endpoints-that-didnt-exist-in-new-versions)
 
 ## Behavior
 

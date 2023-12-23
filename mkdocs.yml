@@ -5,13 +5,22 @@ repo_name: Cadwyn
 repo_url: https://github.com/zmievsa/cadwyn
 
 markdown_extensions:
-  - pymdownx.highlight:
-      anchor_linenums: true
-      line_spans: __span
-      pygments_lang_class: true
-  - pymdownx.inlinehilite
-  - pymdownx.snippets
-  - pymdownx.superfences
+  toc:
+      permalink: true
+  markdown.extensions.codehilite:
+    guess_lang: false
+  admonition: null
+  codehilite: null
+  extra: null
+  pymdownx.superfences:
+    custom_fences:
+    - name: mermaid
+      class: mermaid
+      format: !!python/name:pymdownx.superfences.fence_code_format ''
+  pymdownx.tabbed:
+    alternate_style: true
+  attr_list: null
+  md_in_html: null
 theme:
   name: 'material'
   features:
@@ -19,36 +28,45 @@ theme:
   - search.highlight
   - content.tabs.link
   - navigation.indexes
-  - content.tooltips
+  - navigation.tracking
+  - navigation.tabs
   - navigation.path
+  - content.tooltips
   - content.code.annotate
   - content.code.copy
   - content.code.select
-  - navigation.tabs
   palette:
-    # Palette toggle for automatic mode
     - media: "(prefers-color-scheme)"
       toggle:
-        icon: material/brightness-auto
+        icon: material/link
         name: Switch to light mode
-
-    # Palette toggle for light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      primary: indigo
+      accent: indigo
       toggle:
-        icon: material/brightness-7
+        icon: material/toggle-switch
         name: Switch to dark mode
-
-    # Palette toggle for dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: black
+      accent: indigo
       toggle:
-        icon: material/brightness-4
+        icon: material/toggle-switch-off
         name: Switch to system preference
+  font:
+    text: Roboto
+    code: Roboto Mono
 
 nav:
-  - "Home": "index.md"
-  - "Tutorial": "tutorial.md"
-  - "Recipes": "recipes.md"
-  - "Reference": "reference.md"
-  - "Theory": "theory.md"
+  - "Home":
+    - "index.md"
+  - "Tutorial":
+    - "tutorial.md"
+  - "Recipes":
+    - "recipes.md"
+  - "Reference":
+    - "reference.md"
+  - "Theory":
+    - How we got here: "theory/how_we_got_here.md"
+    - More literature: "theory/literature.md"
