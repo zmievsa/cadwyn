@@ -107,7 +107,7 @@ exclude_lines = [
     "__rich_repr__",
     "__repr__",
 ]
-omit = ["docs/plugin.py"]
+omit = ["./docs/plugin.py", "./site/plugin.py", "./tests/_data/_temp/**/*", "tests/tutorial/data/**/*"]
 
 [tool.pyright]
 reportMissingImports = true
