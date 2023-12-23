@@ -5,9 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.1.2]
+
 ### Changed
 
 * Migrate from black to ruff-format
+* Fix a rare bug in internal body schema handling when it was applied too early, causing partially incomplete data to arrive to the handler
 
 ## [3.1.1]
 

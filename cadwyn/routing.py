@@ -120,8 +120,10 @@ class _EndpointTransformer(Generic[_R]):
         ]
 
     def transform(self) -> dict[VersionDate, _R]:
+        schema_to_internal_request_body_representation = _extract_internal_request_schemas_from_router(
+            self.parent_router
+        )
         router = deepcopy(self.parent_router)
-        schema_to_internal_request_body_representation = _extract_internal_request_schemas_from_router(router)
         router_infos: dict[VersionDate, _RouterInfo] = {}
         routes_with_migrated_requests = {}
         route_bodies_with_migrated_requests: set[type[BaseModel]] = set()
@@ -178,11 +180,11 @@ class _EndpointTransformer(Generic[_R]):
                     template_older_body_model = None
                 _add_data_migrations_to_route(
                     older_route,
+                    # NOTE: The fact that we use latest here assumes that the route can never change its response schema
                     latest_route,
                     template_older_body_model,
                     older_route.body_field.alias if older_route.body_field is not None else None,
                     copy_of_dependant,
-                    # NOTE: The fact that we use latest here assumes that the route can never change its response schema
                     self.versions,
                 )
         for _, router_info in router_infos.items():
@@ -355,6 +357,7 @@ def _extract_internal_request_schemas_from_router(
                 route.endpoint,
                 modify_annotations=_extract_internal_request_schemas_from_annotations,
             )
+            _remake_endpoint_dependencies(route)
     return schema_to_internal_request_body_representation
 
 
