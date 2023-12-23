@@ -30,4 +30,4 @@ repos:
       - id: blacken-docs
         additional_dependencies:
         - black==22.12.0
-        args: ["--line-length=80"]
+        args: ["--line-length=80", "--target-version=py310"]

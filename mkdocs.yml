@@ -4,6 +4,12 @@ site_name: Cadwyn
 repo_name: Cadwyn
 repo_url: https://github.com/zmievsa/cadwyn
 
+plugins:
+  - search
+  - mkdocs-simple-hooks:
+      hooks:
+        on_pre_build: "docs.plugin:on_pre_build"
+
 markdown_extensions:
   toc:
       permalink: true
@@ -61,12 +67,16 @@ theme:
 nav:
   - "Home":
     - "index.md"
-  - "Tutorial":
-    - "tutorial.md"
-  - "Recipes":
-    - "recipes.md"
-  - "Reference":
-    - "reference.md"
+    - "Contributing": "home/CONTRIBUTING.md"
+    - "Changelog": "home/CHANGELOG.md"
+  - "Tutorial": "tutorial.md"
+  - "Recipes": "recipes.md"
+  - "Reference": "reference.md"
   - "Theory":
     - How we got here: "theory/how_we_got_here.md"
-    - More literature: "theory/literature.md"
+    - Literature: "theory/literature.md"
+
+watch:
+- docs
+- CHANGELOG.md
+- mkdocs.yml
