@@ -6,12 +6,30 @@ authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/zmievsa/cadwyn"
+keywords = [
+    "python",
+    "api",
+    "json-schema",
+    "stripe",
+    "versioning",
+    "code-generation",
+    "hints",
+    "api-versioning",
+    "pydantic",
+    "fastapi",
+    "python310",
+    "python311",
+    "python312",
+]
 classifiers = [
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
     "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Internet",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -59,6 +77,7 @@ dirty-equals = "^0.6.0"
 mkdocs = "^1.5.2"
 mkdocs-material = "^9.3.1"
 python-multipart = "^0.0.6"
+mkdocs-simple-hooks = "^0.1.5"
 
 [tool.poetry.scripts]
 cadwyn = "cadwyn.__main__:app"
@@ -90,10 +109,7 @@ exclude_lines = [
     "__repr__",
 ]
 omit = [
-    "tests/test_tutorial/test_users_example003/*",
-    "tests/_data/*",
-    "tests/_temp/*",
-    "tests/test_tutorial/*/schemas/*",
+    "docs/*"
 ]
 
 [tool.black]
@@ -120,7 +136,6 @@ reportAssertAlwaysTrue = true
 reportUnsupportedDunderAll = true
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingSuperCall = true
-ignore=["cadwyn/_codegen/ast_comments.py"]
 
 
 [tool.ruff]
