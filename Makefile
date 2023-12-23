@@ -19,9 +19,9 @@ ci_supertest:
 	poetry add 'pydantic@^1.0.0' || exit 1; \
 	make test || exit 1; \
 	poetry add 'pydantic@^2.0.0' || exit 1; \
-	make test;  \
-	poetry add 'pydantic@>=1.0.0'; \
+	make test; \
 
 supertest:
 	make ci_supertest; \
+	poetry add 'pydantic@>=1.0.0'; \
 	rm coverage.xml .coverage;
