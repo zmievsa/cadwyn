@@ -25,14 +25,6 @@ test = ["anyio[trio]", "coverage[toml] (>=4.5)", "hypothesis (>=4.0)", "mock (>=
 trio = ["trio (<0.22)"]
 
 [[package]]
-name = "ast-comments"
-version = "1.2.0"
-description = ""
-category = "main"
-optional = false
-python-versions = ">=3.8,<4.0"
-
-[[package]]
 name = "asttokens"
 version = "2.4.1"
 description = "Annotate AST trees with source code positions"
@@ -72,6 +64,14 @@ python-versions = ">=3.7"
 
 [package.extras]
 dev = ["freezegun (>=1.0,<2.0)", "pytest (>=6.0)", "pytest-cov"]
+
+[[package]]
+name = "better-ast-comments"
+version = "1.2.1"
+description = ""
+category = "main"
+optional = false
+python-versions = ">=3.8,<4.0"
 
 [[package]]
 name = "certifi"
@@ -962,7 +962,7 @@ cli = ["typer"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "4bdd121d541c9021921fd63345fae1ebfff4a61864bf3e2776e0c4af5eb66e7f"
+content-hash = "120c714789229afcb41179049a33cbaeb3ccd67977e7ac31adb24a33a99cdf24"
 
 [metadata.files]
 annotated-types = [
@@ -972,10 +972,6 @@ annotated-types = [
 anyio = [
     {file = "anyio-3.7.1-py3-none-any.whl", hash = "sha256:91dee416e570e92c64041bd18b900d1d6fa78dff7048769ce5ac5ddad004fbb5"},
     {file = "anyio-3.7.1.tar.gz", hash = "sha256:44a3c9aba0f5defa43261a8b3efb97891f2bd7d804e0e1f56419befa1adfc780"},
-]
-ast-comments = [
-    {file = "ast_comments-1.2.0-py3-none-any.whl", hash = "sha256:b76e3fbf7dfabad244ca543ccdb27dcadbde860408dadc7d4dc944f0fbb6dab0"},
-    {file = "ast_comments-1.2.0.tar.gz", hash = "sha256:9f8a0194ae560e9407a4ce5b46c9e67ab02e2266d27c6305f0d4c4585229b5ad"},
 ]
 asttokens = [
     {file = "asttokens-2.4.1-py2.py3-none-any.whl", hash = "sha256:051ed49c3dcae8913ea7cd08e46a606dba30b79993209636c4875bc1d637bc24"},
@@ -988,6 +984,10 @@ attrs = [
 babel = [
     {file = "Babel-2.14.0-py3-none-any.whl", hash = "sha256:efb1a25b7118e67ce3a259bed20545c29cb68be8ad2c784c83689981b7a57287"},
     {file = "Babel-2.14.0.tar.gz", hash = "sha256:6919867db036398ba21eb5c7a0f6b28ab8cbc3ae7a73a44ebe34ae74a4e7d363"},
+]
+better-ast-comments = [
+    {file = "better_ast_comments-1.2.1-py3-none-any.whl", hash = "sha256:c4993af37ac2655f9997d3751a95bd8a14306d4de17d03d1a89e62d18bea9836"},
+    {file = "better_ast_comments-1.2.1.tar.gz", hash = "sha256:97c0d174b062f06696b4ba63c3bb9782c95a71a02ad505f2cde54c9c7e391d8c"},
 ]
 certifi = [
     {file = "certifi-2023.11.17-py3-none-any.whl", hash = "sha256:e036ab49d5b79556f99cfc2d9320b34cfbe5be05c5871b51de9329f0603b0474"},
