@@ -1,0 +1,1984 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../tutorial/">
+      
+      
+        <link rel="next" href="../reference/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.5.3, mkdocs-material-9.5.3">
+    
+    
+      
+        <title>Recipes - Cadwyn</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.50c56a3b.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce((e,_)=>(e<<5)-e+_.charCodeAt(0),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#recipes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Cadwyn" class="md-header__button md-logo" aria-label="Cadwyn" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54Z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3V6m0 5h18v2H3v-2m0 5h18v2H3v-2Z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Cadwyn
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Recipes
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1M8 13h8v-2H8v2m9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1 0 1.71-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 5-5 5 5 0 0 0-5-5Z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 8a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3Z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5M7 15a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3Z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var media,input,key,value,palette=__md_get("__palette");if(palette&&palette.color){"(prefers-color-scheme)"===palette.color.media&&(media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']"),palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent"));for([key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      <label class="md-header__button md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"/></svg>
+      </label>
+      <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.516 6.516 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5Z"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12Z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41Z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/zmievsa/cadwyn" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.5.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2023 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81z"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Cadwyn
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href=".." class="md-tabs__link">
+          
+  
+    
+  
+  Home
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorial/" class="md-tabs__link">
+        
+  
+    
+  
+  Tutorial
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+    
+  
+  Recipes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../reference/" class="md-tabs__link">
+        
+  
+    
+  
+  Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../theory/how_we_got_here/" class="md-tabs__link">
+          
+  
+    
+  
+  Theory
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Cadwyn" class="md-nav__button md-logo" aria-label="Cadwyn" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54Z"/></svg>
+
+    </a>
+    Cadwyn
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/zmievsa/cadwyn" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.5.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2023 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81z"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Cadwyn
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" >
+        
+          
+          
+          <div class="md-nav__link md-nav__container">
+            <a href=".." class="md-nav__link ">
+              
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_1" id="__nav_1_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1">
+            <span class="md-nav__icon md-icon"></span>
+            Home
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../home/CONTRIBUTING/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Contributing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../home/CHANGELOG/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Changelog
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Tutorial
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Recipes
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Recipes
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#methodology" class="md-nav__link">
+    <span class="md-ellipsis">
+      Methodology
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-note-on-data-versioning" class="md-nav__link">
+    <span class="md-ellipsis">
+      A note on data versioning
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schemas-openapi-data-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schemas (openapi data type)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schemas (openapi data type)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#requests-and-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      Requests and Responses
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Requests and Responses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#schema-field-renaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field renaming
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#addition-or-narrowing-of-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      Addition or Narrowing of constraints
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removal-or-expansion-of-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      Removal or Expansion of constraints
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-field-removal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field removal
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema field removal">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#schema-optional-field-removal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema optional field removal
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-required-field-removal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema required field removal
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-field-addition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field addition
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-optional-field-addition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema optional field addition
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-required-field-addition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema required field addition
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema required field addition">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#with-compatible-default-value-in-older-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      With compatible default value in older versions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#with-incompatible-default-value-in-older-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      With incompatible default value in older versions
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-field-type-change-or-narrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field type change or narrowing
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema field type change or narrowing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#compatible-narrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatible narrowing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incompatible-narrowingchange" class="md-nav__link">
+    <span class="md-ellipsis">
+      Incompatible narrowing/change
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-field-type-expansion-including-enum-expansion" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field type expansion (including enum expansion)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema field type expansion (including enum expansion)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-enum-expansion-is-a-breaking-change-for-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why enum expansion is a breaking change for responses
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      Responses
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Responses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#response-schema-field-addition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response schema field addition
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#response-schema-field-removal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response schema field removal
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#path-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Path changes
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Path changes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#path-addition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Path addition
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#path-deletion" class="md-nav__link">
+    <span class="md-ellipsis">
+      Path deletion
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Behavior
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Behavior">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#calling-endpoint-causes-unexpected-data-modifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      Calling endpoint causes unexpected data modifications
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#calling-endpoint-doesnt-cause-expected-data-modifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      Calling endpoint doesn't cause expected data modifications
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#calling-endpoint-doesnt-cause-expected-additional-actions-eg-webhooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Calling endpoint doesn't cause expected additional actions (e.g. Webhooks)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Errors
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Errors">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#error-status-or-message-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      Error status or message change
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#new-error-introduced" class="md-nav__link">
+    <span class="md-ellipsis">
+      New error introduced
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#old-error-removed" class="md-nav__link">
+    <span class="md-ellipsis">
+      Old error removed
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      
+      
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  <span class="md-ellipsis">
+    Theory
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Theory
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../theory/how_we_got_here/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    How we got here
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../theory/literature/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Literature
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#methodology" class="md-nav__link">
+    <span class="md-ellipsis">
+      Methodology
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-note-on-data-versioning" class="md-nav__link">
+    <span class="md-ellipsis">
+      A note on data versioning
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schemas-openapi-data-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schemas (openapi data type)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schemas (openapi data type)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#requests-and-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      Requests and Responses
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Requests and Responses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#schema-field-renaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field renaming
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#addition-or-narrowing-of-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      Addition or Narrowing of constraints
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removal-or-expansion-of-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      Removal or Expansion of constraints
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-field-removal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field removal
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema field removal">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#schema-optional-field-removal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema optional field removal
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-required-field-removal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema required field removal
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-field-addition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field addition
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-optional-field-addition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema optional field addition
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-required-field-addition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema required field addition
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema required field addition">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#with-compatible-default-value-in-older-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      With compatible default value in older versions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#with-incompatible-default-value-in-older-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      With incompatible default value in older versions
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-field-type-change-or-narrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field type change or narrowing
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema field type change or narrowing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#compatible-narrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compatible narrowing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incompatible-narrowingchange" class="md-nav__link">
+    <span class="md-ellipsis">
+      Incompatible narrowing/change
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-field-type-expansion-including-enum-expansion" class="md-nav__link">
+    <span class="md-ellipsis">
+      Schema field type expansion (including enum expansion)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema field type expansion (including enum expansion)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-enum-expansion-is-a-breaking-change-for-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why enum expansion is a breaking change for responses
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      Responses
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Responses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#response-schema-field-addition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response schema field addition
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#response-schema-field-removal" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response schema field removal
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#path-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Path changes
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Path changes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#path-addition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Path addition
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#path-deletion" class="md-nav__link">
+    <span class="md-ellipsis">
+      Path deletion
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      Behavior
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Behavior">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#calling-endpoint-causes-unexpected-data-modifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      Calling endpoint causes unexpected data modifications
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#calling-endpoint-doesnt-cause-expected-data-modifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      Calling endpoint doesn't cause expected data modifications
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#calling-endpoint-doesnt-cause-expected-additional-actions-eg-webhooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Calling endpoint doesn't cause expected additional actions (e.g. Webhooks)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Errors
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Errors">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#error-status-or-message-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      Error status or message change
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#new-error-introduced" class="md-nav__link">
+    <span class="md-ellipsis">
+      New error introduced
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#old-error-removed" class="md-nav__link">
+    <span class="md-ellipsis">
+      Old error removed
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+  
+  
+
+
+<h1 id="recipes">Recipes<a class="headerlink" href="#recipes" title="Permanent link">&para;</a></h1>
+<p>This section serves as a guide to help you create new versions effectively and maintain your old versions with ease. It consists of a collection of scenarios for different types of breaking changes.</p>
+<p>To follow this guide, choose a type of an entity that you'd like to alter (an endpoint, a schema, etc), find the respective level two subheading, and follow its instructions. Repeat for every breaking change you would like to do.</p>
+<p>The guide will assume the following directory structure:</p>
+<!--- Find a better name for "data" dir. "Schemas" doesn't work because enums can also be there. "Versioned" doesn't work because unversioned stuff can also be there as long as it's not in latest.-->
+<div class="highlight"><pre><span></span><code>├── routes.py
+├── data
+│   ├── __init__.py
+│   ├── unversioned
+│   │   ├── __init__.py
+│   │   └── users.py
+│   └── latest
+│       ├── __init__.py
+│       └── users.py
+└── versions
+    ├── __init__.py
+    └── v2001_01_01.py
+</code></pre></div>
+<p>Schemas, enums, and any other versioned data are inside the <code>data.latest</code> package, version changes are inside the <code>versions.vXXXX_XX_XX</code> modules, and version bundle is inside the <code>versions.__init__</code> module. It includes all versions with all version changes -- including the ones you add in the recipes.</p>
+<p>You can assume that we already have a version <strong>2000-01-01</strong> and we are making a new version <strong>2001-01-01</strong> with the changes from our scenarios.</p>
+<p>Versioning is a complex topic with more pitfalls than you'd expect so please: <strong>do not try to skip this guide</strong>. Otherwise, your code will quickly get unmaintainable. Please also note that any of these scenarios can be combined in any way even within a single version change, though it's recommended to keep the version changes atomic as described in <a href="#methodology">methodology</a> section.</p>
+<h2 id="methodology">Methodology<a class="headerlink" href="#methodology" title="Permanent link">&para;</a></h2>
+<p>Cadwyn implements a methodology that is based on the following set of principles:</p>
+<ul>
+<li>Each version is made up of "version changes" or "compatibility gates" which describe <strong>independent atomic</strong> differences between it and previous version</li>
+<li>We make a new version if an only if we have breaking changes</li>
+<li>Versions must have little to no effect on the business logic</li>
+<li>Versions <strong>must always</strong> be compatible in terms of data</li>
+<li>Creating new versions is avoided at all costs</li>
+<li>Any backwards compatible features must be backported to all compatible versions</li>
+</ul>
+<p>These rules give us an ability to have a large number of self-documenting versions while encapsulating their complexity in small version change classes, providing a consistent and stable experience to our users.</p>
+<p>So if we see that we need to make a breaking change, our general approach is to:</p>
+<ol>
+<li>Make the breaking change in your schemas, routes, or business logic</li>
+<li>Write a version change class (and sometimes <a href="#side-effects">a little extra</a>) that describes the difference between the new version and the old version</li>
+</ol>
+<h2 id="a-note-on-data-versioning">A note on data versioning<a class="headerlink" href="#a-note-on-data-versioning" title="Permanent link">&para;</a></h2>
+<p>Oftentimes you will want to introduce a breaking change where one of the following is true:</p>
+<ul>
+<li>Old data cannot be automatically converted to the structure of the new response</li>
+<li>New response cannot be automatically migrated to an older response</li>
+<li>Old request cannot be automatically converted to the latest or internal request</li>
+</ul>
+<p>This means that you are not versioning your API, you are versioning your <strong>data</strong>. This is not and cannot be solved by an API versioning framework. It also makes it incredibly hard to version as you now cannot guarantee compatibility between versions. Avoid this at all costs -- all your API versions must be compatible between each other.</p>
+<h2 id="schemas-openapi-data-type">Schemas (openapi data type)<a class="headerlink" href="#schemas-openapi-data-type" title="Permanent link">&para;</a></h2>
+<h3 id="requests-and-responses">Requests and Responses<a class="headerlink" href="#requests-and-responses" title="Permanent link">&para;</a></h3>
+<p>In this section, we will cover situations where both requests and respones are affected. We'll be working with our user's response and request models: <code>UserResource</code> and <code>UserCreateRequest</code>. Both of them are located in <code>data.latest.users</code> and both of them share a parent class: <code>User</code> that contains the fields shared by both requests and responses.</p>
+<h4 id="schema-field-renaming">Schema field renaming<a class="headerlink" href="#schema-field-renaming" title="Permanent link">&para;</a></h4>
+<p>Let's say that we had a "summary" field before but now we want to rename it to "bio".</p>
+<ol>
+<li>Rename <code>summary</code> field to <code>bio</code> in <code>data.latest.users.User</code></li>
+<li>
+<p>Add the following migration to <code>versions.v2001_01_01</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">cadwyn.structure</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">VersionChange</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">,</span>
+    <span class="n">convert_response_to_previous_version_for</span><span class="p">,</span>
+    <span class="n">convert_request_to_next_version_for</span><span class="p">,</span>
+    <span class="n">ResponseInfo</span><span class="p">,</span>
+    <span class="n">RequestInfo</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span> <span class="nn">data.latest.users</span> <span class="kn">import</span> <span class="n">User</span><span class="p">,</span> <span class="n">UserCreateRequest</span><span class="p">,</span> <span class="n">UserResource</span>
+
+
+<span class="k">class</span> <span class="nc">RenameSummaryIntoBioInUser</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;Rename &#39;summary&#39; field into &#39;bio&#39; to keep up with industry standards&quot;</span>
+    <span class="p">)</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">User</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;bio&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;summary&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="nd">@convert_request_to_next_version_for</span><span class="p">(</span><span class="n">UserCreateRequest</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">rename_bio_to_summary</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">RequestInfo</span><span class="p">):</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;summary&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;bio&quot;</span><span class="p">)</span>
+
+    <span class="nd">@convert_response_to_previous_version_for</span><span class="p">(</span><span class="n">UserResource</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">rename_bio_to_summary</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="n">ResponseInfo</span><span class="p">):</span>
+        <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;bio&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;summary&quot;</span><span class="p">)</span>
+</code></pre></div>
+</li>
+<li>
+<p><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</p>
+</li>
+</ol>
+<h4 id="addition-or-narrowing-of-constraints">Addition or Narrowing of constraints<a class="headerlink" href="#addition-or-narrowing-of-constraints" title="Permanent link">&para;</a></h4>
+<p>Let's say that we previously allowed users to have a name of arbitrary length but now we want to limit it to 250 characters because we are worried that some users will be using inadequate lengths. You can't do this easily: if you simply add a <code>max_length</code> constraint to <code>User.name</code> -- the existing data in your database might become incompatible with this field in <code>UserResource</code>. So as long as incompatible data is there or can get there from some version -- you cannot add such a constraint to your responses. However, you <strong>can</strong> add it to your requests to prevent the creation of new user accounts with long names.</p>
+<ol>
+<li>Change <code>max_length</code> of <code>data.latest.users.UserResource.name</code> to 250</li>
+<li>
+<p>Add the following migration to <code>versions.v2001_01_01</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">cadwyn.structure</span> <span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
+<span class="kn">from</span> <span class="nn">data.latest.users</span> <span class="kn">import</span> <span class="n">UserCreateRequest</span>
+
+<span class="c1"># Note that in pydantic v2 this would be `from pydantic_core import PydanticUndefined`</span>
+<span class="kn">from</span> <span class="nn">pydantic.fields</span> <span class="kn">import</span> <span class="n">Undefined</span>
+
+
+<span class="k">class</span> <span class="nc">AddMaxLengthConstraintToUserNames</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;Add a max length of 250 to user names when creating new users &quot;</span>
+        <span class="s2">&quot;to prevent overly large names from being used.&quot;</span>
+    <span class="p">)</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">UserCreateRequest</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">max_length</span><span class="o">=</span><span class="n">Undefined</span><span class="p">),</span>
+    <span class="p">)</span>
+</code></pre></div>
+</li>
+<li>
+<p><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</p>
+</li>
+</ol>
+<p>Note, however, that users will still be able to use arbitrary length names in older API versions. If you want to prevent that, then the correct approach would instead be the following:</p>
+<ol>
+<li>Check whether any users have names longer than 250 characters. If there are few or no users that have such long names, then it may make sense to skip step 1. The other steps, however, cannot be skipped if you want to guarantee that your API gives no 500s at any point in the process.</li>
+<li>Issue a 3-6 month warning to all users stating that you will make a breaking change affecting older versions. Mention that you will truncate old names that are longer than 250 characters and that users will no longer be able to create such long names even in old API versions.</li>
+<li>After the deadline, add a <code>max_length</code> constraint to <code>data.latest.users.UserCreateRequest.name</code></li>
+<li><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</li>
+<li>Release it to production</li>
+<li>Truncate all names that are too long in the database (preferably using a migration and a separate release)</li>
+<li>Remove the <code>max_length</code> constraint from <code>data.latest.users.UserCreateRequest.name</code></li>
+<li>Add the <code>max_length</code> constraint to <code>data.latest.users.User.name</code></li>
+<li><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</li>
+</ol>
+<p>This process seems quite complex but it's not Cadwyn-specific: if you want to safely and nicely version for your users, you will have to follow such a process even if you don't use any versioning framework at all.</p>
+<h4 id="removal-or-expansion-of-constraints">Removal or Expansion of constraints<a class="headerlink" href="#removal-or-expansion-of-constraints" title="Permanent link">&para;</a></h4>
+<p>Let's say that we previously only allowed users to have a name of length 50 but now we want to allow names of length 250 too. It does not make sense to add this to a new API version. Just add it into all API versions because it is not a breaking change.</p>
+<p>The recommended approach:</p>
+<ol>
+<li>Change <code>max_length</code> of <code>data.latest.users.User.name</code> to 250</li>
+<li><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</li>
+</ol>
+<p>However, sometimes it can be considered a breaking change if a large portion of your users use your system to verify their data and rely on your system to return status code <code>422</code> if this field is invalid. If that's the case, use the same approach as in <a href="#addition-or-narrowing-of-constraints">constraint addition</a> but use <code>50</code> instead of <code>pydantic.fields.Undefined</code> for the old value.</p>
+<h4 id="schema-field-removal">Schema field removal<a class="headerlink" href="#schema-field-removal" title="Permanent link">&para;</a></h4>
+<h5 id="schema-optional-field-removal">Schema optional field removal<a class="headerlink" href="#schema-optional-field-removal" title="Permanent link">&para;</a></h5>
+<p>Let's say that we had a nullable <code>middle_name</code> field but we decided that it does not make sense anymore and want to remove it now from both requests and responses. We can solve this with <a href="../reference/#internal-request-schemas">internal body request schemas</a>.</p>
+<ol>
+<li>Remove <code>middle_name</code> field from <code>data.latest.users.User</code></li>
+<li>
+<p>Add a <code>data.unversioned.users.UserInternalCreateRequest</code> that we will use later to wrap migrated data instead of the latest request schema.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">Field</span>
+<span class="kn">from</span> <span class="nn">..latest.users</span> <span class="kn">import</span> <span class="n">UserCreateRequest</span>
+
+
+<span class="k">class</span> <span class="nc">UserInternalCreateRequest</span><span class="p">(</span><span class="n">UserCreateRequest</span><span class="p">):</span>
+    <span class="n">middle_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+</li>
+<li>
+<p>Replace <code>UserCreateRequest</code> in your routes with <code>Annotated[UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]]</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">data.latest.users</span> <span class="kn">import</span> <span class="n">UserCreateRequest</span><span class="p">,</span> <span class="n">UserResource</span>
+<span class="kn">from</span> <span class="nn">cadwyn</span> <span class="kn">import</span> <span class="n">InternalRepresentationOf</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
+
+
+<span class="nd">@router</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">,</span> <span class="n">response_model</span><span class="o">=</span><span class="n">UserResource</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">create_user</span><span class="p">(</span>
+    <span class="n">user</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span>
+        <span class="n">InternalUserCreateRequest</span><span class="p">,</span> <span class="n">InternalRepresentationOf</span><span class="p">[</span><span class="n">UserCreateRequest</span><span class="p">]</span>
+    <span class="p">]</span>
+<span class="p">):</span>
+    <span class="o">...</span>
+</code></pre></div>
+</li>
+<li>
+<p>Add the following migration to <code>versions.v2001_01_01</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">cadwyn.structure</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">VersionChange</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">,</span>
+    <span class="n">RequestInfo</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span> <span class="nn">data.latest.users</span> <span class="kn">import</span> <span class="n">User</span>
+
+
+<span class="k">class</span> <span class="nc">RemoveMiddleNameFromUser</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;Remove &#39;User.middle_name&#39; field.&quot;</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">User</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;middle_name&quot;</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">existed_as</span><span class="p">(</span>
+            <span class="nb">type</span><span class="o">=</span><span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">description</span><span class="o">=</span><span class="s2">&quot;User&#39;s Middle Name&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+</code></pre></div>
+</li>
+<li>
+<p><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</p>
+</li>
+</ol>
+<p>Note that in order for this to work, you would still have to store <code>middle_name</code> in your database and return it with your responses.</p>
+<p>Thus we have added a new API version and our business logic hasn't even noticed it.</p>
+<h5 id="schema-required-field-removal">Schema required field removal<a class="headerlink" href="#schema-required-field-removal" title="Permanent link">&para;</a></h5>
+<p>There are two main cases with required fields:</p>
+<ol>
+<li>Remove a required field with a simple fake default (created_at)</li>
+<li>Remove a required field with an impossible default (tax id)</li>
+</ol>
+<p>The first one is simple to solve: just use the approach <a href="#schema-optional-field-removal">above</a> but use a <code>default_factory=datetime.datetime.now</code> instead of <code>default=None</code> within <code>UserInternalCreateRequest</code>.</p>
+<p>Now what about case 2?</p>
+<p>Let's say that you have company resources in your system. Let's also say that each company has a <code>tax_id</code> and now you would like to remove the <code>tax_id</code> field or make it optional. If <code>tax_id</code> was required in your responses, you can't really do this with traditional API versioning because you cannot come up with a sane non-null default for <code>tax_id</code>. It is a case of <a href="#a-note-on-data-versioning">data versioning</a> where you try to make an API version that is inconsistent with other API versions in terms of its data. You deal with this using one of the following approaches:</p>
+<ol>
+<li>Issue a warning to your users that <code>tax_id</code> is going to become optional in all API versions in <code>N</code> months and then make it so. This will allow you to avoid data versioning and your users will have a grace period to fix their issues. Then you can simply follow the <a href="#schema-optional-field-removal">approach above</a>.</li>
+<li>Release a <code>V2</code> version of your API which users will have to migrate their <strong>data</strong> to. This is a drastic approach and you should only reserve it for extreme cases but it is a <strong>correct</strong> way to represent data versioning.</li>
+<li>Disallow the new version (2001-01-01) to be used alongside older versions and disallow users to migrate to older versions after they have migrated to 2001-01-01. Then you can simply follow the <a href="#schema-optional-field-removal">approach above</a>. This is a dirty hack and an inconvenience to your users but it solves the problem too.</li>
+</ol>
+<h4 id="schema-field-addition">Schema field addition<a class="headerlink" href="#schema-field-addition" title="Permanent link">&para;</a></h4>
+<h4 id="schema-optional-field-addition">Schema optional field addition<a class="headerlink" href="#schema-optional-field-addition" title="Permanent link">&para;</a></h4>
+<p>Let's say we want our users to be able to specify a middle name but it is nullable. It is not a breaking change so no new version is necessary whether it is requests or responses.</p>
+<p>The recommended approach:</p>
+<ol>
+<li>Add a nullable <code>middle_name</code> field into <code>data.latest.users.User</code></li>
+<li><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</li>
+</ol>
+<h4 id="schema-required-field-addition">Schema required field addition<a class="headerlink" href="#schema-required-field-addition" title="Permanent link">&para;</a></h4>
+<h5 id="with-compatible-default-value-in-older-versions">With compatible default value in older versions<a class="headerlink" href="#with-compatible-default-value-in-older-versions" title="Permanent link">&para;</a></h5>
+<p>Let's say that our users had a field <code>country</code> that defaulted to <code>USA</code> but our product is now used well beyond United States so we want to make this field required in the <code>latest</code> version.</p>
+<ol>
+<li>Remove <code>default="US"</code> from <code>data.latest.users.UserCreateRequest</code></li>
+<li>
+<p>Add the following migration to <code>versions.v2001_01_01</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">cadwyn.structure</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">VersionChange</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">,</span>
+    <span class="n">convert_request_to_next_version_for</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span> <span class="nn">data.latest.users</span> <span class="kn">import</span> <span class="n">UserCreateRequest</span><span class="p">,</span> <span class="n">UserResource</span>
+
+
+<span class="k">class</span> <span class="nc">MakeUserCountryRequired</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s1">&#39;Make user country required instead of the &quot;USA&quot; default&#39;</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">UserCreateRequest</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;country&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="s2">&quot;USA&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="nd">@convert_request_to_next_version_for</span><span class="p">(</span><span class="n">UserCreateRequest</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">add_time_field_to_request</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">RequestInfo</span><span class="p">):</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;country&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;country&quot;</span><span class="p">,</span> <span class="s2">&quot;USA&quot;</span><span class="p">)</span>
+</code></pre></div>
+</li>
+<li>
+<p><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</p>
+</li>
+</ol>
+<p>That's it! Our old schemas will now contain a default but in <code>latest</code> country will be required. You might notice a weirdness: if we set a default in the old version, why would we also write a migration? That's because of a sad implementation detail of pydantic that <a href="../reference/#defaults-warning">prevents us</a> from using defaults from old versions.</p>
+<h5 id="with-incompatible-default-value-in-older-versions">With incompatible default value in older versions<a class="headerlink" href="#with-incompatible-default-value-in-older-versions" title="Permanent link">&para;</a></h5>
+<p>Let's say that we want to add a required field <code>phone</code> to our users. However, older versions did not have such a field at all. This means that the field is going to be nullable in the old versions but required in the latest version. This also means that older versions contain a wider type (<code>str | None</code>) than the latest version (<code>str</code>). So when we try to migrate request bodies from the older versions to latest -- we might receive a <code>ValidationError</code> because <code>None</code> is not an acceptable value for <code>phone</code> field in the new version. Whenever we have a problem like this, when older version contains more data or a wider type set of data,  we use <a href="../reference/#internal-request-schemas">internal body request schemas</a>.</p>
+<ol>
+<li>Add <code>phone</code> field of type <code>str</code> to <code>data.latest.users.UserCreateRequest</code></li>
+<li>Add <code>phone</code> field of type <code>str | None</code> with a <code>default=None</code> to <code>data.latest.users.UserResource</code> because all users created with older versions of our API won't have phone numbers.</li>
+<li>
+<p>Add a <code>data.unversioned.users.UserInternalCreateRequest</code> that we will use later to wrap migrated data instead of the latest request schema. It will allow us to pass a <code>None</code> to <code>phone</code> from older versions while also guaranteeing that it is non-nullable in our latest version.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">Field</span>
+<span class="kn">from</span> <span class="nn">..latest.users</span> <span class="kn">import</span> <span class="n">UserCreateRequest</span>
+
+
+<span class="k">class</span> <span class="nc">UserInternalCreateRequest</span><span class="p">(</span><span class="n">UserCreateRequest</span><span class="p">):</span>
+    <span class="n">phone</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+</li>
+<li>
+<p>Replace <code>UserCreateRequest</code> in your routes with <code>Annotated[UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]]</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">data.latest.users</span> <span class="kn">import</span> <span class="n">UserCreateRequest</span><span class="p">,</span> <span class="n">UserResource</span>
+<span class="kn">from</span> <span class="nn">cadwyn</span> <span class="kn">import</span> <span class="n">InternalRepresentationOf</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
+
+
+<span class="nd">@router</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">,</span> <span class="n">response_model</span><span class="o">=</span><span class="n">UserResource</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">create_user</span><span class="p">(</span>
+    <span class="n">user</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span>
+        <span class="n">InternalUserCreateRequest</span><span class="p">,</span> <span class="n">InternalRepresentationOf</span><span class="p">[</span><span class="n">UserCreateRequest</span><span class="p">]</span>
+    <span class="p">]</span>
+<span class="p">):</span>
+    <span class="o">...</span>
+</code></pre></div>
+</li>
+<li>
+<p>Add the following migration to <code>versions.v2001_01_01</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">cadwyn.structure</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">VersionChange</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span> <span class="nn">data.latest.users</span> <span class="kn">import</span> <span class="n">UserCreateRequest</span><span class="p">,</span> <span class="n">UserResource</span>
+
+
+<span class="k">class</span> <span class="nc">AddPhoneToUser</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;Add a required phone field to User to allow us to do 2fa and to &quot;</span>
+        <span class="s2">&quot;make it possible to verify new user accounts using an sms.&quot;</span>
+    <span class="p">)</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">UserCreateRequest</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;phone&quot;</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">had</span><span class="p">(</span>
+            <span class="nb">type</span><span class="o">=</span><span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+</code></pre></div>
+</li>
+<li>
+<p><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</p>
+</li>
+</ol>
+<p>See how we didn't remove the <code>phone</code> field from old versions? Instead, we allowed a nullable <code>phone</code> field to be passed into both old <code>UserResource</code> and old <code>UserCreateRequest</code>. This gives our users new functionality without needing to update their API version! It is one of the best parts of Cadwyn's approach: our users can get years worth of updates without switching their API version and without their integration getting broken.</p>
+<h4 id="schema-field-type-change-or-narrowing">Schema field type change or narrowing<a class="headerlink" href="#schema-field-type-change-or-narrowing" title="Permanent link">&para;</a></h4>
+<h5 id="compatible-narrowing">Compatible narrowing<a class="headerlink" href="#compatible-narrowing" title="Permanent link">&para;</a></h5>
+<p>Let's say that previously users could specify their date of birth as a datetime instead of a date. We wish to rectify that. We can solve this with <a href="../reference/#internal-request-schemas">internal body request schemas</a>.</p>
+<ol>
+<li>Continue storing <code>date_of_birth</code> as a datetime in your database to avoid breaking any old behavior</li>
+<li>Change the type of <code>date_of_birth</code> field to <code>datetime.date</code> in <code>data.latest.users.User</code></li>
+<li>
+<p>Add a <code>data.unversioned.users.UserInternalCreateRequest</code> that we will use later to wrap migrated data instead of the latest request schema. This schema will allow us to keep time information from older versions without allowing users in new versions to provide it. This allows us to guarantee that old requests function in the same manner as before while new requests have the narrowed types.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">Field</span>
+<span class="kn">from</span> <span class="nn">..latest.users</span> <span class="kn">import</span> <span class="n">UserCreateRequest</span>
+<span class="kn">import</span> <span class="nn">datetime</span>
+
+
+<span class="k">class</span> <span class="nc">UserInternalCreateRequest</span><span class="p">(</span><span class="n">UserCreateRequest</span><span class="p">):</span>
+    <span class="n">time_of_birth</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">time</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">time</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+</code></pre></div>
+</li>
+<li>
+<p>Replace <code>UserCreateRequest</code> in your routes with <code>Annotated[UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]]</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">data.latest.users</span> <span class="kn">import</span> <span class="n">UserCreateRequest</span><span class="p">,</span> <span class="n">UserResource</span>
+<span class="kn">from</span> <span class="nn">cadwyn</span> <span class="kn">import</span> <span class="n">InternalRepresentationOf</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
+
+
+<span class="nd">@router</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">,</span> <span class="n">response_model</span><span class="o">=</span><span class="n">UserResource</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">create_user</span><span class="p">(</span>
+    <span class="n">user</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span>
+        <span class="n">InternalUserCreateRequest</span><span class="p">,</span> <span class="n">InternalRepresentationOf</span><span class="p">[</span><span class="n">UserCreateRequest</span><span class="p">]</span>
+    <span class="p">]</span>
+<span class="p">):</span>
+    <span class="o">...</span>
+</code></pre></div>
+</li>
+<li>
+<p>Add the following migration to <code>versions.v2001_01_01</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">cadwyn.structure</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">VersionChange</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">,</span>
+    <span class="n">convert_request_to_next_version_for</span><span class="p">,</span>
+    <span class="n">RequestInfo</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span> <span class="nn">data.latest.users</span> <span class="kn">import</span> <span class="n">User</span><span class="p">,</span> <span class="n">UserCreateRequest</span>
+<span class="kn">import</span> <span class="nn">datetime</span>
+
+
+<span class="k">class</span> <span class="nc">ChangeDateOfBirthToDateInUser</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;Change &#39;User.date_of_birth&#39; field type to date instead of &quot;</span>
+        <span class="s2">&quot;a datetime because storing the exact time is unnecessary.&quot;</span>
+    <span class="p">)</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">User</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;date_of_birth&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="nb">type</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="nd">@convert_request_to_next_version_for</span><span class="p">(</span><span class="n">UserCreateRequest</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">add_time_field_to_request</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">RequestInfo</span><span class="p">):</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;time_of_birth&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;date_of_birth&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+</code></pre></div>
+</li>
+<li>
+<p><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</p>
+</li>
+<li>Within your business logic, create the datetime that you will put into the database by combining <code>date_of_birth</code> field and <code>time_of_birth</code> field</li>
+</ol>
+<p>See how we did not need to use <a href="../reference/#data-migrations">convert_response_to_previous_version_for</a>? We do not need to migrate anything because moving from <code>datetime</code> to <code>date</code> is easy: our database data already contains datetimes so pydantic will automatically narrow them to dates for responses if necessary. We also do not need to change anything about <code>date_of_birth</code> in the requests of older versions because our schema of the new version will automatically cast <code>datetime</code> to <code>date</code>.</p>
+<p>This whole process was a bit complex so let us break it down a little:</p>
+<ol>
+<li><code>date_of_birth</code> field is a datetime in 2000 but a date in 2001.</li>
+<li>We needed some way to keep the 2000 behavior without allowing users in 2001 to use it. Cadwyn always converts all requests to the latest version but the latest version doesn't have any time information in this case. The solution is to introduce an internal schema which will include everything from latest plus the time information.</li>
+<li>When we receive a request from 2000, our migration fills up <code>time_of_birth</code> field. When we receive a request from 2001, the default value of <code>time(0, 0, 0)</code> is used.</li>
+<li>Internally we keep working with datetimes. Now we build them from <code>date_of_birth</code> and <code>time_of_birth</code> fields.</li>
+<li>When we return a response, we always return a datetime for <code>date_of_birth</code>. However, it is automatically converted to date by pydantic in 2001</li>
+</ol>
+<p>Thus, we have kept old behavior, added new constrained behavior, and minimized the impact on our business logic as business logic simply doesn't know that <code>date_of_birth</code> in requests was ever a datetime and that <code>date_of_birth</code> in responses is ever a date. All of this information is hidden in our migration which will likely never change.</p>
+<h5 id="incompatible-narrowingchange">Incompatible narrowing/change<a class="headerlink" href="#incompatible-narrowingchange" title="Permanent link">&para;</a></h5>
+<p><a href="#a-note-on-data-versioning">It is data versioning</a>.</p>
+<h4 id="schema-field-type-expansion-including-enum-expansion">Schema field type expansion (including enum expansion)<a class="headerlink" href="#schema-field-type-expansion-including-enum-expansion" title="Permanent link">&para;</a></h4>
+<p>Let's say that our clients could choose a <code>role</code> for our users. Originally, it was only possible to choose <code>admin</code> or <code>regular</code> but we would like to expand it to <code>moderator</code> which has all the powers of an admin except that moderators cannot assign other admins.</p>
+<p>This is not a breaking change in terms of requests but it <a href="#why-enum-expansion-is-a-breaking-change-for-responses"><strong>can be</strong></a> a breaking change in terms of responses.</p>
+<p>So if you do consider it a breaking change in terms of responses, you should do the following:</p>
+<ol>
+<li>Add <code>moderator</code> value into <code>data.latest.users.UserRoleEnum</code></li>
+<li>
+<p>Add the following migration to <code>versions.v2001_01_01</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">cadwyn.structure</span> <span class="kn">import</span> <span class="p">(</span>
+    <span class="n">VersionChange</span><span class="p">,</span>
+    <span class="n">enum</span><span class="p">,</span>
+    <span class="n">convert_response_to_previous_version_for</span><span class="p">,</span>
+    <span class="n">ResponseInfo</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span> <span class="nn">data.latest.users</span> <span class="kn">import</span> <span class="n">UserRoleEnum</span><span class="p">,</span> <span class="n">UserResource</span>
+<span class="kn">import</span> <span class="nn">datetime</span>
+
+
+<span class="k">class</span> <span class="nc">AddModeratorRoleToUser</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;Add &#39;moderator&#39; role to users that represents an admin that &quot;</span>
+        <span class="s2">&quot;cannot create or remove other admins. This allows for a &quot;</span>
+        <span class="s2">&quot;finer-grained permission control.&quot;</span>
+    <span class="p">)</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">enum</span><span class="p">(</span><span class="n">UserRoleEnum</span><span class="p">)</span><span class="o">.</span><span class="n">didnt_have</span><span class="p">(</span><span class="s2">&quot;moderator&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="nd">@convert_response_to_previous_version_for</span><span class="p">(</span><span class="n">UserResource</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">change_moderator_to_regular</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="n">ResponseInfo</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;role&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;moderator&quot;</span><span class="p">:</span>
+            <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;role&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;regular&quot;</span>
+</code></pre></div>
+</li>
+<li>
+<p><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</p>
+</li>
+</ol>
+<p>We convert moderators to regulars in older versions because it is a safer choice for our users.</p>
+<h5 id="why-enum-expansion-is-a-breaking-change-for-responses">Why enum expansion is a breaking change for responses<a class="headerlink" href="#why-enum-expansion-is-a-breaking-change-for-responses" title="Permanent link">&para;</a></h5>
+<p>Let's that our schema includes a list that contains euros and/or dollars. Using our framework for unmarshalling JSON, we take the JSON string and try to convert it into the list of euros and/or dollars. If we suddenly see Georgian lari there -- our unmarshalling framework freaks out because the list is not what it expected, which makes adding an enum value a breaking change when you have a list of items.</p>
+<p>To be more precise: If I, as a client, expect <code>Array&lt;Euro | Dollar&gt;</code>, then <code>Array&lt;Euro&gt;</code> would be a compatible response and <code>Array&lt;Dollar&gt;</code> would be a compatible response BUT <code>Array&lt;Euro | Dollar | Lari&gt;</code> would be an incompatible response.
+That is the case because <code>Array&lt;Euro | Dollar | Lari&gt;</code> is a not a subtype of <code>Array&lt;Euro | Dollar&gt;</code> while <code>Array&lt;Euro&gt;</code> is.</p>
+<p>In a sense, extending an enum that has <code>USD</code> with <code>USD | EUR</code> is equivalent to turning an <code>int</code> field into an <code>int | str</code> field, which is a breaking change. Hence extending an enum is often a breaking change and thus we might not need to solve this problem at all.</p>
+<p>Additional resources:</p>
+<ul>
+<li><a href="https://github.com/OAI/OpenAPI-Specification/issues/1552">https://github.com/OAI/OpenAPI-Specification/issues/1552</a></li>
+<li><a href="https://users.rust-lang.org/t/solved-is-adding-an-enum-variant-a-breaking-change/26721/5">https://users.rust-lang.org/t/solved-is-adding-an-enum-variant-a-breaking-change/26721/5</a></li>
+<li><a href="https://github.com/graphql/graphql-js/issues/968">https://github.com/graphql/graphql-js/issues/968</a></li>
+<li><a href="https://medium.com/@jakob.fiegerl/java-jackson-enum-de-serialization-with-rest-backward-compatibility-9c3ec85ac13d">https://medium.com/@jakob.fiegerl/java-jackson-enum-de-serialization-with-rest-backward-compatibility-9c3ec85ac13d</a></li>
+</ul>
+<h3 id="responses">Responses<a class="headerlink" href="#responses" title="Permanent link">&para;</a></h3>
+<p>In these sections, we'll be working with our user's response model: <code>data.latest.users.UserResource</code>. Note that the main theme here is "Will I be able to serialize this change to any of my versions?" as any change to responses can make them incompatible with the data in your database.</p>
+<h4 id="response-schema-field-addition">Response schema field addition<a class="headerlink" href="#response-schema-field-addition" title="Permanent link">&para;</a></h4>
+<p>Let's say that we decided to expose the creation date of user's account with a <code>created_at</code> field in our API. This is <strong>not</strong> a breaking change so a new version is completely unnecessary. However, if you believe that you absolutely have to make a new version, refer to the <a href="#what-do-we-put-here">... section</a> which lists the actions you would need to perform in such a situation.</p>
+<p>The recommended approach:</p>
+<ol>
+<li>Add <code>created_at</code> field into <code>data.latest.users.UserResource</code></li>
+<li><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</li>
+</ol>
+<p>Now you have everything you need at your disposal: field <code>created_at</code> is available in all versions and your users do not even need to do any extra actions. Just make sure that the data for it is available in all versions too. If it's not: make the field optional.</p>
+<h4 id="response-schema-field-removal">Response schema field removal<a class="headerlink" href="#response-schema-field-removal" title="Permanent link">&para;</a></h4>
+<p>Let's say that our API has a mandatory <code>UserResource.date_of_birth</code> field. Let's also say that our API has previously exposed user's zodiac sign. Our analysts have decided that it does not make sense to store or send this information as it does not affect the functionality and can be inferred from date of birth.</p>
+<ol>
+<li>Remove <code>zodiac_sign</code> field from <code>data.latest.users.UserResource</code></li>
+<li>
+<p>Add the following migration to <code>versions.v2001_01_01</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span> <span class="nn">cadwyn.structure</span> <span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
+<span class="kn">from</span> <span class="nn">data.latest.users</span> <span class="kn">import</span> <span class="n">UserResource</span>
+<span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">Field</span>
+
+
+<span class="k">class</span> <span class="nc">RemoveZodiacSignFromUser</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;Remove &#39;zodiac_sign&#39; field from UserResource because &quot;</span>
+        <span class="s2">&quot;it can be inferred from user&#39;s date of birth and because &quot;</span>
+        <span class="s2">&quot;only a small number of users has utilized it.&quot;</span>
+    <span class="p">)</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">UserResource</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;zodiac_sign&quot;</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">existed_as</span><span class="p">(</span><span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">info</span><span class="o">=</span><span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;User&#39;s magical sign&quot;</span><span class="p">)),</span>
+    <span class="p">)</span>
+</code></pre></div>
+</li>
+<li>
+<p><a href="../reference/#code-generation">Regenerate</a> the versioned schemas</p>
+</li>
+</ol>
+<p>Thanks to the version change above, your old schemas will now include <code>zodiac_sign</code> field but your new schemas will stay the same. Don't remove the zodiac business logic from your router because the old version will still need it. So you always return the zodiac sign but the schemas of the latest version will ignore it.</p>
+<p>You can remove the logic for calculating and returning the zodiac sign after version <code>2000-01-01</code> gets deleted.</p>
+<h2 id="path-changes">Path changes<a class="headerlink" href="#path-changes" title="Permanent link">&para;</a></h2>
+<h3 id="path-addition">Path addition<a class="headerlink" href="#path-addition" title="Permanent link">&para;</a></h3>
+<p>It is not a breaking change so it's recommended to simply add it to all versions. If you believe that you still need it, you can use the <a href="../reference/#defining-endpoints-that-didnt-exist-in-old-versions">following migration</a>.</p>
+<h3 id="path-deletion">Path deletion<a class="headerlink" href="#path-deletion" title="Permanent link">&para;</a></h3>
+<p>See <a href="../reference/#defining-endpoints-that-didnt-exist-in-new-versions">reference</a></p>
+<h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
+<p>First, ask yourself: are you sure there really needs to be a behavioral change? Are you sure it is not possible to keep the same logic for both versions? Or at least make the behavior depend on the received data? Behavioral changes (or <strong>side effects</strong>) are the least maintainable part of almost any versioning approach. They produce the largest footprint on your code so if you are not careful -- your logic will be littered with version checks.</p>
+<p>But if you are certain that you need to make a breaking behavioral change, Cadwyn has all the tools to minimize its impact as much as possible.</p>
+<p>The following sections are all done using a <a href="../reference/#version-changes-with-side-effects">version change with side effects</a>.</p>
+<h3 id="calling-endpoint-causes-unexpected-data-modifications">Calling endpoint causes unexpected data modifications<a class="headerlink" href="#calling-endpoint-causes-unexpected-data-modifications" title="Permanent link">&para;</a></h3>
+<h3 id="calling-endpoint-doesnt-cause-expected-data-modifications">Calling endpoint doesn't cause expected data modifications<a class="headerlink" href="#calling-endpoint-doesnt-cause-expected-data-modifications" title="Permanent link">&para;</a></h3>
+<h3 id="calling-endpoint-doesnt-cause-expected-additional-actions-eg-webhooks">Calling endpoint doesn't cause expected additional actions (e.g. Webhooks)<a class="headerlink" href="#calling-endpoint-doesnt-cause-expected-additional-actions-eg-webhooks" title="Permanent link">&para;</a></h3>
+<h3 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h3>
+<h4 id="error-status-or-message-change">Error status or message change<a class="headerlink" href="#error-status-or-message-change" title="Permanent link">&para;</a></h4>
+<h4 id="new-error-introduced">New error introduced<a class="headerlink" href="#new-error-introduced" title="Permanent link">&para;</a></h4>
+<h4 id="old-error-removed">Old error removed<a class="headerlink" href="#old-error-removed" title="Permanent link">&para;</a></h4>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var tab,labels=set.querySelector(".tabbed-labels");for(tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    <script id="__config" type="application/json">{"base": "..", "features": ["search.suggest", "search.highlight", "content.tabs.link", "navigation.indexes", "navigation.tracking", "navigation.tabs", "navigation.path", "content.tooltips", "content.code.annotate", "content.code.copy", "content.code.select"], "search": "../assets/javascripts/workers/search.f886a092.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7c377c4.min.js"></script>
+      
+    
+  </body>
+</html>
