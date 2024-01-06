@@ -33,3 +33,9 @@ Whether you are a newbie in API versioning, a pro looking for a sophisticated to
 ## Get started
 
 It is recommended to read the [tutorial](https://docs.cadwyn.dev/tutorial/) first to get your feet wet with Cadwyn's approach
+
+## Sponsors
+
+These are our gorgeous sponsors. They are using Cadwyn and are sponsoring it through various means. Contact [me](https://github.com/zmievsa) if you would like to become one too!
+
+[![Monite](./img/sponsor_logos/monite.png)](https://docs.monite.com/)

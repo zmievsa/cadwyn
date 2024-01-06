@@ -33,3 +33,9 @@ Whether you are a newbie in API versioning, a pro looking for a sophisticated to
 ## Get started
 
 The [documentation](https://docs.cadwyn.dev) has everything you need to succeed.
+
+## Sponsors
+
+These are our gorgeous sponsors. They are using Cadwyn and are sponsoring it through various means. Contact [me](https://github.com/zmievsa) if you would like to become one too!
+
+[![Monite](./docs/img/sponsor_logos/monite.png)](https://docs.monite.com/)

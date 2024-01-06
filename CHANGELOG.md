@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.1.4]
+
+### Added
+
+* Sponsors section to README and docs, along with Monite as our main and only current sponsor ✨
+
 ## [3.1.3]
 
 ### Fixed
