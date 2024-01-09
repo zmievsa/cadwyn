@@ -1,3 +1,4 @@
+import datetime
 import functools
 import importlib
 import inspect
@@ -7,6 +8,7 @@ from types import ModuleType
 from typing import Any, TypeVar, Union
 
 from cadwyn.exceptions import CadwynError, ModuleIsNotVersionedError
+from cadwyn.structure.common import VersionVar
 
 Sentinel: Any = object()
 UnionType = type(int | str) | type(Union[int, str])
@@ -107,3 +109,21 @@ def _validate_that_module_is_versioned(file: Path, version_dirs: Collection[Path
         except ValueError:
             pass
     raise ModuleIsNotVersionedError(f"Module {file} is not versioned.")
+
+
+def _validate_version_to_date_format(value: VersionVar):
+    if isinstance(value, str):
+        if value.isdigit() and len(value) == 8:
+            y, m, d = int(value[:4]), int(value[4:6]), int(value[6:])
+            return datetime.date(y, m, d)
+        else:
+            raise ValueError(f"Only digits in the format yyyy mm dd are expected. Instead of {value}")
+    elif isinstance(value, int):
+        y, m, d = int(str(value)[:4]), int(str(value)[4:6]), int(str(value)[6:])
+        return datetime.date(y, m, d)
+    elif isinstance(value, float):
+        value = str(value).replace(".", "")
+        y, m, d = int(value[:4]), int(value[4:6]), int(value[6:])
+        return datetime.date(y, m, d)
+    else:
+        raise TypeError("expected str, int, float")

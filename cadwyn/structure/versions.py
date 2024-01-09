@@ -1,3 +1,4 @@
+import datetime
 import email.message
 import functools
 import inspect
@@ -27,8 +28,8 @@ from cadwyn._compat import PYDANTIC_V2, Undefined, model_dump
 from cadwyn._package_utils import IdentifierPythonPath, get_cls_pythonpath
 from cadwyn.exceptions import CadwynError, CadwynStructureError
 
-from .._utils import Sentinel
-from .common import Endpoint, VersionDate, VersionedModel
+from .._utils import Sentinel, _validate_version_to_date_format
+from .common import Endpoint, VersionDate, VersionedModel, VersionVar
 from .data import (
     AlterRequestByPathInstruction,
     AlterRequestBySchemaInstruction,
@@ -204,10 +205,10 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
 
 
 class Version:
-    def __init__(self, value: VersionDate, *version_changes: type[VersionChange]) -> None:
+    def __init__(self, value: VersionVar, *version_changes: type[VersionChange]) -> None:
         super().__init__()
 
-        self.value = value
+        self.value = value if isinstance(value, datetime.date) else _validate_version_to_date_format(value)
         self.version_changes = version_changes
 
     def __repr__(self) -> str:
