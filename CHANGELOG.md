@@ -9,7 +9,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-* If a user uses a FastAPI/Starlette `StreamingResponse`, we still tried to access body param which caused an `AttributeError`
+* If a user used a FastAPI/Starlette `StreamingResponse`, we still tried to access its `body` attribute which caused an `AttributeError`
 
 ## [3.2.0]
 
