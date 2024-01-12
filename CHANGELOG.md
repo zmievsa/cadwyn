@@ -5,11 +5,15 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
-## [3.2.1]
+## [3.3.0]
 
 ### Fixed
 
-* If a user used a FastAPI/Starlette `StreamingResponse`, we still tried to access its `body` attribute which caused an `AttributeError`
+* If a user used a FastAPI/Starlette `StreamingResponse` or `FileResponse`, we still tried to access its `body` attribute which caused an `AttributeError`
+
+### Changed
+
+* Validation during request migrations is now lazy so if there are no migrations or internal schemas -- the request is not going to be modified at all
 
 ## [3.2.0]
 
