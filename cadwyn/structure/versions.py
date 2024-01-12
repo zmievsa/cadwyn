@@ -445,7 +445,9 @@ class VersionBundle:
         api_version = self.api_version_var.get()
         if api_version is None:
             return response_or_response_body
-        if hasattr(response_or_response_body, "body"):
+        # You might expect the first check to be enough but it's not: starlette actively breaks
+        # Liskov Substitution principle and doesn't define `body` for `StreamingResponse`
+        if isinstance(response_or_response_body, FastapiResponse) and hasattr(response_or_response_body, "body"):
             response_info = ResponseInfo(
                 response_or_response_body,
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
