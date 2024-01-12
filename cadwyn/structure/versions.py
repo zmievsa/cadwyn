@@ -445,7 +445,7 @@ class VersionBundle:
         api_version = self.api_version_var.get()
         if api_version is None:
             return response_or_response_body
-        if isinstance(response_or_response_body, FastapiResponse):
+        if hasattr(response_or_response_body, "body"):
             response_info = ResponseInfo(
                 response_or_response_body,
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
@@ -469,10 +469,10 @@ class VersionBundle:
             path,
             method,
         )
-        if isinstance(response_or_response_body, FastapiResponse):
+        if hasattr(response_or_response_body, "body"):
             # a webserver (uvicorn for instance) calculates the body at the endpoint level.
             # if an endpoint returns no "body", its content-length will be set to 0
-            # json.dums(None) results into "null", and content-length should be 4,
+            # json.dumps(None) results into "null", and content-length should be 4,
             # but it was already calculated to 0 which causes
             # `RuntimeError: Response content longer than Content-Length` or
             # `Too much data for declared Content-Length`, based on the protocol
