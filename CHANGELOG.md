@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.2.1]
+
+### Fixed
+
+* If a user used a FastAPI/Starlette `StreamingResponse`, we still tried to access its `body` attribute which caused an `AttributeError`
+
 ## [3.2.0]
 
 ### Added
