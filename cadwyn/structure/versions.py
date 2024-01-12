@@ -471,7 +471,7 @@ class VersionBundle:
             path,
             method,
         )
-        if hasattr(response_or_response_body, "body"):
+        if isinstance(response_or_response_body, FastapiResponse) and hasattr(response_or_response_body, "body"):
             # a webserver (uvicorn for instance) calculates the body at the endpoint level.
             # if an endpoint returns no "body", its content-length will be set to 0
             # json.dumps(None) results into "null", and content-length should be 4,
