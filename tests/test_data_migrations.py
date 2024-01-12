@@ -653,7 +653,7 @@ class TestResponseMigrations:
     ):
         @router.post(test_path, response_model=latest_module.AnyResponseSchema)
         async def post_endpoint(request: Request):
-            return StreamingResponse(StringIO(), status_code=200)
+            return StreamingResponse(StringIO("streaming response"), status_code=200)
 
         @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
         def migrator(response: ResponseInfo):
@@ -661,13 +661,13 @@ class TestResponseMigrations:
 
         clients = create_versioned_clients(version_change(migrator=migrator))
         resp = clients[date(2000, 1, 1)].post(test_path, json={})
-        assert resp.content == b""
+        assert resp.content == b"streaming response"
         assert dict(resp.headers) == {"x-api-version": "2000-01-01"}
         assert resp.status_code == 201
         assert dict(resp.cookies) == {}
 
         resp = clients[date(2001, 1, 1)].post(test_path, json={})
-        assert resp.content == b""
+        assert resp.content == b"streaming response"
         assert dict(resp.headers) == {"x-api-version": "2001-01-01"}
         assert resp.status_code == 200
 
