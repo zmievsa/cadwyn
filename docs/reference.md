@@ -434,7 +434,7 @@ This type hint will tell Cadwyn that this route has public-facing schema of `Use
 
 ##### StreamingResponse and FileResponse migrations
 
-Migrations for `fastapi.responses.StreamingResponse` and `fastapi.responses.FileResponse` are not directly supported yet ([1](https://github.com/zmievsa/cadwyn/issues/125), [2](https://github.com/zmievsa/cadwyn/issues/126)). However, you can use `response._response` attribute to get access to the original `StreamingResponse` or `FileResponse` and modify it in any way you wish.
+Migrations for the bodies of `fastapi.responses.StreamingResponse` and `fastapi.responses.FileResponse` are not directly supported yet ([1](https://github.com/zmievsa/cadwyn/issues/125), [2](https://github.com/zmievsa/cadwyn/issues/126)). However, you can use `ResponseInfo._response` attribute to get access to the original `StreamingResponse` or `FileResponse` and modify it in any way you wish within your migrations.
 
 ### Pydantic 2 RootModel migration warning
 
