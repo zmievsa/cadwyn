@@ -373,6 +373,7 @@ class TestRequestMigrations:
         assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
             "type": "InternalSchema",
             "foo": 1,
+            # we expect for the passed "bar" attribute to not get passed because it's not in the public schema
             "bar": None,
         }
         assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
@@ -657,7 +658,7 @@ class TestResponseMigrations:
 
         @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
         def migrator(response: ResponseInfo):
-            response.body.status_code = 201
+            response.status_code = 201
 
         clients = create_versioned_clients(version_change(migrator=migrator))
         resp = clients[date(2000, 1, 1)].post(test_path, json={})

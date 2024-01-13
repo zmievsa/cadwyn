@@ -2,27 +2,62 @@ import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, ParamSpec, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, cast, overload
 
 from fastapi import Request, Response
 from starlette.datastructures import MutableHeaders
 
+from cadwyn._compat import PYDANTIC_V2, ModelField, model_dump
 from cadwyn._utils import same_definition_as_in
 
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
 _P = ParamSpec("_P")
+
+_EMPTY_PRELOADED_BODY = object()
+
+
+@dataclass(slots=True)
+class _LazyBody:
+    # This attribute gets set when
+    pre_loaded_body: object | None
+    validated_route_parameters: dict[str, Any]
+    body_field_alias: str | None
+    body_field: ModelField | None
 
 
 # TODO (https://github.com/zmievsa/cadwyn/issues/49): Add form handling
 class RequestInfo:
-    __slots__ = ("body", "headers", "_cookies", "_query_params", "_request")
+    __slots__ = ("headers", "_cookies", "_query_params", "_request", "_body")
 
-    def __init__(self, request: Request, body: Any):
+    def __init__(self, request: Request, lazy_body: _LazyBody):
         super().__init__()
-        self.body = body
+        if lazy_body.pre_loaded_body is not _EMPTY_PRELOADED_BODY:
+            self._body = lazy_body.pre_loaded_body
+        else:
+            self._body = lazy_body
         self.headers = request.headers.mutablecopy()
         self._cookies = request.cookies
         self._query_params = request.query_params._dict
         self._request = request
+
+    @property
+    def body(self) -> Any:
+        if isinstance(self._body, _LazyBody):
+            raw_body: BaseModel | None = self._body.validated_route_parameters.get(
+                self._body.body_field_alias,  # pyright: ignore[reportGeneralTypeIssues]
+            )
+            if raw_body is None:
+                body = None
+            else:
+                body = model_dump(raw_body, by_alias=True, exclude_unset=True)
+                if not PYDANTIC_V2 and raw_body.__custom_root_type__:  # pyright: ignore[reportGeneralTypeIssues]
+                    body = body["__root__"]
+            self._body = body
+            return body
+        else:
+            return self._body
 
     @property
     def cookies(self) -> dict[str, str]:
