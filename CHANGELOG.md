@@ -10,6 +10,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Fixed
 
 * Removed lazy migrations as they were producing incorrect results when there were no migrations but when there were schema changes
+* Added compatibility with fastapi>=0.109.0
 
 ## [3.3.0]
 
