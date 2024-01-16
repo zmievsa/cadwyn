@@ -707,7 +707,7 @@ class TestResponseMigrations:
 
 
 class TestHowAndWhenMigrationsApply:
-    def test__migrate__with_no_migrations__should_not_raise_error(
+    def test__migrate_request_and_response__with_no_migrations__should_not_raise_error(
         self,
         test_path: Literal["/test"],
         create_versioned_clients: CreateVersionedClients,
@@ -720,6 +720,30 @@ class TestHowAndWhenMigrationsApply:
             "cookies": {},
             "query_params": {},
         }
+
+    def test__migrate_request__with_no_migrations__request_schema_should_be_from_latest(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        latest_module,
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        async def endpoint(foo: latest_module.AnyRequestSchema):
+            assert isinstance(
+                foo, latest_module.AnyRequestSchema
+            ), f"Request schema is from: {foo.__class__.__module__}"
+            return {}
+
+        clients = create_versioned_clients(version_change(), version_change())
+        resp_2000 = clients[date(2000, 1, 1)].post(test_path, json={})
+        assert resp_2000.status_code, resp_2000.json()
+
+        resp_2001 = clients[date(2001, 1, 1)].post(test_path, json={})
+        assert resp_2001.status_code, resp_2001.json()
+
+        resp_2002 = clients[date(2002, 1, 1)].post(test_path, json={})
+        assert resp_2002.status_code, resp_2002.json()
 
     def test__migrate_one_version_down__migrations_are_applied_to_2000_version_but_not_to_2000(
         self,
