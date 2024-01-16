@@ -13,7 +13,7 @@ from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, cast
 from fastapi import HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
-from fastapi._compat import ModelField, _normalize_errors
+from fastapi._compat import _normalize_errors
 from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import solve_dependencies
@@ -24,21 +24,19 @@ from pydantic import BaseModel
 from starlette._utils import is_async_callable
 from typing_extensions import assert_never
 
-from cadwyn._compat import Undefined
+from cadwyn._compat import PYDANTIC_V2, ModelField, Undefined, model_dump
 from cadwyn._package_utils import IdentifierPythonPath, get_cls_pythonpath
 from cadwyn.exceptions import CadwynError, CadwynStructureError
 
 from .._utils import Sentinel
 from .common import Endpoint, VersionDate, VersionedModel
 from .data import (
-    _EMPTY_PRELOADED_BODY,
     AlterRequestByPathInstruction,
     AlterRequestBySchemaInstruction,
     AlterResponseByPathInstruction,
     AlterResponseBySchemaInstruction,
     RequestInfo,
     ResponseInfo,
-    _LazyBody,
 )
 from .endpoints import AlterEndpointSubInstruction
 from .enums import AlterEnumSubInstruction
@@ -309,48 +307,35 @@ class VersionBundle:
         request_info: RequestInfo,
         current_version: VersionDate,
         latest_route: APIRoute,
-        old_kwargs: dict[str, Any],
-    ):
+    ) -> dict[str, Any]:
         path = request.scope["path"]
         method = request.method
-        at_least_one_migration_was_applied = False
         for v in reversed(self.versions):
             if v.value <= current_version:
                 continue
             for version_change in v.version_changes:
                 if body_type is not None and body_type in version_change.alter_request_by_schema_instructions:
-                    at_least_one_migration_was_applied = True
                     version_change.alter_request_by_schema_instructions[body_type](request_info)
                 if path in version_change.alter_request_by_path_instructions:
                     for instruction in version_change.alter_request_by_path_instructions[path]:
                         if method in instruction.methods:
-                            at_least_one_migration_was_applied = True
                             instruction(request_info)
-        if not at_least_one_migration_was_applied and (
-            # Either if:
-            # * there is no body
-            # * if there is no body with internal parameters
-            latest_route.body_field is None
-            or (
-                latest_route.dependant.body_params
-                and latest_route.dependant.body_params[0].type_
-                == latest_dependant_with_internal_schema.body_params[0].type_
-            )
-        ):
-            return old_kwargs
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
-        new_kwargs, errors, _, _, _ = await solve_dependencies(
-            request=request,
-            response=response,
-            dependant=latest_dependant_with_internal_schema,
-            body=request_info.body,
-            dependency_overrides_provider=latest_route.dependency_overrides_provider,
-        )
-        if errors:
-            raise RequestValidationError(_normalize_errors(errors), body=request_info.body)
-        return new_kwargs
+        async with AsyncExitStack() as async_exit_stack:
+            new_kwargs, errors, _, _, _ = await solve_dependencies(
+                request=request,
+                response=response,
+                dependant=latest_dependant_with_internal_schema,
+                body=request_info.body,
+                dependency_overrides_provider=latest_route.dependency_overrides_provider,
+                async_exit_stack=async_exit_stack,
+            )
+            if errors:
+                raise RequestValidationError(_normalize_errors(errors), body=request_info.body)
+            return new_kwargs
+        raise NotImplementedError("This code should not be reachable. If it was reached -- it's a bug.")
 
     def _migrate_response(
         self,
@@ -518,7 +503,7 @@ class VersionBundle:
         response: FastapiResponse,
         route: APIRoute,
         latest_route: APIRoute,
-    ):
+    ) -> dict[str, Any]:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
             kwargs.pop(request_param_name)
@@ -528,26 +513,24 @@ class VersionBundle:
             return kwargs
 
         # This is a kind of body param you get when you define a single pydantic schema in your route's body
-        there_is_a_single_simple_body_param = (
+        if (
             len(route.dependant.body_params) == 1
             and template_module_body_field_for_request_migrations is not None
             and body_field_alias is not None
             and body_field_alias in kwargs
-        )
-        if there_is_a_single_simple_body_param:
-            preloaded_body = _EMPTY_PRELOADED_BODY
+        ):
+            raw_body: BaseModel | None = kwargs.get(body_field_alias)
+            if raw_body is None:
+                body = None
+            else:
+                body = model_dump(raw_body, by_alias=True, exclude_unset=True)
+                if not PYDANTIC_V2 and raw_body.__custom_root_type__:  # pyright: ignore[reportGeneralTypeIssues]
+                    body = body["__root__"]
         else:
-            preloaded_body = await _get_body(request, route.body_field)
+            # This is for requests without body or with complex body such as form or file
+            body = await _get_body(request, route.body_field)
 
-        request_info = RequestInfo(
-            request,
-            _LazyBody(
-                preloaded_body,
-                validated_route_parameters=kwargs,
-                body_field_alias=body_field_alias,
-                body_field=route.body_field,
-            ),
-        )
+        request_info = RequestInfo(request, body)
         new_kwargs = await self._migrate_request(
             template_module_body_field_for_request_migrations,
             latest_dependant_with_internal_schema,
@@ -556,7 +539,6 @@ class VersionBundle:
             request_info,
             api_version,
             latest_route,
-            kwargs,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:

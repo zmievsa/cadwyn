@@ -1061,41 +1061,6 @@ def test__router_generation_updating_unused_dependencies__with_migration(
         "b",  # Fastapi called our dependency and got b in 2000
         "a",  # We called our dependency and got a in 2001
         "a",  # Fastapi called our dependency and got a in 2001
-    ]
-
-
-def test__router_generation_updating_unused_dependencies__without_migration(
-    router: VersionedAPIRouter,
-    create_versioned_app: CreateVersionedApp,
-    latest: ModuleType,
-):
-    saved_enum_names = []
-
-    async def dependency(my_enum: latest.StrEnum):
-        saved_enum_names.append(my_enum.name)
-
-    @router.get("/test", dependencies=[Depends(dependency)])
-    async def test_with_dep():
-        pass
-
-    app = create_versioned_app(
-        version_change(
-            enum(latest.StrEnum).didnt_have("a"),
-            enum(latest.StrEnum).had(b="1"),
-        ),
-    )
-
-    client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
-    client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
-
-    resp = client_2000.get("/test", params={"my_enum": "1"})
-    assert resp.status_code == 200
-
-    resp = client_2001.get("/test", params={"my_enum": "1"})
-    assert resp.status_code == 200
-
-    assert saved_enum_names == [
-        "b",  # Fastapi called our dependency and got b in 2000
         "a",  # We called our dependency and got a in 2001
     ]
 

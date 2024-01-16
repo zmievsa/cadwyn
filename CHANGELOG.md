@@ -5,15 +5,17 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.3.1]
+
+### Fixed
+
+* Removed lazy migrations as they were producing incorrect results when there were no migrations but when there were schema changes
+
 ## [3.3.0]
 
 ### Fixed
 
 * If a user used a FastAPI/Starlette `StreamingResponse` or `FileResponse`, we still tried to access its `body` attribute which caused an `AttributeError`
-
-### Changed
-
-* Validation during request migrations is now lazy so if there are no migrations or internal schemas -- the request is not going to be modified at all
 
 ## [3.2.0]
 
