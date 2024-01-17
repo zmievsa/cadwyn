@@ -963,7 +963,7 @@ cli = ["typer"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "c2611ef177d42d7607536534534c781035a558a612ec79c445d8d7f9ed24dc4a"
+content-hash = "120c714789229afcb41179049a33cbaeb3ccd67977e7ac31adb24a33a99cdf24"
 
 [metadata.files]
 annotated-types = [

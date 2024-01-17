@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.3.3]
+
+### Fixed
+
+* Guaranteed that it is impossible to release cadwyn with the wrong pydantic dependency
+
 ## [3.3.2]
 
 ### Fixed
