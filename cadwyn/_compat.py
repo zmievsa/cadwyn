@@ -39,6 +39,7 @@ dict_of_empty_field_info = {k: getattr(_empty_field_info, k) for k in FieldInfo.
 
 
 def is_pydantic_constrained_type(value: object):
+    """This method only works for pydanticV1. It is always False in PydanticV2"""
     return isinstance(value, type) and value.__name__.startswith("Constrained") and value.__name__.endswith("Value")
 
 
@@ -86,10 +87,20 @@ class PydanticFieldWrapper:
     def update_attribute(self, *, name: str, value: Any):
         if PYDANTIC_V2:
             if name in FieldInfo.metadata_lookup:
-                self.field_info.metadata.extend(FieldInfo._collect_metadata({name: value}))
+                metadata = FieldInfo._collect_metadata({name: value})
+                if value is Undefined:
+                    for i, existing_piece_of_metadata in enumerate(self.field_info.metadata):
+                        if str(existing_piece_of_metadata) == str(metadata):
+                            self.field_info.metadata.pop(i)
+                            break
+                else:
+                    self.field_info.metadata.extend(metadata)
             self.field_info._attributes_set[name] = value
         else:
-            setattr(self.field_info, name, value)
+            if value is Undefined:
+                setattr(self.field_info, name, None)
+            else:
+                setattr(self.field_info, name, value)
 
     @property
     def passed_field_attributes(self):

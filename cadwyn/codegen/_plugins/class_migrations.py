@@ -3,7 +3,13 @@ from collections.abc import Sequence
 
 from typing_extensions import assert_never
 
-from cadwyn._compat import FieldInfo, PydanticFieldWrapper, dict_of_empty_field_info, is_pydantic_constrained_type
+from cadwyn._compat import (
+    FieldInfo,
+    PydanticFieldWrapper,
+    Undefined,
+    dict_of_empty_field_info,
+    is_pydantic_constrained_type,
+)
 from cadwyn._package_utils import IdentifierPythonPath, get_cls_pythonpath
 from cadwyn._utils import Sentinel
 from cadwyn.codegen._asts import add_keyword_to_call
@@ -123,7 +129,7 @@ def _add_field_to_model(
     )
 
 
-def _change_field_in_model(
+def _change_field_in_model(  # noqa: C901
     model: PydanticModelWrapper,
     schemas: "dict[IdentifierPythonPath, PydanticModelWrapper]",
     alter_schema_instruction: OldSchemaFieldHad,
@@ -139,6 +145,7 @@ def _change_field_in_model(
     field = defined_fields[alter_schema_instruction.field_name]
     model.fields[alter_schema_instruction.field_name] = field
 
+    # notice that current_field_is_constrained_type is always False in pydantic v2
     current_field_is_constrained_type = is_pydantic_constrained_type(field.annotation)
     if alter_schema_instruction.type is not Sentinel:
         if field.annotation == alter_schema_instruction.type:
@@ -182,8 +189,10 @@ def _change_field_in_model(
                 )
 
             if hasattr(field.annotation, attr_name) and current_field_is_constrained_type:
-                setattr(field.annotation, attr_name, attr_value)
                 ann_ast = field.annotation_ast
+                if attr_value is Undefined:
+                    attr_value = None
+                setattr(field.annotation, attr_name, attr_value)
                 if ann_ast is not None and isinstance(ann_ast, ast.Call):
                     add_keyword_to_call(attr_name, attr_value, ann_ast)
                 else:

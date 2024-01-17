@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel, Field, ValidationError, constr
 from pydantic.fields import FieldInfo
 
-from cadwyn._compat import PYDANTIC_V2, model_fields
+from cadwyn._compat import PYDANTIC_V2, Undefined, model_fields
 from cadwyn.exceptions import (
     InvalidGenerationInstructionError,
 )
@@ -478,6 +478,20 @@ def latest_with_constraints(latest_module_for: LatestModuleFor):
             foo: conint(lt=MY_VAR)
             bar: str = Field(max_length=MY_VAR)
         """,
+    )
+
+
+def test__schema_field_had_constrained_field__constraints_were_removed_in_v1__constraints_do_not_render(
+    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
+    latest_with_constraints,
+):
+    v1 = create_local_simple_versioned_packages(
+        schema(latest_with_constraints.SchemaWithConstraints).field("foo").had(lt=Undefined),
+        schema(latest_with_constraints.SchemaWithConstraints).field("bar").had(max_length=Undefined),
+    )
+
+    assert inspect.getsource(v1.SchemaWithConstraints) == (
+        "class SchemaWithConstraints(BaseModel):\n" "    foo: int = Field()\n" "    bar: str = Field()\n"
     )
 
 
