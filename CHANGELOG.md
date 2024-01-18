@@ -5,6 +5,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.3.5]
+
+### Fixed
+
+* If user made a wrong signature in the transformer of migration, text of an error suggested a wrong solution
+
+
 ## [3.3.4]
 
 ### Fixed
