@@ -73,7 +73,7 @@ class _AlterDataInstruction:
         signature = inspect.signature(self.transformer)
         if list(signature.parameters) != [self._payload_arg_name]:
             raise ValueError(
-                f"Method '{self.transformer.__name__}' must have 2 parameters: cls and {self._payload_arg_name}",
+                f"Method '{self.transformer.__name__}' must have only 1 parameter: {self._payload_arg_name}",
             )
 
         functools.update_wrapper(self, self.transformer)

@@ -338,7 +338,7 @@ def test__convert_response_to_previous_version_for__with_incorrect_args__should_
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Method 'my_conversion_method' must have 2 parameters: cls and response",
+            "Method 'my_conversion_method' must have only 1 parameter: response",
         ),
     ):
 
@@ -351,7 +351,7 @@ def test__convert_response_to_previous_version_for__with_no_args__should_raise_e
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Method 'my_conversion_method2' must have 2 parameters: cls and response",
+            "Method 'my_conversion_method2' must have only 1 parameter: response",
         ),
     ):
 
@@ -364,7 +364,7 @@ def test__convert_request_to_next_version_for__with_incorrect_args__should_raise
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Method 'my_conversion_method' must have 2 parameters: cls and request",
+            "Method 'my_conversion_method' must have only 1 parameter: request",
         ),
     ):
 
@@ -377,7 +377,7 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Method 'my_conversion_method2' must have 2 parameters: cls and request",
+            "Method 'my_conversion_method2' must have only 1 parameter: request",
         ),
     ):
 
