@@ -5,7 +5,7 @@ from typing import Any
 from cadwyn._compat import (
     PydanticFieldWrapper,
     get_attrs_that_are_not_from_field_and_that_are_from_field,
-    is_pydantic_constrained_type,
+    is_pydantic_1_constrained_type,
 )
 from cadwyn._package_utils import IdentifierPythonPath, get_absolute_python_path_of_import
 from cadwyn.codegen._asts import (
@@ -14,6 +14,7 @@ from cadwyn.codegen._asts import (
     pop_docstring_from_cls_body,
 )
 from cadwyn.codegen._common import CodegenContext, PydanticModelWrapper, _EnumWrapper
+from cadwyn.codegen._plugins.class_migrations import _get_annotated_type_ast_and_field_call_ast
 
 
 class ClassRebuildingPlugin:
@@ -93,15 +94,25 @@ def _modify_schema_cls(
         ast.AnnAssign(
             target=ast.Name(name, ctx=ast.Store()),
             annotation=_render_annotation(field.get_annotation_for_rendering()),
-            value=_generate_field_ast(field),
+            value=_generate_field_ast(modified_schemas, model_info, name, field),
             simple=1,
         )
         for name, field in model_info.fields.items()
     ]
+    validator_definitions = [
+        validator.func_ast for validator in model_info.validators.values() if not validator.is_deleted
+    ]
 
-    old_body = [n for n in cls_node.body if not isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)]
+    old_body = [
+        n
+        for n in cls_node.body
+        if not (
+            isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)
+            or (isinstance(n, ast.FunctionDef) and n.name in model_info.validators)
+        )
+    ]
     docstring = pop_docstring_from_cls_body(old_body)
-    cls_node.body = docstring + field_definitions + old_body
+    cls_node.body = docstring + field_definitions + validator_definitions + old_body
     if not cls_node.body:
         cls_node.body = [ast.Pass()]
     return cls_node
@@ -113,13 +124,22 @@ def _render_annotation(annotation: Any):
     return ast.parse(get_fancy_repr(annotation), mode="eval").body
 
 
-def _generate_field_ast(field: PydanticFieldWrapper):
-    if field.field_ast is not None:
+def _generate_field_ast(
+    schemas: dict[IdentifierPythonPath, PydanticModelWrapper],
+    model_info: PydanticModelWrapper,
+    field_name: str,
+    field: PydanticFieldWrapper,
+):
+    _, annotated_field_call_ast = _get_annotated_type_ast_and_field_call_ast(schemas, model_info, field_name, field)
+
+    if field.value_ast is not None:
         # We do this because next plugins **might** use a transformer which will edit the ast within the field
         # and break rendering
-        return copy.deepcopy(field.field_ast)
+        return copy.deepcopy(field.value_ast)
+    if annotated_field_call_ast is not None:
+        return None
     passed_attrs = field.passed_field_attributes
-    if is_pydantic_constrained_type(field.annotation) and field.annotation_ast is None:
+    if is_pydantic_1_constrained_type(field.annotation) and field.annotation_ast is None:
         (
             attrs_that_are_only_in_contype,
             attrs_that_are_only_in_field,

@@ -5,6 +5,7 @@ from cadwyn.codegen._common import CodegenContext
 
 _extra_imports: list[tuple[str, str]] = [
     ("typing", "import typing"),
+    ("pydantic", "import pydantic"),
     ("Any", "from typing import Any"),
     ("Annotated", "from typing import Annotated"),
     ("Field", "from pydantic import Field"),
@@ -16,6 +17,8 @@ _extra_imports: list[tuple[str, str]] = [
     ("confloat", "from pydantic import confloat"),
     ("condecimal", "from pydantic import condecimal"),
     ("condate", "from pydantic import condate"),
+    ("validator", "from pydantic import validator"),
+    ("root_validator", "from pydantic import root_validator"),
 ]
 
 

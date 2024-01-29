@@ -6,7 +6,8 @@ import pytest
 from pydantic import BaseModel, Field, ValidationError, constr
 from pydantic.fields import FieldInfo
 
-from cadwyn._compat import PYDANTIC_V2, Undefined, model_fields
+from cadwyn._compat import PYDANTIC_V2, model_fields
+from cadwyn.codegen._plugins.class_migrations import Unset
 from cadwyn.exceptions import (
     InvalidGenerationInstructionError,
 )
@@ -18,23 +19,9 @@ from tests.conftest import (
     CreateLocalVersionedPackages,
     LatestModuleFor,
     _FakeModuleWithEmptyClasses,
+    _FakeNamespaceWithOneStrField,
     version_change,
 )
-
-
-class _FakeNamespaceWithOneStrField:
-    SchemaWithOneStrField: type[BaseModel]
-
-
-@pytest.fixture()
-def latest_with_one_str_field(latest_module_for: LatestModuleFor) -> _FakeNamespaceWithOneStrField:
-    return latest_module_for(
-        """
-    from pydantic import BaseModel
-    class SchemaWithOneStrField(BaseModel):
-        foo: str
-    """,
-    )
 
 
 class _FakeNamespaceWithOneIntField:
@@ -466,32 +453,52 @@ def test__schema_field_had__float_field(
     )
 
 
+def test__schema_field_had__removing_default_in_version_change(
+    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
+    latest_module_for: LatestModuleFor,
+):
+    latest = latest_module_for(
+        """
+        from pydantic import BaseModel, Field
+        class SchemaWithDefaults(BaseModel):
+            foo: str = "hewwo"
+            bar: int = Field(default=83)
+        """
+    )
+    v1 = create_local_simple_versioned_packages(
+        schema(latest.SchemaWithDefaults).field("foo").had(default=Unset),
+        schema(latest.SchemaWithDefaults).field("bar").had(default=Unset),
+    )
+
+    assert inspect.getsource(v1.SchemaWithDefaults) == (
+        "class SchemaWithDefaults(BaseModel):\n    foo: str\n    bar: int = Field()\n"
+    )
+
+
 @pytest.fixture()
 def latest_with_constraints(latest_module_for: LatestModuleFor):
     return latest_module_for(
         """
         from pydantic import BaseModel, conint, Field
 
-        MY_VAR = 150
-
         class SchemaWithConstraints(BaseModel):
-            foo: conint(lt=MY_VAR)
-            bar: str = Field(max_length=MY_VAR)
+            foo: conint(lt=2 + 5)
+            bar: str = Field(max_length=2 + 5)
         """,
     )
 
 
-def test__schema_field_had_constrained_field__constraints_were_removed_in_v1__constraints_do_not_render(
+def test__schema_field_had_constrained_field__constraints_were_removed_in_version_change__constraints_do_not_render(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_constraints,
+    latest_with_constraints: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_constraints.SchemaWithConstraints).field("foo").had(lt=Undefined),
-        schema(latest_with_constraints.SchemaWithConstraints).field("bar").had(max_length=Undefined),
+        schema(latest_with_constraints.SchemaWithConstraints).field("foo").had(lt=Unset),
+        schema(latest_with_constraints.SchemaWithConstraints).field("bar").had(max_length=Unset),
     )
 
     assert inspect.getsource(v1.SchemaWithConstraints) == (
-        "class SchemaWithConstraints(BaseModel):\n" "    foo: int = Field()\n" "    bar: str = Field()\n"
+        "class SchemaWithConstraints(BaseModel):\n" "    foo: conint()\n" "    bar: str = Field()\n"
     )
 
 
@@ -506,8 +513,8 @@ def test__schema_field_had_constrained_field__only_non_constraint_field_args_wer
 
     assert inspect.getsource(v1.SchemaWithConstraints) == (
         "class SchemaWithConstraints(BaseModel):\n"
-        "    foo: conint(lt=MY_VAR) = Field(alias='foo1')\n"
-        "    bar: str = Field(max_length=MY_VAR, alias='bar1')\n"
+        "    foo: conint(lt=2 + 5) = Field(alias='foo1')\n"
+        "    bar: str = Field(max_length=2 + 5, alias='bar1')\n"
     )
 
 
@@ -544,14 +551,14 @@ def test__schema_field_had_constrained_field__constraints_have_been_modified(
     if PYDANTIC_V2:
         assert inspect.getsource(v1.SchemaWithConstraints) == (
             "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=MY_VAR) = Field(gt=8)\n"
-            "    bar: str = Field(max_length=MY_VAR, min_length=2)\n"
+            "    foo: conint(lt=2 + 5) = Field(gt=8)\n"
+            "    bar: str = Field(max_length=2 + 5, min_length=2)\n"
         )
     else:
         assert inspect.getsource(v1.SchemaWithConstraints) == (
             "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=MY_VAR, gt=8)\n"
-            "    bar: str = Field(max_length=150, min_length=2)\n"
+            "    foo: conint(lt=2 + 5, gt=8)\n"
+            "    bar: str = Field(max_length=7, min_length=2)\n"
         )
 
 
@@ -564,16 +571,17 @@ def test__schema_field_had_constrained_field__both_constraints_and_non_constrain
         schema(latest_with_constraints.SchemaWithConstraints).field("bar").had(min_length=2, alias="bar1"),
     )
     if PYDANTIC_V2:
+        # TODO Validate that this works
         assert inspect.getsource(v1.SchemaWithConstraints) == (
             "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=MY_VAR) = Field(alias='foo1', gt=8)\n"
-            "    bar: str = Field(max_length=MY_VAR, alias='bar1', min_length=2)\n"
+            "    foo: conint(lt=2 + 5) = Field(alias='foo1', gt=8)\n"
+            "    bar: str = Field(max_length=2 + 5, alias='bar1', min_length=2)\n"
         )
     else:
         assert inspect.getsource(v1.SchemaWithConstraints) == (
             "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=MY_VAR, gt=8) = Field(alias='foo1')\n"
-            "    bar: str = Field(alias='bar1', max_length=150, min_length=2)\n"
+            "    foo: conint(lt=2 + 5, gt=8) = Field(alias='foo1')\n"
+            "    bar: str = Field(alias='bar1', max_length=7, min_length=2)\n"
         )
 
 
@@ -633,6 +641,76 @@ def test__schema_field_had_constrained_field__constraint_only_args_were_modified
             "class SchemaWithConstraintsAndField(BaseModel):\n"
             "    foo: constr(strip_whitespace=True, max_length=6) = Field(default='hewwo')\n"
         )
+
+
+@pytest.fixture()
+def latest_with_annotated_constraints(latest_module_for: LatestModuleFor):
+    if not PYDANTIC_V2:
+        pytest.skip("All tests that use Annotated types with Field are only for pydantic 2")
+    return latest_module_for(
+        """
+        from pydantic import BaseModel, conint, Field
+        from typing import Annotated
+        import annotated_types
+
+        class SchemaWithAnnotatedConstraints(BaseModel):
+            foo: Annotated[conint(lt=2 + 5), Field(default=11), annotated_types.Gt(0)]
+        """
+    )
+
+
+def test__schema_field_had_annotated_constrained_field(
+    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
+    latest_with_annotated_constraints: Any,
+):
+    v1 = create_local_simple_versioned_packages(
+        schema(latest_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(lt=Unset),
+    )
+
+    assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
+        "class SchemaWithAnnotatedConstraints(BaseModel):\n"
+        "    foo: Annotated[conint(), Field(default=11), annotated_types.Gt(0)]\n"
+    )
+
+
+def test__schema_field_had_annotated_constrained_field2(
+    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
+    latest_with_annotated_constraints: Any,
+):
+    v1 = create_local_simple_versioned_packages(
+        schema(latest_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(alias="foo1"),
+    )
+
+    assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
+        "class SchemaWithAnnotatedConstraints(BaseModel):\n"
+        "    foo: Annotated[conint(lt=2 + 5), Field(default=11, alias='foo1'), annotated_types.Gt(0)]\n"
+    )
+
+
+def test__schema_field_had_annotated_constrained_field3(
+    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
+    latest_with_annotated_constraints: Any,
+):
+    v1 = create_local_simple_versioned_packages(
+        schema(latest_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(gt=8),
+    )
+    assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
+        "class SchemaWithAnnotatedConstraints(BaseModel):\n"
+        "    foo: Annotated[conint(lt=2 + 5), Field(default=11, gt=8), annotated_types.Gt(0)]\n"
+    )
+
+
+def test__schema_field_had_annotated_constrained_field4(
+    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
+    latest_with_annotated_constraints: Any,
+):
+    v1 = create_local_simple_versioned_packages(
+        schema(latest_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(gt=8, alias="foo1"),
+    )
+    assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
+        "class SchemaWithAnnotatedConstraints(BaseModel):\n"
+        "    foo: Annotated[conint(lt=2 + 5), Field(default=11, alias='foo1', gt=8), annotated_types.Gt(0)]\n"
+    )
 
 
 def test__schema_field_had_constrained_field__schema_has_special_constraints_constraints_have_been_modified(

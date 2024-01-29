@@ -2,6 +2,7 @@ import ast
 import inspect
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 from types import GenericAlias, LambdaType, ModuleType, NoneType
@@ -16,7 +17,7 @@ from typing import (  # noqa: UP035
 from cadwyn._compat import (
     PYDANTIC_V2,
     get_attrs_that_are_not_from_field_and_that_are_from_field,
-    is_pydantic_constrained_type,
+    is_pydantic_1_constrained_type,
 )
 from cadwyn._package_utils import (
     get_absolute_python_path_of_import,
@@ -108,7 +109,7 @@ def transform_none(_: NoneType) -> Any:
 
 def transform_type(value: type) -> Any:
     # This is a hack for pydantic's Constrained types
-    if is_pydantic_constrained_type(value):
+    if is_pydantic_1_constrained_type(value):
         if get_attrs_that_are_not_from_field_and_that_are_from_field(value)[0]:
             parent = value.mro()[1]
             snake_case = _RE_CAMEL_TO_SNAKE.sub("_", value.__name__)
@@ -230,6 +231,13 @@ def add_keyword_to_call(attr_name: str, attr_value: Any, call: ast.Call):
         call.keywords.append(new_keyword)
 
 
+def delete_keyword_from_call(attr_name: str, call: ast.Call):
+    for i, keyword in enumerate(call.keywords):
+        if keyword.arg == attr_name:
+            call.keywords.pop(i)
+            break
+
+
 def get_ast_keyword_from_argument_name_and_value(name: str, value: Any):
     return ast.keyword(
         arg=name,
@@ -247,3 +255,30 @@ def pop_docstring_from_cls_body(cls_body: list[ast.stmt]) -> list[ast.stmt]:
         return [cls_body.pop(0)]
     else:
         return []
+
+
+@dataclass(slots=True)
+class _ValidatorWrapper:
+    func_ast: ast.FunctionDef
+    field_names: set[str | ast.expr] | None
+    is_deleted: bool = False
+
+
+def _get_validator_info_or_none(method: ast.FunctionDef) -> _ValidatorWrapper | None:
+    for decorator in method.decorator_list:
+        # The cases we handle here:
+        # * `Name(id="root_validator")`
+        # * `Call(func=Name(id="validator"), args=[Constant(value="foo")])`
+        # * `Attribute(value=Name(id="pydantic"), attr="root_validator")`
+        # * `Call(func=Attribute(value=Name(id="pydantic"), attr="root_validator"), args=[])`
+
+        if isinstance(decorator, ast.Call) and ast.unparse(decorator.func).endswith("validator"):
+            if len(decorator.args) == 0:
+                return _ValidatorWrapper(method, None)
+            else:
+                return _ValidatorWrapper(
+                    method, {arg.value if isinstance(arg, ast.Constant) else arg for arg in decorator.args}
+                )
+        elif isinstance(decorator, ast.Name | ast.Attribute) and ast.unparse(decorator).endswith("validator"):
+            return _ValidatorWrapper(method, None)
+    return None

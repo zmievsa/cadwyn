@@ -1,14 +1,17 @@
+import ast
+import inspect
+import textwrap
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 from pydantic.fields import FieldInfo
 
+from cadwyn._compat import PYDANTIC_V2
+from cadwyn._utils import Sentinel
+from cadwyn.codegen._asts import _get_validator_info_or_none
 from cadwyn.exceptions import CadwynStructureError
-
-from .._compat import PYDANTIC_V2
-from .._utils import Sentinel
 
 if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
@@ -45,24 +48,24 @@ class FieldChanges:
 
 
 @dataclass(slots=True)
-class OldSchemaFieldHad:
+class FieldHadInstruction:
     schema: type[BaseModel]
-    field_name: str
+    name: str
     type: type
     field_changes: FieldChanges
     new_name: str
 
 
 @dataclass(slots=True)
-class OldSchemaFieldDidntExist:
+class FieldDidntExistInstruction:
     schema: type[BaseModel]
-    field_name: str
+    name: str
 
 
 @dataclass(slots=True)
-class OldSchemaFieldExistedWith:
+class FieldExistedAsInstruction:
     schema: type[BaseModel]
-    field_name: str
+    name: str
     type: type
     field: FieldInfo
 
@@ -104,7 +107,7 @@ class AlterFieldInstructionFactory:
         pattern: str = Sentinel,
         discriminator: str = Sentinel,
         repr: bool = Sentinel,
-    ) -> OldSchemaFieldHad:
+    ) -> FieldHadInstruction:
         if PYDANTIC_V2:
             if regex is not Sentinel:
                 raise CadwynStructureError("`regex` was removed in Pydantic 2. Use `pattern` instead")
@@ -122,9 +125,9 @@ class AlterFieldInstructionFactory:
         else:
             if pattern is not Sentinel:
                 raise CadwynStructureError("`pattern` is only available in Pydantic 2. use `regex` instead")
-        return OldSchemaFieldHad(
+        return FieldHadInstruction(
             schema=self.schema,
-            field_name=self.name,
+            name=self.name,
             type=type,
             new_name=name,
             field_changes=FieldChanges(
@@ -158,28 +161,74 @@ class AlterFieldInstructionFactory:
         )
 
     @property
-    def didnt_exist(self) -> OldSchemaFieldDidntExist:
-        return OldSchemaFieldDidntExist(self.schema, field_name=self.name)
+    def didnt_exist(self) -> FieldDidntExistInstruction:
+        return FieldDidntExistInstruction(self.schema, name=self.name)
 
     def existed_as(
         self,
         *,
         type: Any,
         info: FieldInfo | None = None,
-    ) -> OldSchemaFieldExistedWith:
-        return OldSchemaFieldExistedWith(
+    ) -> FieldExistedAsInstruction:
+        return FieldExistedAsInstruction(
             self.schema,
-            field_name=self.name,
+            name=self.name,
             type=type,
             field=info or Field(),
         )
 
 
-AlterSchemaSubInstruction = OldSchemaFieldHad | OldSchemaFieldDidntExist | OldSchemaFieldExistedWith
+@dataclass(slots=True)
+class ValidatorExistedInstruction:
+    schema: type[BaseModel]
+    validator: Callable[..., Any]
+    validator_fields: set[str | ast.expr] | None = field(default=None, init=False)
+    validator_ast: ast.FunctionDef = field(init=False)
+
+    def __post_init__(self):
+        source = textwrap.dedent(inspect.getsource(self.validator))
+        validator_ast = ast.parse(source).body[0]
+        if not isinstance(validator_ast, ast.FunctionDef):
+            raise CadwynStructureError("The passed validator must be a function")  # TODO: Rewrite
+        self.validator_ast = validator_ast
+
+        validator_info = _get_validator_info_or_none(validator_ast)
+        if validator_info is None:
+            raise CadwynStructureError("The passed validator must be a pydantic validator")
+        self.validator_fields = validator_info.field_names
 
 
 @dataclass(slots=True)
-class AlterSchemaInstruction:
+class ValidatorDidntExistInstruction:
+    schema: type[BaseModel]
+    name: str
+
+
+@dataclass(slots=True)
+class AlterValidatorInstructionFactory:
+    schema: type[BaseModel]
+    func: Callable[..., Any]
+
+    @property
+    def existed(self) -> ValidatorExistedInstruction:
+        return ValidatorExistedInstruction(self.schema, self.func)
+
+    @property
+    def didnt_exist(self) -> ValidatorDidntExistInstruction:
+        return ValidatorDidntExistInstruction(self.schema, self.func.__name__)
+
+
+AlterSchemaSubInstruction = (
+    FieldHadInstruction
+    | FieldDidntExistInstruction
+    | FieldExistedAsInstruction
+    | ValidatorExistedInstruction
+    | ValidatorDidntExistInstruction
+)
+
+
+@dataclass(slots=True)
+class SchemaHadInstruction:
     schema: type[BaseModel]
     name: str
 
@@ -191,8 +240,13 @@ class AlterSchemaInstructionFactory:
     def field(self, name: str, /) -> AlterFieldInstructionFactory:
         return AlterFieldInstructionFactory(self.schema, name)
 
-    def had(self, *, name: str) -> AlterSchemaInstruction:
-        return AlterSchemaInstruction(self.schema, name)
+    def validator(self, func: "Callable[..., Any] | classmethod[Any, Any, Any]", /) -> AlterValidatorInstructionFactory:
+        if isinstance(func, classmethod):
+            func = func.__wrapped__
+        return AlterValidatorInstructionFactory(self.schema, func)
+
+    def had(self, *, name: str) -> SchemaHadInstruction:
+        return SchemaHadInstruction(self.schema, name)
 
 
 def schema(model: type[BaseModel], /) -> AlterSchemaInstructionFactory:

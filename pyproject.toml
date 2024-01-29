@@ -53,7 +53,7 @@ classifiers = [
 python = "^3.10"
 typing-extensions = "*"
 fastapi = ">=0.96.1"
-pydantic = "^2.0.0"
+pydantic = ">=1.0.0"
 typer = {version = ">=0.7.0", optional = true}
 verselect = ">=0.0.6"
 better-ast-comments = "~1.2.1"

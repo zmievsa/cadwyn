@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from starlette._utils import is_async_callable
 from typing_extensions import assert_never
 
-from cadwyn._compat import PYDANTIC_V2, ModelField, Undefined, model_dump
+from cadwyn._compat import PYDANTIC_V2, ModelField, PydanticUndefined, model_dump
 from cadwyn._package_utils import IdentifierPythonPath, get_cls_pythonpath
 from cadwyn.exceptions import CadwynError, CadwynStructureError
 
@@ -41,7 +41,7 @@ from .data import (
 from .endpoints import AlterEndpointSubInstruction
 from .enums import AlterEnumSubInstruction
 from .modules import AlterModuleInstruction
-from .schemas import AlterSchemaInstruction, AlterSchemaSubInstruction
+from .schemas import AlterSchemaSubInstruction, SchemaHadInstruction
 
 _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
 _CADWYN_RESPONSE_PARAM_NAME = "cadwyn_response_param"
@@ -51,7 +51,7 @@ PossibleInstructions: TypeAlias = (
     AlterSchemaSubInstruction
     | AlterEndpointSubInstruction
     | AlterEnumSubInstruction
-    | AlterSchemaInstruction
+    | SchemaHadInstruction
     | AlterModuleInstruction
     | staticmethod
 )
@@ -61,7 +61,7 @@ APIVersionVarType: TypeAlias = ContextVar[VersionDate | None] | ContextVar[Versi
 class VersionChange:
     description: ClassVar[str] = Sentinel
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
-    alter_schema_instructions: ClassVar[list[AlterSchemaSubInstruction | AlterSchemaInstruction]] = Sentinel
+    alter_schema_instructions: ClassVar[list[AlterSchemaSubInstruction | SchemaHadInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
     alter_module_instructions: ClassVar[list[AlterModuleInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[list[AlterEndpointSubInstruction]] = Sentinel
@@ -115,7 +115,7 @@ class VersionChange:
         cls.alter_response_by_schema_instructions = {}
         cls.alter_response_by_path_instructions = defaultdict(list)
         for alter_instruction in cls.instructions_to_migrate_to_previous_version:
-            if isinstance(alter_instruction, AlterSchemaInstruction | AlterSchemaSubInstruction):
+            if isinstance(alter_instruction, SchemaHadInstruction | AlterSchemaSubInstruction):
                 cls.alter_schema_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, AlterEnumSubInstruction):
                 cls.alter_enum_instructions.append(alter_instruction)
@@ -560,7 +560,7 @@ async def _get_body(request: FastapiRequest, body_field: ModelField | None):  # 
             else:
                 body_bytes = await request.body()
                 if body_bytes:
-                    json_body: Any = Undefined
+                    json_body: Any = PydanticUndefined
                     content_type_value = request.headers.get("content-type")
                     if not content_type_value:
                         json_body = await request.json()
@@ -571,7 +571,7 @@ async def _get_body(request: FastapiRequest, body_field: ModelField | None):  # 
                             subtype = message.get_content_subtype()
                             if subtype == "json" or subtype.endswith("+json"):
                                 json_body = await request.json()
-                    if json_body != Undefined:
+                    if json_body != PydanticUndefined:
                         body = json_body
                     else:
                         body = body_bytes

@@ -7,12 +7,14 @@ from fastapi._compat import ModelField as FastAPIModelField
 from pydantic import BaseModel, Field
 
 ModelField: TypeAlias = Any  # pyright: ignore[reportGeneralTypeIssues]
-Undefined: TypeAlias = Any
+PydanticUndefined: TypeAlias = Any
+VALIDATOR_CONFIG_KEY = "__validators__"
 
 try:
     PYDANTIC_V2 = False
 
-    from pydantic.fields import FieldInfo, ModelField, Undefined  # pyright: ignore # noqa: PGH003
+    from pydantic.fields import FieldInfo, ModelField  # pyright: ignore # noqa: PGH003
+    from pydantic.fields import Undefined as PydanticUndefined
 
     _all_field_arg_names = []
     EXTRA_FIELD_NAME = "extra"
@@ -23,7 +25,6 @@ except ImportError:
     from pydantic_core import PydanticUndefined
 
     ModelField: TypeAlias = FieldInfo  # pyright: ignore # noqa: PGH003
-    Undefined = PydanticUndefined  # pyright: ignore # noqa: PGH003
     _all_field_arg_names = sorted(
         [
             name
@@ -38,7 +39,7 @@ _empty_field_info = Field()
 dict_of_empty_field_info = {k: getattr(_empty_field_info, k) for k in FieldInfo.__slots__}
 
 
-def is_pydantic_constrained_type(value: object):
+def is_pydantic_1_constrained_type(value: object):
     """This method only works for pydanticV1. It is always False in PydanticV2"""
     return isinstance(value, type) and value.__name__.startswith("Constrained") and value.__name__.endswith("Value")
 
@@ -64,12 +65,17 @@ def get_attrs_that_are_not_from_field_and_that_are_from_field(value: type):
 
 @dataclasses.dataclass(slots=True)
 class PydanticFieldWrapper:
+    """We DO NOT maintain field.metadata at all"""
+
     annotation: Any
 
     init_model_field: dataclasses.InitVar[ModelField]  # pyright: ignore[reportGeneralTypeIssues]
     field_info: FieldInfo = dataclasses.field(init=False)
 
     annotation_ast: ast.expr | None = None
+    # In the expressions "foo: str | None = None" and "foo: str | None = Field(default=None)"
+    # the values are "None" and "Field(default=None)" respectively
+    value_ast: ast.expr | None = None
     field_ast: ast.expr | None = None
 
     def __post_init__(self, init_model_field: ModelField):  # pyright: ignore[reportGeneralTypeIssues]
@@ -86,21 +92,15 @@ class PydanticFieldWrapper:
 
     def update_attribute(self, *, name: str, value: Any):
         if PYDANTIC_V2:
-            if name in FieldInfo.metadata_lookup:
-                metadata = FieldInfo._collect_metadata({name: value})
-                if value is Undefined:
-                    for i, existing_piece_of_metadata in enumerate(self.field_info.metadata):
-                        if str(existing_piece_of_metadata) == str(metadata):
-                            self.field_info.metadata.pop(i)
-                            break
-                else:
-                    self.field_info.metadata.extend(metadata)
             self.field_info._attributes_set[name] = value
         else:
-            if value is Undefined:
-                setattr(self.field_info, name, None)
-            else:
-                setattr(self.field_info, name, value)
+            setattr(self.field_info, name, value)
+
+    def delete_attribute(self, *, name: str) -> None:
+        if PYDANTIC_V2:
+            self.field_info._attributes_set.pop(name)
+        else:
+            setattr(self.field_info, name, PydanticUndefined)
 
     @property
     def passed_field_attributes(self):
