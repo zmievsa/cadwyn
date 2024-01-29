@@ -17,6 +17,9 @@ if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
 
 
+Unset: Any = object()
+
+
 @dataclass(slots=True)
 class FieldChanges:
     default: Any

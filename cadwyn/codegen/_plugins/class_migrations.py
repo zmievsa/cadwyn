@@ -22,11 +22,10 @@ from cadwyn.structure.schemas import (
     FieldExistedAsInstruction,
     FieldHadInstruction,
     SchemaHadInstruction,
+    Unset,
     ValidatorDidntExistInstruction,
     ValidatorExistedInstruction,
 )
-
-Unset: Any = object()
 
 
 def class_migration_plugin(context: GlobalCodegenContext):
