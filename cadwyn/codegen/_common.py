@@ -16,7 +16,7 @@ from cadwyn._package_utils import IdentifierPythonPath
 from cadwyn.exceptions import CodeGenerationError
 from cadwyn.structure.versions import Version
 
-from ._asts import _get_validator_info_or_none, _ValidatorWrapper
+from ._asts import _ValidatorWrapper, get_validator_info_or_none
 
 _FieldName: TypeAlias = str
 _CodegenPluginASTType = TypeVar("_CodegenPluginASTType", bound=ast.AST)
@@ -93,7 +93,7 @@ def get_fields_and_validators_from_model(
         validators: dict[str, _ValidatorWrapper] = {}
 
         validators_and_nones = (
-            _get_validator_info_or_none(node)
+            get_validator_info_or_none(node)
             for node in cls_ast.body
             if isinstance(node, ast.FunctionDef) and node.decorator_list
         )

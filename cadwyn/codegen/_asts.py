@@ -264,7 +264,7 @@ class _ValidatorWrapper:
     is_deleted: bool = False
 
 
-def _get_validator_info_or_none(method: ast.FunctionDef) -> _ValidatorWrapper | None:
+def get_validator_info_or_none(method: ast.FunctionDef) -> _ValidatorWrapper | None:
     for decorator in method.decorator_list:
         # The cases we handle here:
         # * `Name(id="root_validator")`

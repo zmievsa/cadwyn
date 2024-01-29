@@ -10,7 +10,7 @@ from pydantic.fields import FieldInfo
 
 from cadwyn._compat import PYDANTIC_V2
 from cadwyn._utils import Sentinel
-from cadwyn.codegen._asts import _get_validator_info_or_none
+from cadwyn.codegen._asts import get_validator_info_or_none
 from cadwyn.exceptions import CadwynStructureError
 
 if TYPE_CHECKING:
@@ -192,7 +192,7 @@ class ValidatorExistedInstruction:
             raise CadwynStructureError("The passed validator must be a function")  # TODO: Rewrite
         self.validator_ast = validator_ast
 
-        validator_info = _get_validator_info_or_none(validator_ast)
+        validator_info = get_validator_info_or_none(validator_ast)
         if validator_info is None:
             raise CadwynStructureError("The passed validator must be a pydantic validator")
         self.validator_fields = validator_info.field_names
