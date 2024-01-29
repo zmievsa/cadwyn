@@ -10,6 +10,7 @@ from enum import Enum
 from types import ModuleType
 from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, cast
 
+import fastapi
 from fastapi import HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
@@ -324,17 +325,23 @@ class VersionBundle:
         del request._headers
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
         async with AsyncExitStack() as async_exit_stack:
-            new_kwargs, errors, _, _, _ = await solve_dependencies(
+            # FastAPI has made a nasty breaking change in that version by adding a required argument
+            # without an optional counterpart.
+            if fastapi.__version__ >= "0.106.0":
+                kwargs: dict[str, Any] = {"async_exit_stack": async_exit_stack}
+            else:  # pragma: no cover
+                kwargs: dict[str, Any] = {}
+            dependencies, errors, _, _, _ = await solve_dependencies(
                 request=request,
                 response=response,
                 dependant=latest_dependant_with_internal_schema,
                 body=request_info.body,
                 dependency_overrides_provider=latest_route.dependency_overrides_provider,
-                async_exit_stack=async_exit_stack,
+                **kwargs,
             )
             if errors:
                 raise RequestValidationError(_normalize_errors(errors), body=request_info.body)
-            return new_kwargs
+            return dependencies
         raise NotImplementedError("This code should not be reachable. If it was reached -- it's a bug.")
 
     def _migrate_response(
