@@ -124,7 +124,7 @@ def test__schema_validator_existed__non_validator_was_passed__should_raise_error
         InvalidGenerationInstructionError,
         match=re.escape(
             'You tried to delete a validator "fake_validator" from "SchemaWithOneStrField" in '
-            ' "MyVersionChange" but it doesn\'t have such a validator.'
+            '"MyVersionChange" but it doesn\'t have such a validator.'
         ),
     ):
         create_local_simple_versioned_packages(
