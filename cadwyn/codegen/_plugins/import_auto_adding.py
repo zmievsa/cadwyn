@@ -32,6 +32,8 @@ if PYDANTIC_V2:
             ("StrictFloat", "from pydantic import StrictFloat"),
             ("StrictInt", "from pydantic import StrictInt"),
             ("StrictStr", "from pydantic import StrictStr"),
+            ("model_validator", "from pydantic import model_validator"),
+            ("field_validator", "from pydantic import field_validator"),
         ],
     )
 
