@@ -700,7 +700,7 @@ from cadwyn.structure import VersionChange, schema, Unset
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        schema(MySchema).field("foo").had(description=Unset),
+        schema(MySchema).field("foo").didnt_have("description"),
     )
 ```
 

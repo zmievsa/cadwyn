@@ -3,6 +3,7 @@ import dataclasses
 import inspect
 from typing import Any, TypeAlias
 
+import pydantic
 from fastapi._compat import ModelField as FastAPIModelField
 from pydantic import BaseModel, Field
 
@@ -14,7 +15,7 @@ try:
     PYDANTIC_V2 = False
 
     from pydantic.fields import FieldInfo, ModelField  # pyright: ignore # noqa: PGH003
-    from pydantic.fields import Undefined as PydanticUndefined
+    from pydantic.fields import Undefined as PydanticUndefined  # pyright: ignore # noqa: PGH003
 
     _all_field_arg_names = []
     EXTRA_FIELD_NAME = "extra"
@@ -22,7 +23,7 @@ except ImportError:
     PYDANTIC_V2 = True
 
     from pydantic.fields import FieldInfo
-    from pydantic_core import PydanticUndefined
+    from pydantic_core import PydanticUndefined  # pyright: ignore # noqa: PGH003
 
     ModelField: TypeAlias = FieldInfo  # pyright: ignore # noqa: PGH003
     _all_field_arg_names = sorted(
@@ -42,6 +43,16 @@ dict_of_empty_field_info = {k: getattr(_empty_field_info, k) for k in FieldInfo.
 def is_pydantic_1_constrained_type(value: object):
     """This method only works for pydanticV1. It is always False in PydanticV2"""
     return isinstance(value, type) and value.__name__.startswith("Constrained") and value.__name__.endswith("Value")
+
+
+def is_constrained_type(value: object):
+    if PYDANTIC_V2:
+        import annotated_types
+
+        return isinstance(value, annotated_types.Len | annotated_types.Interval | pydantic.StringConstraints)
+
+    else:
+        return is_pydantic_1_constrained_type(value)
 
 
 def get_attrs_that_are_not_from_field_and_that_are_from_field(value: type):
@@ -74,9 +85,8 @@ class PydanticFieldWrapper:
 
     annotation_ast: ast.expr | None = None
     # In the expressions "foo: str | None = None" and "foo: str | None = Field(default=None)"
-    # the values are "None" and "Field(default=None)" respectively
+    # the value_ast is "None" and "Field(default=None)" respectively
     value_ast: ast.expr | None = None
-    field_ast: ast.expr | None = None
 
     def __post_init__(self, init_model_field: ModelField):  # pyright: ignore[reportGeneralTypeIssues]
         if isinstance(init_model_field, FieldInfo):

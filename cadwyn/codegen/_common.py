@@ -55,9 +55,7 @@ class PydanticModelWrapper:
 
         return fields | self.fields
 
-    def _get_defined_annotations_through_mro(
-        self, schemas: "dict[IdentifierPythonPath, Self]"
-    ) -> dict[str, PydanticFieldWrapper]:
+    def _get_defined_annotations_through_mro(self, schemas: "dict[IdentifierPythonPath, Self]") -> dict[str, Any]:
         annotations = {}
 
         for parent in reversed(self._get_parents(schemas)):
@@ -79,11 +77,7 @@ def get_fields_and_validators_from_model(
     except OSError:
         return (
             {
-                field_name: PydanticFieldWrapper(
-                    # TODO: Do we even support pydantic 1 here?
-                    annotation=field.annotation,
-                    init_model_field=field,
-                )
+                field_name: PydanticFieldWrapper(annotation=field.annotation, init_model_field=field)
                 for field_name, field in fields.items()
             },
             {},
@@ -102,7 +96,6 @@ def get_fields_and_validators_from_model(
         return (
             {
                 node.target.id: PydanticFieldWrapper(
-                    # TODO: Do we even support pydantic 1 here?
                     annotation=fields[node.target.id].annotation,
                     init_model_field=fields[node.target.id],
                     annotation_ast=node.annotation,

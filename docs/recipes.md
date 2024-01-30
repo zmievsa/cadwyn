@@ -121,7 +121,7 @@ Let's say that we previously allowed users to have a name of arbitrary length bu
             "to prevent overly large names from being used."
         )
         instructions_to_migrate_to_previous_version = (
-            schema(UserCreateRequest).field("name").had(max_length=Unset),
+            schema(UserCreateRequest).field("name").didnt_have("max_length"),
         )
     ```
 

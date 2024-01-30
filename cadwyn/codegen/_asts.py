@@ -43,7 +43,7 @@ GenericAliasUnion = GenericAlias | _BaseGenericAlias
 _LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
 
 
-def get_fancy_repr(value: Any):
+def get_fancy_repr(value: Any, force_represent_constrained_types: bool = False):
     if PYDANTIC_V2:
         import annotated_types
 
@@ -58,7 +58,7 @@ def get_fancy_repr(value: Any):
     if value is None or value is NoneType:
         return transform_none(value)
     if isinstance(value, type):
-        return transform_type(value)
+        return transform_type(value, force_represent_constrained_types=force_represent_constrained_types)
     if isinstance(value, Enum):
         return transform_enum(value)
     if isinstance(value, auto):
@@ -107,10 +107,10 @@ def transform_none(_: NoneType) -> Any:
     return "None"
 
 
-def transform_type(value: type) -> Any:
+def transform_type(value: type, force_represent_constrained_types: bool) -> Any:
     # This is a hack for pydantic's Constrained types
     if is_pydantic_1_constrained_type(value):
-        if get_attrs_that_are_not_from_field_and_that_are_from_field(value)[0]:
+        if force_represent_constrained_types or get_attrs_that_are_not_from_field_and_that_are_from_field(value)[0]:
             parent = value.mro()[1]
             snake_case = _RE_CAMEL_TO_SNAKE.sub("_", value.__name__)
             cls_name = "con" + "".join(snake_case.split("_")[1:-1])
@@ -239,10 +239,9 @@ def delete_keyword_from_call(attr_name: str, call: ast.Call):
 
 
 def get_ast_keyword_from_argument_name_and_value(name: str, value: Any):
-    return ast.keyword(
-        arg=name,
-        value=ast.parse(get_fancy_repr(value), mode="eval").body,
-    )
+    if not isinstance(value, ast.AST):
+        value = ast.parse(get_fancy_repr(value), mode="eval").body
+    return ast.keyword(arg=name, value=value)
 
 
 def pop_docstring_from_cls_body(cls_body: list[ast.stmt]) -> list[ast.stmt]:
@@ -260,12 +259,13 @@ def pop_docstring_from_cls_body(cls_body: list[ast.stmt]) -> list[ast.stmt]:
 @dataclass(slots=True)
 class _ValidatorWrapper:
     func_ast: ast.FunctionDef
+    index_of_validator_decorator: int
     field_names: set[str | ast.expr] | None
     is_deleted: bool = False
 
 
 def get_validator_info_or_none(method: ast.FunctionDef) -> _ValidatorWrapper | None:
-    for decorator in method.decorator_list:
+    for index, decorator in enumerate(method.decorator_list):
         # The cases we handle here:
         # * `Name(id="root_validator")`
         # * `Call(func=Name(id="validator"), args=[Constant(value="foo")])`
@@ -274,11 +274,11 @@ def get_validator_info_or_none(method: ast.FunctionDef) -> _ValidatorWrapper | N
 
         if isinstance(decorator, ast.Call) and ast.unparse(decorator.func).endswith("validator"):
             if len(decorator.args) == 0:
-                return _ValidatorWrapper(method, None)
+                return _ValidatorWrapper(method, index, None)
             else:
                 return _ValidatorWrapper(
-                    method, {arg.value if isinstance(arg, ast.Constant) else arg for arg in decorator.args}
+                    method, index, {arg.value if isinstance(arg, ast.Constant) else arg for arg in decorator.args}
                 )
         elif isinstance(decorator, ast.Name | ast.Attribute) and ast.unparse(decorator).endswith("validator"):
-            return _ValidatorWrapper(method, None)
+            return _ValidatorWrapper(method, index, None)
     return None

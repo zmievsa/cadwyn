@@ -48,7 +48,7 @@ def test__schema_validator_existed__with_root_validator_without_call(
     if PYDANTIC_V2:
         pytest.skip("This test is only for Pydantic v1.")
 
-    @pydantic.root_validator
+    @pydantic.root_validator  # pyright: ignore[reportGeneralTypeIssues, reportUntypedFunctionDecorator]
     def hewwo(cls, values):
         raise NotImplementedError
 
@@ -91,6 +91,25 @@ def test__schema_validator_didnt_exist(
     )
 
     assert inspect.getsource(v1.SchemaWithOneStrField) == "class SchemaWithOneStrField(BaseModel):\n    foo: str\n"
+
+
+def test__schema_validator_didnt_exist__applied_twice__should_raise_error(
+    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
+    latest_with_validator: Any,
+):
+    instruction = (
+        schema(latest_with_validator.SchemaWithOneStrField)
+        .validator(latest_with_validator.SchemaWithOneStrField.validate_foo)
+        .didnt_exist
+    )
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            'You tried to delete a validator "validate_foo" from "SchemaWithOneStrField" in '
+            '"MyVersionChange" but it is already deleted.'
+        ),
+    ):
+        create_local_simple_versioned_packages(instruction, instruction)
 
 
 def test__schema_validator_didnt_exist__for_nonexisting_validator__should_raise_error(

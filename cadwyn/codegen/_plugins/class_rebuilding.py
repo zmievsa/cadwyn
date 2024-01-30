@@ -14,7 +14,7 @@ from cadwyn.codegen._asts import (
     pop_docstring_from_cls_body,
 )
 from cadwyn.codegen._common import CodegenContext, PydanticModelWrapper, _EnumWrapper
-from cadwyn.codegen._plugins.class_migrations import _get_annotated_type_ast_and_field_call_ast
+from cadwyn.codegen._plugins.class_migrations import _get_constraint_asts_and_field_call_ast
 
 
 class ClassRebuildingPlugin:
@@ -130,7 +130,7 @@ def _generate_field_ast(
     field_name: str,
     field: PydanticFieldWrapper,
 ):
-    _, annotated_field_call_ast = _get_annotated_type_ast_and_field_call_ast(schemas, model_info, field_name, field)
+    _, annotated_field_call_ast, _ = _get_constraint_asts_and_field_call_ast(schemas, model_info, field_name, field)
 
     if field.value_ast is not None:
         # We do this because next plugins **might** use a transformer which will edit the ast within the field
