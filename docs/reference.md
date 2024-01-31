@@ -694,7 +694,7 @@ class MyChange(VersionChange):
 and if you would like to unset any attribute of a field as if it was never passed, you would do:
 
 ```python
-from cadwyn.structure import VersionChange, schema, Unset
+from cadwyn.structure import VersionChange, schema
 
 
 class MyChange(VersionChange):

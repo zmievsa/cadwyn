@@ -9,7 +9,9 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 * `schema(...).validator(...).existed` and `schema(...).validator(...).didnt_exist` instructions for simplistic manipulation of validators
 * Automatic deletion of validators when the fields they validate get deleted
-* Unsetting of field attributes using `cadwyn.structure.Unset`
+* `schema(...).field(...).didnt_have` for unsetting field attributes
+* Improved support for `typing.Annotated` in schemas
+* Full preservation of original abstract syntax trees for all field values and annotations
 
 ### Fixed
 

@@ -112,8 +112,6 @@ Let's say that we previously allowed users to have a name of arbitrary length bu
     from cadwyn.structure import VersionChange, schema
     from data.latest.users import UserCreateRequest
 
-    from cadwyn.structure import Unset
-
 
     class AddMaxLengthConstraintToUserNames(VersionChange):
         description = (
@@ -150,7 +148,7 @@ The recommended approach:
 1. Change `max_length` of `data.latest.users.User.name` to 250
 2. [Regenerate](./reference.md#code-generation) the versioned schemas
 
-However, sometimes it can be considered a breaking change if a large portion of your users use your system to verify their data and rely on your system to return status code `422` if this field is invalid. If that's the case, use the same approach as in [constraint addition](#addition-or-narrowing-of-constraints) but use `50` instead of `cadwyn.structure.Unset` for the old value.
+However, sometimes it can be considered a breaking change if a large portion of your users use your system to verify their data and rely on your system to return status code `422` if this field is invalid. If that's the case, use the same approach as in [constraint addition](#addition-or-narrowing-of-constraints) but use `50` instead of `schema(UserCreateRequest).field("name").didnt_have("max_length")` for the old value.
 
 ##### Addition or removal of validators
 
