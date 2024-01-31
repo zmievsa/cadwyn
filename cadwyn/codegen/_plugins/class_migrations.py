@@ -141,12 +141,21 @@ def _add_field_to_model(
             f'in "{version_change_name}" but there is already a field with that name.',
         )
 
-    model.fields[alter_schema_instruction.name] = PydanticFieldWrapper(
-        annotation_ast=None,
+    fancy_type_repr = get_fancy_repr(alter_schema_instruction.type)
+    field = PydanticFieldWrapper(
+        annotation_ast=ast.parse(fancy_type_repr, mode="eval").body,
         annotation=alter_schema_instruction.type,
         init_model_field=alter_schema_instruction.field,
         value_ast=None,
     )
+    model.fields[alter_schema_instruction.name] = field
+
+    passed_field_attributes = field.passed_field_attributes
+    if passed_field_attributes:
+        field_call_ast = cast(ast.Call, ast.parse("Field()", mode="eval").body)
+        for attr_name, attr_value in passed_field_attributes.items():
+            add_keyword_to_call(attr_name, attr_value, field_call_ast)
+        field.value_ast = field_call_ast
     model.cls.__annotations__[alter_schema_instruction.name] = alter_schema_instruction.type
 
 
@@ -239,7 +248,7 @@ def _change_field(  # noqa: C901
             )
         field.annotation = alter_schema_instruction.type
         model.cls.__annotations__[alter_schema_instruction.name] = alter_schema_instruction.type
-        fancy_type_repr = get_fancy_repr(alter_schema_instruction.type, force_represent_constrained_types=True)
+        fancy_type_repr = get_fancy_repr(alter_schema_instruction.type)
         field.annotation_ast = ast.parse(fancy_type_repr, mode="eval").body
 
     if alter_schema_instruction.new_name is not Sentinel:

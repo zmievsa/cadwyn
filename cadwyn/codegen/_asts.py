@@ -16,7 +16,6 @@ from typing import (  # noqa: UP035
 
 from cadwyn._compat import (
     PYDANTIC_V2,
-    get_attrs_that_are_not_from_field_and_that_are_from_field,
     is_pydantic_1_constrained_type,
 )
 from cadwyn._package_utils import (
@@ -43,7 +42,7 @@ GenericAliasUnion = GenericAlias | _BaseGenericAlias
 _LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
 
 
-def get_fancy_repr(value: Any, force_represent_constrained_types: bool = False):
+def get_fancy_repr(value: Any):
     if PYDANTIC_V2:
         import annotated_types
 
@@ -58,7 +57,7 @@ def get_fancy_repr(value: Any, force_represent_constrained_types: bool = False):
     if value is None or value is NoneType:
         return transform_none(value)
     if isinstance(value, type):
-        return transform_type(value, force_represent_constrained_types=force_represent_constrained_types)
+        return transform_type(value)
     if isinstance(value, Enum):
         return transform_enum(value)
     if isinstance(value, auto):
@@ -107,31 +106,24 @@ def transform_none(_: NoneType) -> Any:
     return "None"
 
 
-def transform_type(value: type, force_represent_constrained_types: bool) -> Any:
+def transform_type(value: type) -> Any:
     # This is a hack for pydantic's Constrained types
     if is_pydantic_1_constrained_type(value):
-        if force_represent_constrained_types or get_attrs_that_are_not_from_field_and_that_are_from_field(value)[0]:
-            parent = value.mro()[1]
-            snake_case = _RE_CAMEL_TO_SNAKE.sub("_", value.__name__)
-            cls_name = "con" + "".join(snake_case.split("_")[1:-1])
-            return (
-                cls_name.lower()
-                + "("
-                + ", ".join(
-                    [
-                        f"{key}={get_fancy_repr(val)}"
-                        for key, val in value.__dict__.items()
-                        if not key.startswith("_") and val is not None and val != parent.__dict__[key]
-                    ],
-                )
-                + ")"
+        parent = value.mro()[1]
+        snake_case = _RE_CAMEL_TO_SNAKE.sub("_", value.__name__)
+        cls_name = "con" + "".join(snake_case.split("_")[1:-1])
+        return (
+            cls_name.lower()
+            + "("
+            + ", ".join(
+                [
+                    f"{key}={get_fancy_repr(val)}"
+                    for key, val in value.__dict__.items()
+                    if not key.startswith("_") and val is not None and val != parent.__dict__[key]
+                ],
             )
-        else:
-            # In pydantic V1:
-            # MRO of constr looks like: [ConstrainedStrValue, pydantic.types.ConstrainedStr, str, object]
-            #                                                                                -2     -1
-            #                                                                                ^^^
-            value = value.mro()[-2]
+            + ")"
+        )
 
     return value.__name__
 
@@ -232,7 +224,7 @@ def add_keyword_to_call(attr_name: str, attr_value: Any, call: ast.Call):
 
 
 def delete_keyword_from_call(attr_name: str, call: ast.Call):
-    for i, keyword in enumerate(call.keywords):
+    for i, keyword in enumerate(call.keywords):  # pragma: no branch
         if keyword.arg == attr_name:
             call.keywords.pop(i)
             break

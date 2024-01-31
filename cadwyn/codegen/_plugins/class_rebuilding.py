@@ -2,19 +2,12 @@ import ast
 import copy
 from typing import Any
 
-from cadwyn._compat import (
-    PydanticFieldWrapper,
-    get_attrs_that_are_not_from_field_and_that_are_from_field,
-    is_pydantic_1_constrained_type,
-)
 from cadwyn._package_utils import IdentifierPythonPath, get_absolute_python_path_of_import
 from cadwyn.codegen._asts import (
-    get_ast_keyword_from_argument_name_and_value,
     get_fancy_repr,
     pop_docstring_from_cls_body,
 )
 from cadwyn.codegen._common import CodegenContext, PydanticModelWrapper, _EnumWrapper
-from cadwyn.codegen._plugins.class_migrations import _get_constraint_asts_and_field_call_ast
 
 
 class ClassRebuildingPlugin:
@@ -93,8 +86,10 @@ def _modify_schema_cls(
     field_definitions = [
         ast.AnnAssign(
             target=ast.Name(name, ctx=ast.Store()),
-            annotation=_render_annotation(field.get_annotation_for_rendering()),
-            value=_generate_field_ast(modified_schemas, model_info, name, field),
+            annotation=copy.deepcopy(field.annotation_ast),
+            # We do this because next plugins **might** use a transformer which will edit the ast within the field
+            # and break rendering
+            value=copy.deepcopy(field.value_ast),
             simple=1,
         )
         for name, field in model_info.fields.items()
@@ -116,44 +111,3 @@ def _modify_schema_cls(
     if not cls_node.body:
         cls_node.body = [ast.Pass()]
     return cls_node
-
-
-def _render_annotation(annotation: Any):
-    if isinstance(annotation, ast.AST):
-        return copy.deepcopy(annotation)
-    return ast.parse(get_fancy_repr(annotation), mode="eval").body
-
-
-def _generate_field_ast(
-    schemas: dict[IdentifierPythonPath, PydanticModelWrapper],
-    model_info: PydanticModelWrapper,
-    field_name: str,
-    field: PydanticFieldWrapper,
-):
-    _, annotated_field_call_ast, _ = _get_constraint_asts_and_field_call_ast(schemas, model_info, field_name, field)
-
-    if field.value_ast is not None:
-        # We do this because next plugins **might** use a transformer which will edit the ast within the field
-        # and break rendering
-        return copy.deepcopy(field.value_ast)
-    if annotated_field_call_ast is not None:
-        return None
-    passed_attrs = field.passed_field_attributes
-    if is_pydantic_1_constrained_type(field.annotation) and field.annotation_ast is None:
-        (
-            attrs_that_are_only_in_contype,
-            attrs_that_are_only_in_field,
-        ) = get_attrs_that_are_not_from_field_and_that_are_from_field(field.annotation)
-        if not attrs_that_are_only_in_contype:
-            passed_attrs |= attrs_that_are_only_in_field
-
-    if passed_attrs:
-        return ast.Call(
-            func=ast.Name("Field"),
-            args=[],
-            keywords=[
-                get_ast_keyword_from_argument_name_and_value(attr, attr_value)
-                for attr, attr_value in passed_attrs.items()
-            ],
-        )
-    return None

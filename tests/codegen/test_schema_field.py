@@ -512,13 +512,13 @@ def latest_with_constraints(latest_module_for: LatestModuleFor):
     )
 
 
-def test__schema_field_had_constrained_field__constraints_were_removed_in_version_change__constraints_do_not_render(
+def test__schema_field_didnt_have__constrained_field_constraints_removed__constraints_do_not_render(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
     latest_with_constraints: Any,
 ):
     v1 = create_local_simple_versioned_packages(
         schema(latest_with_constraints.SchemaWithConstraints).field("foo").didnt_have("lt"),
-        schema(latest_with_constraints.SchemaWithConstraints).field("bar").didnt_have("min_length", "max_length"),
+        schema(latest_with_constraints.SchemaWithConstraints).field("bar").didnt_have("max_length", "min_length"),
     )
 
     assert inspect.getsource(v1.SchemaWithConstraints) == (

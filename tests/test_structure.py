@@ -426,3 +426,16 @@ def test__endpoint_instruction_factory_interface__with_wrong_http_methods__shoul
         ),
     ):
         endpoint("/test", ["DEATH", "STRAND"])
+
+
+def test__schema_validator_existed__non_validator_was_passed__should_raise_error():
+    def fake_validator(cls, value):
+        raise NotImplementedError
+
+    with pytest.raises(CadwynStructureError, match=re.escape("The passed function must be a pydantic validator")):
+        schema(BaseModel).validator(fake_validator).existed
+
+
+def test__schema_validator_existed__non_function_was_passed__should_raise_error():
+    with pytest.raises(CadwynStructureError, match=re.escape("The passed validator must be a function")):
+        schema(BaseModel).validator(CadwynStructureError).existed
