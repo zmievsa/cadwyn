@@ -678,6 +678,8 @@ class MyChange(VersionChange):
 
 ### Change a field
 
+If you would like to set a description or any other attribute of a field, you would do:
+
 ```python
 from cadwyn.structure import VersionChange, schema
 
@@ -686,6 +688,19 @@ class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").had(description="Foo"),
+    )
+```
+
+and if you would like to unset any attribute of a field as if it was never passed, you would do:
+
+```python
+from cadwyn.structure import VersionChange, schema
+
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        schema(MySchema).field("foo").didnt_have("description"),
     )
 ```
 
@@ -704,6 +719,41 @@ Cadwyn:
 5. Validates the request using `latest` schemas
 
 The part that causes the aforementioned problem is our usage of `exclude_unset=True`. Sadly, when we use it, all default fields do not get set so `latest` does not receive them. And if `latest` does not have the same defaults (for example, if the field has no default and is required in `latest`), then an error will occur. If we used `exclude_unset=False`, then `exclude_unset` would lose all its purpose for the users of our library so we cannot abandon it. Instead, you should set all extra on step 4 in your request migrations.
+
+### Add a validator
+
+```python
+from pydantic import Field, validator
+from cadwyn.structure import VersionChange, schema
+
+
+@validator("foo")
+def validate_foo(cls, value):
+    if not ":" in value:
+        raise TypeError
+    return value
+
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        schema(MySchema).validator(validate_foo).existed,
+    )
+```
+
+### Remove a validator
+
+```python
+from pydantic import Field, validator
+from cadwyn.structure import VersionChange, schema
+
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        schema(MySchema).validator(MySchema.validate_foo).didnt_exist,
+    )
+```
 
 ### Rename a schema
 

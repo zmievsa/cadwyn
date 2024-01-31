@@ -99,7 +99,9 @@ Let's say that we had a "summary" field before but now we want to rename it to "
 
 3. [Regenerate](./reference.md#code-generation) the versioned schemas
 
-#### Addition or Narrowing of constraints
+#### Addition, narrowing, or removal of constraints
+
+##### Addition or Narrowing of constraints
 
 Let's say that we previously allowed users to have a name of arbitrary length but now we want to limit it to 250 characters because we are worried that some users will be using inadequate lengths. You can't do this easily: if you simply add a `max_length` constraint to `User.name` -- the existing data in your database might become incompatible with this field in `UserResource`. So as long as incompatible data is there or can get there from some version -- you cannot add such a constraint to your responses. However, you **can** add it to your requests to prevent the creation of new user accounts with long names.
 
@@ -110,9 +112,6 @@ Let's say that we previously allowed users to have a name of arbitrary length bu
     from cadwyn.structure import VersionChange, schema
     from data.latest.users import UserCreateRequest
 
-    # Note that in pydantic v2 this would be `from pydantic_core import PydanticUndefined`
-    from pydantic.fields import Undefined
-
 
     class AddMaxLengthConstraintToUserNames(VersionChange):
         description = (
@@ -120,7 +119,7 @@ Let's say that we previously allowed users to have a name of arbitrary length bu
             "to prevent overly large names from being used."
         )
         instructions_to_migrate_to_previous_version = (
-            schema(UserCreateRequest).field("name").had(max_length=Undefined),
+            schema(UserCreateRequest).field("name").didnt_have("max_length"),
         )
     ```
 
@@ -140,7 +139,7 @@ Note, however, that users will still be able to use arbitrary length names in ol
 
 This process seems quite complex but it's not Cadwyn-specific: if you want to safely and nicely version for your users, you will have to follow such a process even if you don't use any versioning framework at all.
 
-#### Removal or Expansion of constraints
+##### Removal or Expansion of constraints
 
 Let's say that we previously only allowed users to have a name of length 50 but now we want to allow names of length 250 too. It does not make sense to add this to a new API version. Just add it into all API versions because it is not a breaking change.
 
@@ -149,7 +148,11 @@ The recommended approach:
 1. Change `max_length` of `data.latest.users.User.name` to 250
 2. [Regenerate](./reference.md#code-generation) the versioned schemas
 
-However, sometimes it can be considered a breaking change if a large portion of your users use your system to verify their data and rely on your system to return status code `422` if this field is invalid. If that's the case, use the same approach as in [constraint addition](#addition-or-narrowing-of-constraints) but use `50` instead of `pydantic.fields.Undefined` for the old value.
+However, sometimes it can be considered a breaking change if a large portion of your users use your system to verify their data and rely on your system to return status code `422` if this field is invalid. If that's the case, use the same approach as in [constraint addition](#addition-or-narrowing-of-constraints) but use `50` instead of `schema(UserCreateRequest).field("name").didnt_have("max_length")` for the old value.
+
+##### Addition or removal of validators
+
+The same approach as above could be used to add or remove pydantic validator functions using [validator code generation](./reference.md#add-a-validator).
 
 #### Schema field removal
 

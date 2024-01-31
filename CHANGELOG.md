@@ -5,11 +5,19 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.4.0]
+
+### Added
+
+* `schema(...).validator(...).existed` and `schema(...).validator(...).didnt_exist` instructions for simplistic manipulation of validators
+* Automatic deletion of validators when the fields they validate get deleted
+* `schema(...).field(...).didnt_have` for unsetting field attributes
+* Improved support for `typing.Annotated` in schemas
+* Full preservation of original abstract syntax trees for all field values and annotations
 
 ### Fixed
 
 * If the user wrote a wrong signature in a transformer decorated by `convert_request_to_next_version_for` or `convert_response_to_previous_version_for`, the text of the error suggested the wrong argument count and names
-
 
 ## [3.3.4]
 

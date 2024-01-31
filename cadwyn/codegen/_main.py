@@ -21,7 +21,7 @@ from cadwyn.codegen._common import (
     PydanticModelWrapper,
     _EnumWrapper,
     _ModuleWrapper,
-    get_fields_from_model,
+    get_fields_and_validators_from_model,
 )
 from cadwyn.codegen._plugins.class_migrations import class_migration_plugin
 from cadwyn.codegen._plugins.class_rebuilding import ClassRebuildingPlugin
@@ -63,14 +63,15 @@ def generate_code_for_versioned_packages(
         version of the latest module.
     """
     extra_context = extra_context or {}
+    schemas = {}
+    for k, v in deepcopy(versions.versioned_schemas).items():
+        fields, validators = get_fields_and_validators_from_model(v)
+        schemas[k] = PydanticModelWrapper(v, v.__name__, fields, validators)
 
     _generate_versioned_directories(
         template_module,
         versions=list(versions),
-        schemas={
-            k: PydanticModelWrapper(v, v.__name__, get_fields_from_model(v))
-            for k, v in deepcopy(versions.versioned_schemas).items()
-        },
+        schemas=schemas,
         enums={
             k: _EnumWrapper(v, {member.name: member.value for member in v})
             for k, v in deepcopy(versions.versioned_enums).items()

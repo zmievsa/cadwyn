@@ -32,7 +32,7 @@ from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
 from cadwyn.structure.modules import AlterModuleInstruction
-from cadwyn.structure.schemas import AlterSchemaInstruction, AlterSchemaSubInstruction
+from cadwyn.structure.schemas import AlterSchemaSubInstruction, SchemaHadInstruction
 
 CURRENT_DIR = Path(__file__).parent
 Undefined = object()
@@ -180,6 +180,21 @@ def latest_with_empty_classes(latest_module_for: LatestModuleFor) -> _FakeModule
         class EmptySchema(pydantic.BaseModel):
             pass
         """,
+    )
+
+
+class _FakeNamespaceWithOneStrField:
+    SchemaWithOneStrField: type[BaseModel]
+
+
+@pytest.fixture()
+def latest_with_one_str_field(latest_module_for: LatestModuleFor) -> _FakeNamespaceWithOneStrField:
+    return latest_module_for(
+        """
+    from pydantic import BaseModel
+    class SchemaWithOneStrField(BaseModel):
+        foo: str
+    """,
     )
 
 
@@ -350,7 +365,7 @@ class CreateVersionedClients:
 
 
 def version_change(
-    *instructions: AlterSchemaInstruction
+    *instructions: SchemaHadInstruction
     | AlterSchemaSubInstruction
     | AlterEndpointSubInstruction
     | AlterEnumSubInstruction

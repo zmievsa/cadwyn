@@ -309,7 +309,7 @@ class TestRequestMigrations:
                         "loc": ["header", "my-header"],
                         "msg": "Field required",
                         "input": None,
-                        "url": "https://errors.pydantic.dev/2.5/v/missing",
+                        "url": IsStr,
                     },
                 ],
             }
@@ -447,7 +447,7 @@ class TestRequestMigrations:
                         "loc": ["body", "bar"],
                         "msg": "Input should be a valid string",
                         "type": "string_type",
-                        "url": "https://errors.pydantic.dev/2.5/v/string_type",
+                        "url": IsStr,
                     },
                 ],
             }
