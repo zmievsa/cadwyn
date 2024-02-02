@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.4.1]
+### Fixed
+* model_dump now correctly handles empty payload and returns an empty dict instead of raising an exception
+
 ## [3.4.0]
 
 ### Added
