@@ -118,7 +118,8 @@ def model_fields(model: type[BaseModel]) -> dict[str, FieldInfo]:
         return model.__fields__  # pyright: ignore[reportDeprecated]
 
 
-def model_dump(model: BaseModel, by_alias: bool = False, exclude_unset: bool = False) -> dict[str, Any] | BaseModel:
+def model_dump(model: Any | BaseModel, by_alias: bool = False, exclude_unset: bool = False) -> Any:
+    # it means we have a dict or a list instead of a full model
     if not isinstance(model, BaseModel):
         return model
     if PYDANTIC_V2:
