@@ -118,8 +118,8 @@ def model_fields(model: type[BaseModel]) -> dict[str, FieldInfo]:
         return model.__fields__  # pyright: ignore[reportDeprecated]
 
 
-def model_dump(model: BaseModel, by_alias: bool = False, exclude_unset: bool = False) -> dict[str, Any]:
-    if isinstance(model, dict):
+def model_dump(model: BaseModel, by_alias: bool = False, exclude_unset: bool = False) -> dict[str, Any] | BaseModel:
+    if not isinstance(model, BaseModel):
         return model
     if PYDANTIC_V2:
         return model.model_dump(by_alias=by_alias, exclude_unset=exclude_unset)
