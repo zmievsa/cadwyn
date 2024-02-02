@@ -125,8 +125,8 @@ def model_dump(model: BaseModel, by_alias: bool = False, exclude_unset: bool = F
         return (
             model
             if isinstance(model, dict)
-            else model.dict(by_alias=by_alias, exclude_unset=exclude_unset)
-        )  # pyright: ignore[reportDeprecated]
+            else model.dict(by_alias=by_alias, exclude_unset=exclude_unset)  # pyright: ignore[reportDeprecated]
+        )
 
 
 def rebuild_fastapi_body_param(old_body_param: FastAPIModelField, new_body_param_type: type[BaseModel]):
