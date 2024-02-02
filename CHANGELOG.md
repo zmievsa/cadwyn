@@ -6,8 +6,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ## [Unreleased]
 
 ## [3.4.1]
+
 ### Fixed
-* model_dump now correctly handles empty payload and returns an empty dict instead of raising an exception
+
+* The empty body in POST request caused an exception on a try to serialize it. Now it is handled correctly
 
 ## [3.4.0]
 
