@@ -13,6 +13,10 @@ class CodeGenerationError(CadwynError):
     pass
 
 
+class ModuleIsNotAvailableAsTextError(CodeGenerationError):
+    pass
+
+
 class InvalidGenerationInstructionError(CodeGenerationError):
     pass
 

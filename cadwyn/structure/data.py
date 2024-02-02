@@ -12,7 +12,7 @@ from cadwyn._utils import same_definition_as_in
 _P = ParamSpec("_P")
 
 
-# TODO: Add form handling https://github.com/zmievsa/cadwyn/issues/49
+# TODO (https://github.com/zmievsa/cadwyn/issues/49): Add form handling
 class RequestInfo:
     __slots__ = ("body", "headers", "_cookies", "_query_params", "_request")
 
@@ -33,7 +33,7 @@ class RequestInfo:
         return self._query_params
 
 
-# TODO: handle media_type and background
+# TODO (https://github.com/zmievsa/cadwyn/issues/111): handle _response.media_type and _response.background
 class ResponseInfo:
     __slots__ = ("body", "_response")
 
@@ -73,7 +73,7 @@ class _AlterDataInstruction:
         signature = inspect.signature(self.transformer)
         if list(signature.parameters) != [self._payload_arg_name]:
             raise ValueError(
-                f"Method '{self.transformer.__name__}' must have 2 parameters: cls and {self._payload_arg_name}",
+                f"Method '{self.transformer.__name__}' must have only 1 parameter: {self._payload_arg_name}",
             )
 
         functools.update_wrapper(self, self.transformer)

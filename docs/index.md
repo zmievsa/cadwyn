@@ -21,29 +21,21 @@ Production-ready community-driven modern [Stripe-like](https://stripe.com/blog/a
 
 ## Who is this for?
 
-Cadwyn allows you to support a single version of your code, auto-generating the code/routes for older versions. You keep versioning encapsulated in small and independent "version change" modules while your business logic knows nothing about versioning.
+Cadwyn allows you to support a single version of your code while auto-generating the schemas and routes for older versions. You keep API versioning encapsulated in small and independent "version change" modules while your business logic stays simple and knows nothing about versioning.
 
 Its [approach](https://docs.cadwyn.dev/theory/#ii-migration-based-response-building) will be useful if you want to:
 
 1. Support many API versions for a long time
 2. Effortlessly backport features and bugfixes to older API versions
 
+Whether you are a newbie in API versioning, a pro looking for a sophisticated tool, an experimenter looking to build a similar framework, or even someone who just wants to learn about all approaches to API versioning -- Cadwyn has the functionality, theory, and documentation to cover all the mentioned use cases.
+
 ## Get started
 
-The [documentation](https://docs.cadwyn.dev) has everything you need to get started. It is recommended to read it in the following order:
+It is recommended to read the [tutorial](https://docs.cadwyn.dev/tutorial/) first to get your feet wet with Cadwyn's approach
 
-1. [Tutorial](https://docs.cadwyn.dev/tutorial/)
-2. [Recipes](https://docs.cadwyn.dev/recipes/)
-3. [Reference](https://docs.cadwyn.dev/reference/)
-4. [Theory](https://docs.cadwyn.dev/theory/)
-<!-- TODO: Move section about cadwyn's approach to the beginning and move other approaches and "how we got here" to another article  -->
+## Sponsors
 
-## Similar projects
+These are our gorgeous sponsors. They are using Cadwyn and are sponsoring it through various means. Contact [me](https://github.com/zmievsa) if you would like to become one too!
 
-The following projects are trying to accomplish similar results with a lot more simplistic functionality.
-
-- <https://github.com/sjkaliski/pinned>
-- <https://github.com/phillbaker/gates>
-- <https://github.com/lukepolo/laravel-api-migrations>
-- <https://github.com/tomschlick/request-migrations>
-- <https://github.com/keygen-sh/request_migrations>
+[![Monite](./img/sponsor_logos/monite.png)](https://docs.monite.com/)

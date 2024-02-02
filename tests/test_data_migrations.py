@@ -3,6 +3,7 @@ import re
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from datetime import date
+from io import StringIO
 from types import ModuleType
 from typing import Annotated, Any, Literal, get_args
 
@@ -10,9 +11,11 @@ import pytest
 from dirty_equals import IsPartialDict, IsStr
 from fastapi import APIRouter, Body, Cookie, File, Header, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
+from starlette.responses import StreamingResponse
 
 from cadwyn import VersionedAPIRouter
-from cadwyn._compat import PYDANTIC_V2
+from cadwyn._compat import PYDANTIC_V2, model_dump
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.routing import InternalRepresentationOf
 from cadwyn.structure import (
@@ -42,7 +45,6 @@ def latest_module(latest_module_for: LatestModuleFor):
     from pydantic import BaseModel, Field, RootModel
     from typing import Any
 
-    # TODO: Make a note in cadwyn docs that RootModel instances are CACHED at instantiation time
         # so `RootModel[Any] is RootModel[Any]`. This causes dire consequences if you try to make "different"
         # request and response root models with the same definitions
     class AnyRequestSchema(RootModel[Any]):
@@ -54,7 +56,6 @@ def latest_module(latest_module_for: LatestModuleFor):
     class SchemaWithInternalRepresentation(BaseModel):
         foo: int
 
-    # TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
     class InternalSchema(SchemaWithInternalRepresentation):
         bar: str | None = Field(default=None)
 
@@ -77,7 +78,6 @@ def latest_module(latest_module_for: LatestModuleFor):
     class SchemaWithInternalRepresentation(BaseModel):
         foo: int
 
-    # TODO: Putting it inside a versioned dir is plain wrong. We need a test that doesn't do that.
     class InternalSchema(SchemaWithInternalRepresentation):
         bar: str | None = Field(default=None)
 
@@ -242,11 +242,11 @@ class TestRequestMigrations:
             "query_params": {"query_param_key": "query_param val 2"},
         }
 
+        clients[date(2000, 1, 1)].cookies["5"] = "6"
         assert clients[date(2000, 1, 1)].post(
             test_path,
             json={"1": "2"},
             headers={"3": "4"},
-            cookies={"5": "6"},
             params={"7": "8"},
         ).json() == {
             "body": {"1": "2", "hello": "hello"},
@@ -309,7 +309,7 @@ class TestRequestMigrations:
                         "loc": ["header", "my-header"],
                         "msg": "Field required",
                         "input": None,
-                        "url": "https://errors.pydantic.dev/2.5/v/missing",
+                        "url": IsStr,
                     },
                 ],
             }
@@ -361,16 +361,19 @@ class TestRequestMigrations:
                 str,
             ],
         ):
-            return {"type": type(payload).__name__, **payload.dict()}
+            return {"type": type(payload).__name__, **model_dump(payload)}
 
         clients = create_versioned_clients(version_change())
 
-        payload_arg = clients[date(2000, 1, 1)].app.routes[-1].endpoint.__annotations__["payload"]
+        last_route = clients[date(2000, 1, 1)].app.routes[-1]
+        assert isinstance(last_route, APIRoute)
+        payload_arg = last_route.endpoint.__annotations__["payload"]
         assert get_args(payload_arg)[1] == str
 
         assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
             "type": "InternalSchema",
             "foo": 1,
+            # we expect for the passed "bar" attribute to not get passed because it's not in the public schema
             "bar": None,
         }
         assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
@@ -394,7 +397,7 @@ class TestRequestMigrations:
                 InternalRepresentationOf[latest_module.SchemaWithInternalRepresentation],
             ],
         ):
-            return {"type": type(payload).__name__, **payload.dict()}
+            return {"type": type(payload).__name__, **model_dump(payload)}
 
         @convert_request_to_next_version_for(latest_module.SchemaWithInternalRepresentation)
         def migrator(request: RequestInfo):
@@ -428,7 +431,7 @@ class TestRequestMigrations:
                 InternalRepresentationOf[latest_module.SchemaWithInternalRepresentation],
             ],
         ):
-            return {"type": type(payload).__name__, **payload.dict()}
+            return {"type": type(payload).__name__, **model_dump(payload)}
 
         @convert_request_to_next_version_for(latest_module.SchemaWithInternalRepresentation)
         def migrator(request: RequestInfo):
@@ -444,7 +447,7 @@ class TestRequestMigrations:
                         "loc": ["body", "bar"],
                         "msg": "Input should be a valid string",
                         "type": "string_type",
-                        "url": "https://errors.pydantic.dev/2.5/v/string_type",
+                        "url": IsStr,
                     },
                 ],
             }
@@ -505,7 +508,8 @@ class TestResponseMigrations:
         assert dict(resp.cookies) == {"cookie_key": "cookie_val"}
         assert resp.status_code == 300
 
-        resp = clients[date(2000, 1, 1)].post(test_path, json={"1": "2"}, headers={"3": "4"}, cookies={"5": "6"})
+        clients[date(2000, 1, 1)].cookies["5"] = "6"
+        resp = clients[date(2000, 1, 1)].post(test_path, json={"1": "2"}, headers={"3": "4"})
         assert resp.json() == {
             "body": {"1": "2"},
             "headers": {
@@ -604,9 +608,106 @@ class TestResponseMigrations:
         )
         assert resp.status_code == 301
 
+    def test__fastapi_response_migration__response_only_has_status_code_and_there_is_a_migration(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        latest_module: ModuleType,
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        async def post_endpoint(request: Request):
+            return Response(status_code=200)
+
+        @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
+        def migrator(response: ResponseInfo):
+            response.status_code = 201
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        resp = clients[date(2000, 1, 1)].post(test_path, json={})
+        assert resp.content == b""
+        assert dict(resp.headers) == (
+            {
+                "content-length": "0",
+                "x-api-version": "2000-01-01",
+            }
+        )
+        assert resp.status_code == 201
+        assert dict(resp.cookies) == {}
+
+        resp = clients[date(2001, 1, 1)].post(test_path, json={})
+        assert resp.content == b""
+        assert dict(resp.headers) == (
+            {
+                "content-length": "0",
+                "x-api-version": "2001-01-01",
+            }
+        )
+        assert resp.status_code == 200
+
+    def test__fastapi_response_migration__response_is_streaming_response_and_there_is_a_migration(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        latest_module: ModuleType,
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        async def post_endpoint(request: Request):
+            return StreamingResponse(StringIO("streaming response"), status_code=200)
+
+        @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
+        def migrator(response: ResponseInfo):
+            response.status_code = 201
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        resp = clients[date(2000, 1, 1)].post(test_path, json={})
+        assert resp.content == b"streaming response"
+        assert dict(resp.headers) == {"x-api-version": "2000-01-01"}
+        assert resp.status_code == 201
+        assert dict(resp.cookies) == {}
+
+        resp = clients[date(2001, 1, 1)].post(test_path, json={})
+        assert resp.content == b"streaming response"
+        assert dict(resp.headers) == {"x-api-version": "2001-01-01"}
+        assert resp.status_code == 200
+
+    def test__fastapi_response_migration__response_only_has_status_code_and_there_is_no_migration(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        latest_module: ModuleType,
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        async def post_endpoint(request: Request):
+            return Response(status_code=200)
+
+        clients = create_versioned_clients(version_change())
+        resp = clients[date(2000, 1, 1)].post(test_path, json={})
+        assert resp.content == b""
+        assert dict(resp.headers) == (
+            {
+                "content-length": "0",
+                "x-api-version": "2000-01-01",
+            }
+        )
+        assert resp.status_code == 200
+        assert dict(resp.cookies) == {}
+
+        resp = clients[date(2001, 1, 1)].post(test_path, json={})
+        assert resp.content == b""
+        assert dict(resp.headers) == (
+            {
+                "content-length": "0",
+                "x-api-version": "2001-01-01",
+            }
+        )
+        assert resp.status_code == 200
+
 
 class TestHowAndWhenMigrationsApply:
-    def test__migrate__with_no_migrations__should_not_raise_error(
+    def test__migrate_request_and_response__with_no_migrations__should_not_raise_error(
         self,
         test_path: Literal["/test"],
         create_versioned_clients: CreateVersionedClients,
@@ -619,6 +720,30 @@ class TestHowAndWhenMigrationsApply:
             "cookies": {},
             "query_params": {},
         }
+
+    def test__migrate_request__with_no_migrations__request_schema_should_be_from_latest(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        latest_module,
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        async def endpoint(foo: latest_module.AnyRequestSchema):
+            assert isinstance(
+                foo, latest_module.AnyRequestSchema
+            ), f"Request schema is from: {foo.__class__.__module__}"
+            return {}
+
+        clients = create_versioned_clients(version_change(), version_change())
+        resp_2000 = clients[date(2000, 1, 1)].post(test_path, json={})
+        assert resp_2000.status_code, resp_2000.json()
+
+        resp_2001 = clients[date(2001, 1, 1)].post(test_path, json={})
+        assert resp_2001.status_code, resp_2001.json()
+
+        resp_2002 = clients[date(2002, 1, 1)].post(test_path, json={})
+        assert resp_2002.status_code, resp_2002.json()
 
     def test__migrate_one_version_down__migrations_are_applied_to_2000_version_but_not_to_2000(
         self,

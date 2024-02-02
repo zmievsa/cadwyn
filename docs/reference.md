@@ -7,7 +7,7 @@ Cadwyn supports both Pydantic 1 and Pydantic 2 so you can pick your preferred ve
 
 ## Cadwyn's flow
 
-Cadwyn aims to be the most accurate and sophisticated API Versioning model out there. First of all, you maintain **zero** duplicated code yourself. Usually, in API versioning you [would need to](./theory.md) duplicate and maintain at least some layer of your applicaton. It could be the database, business logic, schemas, and endpoints. Cadwyn only duplicates your:
+Cadwyn aims to be the most accurate and sophisticated API Versioning model out there. First of all, you maintain **zero** duplicated code yourself. Usually, in API versioning you [would need to](./theory/how_we_got_here.md) duplicate and maintain at least some layer of your applicaton. It could be the database, business logic, schemas, and endpoints. Cadwyn only duplicates your:
 
 * schemas but you do not maintain the duplicates -- you only regenerate it when necessary
 * endpoints but only in runtime so you do not need to maintain the duplicates
@@ -150,7 +150,8 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 
 
 versions = VersionBundle(
-    Version(date(2023, 2, 10), RemoveTaxIDEndpoints), Version(date(2022, 11, 16))
+    Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
+    Version(date(2022, 11, 16)),
 )
 ```
 
@@ -162,7 +163,7 @@ Now let's discuss what each of these parts does and why:
 
 #### VersionChange.\_\_name\_\_
 
-The name of the version change, `RemoveTaxIDEndpoints`, describes what breaking change has happened. It must be a verb and it is the best resource for your new developers to quickly understand what happened between the versions. Do not be shy to use really long names -- it is better to have a long name than to create a misunderstanding. Avoid generic names such as `RefactorUserFields`. Better have an ugly name such as `RenameCreationDatetimeAndUpdateDatetimeInfoCreatedAtAndUpdatedAt` then to have a generic name such as `RefactorFields`. Because after just a few of such version changes, your versioning structure can become completely unreadable:
+The name of the version change, `RemoveTaxIDEndpoints`, describes what breaking change has happened. It must be a verb and it is the best resource for your new developers to quickly understand what happened between the versions. Do not be shy to use really long names -- it is better to have a long name than to create a misunderstanding. Avoid generic names such as `RefactorUserFields`. Better have an ugly name such as `RenameCreationDatetimeAndUpdateDatetimeToCreatedAtAndUpdatedAt` then to have a generic name such as `RefactorFields`. Because after just a few of such version changes, your versioning structure can become completely unreadable:
 
 ```python
 versions = VersionBundle(
@@ -189,7 +190,7 @@ Changes:
 * Changed schema for 'POST /v1/tax_ids' endpoint
 ```
 
-* Its first line, `Migration from first version (2022-11-16) to 2023-09-01 version.`, duplicates the already-known information -- your developers will know which version `VersionChange` migrates to and from by its location in [VersionBundle]() and most likely by its file name. Your clients will also know that because you can automatically infer this information from  So it is simply standing in the way of actually useful parts of the documentation
+* Its first line, `Migration from first version (2022-11-16) to 2023-09-01 version.`, duplicates the already-known information -- your developers will know which version `VersionChange` migrates to and from by its location in [VersionBundle](#versionbundle) and most likely by its file name. Your clients will also know that because you can automatically infer this information from  So it is simply standing in the way of actually useful parts of the documentation
 * Its second line, `Changes:`, does not make any sense as well because description of a `VersionChange` cannot describe anything but changes. So again, it's stating the obvious and making it harder for our readers to understand the crux of the change
 * Its third line, `Changed schema for 'POST /v1/tax_ids' endpoint`, gives both too much and too little information. First of all, it talks about changing schema but it never mentions what exactly changed. Remember: we are doing this to make it easy for our clients to migrate from one version to another. Insteaad, it is much better to mention the openapi model name that you changed, the fields you changed, and why you changed them
 
@@ -204,14 +205,20 @@ This approach of *maintaining the present and describing the past* might appear 
 Let's say that we renamed the field `creation_date` into `created_at`. We have altered our schemas -- that's great! But when our clients send us requests using the old versions of our API -- we will still get the data where we have `creation_date` instead of `created_at`. How do we solve this? Well, in Cadwyn your business logic never receives requests of the old versions. Instead, it receives only the requests of the latest version. So when you define a version change that renames a field, you need to also define how to convert the request body from the old version to the newer version. For example:
 
 ```python
-from cadwyn.structure import VersionChange, schema, convert_request_to_next_version_for
+from cadwyn.structure import (
+    VersionChange,
+    schema,
+    convert_request_to_next_version_for,
+)
 from data.latest.invoices import InvoiceCreateRequest
 
 
 class RemoveTaxIDEndpoints(VersionChange):
     description = "Rename `Invoice.creation_date` into `Invoice.created_at`."
     instructions_to_migrate_to_previous_version = (
-        schema(InvoiceCreateRequest).field("creation_date").had(name="created_at"),
+        schema(InvoiceCreateRequest)
+        .field("creation_date")
+        .had(name="created_at"),
     )
 
     @convert_request_to_next_version_for(InvoiceCreateRequest)
@@ -232,7 +239,11 @@ from cadwyn.structure import (
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
 )
-from data.latest.invoices import BaseInvoice, InvoiceCreateRequest, InvoiceResource
+from data.latest.invoices import (
+    BaseInvoice,
+    InvoiceCreateRequest,
+    InvoiceResource,
+)
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -257,6 +268,56 @@ Now our request comes, Cadwyn migrates it to the latest version using our reques
 ![The diagram showing how it works](<./img/simplified_migration_model.png>)
 
 **Notice** how we used the **latest** versions of our schemas in our migration -- this pattern can be found everywhere in Cadwyn. You use the latest version of your schemas to describe what happened to all other versions because other versions might not exist when you are defining migrations for them.
+
+##### Path-based migration specification
+
+Oftentimes you will need to migrate not based on the request body or response model but based on the path of the endpoint. This happens when, for example, endpoint does not have a request body or its response model is used in other places that we do not want to migrate. Let's pick the example [above](#data-migrations) and use paths instead of schemas:
+
+```python
+from cadwyn.structure import (
+    VersionChange,
+    schema,
+    convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
+)
+from data.latest.invoices import BaseInvoice
+
+
+class RemoveTaxIDEndpoints(VersionChange):
+    description = "Rename `Invoice.creation_date` into `Invoice.created_at`."
+    instructions_to_migrate_to_previous_version = (
+        schema(BaseInvoice).field("creation_date").had(name="created_at"),
+    )
+
+    @convert_request_to_next_version_for("/v1/invoices", ["POST"])
+    def rename_creation_date_into_created_at(request: RequestInfo):
+        request.body["created_at"] = request.body.pop("creation_date")
+
+    @convert_response_to_previous_version_for("/v1/invoices", ["GET"])
+    def rename_created_at_into_creation_date(response: ResponseInfo):
+        response.body["creation_date"] = response.body.pop("created_at")
+```
+
+Though I highly recommend you to stick to schemas as it is much easier to introduce inconsistencies when using paths; for example, when you have 10 endpoints with the same response body schema but you forgot to add migrations for 3 of them because you use paths instead of schemas.
+
+##### Migration of non-body attributes
+
+Cadwyn has an ability to migrate more than just request bodies.
+
+`RequestInfo` has the the following interfaces to migrate requests:
+
+* `body: Any`
+* `headers: starlette.datastructures.MutableHeaders`
+* `cookies: dict[str, str]`
+* `query_params: dict[str, str]`
+
+`ResponseInfo` has the the following interfaces to migrate responses:
+
+* `body: Any`
+* `status_code: int`
+* `headers: starlette.datastructures.MutableHeaders`
+* [set_cookie](https://www.starlette.io/responses/#set-cookie)
+* [delete_cookie](https://www.starlette.io/responses/#delete-cookie)
 
 ##### Internal representations
 
@@ -310,12 +371,7 @@ return {"address": user.addresses[0] if user.addresses else None, **user}
 So now your migration will look like the following:
 
 ```python
-from cadwyn.structure import (
-    VersionChange,
-    schema,
-    convert_request_to_next_version_for,
-    convert_response_to_previous_version_for,
-)
+from cadwyn.structure import VersionChange, schema
 from data.latest.users import User
 
 
@@ -367,12 +423,54 @@ router = VersionedAPIRouter(prefix="/v1/users")
 
 @router.post("", response_model=User)
 def create_user(
-    payload: Annotated[InternalUserCreateRequest, InternalRepresentationOf[User]]
+    payload: Annotated[
+        InternalUserCreateRequest, InternalRepresentationOf[User]
+    ]
 ):
     ...
 ```
 
 This type hint will tell Cadwyn that this route has public-facing schema of `User` that Cadwyn will use for validating all requests. Cadwyn will always use `InternalUserCreateRequest` when pushing body field into your business logic instead of `User`. Note that users will not be able to use any fields from the internal representation and their requests will still be validated by your regular schemas. So even if you added a field `foo` in an internal representation, and your user has passed this field in the body of the request, this field will not get to the internal representation because it will be removed at the moment of request validation (or even an error will occur if you use `extra="ignore"`). OpenAPI will also only use the public schemas, not the internal ones.
+
+##### StreamingResponse and FileResponse migrations
+
+Migrations for the bodies of `fastapi.responses.StreamingResponse` and `fastapi.responses.FileResponse` are not directly supported yet ([1](https://github.com/zmievsa/cadwyn/issues/125), [2](https://github.com/zmievsa/cadwyn/issues/126)). However, you can use `ResponseInfo._response` attribute to get access to the original `StreamingResponse` or `FileResponse` and modify it in any way you wish within your migrations.
+
+### Pydantic 2 RootModel migration warning
+
+Pydantic 2 has an interesting implementation detail: `pydantic.RootModel` instances are memoized. So the following code is going to output `True`:
+
+```python
+from data.latest.users import User
+from pydantic import RootModel
+
+BulkCreateUsersRequestBody = RootModel[list[User]]
+BulkCreateUsersResponseBody = RootModel[list[User]]
+
+print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # True
+```
+
+So if you make a migration that should only affect one of these schemas -- it will automatically affect both. A recommended alternative is to either use subclassing:
+
+```python
+from data.latest.users import User
+from pydantic import RootModel
+
+UserList = RootModel[list[User]]
+
+
+class BulkCreateUsersRequestBody(UserList):
+    pass
+
+
+class BulkCreateUsersResponseBody(UserList):
+    pass
+
+
+print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # False
+```
+
+or to specify migrations using [endpoint path](#path-based-migration-specification) instead of a schema.
 
 ### VersionBundle
 
@@ -388,7 +486,8 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 
 
 versions = VersionBundle(
-    Version(date(2023, 2, 10), RemoveTaxIDEndpoints), Version(date(2022, 11, 16))
+    Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
+    Version(date(2022, 11, 16)),
 )
 ```
 
@@ -493,11 +592,13 @@ class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
         # We don't have to specify the name here because there's only one such deleted endpoint
         endpoint("/users", ["GET"]).existed,
         # We do have to specify the name because we now have two existing endpoints after the instruction above
-        endpoint("/users", ["GET"], func_name="get_users_by_name").didnt_exist,
+        endpoint(
+            "/users", ["GET"], endpoint_func_name="get_users_by_name"
+        ).didnt_exist,
     )
 ```
 
-So by using a more concrete `func_name`, we are capable to distinguish between different functions that affect the same routes.
+So by using a more concrete `endpoint_func_name`, we are capable to distinguish between different functions that affect the same routes.
 
 ## Enums
 
@@ -560,24 +661,7 @@ You can also specify any string in place of type:
 schema(MySchema).field("foo").existed_as(type="AnythingHere")
 ```
 
-It is often the case that you want to add a type that has not been imported in your schemas yet. You can use `import_from` and optionally `import_as` to do this:
-
-```python
-schema(MySchema).field("foo").existed_as(
-    type=MyOtherSchema, import_from="..some_module", import_as="Foo"
-)
-```
-
-Which will render as:
-
-```python
-from ..some_module import MyOtherSchema as Foo
-from pydantic import BaseModel, Field
-
-
-class MySchema(BaseModel):
-    foo: Foo = Field()
-```
+It is often the case that you want to add a type that has not been imported in your schemas yet. You can use [module import adding](#modules) to solve this issue.
 
 ### Remove a field
 
@@ -594,6 +678,8 @@ class MyChange(VersionChange):
 
 ### Change a field
 
+If you would like to set a description or any other attribute of a field, you would do:
+
 ```python
 from cadwyn.structure import VersionChange, schema
 
@@ -602,6 +688,70 @@ class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").had(description="Foo"),
+    )
+```
+
+and if you would like to unset any attribute of a field as if it was never passed, you would do:
+
+```python
+from cadwyn.structure import VersionChange, schema
+
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        schema(MySchema).field("foo").didnt_have("description"),
+    )
+```
+
+#### **DEFAULTS WARNING**
+
+If you add `default` or `default_factory` into the old version of a schema -- it will not manifest in code automatically. Instead, you should add both the `default` or `default_factory`, and then also add the default value using a request migration.
+
+This happens because of how Cadwyn works with pydantic and sadly cannot be changed:
+
+Cadwyn:
+
+1. Receives the request of some version `V`
+2. Validates the request using the schemas from `V`
+3. Marshalls the unmarshalled request body into a raw data structure using `BaseModel.dict` (`BaseModel.model_dump` in Pydantic v2) using **exclude_unset=True**
+4. Passes the request through all request migrations from `V` to `latest`
+5. Validates the request using `latest` schemas
+
+The part that causes the aforementioned problem is our usage of `exclude_unset=True`. Sadly, when we use it, all default fields do not get set so `latest` does not receive them. And if `latest` does not have the same defaults (for example, if the field has no default and is required in `latest`), then an error will occur. If we used `exclude_unset=False`, then `exclude_unset` would lose all its purpose for the users of our library so we cannot abandon it. Instead, you should set all extra on step 4 in your request migrations.
+
+### Add a validator
+
+```python
+from pydantic import Field, validator
+from cadwyn.structure import VersionChange, schema
+
+
+@validator("foo")
+def validate_foo(cls, value):
+    if not ":" in value:
+        raise TypeError
+    return value
+
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        schema(MySchema).validator(validate_foo).existed,
+    )
+```
+
+### Remove a validator
+
+```python
+from pydantic import Field, validator
+from cadwyn.structure import VersionChange, schema
+
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        schema(MySchema).validator(MySchema.validate_foo).didnt_exist,
     )
 ```
 
@@ -622,6 +772,24 @@ class MyChange(VersionChange):
 
 which will replace all references to this schema with the new name.
 
+## Modules
+
+Oftentimes you start depending on new types in-between versions. For example, let's say that you depended on `Invoice` schema within your `data.latest.users` in older versions but now you do not. This means that once we run code generation and this type gets back into some annotation of some schema in `data.latest.users` -- it will not be imported because it was not imported in `latest`. To solve problems like this one, we have `module` instructions:
+
+```python
+from cadwyn.structure import VersionChange, module
+import data.latest.users
+
+
+class MyChange(VersionChange):
+    description = "..."
+    instructions_to_migrate_to_previous_version = (
+        module(data.latest.users).had(import_="from .invoices import Invoice"),
+    )
+```
+
+Which will add-in this import at the top of `users` file in all versions before this version change.
+
 ## Version changes with side effects
 
 Sometimes you will use API versioning to handle a breaking change in your **business logic**, not in the schemas themselves. In such cases, it is tempting to add a version check and just follow the new business logic such as:
@@ -634,7 +802,7 @@ if api_version_var.get() >= date(2022, 11, 11):
 
 In cadwyn, this approach is **highly** discouraged. It is recommended that you avoid side effects like this at any cost because each one makes your core logic harder to understand. But if you cannot, then I urge you to at least abstract away versions and versioning from your business logic which will make your code much easier to read.
 
-**WARNING**: Side effects are the wrong way to do API Versioning. In 99% of time, you will need them. Please, think twice before using them. API Versioning is about having the same underlying app and data while just changing the schemas and api endpoints to interact with it. By introducing side effects, you leak versioning into your business logic and possibly even your data which makes your code much harder to support in the long term. If each side effect adds a single `if` to your logic, than after 100 versions with side effects, you will have 100 more `if`s. If used correctly, Cadwyn can help you support decades worth of API versions at the same time with minimal costs but side effects make it much harder to do. Changes in the underlying source, structure, or logic of your data should not affect your API or public-facing business logic.
+**WARNING**: Side effects are the wrong way to do API Versioning. In 99% of time, you will **not** need them. Please, think twice before using them. API Versioning is about having the same underlying app and data while just changing the schemas and api endpoints to interact with it. By introducing side effects, you leak versioning into your business logic and possibly even your data which makes your code much harder to support in the long term. If each side effect adds a single `if` to your logic, than after 100 versions with side effects, you will have 100 more `if`s. If used correctly, Cadwyn can help you support decades worth of API versions at the same time with minimal costs but side effects make it much harder to do. Changes in the underlying source, structure, or logic of your data should not affect your API or public-facing business logic.
 
 To simplify this, cadwyn has a special `VersionChangeWithSideEffects` class. It makes finding dangerous versions that have side effects much easier and provides a nice abstraction for checking whether we are on a version where these side effects have been applied.
 

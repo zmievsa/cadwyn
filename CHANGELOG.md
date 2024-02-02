@@ -5,6 +5,94 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.4.0]
+
+### Added
+
+* `schema(...).validator(...).existed` and `schema(...).validator(...).didnt_exist` instructions for simplistic manipulation of validators
+* Automatic deletion of validators when the fields they validate get deleted
+* `schema(...).field(...).didnt_have` for unsetting field attributes
+* Improved support for `typing.Annotated` in schemas
+* Full preservation of original abstract syntax trees for all field values and annotations
+
+### Fixed
+
+* If the user wrote a wrong signature in a transformer decorated by `convert_request_to_next_version_for` or `convert_response_to_previous_version_for`, the text of the error suggested the wrong argument count and names
+
+## [3.3.4]
+
+### Fixed
+
+* Added backwards compatibility for FastAPI < 0.106.0
+
+## [3.3.3]
+
+### Fixed
+
+* Guaranteed that it is impossible to release cadwyn with the wrong pydantic dependency
+
+## [3.3.2]
+
+### Fixed
+
+* Downgrade required version of verselect for backwards compatibility
+
+## [3.3.1]
+
+### Fixed
+
+* Removed lazy migrations as they were producing incorrect results when there were no migrations but when there were schema changes
+* Added compatibility with fastapi>=0.109.0
+
+## [3.3.0]
+
+### Fixed
+
+* If a user used a FastAPI/Starlette `StreamingResponse` or `FileResponse`, we still tried to access its `body` attribute which caused an `AttributeError`
+
+## [3.2.0]
+
+### Added
+
+* Sponsors section to README and docs, along with Monite as our main and only current sponsor ✨
+
+## [3.1.3]
+
+### Fixed
+
+* Switched to `better-ast-comments` because `ast-comments` had no license listed on pypi (even though its actual license was MIT) which caused some dependency checking tools to report it as unlicensed
+
+## [3.1.2]
+
+### Changed
+
+* Migrate from black to ruff-format
+
+### Fixed
+
+* A rare Pydantic 2 bug in internal body schema handling when it was applied too early, causing partially incomplete data to arrive to the handler
+
+## [3.1.1]
+
+### Fixed
+
+* Previously we did not pass `dependency_overrides_provider`, `response_model_exclude_unset` `response_model_exclude_defaults`, and `response_model_exclude_none` to `fastapi` which could cause erroneous behaviour during serialization in rare cases.
+
+## [3.1.0]
+
+### Added
+
+* `module(...).had(import_=...)` construct for adding imports in older versions
+* Codegen plugin system that allows easily customizing code generation for any purpose. It also significantly simplifies the core code of code generation
+
+## [3.0.2]
+
+### Fixed
+
+* If a user returned a FastAPI/Starlette `Response` with an empty body, we still tried to serialize it which caused an invalid response body
+
+## [Unreleased]
+
 ## [3.0.0]
 
 ### Added
@@ -16,9 +104,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Changed
 
-* internal request representation is now done using [an annotation](docs.cadwyn.org/reference#internal-request-body-representations)
+* internal request representation is now done using [an annotation](https://docs.cadwyn.dev/reference#internal-request-body-representations)
 * `latest_schemas_module` was renamed to `latest_schemas_package` everywhere
 * `api_version_var` in `VersionBundle` is now an optional argument instead of a required one
+
+### Removed
+
+* `cadwyn.internal_representation_of` because it is now done using [an annotation](https://docs.cadwyn.dev/reference#internal-request-body-representations)
 
 ## [2.3.4]
 

@@ -1,4 +1,6 @@
-# Theory
+# How we got here
+
+Over the years we have seen so many ways to do API Versioning. In fact, the majority of these ways can be put into an elegant evolution. Let's go through it from the largest level of duplication to the smallest.
 
 ## Types of API versioning
 
