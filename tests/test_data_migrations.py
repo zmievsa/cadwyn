@@ -461,6 +461,22 @@ class TestRequestMigrations:
             "bar": None,
         }
 
+    def test__model_dump_correctly_works_with_empty_request_body__should_return_empty_dict(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        latest_module: ModuleType,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path)
+        async def route(payload: dict = Body(None)):
+            return payload
+
+        payload = {"foo": "bar"}
+        clients = create_versioned_clients(version_change())
+        assert clients[date(2000, 1, 1)].post(url=test_path, json=payload).json() == payload
+        assert clients[date(2001, 1, 1)].post(url=test_path, json=payload).json() == payload
+
 
 class TestResponseMigrations:
     def test__all_response_components_migration__post_endpoint__migration_filled_results_up(

@@ -119,9 +119,6 @@ def model_fields(model: type[BaseModel]) -> dict[str, FieldInfo]:
 
 
 def model_dump(model: Any | BaseModel, by_alias: bool = False, exclude_unset: bool = False) -> Any:
-    # it means we have a dict or a list instead of a full model
-    if not isinstance(model, BaseModel):
-        return model
     if PYDANTIC_V2:
         return model.model_dump(by_alias=by_alias, exclude_unset=exclude_unset)
     else:
