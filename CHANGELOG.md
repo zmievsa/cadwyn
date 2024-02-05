@@ -9,7 +9,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-* The empty body in POST request caused an exception on a try to serialize it. Now it is handled correctly
+* If the endpoint specified a single non-pydantic (list/dict) body parameter, Cadwyn failed to serialize the body
 
 ## [3.4.0]
 

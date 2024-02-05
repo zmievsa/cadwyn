@@ -461,7 +461,7 @@ class TestRequestMigrations:
             "bar": None,
         }
 
-    def test__model_dump_correctly_works_with_empty_request_body__should_return_empty_dict(
+    def test__serialization_of_request_body__when_body_is_non_pydantic(
         self,
         create_versioned_clients: CreateVersionedClients,
         latest_module: ModuleType,
