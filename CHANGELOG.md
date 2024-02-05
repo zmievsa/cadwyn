@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.4.1]
+
+### Fixed
+
+* If the endpoint specified a single non-pydantic (list/dict) body parameter, Cadwyn failed to serialize the body
+
 ## [3.4.0]
 
 ### Added

@@ -529,6 +529,10 @@ class VersionBundle:
             raw_body: BaseModel | None = kwargs.get(body_field_alias)
             if raw_body is None:
                 body = None
+            # It means we have a dict or a list instead of a full model.
+            # This covers the following use case in the endpoint definition: "payload: dict = Body(None)"
+            elif not isinstance(raw_body, BaseModel):
+                body = raw_body
             else:
                 body = model_dump(raw_body, by_alias=True, exclude_unset=True)
                 if not PYDANTIC_V2 and raw_body.__custom_root_type__:  # pyright: ignore[reportGeneralTypeIssues]

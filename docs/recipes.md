@@ -183,7 +183,7 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
     @router.post("/users", response_model=UserResource)
     async def create_user(
         user: Annotated[
-            InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]
+            UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]
         ]
     ):
         ...
@@ -306,7 +306,7 @@ Let's say that we want to add a required field `phone` to our users. However, ol
     @router.post("/users", response_model=UserResource)
     async def create_user(
         user: Annotated[
-            InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]
+            UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]
         ]
     ):
         ...
@@ -372,7 +372,7 @@ Let's say that previously users could specify their date of birth as a datetime 
     @router.post("/users", response_model=UserResource)
     async def create_user(
         user: Annotated[
-            InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]
+            UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]
         ]
     ):
         ...
