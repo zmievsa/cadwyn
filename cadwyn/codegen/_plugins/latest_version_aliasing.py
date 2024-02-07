@@ -64,8 +64,6 @@ class _ImportedModule:
         module = f"{self.path}.{self.name}"
         name = ast.alias(name="*")
         level = self.how_far_up_is_base_schema_dir_from_current_module
-        if level == 2 and self.is_package:
-            level -= 1
 
         return ast.ImportFrom(
             level=level,
