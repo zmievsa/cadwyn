@@ -111,7 +111,7 @@ def test__non_pydantic_schema__error(
         )
 
 
-def test__schema_defined_in_non_init_nested_files(
+def test__schema_defined_in_nested_files(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
     latest_with_empty_classes: _FakeModuleWithEmptyClasses,
     latest_dir: Path,
@@ -185,17 +185,29 @@ def test__schema_defined_in_non_init_nested_files(
         schema(latest_level2.Level2).field("foo").didnt_exist,
     )
 
-    latest_level0 = importlib.import_module(temp_data_package_path + ".v2000_01_01.level0")
-    latest_level1_root = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir")
-    latest_level1 = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir.level1")
-    latest_level2_root = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir.level2_dir")
-    latest_level2 = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir.level2_dir.level2")
+    latest_alias_level0 = importlib.import_module(temp_data_package_path + ".v2001_01_01.level0")
+    latest_alias_level1_root = importlib.import_module(temp_data_package_path + ".v2001_01_01.level1_dir")
+    latest_alias_level1 = importlib.import_module(temp_data_package_path + ".v2001_01_01.level1_dir.level1")
+    latest_alias_level2_root = importlib.import_module(temp_data_package_path + ".v2001_01_01.level1_dir.level2_dir")
+    latest_alias_level2 = importlib.import_module(temp_data_package_path + ".v2001_01_01.level1_dir.level2_dir.level2")
 
-    assert inspect.getsource(latest_level0.Level0) == "class Level0(BaseModel):\n    pass\n"
-    assert inspect.getsource(latest_level1_root.Level1Root) == "class Level1Root(BaseModel):\n    pass\n"
-    assert inspect.getsource(latest_level1.Level1) == "class Level1(BaseModel):\n    pass\n"
-    assert inspect.getsource(latest_level2_root.Level2Root) == "class Level2Root(BaseModel):\n    pass\n"
-    assert inspect.getsource(latest_level2.Level2) == "class Level2(BaseModel):\n    pass\n"
+    assert latest_alias_level0.Level0 is latest_level0.Level0
+    assert latest_alias_level1_root.Level1Root is latest_level1_root.Level1Root
+    assert latest_alias_level1.Level1 is latest_level1.Level1
+    assert latest_alias_level2_root.Level2Root is latest_level2_root.Level2Root
+    assert latest_alias_level2.Level2 is latest_level2.Level2
+
+    old_level0 = importlib.import_module(temp_data_package_path + ".v2000_01_01.level0")
+    old_level1_root = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir")
+    old_level1 = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir.level1")
+    old_level2_root = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir.level2_dir")
+    old_level2 = importlib.import_module(temp_data_package_path + ".v2000_01_01.level1_dir.level2_dir.level2")
+
+    assert inspect.getsource(old_level0.Level0) == "class Level0(BaseModel):\n    pass\n"
+    assert inspect.getsource(old_level1_root.Level1Root) == "class Level1Root(BaseModel):\n    pass\n"
+    assert inspect.getsource(old_level1.Level1) == "class Level1(BaseModel):\n    pass\n"
+    assert inspect.getsource(old_level2_root.Level2Root) == "class Level2Root(BaseModel):\n    pass\n"
+    assert inspect.getsource(old_level2.Level2) == "class Level2(BaseModel):\n    pass\n"
 
 
 @pytest.fixture()

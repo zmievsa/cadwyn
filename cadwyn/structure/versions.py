@@ -27,6 +27,7 @@ from typing_extensions import assert_never
 
 from cadwyn._compat import PYDANTIC_V2, ModelField, PydanticUndefined, model_dump
 from cadwyn._package_utils import IdentifierPythonPath, get_cls_pythonpath
+from cadwyn._utils import classproperty
 from cadwyn.exceptions import CadwynError, CadwynStructureError
 
 from .._utils import Sentinel
@@ -189,9 +190,8 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
                 f"Can't subclass {cls.__name__} as it was never meant to be subclassed.",
             )
 
-    @classmethod
-    @property
-    def is_applied(cls) -> bool:
+    @classproperty
+    def is_applied(cls: type["VersionChangeWithSideEffects"]) -> bool:  # pyright: ignore[reportGeneralTypeIssues]
         if (
             cls._bound_version_bundle is None
             or cls not in cls._bound_version_bundle._version_changes_to_version_mapping
@@ -294,7 +294,7 @@ class VersionBundle:
     @functools.cached_property
     def _version_changes_to_version_mapping(
         self,
-    ) -> dict[type[VersionChange], VersionDate]:
+    ) -> dict[type[VersionChange] | type[VersionChangeWithSideEffects], VersionDate]:
         return {
             version_change: version.value for version in self.versions for version_change in version.version_changes
         }

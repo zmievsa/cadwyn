@@ -4,13 +4,26 @@ import inspect
 from collections.abc import Callable, Collection
 from pathlib import Path
 from types import ModuleType
-from typing import Any, TypeVar, Union
+from typing import Any, Generic, TypeVar, Union
 
 from cadwyn.exceptions import CadwynError, ModuleIsNotVersionedError
 
 Sentinel: Any = object()
 UnionType = type(int | str) | type(Union[int, str])
 _T = TypeVar("_T", bound=Callable)
+
+
+_P_T = TypeVar("_P_T")
+_P_R = TypeVar("_P_R")
+
+
+class classproperty(Generic[_P_T, _P_R]):  # noqa: N801
+    def __init__(self, func: Callable[[_P_T], _P_R]) -> None:
+        super().__init__()
+        self.func = func
+
+    def __get__(self, obj: Any, cls: _P_T) -> _P_R:
+        return self.func(cls)
 
 
 class PlainRepr(str):
@@ -80,7 +93,8 @@ def get_index_of_latest_schema_dir_in_module_python_path(
     # /home/myuser/package/companies/latest/__init__.py
     file = Path(file)
     _validate_that_module_is_versioned(file, version_dirs)
-    if file.name == "__init__.py":
+    is_package = file.name == "__init__.py"
+    if is_package:
         # /home/myuser/package/companies/latest/
         file = file.parent
     # /home/myuser/package/companies
@@ -94,7 +108,12 @@ def get_index_of_latest_schema_dir_in_module_python_path(
     # ['package', 'companies', 'latest', 'schemas']
     module_split_python_path = module_python_path.split(".")
 
-    return len(module_split_python_path) - len(relative_file_parts)
+    index = len(module_split_python_path) - len(relative_file_parts) - int(is_package)
+
+    # When we are in latest/__init__.py, we have this special case
+    if len(relative_file_parts) == 1 and is_package:
+        index += 1
+    return index
 
 
 def _validate_that_module_is_versioned(file: Path, version_dirs: Collection[Path]):
