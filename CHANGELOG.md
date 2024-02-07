@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.4.2]
+
+### Fixed
+
+* Fix import aliases in nested `__init__.py` files generating incorrectly for latest version
+
 ## [3.4.1]
 
 ### Fixed

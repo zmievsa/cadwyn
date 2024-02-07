@@ -64,8 +64,7 @@ class _ImportedModule:
         module = f"{self.path}.{self.name}"
         name = ast.alias(name="*")
         level = self.how_far_up_is_base_schema_dir_from_current_module
-        if self.is_package and level == 2:
-            level -= 1
+
         return ast.ImportFrom(
             level=level,
             module=module,
@@ -93,6 +92,7 @@ def _prepare_imports_from_version_dirs(
     how_far_up_is_base_schema_dir_from_current_module = (
         len(original_module_parts) - index_of_latest_package_dir_in_pythonpath
     )
+
     is_package = original_module_parts[-1] == "__init__"
     if is_package:
         original_module_parts.pop(-1)
