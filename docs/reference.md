@@ -589,9 +589,11 @@ class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
         "because using headers is a bad API practice in such scenarios."
     )
     instructions_to_migrate_to_previous_version = (
-        # We don't have to specify the name here because there's only one such deleted endpoint
-        endpoint("/users", ["GET"]).existed,
-        # We do have to specify the name because we now have two existing endpoints after the instruction above
+        # We need to specify the name, otherwise, we will encounter an exception due to having two identical endpoints 
+        # with the same path and method
+        endpoint("/users", ["GET"], func_name="get_users_by_name_before_we_started_using_params").existed,
+        # We also need to specify the name here because, following the instruction above, 
+        # we now have two existing endpoints
         endpoint(
             "/users", ["GET"], func_name="get_users_by_name"
         ).didnt_exist,
