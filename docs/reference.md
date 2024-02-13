@@ -593,12 +593,12 @@ class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
         endpoint("/users", ["GET"]).existed,
         # We do have to specify the name because we now have two existing endpoints after the instruction above
         endpoint(
-            "/users", ["GET"], endpoint_func_name="get_users_by_name"
+            "/users", ["GET"], func_name="get_users_by_name"
         ).didnt_exist,
     )
 ```
 
-So by using a more concrete `endpoint_func_name`, we are capable to distinguish between different functions that affect the same routes.
+So by using a more concrete `func_name`, we are capable to distinguish between different functions that affect the same routes.
 
 ## Enums
 
