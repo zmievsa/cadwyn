@@ -10,7 +10,7 @@ from typing import Annotated, Any, Literal, get_args
 import fastapi
 import pytest
 from dirty_equals import IsPartialDict, IsStr
-from fastapi import APIRouter, Body, Cookie, File, Header, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Body, Cookie, File, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.responses import StreamingResponse
@@ -490,7 +490,7 @@ class TestResponseMigrations:
         @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
         def migrator(response: ResponseInfo):
             response.body["body_key"] = "body_val"
-            assert response.status_code is None
+            assert response.status_code == 200
             response.status_code = 300
             response.headers["header"] = "header_val"
             response.set_cookie("cookie_key", "cookie_val", max_age=83)
@@ -1057,3 +1057,127 @@ def test__request_and_response_migrations__for_paths_with_variables__can_match(
     clients = create_versioned_clients(version_change(req=request_converter, resp=response_converter))
     assert clients[date(2000, 1, 1)].post("/test/83").json() == [83, "Hewwo", "World"]
     assert clients[date(2001, 1, 1)].post("/test/83").json() == [83, "wow"]
+
+
+def test__request_and_response_migrations__for_endpoint_with_http_exception__can_migrate_to_200(
+    create_versioned_clients: CreateVersionedClients,
+    latest_module,
+    router: VersionedAPIRouter,
+):
+    @router.post("/test")
+    async def endpoint():
+        raise HTTPException(status_code=404)
+
+    @convert_response_to_previous_version_for("/test", ["POST"])
+    def response_converter(response: ResponseInfo):
+        response.status_code = 200
+        response.body = {"hello": "darkness"}
+        response.headers["hewwo"] = "dawkness"
+
+    clients = create_versioned_clients(version_change(resp=response_converter))
+    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    assert resp_2000.status_code == 200
+    assert resp_2000.json() == {"hello": "darkness"}
+    assert resp_2000.headers["hewwo"] == "dawkness"
+
+    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    assert resp_2001.status_code == 404
+    assert resp_2001.json() == {"detail": "Not Found"}
+    assert "hewwo" not in resp_2001.headers
+
+
+def test__request_and_response_migrations__for_endpoint_with_http_exception__can_migrate_to_another_error(
+    create_versioned_clients: CreateVersionedClients,
+    latest_module,
+    router: VersionedAPIRouter,
+):
+    @router.post("/test")
+    async def endpoint():
+        raise HTTPException(status_code=404)
+
+    @convert_response_to_previous_version_for("/test", ["POST"])
+    def response_converter(response: ResponseInfo):
+        response.status_code = 401
+        response.body = None
+
+    clients = create_versioned_clients(version_change(resp=response_converter))
+    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    assert resp_2000.status_code == 401
+    assert resp_2000.json() == {"detail": "Unauthorized"}
+
+    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    assert resp_2001.status_code == 404
+    assert resp_2001.json() == {"detail": "Not Found"}
+
+
+def test__request_and_response_migrations__for_endpoint_with_no_default_status_code__response_should_contain_default(
+    create_versioned_clients: CreateVersionedClients,
+    latest_module,
+    router: VersionedAPIRouter,
+):
+    @router.post("/test")
+    async def endpoint():
+        return 83
+
+    @convert_response_to_previous_version_for("/test", ["POST"])
+    def response_converter(response: ResponseInfo):
+        assert response.status_code == 200
+
+    clients = create_versioned_clients(version_change(resp=response_converter))
+
+    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    assert resp_2000.status_code == 200
+    assert resp_2000.json() == 83
+
+    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    assert resp_2001.status_code == 200
+    assert resp_2001.json() == 83
+
+
+def test__request_and_response_migrations__for_endpoint_with_custom_status_code__response_should_contain_default(
+    create_versioned_clients: CreateVersionedClients,
+    latest_module,
+    router: VersionedAPIRouter,
+):
+    @router.post("/test", status_code=201)
+    async def endpoint():
+        return 83
+
+    @convert_response_to_previous_version_for("/test", ["POST"])
+    def response_converter(response: ResponseInfo):
+        assert response.status_code == 201
+
+    clients = create_versioned_clients(version_change(resp=response_converter))
+
+    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    assert resp_2000.status_code == 201
+    assert resp_2000.json() == 83
+
+    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    assert resp_2001.status_code == 201
+    assert resp_2001.json() == 83
+
+
+def test__request_and_response_migrations__for_endpoint_with_modified_status_code__response_should_not_change(
+    create_versioned_clients: CreateVersionedClients,
+    latest_module,
+    router: VersionedAPIRouter,
+):
+    @router.post("/test")
+    async def endpoint(response: Response):
+        response.status_code = 201
+        return 83
+
+    @convert_response_to_previous_version_for("/test", ["POST"])
+    def response_converter(response: ResponseInfo):
+        assert response.status_code == 201
+
+    clients = create_versioned_clients(version_change(resp=response_converter))
+
+    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    assert resp_2000.status_code == 201
+    assert resp_2000.json() == 83
+
+    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    assert resp_2001.status_code == 201
+    assert resp_2001.json() == 83
