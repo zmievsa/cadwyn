@@ -303,13 +303,13 @@ class VersionBundle:
         self,
         body_type: type[BaseModel] | None,
         latest_dependant_with_internal_schema: Dependant,
+        path: str,
         request: FastapiRequest,
         response: FastapiResponse,
         request_info: RequestInfo,
         current_version: VersionDate,
         latest_route: APIRoute,
     ) -> dict[str, Any]:
-        path = request.scope["path"]
         method = request.method
         for v in reversed(self.versions):
             if v.value <= current_version:
@@ -363,7 +363,6 @@ class VersionBundle:
         Returns:
             Modified data
         """
-
         for v in self.versions:
             if v.value <= current_version:
                 break
@@ -396,7 +395,6 @@ class VersionBundle:
             async def decorator(*args: Any, **kwargs: Any) -> _R:
                 request: FastapiRequest = kwargs[request_param_name]
                 response: FastapiResponse = kwargs[response_param_name]
-                path = request.scope["path"]
                 method = request.method
                 kwargs = await self._convert_endpoint_kwargs_to_version(
                     template_module_body_field_for_request_migrations,
@@ -413,7 +411,7 @@ class VersionBundle:
                 return await self._convert_endpoint_response_to_version(
                     endpoint,
                     latest_route,
-                    path,
+                    route,
                     method,
                     response_param_name,
                     kwargs,
@@ -433,7 +431,7 @@ class VersionBundle:
         self,
         func_to_get_response_from: Endpoint,
         latest_route: APIRoute,
-        path: str,
+        route: APIRoute,
         method: str,
         response_param_name: str,
         kwargs: dict[str, Any],
@@ -480,7 +478,7 @@ class VersionBundle:
             response_info,
             api_version,
             latest_route,
-            path,
+            route.path,
             method,
         )
         if isinstance(response_or_response_body, FastapiResponse):
@@ -545,6 +543,7 @@ class VersionBundle:
         new_kwargs = await self._migrate_request(
             template_module_body_field_for_request_migrations,
             latest_dependant_with_internal_schema,
+            route.path,
             request,
             response,
             request_info,

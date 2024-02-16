@@ -7,6 +7,7 @@ from io import StringIO
 from types import ModuleType
 from typing import Annotated, Any, Literal, get_args
 
+import fastapi
 import pytest
 from dirty_equals import IsPartialDict, IsStr
 from fastapi import APIRouter, Body, Cookie, File, Header, Query, Request, Response, UploadFile
@@ -1034,3 +1035,25 @@ def test__uploadfile_can_work(
             "content-type": "application/octet-stream",
         },
     }
+
+
+def test__request_and_response_migrations__for_paths_with_variables__can_match(
+    create_versioned_clients: CreateVersionedClients,
+    latest_module,
+    router: VersionedAPIRouter,
+):
+    @router.post("/test/{id}")
+    async def endpoint(id: int, my_query: str = fastapi.Query(default="wow")):
+        return [id, my_query]
+
+    @convert_request_to_next_version_for("/test/{id}", ["POST"])
+    def request_converter(request: RequestInfo):
+        request.query_params["my_query"] = "Hewwo"
+
+    @convert_response_to_previous_version_for("/test/{id}", ["POST"])
+    def response_converter(response: ResponseInfo):
+        response.body.append("World")
+
+    clients = create_versioned_clients(version_change(req=request_converter, resp=response_converter))
+    assert clients[date(2000, 1, 1)].post("/test/83").json() == [83, "Hewwo", "World"]
+    assert clients[date(2001, 1, 1)].post("/test/83").json() == [83, "wow"]
