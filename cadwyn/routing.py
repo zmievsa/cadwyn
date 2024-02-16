@@ -1,5 +1,6 @@
 import functools
 import inspect
+import re
 import sys
 import typing
 import warnings
@@ -45,7 +46,13 @@ from typing_extensions import Self, assert_never
 from cadwyn._compat import model_fields, rebuild_fastapi_body_param
 from cadwyn._package_utils import get_package_path_from_module, get_version_dir_path
 from cadwyn._utils import Sentinel, UnionType, get_another_version_of_module
-from cadwyn.exceptions import CadwynError, ModuleIsNotVersionedError, RouteAlreadyExistsError, RouterGenerationError
+from cadwyn.exceptions import (
+    CadwynError,
+    ModuleIsNotVersionedError,
+    RouteAlreadyExistsError,
+    RouterGenerationError,
+    RouterPathParamsModifiedError,
+)
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionDate
 from cadwyn.structure.endpoints import (
@@ -624,6 +631,19 @@ def _apply_endpoint_had_instruction(
                     " It means that your version change has no effect on the attribute"
                     " and can be removed.",
                 )
+            if attr_name == "path":
+                original_path_params = {p.alias for p in original_route.dependant.path_params}
+                new_path_params = set(re.findall("{(.*?)}", attr))
+                if new_path_params != original_path_params:
+                    raise RouterPathParamsModifiedError(
+                        f'When altering the path of "{original_route.path}" in "{version_change.__name__}",'
+                        " you have tried to change its path params "
+                        f'from "{list(original_route.methods)}" to "{list(new_path_params)}". It is not allowed to '
+                        "change the path params of a route because the endpoint was created to handle the old path "
+                        "params. In fact, there is no need to change them because the change of path params is "
+                        "not a breaking change. If you really need to change the path params, you should create a "
+                        "new route with the new path params and delete the old one.",
+                    )
             setattr(original_route, attr_name, attr)
 
 

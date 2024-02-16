@@ -19,7 +19,7 @@ from starlette.responses import FileResponse
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn._compat import PYDANTIC_V2, model_fields
-from cadwyn.exceptions import CadwynError, RouterGenerationError
+from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
 from cadwyn.routing import generate_versioned_routers
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.enums import enum
@@ -236,7 +236,7 @@ def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
 @pytest.mark.parametrize(
     ("attr", "attr_value"),
     [
-        ("path", "/wow"),
+        ("path", "/wow/{hewwo}"),
         ("status_code", 204),
         ("tags", ["foo", "bar"]),
         ("summary", "my summary"),
@@ -272,6 +272,19 @@ def test__endpoint_had(
     assert len(routes_2000) == len(routes_2001) == 1
     assert getattr(routes_2000[0], attr) == attr_value
     assert getattr(routes_2001[0], attr) != attr_value
+
+
+def test__endpoint_had_another_path_variable(
+    test_endpoint: Endpoint,
+    test_path: str,
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+):
+    with pytest.raises(RouterPathParamsModifiedError):
+        create_versioned_api_routes(
+            version_change(
+                endpoint(test_path, ["GET"]).had(path="/test/{world}"),
+            ),
+        )
 
 
 def test__endpoint_had_dependencies(
