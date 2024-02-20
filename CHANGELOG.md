@@ -5,12 +5,6 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
-## [3.4.3]
-
-### Fixed
-
-* The documentation regarding the topic "Dealing with endpoint duplicates."
-
 ## [3.4.2]
 
 ### Fixed
