@@ -25,6 +25,10 @@ class RouterGenerationError(CadwynError):
     pass
 
 
+class RouterPathParamsModifiedError(RouterGenerationError):
+    pass
+
+
 class RouteAlreadyExistsError(RouterGenerationError):
     def __init__(self, *routes: APIRoute):
         self.routes = routes

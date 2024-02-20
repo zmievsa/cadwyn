@@ -303,13 +303,13 @@ class VersionBundle:
         self,
         body_type: type[BaseModel] | None,
         latest_dependant_with_internal_schema: Dependant,
+        path: str,
         request: FastapiRequest,
         response: FastapiResponse,
         request_info: RequestInfo,
         current_version: VersionDate,
         latest_route: APIRoute,
     ) -> dict[str, Any]:
-        path = request.scope["path"]
         method = request.method
         for v in reversed(self.versions):
             if v.value <= current_version:
@@ -363,7 +363,6 @@ class VersionBundle:
         Returns:
             Modified data
         """
-
         for v in self.versions:
             if v.value <= current_version:
                 break
@@ -396,7 +395,6 @@ class VersionBundle:
             async def decorator(*args: Any, **kwargs: Any) -> _R:
                 request: FastapiRequest = kwargs[request_param_name]
                 response: FastapiResponse = kwargs[response_param_name]
-                path = request.scope["path"]
                 method = request.method
                 kwargs = await self._convert_endpoint_kwargs_to_version(
                     template_module_body_field_for_request_migrations,
@@ -413,7 +411,7 @@ class VersionBundle:
                 return await self._convert_endpoint_response_to_version(
                     endpoint,
                     latest_route,
-                    path,
+                    route,
                     method,
                     response_param_name,
                     kwargs,
@@ -425,28 +423,38 @@ class VersionBundle:
             if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
 
-            return decorator  # pyright: ignore[reportGeneralTypeIssues]
+            return decorator  # pyright: ignore[reportReturnType]
 
         return wrapper
 
-    async def _convert_endpoint_response_to_version(
+    # TODO: Simplify it
+    async def _convert_endpoint_response_to_version(  # noqa: C901
         self,
         func_to_get_response_from: Endpoint,
         latest_route: APIRoute,
-        path: str,
+        route: APIRoute,
         method: str,
         response_param_name: str,
         kwargs: dict[str, Any],
         fastapi_response_dependency: FastapiResponse,
     ) -> Any:
+        raised_exception = None
         if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
             kwargs.pop(response_param_name)
-        if is_async_callable(func_to_get_response_from):
-            response_or_response_body: FastapiResponse | object = await func_to_get_response_from(**kwargs)
-        else:
-            response_or_response_body: FastapiResponse | object = await run_in_threadpool(
-                func_to_get_response_from,
-                **kwargs,
+        try:
+            if is_async_callable(func_to_get_response_from):
+                response_or_response_body: FastapiResponse | object = await func_to_get_response_from(**kwargs)
+            else:
+                response_or_response_body: FastapiResponse | object = await run_in_threadpool(
+                    func_to_get_response_from,
+                    **kwargs,
+                )
+        except HTTPException as exc:
+            raised_exception = exc
+            response_or_response_body = FastapiResponse(
+                content=json.dumps({"detail": raised_exception.detail}),
+                status_code=raised_exception.status_code,
+                headers=raised_exception.headers,
             )
         api_version = self.api_version_var.get()
         if api_version is None:
@@ -464,8 +472,18 @@ class VersionBundle:
             else:
                 body = None
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
+
             response_info = ResponseInfo(response_or_response_body, body)
         else:
+            if fastapi_response_dependency.status_code is not None:
+                status_code = fastapi_response_dependency.status_code
+            elif route.status_code is not None:
+                status_code = route.status_code
+            elif raised_exception is not None:
+                raise NotImplementedError
+            else:
+                status_code = 200
+            fastapi_response_dependency.status_code = status_code
             response_info = ResponseInfo(
                 fastapi_response_dependency,
                 _prepare_response_content(
@@ -480,7 +498,7 @@ class VersionBundle:
             response_info,
             api_version,
             latest_route,
-            path,
+            route.path,
             method,
         )
         if isinstance(response_or_response_body, FastapiResponse):
@@ -497,6 +515,17 @@ class VersionBundle:
             if response_info.body is not None and hasattr(response_info._response, "body"):
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
                 response_info._response.body = json.dumps(response_info.body).encode()
+
+            if raised_exception is not None and response_info.status_code >= 400:
+                if isinstance(response_info.body, dict) and "detail" in response_info.body:
+                    detail = response_info.body["detail"]
+                else:
+                    detail = response_info.body
+                raise HTTPException(
+                    status_code=response_info.status_code,
+                    detail=detail,
+                    headers=dict(response_info.headers),
+                )
             return response_info._response
         return response_info.body
 
@@ -545,6 +574,7 @@ class VersionBundle:
         new_kwargs = await self._migrate_request(
             template_module_body_field_for_request_migrations,
             latest_dependant_with_internal_schema,
+            route.path,
             request,
             response,
             request_info,
