@@ -122,7 +122,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Removed
 
-* `cadwyn.internal_representation_of` because it is now done using [an annotation](https://docs.cadwyn.dev/reference#internal-request-body-representations)
+* `cadwyn.internal_body_representation_of` because it is now done using [an annotation](https://docs.cadwyn.dev/reference#internal-request-body-representations)
 
 ## [2.3.4]
 
