@@ -76,7 +76,7 @@ def transform_grouped_metadata(value: "annotated_types.GroupedMetadata"):
     modified_fields = []
     empty_obj = type(value)
 
-    for key in empty_obj.__dataclass_fields__:  # pyright: ignore[reportGeneralTypeIssues]
+    for key in empty_obj.__dataclass_fields__:  # pyright: ignore[reportAttributeAccessIssue]
         if getattr(value, key) != getattr(empty_obj, key):
             modified_fields.append((key, getattr(value, key)))
 
@@ -136,7 +136,7 @@ def transform_auto(_: auto) -> Any:
     return PlainRepr("auto()")
 
 
-def transform_union(value: UnionType) -> Any:
+def transform_union(value: UnionType) -> Any:  # pyright: ignore[reportInvalidTypeForm]
     return "typing.Union[" + (", ".join(get_fancy_repr(a) for a in get_args(value))) + "]"
 
 

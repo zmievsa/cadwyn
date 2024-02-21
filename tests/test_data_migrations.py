@@ -589,11 +589,11 @@ class TestResponseMigrations:
     ):
         @router.post(test_path, response_model=latest_module.AnyResponseSchema)
         async def post_endpoint(request: Request):
-            return JSONResponse({"hewwo": "darkness"}, status_code=301, headers={"header-key": "header-val"})
+            return JSONResponse({"hewwo": "darkness"}, status_code=203, headers={"header-key": "header-val"})
 
         @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
         def migrator(response: ResponseInfo):
-            assert response.status_code == 301
+            assert response.status_code == 203
             assert response.headers["header-key"] == "header-val"
             response.body |= {"migration": "body"}
             response.status_code = 201
@@ -623,7 +623,7 @@ class TestResponseMigrations:
                 "x-api-version": "2001-01-01",
             }
         )
-        assert resp.status_code == 301
+        assert resp.status_code == 203
 
     def test__fastapi_response_migration__response_only_has_status_code_and_there_is_a_migration(
         self,
@@ -1068,7 +1068,7 @@ def test__request_and_response_migrations__for_endpoint_with_http_exception__can
     async def endpoint():
         raise HTTPException(status_code=404)
 
-    @convert_response_to_previous_version_for("/test", ["POST"])
+    @convert_response_to_previous_version_for("/test", ["POST"], migrate_http_errors=True)
     def response_converter(response: ResponseInfo):
         response.status_code = 200
         response.body = {"hello": "darkness"}
@@ -1086,6 +1086,27 @@ def test__request_and_response_migrations__for_endpoint_with_http_exception__can
     assert "hewwo" not in resp_2001.headers
 
 
+def test__request_and_response_migrations__for_endpoint_with_http_exception_and_no_error_migrations__wont_migrate(
+    create_versioned_clients: CreateVersionedClients,
+    latest_module,
+    router: VersionedAPIRouter,
+):
+    @router.post("/test")
+    async def endpoint():
+        raise HTTPException(status_code=400)
+
+    @convert_response_to_previous_version_for("/test", ["POST"])
+    def response_converter(response: ResponseInfo):
+        raise NotImplementedError("This should not be called")
+
+    clients = create_versioned_clients(version_change(resp=response_converter))
+    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    assert resp_2000.status_code == 400
+
+    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    assert resp_2001.status_code == 400
+
+
 def test__request_and_response_migrations__for_endpoint_with_http_exception__can_migrate_to_another_error(
     create_versioned_clients: CreateVersionedClients,
     latest_module,
@@ -1095,7 +1116,7 @@ def test__request_and_response_migrations__for_endpoint_with_http_exception__can
     async def endpoint():
         raise HTTPException(status_code=404)
 
-    @convert_response_to_previous_version_for("/test", ["POST"])
+    @convert_response_to_previous_version_for("/test", ["POST"], migrate_http_errors=True)
     def response_converter(response: ResponseInfo):
         response.status_code = 401
         response.body = None

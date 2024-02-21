@@ -300,6 +300,32 @@ class RemoveTaxIDEndpoints(VersionChange):
 
 Though I highly recommend you to stick to schemas as it is much easier to introduce inconsistencies when using paths; for example, when you have 10 endpoints with the same response body schema but you forgot to add migrations for 3 of them because you use paths instead of schemas.
 
+##### Migration of HTTP errors
+
+Oftentimes you need to raise `fastapi.HTTPException` in your code to signal some errors to your users. However, if you want to change the status code of some error, it would be a breaking change because your error status codes and sometimes even their bodies are a part of your API contract.
+
+By default, Cadwyn's response migrations do not handle errors but you can use the `migrate_http_errors` keyword argument to enable it:
+
+```python
+from cadwyn.structure import (
+    VersionChange,
+    convert_response_to_previous_version_for,
+)
+from data.latest.invoices import BaseInvoice
+
+
+class RemoveTaxIDEndpoints(VersionChange):
+    description = "Change status code in 'GET /v1/invoices' when invoice was not found from 400 to 404"
+    instructions_to_migrate_to_previous_version = ()
+
+    @convert_response_to_previous_version_for(
+        "/v1/invoices", ["GET"], migrate_http_errors=True
+    )
+    def change_400_to_404(response: ResponseInfo):
+        if response.status_code == 400:
+            response.status_code = 404
+```
+
 ##### Migration of non-body attributes
 
 Cadwyn has an ability to migrate more than just request bodies.
@@ -589,14 +615,16 @@ class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
         "because using headers is a bad API practice in such scenarios."
     )
     instructions_to_migrate_to_previous_version = (
-        # We need to specify the name, otherwise, we will encounter an exception due to having two identical endpoints 
+        # We need to specify the name, otherwise, we will encounter an exception due to having two identical endpoints
         # with the same path and method
-        endpoint("/users", ["GET"], func_name="get_users_by_name_before_we_started_using_params").existed,
-        # We also need to specify the name here because, following the instruction above, 
-        # we now have two existing endpoints
         endpoint(
-            "/users", ["GET"], func_name="get_users_by_name"
-        ).didnt_exist,
+            "/users",
+            ["GET"],
+            func_name="get_users_by_name_before_we_started_using_params",
+        ).existed,
+        # We also need to specify the name here because, following the instruction above,
+        # we now have two existing endpoints
+        endpoint("/users", ["GET"], func_name="get_users_by_name").didnt_exist,
     )
 ```
 

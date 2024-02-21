@@ -35,7 +35,7 @@ class PlainRepr(str):
 
 def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
     def decorator(f: Callable) -> _T:
-        return f  # pyright: ignore[reportGeneralTypeIssues]
+        return f  # pyright: ignore[reportReturnType]
 
     return decorator
 

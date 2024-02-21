@@ -136,7 +136,7 @@ def convert_request_to_next_version_for(
                 transformer=transformer,
             )
 
-    return decorator  # pyright: ignore[reportGeneralTypeIssues]
+    return decorator  # pyright: ignore[reportReturnType]
 
 
 ############
@@ -144,8 +144,10 @@ def convert_request_to_next_version_for(
 ############
 
 
+@dataclass
 class _BaseAlterResponseInstruction(_AlterDataInstruction):
     _payload_arg_name = "response"
+    migrate_http_errors: bool
 
 
 @dataclass
@@ -160,12 +162,23 @@ class AlterResponseByPathInstruction(_BaseAlterResponseInstruction):
 
 
 @overload
-def convert_response_to_previous_version_for(schema: type, /) -> "type[staticmethod[_P, None]]":
+def convert_response_to_previous_version_for(
+    schema: type,
+    /,
+    *,
+    migrate_http_errors: bool = False,
+) -> "type[staticmethod[_P, None]]":
     ...
 
 
 @overload
-def convert_response_to_previous_version_for(path: str, methods: list[str], /) -> "type[staticmethod[_P, None]]":
+def convert_response_to_previous_version_for(
+    path: str,
+    methods: list[str],
+    /,
+    *,
+    migrate_http_errors: bool = False,
+) -> "type[staticmethod[_P, None]]":
     ...
 
 
@@ -173,6 +186,8 @@ def convert_response_to_previous_version_for(
     schema_or_path: type | str,
     methods: list[str] | None = None,
     /,
+    *,
+    migrate_http_errors: bool = False,
 ) -> "type[staticmethod[_P, None]]":
     _validate_decorator_args(schema_or_path, methods)
 
@@ -183,11 +198,16 @@ def convert_response_to_previous_version_for(
                 path=schema_or_path,
                 methods=set(cast(list, methods)),
                 transformer=transformer,
+                migrate_http_errors=migrate_http_errors,
             )
         else:
-            return AlterResponseBySchemaInstruction(schema=schema_or_path, transformer=transformer)
+            return AlterResponseBySchemaInstruction(
+                schema=schema_or_path,
+                transformer=transformer,
+                migrate_http_errors=migrate_http_errors,
+            )
 
-    return decorator  # pyright: ignore[reportGeneralTypeIssues]
+    return decorator  # pyright: ignore[reportReturnType]
 
 
 def _validate_decorator_args(schema_or_path: type | str, methods: list[str] | None):

@@ -17,7 +17,7 @@ from typing import (
     Generic,
     TypeAlias,
     TypeVar,
-    _BaseGenericAlias,  # pyright: ignore[reportGeneralTypeIssues]
+    _BaseGenericAlias,  # pyright: ignore[reportAttributeAccessIssue]
     cast,
     final,
     get_args,
@@ -470,7 +470,7 @@ class _AnnotationTransformer:
                 use_cache=annotation.use_cache,
             )
         elif isinstance(annotation, UnionType):
-            getitem = typing.Union.__getitem__  # pyright: ignore[reportGeneralTypeIssues]
+            getitem = typing.Union.__getitem__  # pyright: ignore[reportAttributeAccessIssue]
             return getitem(
                 tuple(self._change_version_of_annotations(a, version_dir) for a in get_args(annotation)),
             )
@@ -734,7 +734,7 @@ def _copy_function(function: _T) -> _T:
     if inspect.iscoroutinefunction(function):
 
         @functools.wraps(function)
-        async def annotation_modifying_decorator(  # pyright: ignore[reportGeneralTypeIssues]
+        async def annotation_modifying_decorator(  # pyright: ignore[reportRedeclaration]
             *args: Any,
             **kwargs: Any,
         ) -> Any:
@@ -750,7 +750,7 @@ def _copy_function(function: _T) -> _T:
             return function(*args, **kwargs)
 
     # Otherwise it will have the same signature as __wrapped__ due to how inspect module works
-    annotation_modifying_decorator.__alt_wrapped__ = (  # pyright: ignore[reportGeneralTypeIssues]
+    annotation_modifying_decorator.__alt_wrapped__ = (  # pyright: ignore[reportAttributeAccessIssue]
         annotation_modifying_decorator.__wrapped__
     )
     del annotation_modifying_decorator.__wrapped__

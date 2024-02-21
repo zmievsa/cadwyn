@@ -39,6 +39,7 @@ from .data import (
     AlterResponseBySchemaInstruction,
     RequestInfo,
     ResponseInfo,
+    _BaseAlterResponseInstruction,
 )
 from .endpoints import AlterEndpointSubInstruction
 from .enums import AlterEnumSubInstruction
@@ -367,15 +368,24 @@ class VersionBundle:
             if v.value <= current_version:
                 break
             for version_change in v.version_changes:
+                migrations_to_apply: list[_BaseAlterResponseInstruction] = []
+
                 if (
                     latest_route.response_model
                     and latest_route.response_model in version_change.alter_response_by_schema_instructions
                 ):
-                    version_change.alter_response_by_schema_instructions[latest_route.response_model](response_info)
+                    migrations_to_apply.append(
+                        version_change.alter_response_by_schema_instructions[latest_route.response_model]
+                    )
+
                 if path in version_change.alter_response_by_path_instructions:
                     for instruction in version_change.alter_response_by_path_instructions[path]:
                         if method in instruction.methods:
-                            instruction(response_info)
+                            migrations_to_apply.append(instruction)
+
+                for migration in migrations_to_apply:
+                    if response_info.status_code < 300 or migration.migrate_http_errors:
+                        migration(response_info)
         return response_info
 
     # TODO (https://github.com/zmievsa/cadwyn/issues/113): Refactor this function and all functions it calls.

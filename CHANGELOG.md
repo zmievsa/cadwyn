@@ -5,12 +5,15 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
-## [3.4.5]
+## [3.5.0]
 
 ### Fixed
 
-* Previously, Cadwyn was unable to handle HTTP status errors in response converters
 * Previously, Cadwyn did not set the default status code for ResponseInfo
+
+### Added
+
+* HTTP status error handling in response converters using `convert_response_to_previous_version_for(...,  migrate_http_errors=True)`
 
 ## [3.4.4]
 

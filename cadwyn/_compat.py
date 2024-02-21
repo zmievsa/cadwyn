@@ -7,7 +7,7 @@ import pydantic
 from fastapi._compat import ModelField as FastAPIModelField
 from pydantic import BaseModel, Field
 
-ModelField: TypeAlias = Any  # pyright: ignore[reportGeneralTypeIssues]
+ModelField: TypeAlias = Any  # pyright: ignore[reportRedeclaration]
 PydanticUndefined: TypeAlias = Any
 VALIDATOR_CONFIG_KEY = "__validators__"
 
@@ -61,7 +61,7 @@ class PydanticFieldWrapper:
 
     annotation: Any
 
-    init_model_field: dataclasses.InitVar[ModelField]  # pyright: ignore[reportGeneralTypeIssues]
+    init_model_field: dataclasses.InitVar[ModelField]  # pyright: ignore[reportInvalidTypeForm]
     field_info: FieldInfo = dataclasses.field(init=False)
 
     annotation_ast: ast.expr | None = None
@@ -69,7 +69,7 @@ class PydanticFieldWrapper:
     # the value_ast is "None" and "Field(default=None)" respectively
     value_ast: ast.expr | None = None
 
-    def __post_init__(self, init_model_field: ModelField):  # pyright: ignore[reportGeneralTypeIssues]
+    def __post_init__(self, init_model_field: ModelField):  # pyright: ignore[reportInvalidTypeForm]
         if isinstance(init_model_field, FieldInfo):
             self.field_info = init_model_field
         else:
@@ -134,10 +134,10 @@ def rebuild_fastapi_body_param(old_body_param: FastAPIModelField, new_body_param
         kwargs.update(
             {
                 "type_": new_body_param_type,
-                "class_validators": old_body_param.class_validators,  # pyright: ignore[reportGeneralTypeIssues]
+                "class_validators": old_body_param.class_validators,  # pyright: ignore[reportAttributeAccessIssue]
                 "default": old_body_param.default,
                 "required": old_body_param.required,
-                "model_config": old_body_param.model_config,  # pyright: ignore[reportGeneralTypeIssues]
+                "model_config": old_body_param.model_config,  # pyright: ignore[reportAttributeAccessIssue]
                 "alias": old_body_param.alias,
             },
         )
