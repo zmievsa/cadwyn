@@ -53,7 +53,7 @@ Oftentimes you will want to introduce a breaking change where one of the followi
 * New response cannot be automatically migrated to an older response
 * Old request cannot be automatically converted to the latest or internal request
 
-This means that you are not versioning your API, you are versioning your **data**. This is not and cannot be solved by an API versioning framework. It also makes it incredibly hard to version as you now cannot guarantee compatibility between versions. Avoid this at all costs -- all your API versions must be compatible between each other.
+This means that you are not versioning your API, you are versioning your **data**. This is not and cannot be solved by an API versioning framework. It also makes it incredibly hard to version as you now cannot guarantee compatibility between versions. Avoid this at all costs -- all your API versions must be compatible between each other. Data versioning is not a result of a complicated use case, it is a result of **errors** when divising a new version. I am yet to meet a single case where data versioning is the right way to solve an API versioning problem.
 
 ## Schemas (openapi data type)
 
@@ -230,9 +230,10 @@ Now what about case 2?
 
 Let's say that you have company resources in your system. Let's also say that each company has a `tax_id` and now you would like to remove the `tax_id` field or make it optional. If `tax_id` was required in your responses, you can't really do this with traditional API versioning because you cannot come up with a sane non-null default for `tax_id`. It is a case of [data versioning](#a-note-on-data-versioning) where you try to make an API version that is inconsistent with other API versions in terms of its data. You deal with this using one of the following approaches:
 
+0. Talk to your users. In any API versioning problem, talking to your users is the best first step. See whether this is actually a breaking change for them. Maybe only a small subset of your users is using this field and you can migrate this subset manually without much investment, which will allow you to make the breaking changes without breaking anyone's API. Though this approach becomes impossible to use once you get a lot of clients.
 1. Issue a warning to your users that `tax_id` is going to become optional in all API versions in `N` months and then make it so. This will allow you to avoid data versioning and your users will have a grace period to fix their issues. Then you can simply follow the [approach above](#schema-optional-field-removal).
 2. Release a `V2` version of your API which users will have to migrate their **data** to. This is a drastic approach and you should only reserve it for extreme cases but it is a **correct** way to represent data versioning.
-3. Disallow the new version (2001-01-01) to be used alongside older versions and disallow users to migrate to older versions after they have migrated to 2001-01-01. Then you can simply follow the [approach above](#schema-optional-field-removal). This is a dirty hack and an inconvenience to your users but it solves the problem too.
+3. Disallow the new version (2001-01-01) to be used alongside older versions and disallow users to migrate to older versions after they have migrated to 2001-01-01. Then you can simply follow the [approach above](#schema-optional-field-removal). This is a dirty hack and an inconvenience to your users but it solves the problem too, albeit I would never recommend to use this solition.
 
 #### Schema field addition
 
