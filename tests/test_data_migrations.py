@@ -1205,7 +1205,10 @@ def test__manual_response_migrations(
     new_response = version_bundle.migrate_response_body(
         latest_with_empty_classes.EmptySchema, latest_body={"id": "hewwo"}, version=date(2000, 1, 1)
     )
-    assert new_response.dict() == {"name": "Apples", "amount": 83}
+    assert new_response.dict() == {
+        "name": "Apples",
+        "amount": 83,
+    }
     assert new_response.dict(exclude_unset=True) == {"amount": 83}
 
     with pytest.raises(CadwynError):
