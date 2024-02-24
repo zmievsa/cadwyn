@@ -25,15 +25,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
+
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install poetry
-        uses: abatilo/actions-poetry@v2
+
+      - uses: abatilo/actions-poetry@v2
         with:
           poetry-version: 1.7.1
+
       - name: Install dependencies
         run: poetry install --all-extras
+
       - name: Test
         run: make ci_supertest
 
@@ -43,48 +46,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Assert PR target is main
-        if: github.event_name == 'pull_request' && github.repository == 'psf/black'
-        run: |
-          if [ "$GITHUB_BASE_REF" != "main" ]; then
-              echo "::error::PR targeting '$GITHUB_BASE_REF', please refile targeting 'main'." && exit 1
-          fi
-
-      - name: Set up latest Python
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
-        uses: abatilo/actions-poetry@v2
+      - uses: abatilo/actions-poetry@v2
         with:
           poetry-version: 1.7.1
 
       - name: Install dependencies
         run: poetry install --all-extras
 
-      - name: Run pre-commit hooks
-        uses: pre-commit/action@v3.0.0
+      - uses: pre-commit/action@v3.0.0
 
   Typecheck:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Assert PR target is main
-        if: github.event_name == 'pull_request' && github.repository == 'psf/black'
-        run: |
-          if [ "$GITHUB_BASE_REF" != "main" ]; then
-              echo "::error::PR targeting '$GITHUB_BASE_REF', please refile targeting 'main'." && exit 1
-          fi
       - uses: actions/checkout@v4
 
-      - run: pipx install poetry
       - uses: actions/setup-python@v4
         with:
           cache: 'poetry'
 
-      - run: poetry install --all-extras
-      - run: echo "$(poetry env info --path)/bin" >> $GITHUB_PATH
+      - uses: abatilo/actions-poetry@v2
+        with:
+          poetry-version: 1.7.1
+
+      - name: Install dependencies
+        run: |
+          poetry install --all-extras
+          echo "$(poetry env info --path)/bin" >> $GITHUB_PATH
 
       - uses: jakebailey/pyright-action@v1
         with:
