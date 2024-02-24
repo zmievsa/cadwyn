@@ -13,7 +13,6 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - uses: actions/checkout@v4
     - uses: abatilo/actions-poetry@v2
       with:
         poetry-version: ${{ inputs.poetry-version }}

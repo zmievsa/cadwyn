@@ -33,6 +33,7 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-python-poetry
         with:
           python-version: ${{ matrix.python-version }}
@@ -42,6 +43,7 @@ jobs:
   Lint:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-python-poetry
 
       - uses: pre-commit/action@v3.0.0
@@ -49,6 +51,7 @@ jobs:
   Typecheck:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-python-poetry
 
       - uses: jakebailey/pyright-action@v1
