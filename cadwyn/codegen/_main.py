@@ -81,6 +81,8 @@ def generate_code_for_versioned_packages(
         codegen_plugins=codegen_plugins,
         migration_plugins=migration_plugins,
     )
+    # This should not affect real use cases at all but is rather useful for testing
+    importlib.invalidate_caches()
 
 
 def _generate_versioned_directories(

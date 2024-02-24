@@ -73,7 +73,6 @@ class RunSchemaCodegen:
     def __call__(self, versions: VersionBundle) -> Any:
         latest_module = importlib.import_module(self.temp_data_package_path + ".latest")
         generate_code_for_versioned_packages(latest_module, versions)
-        importlib.invalidate_caches()
         return latest_module
 
 
@@ -97,7 +96,6 @@ class CreateVersionedPackages:
             ),
             ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
         )
-        importlib.invalidate_caches()
         schemas = tuple(
             reversed(
                 [
