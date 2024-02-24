@@ -1,4 +1,5 @@
 import http.cookies
+import importlib
 import re
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
@@ -13,11 +14,12 @@ from dirty_equals import IsPartialDict, IsStr
 from fastapi import APIRouter, Body, Cookie, File, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
-from cadwyn import VersionedAPIRouter
+from cadwyn import VersionedAPIRouter, generate_code_for_versioned_packages
 from cadwyn._compat import PYDANTIC_V2, model_dump
-from cadwyn.exceptions import CadwynStructureError
+from cadwyn.exceptions import CadwynError, CadwynLatestRequestValidationError, CadwynStructureError
 from cadwyn.routing import InternalRepresentationOf
 from cadwyn.structure import (
     VersionChange,
@@ -25,9 +27,12 @@ from cadwyn.structure import (
     convert_response_to_previous_version_for,
 )
 from cadwyn.structure.data import RequestInfo, ResponseInfo
+from cadwyn.structure.schemas import schema
+from cadwyn.structure.versions import Version, VersionBundle
 from tests.conftest import (
     CreateVersionedClients,
     LatestModuleFor,
+    _FakeModuleWithEmptyClasses,
     client,
     version_change,
 )
@@ -38,7 +43,7 @@ def test_path():
     return "/test"
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 def latest_module(latest_module_for: LatestModuleFor):
     if PYDANTIC_V2:
         return latest_module_for(
@@ -184,7 +189,7 @@ def _post_endpoint_with_extra_depends(  # noqa: PT005
     router: VersionedAPIRouter,
     test_path: Literal["/test"],
     latest_module: ModuleType,
-    _post_endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],  # pyright: ignore[reportGeneralTypeIssues]
+    _post_endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],  # pyright: ignore[reportRedeclaration]
 ):
     if request.param == "no request":
         router.routes = []
@@ -261,6 +266,7 @@ class TestRequestMigrations:
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
+        latest_module: ModuleType,
     ):
         @router.get(test_path)
         async def get(request: Request):
@@ -285,11 +291,12 @@ class TestRequestMigrations:
             "query_params": {"request2": "request2"},
         }
 
-    def test__depends_gets_broken_after_migration__should_raise_422(
+    def test__depends_gets_broken_after_migration__should_raise_500(
         self,
         create_versioned_clients: CreateVersionedClients,
         router: VersionedAPIRouter,
         test_path,
+        latest_module: ModuleType,
     ):
         @router.get(test_path)
         async def get(my_header: str = Header()):
@@ -301,30 +308,9 @@ class TestRequestMigrations:
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
-        response = clients[date(2000, 1, 1)].get(test_path, headers={"my-header": "wow"}).json()
-        if PYDANTIC_V2:
-            assert response == {
-                "detail": [
-                    {
-                        "type": "missing",
-                        "loc": ["header", "my-header"],
-                        "msg": "Field required",
-                        "input": None,
-                        "url": IsStr,
-                    },
-                ],
-            }
-        else:
-            assert response == {
-                "detail": [
-                    {
-                        "loc": ["header", "my-header"],
-                        "msg": "field required",
-                        "type": "value_error.missing",
-                    },
-                ],
-            }
         assert clients[date(2001, 1, 1)].get(test_path, headers={"my-header": "wow"}).json() == 83
+        with pytest.raises(CadwynLatestRequestValidationError):
+            clients[date(2000, 1, 1)].get(test_path, headers={"my-header": "wow"}).json()
 
     def test__optional_body_field(
         self,
@@ -439,28 +425,13 @@ class TestRequestMigrations:
             request.body["bar"] = [1, 2, 3]
 
         clients = create_versioned_clients(version_change(migrator=migrator))
-        response = clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json()
-        if PYDANTIC_V2:
-            assert response == {
-                "detail": [
-                    {
-                        "input": [1, 2, 3],
-                        "loc": ["body", "bar"],
-                        "msg": "Input should be a valid string",
-                        "type": "string_type",
-                        "url": IsStr,
-                    },
-                ],
-            }
-        else:
-            assert response == {
-                "detail": [{"loc": ["body", "bar"], "msg": "str type expected", "type": "type_error.str"}],
-            }
         assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
             "type": "InternalSchema",
             "foo": 1,
             "bar": None,
         }
+        with pytest.raises(CadwynLatestRequestValidationError):
+            clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json()
 
     def test__serialization_of_request_body__when_body_is_non_pydantic(
         self,
@@ -823,6 +794,7 @@ class TestHowAndWhenMigrationsApply:
             == []
         )
 
+    # TODO: An error is a better behavior here
     def test__try_migrating_to_version_below_earliest__undefined_behaior(
         self,
         create_versioned_clients: CreateVersionedClients,
@@ -957,7 +929,7 @@ def test__invalid_path_migration_syntax():
         ValueError,
         match=re.escape("If path was provided as a first argument, methods must be provided as a second argument"),
     ):
-        convert_request_to_next_version_for("/test")  # pyright: ignore[reportGeneralTypeIssues]
+        convert_request_to_next_version_for("/test")  # pyright: ignore[reportArgumentType]
 
 
 def test__invalid_schema_migration_syntax(latest_module):
@@ -1202,3 +1174,50 @@ def test__request_and_response_migrations__for_endpoint_with_modified_status_cod
     resp_2001 = clients[date(2001, 1, 1)].post("/test")
     assert resp_2001.status_code == 201
     assert resp_2001.json() == 83
+
+
+def test__manual_response_migrations(
+    latest_with_empty_classes: _FakeModuleWithEmptyClasses,
+    latest_package_path: str,
+):
+    latest_package = importlib.import_module(latest_package_path)
+
+    @convert_response_to_previous_version_for(latest_with_empty_classes.EmptySchema)
+    def response_converter(response: ResponseInfo):
+        response.body["amount"] = 83
+
+    version_bundle = VersionBundle(
+        Version(
+            date(2001, 1, 1),
+            version_change(
+                schema(latest_with_empty_classes.EmptySchema)
+                .field("name")
+                .existed_as(type=str, info=Field(default="Apples")),
+                schema(latest_with_empty_classes.EmptySchema).field("amount").existed_as(type=int),
+                convert=response_converter,
+            ),
+        ),
+        Version(date(2000, 1, 1)),
+        latest_schemas_package=latest_package,
+    )
+    generate_code_for_versioned_packages(latest_package, version_bundle)
+
+    new_response = version_bundle.migrate_response_body(
+        latest_with_empty_classes.EmptySchema, latest_body={"id": "hewwo"}, version=date(2000, 1, 1)
+    )
+    assert new_response.dict() == {
+        "name": "Apples",
+        "amount": 83,
+    }
+    assert new_response.dict(exclude_unset=True) == {"amount": 83}
+
+    with pytest.raises(CadwynError):
+        new_response = version_bundle.migrate_response_body(
+            latest_with_empty_classes.EmptySchema, latest_body={"id": "hewwo"}, version=date(1999, 1, 1)
+        )
+
+
+def test__manual_response_migrations__without_attached_latest_package__should_raise_error():
+    version_bundle = VersionBundle(Version(date(2000, 1, 1)))
+    with pytest.raises(CadwynError):
+        version_bundle.migrate_response_body(BaseModel, latest_body={"id": "hewwo"}, version=date(2000, 1, 1))

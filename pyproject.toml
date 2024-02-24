@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cadwyn"
-version = "3.5.0"
+version = "3.6.3"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -69,15 +69,14 @@ pytest-cov = ">=4.0.0"
 uvicorn = "*"
 devtools = "*"
 pdbpp = "^0.10.3"
-pytest-asyncio = "^0.21.0"
 httpx = "*"
-pytest-fixture-classes = "^1.0.3"
-pre-commit = "^3.4.0"
-dirty-equals = "^0.6.0"
-mkdocs = "^1.5.2"
-mkdocs-material = "^9.3.1"
-python-multipart = "^0.0.6"
-mkdocs-simple-hooks = "^0.1.5"
+pytest-fixture-classes = ">=1.0.3"
+pre-commit = ">=3.4.0"
+dirty-equals = ">=0.6.0"
+mkdocs = ">=1.5.2"
+mkdocs-material = ">=9.3.1"
+python-multipart = ">=0.0.6"
+mkdocs-simple-hooks = ">=0.1.5"
 
 [tool.poetry.scripts]
 cadwyn = "cadwyn.__main__:app"
@@ -130,6 +129,7 @@ reportUnsupportedDunderAll = true
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingSuperCall = true
 reportFunctionMemberAccess = false
+reportCircularImports = true
 
 
 [tool.ruff]

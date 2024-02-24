@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from enum import Enum
+from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, cast
 
@@ -26,9 +27,14 @@ from starlette._utils import is_async_callable
 from typing_extensions import assert_never
 
 from cadwyn._compat import PYDANTIC_V2, ModelField, PydanticUndefined, model_dump
-from cadwyn._package_utils import IdentifierPythonPath, get_cls_pythonpath
-from cadwyn._utils import classproperty
-from cadwyn.exceptions import CadwynError, CadwynStructureError
+from cadwyn._package_utils import (
+    IdentifierPythonPath,
+    get_cls_pythonpath,
+    get_package_path_from_module,
+    get_version_dir_path,
+)
+from cadwyn._utils import classproperty, get_another_version_of_cls
+from cadwyn.exceptions import CadwynError, CadwynLatestRequestValidationError, CadwynStructureError
 
 from .._utils import Sentinel
 from .common import Endpoint, VersionDate, VersionedModel
@@ -224,10 +230,13 @@ class VersionBundle:
         /,
         *other_versions: Version,
         api_version_var: APIVersionVarType | None = None,
+        latest_schemas_package: ModuleType | None = None,
     ) -> None:
         super().__init__()
 
+        self.latest_schemas_package: ModuleType | None = latest_schemas_package
         self.versions = (latest_version, *other_versions)
+        self.version_dates = tuple(version.value for version in self.versions)
         if api_version_var is None:
             api_version_var = ContextVar("cadwyn_api_version")
         self.api_version_var = api_version_var
@@ -293,6 +302,47 @@ class VersionBundle:
         }
 
     @functools.cached_property
+    def versioned_directories(self) -> tuple[Path, ...]:
+        if self.latest_schemas_package is None:
+            raise CadwynError(
+                f"You cannot call 'VersionBundle.{self.migrate_response_body.__name__}' because it has no access to "
+                "'latest_schemas_package'. It likely means that it was not attached "
+                "to any Cadwyn application which attaches 'latest_schemas_package' during initialization."
+            )
+        return tuple(
+            [get_package_path_from_module(self.latest_schemas_package)]
+            + [get_version_dir_path(self.latest_schemas_package, version.value) for version in self]
+        )
+
+    def migrate_response_body(self, latest_response_model: type[BaseModel], *, latest_body: Any, version: VersionDate):
+        """Convert the data to a specific version by applying all version changes from latest until that version
+        in reverse order and wrapping the result in the correct version of latest_response_model.
+        """
+        response = ResponseInfo(FastapiResponse(status_code=200), body=latest_body)
+        migrated_response = self._migrate_response(
+            response,
+            current_version=version,
+            latest_response_model=latest_response_model,
+            path="\0\0\0",
+            method="GET",
+        )
+
+        version = self._get_closest_lesser_version(version)
+        # + 1 comes from latest also being in the versioned_directories list
+        version_dir = self.versioned_directories[self.version_dates.index(version) + 1]
+
+        versioned_response_model: type[BaseModel] = get_another_version_of_cls(
+            latest_response_model, version_dir, self.versioned_directories
+        )
+        return versioned_response_model.parse_obj(migrated_response.body)
+
+    def _get_closest_lesser_version(self, version: VersionDate):
+        for defined_version in self.version_dates:
+            if defined_version <= version:
+                return defined_version
+        raise CadwynError("You tried to migrate to version that is earlier than the first version which is prohibited.")
+
+    @functools.cached_property
     def _version_changes_to_version_mapping(
         self,
     ) -> dict[type[VersionChange] | type[VersionChangeWithSideEffects], VersionDate]:
@@ -341,7 +391,9 @@ class VersionBundle:
                 **kwargs,
             )
             if errors:
-                raise RequestValidationError(_normalize_errors(errors), body=request_info.body)
+                raise CadwynLatestRequestValidationError(
+                    _normalize_errors(errors), body=request_info.body, version=current_version
+                )
             return dependencies
         raise NotImplementedError("This code should not be reachable. If it was reached -- it's a bug.")
 
@@ -349,7 +401,7 @@ class VersionBundle:
         self,
         response_info: ResponseInfo,
         current_version: VersionDate,
-        latest_route: APIRoute,
+        latest_response_model: type[BaseModel],
         path: str,
         method: str,
     ) -> ResponseInfo:
@@ -371,11 +423,11 @@ class VersionBundle:
                 migrations_to_apply: list[_BaseAlterResponseInstruction] = []
 
                 if (
-                    latest_route.response_model
-                    and latest_route.response_model in version_change.alter_response_by_schema_instructions
+                    latest_response_model
+                    and latest_response_model in version_change.alter_response_by_schema_instructions
                 ):
                     migrations_to_apply.append(
-                        version_change.alter_response_by_schema_instructions[latest_route.response_model]
+                        version_change.alter_response_by_schema_instructions[latest_response_model]
                     )
 
                 if path in version_change.alter_response_by_path_instructions:
@@ -485,7 +537,7 @@ class VersionBundle:
 
             response_info = ResponseInfo(response_or_response_body, body)
         else:
-            if fastapi_response_dependency.status_code is not None:
+            if fastapi_response_dependency.status_code is not None:  # pyright: ignore[reportUnnecessaryComparison]
                 status_code = fastapi_response_dependency.status_code
             elif route.status_code is not None:
                 status_code = route.status_code
@@ -507,7 +559,7 @@ class VersionBundle:
         response_info = self._migrate_response(
             response_info,
             api_version,
-            latest_route,
+            latest_route.response_model,
             route.path,
             method,
         )
@@ -574,7 +626,7 @@ class VersionBundle:
                 body = raw_body
             else:
                 body = model_dump(raw_body, by_alias=True, exclude_unset=True)
-                if not PYDANTIC_V2 and raw_body.__custom_root_type__:  # pyright: ignore[reportGeneralTypeIssues]
+                if not PYDANTIC_V2 and raw_body.__custom_root_type__:  # pyright: ignore[reportAttributeAccessIssue]
                     body = body["__root__"]
         else:
             # This is for requests without body or with complex body such as form or file

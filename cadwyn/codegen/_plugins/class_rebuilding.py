@@ -2,11 +2,11 @@ import ast
 import copy
 from typing import Any
 
-from cadwyn._package_utils import IdentifierPythonPath, get_absolute_python_path_of_import
-from cadwyn.codegen._asts import (
+from cadwyn._asts import (
     get_fancy_repr,
     pop_docstring_from_cls_body,
 )
+from cadwyn._package_utils import IdentifierPythonPath, get_absolute_python_path_of_import
 from cadwyn.codegen._common import CodegenContext, PydanticModelWrapper, _EnumWrapper
 
 

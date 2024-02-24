@@ -10,9 +10,9 @@ from typing import Any
 
 import ast_comments
 
+from cadwyn._asts import get_all_names_defined_at_toplevel_of_module, read_python_module
 from cadwyn._package_utils import IdentifierPythonPath, get_package_path_from_module, get_version_dir_path
 from cadwyn._utils import get_index_of_latest_schema_dir_in_module_python_path
-from cadwyn.codegen._asts import get_all_names_defined_at_toplevel_of_module, read_python_module
 from cadwyn.codegen._common import (
     CodegenContext,
     CodegenPlugin,
@@ -81,6 +81,8 @@ def generate_code_for_versioned_packages(
         codegen_plugins=codegen_plugins,
         migration_plugins=migration_plugins,
     )
+    # This should not affect real use cases at all but is rather useful for testing
+    importlib.invalidate_caches()
 
 
 def _generate_versioned_directories(

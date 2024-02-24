@@ -125,7 +125,7 @@ Let's say that we previously allowed users to have a name of arbitrary length bu
 
 3. [Regenerate](./reference.md#code-generation) the versioned schemas
 
-Note, however, that users will still be able to use arbitrary length names in older API versions. If you want to prevent that, then the correct approach would instead be the following:
+Note, however, that anyone using the old API versions will also not be able  will still be able to use arbitrary length names in older API versions. If you want to prevent that, then the correct approach would instead be the following:
 
 0. Check whether any users have names longer than 250 characters. If there are few or no users that have such long names, then it may make sense to skip step 1. The other steps, however, cannot be skipped if you want to guarantee that your API gives no 500s at any point in the process.
 1. Issue a 3-6 month warning to all users stating that you will make a breaking change affecting older versions. Mention that you will truncate old names that are longer than 250 characters and that users will no longer be able to create such long names even in old API versions.

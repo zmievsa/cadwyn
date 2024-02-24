@@ -57,10 +57,12 @@ Then we create our version bundle which will keep track of our API versions:
 # versions/__init__.py
 from cadwyn.structure import Version, VersionBundle
 from datetime import date
+from data import latest
 
 
 version_bundle = VersionBundle(
     Version(date(2001, 1, 1)),
+    latest_schemas_package=latest,
 )
 ```
 
@@ -85,7 +87,6 @@ generate_code_for_versioned_packages(latest, version_bundle)
 # routes.py
 from data.latest.users import UserCreateRequest, UserResource
 from versions import version_bundle
-from data import latest
 from cadwyn import VersionedAPIRouter, Cadwyn
 import uuid
 import uvicorn
@@ -109,7 +110,7 @@ async def get_user(user_id: uuid.UUID):
     return database_parody[user_id]
 
 
-app = Cadwyn(versions=version_bundle, latest_schemas_package=latest)
+app = Cadwyn(versions=version_bundle)
 app.generate_and_include_versioned_routers(router)
 
 uvicorn.run(app)
@@ -147,7 +148,6 @@ class UserResource(BaseUser):
 # routes.py
 from data.latest.users import UserCreateRequest, UserResource
 from versions import version_bundle
-from data import latest
 from cadwyn import VersionedAPIRouter, Cadwyn
 import uuid
 import uvicorn
@@ -171,7 +171,7 @@ async def get_user(user_id: uuid.UUID):
     return database_parody[user_id]
 
 
-app = Cadwyn(versions=version_bundle, latest_schemas_package=latest)
+app = Cadwyn(versions=version_bundle)
 app.generate_and_include_versioned_routers(router)
 
 uvicorn.run(app)
@@ -235,11 +235,13 @@ Finally, we group the version changes in the `VersionBundle` class.
 from versions.v2002_01_01 import ChangeAddressToList
 from cadwyn.structure import Version, VersionBundle
 from datetime import date
+from data import latest
 
 
 version_bundle = VersionBundle(
     Version(date(2002, 1, 1), ChangeAddressToList),
     Version(date(2001, 1, 1)),
+    latest_schemas_package=latest,
 )
 ```
 

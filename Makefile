@@ -17,6 +17,7 @@ format:
 test:
 	poetry run pytest tests \
 		--cov=. \
+		--pdb \
 		--cov-report=term-missing:skip-covered \
 		--cov-branch \
 		--cov-append \

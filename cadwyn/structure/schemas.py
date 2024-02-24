@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field
 from pydantic.fields import FieldInfo
 
+from cadwyn._asts import _ValidatorWrapper, get_validator_info_or_none
 from cadwyn._compat import PYDANTIC_V2
 from cadwyn._utils import Sentinel
-from cadwyn.codegen._asts import _ValidatorWrapper, get_validator_info_or_none
 from cadwyn.exceptions import CadwynStructureError
 
 if TYPE_CHECKING:
@@ -227,7 +227,7 @@ class AlterFieldInstructionFactory:
 class ValidatorExistedInstruction:
     schema: type[BaseModel]
     validator: Callable[..., Any]
-    validator_info: _ValidatorWrapper = field(init=False)
+    validator_info: "_ValidatorWrapper" = field(init=False)
 
     def __post_init__(self):
         source = textwrap.dedent(inspect.getsource(self.validator))

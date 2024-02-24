@@ -75,6 +75,7 @@ nav:
   - "Theory":
     - How we got here: "theory/how_we_got_here.md"
     - Literature: "theory/literature.md"
+    - Design decisions: "theory/design_decisions.md"
 
 watch:
 - docs

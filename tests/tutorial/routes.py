@@ -2,10 +2,9 @@ import uuid
 from typing import Annotated
 
 from cadwyn import VersionedAPIRouter
-from cadwyn.main import Cadwyn
+from cadwyn.applications import Cadwyn
 from cadwyn.routing import InternalRepresentationOf
 
-from .data import latest
 from .data.latest.users import (
     UserAddressResourceList,
     UserCreateRequest,
@@ -44,4 +43,4 @@ async def get_user_addresses(user_id: uuid.UUID):
     return {"data": database_parody[f"addr_{user_id}"]}
 
 
-app = Cadwyn(latest_schemas_package=latest, versions=version_bundle)
+app = Cadwyn(versions=version_bundle)

@@ -6,7 +6,7 @@ from enum import Enum
 from functools import cache
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Generic, Protocol, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, TypeVar, cast
 
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -14,9 +14,11 @@ from typing_extensions import Self
 from cadwyn._compat import PydanticFieldWrapper, model_fields
 from cadwyn._package_utils import IdentifierPythonPath
 from cadwyn.exceptions import CodeGenerationError
-from cadwyn.structure.versions import Version
 
-from ._asts import _ValidatorWrapper, get_validator_info_or_none
+if TYPE_CHECKING:
+    from cadwyn.structure.versions import Version
+
+from .._asts import _ValidatorWrapper, get_validator_info_or_none
 
 _FieldName: TypeAlias = str
 _CodegenPluginASTType = TypeVar("_CodegenPluginASTType", bound=ast.AST)
@@ -28,7 +30,11 @@ class PydanticModelWrapper:
     name: str
     fields: dict[_FieldName, PydanticFieldWrapper]
     validators: dict[_FieldName, _ValidatorWrapper]
+    annotations: dict[str, Any] = dataclasses.field(init=False, repr=False)
     _parents: list[Self] | None = dataclasses.field(init=False, default=None)
+
+    def __post_init__(self):
+        self.annotations = self.cls.__annotations__.copy()
 
     def _get_parents(self, schemas: "dict[IdentifierPythonPath, Self]"):
         if self._parents is not None:
@@ -59,9 +65,9 @@ class PydanticModelWrapper:
         annotations = {}
 
         for parent in reversed(self._get_parents(schemas)):
-            annotations |= parent.cls.__annotations__
+            annotations |= parent.annotations
 
-        return annotations | self.cls.__annotations__
+        return annotations | self.annotations
 
 
 @cache
@@ -74,7 +80,7 @@ def get_fields_and_validators_from_model(
     fields = model_fields(cls)
     try:
         source = inspect.getsource(cls)
-    except OSError:
+    except OSError:  # pragma: no cover # It is covered by tests but not on every platform
         return (
             {
                 field_name: PydanticFieldWrapper(annotation=field.annotation, init_model_field=field)
@@ -122,9 +128,9 @@ class _ModuleWrapper:
 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class GlobalCodegenContext:
-    current_version: Version
-    latest_version: Version = dataclasses.field(init=False)
-    versions: list[Version]
+    current_version: "Version"
+    latest_version: "Version" = dataclasses.field(init=False)
+    versions: "list[Version]"
     schemas: dict[IdentifierPythonPath, PydanticModelWrapper] = dataclasses.field(repr=False)
     enums: dict[IdentifierPythonPath, _EnumWrapper] = dataclasses.field(repr=False)
     modules: dict[IdentifierPythonPath, _ModuleWrapper] = dataclasses.field(repr=False)
