@@ -1201,6 +1201,7 @@ def test__manual_response_migrations(
         latest_schemas_package=latest_package,
     )
     generate_code_for_versioned_packages(latest_package, version_bundle)
+    importlib.invalidate_caches()
 
     new_response = version_bundle.migrate_response_body(
         latest_with_empty_classes.EmptySchema, latest_body={"id": "hewwo"}, version=date(2000, 1, 1)
