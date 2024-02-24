@@ -6,7 +6,7 @@ from enum import Enum
 from functools import cache
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Generic, Protocol, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, TypeVar, cast
 
 from pydantic import BaseModel
 from typing_extensions import Self
@@ -14,9 +14,11 @@ from typing_extensions import Self
 from cadwyn._compat import PydanticFieldWrapper, model_fields
 from cadwyn._package_utils import IdentifierPythonPath
 from cadwyn.exceptions import CodeGenerationError
-from cadwyn.structure.versions import Version
 
-from ._asts import _ValidatorWrapper, get_validator_info_or_none
+if TYPE_CHECKING:
+    from cadwyn.structure.versions import Version
+
+from .._asts import _ValidatorWrapper, get_validator_info_or_none
 
 _FieldName: TypeAlias = str
 _CodegenPluginASTType = TypeVar("_CodegenPluginASTType", bound=ast.AST)
@@ -122,9 +124,9 @@ class _ModuleWrapper:
 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class GlobalCodegenContext:
-    current_version: Version
-    latest_version: Version = dataclasses.field(init=False)
-    versions: list[Version]
+    current_version: "Version"
+    latest_version: "Version" = dataclasses.field(init=False)
+    versions: "list[Version]"
     schemas: dict[IdentifierPythonPath, PydanticModelWrapper] = dataclasses.field(repr=False)
     enums: dict[IdentifierPythonPath, _EnumWrapper] = dataclasses.field(repr=False)
     modules: dict[IdentifierPythonPath, _ModuleWrapper] = dataclasses.field(repr=False)

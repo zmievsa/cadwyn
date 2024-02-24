@@ -242,22 +242,26 @@ class CreateLocalVersionedPackages:
         )
         importlib.invalidate_caches()
 
-        schemas = tuple(
-            reversed(
-                [
-                    importlib.import_module(
-                        self.latest_package_path.removesuffix("latest") + f"{get_version_dir_name(version.value)}",
-                    )
-                    for version in created_versions
-                ],
-            ),
-        )
+        schemas = import_all_schemas(self.latest_package_path, created_versions)
 
         # Validate that latest version is always equivalent to the template version
         assert {k: v for k, v in schemas[-1].__dict__.items() if not k.startswith("__")} == {
             k: v for k, v in latest.__dict__.items() if not k.startswith("__")
         }
         return schemas
+
+
+def import_all_schemas(latest_package_path: str, created_versions: Sequence[Version]):
+    return tuple(
+        reversed(
+            [
+                importlib.import_module(
+                    latest_package_path.removesuffix("latest") + f"{get_version_dir_name(version.value)}",
+                )
+                for version in created_versions
+            ],
+        ),
+    )
 
 
 @fixture_class(name="create_local_simple_versioned_packages")

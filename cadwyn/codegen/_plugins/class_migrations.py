@@ -4,6 +4,7 @@ from typing import Annotated, Any, cast, get_args, get_origin
 
 from typing_extensions import assert_never
 
+from cadwyn._asts import add_keyword_to_call, delete_keyword_from_call, get_fancy_repr
 from cadwyn._compat import (
     PYDANTIC_V2,
     FieldInfo,
@@ -13,7 +14,6 @@ from cadwyn._compat import (
 )
 from cadwyn._package_utils import IdentifierPythonPath, get_cls_pythonpath
 from cadwyn._utils import Sentinel
-from cadwyn.codegen._asts import add_keyword_to_call, delete_keyword_from_call, get_fancy_repr
 from cadwyn.codegen._common import GlobalCodegenContext, PydanticModelWrapper, _EnumWrapper
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction

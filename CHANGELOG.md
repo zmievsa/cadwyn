@@ -5,6 +5,27 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.6.2]
+
+### Fixed
+
+* Removed exception when creating `cadwyn.Cadwyn` without `latest_schemas_package` as it was a minor breaking change
+
+## [3.6.0]
+
+### Added
+
+* Add `cadwyn.VersionBundle.migrate_response_body` that allows us to migrate response bodies outside of routing and FastAPI
+* `latest_schemas_package` argument to `cadwyn.VersionBundle` to support the migration above
+
+### Removed
+
+### Changed
+
+* We now raise a 5xx error (`cadwyn.exceptions.CadwynLatestRequestValidationError`) whenever a request migration caused our payload to be incompatible with latest request schemas
+* Deprecated `cadwyn.main` and use `cadwyn.applications` instead
+* Deprecated `latest_schemas_package` argument in `cadwyn.Cadwyn`
+
 ## [3.5.0]
 
 ### Fixed

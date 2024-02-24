@@ -58,7 +58,6 @@ After you have defined a main app, you can add versioned API routers to it using
 ```python
 from cadwyn import VersionedAPIRouter, Cadwyn
 from versions import my_version_bundle
-from data import latest
 
 
 router = VersionedAPIRouter(prefix="/users")
@@ -74,11 +73,11 @@ async def read_user(username: str):
     return {"username": username}
 
 
-app = Cadwyn(versions=my_version_bundle, latest_schemas_package=latest)
+app = Cadwyn(versions=my_version_bundle)
 app.generate_and_include_versioned_routers(router)
 ```
 
-That's it! `generate_and_include_versioned_routers` will generate all versions of your routers based on the `versions` argument and will use schemas from the versioned schema directories parallel to `latest_schema_package`.
+That's it! `generate_and_include_versioned_routers` will generate all versions of your routers based on the `versions` argument and will use schemas from the versioned schema directories parallel to `versions.latest_schema_package`.
 
 ### Routing
 
@@ -145,6 +144,7 @@ Then you add your version change class(es) into your version bundle to activate 
 
 from cadwyn.structure import VersionBundle, Version
 from datetime import date
+from data import latest
 
 from .v2023_02_10 import RemoveTaxIDEndpoints
 
@@ -152,6 +152,7 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 versions = VersionBundle(
     Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
     Version(date(2022, 11, 16)),
+    latest_schemas_package=latest,
 )
 ```
 
@@ -171,6 +172,7 @@ versions = VersionBundle(
     Version(date(2023, 4, 2), DeleteEndpoint, ChangeFields, RenameFields),
     Version(date(2023, 2, 10), RenameEndpoints, RefactorFields),
     Version(date(2022, 11, 16)),
+    latest_schemas_package=latest,
 )
 ```
 
@@ -458,6 +460,21 @@ def create_user(
 
 This type hint will tell Cadwyn that this route has public-facing schema of `User` that Cadwyn will use for validating all requests. Cadwyn will always use `InternalUserCreateRequest` when pushing body field into your business logic instead of `User`. Note that users will not be able to use any fields from the internal representation and their requests will still be validated by your regular schemas. So even if you added a field `foo` in an internal representation, and your user has passed this field in the body of the request, this field will not get to the internal representation because it will be removed at the moment of request validation (or even an error will occur if you use `extra="ignore"`). OpenAPI will also only use the public schemas, not the internal ones.
 
+##### Manual body migrations
+
+Oftentimes you will have a need to migrate your data outside of routing, manually. For example, when you need to send a versioned response to your client via webhook or inside a worker/cronjob. In these instances, you can use `cadwyn.VersionBundle.migrate_response_body`:
+
+```python
+from data.latest.users import UserResource
+from versions import version_bundle
+
+body_from_2000_01_01 = version_bundle.migrate_response_body(
+    UserResource, latest_body={"name": "John"}, version=date(2000, 1, 1)
+)
+```
+
+The returned `body_from_2000_01_01` is your data passed through all converters (similar to how it would when a response is returned from your route) and wrapped into `data.v2000_01_01.UserResource`. The fact that it is wrapped gives us the ability to include pydantic's defaults.
+
 ##### StreamingResponse and FileResponse migrations
 
 Migrations for the bodies of `fastapi.responses.StreamingResponse` and `fastapi.responses.FileResponse` are not directly supported yet ([1](https://github.com/zmievsa/cadwyn/issues/125), [2](https://github.com/zmievsa/cadwyn/issues/126)). However, you can use `ResponseInfo._response` attribute to get access to the original `StreamingResponse` or `FileResponse` and modify it in any way you wish within your migrations.
@@ -507,6 +524,7 @@ or to specify migrations using [endpoint path](#path-based-migration-specificati
 
 from cadwyn.structure import VersionBundle, Version
 from datetime import date
+from data import latest
 
 from .v2023_02_10 import RemoveTaxIDEndpoints
 
@@ -514,6 +532,7 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 versions = VersionBundle(
     Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
     Version(date(2022, 11, 16)),
+    latest_schemas_package=latest,
 )
 ```
 

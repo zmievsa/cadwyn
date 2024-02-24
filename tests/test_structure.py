@@ -101,7 +101,7 @@ class TestVersionChange:
 
             class DummySubClass(VersionChange):
                 description = "dummy description"
-                instructions_to_migrate_to_previous_version = True  # pyright: ignore[reportGeneralTypeIssues]
+                instructions_to_migrate_to_previous_version = True  # pyright: ignore[reportAssignmentType]
 
     def test__instructions_to_migrate_to_previous_version__non_instruction_specified_in_list__should_raise_error(self):
         with pytest.raises(
@@ -113,7 +113,7 @@ class TestVersionChange:
 
             class DummySubClass(VersionChange):
                 description = "dummy description"
-                instructions_to_migrate_to_previous_version = [True]  # pyright: ignore[reportGeneralTypeIssues]
+                instructions_to_migrate_to_previous_version = [True]  # pyright: ignore[reportAssignmentType]
 
     def test__non_instruction_attribute_set__should_raise_error(self):
         with pytest.raises(

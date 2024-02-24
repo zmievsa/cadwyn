@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cadwyn"
-version = "3.5.0"
+version = "3.6.2"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -130,6 +130,7 @@ reportUnsupportedDunderAll = true
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingSuperCall = true
 reportFunctionMemberAccess = false
+reportCircularImports = true
 
 
 [tool.ruff]

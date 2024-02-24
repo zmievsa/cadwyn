@@ -1,6 +1,7 @@
 import functools
 import importlib
 import inspect
+import sys
 from collections.abc import Callable, Collection
 from pathlib import Path
 from types import ModuleType
@@ -40,10 +41,23 @@ def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
     return decorator
 
 
+@functools.cache
+def get_another_version_of_cls(
+    cls_from_old_version: type[Any], new_version_dir: Path, version_dirs: frozenset[Path] | tuple[Path, ...]
+):
+    # version_dir = /home/myuser/package/companies/v2021_01_01
+    module_from_old_version = sys.modules[cls_from_old_version.__module__]
+    try:
+        module = get_another_version_of_module(module_from_old_version, new_version_dir, version_dirs)
+    except ModuleIsNotVersionedError:
+        return cls_from_old_version
+    return getattr(module, cls_from_old_version.__name__)
+
+
 def get_another_version_of_module(
     module_from_old_version: ModuleType,
     new_version_dir: Path,
-    version_dirs: frozenset[Path],
+    version_dirs: frozenset[Path] | tuple[Path, ...],
 ):
     new_model_module_python_path = get_pythonpath_to_another_version_of_module(
         module_from_old_version,
@@ -56,7 +70,7 @@ def get_another_version_of_module(
 def get_pythonpath_to_another_version_of_module(
     module_from_old_version: ModuleType,
     new_version_dir: Path,
-    version_dirs: frozenset[Path],
+    version_dirs: frozenset[Path] | tuple[Path, ...],
 ) -> str:
     # ['package', 'companies', 'latest', 'schemas']
     #                           ^^^^^^

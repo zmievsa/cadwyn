@@ -1,7 +1,6 @@
 import functools
 import inspect
 import re
-import sys
 import typing
 import warnings
 from collections import defaultdict
@@ -44,11 +43,10 @@ from starlette.routing import (
 from typing_extensions import Self, assert_never
 
 from cadwyn._compat import model_fields, rebuild_fastapi_body_param
-from cadwyn._package_utils import get_package_path_from_module, get_version_dir_path
-from cadwyn._utils import Sentinel, UnionType, get_another_version_of_module
+from cadwyn._package_utils import get_version_dir_path
+from cadwyn._utils import Sentinel, UnionType, get_another_version_of_cls
 from cadwyn.exceptions import (
     CadwynError,
-    ModuleIsNotVersionedError,
     RouteAlreadyExistsError,
     RouterGenerationError,
     RouterPathParamsModifiedError,
@@ -381,8 +379,8 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
 @final
 class _AnnotationTransformer:
     __slots__ = (
+        "versions",
         "latest_schemas_package",
-        "version_dirs",
         "template_version_dir",
         "latest_version_dir",
         "change_versions_of_a_non_container_annotation",
@@ -398,16 +396,14 @@ class _AnnotationTransformer:
                 'The name of the latest schemas module must be "latest". '
                 f'Received "{latest_schemas_package.__name__}" instead.',
             )
+        self.versions = versions
+        self.versions.latest_schemas_package = latest_schemas_package
         self.latest_schemas_package = latest_schemas_package
-        self.version_dirs = frozenset(
-            [get_package_path_from_module(latest_schemas_package)]
-            + [get_version_dir_path(latest_schemas_package, version.value) for version in versions],
-        )
         # Okay, the naming is confusing, I know. Essentially template_version_dir is a dir of
         # latest_schemas_package while latest_version_dir is a version equivalent to latest but
         # with its own directory. Pick a better naming and make a PR, I am at your mercy.
-        self.template_version_dir = min(self.version_dirs)  # "latest" < "v0000_00_00"
-        self.latest_version_dir = max(self.version_dirs)  # "v2005_11_11" > "v2000_11_11"
+        self.template_version_dir = min(versions.versioned_directories)  # "latest" < "v0000_00_00"
+        self.latest_version_dir = max(versions.versioned_directories)  # "v2005_11_11" > "v2000_11_11"
 
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
         # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
@@ -449,15 +445,6 @@ class _AnnotationTransformer:
                 continue
             self.migrate_route_to_version(callback, version_dir, ignore_response_model=ignore_response_model)
         _remake_endpoint_dependencies(route)
-
-    def get_another_version_of_cls(self, cls_from_old_version: type[Any], new_version_dir: Path):
-        # version_dir = /home/myuser/package/companies/v2021_01_01
-        module_from_old_version = sys.modules[cls_from_old_version.__module__]
-        try:
-            module = get_another_version_of_module(module_from_old_version, new_version_dir, self.version_dirs)
-        except ModuleIsNotVersionedError:
-            return cls_from_old_version
-        return getattr(module, cls_from_old_version.__name__)
 
     def _change_versions_of_a_non_container_annotation(self, annotation: Any, version_dir: Path) -> Any:
         if isinstance(annotation, _BaseGenericAlias | GenericAlias):
@@ -526,7 +513,7 @@ class _AnnotationTransformer:
                     )
                 else:
                     self._validate_source_file_is_located_in_template_dir(annotation, source_file)
-            return self.get_another_version_of_cls(annotation, version_dir)
+            return get_another_version_of_cls(annotation, version_dir, self.versions.versioned_directories)
         else:
             return annotation
 
@@ -539,7 +526,7 @@ class _AnnotationTransformer:
         if (
             source_file.startswith(dir_with_versions)
             and not source_file.startswith(template_dir)
-            and any(source_file.startswith(str(d)) for d in self.version_dirs)
+            and any(source_file.startswith(str(d)) for d in self.versions.versioned_directories)
         ):
             raise RouterGenerationError(
                 f'"{annotation}" is not defined in "{self.template_version_dir}" even though it must be. '

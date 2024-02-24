@@ -48,7 +48,7 @@ def test__schema_validator_existed__with_root_validator_without_call(
     if PYDANTIC_V2:
         pytest.skip("This test is only for Pydantic v1.")
 
-    @pydantic.root_validator  # pyright: ignore[reportGeneralTypeIssues, reportUntypedFunctionDecorator]
+    @pydantic.root_validator  # pyright: ignore[reportCallIssue, reportUntypedFunctionDecorator]
     def hewwo(cls, values):
         raise NotImplementedError
 

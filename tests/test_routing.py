@@ -1026,7 +1026,7 @@ class MySchema(BaseModel):
     other_module = importlib.import_module(temp_data_package_path + ".other_module")
 
     @router.post("/test")
-    async def test_with_dep1(dep: other_module.MySchema):  # pyright: ignore[reportGeneralTypeIssues]
+    async def test_with_dep1(dep: other_module.MySchema):  # pyright: ignore[reportInvalidTypeForm]
         return dep
 
     app = create_versioned_app(version_change())

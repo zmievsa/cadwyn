@@ -110,7 +110,7 @@ def test__field_existed_as__extras_are_added(
         .existed_as(
             type=int,
             info=Field(
-                deflolbtt="hewwo",  # pyright: ignore[reportGeneralTypeIssues]
+                deflolbtt="hewwo",  # pyright: ignore[reportCallIssue]
             ),
         ),
     )
@@ -263,7 +263,7 @@ def assert_field_had_changes_apply(
     )
     field_info = model_fields(getattr(v1, model.__name__))["foo"]
     if not PYDANTIC_V2:
-        field_info = field_info.field_info  # pyright: ignore[reportGeneralTypeIssues]
+        field_info = field_info.field_info  # pyright: ignore[reportAttributeAccessIssue]
     if PYDANTIC_V2 and attr in FieldInfo.metadata_lookup:
         # We do this because _PydanticGeneralMetadata does not have a proper `__eq__`
         assert repr(FieldInfo._collect_metadata({attr: attr_value})[0]) in [repr(obj) for obj in field_info.metadata]
@@ -480,7 +480,7 @@ def test__schema_field_didnt_have__using_incorrect_attribute__should_raise_error
         CadwynStructureError,
         match=re.escape("Unknown attribute 'defaults'. Are you sure it's a valid field attribute?"),
     ):
-        schema(BaseModel).field("foo").didnt_have("defaults")  # pyright: ignore[reportGeneralTypeIssues]
+        schema(BaseModel).field("foo").didnt_have("defaults")  # pyright: ignore[reportArgumentType]
 
 
 def test__schema_field_didnt_have__removing_nonexistent_attribute__should_raise_error(
