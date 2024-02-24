@@ -1,11 +1,11 @@
-name: Upload PYPI Package
+name: Release PYPI Package
 
 on:
   release:
     types: [created]
 
 jobs:
-  Publish-To-PyPI:
+  Release:
     runs-on: ubuntu-latest
 
     steps:
