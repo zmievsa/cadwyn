@@ -17,25 +17,30 @@ on:
 jobs:
   Tests:
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
-        python-version: ["3.10", "3.11"]
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.10"
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: windows-latest
+            python-version: "3.10"
+          - os: macos-latest
+            python-version: "3.10"
 
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
 
+      - run: pipx install poetry
+
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'poetry'
 
-      - uses: abatilo/actions-poetry@v2
-        with:
-          poetry-version: 1.7.1
-
-      - name: Install dependencies
-        run: poetry install --all-extras
+      - run: poetry install --all-extras
 
       - name: Test
         run: make ci_supertest
@@ -46,16 +51,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - run: pipx install poetry
+
       - uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          cache: 'poetry'
 
-      - uses: abatilo/actions-poetry@v2
-        with:
-          poetry-version: 1.7.1
-
-      - name: Install dependencies
-        run: poetry install --all-extras
+      - run: poetry install --all-extras
 
       - uses: pre-commit/action@v3.0.0
 
@@ -65,16 +67,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - run: pipx install poetry
+
       - uses: actions/setup-python@v4
         with:
           cache: 'poetry'
 
-      - uses: abatilo/actions-poetry@v2
-        with:
-          poetry-version: 1.7.1
-
-      - name: Install dependencies
-        run: |
+      - run: |
           poetry install --all-extras
           echo "$(poetry env info --path)/bin" >> $GITHUB_PATH
 
