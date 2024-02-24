@@ -5,7 +5,7 @@ on:
     types: [created]
 
 jobs:
-  deploy:
+  Publish-To-PyPI:
     runs-on: ubuntu-latest
 
     steps:
