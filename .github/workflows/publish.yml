@@ -10,21 +10,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-      - name: Install poetry
-        uses: abatilo/actions-poetry@v2
-        with:
-          poetry-version: 1.7.1
-      - name: Install dependencies
-        run: poetry install --all-extras
-      - name: Build
-        run: poetry build
+      - uses: ./.github/actions/setup-python-poetry
       - name: Publish
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: |
           poetry config pypi-token.pypi $PYPI_TOKEN
-          poetry publish
+          poetry publish --build

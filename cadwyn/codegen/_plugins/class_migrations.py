@@ -156,7 +156,7 @@ def _add_field_to_model(
         for attr_name, attr_value in passed_field_attributes.items():
             add_keyword_to_call(attr_name, attr_value, field_call_ast)
         field.value_ast = field_call_ast
-    model.cls.__annotations__[alter_schema_instruction.name] = alter_schema_instruction.type
+    model.annotations[alter_schema_instruction.name] = alter_schema_instruction.type
 
 
 def _change_field_in_model(
@@ -175,7 +175,7 @@ def _change_field_in_model(
 
     field = defined_fields[alter_schema_instruction.name]
     model.fields[alter_schema_instruction.name] = field
-    model.cls.__annotations__[alter_schema_instruction.name] = defined_annotations[alter_schema_instruction.name]
+    model.annotations[alter_schema_instruction.name] = defined_annotations[alter_schema_instruction.name]
 
     annotation_ast, field_call_ast, contype_is_definitely_used = _get_constraint_asts_and_field_call_ast(
         schemas, model, alter_schema_instruction.name, field
@@ -247,7 +247,7 @@ def _change_field(  # noqa: C901
                 f'but it already has type "{field.annotation}"',
             )
         field.annotation = alter_schema_instruction.type
-        model.cls.__annotations__[alter_schema_instruction.name] = alter_schema_instruction.type
+        model.annotations[alter_schema_instruction.name] = alter_schema_instruction.type
         fancy_type_repr = get_fancy_repr(alter_schema_instruction.type)
         field.annotation_ast = ast.parse(fancy_type_repr, mode="eval").body
 
@@ -259,7 +259,7 @@ def _change_field(  # noqa: C901
                 "but it already has that name.",
             )
         model.fields[alter_schema_instruction.new_name] = model.fields.pop(alter_schema_instruction.name)
-        model.cls.__annotations__[alter_schema_instruction.new_name] = model.cls.__annotations__.pop(
+        model.annotations[alter_schema_instruction.new_name] = model.annotations.pop(
             alter_schema_instruction.name,
             defined_annotations[alter_schema_instruction.name],
         )

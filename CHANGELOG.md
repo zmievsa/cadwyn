@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.6.3]
+
+### Fixed
+
+* A rare pydantic 2 bug that caused `BaseModel` annotations to be corrupted when new fields were added to the schema
+
 ## [3.6.2]
 
 ### Fixed

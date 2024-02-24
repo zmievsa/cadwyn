@@ -30,7 +30,11 @@ class PydanticModelWrapper:
     name: str
     fields: dict[_FieldName, PydanticFieldWrapper]
     validators: dict[_FieldName, _ValidatorWrapper]
+    annotations: dict[str, Any] = dataclasses.field(init=False, repr=False)
     _parents: list[Self] | None = dataclasses.field(init=False, default=None)
+
+    def __post_init__(self):
+        self.annotations = self.cls.__annotations__.copy()
 
     def _get_parents(self, schemas: "dict[IdentifierPythonPath, Self]"):
         if self._parents is not None:
@@ -61,9 +65,9 @@ class PydanticModelWrapper:
         annotations = {}
 
         for parent in reversed(self._get_parents(schemas)):
-            annotations |= parent.cls.__annotations__
+            annotations |= parent.annotations
 
-        return annotations | self.cls.__annotations__
+        return annotations | self.annotations
 
 
 @cache
