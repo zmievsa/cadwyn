@@ -38,7 +38,6 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'poetry'
 
       - run: poetry install --all-extras
 
@@ -54,8 +53,6 @@ jobs:
         with:
           poetry-version: 1.7.1
       - uses: actions/setup-python@v4
-        with:
-          cache: 'poetry'
 
       - run: poetry install --all-extras
 
@@ -70,8 +67,6 @@ jobs:
         with:
           poetry-version: 1.7.1
       - uses: actions/setup-python@v4
-        with:
-          cache: 'poetry'
 
       - run: |
           poetry install --all-extras
