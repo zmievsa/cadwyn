@@ -32,9 +32,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
-
-      - run: pipx install poetry
-
+      - uses: abatilo/actions-poetry@v2
+        with:
+          poetry-version: 1.7.1
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
@@ -50,9 +50,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - run: pipx install poetry
-
+      - uses: abatilo/actions-poetry@v2
+        with:
+          poetry-version: 1.7.1
       - uses: actions/setup-python@v4
         with:
           cache: 'poetry'
@@ -66,9 +66,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - run: pipx install poetry
-
+      - uses: abatilo/actions-poetry@v2
+        with:
+          poetry-version: 1.7.1
       - uses: actions/setup-python@v4
         with:
           cache: 'poetry'
