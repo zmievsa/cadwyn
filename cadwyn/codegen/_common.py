@@ -80,7 +80,7 @@ def get_fields_and_validators_from_model(
     fields = model_fields(cls)
     try:
         source = inspect.getsource(cls)
-    except OSError:
+    except OSError:  # pragma: no cover # It is covered by tests but not on every platform
         return (
             {
                 field_name: PydanticFieldWrapper(annotation=field.annotation, init_model_field=field)
