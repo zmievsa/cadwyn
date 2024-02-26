@@ -5,8 +5,8 @@ Production-ready community-driven modern [Stripe-like](https://stripe.com/blog/a
 ---
 
 <p align="center">
-<a href="https://github.com/zmievsa/cadwyn/actions?query=workflow%3ATests+event%3Apush+branch%3Amain" target="_blank">
-    <img src="https://github.com/zmievsa/cadwyn/actions/workflows/test.yaml/badge.svg?branch=main&event=push" alt="Test">
+<a href="https://github.com/zmievsa/cadwyn/actions/workflows/ci.yaml?branch=main&event=push" target="_blank">
+    <img src="https://github.com/zmievsa/cadwyn/actions/workflows/ci.yaml/badge.svg?branch=main&event=push" alt="Test">
 </a>
 <a href="https://codecov.io/gh/ovsyanka83/cadwyn" target="_blank">
     <img src="https://img.shields.io/codecov/c/github/ovsyanka83/cadwyn?color=%2334D058" alt="Coverage">
