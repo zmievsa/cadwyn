@@ -13,6 +13,11 @@ jobs:
     - uses: actions/checkout@v4
     - uses: ./.github/actions/setup-python-poetry
     - run: poetry build
+    - name: Store the distribution packages
+      uses: actions/upload-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
   Publish:
     name: Publish Python 🐍 distribution 📦 to PyPI
     runs-on: ubuntu-latest
@@ -26,5 +31,10 @@ jobs:
     - build
 
     steps:
+      - name: Download all the dists
+        uses: actions/download-artifact@v3
+        with:
+          name: python-package-distributions
+          path: dist/
       - name: Publish distribution 📦 to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
