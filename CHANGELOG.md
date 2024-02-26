@@ -5,6 +5,14 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.6.5]
+
+### Fixed
+
+* When a class-based dependency was used, its dependant was incorrectly generated, causing all affected endpoints to completely stop functioning
+
+## [3.6.4] <!-- Test release -->
+
 ## [3.6.3]
 
 ### Fixed
