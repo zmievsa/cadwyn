@@ -1,6 +1,7 @@
 import functools
 import inspect
 import re
+import types
 import typing
 import warnings
 from collections import defaultdict
@@ -541,20 +542,20 @@ def _modify_callable(
     modify_annotations: Callable[[dict[str, Any]], dict[str, Any]] = lambda a: a,
     modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,
 ):
-    annotation_modifying_decorator = _copy_function(call)
+    annotation_modifying_wrapper = _copy_function(call)
     old_params = inspect.signature(call).parameters
-    callable_annotations = annotation_modifying_decorator.__annotations__
+    callable_annotations = annotation_modifying_wrapper.__annotations__
 
-    annotation_modifying_decorator.__annotations__ = modify_annotations(callable_annotations)
-    annotation_modifying_decorator.__defaults__ = modify_defaults(
+    annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
+    annotation_modifying_wrapper.__defaults__ = modify_defaults(
         tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
     )
-    annotation_modifying_decorator.__signature__ = _generate_signature(
-        annotation_modifying_decorator,
+    annotation_modifying_wrapper.__signature__ = _generate_signature(
+        annotation_modifying_wrapper,
         old_params,
     )
 
-    return annotation_modifying_decorator
+    return annotation_modifying_wrapper
 
 
 def _remake_endpoint_dependencies(route: fastapi.routing.APIRoute):
@@ -718,10 +719,13 @@ def _copy_function(function: _T) -> _T:
     while hasattr(function, "__alt_wrapped__"):
         function = function.__alt_wrapped__
 
+    if not isinstance(function, types.FunctionType):
+        # This means that the callable is actually an instance of a regular class
+        function = function.__call__
     if inspect.iscoroutinefunction(function):
 
         @functools.wraps(function)
-        async def annotation_modifying_decorator(  # pyright: ignore[reportRedeclaration]
+        async def annotation_modifying_wrapper(  # pyright: ignore[reportRedeclaration]
             *args: Any,
             **kwargs: Any,
         ) -> Any:
@@ -730,16 +734,16 @@ def _copy_function(function: _T) -> _T:
     else:
 
         @functools.wraps(function)
-        def annotation_modifying_decorator(
+        def annotation_modifying_wrapper(
             *args: Any,
             **kwargs: Any,
         ) -> Any:
             return function(*args, **kwargs)
 
     # Otherwise it will have the same signature as __wrapped__ due to how inspect module works
-    annotation_modifying_decorator.__alt_wrapped__ = (  # pyright: ignore[reportAttributeAccessIssue]
-        annotation_modifying_decorator.__wrapped__
+    annotation_modifying_wrapper.__alt_wrapped__ = (  # pyright: ignore[reportAttributeAccessIssue]
+        annotation_modifying_wrapper.__wrapped__
     )
-    del annotation_modifying_decorator.__wrapped__
+    del annotation_modifying_wrapper.__wrapped__
 
-    return cast(_T, annotation_modifying_decorator)
+    return cast(_T, annotation_modifying_wrapper)

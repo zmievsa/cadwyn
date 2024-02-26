@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cadwyn"
-version = "3.6.4"
+version = "3.6.5"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -135,6 +135,8 @@ reportCircularImports = true
 [tool.ruff]
 target-version = "py310"
 line-length = 120
+
+[tool.ruff.lint]
 select = [
     "F",       # pyflakes
     "E",       # pycodestyle errors
@@ -211,11 +213,7 @@ ignore = [
     "COM819",  # Checks for the presence of prohibited trailing commas
 ]
 
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "tests/*" = [
     "S",      # ignore bandit security issues in tests
     "B018",   # ignore useless expressions in tests
@@ -231,8 +229,12 @@ indent-style = "space"
     "ERA001", # Found commented-out code (it's not actually commented out. It's just comments)
 ]
 
-[tool.ruff.mccabe]
+[tool.ruff.lint.mccabe]
 max-complexity = 14
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

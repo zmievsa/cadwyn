@@ -12,6 +12,7 @@ import pytest
 from dirty_equals import IsStr
 from fastapi import APIRouter, Body, Depends, UploadFile
 from fastapi.routing import APIRoute
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
@@ -30,6 +31,7 @@ from tests._data.unversioned_schemas import UnversionedSchema3
 from tests.conftest import (
     CreateSimpleVersionedPackages,
     CreateVersionedApp,
+    CreateVersionedClients,
     LatestModuleFor,
     RunSchemaCodegen,
     client,
@@ -1230,3 +1232,27 @@ def test__generate_versioned_routers__two_routers(
     }
     assert endpoints_equal(routers[date(2000, 1, 1)].routes[0].endpoint, test_endpoint2)  # pyright: ignore
     assert endpoints_equal(routers[date(2000, 1, 1)].routes[0].endpoint, test_endpoint2)  # pyright: ignore
+
+
+def test__basic_router_generation__using_http_bearer(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    auth_header_scheme = HTTPBearer(description="Bearer token for authentication")
+
+    def auth(
+        auth_header: Annotated[
+            HTTPAuthorizationCredentials | None,
+            Depends(auth_header_scheme),
+        ],
+    ):
+        raise NotImplementedError
+
+    @router.get("/test", dependencies=[Depends(auth)])
+    async def test():
+        raise NotImplementedError
+
+    client_2000, *_ = create_versioned_clients().values()
+    response = client_2000.get("/test")
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Not authenticated"}
