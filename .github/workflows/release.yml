@@ -5,12 +5,23 @@ on:
     types: [created]
 
 jobs:
-  Release:
+  build:
+    name: Build distribution 📦
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
-      - uses: ./.github/actions/setup-python-poetry
-      - run: poetry build
+    - uses: actions/checkout@v4
+    - uses: ./.github/actions/setup-python-poetry
+    - run: poetry build
+  Publish:
+    name: Publish Python 🐍 distribution 📦 to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
+    needs:
+    - build
+
+    steps:
       - name: Publish distribution 📦 to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
