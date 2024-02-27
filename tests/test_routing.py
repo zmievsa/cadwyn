@@ -13,6 +13,7 @@ from dirty_equals import IsStr
 from fastapi import APIRouter, Body, Depends, UploadFile
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security.http import HTTPBasic
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
@@ -1234,11 +1235,21 @@ def test__generate_versioned_routers__two_routers(
     assert endpoints_equal(routers[date(2000, 1, 1)].routes[0].endpoint, test_endpoint2)  # pyright: ignore
 
 
-def test__basic_router_generation__using_http_bearer(
+class MyHTTPBearer(HTTPBearer):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("security_cls", "expected_status_code"),
+    [(HTTPBearer, 403), (MyHTTPBearer, 403), (HTTPBasic, 401)],
+)
+def test__basic_router_generation__using_http_security_dependency__should_generate_the_required_security_params(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
+    security_cls: type[HTTPBearer] | type[MyHTTPBearer] | type[HTTPBasic],
+    expected_status_code: int,
 ):
-    auth_header_scheme = HTTPBearer(description="Bearer token for authentication")
+    auth_header_scheme = security_cls(description="Bearer token for authentication")
 
     def auth(
         auth_header: Annotated[
@@ -1253,6 +1264,84 @@ def test__basic_router_generation__using_http_bearer(
         raise NotImplementedError
 
     client_2000, *_ = create_versioned_clients().values()
+    dependant = cast(APIRoute, client_2000.app.routes[-1]).dependant
+    assert dependant.dependencies[1].dependencies[0].security_requirements[0].security_scheme is auth_header_scheme
     response = client_2000.get("/test")
-    assert response.status_code == 403
+    assert response.status_code == expected_status_code
     assert response.json() == {"detail": "Not authenticated"}
+
+
+def test__basic_router_generation__using_custom_class_based_dependency__should_migrate_as_usual(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    latest: ModuleType,
+):
+    payloads_dependency_was_called_with = []
+
+    class MyCustomDependency:
+        def __call__(self, my_body: latest.SchemaWithOneIntField):
+            payloads_dependency_was_called_with.append(my_body.dict())
+            return my_body
+
+    @router.post("/test")
+    async def route(dependency: Any = Depends(MyCustomDependency())):
+        return dependency
+
+    client_2000, client_2001 = create_versioned_clients(
+        version_change(schema(latest.SchemaWithOneIntField).field("bar").existed_as(type=str)),
+    ).values()
+
+    response = client_2000.post("/test", json={"foo": 3, "bar": "meaw"})
+    assert response.status_code == 200
+    assert response.json() == {"foo": 3}
+
+    response = client_2001.post("/test", json={"foo": 3})
+    assert response.status_code == 200
+    assert response.json() == {"foo": 3}
+
+    # This is not a nice behavior but this is the way Cadwyn functions: the dependency is going to be called
+    # twice: once by fastapi with solve_dependencies for the old version and once by Cadwyn
+    # with solve_dependencies for the new version.
+    assert payloads_dependency_was_called_with == [
+        {"foo": 3, "bar": "meaw"},  # client_2000
+        {"foo": 3},  # client_2000
+        {"foo": 3},  # client_2001
+        {"foo": 3},  # client_2001
+    ]
+
+
+def test__basic_router_generation__subclass_of_security_class_based_dependency_with_overriden_call__will_not_migrate(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    latest: ModuleType,
+):
+    payloads_dependency_was_called_with = []
+
+    class MyCustomDependency(HTTPBearer):
+        def __call__(self, my_body: latest.SchemaWithOneIntField):
+            payloads_dependency_was_called_with.append(my_body.dict())
+            return my_body
+
+    @router.post("/test")
+    async def route(dependency: Any = Depends(MyCustomDependency())):
+        return dependency
+
+    client_2000, client_2001 = create_versioned_clients(
+        version_change(schema(latest.SchemaWithOneIntField).field("bar").existed_as(type=str)),
+    ).values()
+
+    response = client_2000.post("/test", json={"foo": 3, "bar": "meaw"})
+    assert response.status_code == 200
+    assert response.json() == {"foo": 3}
+
+    response = client_2001.post("/test", json={"foo": 3})
+    assert response.status_code == 200
+    assert response.json() == {"foo": 3}
+
+    # I.e. It was not migrated at all because we do not migrate any security classes that belong to FastAPI
+    assert payloads_dependency_was_called_with == [
+        {"foo": 3},  # client_2000
+        {"foo": 3},  # client_2000
+        {"foo": 3},  # client_2001
+        {"foo": 3},  # client_2001
+    ]

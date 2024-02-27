@@ -24,7 +24,9 @@ from typing import (
     get_origin,
 )
 
+import fastapi.params
 import fastapi.routing
+import fastapi.security.base
 import fastapi.utils
 from fastapi._compat import ModelField as FastAPIModelField
 from fastapi._compat import create_body_model
@@ -472,6 +474,10 @@ class _AnnotationTransformer:
                 )
             return self._change_version_of_type(annotation, version_dir)
         elif callable(annotation):
+            if type(annotation).__module__.startswith(
+                ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
+            ) or isinstance(annotation, fastapi.params.Security | fastapi.security.base.SecurityBase):
+                return annotation
 
             def modifier(annotation: Any):
                 return self._change_version_of_annotations(annotation, version_dir)
@@ -545,7 +551,6 @@ def _modify_callable(
     annotation_modifying_wrapper = _copy_function(call)
     old_params = inspect.signature(call).parameters
     callable_annotations = annotation_modifying_wrapper.__annotations__
-
     annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
     annotation_modifying_wrapper.__defaults__ = modify_defaults(
         tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
@@ -718,8 +723,7 @@ def _get_migrated_routes_by_path(version: Version) -> dict[_EndpointPath, set[_E
 def _copy_function(function: _T) -> _T:
     while hasattr(function, "__alt_wrapped__"):
         function = function.__alt_wrapped__
-
-    if not isinstance(function, types.FunctionType):
+    if not isinstance(function, types.FunctionType | types.MethodType):
         # This means that the callable is actually an instance of a regular class
         function = function.__call__
     if inspect.iscoroutinefunction(function):
