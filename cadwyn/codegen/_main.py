@@ -96,6 +96,7 @@ def _generate_versioned_directories(
     migration_plugins: Collection[MigrationPlugin],
 ):
     for version in versions:
+        print(f"Generating code for version={version.value!s}")  # noqa: T201
         global_context = GlobalCodegenContext(
             current_version=version,
             versions=versions,
@@ -104,6 +105,7 @@ def _generate_versioned_directories(
             modules=modules,
             extra=extra_context,
         )
+
         _generate_directory_for_version(template_package, codegen_plugins, version, global_context)
         for plugin in migration_plugins:
             plugin(global_context)
@@ -117,6 +119,7 @@ def _generate_directory_for_version(
 ):
     template_dir = get_package_path_from_module(template_package)
     version_dir = get_version_dir_path(template_package, version.value)
+
     for (
         _relative_path_to_file,
         template_module,

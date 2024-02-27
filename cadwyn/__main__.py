@@ -5,6 +5,7 @@ from typing import Any
 
 import typer
 
+from cadwyn.exceptions import CadwynError
 from cadwyn.structure.versions import VersionBundle
 
 app = typer.Typer(
@@ -22,8 +23,8 @@ def version_callback(value: bool):
         raise typer.Exit
 
 
-@app.command(name="generate-code-for-versioned-packages")
-def generate_versioned_packages(
+@app.command(name="generate-code-for-versioned-packages", hidden=True)
+def deprecated_generate_versioned_packages(
     path_to_template_package: str = typer.Argument(
         ...,
         help=(
@@ -56,6 +57,39 @@ def generate_versioned_packages(
         template_package,
         version_bundle,
         ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
+    )
+
+
+@app.command(
+    name="codegen",
+    help=(
+        "For each version in the version bundle, generate a versioned package based on the "
+        "`latest_schema_package` package"
+    ),
+    short_help="Generate code for all versions of schemas",
+)
+def generate_versioned_packages(
+    full_path_to_version_bundle: str = typer.Argument(
+        ...,
+        help="The python path to the version bundle. Format: 'path.to.version_bundle:my_version_bundle_var'",
+        show_default=False,
+    ),
+) -> None:
+    from .codegen._main import generate_code_for_versioned_packages
+
+    sys.path.append(str(Path.cwd()))
+    path_to_version_bundle, version_bundle_variable_name = full_path_to_version_bundle.split(":")
+    version_bundle_module = importlib.import_module(path_to_version_bundle)
+    possibly_version_bundle = getattr(version_bundle_module, version_bundle_variable_name)
+    version_bundle = _get_version_bundle(possibly_version_bundle)
+
+    if version_bundle.latest_schemas_package is None:  # pragma: no cover
+        raise CadwynError("VersionBundle requires a 'latest_schemas_package' argument to generate schemas.")
+
+    return generate_code_for_versioned_packages(
+        version_bundle.latest_schemas_package,
+        version_bundle,
+        ignore_coverage_for_latest_aliases=True,
     )
 
 

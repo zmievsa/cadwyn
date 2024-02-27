@@ -36,7 +36,7 @@ def _resources(temp_data_dir, latest_with_empty_classes: _FakeModuleWithEmptyCla
     version_bundle = VersionBundle(
         Version(date(2001, 1, 1), VersionChange1),
         Version(date(2000, 1, 1)),
-        api_version_var=api_version_var,
+        latest_schemas_package=latest,
     )
 
 
@@ -84,6 +84,26 @@ def test__cli_codegen(
     result = CliRunner().invoke(
         cadwyn_typer_app,
         [
+            "codegen",
+            temp_data_package_path + f".my_cli:{variable_name_to_use}",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+
+    _assert_codegen_migrations_were_applied(temp_data_package_path)
+
+
+@pytest.mark.parametrize("variable_name_to_use", ["version_bundle", "callable_that_returns_version_bundle"])
+def test__deprecated_cli_codegen_should_raise_deprecation_warning(
+    temp_data_package_path: str,
+    variable_name_to_use: str,
+    latest_with_empty_classes,
+    latest_package_path,
+    data_package_path,
+) -> None:
+    result = CliRunner().invoke(
+        cadwyn_typer_app,
+        [
             "generate-code-for-versioned-packages",
             latest_package_path,
             temp_data_package_path + f".my_cli:{variable_name_to_use}",
@@ -98,7 +118,7 @@ def test__cli_codegen(
     "variable_name_to_use",
     ["invalid_callable_that_has_arguments", "invalid_callable_that_returns_non_version_bundle", "VersionChange1"],
 )
-def test__cli_codegen__with_invalid_version_bundle_arg__should_raise_type_error(
+def test__deprecated_cli_codegen__with_invalid_version_bundle_arg__should_raise_type_error(
     temp_data_package_path,
     latest_package_path: str,
     variable_name_to_use: str,

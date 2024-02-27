@@ -68,15 +68,10 @@ version_bundle = VersionBundle(
 
 ### Generating versioned schemas
 
-Now let's generate the only version of our schemas -- the one we created in the [first step](#a-dummy-setup).  We'll need the our API versions and the package representing the latest versions of our schemas.
+Now let's generate the only version of our schemas -- the one we created in the [first step](#a-dummy-setup):
 
-```python
-# generate_schemas.py
-from data import latest
-from versions import version_bundle
-from cadwyn import generate_code_for_versioned_packages
-
-generate_code_for_versioned_packages(latest, version_bundle)
+```bash
+cadwyn codegen versions:version_bundle
 ```
 
 **WARNING** Cadwyn doesn't edit your imports when generating schemas so if you make any imports from versioned code to versioned code, I would suggest using [relative imports](https://docs.python.org/3/reference/import.html#package-relative-imports) to make sure that they will still work as expected after code generation.
