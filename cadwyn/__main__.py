@@ -1,5 +1,6 @@
 import importlib
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,12 @@ def deprecated_generate_versioned_packages(
     ),
 ) -> None:
     """For each version in the version bundle, generate a versioned package based on the template package"""
+    warnings.warn(
+        "`cadwyn generate-code-for-versioned-packages` is deprecated. Please, use `cadwyn codegen` instead",
+        DeprecationWarning,
+        stacklevel=1,
+    )
+
     from .codegen._main import generate_code_for_versioned_packages
 
     sys.path.append(str(Path.cwd()))

@@ -101,14 +101,15 @@ def test__deprecated_cli_codegen_should_raise_deprecation_warning(
     latest_package_path,
     data_package_path,
 ) -> None:
-    result = CliRunner().invoke(
-        cadwyn_typer_app,
-        [
-            "generate-code-for-versioned-packages",
-            latest_package_path,
-            temp_data_package_path + f".my_cli:{variable_name_to_use}",
-        ],
-    )
+    with pytest.warns(DeprecationWarning, match="`cadwyn generate-code-for-versioned-packages` is deprecated"):
+        result = CliRunner().invoke(
+            cadwyn_typer_app,
+            [
+                "generate-code-for-versioned-packages",
+                latest_package_path,
+                temp_data_package_path + f".my_cli:{variable_name_to_use}",
+            ],
+        )
     assert result.exit_code == 0, result.stdout
 
     _assert_codegen_migrations_were_applied(temp_data_package_path)
