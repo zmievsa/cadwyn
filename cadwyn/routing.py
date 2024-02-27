@@ -629,9 +629,9 @@ def _apply_endpoint_had_instruction(
                 new_path_params = set(re.findall("{(.*?)}", attr))
                 if new_path_params != original_path_params:
                     raise RouterPathParamsModifiedError(
-                        f'When altering the path of "{original_route.path}" in "{version_change.__name__}",'
-                        " you have tried to change its path params "
-                        f'from "{list(original_route.methods)}" to "{list(new_path_params)}". It is not allowed to '
+                        f'When altering the path of "{list(original_route.methods)} {original_route.path}" '
+                        f'in "{version_change.__name__}", you have tried to change its path params '
+                        f'from "{list(original_path_params)}" to "{list(new_path_params)}". It is not allowed to '
                         "change the path params of a route because the endpoint was created to handle the old path "
                         "params. In fact, there is no need to change them because the change of path params is "
                         "not a breaking change. If you really need to change the path params, you should create a "

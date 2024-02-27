@@ -5,6 +5,16 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.7.1]
+
+### Fixed
+
+* Error message for changing path params of an endpoint in an incompatible manner which listed methods instead of path params
+
+### Changed
+
+* Deprecated `cadwyn generate-code-for-versioned-packages` and added `cadwyn codegen` instead. It doesn't require `template_package` argument anymore and does not have the `ignore_coverage_for_latest_aliases` argument as we plan to remove this feature in the future. So it only requires `version_bundle`.
+
 ## [3.7.0]
 
 ### Changed
