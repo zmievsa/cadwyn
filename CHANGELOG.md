@@ -5,6 +5,11 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Added
+
+* Discord status badge in README
+* Logos to existing status badges in README
+
 ## [3.7.1]
 
 ### Fixed
