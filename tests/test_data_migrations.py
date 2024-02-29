@@ -19,7 +19,7 @@ from starlette.responses import StreamingResponse
 
 from cadwyn import VersionedAPIRouter, generate_code_for_versioned_packages
 from cadwyn._compat import PYDANTIC_V2, model_dump
-from cadwyn.exceptions import CadwynError, CadwynLatestRequestValidationError, CadwynStructureError
+from cadwyn.exceptions import CadwynError, CadwynLatestRequestValidationError
 from cadwyn.routing import InternalRepresentationOf
 from cadwyn.structure import (
     VersionChange,
@@ -633,7 +633,7 @@ class TestResponseMigrations:
         )
         assert resp.status_code == 200
 
-    def test__fastapi_response_migration__response_is_streaming_response_and_there_is_a_migration(
+    def test__fastapi_response_migration__streaming_response_and_there_is_a_migration(
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
@@ -926,52 +926,26 @@ class TestHowAndWhenMigrationsApply:
 
 def test__invalid_path_migration_syntax():
     with pytest.raises(
-        ValueError,
+        TypeError,
         match=re.escape("If path was provided as a first argument, methods must be provided as a second argument"),
     ):
         convert_request_to_next_version_for("/test")  # pyright: ignore[reportArgumentType]
 
 
-def test__invalid_schema_migration_syntax(latest_module):
+def test__schema_migration_syntax__with_methods_after_a_schema__should_raise_error(latest_module):
     with pytest.raises(
-        ValueError,
-        match=re.escape("If schema was provided as a first argument, methods argument should not be provided"),
+        TypeError,
+        match=re.escape("If schema was provided as a first argument, all other arguments must also be schemas"),
     ):
         convert_request_to_next_version_for(latest_module.AnyRequestSchema, ["POST"])
 
 
-def test__defining_two_migrations_for_the_same_request(latest_module):
+def test__schema_migration_syntax__with_additional_schemas_after_methods__should_raise_error(latest_module):
     with pytest.raises(
-        CadwynStructureError,
-        match=re.escape('There already exists a request migration for "AnyRequestSchema" in "MyVersionChange".'),
+        TypeError,
+        match=re.escape("If path was provided as a first argument, then additional schemas cannot be added"),
     ):
-
-        @convert_request_to_next_version_for(latest_module.AnyRequestSchema)
-        def migration1(request: RequestInfo):
-            raise NotImplementedError
-
-        @convert_request_to_next_version_for(latest_module.AnyRequestSchema)
-        def migration2(request: RequestInfo):
-            raise NotImplementedError
-
-        version_change(migration1=migration1, migration2=migration2)
-
-
-def test__defining_two_migrations_for_the_same_response(latest_module):
-    with pytest.raises(
-        CadwynStructureError,
-        match=re.escape('There already exists a response migration for "AnyResponseSchema" in "MyVersionChange".'),
-    ):
-
-        @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
-        def migration1(response: ResponseInfo):
-            raise NotImplementedError
-
-        @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
-        def migration2(response: ResponseInfo):
-            raise NotImplementedError
-
-        version_change(migration1=migration1, migration2=migration2)
+        convert_request_to_next_version_for("/v1/test", ["POST"], latest_module.AnyRequestSchema)  # pyright: ignore[reportArgumentType]
 
 
 def test__uploadfile_can_work(
@@ -1221,3 +1195,69 @@ def test__manual_response_migrations__without_attached_latest_package__should_ra
     version_bundle = VersionBundle(Version(date(2000, 1, 1)))
     with pytest.raises(CadwynError):
         version_bundle.migrate_response_body(BaseModel, latest_body={"id": "hewwo"}, version=date(2000, 1, 1))
+
+
+def test__request_and_response_migrations__with_multiple_schemas_in_converters(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    latest_module_for: LatestModuleFor,
+) -> None:
+    latest = latest_module_for(
+        """
+    from pydantic import BaseModel
+
+    class Request_1(BaseModel):
+        i: list[str]
+
+    class Response_1(BaseModel):
+        i: list[str]
+
+    class Request_2(BaseModel):
+        i: list[str]
+
+    class Response_2(BaseModel):
+        i: list[str]
+
+    class Request_3(BaseModel):
+        i: list[str]
+
+    class Response_3(BaseModel):
+        i: list[str]
+
+    """
+    )
+
+    @router.post("/test_1")
+    async def endpoint_1(body: latest.Request_1) -> latest.Response_1:
+        body.i.append("test_1")
+        return body
+
+    @router.post("/test_2")
+    async def endpoint_2(body: latest.Request_2) -> latest.Response_2:
+        body.i.append("test_2")
+        return body
+
+    @router.post("/test_3")
+    async def endpoint_3(body: latest.Request_3) -> latest.Response_3:
+        body.i.append("test_3")
+        return body
+
+    @convert_request_to_next_version_for(latest.Request_1, latest.Request_2, latest.Request_3)
+    def request_converter(request: RequestInfo):
+        request.body["i"].append("request_migration")
+
+    @convert_response_to_previous_version_for(latest.Response_1, latest.Response_2, latest.Response_3)
+    def response_converter(response: ResponseInfo):
+        response.body["i"].append("response_migration")
+
+    clients = create_versioned_clients(version_change(req=request_converter, resp=response_converter))
+    client_2000, client_2001 = clients.values()
+
+    for endpoint in ("test_1", "test_2", "test_3"):
+        resp_2000 = client_2000.post(f"/{endpoint}", json={"i": ["original_request"]})
+        assert resp_2000.status_code == 200
+        assert resp_2000.json() == {"i": ["original_request", "request_migration", endpoint, "response_migration"]}
+
+        resp_2001 = client_2001.post(f"/{endpoint}", json={"i": ["original_request"]})
+        assert resp_2001.status_code == 200
+        assert resp_2001.json() == {"i": ["original_request", endpoint]}
