@@ -592,6 +592,10 @@ class VersionBundle:
                     detail = response_info.body["detail"]
                 else:
                     detail = response_info.body
+                # It makes more sense to re-calculate content length because the previously calculated one
+                # might slightly differ.
+                del response_info.headers["content-length"]
+
                 raise HTTPException(
                     status_code=response_info.status_code,
                     detail=detail,
