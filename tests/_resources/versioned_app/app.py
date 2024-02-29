@@ -8,10 +8,10 @@ from fastapi.testclient import TestClient
 
 from cadwyn import Cadwyn
 from cadwyn.structure.versions import Version, VersionBundle
-from tests.verselect._resources.utils import BASIC_HEADERS
-from tests.verselect._resources.versioned_app.v2021_01_01 import router as v2021_01_01_router
-from tests.verselect._resources.versioned_app.v2022_01_02 import router as v2022_01_02_router
-from tests.verselect._resources.versioned_app.webhooks import router as webhooks_router
+from tests._resources.utils import BASIC_HEADERS
+from tests._resources.versioned_app.v2021_01_01 import router as v2021_01_01_router
+from tests._resources.versioned_app.v2022_01_02 import router as v2022_01_02_router
+from tests._resources.versioned_app.webhooks import router as webhooks_router
 
 
 @asynccontextmanager

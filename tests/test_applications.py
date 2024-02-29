@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 
 from cadwyn import Cadwyn
 from cadwyn.structure.versions import Version, VersionBundle
-from tests.verselect._resources.utils import BASIC_HEADERS, DEFAULT_API_VERSION
-from tests.verselect._resources.versioned_app.app import (
+from tests._resources.utils import BASIC_HEADERS, DEFAULT_API_VERSION
+from tests._resources.versioned_app.app import (
     client_without_headers,
     client_without_headers_and_with_custom_api_version_var,
     lifespan,
