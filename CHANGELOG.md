@@ -5,11 +5,14 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.8.0]
+
 ### Added
 
 * Discord status badge in README
 * Logos to existing status badges in README
 * An ability to specify multiple schemas when using `convert_request_to_next_version_for` and `convert_response_to_next_version_for` to be able to migrate multiple types of schemas using the same converter
+* Redoc support
 
 ### Removed
 
@@ -17,7 +20,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-* h11._util.LocalProtocolError when raising `HTTPException(status_code=500)`.
+* `h11._util.LocalProtocolError` when raising `HTTPException(status_code=500)`.
 
 ## [3.7.1]
 

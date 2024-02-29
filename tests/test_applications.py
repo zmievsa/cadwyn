@@ -31,10 +31,11 @@ def test__header_routing_fastapi_init__openapi_passing__nulls_prevent_openapi_ro
     assert [cast(APIRoute, r).path for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16)))).routes] == [
         "/openapi.json",
         "/docs",
+        "/redoc",
     ]
     assert [
         cast(APIRoute, r).path
-        for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), docs_url=None).routes
+        for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), docs_url=None, redoc_url=None).routes
     ] == [
         "/openapi.json",
     ]
@@ -104,10 +105,19 @@ def test__get_docs__all_versions():
     assert "http://testserver/docs?version=2021-01-01" in resp.text
     assert "http://testserver/docs?version=unversioned" in resp.text
 
+    resp = client_without_headers.get("/redoc")
+    assert resp.status_code == 200
+    assert "http://testserver/redoc?version=2022-02-02" in resp.text
+    assert "http://testserver/redoc?version=2021-01-01" in resp.text
+    assert "http://testserver/redoc?version=unversioned" in resp.text
+
 
 # I wish we could check it properly but it's a dynamic page and I'm not in the mood of adding selenium
 def test__get_docs__specific_version():
     resp = client_without_headers.get("/docs?version=2022-01-01")
+    assert resp.status_code == 200
+
+    resp = client_without_headers.get("/redoc?version=2022-01-01")
     assert resp.status_code == 200
 
 
