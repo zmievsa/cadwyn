@@ -9,9 +9,8 @@ from contextvars import ContextVar
 from enum import Enum
 from pathlib import Path
 from types import ModuleType
-from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, cast
+from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
 
-import fastapi
 from fastapi import HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
@@ -360,6 +359,7 @@ class VersionBundle:
         request_info: RequestInfo,
         current_version: VersionDate,
         latest_route: APIRoute,
+        exit_stack: AsyncExitStack,
     ) -> dict[str, Any]:
         method = request.method
         for v in reversed(self.versions):
@@ -375,27 +375,20 @@ class VersionBundle:
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
-        async with AsyncExitStack() as async_exit_stack:
-            # FastAPI has made a nasty breaking change in that version by adding a required argument
-            # without an optional counterpart.
-            if fastapi.__version__ >= "0.106.0":
-                kwargs: dict[str, Any] = {"async_exit_stack": async_exit_stack}
-            else:  # pragma: no cover
-                kwargs: dict[str, Any] = {}
-            dependencies, errors, _, _, _ = await solve_dependencies(
-                request=request,
-                response=response,
-                dependant=latest_dependant_with_internal_schema,
-                body=request_info.body,
-                dependency_overrides_provider=latest_route.dependency_overrides_provider,
-                **kwargs,
+
+        dependencies, errors, _, _, _ = await solve_dependencies(
+            request=request,
+            response=response,
+            dependant=latest_dependant_with_internal_schema,
+            body=request_info.body,
+            dependency_overrides_provider=latest_route.dependency_overrides_provider,
+            async_exit_stack=exit_stack,
+        )
+        if errors:
+            raise CadwynLatestRequestValidationError(
+                _normalize_errors(errors), body=request_info.body, version=current_version
             )
-            if errors:
-                raise CadwynLatestRequestValidationError(
-                    _normalize_errors(errors), body=request_info.body, version=current_version
-                )
-            return dependencies
-        raise NotImplementedError("This code should not be reachable. If it was reached -- it's a bug.")
+        return dependencies
 
     def _migrate_response(
         self,
@@ -455,30 +448,43 @@ class VersionBundle:
         def wrapper(endpoint: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
             @functools.wraps(endpoint)
             async def decorator(*args: Any, **kwargs: Any) -> _R:
-                request: FastapiRequest = kwargs[request_param_name]
-                response: FastapiResponse = kwargs[response_param_name]
-                method = request.method
-                kwargs = await self._convert_endpoint_kwargs_to_version(
-                    template_module_body_field_for_request_migrations,
-                    module_body_field_name,
-                    # Dependant must be from the version of the finally migrated request, not the version of endpoint
-                    dependant_for_request_migrations,
-                    request_param_name,
-                    kwargs,
-                    response,
-                    route,
-                    latest_route,
-                )
+                request_param: FastapiRequest = kwargs[request_param_name]
+                response_param: FastapiResponse = kwargs[response_param_name]
+                method = request_param.method
+                response = Sentinel
+                async with AsyncExitStack() as exit_stack:
+                    kwargs = await self._convert_endpoint_kwargs_to_version(
+                        template_module_body_field_for_request_migrations,
+                        module_body_field_name,
+                        # Dependant must be from the version of the finally migrated request,
+                        # not the version of endpoint
+                        dependant_for_request_migrations,
+                        request_param_name,
+                        kwargs,
+                        response_param,
+                        route,
+                        latest_route,
+                        exit_stack,
+                    )
 
-                return await self._convert_endpoint_response_to_version(
-                    endpoint,
-                    latest_route,
-                    route,
-                    method,
-                    response_param_name,
-                    kwargs,
-                    response,
-                )
+                    response = await self._convert_endpoint_response_to_version(
+                        endpoint,
+                        latest_route,
+                        route,
+                        method,
+                        response_param_name,
+                        kwargs,
+                        response_param,
+                    )
+                if response is Sentinel:  # pragma: no cover
+                    raise CadwynError(
+                        "No response object was returned. There's a high chance that the "
+                        "application code is raising an exception and a dependency with yield "
+                        "has a block with a bare except, or a block with except Exception, "
+                        "and is not raising the exception again. Read more about it in the "
+                        "docs: https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/#dependencies-with-yield-and-except"
+                    )
+                return response
 
             if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _CADWYN_REQUEST_PARAM_NAME, FastapiRequest)
@@ -601,6 +607,7 @@ class VersionBundle:
         response: FastapiResponse,
         route: APIRoute,
         latest_route: APIRoute,
+        exit_stack: AsyncExitStack,
     ) -> dict[str, Any]:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
@@ -630,7 +637,7 @@ class VersionBundle:
                     body = body["__root__"]
         else:
             # This is for requests without body or with complex body such as form or file
-            body = await _get_body(request, route.body_field)
+            body = await _get_body(request, route.body_field, exit_stack)
 
         request_info = RequestInfo(request, body)
         new_kwargs = await self._migrate_request(
@@ -642,6 +649,7 @@ class VersionBundle:
             request_info,
             api_version,
             latest_route,
+            exit_stack=exit_stack,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:
@@ -651,15 +659,16 @@ class VersionBundle:
 
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
-async def _get_body(request: FastapiRequest, body_field: ModelField | None):  # pragma: no cover # This is from fastapi
+async def _get_body(
+    request: FastapiRequest, body_field: ModelField | None, exit_stack: AsyncExitStack
+):  # pragma: no cover # This is from fastapi
     is_body_form = body_field and isinstance(body_field.field_info, params.Form)
     try:
         body: Any = None
         if body_field:
             if is_body_form:
                 body = await request.form()
-                stack = cast(AsyncExitStack, request.scope.get("fastapi_astack"))
-                stack.push_async_callback(body.close)
+                exit_stack.push_async_callback(body.close)
             else:
                 body_bytes = await request.body()
                 if body_bytes:

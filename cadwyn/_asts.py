@@ -39,8 +39,6 @@ _BaseGenericAlias = type(List[int]).mro()[1]  # noqa: UP006
 # instead of typing._GenericAlias.
 GenericAliasUnion = GenericAlias | _BaseGenericAlias
 
-_LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
-
 
 def get_fancy_repr(value: Any):
     if PYDANTIC_V2:
