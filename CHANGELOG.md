@@ -9,6 +9,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 * Discord status badge in README
 * Logos to existing status badges in README
+* An ability to specify multiple schemas when using `convert_request_to_next_version_for` and `convert_response_to_next_version_for` to be able to migrate multiple types of schemas using the same converter
 
 ## [3.7.1]
 

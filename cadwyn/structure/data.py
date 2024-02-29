@@ -97,7 +97,7 @@ class _BaseAlterRequestInstruction(_AlterDataInstruction):
 
 @dataclass
 class AlterRequestBySchemaInstruction(_BaseAlterRequestInstruction):
-    schema: Any
+    schemas: tuple[Any, ...]
 
 
 @dataclass
@@ -107,7 +107,9 @@ class AlterRequestByPathInstruction(_BaseAlterRequestInstruction):
 
 
 @overload
-def convert_request_to_next_version_for(schema: type, /) -> "type[staticmethod[_P, None]]":
+def convert_request_to_next_version_for(
+    first_schema: type, /, *additional_schemas: type
+) -> "type[staticmethod[_P, None]]":
     ...
 
 
@@ -118,21 +120,26 @@ def convert_request_to_next_version_for(path: str, methods: list[str], /) -> "ty
 
 def convert_request_to_next_version_for(
     schema_or_path: type | str,
-    methods: list[str] | None = None,
+    methods_or_second_schema: list[str] | None | type = None,
     /,
+    *additional_schemas: type,
 ) -> "type[staticmethod[_P, None]]":
-    _validate_decorator_args(schema_or_path, methods)
+    _validate_decorator_args(schema_or_path, methods_or_second_schema, additional_schemas)
 
     def decorator(transformer: Callable[[RequestInfo], None]) -> Any:
         if isinstance(schema_or_path, str):
             return AlterRequestByPathInstruction(
                 path=schema_or_path,
-                methods=set(cast(list, methods)),
+                methods=set(cast(list, methods_or_second_schema)),
                 transformer=transformer,
             )
         else:
+            if methods_or_second_schema is None:
+                schemas = (schema_or_path,)
+            else:
+                schemas = (schema_or_path, methods_or_second_schema, *additional_schemas)
             return AlterRequestBySchemaInstruction(
-                schema=schema_or_path,
+                schemas=schemas,
                 transformer=transformer,
             )
 
@@ -152,7 +159,7 @@ class _BaseAlterResponseInstruction(_AlterDataInstruction):
 
 @dataclass
 class AlterResponseBySchemaInstruction(_BaseAlterResponseInstruction):
-    schema: Any
+    schemas: tuple[Any, ...]
 
 
 @dataclass
@@ -163,9 +170,9 @@ class AlterResponseByPathInstruction(_BaseAlterResponseInstruction):
 
 @overload
 def convert_response_to_previous_version_for(
-    schema: type,
+    first_schema: type,
     /,
-    *,
+    *schemas: type,
     migrate_http_errors: bool = False,
 ) -> "type[staticmethod[_P, None]]":
     ...
@@ -184,25 +191,29 @@ def convert_response_to_previous_version_for(
 
 def convert_response_to_previous_version_for(
     schema_or_path: type | str,
-    methods: list[str] | None = None,
+    methods_or_second_schema: list[str] | type | None = None,
     /,
-    *,
+    *additional_schemas: type,
     migrate_http_errors: bool = False,
 ) -> "type[staticmethod[_P, None]]":
-    _validate_decorator_args(schema_or_path, methods)
+    _validate_decorator_args(schema_or_path, methods_or_second_schema, additional_schemas)
 
     def decorator(transformer: Callable[[ResponseInfo], None]) -> Any:
         if isinstance(schema_or_path, str):
             # The validation above checks that methods is not None
             return AlterResponseByPathInstruction(
                 path=schema_or_path,
-                methods=set(cast(list, methods)),
+                methods=set(cast(list, methods_or_second_schema)),
                 transformer=transformer,
                 migrate_http_errors=migrate_http_errors,
             )
         else:
+            if methods_or_second_schema is None:
+                schemas = (schema_or_path,)
+            else:
+                schemas = (schema_or_path, methods_or_second_schema, *additional_schemas)
             return AlterResponseBySchemaInstruction(
-                schema=schema_or_path,
+                schemas=schemas,
                 transformer=transformer,
                 migrate_http_errors=migrate_http_errors,
             )
@@ -210,10 +221,14 @@ def convert_response_to_previous_version_for(
     return decorator  # pyright: ignore[reportReturnType]
 
 
-def _validate_decorator_args(schema_or_path: type | str, methods: list[str] | None):
+def _validate_decorator_args(
+    schema_or_path: type | str, methods_or_second_schema: list[str] | type | None, additional_schemas: tuple[type, ...]
+):
     if isinstance(schema_or_path, str):
-        if methods is None:
-            raise ValueError("If path was provided as a first argument, methods must be provided as a second argument")
+        if not isinstance(methods_or_second_schema, list):
+            raise TypeError("If path was provided as a first argument, methods must be provided as a second argument")
+        if additional_schemas:
+            raise TypeError("If path was provided as a first argument, then additional schemas cannot be added")
 
-    elif methods is not None:
-        raise ValueError("If schema was provided as a first argument, methods argument should not be provided")
+    elif methods_or_second_schema is not None and not isinstance(methods_or_second_schema, type):
+        raise TypeError("If schema was provided as a first argument, all other arguments must also be schemas")

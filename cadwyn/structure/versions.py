@@ -74,9 +74,11 @@ class VersionChange:
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
     alter_module_instructions: ClassVar[list[AlterModuleInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[list[AlterEndpointSubInstruction]] = Sentinel
-    alter_request_by_schema_instructions: ClassVar[dict[type[BaseModel], AlterRequestBySchemaInstruction]] = Sentinel
+    alter_request_by_schema_instructions: ClassVar[
+        dict[type[BaseModel], list[AlterRequestBySchemaInstruction]]
+    ] = Sentinel
     alter_request_by_path_instructions: ClassVar[dict[str, list[AlterRequestByPathInstruction]]] = Sentinel
-    alter_response_by_schema_instructions: ClassVar[dict[type, AlterResponseBySchemaInstruction]] = Sentinel
+    alter_response_by_schema_instructions: ClassVar[dict[type, list[AlterResponseBySchemaInstruction]]] = Sentinel
     alter_response_by_path_instructions: ClassVar[dict[str, list[AlterResponseByPathInstruction]]] = Sentinel
     _bound_version_bundle: "VersionBundle | None"
 
@@ -95,21 +97,13 @@ class VersionChange:
     def _extract_body_instructions_into_correct_containers(cls):
         for instruction in cls.__dict__.values():
             if isinstance(instruction, AlterRequestBySchemaInstruction):
-                if instruction.schema in cls.alter_request_by_schema_instructions:
-                    raise CadwynStructureError(
-                        f'There already exists a request migration for "{instruction.schema.__name__}" '
-                        f'in "{cls.__name__}".',
-                    )
-                cls.alter_request_by_schema_instructions[instruction.schema] = instruction
+                for schema in instruction.schemas:
+                    cls.alter_request_by_schema_instructions[schema].append(instruction)
             elif isinstance(instruction, AlterRequestByPathInstruction):
                 cls.alter_request_by_path_instructions[instruction.path].append(instruction)
             elif isinstance(instruction, AlterResponseBySchemaInstruction):
-                if instruction.schema in cls.alter_response_by_schema_instructions:
-                    raise CadwynStructureError(
-                        f'There already exists a response migration for "{instruction.schema.__name__}" '
-                        f'in "{cls.__name__}".',
-                    )
-                cls.alter_response_by_schema_instructions[instruction.schema] = instruction
+                for schema in instruction.schemas:
+                    cls.alter_response_by_schema_instructions[schema].append(instruction)
             elif isinstance(instruction, AlterResponseByPathInstruction):
                 cls.alter_response_by_path_instructions[instruction.path].append(instruction)
 
@@ -119,9 +113,9 @@ class VersionChange:
         cls.alter_enum_instructions = []
         cls.alter_module_instructions = []
         cls.alter_endpoint_instructions = []
-        cls.alter_request_by_schema_instructions = {}
+        cls.alter_request_by_schema_instructions = defaultdict(list)
         cls.alter_request_by_path_instructions = defaultdict(list)
-        cls.alter_response_by_schema_instructions = {}
+        cls.alter_response_by_schema_instructions = defaultdict(list)
         cls.alter_response_by_path_instructions = defaultdict(list)
         for alter_instruction in cls.instructions_to_migrate_to_previous_version:
             if isinstance(alter_instruction, SchemaHadInstruction | AlterSchemaSubInstruction):
@@ -272,13 +266,21 @@ class VersionBundle:
 
     @functools.cached_property
     def versioned_schemas(self) -> dict[IdentifierPythonPath, type[VersionedModel]]:
-        return {
+        altered_schemas = {
             get_cls_pythonpath(instruction.schema): instruction.schema
             for version in self.versions
             for version_change in version.version_changes
             for instruction in list(version_change.alter_schema_instructions)
-            + list(version_change.alter_request_by_schema_instructions.values())
         }
+
+        migrated_schemas = {
+            get_cls_pythonpath(schema): schema
+            for version in self.versions
+            for version_change in version.version_changes
+            for schema in list(version_change.alter_request_by_schema_instructions.keys())
+        }
+
+        return altered_schemas | migrated_schemas
 
     @functools.cached_property
     def versioned_enums(self) -> dict[IdentifierPythonPath, type[Enum]]:
@@ -367,7 +369,8 @@ class VersionBundle:
                 continue
             for version_change in v.version_changes:
                 if body_type is not None and body_type in version_change.alter_request_by_schema_instructions:
-                    version_change.alter_request_by_schema_instructions[body_type](request_info)
+                    for instruction in version_change.alter_request_by_schema_instructions[body_type]:
+                        instruction(request_info)
                 if path in version_change.alter_request_by_path_instructions:
                     for instruction in version_change.alter_request_by_path_instructions[path]:
                         if method in instruction.methods:
@@ -426,7 +429,7 @@ class VersionBundle:
                     latest_response_model
                     and latest_response_model in version_change.alter_response_by_schema_instructions
                 ):
-                    migrations_to_apply.append(
+                    migrations_to_apply.extend(
                         version_change.alter_response_by_schema_instructions[latest_response_model]
                     )
 
