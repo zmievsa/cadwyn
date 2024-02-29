@@ -15,6 +15,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 * Dependency from verselect. Now it is included as a part of Cadwyn
 
+### Fixed
+
+* h11._util.LocalProtocolError when raising `HTTPException(status_code=500)`.
+
 ## [3.7.1]
 
 ### Fixed
