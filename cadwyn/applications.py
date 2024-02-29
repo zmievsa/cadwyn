@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from fastapi import APIRouter, FastAPI, HTTPException, routing
 from fastapi.datastructures import Default
-from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.params import Depends
 from fastapi.templating import Jinja2Templates
@@ -132,6 +132,7 @@ class Cadwyn(FastAPI):
         self.swaggers = {}
         router = APIRouter(routes=routes)
         self.docs_url = docs_url
+        self.redoc_url = redoc_url
         self.openapi_url = openapi_url
 
         if self.openapi_url is not None:
@@ -144,6 +145,12 @@ class Cadwyn(FastAPI):
                 router.add_route(
                     path=self.docs_url,
                     endpoint=self.swagger_dashboard,
+                    include_in_schema=False,
+                )
+            if self.redoc_url is not None:
+                router.add_route(
+                    path=self.redoc_url,
+                    endpoint=self.redoc_dashboard,
                     include_in_schema=False,
                 )
         self.add_unversioned_routers(router)
@@ -217,19 +224,25 @@ class Cadwyn(FastAPI):
         return JSONResponse(openapi_of_a_version)
 
     async def swagger_dashboard(self, req: Request) -> Response:
+        return self._render_docs_dashboard_or_concrete_verssion(get_swagger_ui_html, req, cast(str, self.docs_url))
+
+    async def redoc_dashboard(self, req: Request) -> Response:
+        return self._render_docs_dashboard_or_concrete_verssion(get_redoc_html, req, cast(str, self.redoc_url))
+
+    def _render_docs_dashboard_or_concrete_verssion(self, render_docs: Callable[..., Any], req: Request, docs_url: str):
         base_url = str(req.base_url).rstrip("/")
         version = req.query_params.get("version")
+
         if version:
-            return get_swagger_ui_html(
+            return render_docs(
                 openapi_url=f"{self.openapi_url}?version={version}",
                 title="Swagger UI",
             )
-
         return self._templates.TemplateResponse(
             "docs.html",
             {
                 "request": req,
-                "table": {version: f"{base_url}{self.docs_url}?version={version}" for version in sorted(self.swaggers)},
+                "table": {version: f"{base_url}{docs_url}?version={version}" for version in sorted(self.swaggers)},
             },
         )
 
