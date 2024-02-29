@@ -81,7 +81,7 @@ That's it! `generate_and_include_versioned_routers` will generate all versions o
 
 ### Routing
 
-Cadwyn is built on header-based routing. First, we route requests to the appropriate API version based on the version header (`x-api-version` by default). Then we route by the appropriate url path and method. Currerntly, Cadwyn only works with ISO date-based versions (such as `2022-11-16`). If the user sends an incorrect API version, Cadwyn picks up the closest lower applicable version. For example, `2022-11-16` in request can be matched by `2022-11-15` and `2000-01-01` but cannot be matched by `2022-11-17`. See more details in [verselect](https://github.com/team-monite/verselect).
+Cadwyn is built on header-based routing. First, we route requests to the appropriate API version based on the version header (`x-api-version` by default). Then we route by the appropriate url path and method. Currerntly, Cadwyn only works with ISO date-based versions (such as `2022-11-16`). If the user sends an incorrect API version, Cadwyn picks up the closest lower applicable version. For example, `2022-11-16` in request can be matched by `2022-11-15` and `2000-01-01` but cannot be matched by `2022-11-17`.
 
 However, header-based routing is only the standard way to use Cadwyn. If you want to use any other sort of routing, you can use Cadwyn directly through `cadwyn.generate_versioned_routers`. Just remember to update the `VersionBundle.api_version_var` variable each time you route some request to a version. This variable allows Cadwyn to do [side effects](#version-changes-with-side-effects) and [data migrations](#data-migrations).
 
