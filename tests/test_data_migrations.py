@@ -1228,17 +1228,17 @@ def test__request_and_response_migrations__with_multiple_schemas_in_converters(
     )
 
     @router.post("/test_1")
-    async def endpoint_1(body: latest.Request_1) -> latest.Response_1:
+    async def endpoint_1(body: latest.Request_1) -> latest.Response_1:  # pyright: ignore[reportInvalidTypeForm]
         body.i.append("test_1")
         return body
 
     @router.post("/test_2")
-    async def endpoint_2(body: latest.Request_2) -> latest.Response_2:
+    async def endpoint_2(body: latest.Request_2) -> latest.Response_2:  # pyright: ignore[reportInvalidTypeForm]
         body.i.append("test_2")
         return body
 
     @router.post("/test_3")
-    async def endpoint_3(body: latest.Request_3) -> latest.Response_3:
+    async def endpoint_3(body: latest.Request_3) -> latest.Response_3:  # pyright: ignore[reportInvalidTypeForm]
         body.i.append("test_3")
         return body
 
