@@ -22,7 +22,7 @@ from starlette.responses import FileResponse
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn._compat import PYDANTIC_V2, model_fields
 from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
-from cadwyn.routing import generate_versioned_routers
+from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.enums import enum
 from cadwyn.structure.versions import VersionChange

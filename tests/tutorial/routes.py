@@ -3,7 +3,7 @@ from typing import Annotated
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.applications import Cadwyn
-from cadwyn.routing import InternalRepresentationOf
+from cadwyn.route_generation import InternalRepresentationOf
 
 from .data.latest.users import (
     UserAddressResourceList,

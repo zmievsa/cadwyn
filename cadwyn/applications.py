@@ -19,17 +19,17 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
 from typing_extensions import Self
 
-from cadwyn.routing import generate_versioned_routers
+from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
+from cadwyn.route_generation import generate_versioned_routers
+from cadwyn.routing import _RootHeaderAPIRouter
 from cadwyn.structure import VersionBundle
-from cadwyn.verselect.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
-from cadwyn.verselect.routing import RootHeaderAPIRouter
 
 CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
 
 
 class Cadwyn(FastAPI):
-    _templates = Jinja2Templates(directory=CURR_DIR.parent / "verselect/docs")
+    _templates = Jinja2Templates(directory=CURR_DIR.parent / "static")
 
     def __init__(
         self,
@@ -117,7 +117,7 @@ class Cadwyn(FastAPI):
             separate_input_output_schemas=separate_input_output_schemas,
             **extra,
         )
-        self.router: RootHeaderAPIRouter = RootHeaderAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
+        self.router: _RootHeaderAPIRouter = _RootHeaderAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
             routes=self.routes,
             on_startup=on_startup,
             on_shutdown=on_shutdown,

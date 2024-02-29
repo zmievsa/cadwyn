@@ -20,7 +20,7 @@ from starlette.responses import StreamingResponse
 from cadwyn import VersionedAPIRouter, generate_code_for_versioned_packages
 from cadwyn._compat import PYDANTIC_V2, model_dump
 from cadwyn.exceptions import CadwynError, CadwynLatestRequestValidationError
-from cadwyn.routing import InternalRepresentationOf
+from cadwyn.route_generation import InternalRepresentationOf
 from cadwyn.structure import (
     VersionChange,
     convert_request_to_next_version_for,
