@@ -1,5 +1,4 @@
 from collections.abc import Callable, Coroutine, Sequence
-from contextvars import ContextVar
 from datetime import date
 from logging import getLogger
 from pathlib import Path
@@ -81,12 +80,6 @@ class Cadwyn(FastAPI):
         self.versions.latest_schemas_package = latest_schemas_package
         self.latest_schemas_package = cast(ModuleType, latest_schemas_package)
 
-        # This is only here for backwards compatibility with
-        # the old times
-        api_version_var = extra.get("api_version_var")
-        if api_version_var is None:
-            api_version_var = ContextVar("api_header_version")
-        self.api_version_var = api_version_var
         super().__init__(
             debug=debug,
             title=title,
@@ -157,7 +150,7 @@ class Cadwyn(FastAPI):
         self.add_middleware(
             HeaderVersioningMiddleware,
             api_version_header_name=self.router.api_version_header_name,
-            api_version_var=self.api_version_var,
+            api_version_var=self.versions.api_version_var,
             default_response_class=default_response_class,
         )
 
