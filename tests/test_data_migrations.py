@@ -352,7 +352,8 @@ class TestRequestMigrations:
 
         clients = create_versioned_clients(version_change())
 
-        last_route = clients[date(2000, 1, 1)].app.routes[-1]
+        # [-1] route is /openapi.json
+        last_route = clients[date(2000, 1, 1)].app.routes[-2]
         assert isinstance(last_route, APIRoute)
         payload_arg = last_route.endpoint.__annotations__["payload"]
         assert get_args(payload_arg)[1] == str

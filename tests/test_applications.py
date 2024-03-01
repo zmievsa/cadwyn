@@ -22,12 +22,12 @@ from tests._resources.versioned_app.app import (
 
 def test__header_routing__invalid_version_format__error():
     main_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
-    main_app.add_header_versioned_routers(header_value=DEFAULT_API_VERSION)
+    main_app.add_header_versioned_routers(APIRouter(), header_value=DEFAULT_API_VERSION)
     with pytest.raises(ValueError, match=re.escape("header_value should be in ISO 8601 format")):
         main_app.add_header_versioned_routers(APIRouter(), header_value="2022-01_01")
 
 
-def test__header_routing_fastapi_init__openapi_passing__nulls_prevent_openapi_routes_from_generating():
+def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_openapi_routes():
     assert [cast(APIRoute, r).path for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16)))).routes] == [
         "/openapi.json",
         "/docs",
@@ -54,7 +54,10 @@ def test__header_routing_fastapi_init__changing_openapi_url__docs_still_return_2
 def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empty__version_should_not_have_any_routes():
     app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
     app.add_header_versioned_routers(APIRouter(), header_value="2022-11-16")
-    assert app.router.versioned_routes == {}
+    assert len(app.router.versioned_routes) == 1
+    assert len(app.router.versioned_routes[date(2022, 11, 16)]) == 1
+    route = cast(APIRoute, app.router.versioned_routes[date(2022, 11, 16)][0])
+    assert route.path == "/openapi.json"
 
 
 @pytest.mark.parametrize("client", [client_without_headers, client_without_headers_and_with_custom_api_version_var])
@@ -88,6 +91,9 @@ def test__get_webhooks_router():
 
 
 def test__get_openapi():
+    resp = client_without_headers.get("/openapi.json", headers={"x-api-version": "2021-01-01"})
+    assert resp.status_code == 200
+
     resp = client_without_headers.get("/openapi.json?version=2021-01-01")
     assert resp.status_code == 200
 

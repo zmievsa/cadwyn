@@ -140,9 +140,10 @@ def test__endpoint_didnt_exist(
 ):
     routes_2000, routes_2001 = create_versioned_api_routes(version_change(endpoint(test_path, ["GET"]).didnt_exist))
 
-    assert routes_2000 == []
-    assert len(routes_2001) == 1
-    assert endpoints_equal(routes_2001[0].endpoint, test_endpoint)
+    assert len(routes_2000) == 1
+    assert routes_2000[0].path == "/openapi.json"
+    assert len(routes_2001) == 2
+    assert endpoints_equal(routes_2001[1].endpoint, test_endpoint)
 
 
 def test__endpoint_existed(
@@ -164,12 +165,12 @@ def test__endpoint_existed(
         ),
     )
 
-    assert len(routes_2000) == 2
-    assert endpoints_equal(routes_2000[0].endpoint, test_endpoint)
-    assert endpoints_equal(routes_2000[1].endpoint, test_endpoint_post)
+    assert len(routes_2000) == 3
+    assert endpoints_equal(routes_2000[1].endpoint, test_endpoint)
+    assert endpoints_equal(routes_2000[2].endpoint, test_endpoint_post)
 
-    assert len(routes_2001) == 1
-    assert endpoints_equal(routes_2001[0].endpoint, test_endpoint_post)
+    assert len(routes_2001) == 2
+    assert endpoints_equal(routes_2001[1].endpoint, test_endpoint_post)
 
 
 def test__endpoint_existed__endpoint_removed_in_latest_but_never_restored__should_raise_error(
@@ -272,9 +273,9 @@ def test__endpoint_had(
         ),
     )
 
-    assert len(routes_2000) == len(routes_2001) == 1
-    assert getattr(routes_2000[0], attr) == attr_value
-    assert getattr(routes_2001[0], attr) != attr_value
+    assert len(routes_2000) == len(routes_2001) == 2
+    assert getattr(routes_2000[1], attr) == attr_value
+    assert getattr(routes_2001[1], attr) != attr_value
 
 
 def test__endpoint_had_another_path_variable(
@@ -301,13 +302,13 @@ def test__endpoint_had_dependencies(
         ),
     )
 
-    assert len(routes_2000) == len(routes_2001) == 1
-    assert len(routes_2000[0].dependencies) == 2
-    dependency = routes_2000[0].dependencies[1].dependency
+    assert len(routes_2000) == len(routes_2001) == 2
+    assert len(routes_2000[1].dependencies) == 2
+    dependency = routes_2000[1].dependencies[1].dependency
     assert dependency is not None
     assert dependency() == "hewwo"
 
-    assert len(routes_2001[0].dependencies) == 1
+    assert len(routes_2001[1].dependencies) == 1
 
 
 def test__only_exists_in_older_versions__endpoint_is_not_a_route__error(
@@ -416,9 +417,9 @@ def test__router_generation__editing_multiple_endpoints_with_same_route(
             endpoint("/test/{hewwo}", ["GET", "POST"]).had(description="Meaw"),
         ),
     )
-    assert len(routes_2000) == len(routes_2001) == 1
-    assert routes_2000[0].description == "Meaw"
-    assert routes_2001[0].description == ""
+    assert len(routes_2000) == len(routes_2001) == 2
+    assert routes_2000[1].description == "Meaw"
+    assert routes_2001[1].description == ""
 
 
 def test__router_generation__editing_an_endpoint_with_a_more_general_method__should_raise_error(
@@ -450,11 +451,11 @@ def test__router_generation__editing_multiple_methods_of_multiple_endpoints__sho
             endpoint("/test", ["GET", "POST"]).had(description="Meaw"),
         ),
     )
-    assert routes_2000[0].description == "Meaw"
     assert routes_2000[1].description == "Meaw"
+    assert routes_2000[2].description == "Meaw"
 
-    assert routes_2001[0].description == ""
     assert routes_2001[1].description == ""
+    assert routes_2001[2].description == ""
 
 
 def test__router_generation__deleting_a_deleted_endpoint__error(
@@ -508,9 +509,9 @@ def test__router_generation__restoring_deleted_routes_for_same_path_with_func_na
 
     routes_2000, routes_2001 = create_versioned_api_routes(version_change(*instructions))
 
-    assert len(routes_2000) == len(routes_2001) == 1
-    assert endpoints_equal(routes_2000[0].endpoint, routes[route_index_to_delete_first])
-    assert endpoints_equal(routes_2001[0].endpoint, routes[route_index_to_delete_first - 1])
+    assert len(routes_2000) == len(routes_2001) == 2
+    assert endpoints_equal(routes_2000[1].endpoint, routes[route_index_to_delete_first])
+    assert endpoints_equal(routes_2001[1].endpoint, routes[route_index_to_delete_first - 1])
 
 
 def test__router_generation__changing_status_code_of_endpoint(
@@ -694,9 +695,9 @@ def test__router_generation__non_api_route_added(
         raise NotImplementedError
 
     app = create_versioned_app(version_change(endpoint(test_path, ["GET"]).didnt_exist))
-    assert len(app.router.versioned_routes[date(2000, 1, 1)]) == 1
-    assert len(app.router.versioned_routes[date(2001, 1, 1)]) == 2
-    route = app.router.versioned_routes[date(2001, 1, 1)][0]
+    assert len(app.router.versioned_routes[date(2000, 1, 1)]) == 2
+    assert len(app.router.versioned_routes[date(2001, 1, 1)]) == 3
+    route = app.router.versioned_routes[date(2001, 1, 1)][1]
     assert isinstance(route, APIRoute)
     assert endpoints_equal(route.endpoint, test_endpoint)
 
@@ -718,18 +719,18 @@ def test__router_generation__updating_response_model(
         version_change(schema(latest.SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
 
-    assert len(routes_2000) == len(routes_2001) == 1
+    assert len(routes_2000) == len(routes_2001) == 2
     assert (
-        routes_2000[0].response_model
+        routes_2000[1].response_model
         == dict[str, list[importlib.import_module(temp_data_package_path + ".v2000_01_01").SchemaWithOnePydanticField]]
     )
     assert (
-        routes_2001[0].response_model
+        routes_2001[1].response_model
         == dict[str, list[importlib.import_module(temp_data_package_path + ".v2001_01_01").SchemaWithOnePydanticField]]
     )
 
-    assert get_nested_field_type(routes_2000[0].response_model) == list[str]
-    assert get_nested_field_type(routes_2001[0].response_model) == int
+    assert get_nested_field_type(routes_2000[1].response_model) == list[str]
+    assert get_nested_field_type(routes_2001[1].response_model) == int
 
 
 def test__router_generation__using_non_latest_version_of_schema__should_raise_error(
@@ -850,15 +851,15 @@ def test__router_generation__updating_request_models(
         importlib.import_module(temp_data_package_path + ".v2000_01_01"),
         importlib.import_module(temp_data_package_path + ".v2001_01_01"),
     )
-    assert len(routes_2000) == len(routes_2001) == 1
+    assert len(routes_2000) == len(routes_2001) == 2
 
-    body_param_2000 = routes_2000[0].dependant.body_params[0]
-    body_param_2001 = routes_2001[0].dependant.body_params[0]
+    body_param_2000 = routes_2000[1].dependant.body_params[0]
+    body_param_2001 = routes_2001[1].dependant.body_params[0]
     assert getattr(body_param_2000, TYPE_ATTR) == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
     assert getattr(body_param_2001, TYPE_ATTR) == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
 
-    assert get_nested_field_type(getattr(routes_2000[0].dependant.body_params[0], TYPE_ATTR)) == list[str]
-    assert get_nested_field_type(getattr(routes_2001[0].dependant.body_params[0], TYPE_ATTR)) == int
+    assert get_nested_field_type(getattr(routes_2000[1].dependant.body_params[0], TYPE_ATTR)) == list[str]
+    assert get_nested_field_type(getattr(routes_2001[1].dependant.body_params[0], TYPE_ATTR)) == int
 
 
 def test__router_generation__using_unversioned_models(
@@ -882,15 +883,15 @@ def test__router_generation__using_unversioned_models(
         version_change(schema(latest.SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
 
-    assert len(routes_2000) == len(routes_2001) == 3
-    assert routes_2000[0].dependant.body_params[0].type_ is UnversionedSchema1
-    assert routes_2001[0].dependant.body_params[0].type_ is UnversionedSchema1
+    assert len(routes_2000) == len(routes_2001) == 4
+    assert routes_2000[1].dependant.body_params[0].type_ is UnversionedSchema1
+    assert routes_2001[1].dependant.body_params[0].type_ is UnversionedSchema1
 
-    assert routes_2000[1].dependant.body_params[0].type_ is UnversionedSchema2
-    assert routes_2001[1].dependant.body_params[0].type_ is UnversionedSchema2
+    assert routes_2000[2].dependant.body_params[0].type_ is UnversionedSchema2
+    assert routes_2001[2].dependant.body_params[0].type_ is UnversionedSchema2
 
-    assert routes_2000[2].dependant.body_params[0].type_ is UnversionedSchema3
-    assert routes_2001[2].dependant.body_params[0].type_ is UnversionedSchema3
+    assert routes_2000[3].dependant.body_params[0].type_ is UnversionedSchema3
+    assert routes_2001[3].dependant.body_params[0].type_ is UnversionedSchema3
 
 
 def test__router_generation__using_weird_typehints(
@@ -907,13 +908,13 @@ def test__router_generation__using_weird_typehints(
     routes_2000, routes_2001 = create_versioned_api_routes(
         version_change(schema(latest.SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
-    assert len(routes_2000) == len(routes_2001) == 1
+    assert len(routes_2000) == len(routes_2001) == 2
 
-    assert getattr(routes_2000[0].dependant.body_params[0], TYPE_ATTR) is newtype
-    assert getattr(routes_2001[0].dependant.body_params[0], TYPE_ATTR) is newtype
+    assert getattr(routes_2000[1].dependant.body_params[0], TYPE_ATTR) is newtype
+    assert getattr(routes_2001[1].dependant.body_params[0], TYPE_ATTR) is newtype
 
-    assert getattr(routes_2000[0].dependant.body_params[1], TYPE_ATTR) == str | int
-    assert getattr(routes_2001[0].dependant.body_params[1], TYPE_ATTR) == str | int
+    assert getattr(routes_2000[1].dependant.body_params[1], TYPE_ATTR) == str | int
+    assert getattr(routes_2001[1].dependant.body_params[1], TYPE_ATTR) == str | int
 
 
 def test__router_generation__using_oydantic_typehints(
@@ -930,7 +931,7 @@ def test__router_generation__using_oydantic_typehints(
     routes_2000, routes_2001 = create_versioned_api_routes(
         version_change(schema(latest.SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
-    assert len(routes_2000) == len(routes_2001) == 1
+    assert len(routes_2000) == len(routes_2001) == 2
     # We are intentionally not checking anything here. Our goal is to validate that there is no exception
 
 
@@ -1105,13 +1106,13 @@ def test__router_generation__updating_callbacks(
         version_change(schema(latest.SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
 
-    route = app.router.versioned_routes[date(2000, 1, 1)][0]
+    route = app.router.versioned_routes[date(2000, 1, 1)][1]
     assert isinstance(route, APIRoute)
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
     assert generated_callback.dependant.body_params[0].type_.__module__.endswith(".v2000_01_01")
-    route = app.router.versioned_routes[date(2001, 1, 1)][0]
+    route = app.router.versioned_routes[date(2001, 1, 1)][1]
     assert isinstance(route, APIRoute)
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
@@ -1264,6 +1265,7 @@ def test__basic_router_generation__using_http_security_dependency__should_genera
         raise NotImplementedError
 
     client_2000, *_ = create_versioned_clients().values()
+
     dependant = cast(APIRoute, client_2000.app.routes[-1]).dependant
     assert dependant.dependencies[1].dependencies[0].security_requirements[0].security_scheme is auth_header_scheme
     response = client_2000.get("/test")

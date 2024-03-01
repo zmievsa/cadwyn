@@ -129,37 +129,41 @@ class Cadwyn(FastAPI):
             api_version_header_name=api_version_header_name,
             lifespan=lifespan,
         )
-        self.swaggers = {}
-        router = APIRouter(routes=routes)
         self.docs_url = docs_url
         self.redoc_url = redoc_url
         self.openapi_url = openapi_url
+        self.redoc_url = redoc_url
+        self.swaggers = {}
 
-        if self.openapi_url is not None:
-            router.add_route(
-                path=self.openapi_url,
-                endpoint=self.openapi_jsons,
-                include_in_schema=False,
-            )
-            if self.docs_url is not None:
-                router.add_route(
-                    path=self.docs_url,
-                    endpoint=self.swagger_dashboard,
-                    include_in_schema=False,
-                )
-            if self.redoc_url is not None:
-                router.add_route(
-                    path=self.redoc_url,
-                    endpoint=self.redoc_dashboard,
-                    include_in_schema=False,
-                )
-        self.add_unversioned_routers(router)
+        unversioned_router = APIRouter(routes=routes)
+        self._add_openapi_endpoints(unversioned_router)
+        self.add_unversioned_routers(unversioned_router)
         self.add_middleware(
             HeaderVersioningMiddleware,
             api_version_header_name=self.router.api_version_header_name,
             api_version_var=self.versions.api_version_var,
             default_response_class=default_response_class,
         )
+
+    def _add_openapi_endpoints(self, unversioned_router: APIRouter):
+        if self.openapi_url is not None:
+            unversioned_router.add_route(
+                path=self.openapi_url,
+                endpoint=self.openapi_jsons,
+                include_in_schema=False,
+            )
+            if self.docs_url is not None:
+                unversioned_router.add_route(
+                    path=self.docs_url,
+                    endpoint=self.swagger_dashboard,
+                    include_in_schema=False,
+                )
+            if self.redoc_url is not None:
+                unversioned_router.add_route(
+                    path=self.redoc_url,
+                    endpoint=self.redoc_dashboard,
+                    include_in_schema=False,
+                )
 
     def generate_and_include_versioned_routers(self, *routers: APIRouter) -> None:
         root_router = APIRouter()
@@ -213,7 +217,7 @@ class Cadwyn(FastAPI):
             self.swaggers[header_value_str] = openapi
 
     async def openapi_jsons(self, req: Request) -> JSONResponse:
-        version = req.query_params.get("version")
+        version = req.query_params.get("version") or req.headers.get(self.router.api_version_header_name)
         openapi_of_a_version = self.swaggers.get(version)
         if not openapi_of_a_version:
             raise HTTPException(
@@ -248,7 +252,8 @@ class Cadwyn(FastAPI):
 
     def add_header_versioned_routers(
         self,
-        *routers: APIRouter,
+        first_router: APIRouter,
+        *other_routers: APIRouter,
         header_value: str,
     ) -> list[BaseRoute]:
         """Add all routes from routers to be routed using header_value and return the added routes"""
@@ -257,17 +262,24 @@ class Cadwyn(FastAPI):
         except ValueError as e:
             raise ValueError("header_value should be in ISO 8601 format") from e
 
+        if header_value_as_dt not in self.router.versioned_routes:  # pragma: no branch
+            self.router.versioned_routes[header_value_as_dt] = []
+            if self.openapi_url is not None:  # pragma: no branch
+                self.router.versioned_routes[header_value_as_dt].append(
+                    Route(path=self.openapi_url, endpoint=self.openapi_jsons, include_in_schema=False)
+                )
+
         added_routes: list[BaseRoute] = []
-        for router in routers:
+        for router in (first_router, *other_routers):
             added_route_count = len(router.routes)
+
             self.include_router(
                 router,
                 dependencies=[Depends(_get_api_version_dependency(self.router.api_version_header_name, header_value))],
             )
             added_routes.extend(self.routes[len(self.routes) - added_route_count :])
-
         for route in added_routes:
-            self.router.versioned_routes.setdefault(header_value_as_dt, []).append(route)
+            self.router.versioned_routes[header_value_as_dt].append(route)
 
         self.enrich_swagger()
         return added_routes
