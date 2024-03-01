@@ -137,7 +137,7 @@ You can use `cadwyn codegen` which accepts a python path to your version bundle.
 cadwyn codegen path.to.version.bundle:version_bundle_variable
 ```
 
-#### **Note**
+**Note that:**
 
 * You don't use the system path style for both arguments. Instead, imagine that you are importing these modules in python -- that's the way you want to write down the paths.
 * Take a look at how we point to our version bundle. We use ":" to say that it's a variable within the specified module
@@ -785,7 +785,7 @@ class MyChange(VersionChange):
     )
 ```
 
-#### **DEFAULTS WARNING**
+**DEFAULTS WARNING:**
 
 If you add `default` or `default_factory` into the old version of a schema -- it will not manifest in code automatically. Instead, you should add both the `default` or `default_factory`, and then also add the default value using a request migration.
 
