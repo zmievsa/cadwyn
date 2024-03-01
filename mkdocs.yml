@@ -69,9 +69,9 @@ nav:
     - "index.md"
     - "Contributing": "home/CONTRIBUTING.md"
     - "Changelog": "home/CHANGELOG.md"
-  - "Tutorial": "tutorial.md"
-  - "Recipes": "recipes.md"
-  - "Reference": "reference.md"
+  - "Quickstart": "quickstart.md"
+  - "How to...": "how_to.md"
+  - "Concepts": "concepts.md"
   - "Theory":
     - How we got here: "theory/how_we_got_here.md"
     - Literature: "theory/literature.md"

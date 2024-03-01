@@ -1,11 +1,7 @@
 
-# Reference
+# Concepts
 
-## Pydantic
-
-Cadwyn supports both Pydantic 1 and Pydantic 2 so you can pick your preferred version without any issue.
-
-## Cadwyn's flow
+## Mission
 
 Cadwyn aims to be the most accurate and sophisticated API Versioning model out there. First of all, you maintain **zero** duplicated code yourself. Usually, in API versioning you [would need to](./theory/how_we_got_here.md) duplicate and maintain at least some layer of your applicaton. It could be the database, business logic, schemas, and endpoints. Cadwyn only duplicates your:
 
@@ -14,7 +10,25 @@ Cadwyn aims to be the most accurate and sophisticated API Versioning model out t
 
 You define your database, business logic, routes, and schemas only once. Then, whenever you release a new API version, you use Cadwyn's [version change DSL](#version-changes) to describe how to convert your app to the previous version. So your business logic and database stay intact and always represent the latest version while the version changes make sure that your clients can continue using the previous versions without ever needing to update their code.
 
-### Service structure
+## Methodology
+
+Cadwyn implements a methodology that is based on the following set of principles:
+
+* Each version is made up of "version changes" or "compatibility gates" which describe **independent atomic** differences between it and previous version
+* We make a new version if an only if we have breaking changes
+* Versions must have little to no effect on the business logic
+* Versions **must always** be compatible in terms of data
+* Creating new versions is avoided at all costs
+* Any backwards compatible features must be backported to all compatible versions
+
+These rules give us an ability to have a large number of self-documenting versions while encapsulating their complexity in small version change classes, providing a consistent and stable experience to our users.
+
+So if we see that we need to make a breaking change, our general approach is to:
+
+1. Make the breaking change in your schemas, routes, or business logic
+2. Write a version change class (and sometimes [a little extra](#version-changes-with-side-effects)) that describes the difference between the new version and the old version
+
+## Service structure
 
 The service structure with Cadwyn is fairly straighforward. See the [example service](https://github.com/zmievsa/cadwyn/tree/main/tests/tutorial) or follow the steps above:
 
@@ -26,6 +40,7 @@ The service structure with Cadwyn is fairly straighforward. See the [example ser
 6. [Include this router](#main-app) and any other versioned routers into your `Cadwyn` app. It will duplicate your router in runtime for each API version.
 
 The recommended directory structure for cadwyn is as follows:
+<!--- Find a better name for "data" dir. "Schemas" doesn't work because enums can also be there. "Versioned" doesn't work because unversioned stuff can also be there as long as it's not in latest.-->
 
 ```tree
 ├── data
@@ -41,9 +56,23 @@ The recommended directory structure for cadwyn is as follows:
     └── v2001_01_01.py  # Your version changes go here
 ```
 
+Schemas, enums, and any other versioned data are inside the `data.latest` package, version changes are inside the `versions.vXXXX_XX_XX` modules, and version bundle is inside the `versions.__init__` module. It includes all versions with all version changes -- including the ones you add in the recipes.
+
+You can assume for the purpose of our guides that we already have a version **2000-01-01** and we are making a new version **2001-01-01** with the changes from our scenarios.
+
 You can structure your business logic, database, and all other parts of your application in any way you like.
 
 That's it! Your service is ready to be versioned. We can now use the most powerful feature of Cadwyn: [version changes](#version-changes).
+
+## Beware of data versioning
+
+Oftentimes you will want to introduce a breaking change where one of the following is true:
+
+* Old data cannot be automatically converted to the structure of the new response
+* New response cannot be automatically migrated to an older response
+* Old request cannot be automatically converted to the latest or internal request
+
+This means that you are not versioning your API, you are versioning your **data**. This is not and cannot be solved by an API versioning framework. It also makes it incredibly hard to version as you now cannot guarantee compatibility between versions. Avoid this at all costs -- all your API versions must be compatible between each other. Data versioning is not a result of a complicated use case, it is a result of **errors** when divising a new version. I am yet to meet a single case where data versioning is the right way to solve an API versioning problem.
 
 ## Main App
 
@@ -541,7 +570,7 @@ versions = VersionBundle(
 
 See how our first version, `2022-11-16` does not have any version changes? That is intentional! How can it have breaking changes if there are no versions before it?
 
-## Endpoints
+## Endpoint migrations
 
 Note that the endpoint constructor contains a second argument that describes the methods of the endpoints you would like to edit. If you have two routes for a single endpoint and you put both of their methods into the instruction -- both of them are going to be changed as you would expect.
 
@@ -652,7 +681,7 @@ class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
 
 So by using a more concrete `func_name`, we are capable to distinguish between different functions that affect the same routes.
 
-## Enums
+## Enum migrations
 
 All of the following instructions affect only code generation.
 
@@ -687,11 +716,11 @@ class MyChange(VersionChange):
     )
 ```
 
-## Schemas
+## Schema migrations
 
 All of the following instructions affect only code generation.
 
-### Add a field
+### Add a field to the older version
 
 ```python
 from pydantic import Field
@@ -715,7 +744,7 @@ schema(MySchema).field("foo").existed_as(type="AnythingHere")
 
 It is often the case that you want to add a type that has not been imported in your schemas yet. You can use [module import adding](#modules) to solve this issue.
 
-### Remove a field
+### Remove a field from the older version
 
 ```python
 from cadwyn.structure import VersionChange, schema
@@ -728,7 +757,7 @@ class MyChange(VersionChange):
     )
 ```
 
-### Change a field
+### Change a field in the older version
 
 If you would like to set a description or any other attribute of a field, you would do:
 
@@ -772,7 +801,7 @@ Cadwyn:
 
 The part that causes the aforementioned problem is our usage of `exclude_unset=True`. Sadly, when we use it, all default fields do not get set so `latest` does not receive them. And if `latest` does not have the same defaults (for example, if the field has no default and is required in `latest`), then an error will occur. If we used `exclude_unset=False`, then `exclude_unset` would lose all its purpose for the users of our library so we cannot abandon it. Instead, you should set all extra on step 4 in your request migrations.
 
-### Add a validator
+### Add a validator to the older version
 
 ```python
 from pydantic import Field, validator
@@ -793,7 +822,7 @@ class MyChange(VersionChange):
     )
 ```
 
-### Remove a validator
+### Remove a validator from the older version
 
 ```python
 from pydantic import Field, validator
@@ -807,7 +836,7 @@ class MyChange(VersionChange):
     )
 ```
 
-### Rename a schema
+### Rename a schema in the older version
 
 If you wish to rename your schema to make sure that its name is different in openapi.json:
 
@@ -824,7 +853,7 @@ class MyChange(VersionChange):
 
 which will replace all references to this schema with the new name.
 
-## Modules
+## Module migrations
 
 Oftentimes you start depending on new types in-between versions. For example, let's say that you depended on `Invoice` schema within your `data.latest.users` in older versions but now you do not. This means that once we run code generation and this type gets back into some annotation of some schema in `data.latest.users` -- it will not be imported because it was not imported in `latest`. To solve problems like this one, we have `module` instructions:
 
