@@ -2,14 +2,14 @@ import ast
 import importlib
 import os
 import shutil
-import warnings
 from collections.abc import Collection, Generator, Sequence
 from copy import deepcopy
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, overload
 
 import ast_comments
+from typing_extensions import deprecated
 
 from cadwyn._asts import get_all_names_defined_at_toplevel_of_module, read_python_module
 from cadwyn._package_utils import IdentifierPythonPath, get_package_path_from_module, get_version_dir_path
@@ -45,8 +45,37 @@ DEFAULT_CODEGEN_MIGRATION_PLUGINS: tuple[MigrationPlugin, ...] = (
 )
 
 
+@overload
 def generate_code_for_versioned_packages(
-    template_module: ModuleType,
+    head_package: ModuleType,
+    versions: VersionBundle,
+    *,
+    codegen_plugins: Sequence[CodegenPlugin] = DEFAULT_CODEGEN_PLUGINS,
+    migration_plugins: Sequence[MigrationPlugin] = DEFAULT_CODEGEN_MIGRATION_PLUGINS,
+    extra_context: dict[str, Any] | None = None,
+):
+    ...
+
+
+@overload
+@deprecated(
+    "ignore_coverage_for_latest_aliases is deprecated. "
+    "You do not need to pass it any longer and it is going to be deleted in the future."
+)
+def generate_code_for_versioned_packages(
+    head_package: ModuleType,
+    versions: VersionBundle,
+    *,
+    ignore_coverage_for_latest_aliases: bool | None = None,
+    codegen_plugins: Sequence[CodegenPlugin] = DEFAULT_CODEGEN_PLUGINS,
+    migration_plugins: Sequence[MigrationPlugin] = DEFAULT_CODEGEN_MIGRATION_PLUGINS,
+    extra_context: dict[str, Any] | None = None,
+):
+    ...
+
+
+def generate_code_for_versioned_packages(
+    head_package: ModuleType,
     versions: VersionBundle,
     *,
     ignore_coverage_for_latest_aliases: bool | None = None,
@@ -56,15 +85,9 @@ def generate_code_for_versioned_packages(
 ):
     """
     Args:
-        template_module: The latest package from which we will generate the versioned packages
-        versions: Version bundle to generate versions from
-        version of the latest module.
+        head_package: The head package from which we will generate the versioned packages
+        versions: Version bundle to generate versions from the head package.
     """
-    if ignore_coverage_for_latest_aliases:
-        warnings.warn(
-            "ignore_coverage_for_latest_aliases argument was passed even though it is deprecated and unused.",
-            stacklevel=2,
-        )
     extra_context = extra_context or {}
     schemas = {}
     for k, v in deepcopy(versions.versioned_schemas).items():
@@ -72,7 +95,7 @@ def generate_code_for_versioned_packages(
         schemas[k] = PydanticModelWrapper(v, v.__name__, fields, validators)
 
     _generate_versioned_directories(
-        template_module,
+        head_package,
         versions=list(versions),
         schemas=schemas,
         enums={
@@ -198,7 +221,7 @@ def _build_context(
         parsed_file,
         module_python_path,
     )
-    index_of_latest_package_dir_in_module_python_path = get_index_of_head_schema_dir_in_module_python_path(
+    index_of_head_package_dir_in_module_python_path = get_index_of_head_schema_dir_in_module_python_path(
         template_module,
         template_dir.with_name(version_dir.name),
     )
@@ -209,7 +232,7 @@ def _build_context(
         enums=global_context.enums,
         modules=global_context.modules,
         extra=global_context.extra,
-        index_of_latest_package_dir_in_module_python_path=index_of_latest_package_dir_in_module_python_path,
+        index_of_head_package_dir_in_module_python_path=index_of_head_package_dir_in_module_python_path,
         module_python_path=module_python_path,
         all_names_defined_on_toplevel_of_file=all_names_defined_at_toplevel_of_file,
         template_module=template_module,

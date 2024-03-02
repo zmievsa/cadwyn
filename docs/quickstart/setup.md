@@ -12,17 +12,14 @@ pip install cadwyn
 The recommended directory structure for cadwyn is as follows:
 
 ```tree
-├── data
+├── data    # Any name or structure could be used here
 │   ├── __init__.py
-│   ├── unversioned
-│   │   ├── __init__.py
-│   │   └── users.py
-│   └── latest          # The latest version of your schemas goes here
+│   └── head    # This is the `head_schemas_package` and it must be named `head`
 │       ├── __init__.py
 │       └── users.py
 └── versions
     ├── __init__.py     # Your version bundle goes here
-    └── v2001_01_01.py  # Your version changes go here
+    └── v2001_01_01.py  # Your version changes go here for each new version
 ```
 
 Here is an initial API setup where the User has a single address. We will be implementing two routes - one for creating a user and another for retrieving user details. We'll be using "int" for ID for simplicity. Please note that we will use a dict in place of a database for simplicity of our examples but do not ever do it in real life.
@@ -32,7 +29,7 @@ The first API you come up with usually doesn't require more than one address -- 
 So we create our file with schemas:
 
 ```python
-# data/latest/users.py
+# data/head/users.py
 from pydantic import BaseModel
 import uuid
 
@@ -53,14 +50,15 @@ Then we create our version bundle which will keep track of our API versions:
 
 ```python
 # versions/__init__.py
-from cadwyn.structure import Version, VersionBundle
+from cadwyn.structure import Version, VersionBundle, HeadVersion
 from datetime import date
-from data import latest
+from data import head
 
 
 version_bundle = VersionBundle(
+    HeadVersion(),
     Version(date(2001, 1, 1)),
-    latest_schemas_package=latest,
+    head_schemas_package=head,
 )
 ```
 
@@ -78,7 +76,7 @@ cadwyn codegen versions:version_bundle
 
 ```python
 # routes.py
-from data.latest.users import UserCreateRequest, UserResource
+from data.head.users import UserCreateRequest, UserResource
 from versions import version_bundle
 from cadwyn import VersionedAPIRouter, Cadwyn
 import uuid

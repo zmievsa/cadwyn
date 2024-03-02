@@ -1254,7 +1254,7 @@ def test__manual_response_migrations(
     head_with_empty_classes: _FakeModuleWithEmptyClasses,
     head_package_path: str,
 ):
-    latest_package = importlib.import_module(head_package_path)
+    head_package = importlib.import_module(head_package_path)
 
     @convert_response_to_previous_version_for(head_with_empty_classes.EmptySchema)
     def response_converter(response: ResponseInfo):
@@ -1272,9 +1272,9 @@ def test__manual_response_migrations(
             ),
         ),
         Version(date(2000, 1, 1)),
-        latest_schemas_package=latest_package,
+        head_schemas_package=head_package,
     )
-    generate_code_for_versioned_packages(latest_package, version_bundle)
+    generate_code_for_versioned_packages(head_package, version_bundle)
 
     new_response = version_bundle.migrate_response_body(
         head_with_empty_classes.EmptySchema, latest_body={"id": "hewwo"}, version=date(2000, 1, 1)

@@ -10,7 +10,7 @@ from contextvars import ContextVar
 from enum import Enum
 from pathlib import Path
 from types import ModuleType
-from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, cast
+from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, cast, overload
 
 from fastapi import HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
 from starlette._utils import is_async_callable
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from cadwyn._compat import PYDANTIC_V2, ModelField, PydanticUndefined, model_dump
 from cadwyn._package_utils import (
@@ -237,12 +237,36 @@ class HeadVersion:
 
 
 class VersionBundle:
+    @overload
     def __init__(
         self,
         latest_version_or_head_version: Version | HeadVersion,
         /,
         *other_versions: Version,
         api_version_var: APIVersionVarType | None = None,
+        head_schemas_package: ModuleType | None = None,
+    ) -> None:
+        ...
+
+    @overload
+    @deprecated("Pass head_version_package instead of latest_schemas_package.")
+    def __init__(
+        self,
+        latest_version_or_head_version: Version | HeadVersion,
+        /,
+        *other_versions: Version,
+        api_version_var: APIVersionVarType | None = None,
+        latest_schemas_package: ModuleType | None = None,
+    ) -> None:
+        ...
+
+    def __init__(
+        self,
+        latest_version_or_head_version: Version | HeadVersion,
+        /,
+        *other_versions: Version,
+        api_version_var: APIVersionVarType | None = None,
+        head_schemas_package: ModuleType | None = None,
         latest_schemas_package: ModuleType | None = None,
     ) -> None:
         super().__init__()
@@ -254,7 +278,7 @@ class VersionBundle:
             self.head_version = HeadVersion()
             self.versions = (latest_version_or_head_version, *other_versions)
 
-        self.latest_schemas_package: ModuleType | None = latest_schemas_package
+        self.head_schemas_package = head_schemas_package or latest_schemas_package
         self.version_dates = tuple(version.value for version in self.versions)
         if api_version_var is None:
             api_version_var = ContextVar("cadwyn_api_version")
@@ -286,25 +310,30 @@ class VersionBundle:
                     )
                 version_change._bound_version_bundle = self
 
+    @property
+    @deprecated("Use head_version_package instead.")
+    def latest_schemas_package(self):
+        return self.head_schemas_package
+
     def __iter__(self) -> Iterator[Version]:
         yield from self.versions
 
-    def _validate_latest_schemas_package_structure(self):
+    def _validate_head_schemas_package_structure(self):
         # This entire function won't be necessary once we start raising an exception
         # upon receiving `latest`.
 
-        latest_schemas_package = cast(ModuleType, self.latest_schemas_package)
+        head_schemas_package = cast(ModuleType, self.head_schemas_package)
 
-        if not hasattr(latest_schemas_package, "__path__"):
+        if not hasattr(head_schemas_package, "__path__"):
             raise CadwynStructureError(
-                f'The head schemas module must be a package. "{latest_schemas_package.__name__}" is not a package.',
+                f'The head schemas module must be a package. "{head_schemas_package.__name__}" is not a package.',
             )
-        elif latest_schemas_package.__name__.endswith(".head"):
+        elif head_schemas_package.__name__.endswith(".head"):
             return "head"
-        elif latest_schemas_package.__name__.endswith(".latest"):
+        elif head_schemas_package.__name__.endswith(".latest"):
             warnings.warn(
                 'The name of the head schemas module must be "head". '
-                f'Received "{latest_schemas_package.__name__}" instead.',
+                f'Received "{head_schemas_package.__name__}" instead.',
                 DeprecationWarning,
                 stacklevel=4,
             )
@@ -312,7 +341,7 @@ class VersionBundle:
         else:
             raise CadwynStructureError(
                 'The name of the head schemas module must be "head". '
-                f'Received "{latest_schemas_package.__name__}" instead.',
+                f'Received "{head_schemas_package.__name__}" instead.',
             )
 
     @functools.cached_property
@@ -356,15 +385,15 @@ class VersionBundle:
 
     @functools.cached_property
     def versioned_directories(self) -> tuple[Path, ...]:
-        if self.latest_schemas_package is None:
+        if self.head_schemas_package is None:
             raise CadwynError(
                 f"You cannot call 'VersionBundle.{self.migrate_response_body.__name__}' because it has no access to "
-                "'latest_schemas_package'. It likely means that it was not attached "
-                "to any Cadwyn application which attaches 'latest_schemas_package' during initialization."
+                "'head_schemas_package'. It likely means that it was not attached "
+                "to any Cadwyn application which attaches 'head_schemas_package' during initialization."
             )
         return tuple(
-            [get_package_path_from_module(self.latest_schemas_package)]
-            + [get_version_dir_path(self.latest_schemas_package, version.value) for version in self]
+            [get_package_path_from_module(self.head_schemas_package)]
+            + [get_version_dir_path(self.head_schemas_package, version.value) for version in self]
         )
 
     def migrate_response_body(self, latest_response_model: type[BaseModel], *, latest_body: Any, version: VersionDate):

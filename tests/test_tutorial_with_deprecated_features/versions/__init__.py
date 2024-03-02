@@ -10,5 +10,5 @@ version_bundle = VersionBundle(
     Version(date(2002, 1, 1), ChangeAddressesToSubresource),
     Version(date(2001, 1, 1), ChangeAddressToList),
     Version(date(2000, 1, 1)),
-    latest_schemas_package=latest,
+    head_schemas_package=latest,
 )

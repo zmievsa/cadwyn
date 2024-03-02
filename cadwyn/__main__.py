@@ -71,7 +71,7 @@ def deprecated_generate_versioned_packages(
     name="codegen",
     help=(
         "For each version in the version bundle, generate a versioned package based on the "
-        "`latest_schema_package` package"
+        "`head_schema_package` package"
     ),
     short_help="Generate code for all versions of schemas",
 )
@@ -90,14 +90,10 @@ def generate_versioned_packages(
     possibly_version_bundle = getattr(version_bundle_module, version_bundle_variable_name)
     version_bundle = _get_version_bundle(possibly_version_bundle)
 
-    if version_bundle.latest_schemas_package is None:  # pragma: no cover
-        raise CadwynError("VersionBundle requires a 'latest_schemas_package' argument to generate schemas.")
+    if version_bundle.head_schemas_package is None:  # pragma: no cover
+        raise CadwynError("VersionBundle requires a 'head_schemas_package' argument to generate schemas.")
 
-    return generate_code_for_versioned_packages(
-        version_bundle.latest_schemas_package,
-        version_bundle,
-        ignore_coverage_for_latest_aliases=True,
-    )
+    return generate_code_for_versioned_packages(version_bundle.head_schemas_package, version_bundle)
 
 
 def _get_version_bundle(possibly_version_bundle: Any) -> VersionBundle:

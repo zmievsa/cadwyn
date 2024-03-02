@@ -5,6 +5,18 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.10.0]
+
+### Added
+
+* The new approach to internal schemas: instead of having them duplicate certain fields from `latest`, we introduced a new `HEAD` version -- the only one the user maintains by hand. All requests get migrated to `HEAD` and latest schemas are generated from `HEAD`. `cadwyn.structure.HeadVersion` was added to give us the ability to have migrations between `HEAD` and latest, thus eliminating the need for `InternalRepresentationOf` because all the used schemas are now the internal representations
+
+### Changed
+
+* `latest` is now named `head` because it no longer represents the newest version. Instead, it is the the `internally used` version and the version that is used for generating all other versions.
+* the newest version is not aliased from `latest` anymore. Instead, it is generated like all the rest
+* deprecated `InternalRepresentationOf` and the concept of `internal schemas` in favor of `HeadVersion` migrations
+
 ## [3.9.1]
 
 ### Fixed
@@ -32,7 +44,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-* `h11._util.LocalProtocolError` when raising `HTTPException(status_code=500)`.
+* `h11._util.LocalProtocolError` when raising `HTTPException(status_code=500)`
 
 ## [3.7.1]
 

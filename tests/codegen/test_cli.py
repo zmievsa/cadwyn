@@ -36,7 +36,7 @@ def _resources(temp_data_dir, head_with_empty_classes: _FakeModuleWithEmptyClass
     version_bundle = VersionBundle(
         Version(date(2001, 1, 1), VersionChange1),
         Version(date(2000, 1, 1)),
-        latest_schemas_package=head,
+        head_schemas_package=head,
     )
 
 

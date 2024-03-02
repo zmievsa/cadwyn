@@ -36,7 +36,7 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 versions = VersionBundle(
     Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
     Version(date(2022, 11, 16)),
-    latest_schemas_package=latest,
+    head_schemas_package=latest,
 )
 ```
 
@@ -56,7 +56,7 @@ versions = VersionBundle(
     Version(date(2023, 4, 2), DeleteEndpoint, ChangeFields, RenameFields),
     Version(date(2023, 2, 10), RenameEndpoints, RefactorFields),
     Version(date(2022, 11, 16)),
-    latest_schemas_package=latest,
+    head_schemas_package=latest,
 )
 ```
 
@@ -416,7 +416,7 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 versions = VersionBundle(
     Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
     Version(date(2022, 11, 16)),
-    latest_schemas_package=latest,
+    head_schemas_package=latest,
 )
 ```
 

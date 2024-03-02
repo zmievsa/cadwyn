@@ -72,9 +72,10 @@ class RunSchemaCodegen:
     temp_data_package_path: str
 
     def __call__(self, versions: VersionBundle) -> Any:
-        latest_module = importlib.import_module(self.temp_data_package_path + ".head")
-        generate_code_for_versioned_packages(latest_module, versions)
-        return latest_module
+        head_package = importlib.import_module(self.temp_data_package_path + ".head")
+        versions.head_schemas_package = head_package
+        generate_code_for_versioned_packages(versions.head_schemas_package, versions)
+        return versions.head_schemas_package
 
 
 @fixture_class(name="create_versioned_packages")
@@ -85,7 +86,6 @@ class CreateVersionedPackages:
     def __call__(
         self,
         *version_changes: type[VersionChange] | list[type[VersionChange]],
-        ignore_coverage_for_latest_aliases: bool = True,
     ) -> tuple[ModuleType, ...]:
         created_versions = versions(version_changes)
         latest = importlib.import_module(self.temp_data_package_path + ".head")
@@ -95,7 +95,6 @@ class CreateVersionedPackages:
                 *created_versions,
                 api_version_var=self.api_version_var,
             ),
-            ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
         )
         return tuple(
             reversed(
@@ -199,11 +198,8 @@ class CreateSimpleVersionedPackages:
     temp_data_package_path: str
     create_versioned_packages: CreateVersionedPackages
 
-    def __call__(self, *instructions: Any, ignore_coverage_for_latest_aliases: bool = True) -> tuple[ModuleType, ...]:
-        return self.create_versioned_packages(
-            version_change(*instructions),
-            ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
-        )
+    def __call__(self, *instructions: Any) -> tuple[ModuleType, ...]:
+        return self.create_versioned_packages(version_change(*instructions))
 
 
 @fixture_class(name="create_local_versioned_packages")
@@ -327,9 +323,10 @@ class CreateVersionedApp:
             HeadVersion(*head_version_changes),
             *versions(version_changes),
             api_version_var=self.api_version_var,
+            head_schemas_package=importlib.import_module(self.temp_data_package_path + ".head"),
         )
-        latest_module = self.run_schema_codegen(bundle)
-        app = Cadwyn(versions=bundle, latest_schemas_package=latest_module)
+        self.run_schema_codegen(bundle)
+        app = Cadwyn(versions=bundle)
         app.generate_and_include_versioned_routers(self.router)
         return app
 
