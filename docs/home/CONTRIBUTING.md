@@ -37,7 +37,7 @@ The rest of this document will assume this environment is active wherever comman
   * If something cannot be typed correctly due to a limitation of the type checkers, you may use [typing.cast](https://docs.python.org/3/library/typing.html#typing.cast) to rectify the situation. However, you should only use as a last resort if you've exhausted all other options of [type narrowing](https://mypy.readthedocs.io/en/stable/type_narrowing.html), such as [isinstance()](https://docs.python.org/3/library/functions.html#isinstance) checks and [type guards](https://docs.python.org/3/library/typing.html#typing.TypeGuard)
   * You may use `pyright: ignore` if you ensured that a line is correct, but pyright has issues with it.
 * If you are adding or modifying existing code, ensure that it's fully tested. 100% test coverage is mandatory, and will be checked on the PR using [Github Actions](https://github.com/features/actions)
-* When adding a new public interface, it has to be included in the reference documentation located in `docs/reference.md`. If applicable, add or modify examples in the docs related to the new functionality implemented, following the guidelines established in [Adding examples](#adding-examples)
+* When adding a new public interface, it has to be included in the concept documentation located in `docs/concepts.md`. If applicable, add or modify examples in the docs related to the new functionality implemented.
 
 ### Writing and running tests
 

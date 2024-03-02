@@ -1,123 +1,4 @@
-
-# Reference
-
-## Pydantic
-
-Cadwyn supports both Pydantic 1 and Pydantic 2 so you can pick your preferred version without any issue.
-
-## Cadwyn's flow
-
-Cadwyn aims to be the most accurate and sophisticated API Versioning model out there. First of all, you maintain **zero** duplicated code yourself. Usually, in API versioning you [would need to](./theory/how_we_got_here.md) duplicate and maintain at least some layer of your applicaton. It could be the database, business logic, schemas, and endpoints. Cadwyn only duplicates your:
-
-* schemas but you do not maintain the duplicates -- you only regenerate it when necessary
-* endpoints but only in runtime so you do not need to maintain the duplicates
-
-You define your database, business logic, routes, and schemas only once. Then, whenever you release a new API version, you use Cadwyn's [version change DSL](#version-changes) to describe how to convert your app to the previous version. So your business logic and database stay intact and always represent the latest version while the version changes make sure that your clients can continue using the previous versions without ever needing to update their code.
-
-### Service structure
-
-The service structure with Cadwyn is fairly straighforward. See the [example service](https://github.com/zmievsa/cadwyn/tree/main/tests/tutorial) or follow the steps above:
-
-1. Define a [VersionBundle](#versionbundle) where you add your first version.
-2. Create a `data/latest` directory and add your latest version of schemas there. This will serve as a template directory for future code generation.
-3. Run [code generation](#code-generation) that will create generated versions of your `latest` directory next to it.
-4. Create a [Cadwyn app](#main-app) that you will use instead of `FastAPI`. Pass imported `data/latest` and your `VersonBundle` to it.
-5. Create a [VersionedAPIRouter](#versionedapirouter) that you will use for defining your versioned routes.
-6. [Include this router](#main-app) and any other versioned routers into your `Cadwyn` app. It will duplicate your router in runtime for each API version.
-
-The recommended directory structure for cadwyn is as follows:
-
-```tree
-├── data
-│   ├── __init__.py
-│   ├── unversioned
-│   │   ├── __init__.py
-│   │   └── users.py
-│   └── latest          # The latest version of your schemas goes here
-│       ├── __init__.py
-│       └── users.py
-└── versions
-    ├── __init__.py     # Your version bundle goes here
-    └── v2001_01_01.py  # Your version changes go here
-```
-
-You can structure your business logic, database, and all other parts of your application in any way you like.
-
-That's it! Your service is ready to be versioned. We can now use the most powerful feature of Cadwyn: [version changes](#version-changes).
-
-## Main App
-
-Cadwyn's standard usage is done with a single customized FastAPI app: `cadwyn.Cadwyn`. It accepts all the same arguments as `FastAPI` three more keyword-only arguments:
-
-* Required `versions: VersionBundle` describes [all versions](#versionbundle) within your application
-* Required `latest_schemas_package: ModuleType` is your [latest package](#service-structure) that contains the latest versions of your versioned schemas
-* Optional `api_version_header_name: str = "x-api-version"` is the header that Cadwyn will use for [routing](#routing) to different API versions of your app
-
-After you have defined a main app, you can add versioned API routers to it using `Cadwyn.generate_and_include_versioned_routers(*routers)`
-
-```python
-from cadwyn import VersionedAPIRouter, Cadwyn
-from versions import my_version_bundle
-
-
-router = VersionedAPIRouter(prefix="/users")
-
-
-@router.get("/users/", tags=["users"])
-async def read_users():
-    return [{"username": "Rick"}, {"username": "Morty"}]
-
-
-@router.get("/users/{username}", tags=["users"])
-async def read_user(username: str):
-    return {"username": username}
-
-
-app = Cadwyn(versions=my_version_bundle)
-app.generate_and_include_versioned_routers(router)
-```
-
-That's it! `generate_and_include_versioned_routers` will generate all versions of your routers based on the `versions` argument and will use schemas from the versioned schema directories parallel to `versions.latest_schema_package`.
-
-### Routing
-
-Cadwyn is built on header-based routing. First, we route requests to the appropriate API version based on the version header (`x-api-version` by default). Then we route by the appropriate url path and method. Currerntly, Cadwyn only works with ISO date-based versions (such as `2022-11-16`). If the user sends an incorrect API version, Cadwyn picks up the closest lower applicable version. For example, `2022-11-16` in request can be matched by `2022-11-15` and `2000-01-01` but cannot be matched by `2022-11-17`.
-
-However, header-based routing is only the standard way to use Cadwyn. If you want to use any other sort of routing, you can use Cadwyn directly through `cadwyn.generate_versioned_routers`. Just remember to update the `VersionBundle.api_version_var` variable each time you route some request to a version. This variable allows Cadwyn to do [side effects](#version-changes-with-side-effects) and [data migrations](#data-migrations).
-
-#### VersionedAPIRouter
-
-Cadwyn has its own API Router class: `cadwyn.VersionedAPIRouter`. You are free to use a regular `fastapi.APIRouter` but `cadwyn.VersionedAPIRouter` has a special decorator `only_exists_in_older_versions(route)` which allows you to define routes that have been previously deleted. First you define the route and than add this decorator to it.
-
-## CLI
-
-Cadwyn has an optional CLI interface that can be installed with `pip install cadwyn[cli]`.
-Run `cadwyn --version` to check current version of Cadwyn.
-
-## Code generation
-
-Cadwyn generates versioned schemas and everything related to them from latest version. These versioned schemas will be automatically used in requests and responses for [versioned API routes](#main-app). There are two methods of generating code: using a function and using the CLI:
-
-### Command-line interface
-
-You can use `cadwyn codegen` which accepts a python path to your version bundle.
-
-**NOTE** that it is not a regular system path. It's the **python-style** path -- the same one you would use when running `uvicorn` through command-line. Imagine that you are importing the module and then appending `":" + version_bundle_variable_name` at the end.
-
-```bash
-cadwyn codegen path.to.version.bundle:version_bundle_variable
-```
-
-#### **Note**
-
-* You don't use the system path style for both arguments. Instead, imagine that you are importing these modules in python -- that's the way you want to write down the paths.
-* Take a look at how we point to our version bundle. We use ":" to say that it's a variable within the specified module
-
-### Function interface
-
-You can use `cadwyn.generate_code_for_versioned_packages` which accepts a `template_module` (a directory which contains the latest versions) and `versions` which is the `VersionBundle` from which to generate versions.
-
-## Version Changes
+# Version Changes
 
 Version changes are the backbone of Cadwyn. They give you an ability to describe things like "This field in that schema had a different name in an older version" or "this endpoint was deleted in the latest version". Whenever add a new version, it means that you wish to make a bunch of breaking changes in your API without affecting your users.
 
@@ -161,11 +42,11 @@ versions = VersionBundle(
 
 Now let's discuss what each of these parts does and why:
 
-### VersionChange
+## VersionChange
 
 `VersionChange` classes describe each atomic group of business capabilities that you have altered in a version.
 
-#### VersionChange.\_\_name\_\_
+### VersionChange.\_\_name\_\_
 
 The name of the version change, `RemoveTaxIDEndpoints`, describes what breaking change has happened. It must be a verb and it is the best resource for your new developers to quickly understand what happened between the versions. Do not be shy to use really long names -- it is better to have a long name than to create a misunderstanding. Avoid generic names such as `RefactorUserFields`. Better have an ugly name such as `RenameCreationDatetimeAndUpdateDatetimeToCreatedAtAndUpdatedAt` then to have a generic name such as `RefactorFields`. Because after just a few of such version changes, your versioning structure can become completely unreadable:
 
@@ -179,7 +60,7 @@ versions = VersionBundle(
 )
 ```
 
-#### VersionChange.description
+### VersionChange.description
 
 The description field of your version change must be even more detailed. In fact, it is intended to be the **name** and the **summary** of the version change for your clients. It must clearly state to you clients **what happened** and **why**. So you need to make it grammatically correct, detailed, concrete, and written for humans. Note that you do not have to use a strict machine-readable format -- it is a portion of documentation, not a set of intructions. Let's take [Stripe's description](https://stripe.com/blog/api-versioning) to one of their version changes as an example:
 
@@ -199,13 +80,13 @@ Changes:
 * Its second line, `Changes:`, does not make any sense as well because description of a `VersionChange` cannot describe anything but changes. So again, it's stating the obvious and making it harder for our readers to understand the crux of the change
 * Its third line, `Changed schema for 'POST /v1/tax_ids' endpoint`, gives both too much and too little information. First of all, it talks about changing schema but it never mentions what exactly changed. Remember: we are doing this to make it easy for our clients to migrate from one version to another. Insteaad, it is much better to mention the openapi model name that you changed, the fields you changed, and why you changed them
 
-#### VersionChange.instructions_to_migrate_to_previous_version
+### VersionChange.instructions_to_migrate_to_previous_version
 
 In Cadwyn, you use the latest version. This attribute is a way for you to describe how your schemas and endpoints looked in previous versions so that Cadwyn can guess code generation and route generation to recreate the old schemas and endpoints for your clients. So you only need to maintain your latest schemas and your migrations while Cadwyn takes care of the rest. In fact, you spend barely any effort on **maintaining** your migrations because they are effectively immutable -- they describe the breaking changes that happened in the past so there is no need to ever change them.
 
 This approach of *maintaining the present and describing the past* might appear weird. You just need to form the correct mindset which is counter-intuitive at first but after just one or two attempts at versioning you will see how much sense this approach makes.
 
-#### Data migrations
+### Data migrations
 
 Let's say that we renamed the field `creation_date` into `created_at`. We have altered our schemas -- that's great! But when our clients send us requests using the old versions of our API -- we will still get the data where we have `creation_date` instead of `created_at`. How do we solve this? Well, in Cadwyn your business logic never receives requests of the old versions. Instead, it receives only the requests of the latest version. So when you define a version change that renames a field, you need to also define how to convert the request body from the old version to the newer version. For example:
 
@@ -270,11 +151,11 @@ Notice how we specified the schema for `InvoiceResource` in our migration? This 
 
 Now our request comes, Cadwyn migrates it to the latest version using our request migration, then we do our business logic, return the latest response from it, and Cadwyn migrates it back to the request version. Does our business logic or database know about the fact that we have two versions? No, not at all! It is zero-cost. Imagine how beneficial it is when you support not two but two hundred versions.
 
-![The diagram showing how it works](<./img/simplified_migration_model.png>)
+![The diagram showing how it works](../img/simplified_migration_model.png)
 
 **Notice** how we used the **latest** versions of our schemas in our migration -- this pattern can be found everywhere in Cadwyn. You use the latest version of your schemas to describe what happened to all other versions because other versions might not exist when you are defining migrations for them.
 
-##### Path-based migration specification
+#### Path-based migration specification
 
 Oftentimes you will need to migrate not based on the request body or response model but based on the path of the endpoint. This happens when, for example, endpoint does not have a request body or its response model is used in other places that we do not want to migrate. Let's pick the example [above](#data-migrations) and use paths instead of schemas:
 
@@ -305,7 +186,7 @@ class RemoveTaxIDEndpoints(VersionChange):
 
 Though I highly recommend you to stick to schemas as it is much easier to introduce inconsistencies when using paths; for example, when you have 10 endpoints with the same response body schema but you forgot to add migrations for 3 of them because you use paths instead of schemas.
 
-##### Migration of HTTP errors
+#### Migration of HTTP errors
 
 Oftentimes you need to raise `fastapi.HTTPException` in your code to signal some errors to your users. However, if you want to change the status code of some error, it would be a breaking change because your error status codes and sometimes even their bodies are a part of your API contract.
 
@@ -331,7 +212,7 @@ class RemoveTaxIDEndpoints(VersionChange):
             response.status_code = 404
 ```
 
-##### Migration of non-body attributes
+#### Migration of non-body attributes
 
 Cadwyn has an ability to migrate more than just request bodies.
 
@@ -350,7 +231,7 @@ Cadwyn has an ability to migrate more than just request bodies.
 * [set_cookie](https://www.starlette.io/responses/#set-cookie)
 * [delete_cookie](https://www.starlette.io/responses/#delete-cookie)
 
-##### Internal representations
+#### Internal representations
 
 We have only reviewed simplistic cases so far. But what happens when you cannot just migrate your data that easily? It can happen because your earlier versions had **more data** than your newer versions. Or that data had more formats.
 
@@ -463,7 +344,7 @@ def create_user(
 
 This type hint will tell Cadwyn that this route has public-facing schema of `User` that Cadwyn will use for validating all requests. Cadwyn will always use `InternalUserCreateRequest` when pushing body field into your business logic instead of `User`. Note that users will not be able to use any fields from the internal representation and their requests will still be validated by your regular schemas. So even if you added a field `foo` in an internal representation, and your user has passed this field in the body of the request, this field will not get to the internal representation because it will be removed at the moment of request validation (or even an error will occur if you use `extra="ignore"`). OpenAPI will also only use the public schemas, not the internal ones.
 
-##### Manual body migrations
+#### Manual body migrations
 
 Oftentimes you will have a need to migrate your data outside of routing, manually. For example, when you need to send a versioned response to your client via webhook or inside a worker/cronjob. In these instances, you can use `cadwyn.VersionBundle.migrate_response_body`:
 
@@ -478,11 +359,11 @@ body_from_2000_01_01 = version_bundle.migrate_response_body(
 
 The returned `body_from_2000_01_01` is your data passed through all converters (similar to how it would when a response is returned from your route) and wrapped into `data.v2000_01_01.UserResource`. The fact that it is wrapped gives us the ability to include pydantic's defaults.
 
-##### StreamingResponse and FileResponse migrations
+#### StreamingResponse and FileResponse migrations
 
 Migrations for the bodies of `fastapi.responses.StreamingResponse` and `fastapi.responses.FileResponse` are not directly supported yet ([1](https://github.com/zmievsa/cadwyn/issues/125), [2](https://github.com/zmievsa/cadwyn/issues/126)). However, you can use `ResponseInfo._response` attribute to get access to the original `StreamingResponse` or `FileResponse` and modify it in any way you wish within your migrations.
 
-### Pydantic 2 RootModel migration warning
+## Pydantic 2 RootModel migration warning
 
 Pydantic 2 has an interesting implementation detail: `pydantic.RootModel` instances are memoized. So the following code is going to output `True`:
 
@@ -518,7 +399,7 @@ print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # False
 
 or to specify migrations using [endpoint path](#path-based-migration-specification) instead of a schema.
 
-### VersionBundle
+## VersionBundle
 
 `VersionBundle` is your single source of truth for your list of versions. It contains your list of versions and all [version changes](#version-changes) associated with them. Each version change is a single group of breaking changes. Each `Version` contains a group of version changes that caused this version to be created. So for example, if I deleted an endpoint `POST /v1/tax_ids` in version `2023-02-10`, then I'll add the version change for deleting that endpoint into `2023-02-10`. For example:
 
@@ -540,307 +421,6 @@ versions = VersionBundle(
 ```
 
 See how our first version, `2022-11-16` does not have any version changes? That is intentional! How can it have breaking changes if there are no versions before it?
-
-## Endpoints
-
-Note that the endpoint constructor contains a second argument that describes the methods of the endpoints you would like to edit. If you have two routes for a single endpoint and you put both of their methods into the instruction -- both of them are going to be changed as you would expect.
-
-### Defining endpoints that didn't exist in new versions
-
-If you had an endpoint in old version but do not have it in a new one, you must still define it but mark it as deleted.
-
-```python
-@router.only_exists_in_older_versions
-@router.get("/my_old_endpoint")
-async def my_old_endpoint():
-    ...
-```
-
-and then define it as existing in one of the older versions:
-
-```python
-from cadwyn.structure import VersionChange, endpoint
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        endpoint("/my_old_endpoint", ["GET"]).existed,
-    )
-```
-
-### Defining endpoints that didn't exist in old versions
-
-If you have an endpoint in your new version that must not exist in older versions, you define it as usual and then mark it as "non-existing" in old versions:
-
-```python
-from cadwyn.structure import VersionChange, endpoint
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        endpoint("/my_new_endpoint", ["GET"]).didnt_exist,
-    )
-```
-
-### Changing endpoint attributes
-
-If you want to change any attribute of your endpoint in a new version, you can return the attribute's value in all older versions like so:
-
-```python
-from cadwyn.structure import VersionChange, endpoint
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        endpoint("/my_endpoint", ["GET"]).had(description="My old description"),
-    )
-```
-
-### Dealing with endpoint duplicates
-
-Sometimes, when you're doing some advanced changes in between versions, you will need to rewrite your endpoint function entirely. So essentially you'd have the following structure:
-
-```python
-from fastapi.params import Param
-from fastapi.headers import Header
-from typing import Annotated
-from cadwyn import VersionedAPIRouter
-
-router = VersionedAPIRouter()
-
-
-@router.only_exists_in_older_versions
-@router.get("/users")
-def get_users_by_name_before_we_started_using_params(
-    user_name: Annotated[str, Header()]
-):
-    """Do some logic with user_name"""
-
-
-@router.get("/users")
-def get_users_by_name(user_name: Annotated[str, Param()]):
-    """Do some logic with user_name"""
-```
-
-As you see, these two functions have the same methods and paths. And when you have many versions, you can have even more functions like these two. So how do we ask cadwyn to restore only one of them and delete the other one?
-
-```python
-from cadwyn.structure import VersionChange, endpoint
-
-
-class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
-    description = (
-        "Use params instead of headers for user name filtering in GET /users "
-        "because using headers is a bad API practice in such scenarios."
-    )
-    instructions_to_migrate_to_previous_version = (
-        # We need to specify the name, otherwise, we will encounter an exception due to having two identical endpoints
-        # with the same path and method
-        endpoint(
-            "/users",
-            ["GET"],
-            func_name="get_users_by_name_before_we_started_using_params",
-        ).existed,
-        # We also need to specify the name here because, following the instruction above,
-        # we now have two existing endpoints
-        endpoint("/users", ["GET"], func_name="get_users_by_name").didnt_exist,
-    )
-```
-
-So by using a more concrete `func_name`, we are capable to distinguish between different functions that affect the same routes.
-
-## Enums
-
-All of the following instructions affect only code generation.
-
-### Adding enum members
-
-Note that adding enum members **can** be a breaking change unlike adding optional fields to a schema. For example, if I return a list of entities, each of which has some type, and I add a new type -- then my client's code is likely to break.
-
-So I suggest adding enum members in new versions as well.
-
-```python
-from cadwyn.structure import VersionChange, enum
-from enum import auto
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        enum(my_enum).had(foo="baz", bar=auto()),
-    )
-```
-
-### Removing enum members
-
-```python
-from cadwyn.structure import VersionChange, enum
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        enum(my_enum).didnt_have("foo", "bar"),
-    )
-```
-
-## Schemas
-
-All of the following instructions affect only code generation.
-
-### Add a field
-
-```python
-from pydantic import Field
-from cadwyn.structure import VersionChange, schema
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema)
-        .field("foo")
-        .existed_as(type=list[str], info=Field(description="Foo")),
-    )
-```
-
-You can also specify any string in place of type:
-
-```python
-schema(MySchema).field("foo").existed_as(type="AnythingHere")
-```
-
-It is often the case that you want to add a type that has not been imported in your schemas yet. You can use [module import adding](#modules) to solve this issue.
-
-### Remove a field
-
-```python
-from cadwyn.structure import VersionChange, schema
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).field("foo").didnt_exist,
-    )
-```
-
-### Change a field
-
-If you would like to set a description or any other attribute of a field, you would do:
-
-```python
-from cadwyn.structure import VersionChange, schema
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).field("foo").had(description="Foo"),
-    )
-```
-
-and if you would like to unset any attribute of a field as if it was never passed, you would do:
-
-```python
-from cadwyn.structure import VersionChange, schema
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).field("foo").didnt_have("description"),
-    )
-```
-
-#### **DEFAULTS WARNING**
-
-If you add `default` or `default_factory` into the old version of a schema -- it will not manifest in code automatically. Instead, you should add both the `default` or `default_factory`, and then also add the default value using a request migration.
-
-This happens because of how Cadwyn works with pydantic and sadly cannot be changed:
-
-Cadwyn:
-
-1. Receives the request of some version `V`
-2. Validates the request using the schemas from `V`
-3. Marshalls the unmarshalled request body into a raw data structure using `BaseModel.dict` (`BaseModel.model_dump` in Pydantic v2) using **exclude_unset=True**
-4. Passes the request through all request migrations from `V` to `latest`
-5. Validates the request using `latest` schemas
-
-The part that causes the aforementioned problem is our usage of `exclude_unset=True`. Sadly, when we use it, all default fields do not get set so `latest` does not receive them. And if `latest` does not have the same defaults (for example, if the field has no default and is required in `latest`), then an error will occur. If we used `exclude_unset=False`, then `exclude_unset` would lose all its purpose for the users of our library so we cannot abandon it. Instead, you should set all extra on step 4 in your request migrations.
-
-### Add a validator
-
-```python
-from pydantic import Field, validator
-from cadwyn.structure import VersionChange, schema
-
-
-@validator("foo")
-def validate_foo(cls, value):
-    if not ":" in value:
-        raise TypeError
-    return value
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).validator(validate_foo).existed,
-    )
-```
-
-### Remove a validator
-
-```python
-from pydantic import Field, validator
-from cadwyn.structure import VersionChange, schema
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).validator(MySchema.validate_foo).didnt_exist,
-    )
-```
-
-### Rename a schema
-
-If you wish to rename your schema to make sure that its name is different in openapi.json:
-
-```python
-from cadwyn.structure import VersionChange, schema
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).had(name="OtherSchema"),
-    )
-```
-
-which will replace all references to this schema with the new name.
-
-## Modules
-
-Oftentimes you start depending on new types in-between versions. For example, let's say that you depended on `Invoice` schema within your `data.latest.users` in older versions but now you do not. This means that once we run code generation and this type gets back into some annotation of some schema in `data.latest.users` -- it will not be imported because it was not imported in `latest`. To solve problems like this one, we have `module` instructions:
-
-```python
-from cadwyn.structure import VersionChange, module
-import data.latest.users
-
-
-class MyChange(VersionChange):
-    description = "..."
-    instructions_to_migrate_to_previous_version = (
-        module(data.latest.users).had(import_="from .invoices import Invoice"),
-    )
-```
-
-Which will add-in this import at the top of `users` file in all versions before this version change.
 
 ## Version changes with side effects
 
@@ -884,9 +464,3 @@ async def create_user(payload):
 ```
 
 So this change can be contained in any version -- your business logic doesn't know which version it has and shouldn't.
-
-## API Version header and context variables
-
-Cadwyn automatically converts your data to a correct version and has "version checks" when dealing with side effects as described in [the section above](#version-changes-with-side-effects). It can only do so using a special [context variable](https://docs.python.org/3/library/contextvars.html) that stores the current API version.
-
-You can also pass a different compatible contextvar to your `cadwyn.VersionBundle` constructor.
