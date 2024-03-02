@@ -1,4 +1,5 @@
 # Schema migrations
+
 All of the following instructions affect only code generation.
 
 ## Add a field to the older version
@@ -23,7 +24,7 @@ You can also specify any string in place of type:
 schema(MySchema).field("foo").existed_as(type="AnythingHere")
 ```
 
-It is often the case that you want to add a type that has not been imported in your schemas yet. You can use [module import adding](#modules) to solve this issue.
+It is often the case that you want to add a type that has not been imported in your schemas yet. You can use [module import adding](./module_migrations.md) to solve this issue.
 
 ## Remove a field from the older version
 

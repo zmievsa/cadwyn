@@ -1,4 +1,5 @@
 # Beware of data versioning
+
 Oftentimes you will want to introduce a breaking change where one of the following is true:
 
 * Old data cannot be automatically converted to the structure of the new response

@@ -1,4 +1,5 @@
 # Endpoint migrations
+
 Note that the endpoint constructor contains a second argument that describes the methods of the endpoints you would like to edit. If you have two routes for a single endpoint and you put both of their methods into the instruction -- both of them are going to be changed as you would expect.
 
 ## Defining endpoints that didn't exist in new versions

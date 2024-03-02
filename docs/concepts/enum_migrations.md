@@ -1,4 +1,5 @@
 # Enum migrations
+
 All of the following instructions affect only code generation.
 
 ## Adding enum members
