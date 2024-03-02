@@ -9,6 +9,7 @@ from .enums import enum
 from .modules import module
 from .schemas import schema
 from .versions import (
+    HeadVersion,
     Version,
     VersionBundle,
     VersionChange,
@@ -18,6 +19,7 @@ from .versions import (
 __all__ = [
     "VersionBundle",
     "Version",
+    "HeadVersion",
     "VersionChange",
     "VersionChangeWithSideEffects",
     "endpoint",

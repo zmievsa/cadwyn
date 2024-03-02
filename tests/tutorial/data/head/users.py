@@ -1,6 +1,6 @@
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class BaseUser(BaseModel):
@@ -9,6 +9,7 @@ class BaseUser(BaseModel):
 
 class UserCreateRequest(BaseUser):
     default_address: str
+    addresses_to_create: list[str] = Field(default_factory=list)
 
 
 class UserResource(BaseUser):

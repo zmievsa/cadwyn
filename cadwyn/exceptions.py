@@ -9,7 +9,7 @@ class CadwynError(Exception):
     pass
 
 
-class CadwynLatestRequestValidationError(CadwynError):
+class CadwynHeadRequestValidationError(CadwynError):
     def __init__(self, errors: list[Any], body: Any, version: date) -> None:
         self.errors = errors
         self.body = body

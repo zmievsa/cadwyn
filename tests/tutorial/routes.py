@@ -1,16 +1,13 @@
 import uuid
-from typing import Annotated
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.applications import Cadwyn
-from cadwyn.route_generation import InternalRepresentationOf
 
 from .data.head.users import (
     UserAddressResourceList,
     UserCreateRequest,
     UserResource,
 )
-from .data.unversioned import InternalUserCreateRequest
 from .versions import version_bundle
 
 router = VersionedAPIRouter()
@@ -18,7 +15,7 @@ database_parody = {}
 
 
 @router.post("/users", response_model=UserResource)
-async def create_user(user: Annotated[InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]]):
+async def create_user(user: UserCreateRequest):
     id_ = uuid.uuid4()
     database_parody[id_] = {"id": id_}
     addresses = create_user_addresses(id_, [user.default_address, *user.addresses_to_create])

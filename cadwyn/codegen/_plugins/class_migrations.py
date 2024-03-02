@@ -29,7 +29,7 @@ from cadwyn.structure.schemas import (
 )
 
 
-def class_migration_plugin(context: GlobalCodegenContext):
+def class_migration_plugin(context: GlobalCodegenContext) -> None:
     for version_change in context.current_version.version_changes:
         _apply_alter_schema_instructions(
             context.schemas,

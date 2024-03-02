@@ -80,6 +80,7 @@ def generate_code_for_versioned_packages(
             for k, v in deepcopy(versions.versioned_enums).items()
         },
         modules={k: _ModuleWrapper(module) for k, module in versions.versioned_modules.items()},
+        version_bundle=versions,
         extra_context=extra_context | {"ignore_coverage_for_latest_aliases": ignore_coverage_for_latest_aliases},
         codegen_plugins=codegen_plugins,
         migration_plugins=migration_plugins,
@@ -94,10 +95,22 @@ def _generate_versioned_directories(
     schemas: dict[IdentifierPythonPath, PydanticModelWrapper],
     enums: dict[IdentifierPythonPath, _EnumWrapper],
     modules: dict[IdentifierPythonPath, _ModuleWrapper],
+    version_bundle: VersionBundle,
     extra_context: dict[str, Any],
     codegen_plugins: Collection[CodegenPlugin],
     migration_plugins: Collection[MigrationPlugin],
 ):
+    global_context = GlobalCodegenContext(
+        current_version=version_bundle.head_version,
+        versions=versions,
+        schemas=schemas,
+        enums=enums,
+        modules=modules,
+        extra=extra_context,
+        version_bundle=version_bundle,
+    )
+    for plugin in migration_plugins:
+        plugin(global_context)
     for version in versions:
         print(f"Generating code for version={version.value!s}")  # noqa: T201
         global_context = GlobalCodegenContext(
@@ -107,8 +120,8 @@ def _generate_versioned_directories(
             enums=enums,
             modules=modules,
             extra=extra_context,
+            version_bundle=version_bundle,
         )
-
         _generate_directory_for_version(template_package, codegen_plugins, version, global_context)
         for plugin in migration_plugins:
             plugin(global_context)
@@ -201,6 +214,7 @@ def _build_context(
         all_names_defined_on_toplevel_of_file=all_names_defined_at_toplevel_of_file,
         template_module=template_module,
         module_path=parallel_file,
+        version_bundle=global_context.version_bundle,
     )
 
 

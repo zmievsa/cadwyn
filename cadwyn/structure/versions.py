@@ -34,7 +34,7 @@ from cadwyn._package_utils import (
     get_version_dir_path,
 )
 from cadwyn._utils import classproperty, get_another_version_of_cls
-from cadwyn.exceptions import CadwynError, CadwynLatestRequestValidationError, CadwynStructureError
+from cadwyn.exceptions import CadwynError, CadwynHeadRequestValidationError, CadwynStructureError
 
 from .._utils import Sentinel
 from .common import Endpoint, VersionDate, VersionedModel
@@ -217,10 +217,29 @@ class Version:
         return f"Version('{self.value}')"
 
 
+class HeadVersion:
+    def __init__(self, *version_changes: type[VersionChange]) -> None:
+        super().__init__()
+        self.version_changes = version_changes
+
+        for version_change in version_changes:
+            if any(
+                [
+                    version_change.alter_request_by_path_instructions,
+                    version_change.alter_request_by_schema_instructions,
+                    version_change.alter_response_by_path_instructions,
+                    version_change.alter_response_by_schema_instructions,
+                ]
+            ):
+                raise NotImplementedError(
+                    f"HeadVersion does not support request or response migrations but {version_change} contained one."
+                )
+
+
 class VersionBundle:
     def __init__(
         self,
-        latest_version: Version,
+        latest_version_or_head_version: Version | HeadVersion,
         /,
         *other_versions: Version,
         api_version_var: APIVersionVarType | None = None,
@@ -228,8 +247,14 @@ class VersionBundle:
     ) -> None:
         super().__init__()
 
+        if isinstance(latest_version_or_head_version, HeadVersion):
+            self.head_version = latest_version_or_head_version
+            self.versions = other_versions
+        else:
+            self.head_version = HeadVersion()
+            self.versions = (latest_version_or_head_version, *other_versions)
+
         self.latest_schemas_package: ModuleType | None = latest_schemas_package
-        self.versions = (latest_version, *other_versions)
         self.version_dates = tuple(version.value for version in self.versions)
         if api_version_var is None:
             api_version_var = ContextVar("cadwyn_api_version")
@@ -294,7 +319,7 @@ class VersionBundle:
     def versioned_schemas(self) -> dict[IdentifierPythonPath, type[VersionedModel]]:
         altered_schemas = {
             get_cls_pythonpath(instruction.schema): instruction.schema
-            for version in self.versions
+            for version in (self.head_version, *self.versions)
             for version_change in version.version_changes
             for instruction in list(version_change.alter_schema_instructions)
         }
@@ -350,7 +375,7 @@ class VersionBundle:
         migrated_response = self._migrate_response(
             response,
             current_version=version,
-            latest_response_model=latest_response_model,
+            head_response_model=latest_response_model,
             path="\0\0\0",
             method="GET",
         )
@@ -381,13 +406,13 @@ class VersionBundle:
     async def _migrate_request(
         self,
         body_type: type[BaseModel] | None,
-        latest_dependant_with_internal_schema: Dependant,
+        head_dependant: Dependant,
         path: str,
         request: FastapiRequest,
         response: FastapiResponse,
         request_info: RequestInfo,
         current_version: VersionDate,
-        latest_route: APIRoute,
+        head_route: APIRoute,
         exit_stack: AsyncExitStack,
     ) -> dict[str, Any]:
         method = request.method
@@ -409,13 +434,13 @@ class VersionBundle:
         dependencies, errors, _, _, _ = await solve_dependencies(
             request=request,
             response=response,
-            dependant=latest_dependant_with_internal_schema,
+            dependant=head_dependant,
             body=request_info.body,
-            dependency_overrides_provider=latest_route.dependency_overrides_provider,
+            dependency_overrides_provider=head_route.dependency_overrides_provider,
             async_exit_stack=exit_stack,
         )
         if errors:
-            raise CadwynLatestRequestValidationError(
+            raise CadwynHeadRequestValidationError(
                 _normalize_errors(errors), body=request_info.body, version=current_version
             )
         return dependencies
@@ -424,7 +449,7 @@ class VersionBundle:
         self,
         response_info: ResponseInfo,
         current_version: VersionDate,
-        latest_response_model: type[BaseModel],
+        head_response_model: type[BaseModel],
         path: str,
         method: str,
     ) -> ResponseInfo:
@@ -445,12 +470,9 @@ class VersionBundle:
             for version_change in v.version_changes:
                 migrations_to_apply: list[_BaseAlterResponseInstruction] = []
 
-                if (
-                    latest_response_model
-                    and latest_response_model in version_change.alter_response_by_schema_instructions
-                ):
+                if head_response_model and head_response_model in version_change.alter_response_by_schema_instructions:
                     migrations_to_apply.extend(
-                        version_change.alter_response_by_schema_instructions[latest_response_model]
+                        version_change.alter_response_by_schema_instructions[head_response_model]
                     )
 
                 if path in version_change.alter_response_by_path_instructions:
@@ -466,10 +488,10 @@ class VersionBundle:
     # TODO (https://github.com/zmievsa/cadwyn/issues/113): Refactor this function and all functions it calls.
     def _versioned(
         self,
-        template_module_body_field_for_request_migrations: type[BaseModel] | None,
+        head_body_field: type[BaseModel] | None,
         module_body_field_name: str | None,
         route: APIRoute,
-        latest_route: APIRoute,
+        head_route: APIRoute,
         dependant_for_request_migrations: Dependant,
         *,
         request_param_name: str,
@@ -484,7 +506,7 @@ class VersionBundle:
                 response = Sentinel
                 async with AsyncExitStack() as exit_stack:
                     kwargs = await self._convert_endpoint_kwargs_to_version(
-                        template_module_body_field_for_request_migrations,
+                        head_body_field,
                         module_body_field_name,
                         # Dependant must be from the version of the finally migrated request,
                         # not the version of endpoint
@@ -493,13 +515,13 @@ class VersionBundle:
                         kwargs,
                         response_param,
                         route,
-                        latest_route,
+                        head_route,
                         exit_stack,
                     )
 
                     response = await self._convert_endpoint_response_to_version(
                         endpoint,
-                        latest_route,
+                        head_route,
                         route,
                         method,
                         response_param_name,
@@ -529,7 +551,7 @@ class VersionBundle:
     async def _convert_endpoint_response_to_version(  # noqa: C901
         self,
         func_to_get_response_from: Endpoint,
-        latest_route: APIRoute,
+        head_route: APIRoute,
         route: APIRoute,
         method: str,
         response_param_name: str,
@@ -586,16 +608,16 @@ class VersionBundle:
                 fastapi_response_dependency,
                 _prepare_response_content(
                     response_or_response_body,
-                    exclude_unset=latest_route.response_model_exclude_unset,
-                    exclude_defaults=latest_route.response_model_exclude_defaults,
-                    exclude_none=latest_route.response_model_exclude_none,
+                    exclude_unset=head_route.response_model_exclude_unset,
+                    exclude_defaults=head_route.response_model_exclude_defaults,
+                    exclude_none=head_route.response_model_exclude_none,
                 ),
             )
 
         response_info = self._migrate_response(
             response_info,
             api_version,
-            latest_route.response_model,
+            head_route.response_model,
             route.path,
             method,
         )
@@ -633,14 +655,14 @@ class VersionBundle:
 
     async def _convert_endpoint_kwargs_to_version(
         self,
-        template_module_body_field_for_request_migrations: type[BaseModel] | None,
+        head_body_field: type[BaseModel] | None,
         body_field_alias: str | None,
-        latest_dependant_with_internal_schema: Dependant,
+        head_dependant: Dependant,
         request_param_name: str,
         kwargs: dict[str, Any],
         response: FastapiResponse,
         route: APIRoute,
-        latest_route: APIRoute,
+        head_route: APIRoute,
         exit_stack: AsyncExitStack,
     ) -> dict[str, Any]:
         request: FastapiRequest = kwargs[request_param_name]
@@ -654,7 +676,7 @@ class VersionBundle:
         # This is a kind of body param you get when you define a single pydantic schema in your route's body
         if (
             len(route.dependant.body_params) == 1
-            and template_module_body_field_for_request_migrations is not None
+            and head_body_field is not None
             and body_field_alias is not None
             and body_field_alias in kwargs
         ):
@@ -675,14 +697,14 @@ class VersionBundle:
 
         request_info = RequestInfo(request, body)
         new_kwargs = await self._migrate_request(
-            template_module_body_field_for_request_migrations,
-            latest_dependant_with_internal_schema,
+            head_body_field,
+            head_dependant,
             route.path,
             request,
             response,
             request_info,
             api_version,
-            latest_route,
+            head_route,
             exit_stack=exit_stack,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies

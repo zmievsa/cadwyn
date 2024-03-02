@@ -182,7 +182,6 @@ def test__endpoint_existed__endpoint_removed_in_latest_but_never_restored__shoul
     async def test_endpoint():
         raise NotImplementedError
 
-    # with insert_pytest_raises():
     with pytest.raises(
         RouterGenerationError,
         match=re.escape(

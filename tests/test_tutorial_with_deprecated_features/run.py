@@ -3,8 +3,8 @@ if __name__ == "__main__":
 
     import uvicorn
 
-    from tests.test_tutorial_with_latest.routes import app, router
-    from tests.test_tutorial_with_latest.utils import clean_versions
+    from tests.test_tutorial_with_deprecated_features.routes import app, router
+    from tests.test_tutorial_with_deprecated_features.utils import clean_versions
 
     try:
         app.generate_and_include_versioned_routers(router)

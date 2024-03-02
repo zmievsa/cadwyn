@@ -19,7 +19,7 @@ from starlette.responses import StreamingResponse
 
 from cadwyn import VersionedAPIRouter, generate_code_for_versioned_packages
 from cadwyn._compat import PYDANTIC_V2, model_dump
-from cadwyn.exceptions import CadwynError, CadwynLatestRequestValidationError
+from cadwyn.exceptions import CadwynError, CadwynHeadRequestValidationError
 from cadwyn.route_generation import InternalRepresentationOf
 from cadwyn.structure import (
     VersionChange,
@@ -59,6 +59,10 @@ def head_module(head_module_for: HeadModuleFor):
     class AnyResponseSchema(RootModel[Any]):
         pass
 
+    class SchemaWithHeadMigrations(BaseModel):
+        foo: int
+        bar: str | None = Field(default=None)
+
     class SchemaWithInternalRepresentation(BaseModel):
         foo: int
 
@@ -80,6 +84,10 @@ def head_module(head_module_for: HeadModuleFor):
 
     class AnyResponseSchema(BaseModel):
         __root__: Any
+
+    class SchemaWithHeadMigrations(BaseModel):
+        foo: int
+        bar: str | None = Field(default=None)
 
     class SchemaWithInternalRepresentation(BaseModel):
         foo: int
@@ -309,7 +317,7 @@ class TestRequestMigrations:
         clients = create_versioned_clients(version_change(migrator=migrator))
 
         assert clients[date(2001, 1, 1)].get(test_path, headers={"my-header": "wow"}).json() == 83
-        with pytest.raises(CadwynLatestRequestValidationError):
+        with pytest.raises(CadwynHeadRequestValidationError):
             clients[date(2000, 1, 1)].get(test_path, headers={"my-header": "wow"}).json()
 
     def test__optional_body_field(
@@ -431,7 +439,100 @@ class TestRequestMigrations:
             "foo": 1,
             "bar": None,
         }
-        with pytest.raises(CadwynLatestRequestValidationError):
+        with pytest.raises(CadwynHeadRequestValidationError):
+            clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json()
+
+    def test__head_schema_migration__with_no_versioned_migrations__body_gets_parsed_to_head_schema(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        head_module: ModuleType,
+        temp_data_package_path: str,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path)
+        async def route(payload: head_module.SchemaWithHeadMigrations):
+            return payload
+
+        clients = create_versioned_clients(
+            version_change(),
+            head_version_changes=[
+                version_change(schema(head_module.SchemaWithHeadMigrations).field("bar").didnt_exist)
+            ],
+        )
+
+        # [-1] route is /openapi.json
+        last_route = clients[date(2000, 1, 1)].app.routes[-2]
+        assert isinstance(last_route, APIRoute)
+
+        assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+            "foo": 1,
+            "bar": None,
+        }
+        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+            "foo": 1,
+            "bar": None,
+        }
+
+    def test__head_schema_migration__with_versioned_migrations__body_gets_parsed_to_internal_request_schema(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        head_module: ModuleType,
+        temp_data_package_path: str,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path)
+        async def route(payload: head_module.SchemaWithHeadMigrations):
+            return payload
+
+        @convert_request_to_next_version_for(head_module.SchemaWithHeadMigrations)
+        def migrator(request: RequestInfo):
+            request.body["bar"] = "world"
+
+        clients = create_versioned_clients(
+            version_change(migrator=migrator),
+            head_version_changes=[
+                version_change(schema(head_module.SchemaWithHeadMigrations).field("bar").didnt_exist)
+            ],
+        )
+
+        assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+            "foo": 1,
+            "bar": "world",
+        }
+        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+            "foo": 1,
+            "bar": None,
+        }
+
+    def test__head_schema_migration__with_invalid_versioned_migrations__internal_schema_validation_error(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        head_module: ModuleType,
+        temp_data_package_path: str,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path)
+        async def route(payload: head_module.SchemaWithHeadMigrations):
+            return payload
+
+        @convert_request_to_next_version_for(head_module.SchemaWithHeadMigrations)
+        def migrator(request: RequestInfo):
+            request.body["bar"] = [1, 2, 3]
+
+        clients = create_versioned_clients(
+            version_change(migrator=migrator),
+            head_version_changes=[
+                version_change(schema(head_module.SchemaWithHeadMigrations).field("bar").didnt_exist)
+            ],
+        )
+        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+            "foo": 1,
+            "bar": None,
+        }
+        with pytest.raises(CadwynHeadRequestValidationError):
             clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json()
 
     def test__serialization_of_request_body__when_body_is_non_pydantic(

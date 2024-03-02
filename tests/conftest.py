@@ -33,6 +33,7 @@ from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
 from cadwyn.structure.modules import AlterModuleInstruction
 from cadwyn.structure.schemas import AlterSchemaSubInstruction, SchemaHadInstruction
+from cadwyn.structure.versions import HeadVersion
 
 CURRENT_DIR = Path(__file__).parent
 Undefined = object()
@@ -317,8 +318,16 @@ class CreateVersionedApp:
     temp_data_package_path: str
     run_schema_codegen: RunSchemaCodegen
 
-    def __call__(self, *version_changes: type[VersionChange] | list[type[VersionChange]]) -> Cadwyn:
-        bundle = VersionBundle(*versions(version_changes), api_version_var=self.api_version_var)
+    def __call__(
+        self,
+        *version_changes: type[VersionChange] | list[type[VersionChange]],
+        head_version_changes: Sequence[type[VersionChange]] = (),
+    ) -> Cadwyn:
+        bundle = VersionBundle(
+            HeadVersion(*head_version_changes),
+            *versions(version_changes),
+            api_version_var=self.api_version_var,
+        )
         latest_module = self.run_schema_codegen(bundle)
         app = Cadwyn(versions=bundle, latest_schemas_package=latest_module)
         app.generate_and_include_versioned_routers(self.router)
@@ -343,8 +352,9 @@ class CreateVersionedClients:
     def __call__(
         self,
         *version_changes: type[VersionChange] | list[type[VersionChange]],
+        head_version_changes: Sequence[type[VersionChange]] = (),
     ) -> dict[date, CadwynTestClient]:
-        app = self.create_versioned_app(*version_changes)
+        app = self.create_versioned_app(*version_changes, head_version_changes=head_version_changes)
         return {
             version: CadwynTestClient(app, headers={app.router.api_version_header_name: version.isoformat()})
             for version in reversed(app.router.versioned_routes)
