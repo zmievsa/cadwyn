@@ -2,14 +2,15 @@ import email.message
 import functools
 import inspect
 import json
+import warnings
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from enum import Enum
 from pathlib import Path
 from types import ModuleType
-from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
+from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, cast
 
 from fastapi import HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -260,8 +261,34 @@ class VersionBundle:
                     )
                 version_change._bound_version_bundle = self
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Version]:
         yield from self.versions
+
+    def _validate_latest_schemas_package_structure(self):
+        # This entire function won't be necessary once we start raising an exception
+        # upon receiving `latest`.
+
+        latest_schemas_package = cast(ModuleType, self.latest_schemas_package)
+
+        if not hasattr(latest_schemas_package, "__path__"):
+            raise CadwynStructureError(
+                f'The head schemas module must be a package. "{latest_schemas_package.__name__}" is not a package.',
+            )
+        elif latest_schemas_package.__name__.endswith(".head"):
+            return "head"
+        elif latest_schemas_package.__name__.endswith(".latest"):
+            warnings.warn(
+                'The name of the head schemas module must be "head". '
+                f'Received "{latest_schemas_package.__name__}" instead.',
+                DeprecationWarning,
+                stacklevel=4,
+            )
+            return "latest"
+        else:
+            raise CadwynStructureError(
+                'The name of the head schemas module must be "head". '
+                f'Received "{latest_schemas_package.__name__}" instead.',
+            )
 
     @functools.cached_property
     def versioned_schemas(self) -> dict[IdentifierPythonPath, type[VersionedModel]]:

@@ -139,10 +139,6 @@ class GlobalCodegenContext:
     def __post_init__(self):
         self.latest_version = max(self.versions, key=lambda v: v.value)
 
-    @property
-    def current_version_is_latest(self):
-        return self.latest_version == self.current_version
-
 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class CodegenContext(GlobalCodegenContext):

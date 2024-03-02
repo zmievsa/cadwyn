@@ -71,7 +71,7 @@ class RunSchemaCodegen:
     temp_data_package_path: str
 
     def __call__(self, versions: VersionBundle) -> Any:
-        latest_module = importlib.import_module(self.temp_data_package_path + ".latest")
+        latest_module = importlib.import_module(self.temp_data_package_path + ".head")
         generate_code_for_versioned_packages(latest_module, versions)
         return latest_module
 
@@ -87,7 +87,7 @@ class CreateVersionedPackages:
         ignore_coverage_for_latest_aliases: bool = True,
     ) -> tuple[ModuleType, ...]:
         created_versions = versions(version_changes)
-        latest = importlib.import_module(self.temp_data_package_path + ".latest")
+        latest = importlib.import_module(self.temp_data_package_path + ".head")
         generate_code_for_versioned_packages(
             latest,
             VersionBundle(
@@ -96,7 +96,7 @@ class CreateVersionedPackages:
             ),
             ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
         )
-        schemas = tuple(
+        return tuple(
             reversed(
                 [
                     importlib.import_module(
@@ -106,10 +106,6 @@ class CreateVersionedPackages:
                 ],
             ),
         )
-        assert {k: v for k, v in schemas[-1].__dict__.items() if not k.startswith("__")} == {
-            k: v for k, v in latest.__dict__.items() if not k.startswith("__")
-        }
-        return schemas
 
 
 @pytest.fixture()
@@ -131,29 +127,29 @@ def temp_data_package_path(data_package_path: str, temp_dir: Path, temp_data_dir
 
 
 @pytest.fixture()
-def latest_dir(temp_data_dir: Path):
-    latest = temp_data_dir.joinpath("latest")
-    latest.mkdir(parents=True)
-    return latest
+def head_dir(temp_data_dir: Path):
+    head = temp_data_dir.joinpath("head")
+    head.mkdir(parents=True)
+    return head
 
 
 @pytest.fixture()
-def latest_package_path(latest_dir: Path, temp_data_package_path: str) -> str:
-    return f"{temp_data_package_path}.{latest_dir.name}"
+def head_package_path(head_dir: Path, temp_data_package_path: str) -> str:
+    return f"{temp_data_package_path}.{head_dir.name}"
 
 
-@fixture_class(name="latest_module_for")
-class LatestModuleFor:
+@fixture_class(name="head_module_for")
+class HeadModuleFor:
     temp_dir: Path
-    latest_dir: Path
-    latest_package_path: str
+    head_dir: Path
+    head_package_path: str
     created_modules: list[ModuleType]
 
     def __call__(self, source: str) -> Any:
         source = textwrap.dedent(source).strip()
-        self.latest_dir.joinpath("__init__.py").write_text(source)
+        self.head_dir.joinpath("__init__.py").write_text(source)
         importlib.invalidate_caches()
-        latest = importlib.import_module(self.latest_package_path)
+        latest = importlib.import_module(self.head_package_path)
         if self.created_modules:
             raise NotImplementedError("You cannot write latest twice")
         self.created_modules.append(latest)
@@ -166,8 +162,8 @@ class _FakeModuleWithEmptyClasses:
 
 
 @pytest.fixture()
-def latest_with_empty_classes(latest_module_for: LatestModuleFor) -> _FakeModuleWithEmptyClasses:
-    return latest_module_for(
+def head_with_empty_classes(head_module_for: HeadModuleFor) -> _FakeModuleWithEmptyClasses:
+    return head_module_for(
         """
         from enum import Enum, auto
         import pydantic
@@ -186,8 +182,8 @@ class _FakeNamespaceWithOneStrField:
 
 
 @pytest.fixture()
-def latest_with_one_str_field(latest_module_for: LatestModuleFor) -> _FakeNamespaceWithOneStrField:
-    return latest_module_for(
+def head_with_one_str_field(head_module_for: HeadModuleFor) -> _FakeNamespaceWithOneStrField:
+    return head_module_for(
         """
     from pydantic import BaseModel
     class SchemaWithOneStrField(BaseModel):
@@ -214,47 +210,38 @@ class CreateLocalVersionedPackages:
     api_version_var: ContextVar[date | None]
     temp_dir: Path
     created_modules: list[ModuleType]
-    latest_package_path: str
+    head_package_path: str
 
     def __call__(
         self,
         *version_changes: type[VersionChange] | list[type[VersionChange]],
-        ignore_coverage_for_latest_aliases: bool = True,
         codegen_plugins: Sequence[CodegenPlugin] = DEFAULT_CODEGEN_PLUGINS,
         migration_plugins: Sequence[MigrationPlugin] = DEFAULT_CODEGEN_MIGRATION_PLUGINS,
         extra_context: dict[str, Any] | None = None,
     ) -> tuple[ModuleType, ...]:
-        latest = self.created_modules[0]
         created_versions = versions(version_changes)
 
         generate_code_for_versioned_packages(
-            importlib.import_module(self.latest_package_path),
+            importlib.import_module(self.head_package_path),
             VersionBundle(
                 *created_versions,
                 api_version_var=self.api_version_var,
             ),
-            ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
             codegen_plugins=codegen_plugins,
             migration_plugins=migration_plugins,
             extra_context=extra_context,
         )
         importlib.invalidate_caches()
 
-        schemas = import_all_schemas(self.latest_package_path, created_versions)
-
-        # Validate that latest version is always equivalent to the template version
-        assert {k: v for k, v in schemas[-1].__dict__.items() if not k.startswith("__")} == {
-            k: v for k, v in latest.__dict__.items() if not k.startswith("__")
-        }
-        return schemas
+        return import_all_schemas(self.head_package_path, created_versions)
 
 
-def import_all_schemas(latest_package_path: str, created_versions: Sequence[Version]):
+def import_all_schemas(head_package_path: str, created_versions: Sequence[Version]):
     return tuple(
         reversed(
             [
                 importlib.import_module(
-                    latest_package_path.removesuffix("latest") + f"{get_version_dir_name(version.value)}",
+                    head_package_path.removesuffix("head") + f"{get_version_dir_name(version.value)}",
                 )
                 for version in created_versions
             ],
@@ -270,14 +257,12 @@ class CreateLocalSimpleVersionedPackages:
     def __call__(
         self,
         *instructions: Any,
-        ignore_coverage_for_latest_aliases: bool = True,
         codegen_plugins: Sequence[CodegenPlugin] = DEFAULT_CODEGEN_PLUGINS,
         migration_plugins: Sequence[MigrationPlugin] = DEFAULT_CODEGEN_MIGRATION_PLUGINS,
         extra_context: dict[str, Any] | None = None,
     ) -> ModuleType:
         return self.create_local_versioned_packages(
             version_change(*instructions),
-            ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
             codegen_plugins=codegen_plugins,
             migration_plugins=migration_plugins,
             extra_context=extra_context,

@@ -31,7 +31,7 @@ from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import Version, VersionBundle
 from tests.conftest import (
     CreateVersionedClients,
-    LatestModuleFor,
+    HeadModuleFor,
     _FakeModuleWithEmptyClasses,
     client,
     version_change,
@@ -44,9 +44,9 @@ def test_path():
 
 
 @pytest.fixture()
-def latest_module(latest_module_for: LatestModuleFor):
+def head_module(head_module_for: HeadModuleFor):
     if PYDANTIC_V2:
-        return latest_module_for(
+        return head_module_for(
             """
     from pydantic import BaseModel, Field, RootModel
     from typing import Any
@@ -69,7 +69,7 @@ def latest_module(latest_module_for: LatestModuleFor):
             """,
         )
     else:
-        return latest_module_for(
+        return head_module_for(
             """
     from pydantic import BaseModel, Field
     from typing import Any
@@ -97,7 +97,7 @@ def _get_endpoint(
     request: pytest.FixtureRequest,
     test_path: str,
     router: VersionedAPIRouter,
-    latest_module: ModuleType,
+    head_module: ModuleType,
 ):
     def _get_response_data(request: Request):
         return {
@@ -108,20 +108,20 @@ def _get_endpoint(
 
     if request.param == "is_async":
 
-        @router.get(test_path, response_model=latest_module.AnyResponseSchema)
+        @router.get(test_path, response_model=head_module.AnyResponseSchema)
         async def get_async_endpoint(request: Request):
             return _get_response_data(request)
 
     else:
 
-        @router.get(test_path, response_model=latest_module.AnyResponseSchema)
+        @router.get(test_path, response_model=head_module.AnyResponseSchema)
         def get_sync_endpoint(request: Request):
             return _get_response_data(request)
 
 
 @pytest.fixture(params=["is_async", "is_sync"])
-def _post_endpoint(request, test_path: str, router: VersionedAPIRouter, latest_module: ModuleType):
-    def _get_request_data(request: Request, body: latest_module.AnyRequestSchema):
+def _post_endpoint(request, test_path: str, router: VersionedAPIRouter, head_module: ModuleType):
+    def _get_request_data(request: Request, body: head_module.AnyRequestSchema):
         if not PYDANTIC_V2:
             body = body.__root__
         return {
@@ -133,25 +133,25 @@ def _post_endpoint(request, test_path: str, router: VersionedAPIRouter, latest_m
 
     if request.param == "is_async":
 
-        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
-        async def post_async_endpoint(request: Request, body: latest_module.AnyRequestSchema):
+        @router.post(test_path, response_model=head_module.AnyResponseSchema)
+        async def post_async_endpoint(request: Request, body: head_module.AnyRequestSchema):
             return _get_request_data(request, body)
 
     else:
 
-        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
-        def post_sync_endpoint(request: Request, body: latest_module.AnyRequestSchema):
+        @router.post(test_path, response_model=head_module.AnyResponseSchema)
+        def post_sync_endpoint(request: Request, body: head_module.AnyRequestSchema):
             return _get_request_data(request, body)
 
 
 @pytest.fixture(params=["by path", "by schema"])
-def version_change_1(request, test_path: str, latest_module):
+def version_change_1(request, test_path: str, head_module):
     if request.param == "by path":
         convert_request = convert_request_to_next_version_for(test_path, ["POST"])
         convert_response = convert_response_to_previous_version_for(test_path, ["POST"])
     else:
-        convert_request = convert_request_to_next_version_for(latest_module.AnyRequestSchema)
-        convert_response = convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
+        convert_request = convert_request_to_next_version_for(head_module.AnyRequestSchema)
+        convert_response = convert_response_to_previous_version_for(head_module.AnyResponseSchema)
 
     @convert_request
     def change_address_to_multiple_items(request: RequestInfo):
@@ -168,12 +168,12 @@ def version_change_1(request, test_path: str, latest_module):
 
 
 @pytest.fixture()
-def version_change_2(latest_module):
-    @convert_request_to_next_version_for(latest_module.AnyRequestSchema)
+def version_change_2(head_module):
+    @convert_request_to_next_version_for(head_module.AnyRequestSchema)
     def change_addresses_to_default_address(request: RequestInfo):
         request.body.append("request change 2")
 
-    @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
+    @convert_response_to_previous_version_for(head_module.AnyResponseSchema)
     def change_addresses_to_list(response: ResponseInfo) -> None:
         response.body["body"].append("response change 2")
 
@@ -188,7 +188,7 @@ def _post_endpoint_with_extra_depends(  # noqa: PT005
     request: pytest.FixtureRequest,
     router: VersionedAPIRouter,
     test_path: Literal["/test"],
-    latest_module: ModuleType,
+    head_module: ModuleType,
     _post_endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],  # pyright: ignore[reportRedeclaration]
 ):
     if request.param == "no request":
@@ -196,7 +196,7 @@ def _post_endpoint_with_extra_depends(  # noqa: PT005
 
         @router.post(test_path)
         async def _post_endpoint(
-            body: latest_module.AnyRequestSchema,
+            body: head_module.AnyRequestSchema,
             header_key: str | None = Header(default=None, alias="header_key"),
             n_header: str | None = Header(default=None, alias="3"),
             cookie_key: str | None = Cookie(default=None),
@@ -228,11 +228,11 @@ class TestRequestMigrations:
     def test__all_request_components_migration__post_endpoint__migration_filled_results_up(
         self,
         create_versioned_clients: CreateVersionedClients,
-        latest_module: ModuleType,
+        head_module: ModuleType,
         test_path: Literal["/test"],
         _post_endpoint_with_extra_depends: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
     ):
-        @convert_request_to_next_version_for(latest_module.AnyRequestSchema)
+        @convert_request_to_next_version_for(head_module.AnyRequestSchema)
         def migrator(request: RequestInfo):
             request.body["hello"] = "hello"
             request.headers["header_key"] = "header val 2"
@@ -266,7 +266,7 @@ class TestRequestMigrations:
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
-        latest_module: ModuleType,
+        head_module: ModuleType,
     ):
         @router.get(test_path)
         async def get(request: Request):
@@ -296,7 +296,7 @@ class TestRequestMigrations:
         create_versioned_clients: CreateVersionedClients,
         router: VersionedAPIRouter,
         test_path,
-        latest_module: ModuleType,
+        head_module: ModuleType,
     ):
         @router.get(test_path)
         async def get(my_header: str = Header()):
@@ -315,15 +315,15 @@ class TestRequestMigrations:
     def test__optional_body_field(
         self,
         create_versioned_clients: CreateVersionedClients,
-        latest_module: ModuleType,
+        head_module: ModuleType,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
     ):
         @router.post(test_path)
-        async def route(payload: latest_module.AnyRequestSchema | None = Body(None)):
+        async def route(payload: head_module.AnyRequestSchema | None = Body(None)):
             return payload or {"hello": "world"}
 
-        @convert_request_to_next_version_for(latest_module.AnyRequestSchema)
+        @convert_request_to_next_version_for(head_module.AnyRequestSchema)
         def migrator(request: RequestInfo):
             assert request.body is None
 
@@ -335,7 +335,7 @@ class TestRequestMigrations:
     def test__internal_schema_specified__with_no_migrations__body_gets_parsed_to_internal_request_schema(
         self,
         create_versioned_clients: CreateVersionedClients,
-        latest_module: ModuleType,
+        head_module: ModuleType,
         temp_data_package_path: str,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
@@ -343,8 +343,8 @@ class TestRequestMigrations:
         @router.post(test_path)
         async def route(
             payload: Annotated[
-                latest_module.InternalSchema,
-                InternalRepresentationOf[latest_module.SchemaWithInternalRepresentation],
+                head_module.InternalSchema,
+                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],
                 str,
             ],
         ):
@@ -373,7 +373,7 @@ class TestRequestMigrations:
     def test__internal_schema_specified__with_migrations__body_gets_parsed_to_internal_request_schema(
         self,
         create_versioned_clients: CreateVersionedClients,
-        latest_module: ModuleType,
+        head_module: ModuleType,
         temp_data_package_path: str,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
@@ -381,13 +381,13 @@ class TestRequestMigrations:
         @router.post(test_path)
         async def route(
             payload: Annotated[
-                latest_module.InternalSchema,
-                InternalRepresentationOf[latest_module.SchemaWithInternalRepresentation],
+                head_module.InternalSchema,
+                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],
             ],
         ):
             return {"type": type(payload).__name__, **model_dump(payload)}
 
-        @convert_request_to_next_version_for(latest_module.SchemaWithInternalRepresentation)
+        @convert_request_to_next_version_for(head_module.SchemaWithInternalRepresentation)
         def migrator(request: RequestInfo):
             request.body["bar"] = "world"
 
@@ -407,7 +407,7 @@ class TestRequestMigrations:
     def test__internal_schema_specified__with_invalid_migrations__internal_schema_validation_error(
         self,
         create_versioned_clients: CreateVersionedClients,
-        latest_module: ModuleType,
+        head_module: ModuleType,
         temp_data_package_path: str,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
@@ -415,13 +415,13 @@ class TestRequestMigrations:
         @router.post(test_path)
         async def route(
             payload: Annotated[
-                latest_module.InternalSchema,
-                InternalRepresentationOf[latest_module.SchemaWithInternalRepresentation],
+                head_module.InternalSchema,
+                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],
             ],
         ):
             return {"type": type(payload).__name__, **model_dump(payload)}
 
-        @convert_request_to_next_version_for(latest_module.SchemaWithInternalRepresentation)
+        @convert_request_to_next_version_for(head_module.SchemaWithInternalRepresentation)
         def migrator(request: RequestInfo):
             request.body["bar"] = [1, 2, 3]
 
@@ -437,7 +437,7 @@ class TestRequestMigrations:
     def test__serialization_of_request_body__when_body_is_non_pydantic(
         self,
         create_versioned_clients: CreateVersionedClients,
-        latest_module: ModuleType,
+        head_module: ModuleType,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
     ):
@@ -455,11 +455,11 @@ class TestResponseMigrations:
     def test__all_response_components_migration__post_endpoint__migration_filled_results_up(
         self,
         create_versioned_clients: CreateVersionedClients,
-        latest_module: ModuleType,
+        head_module: ModuleType,
         test_path: Literal["/test"],
         _post_endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
     ):
-        @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
+        @convert_response_to_previous_version_for(head_module.AnyResponseSchema)
         def migrator(response: ResponseInfo):
             response.body["body_key"] = "body_val"
             assert response.status_code == 200
@@ -531,10 +531,10 @@ class TestResponseMigrations:
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
-        latest_module: ModuleType,
+        head_module: ModuleType,
         _get_endpoint,
     ):
-        @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
+        @convert_response_to_previous_version_for(head_module.AnyResponseSchema)
         def migrator(response: ResponseInfo):
             response.status_code = 300
             response.headers["header_key"] = "header-val"
@@ -556,14 +556,14 @@ class TestResponseMigrations:
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
-        latest_module: ModuleType,
+        head_module: ModuleType,
         router: VersionedAPIRouter,
     ):
-        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        @router.post(test_path, response_model=head_module.AnyResponseSchema)
         async def post_endpoint(request: Request):
             return JSONResponse({"hewwo": "darkness"}, status_code=203, headers={"header-key": "header-val"})
 
-        @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
+        @convert_response_to_previous_version_for(head_module.AnyResponseSchema)
         def migrator(response: ResponseInfo):
             assert response.status_code == 203
             assert response.headers["header-key"] == "header-val"
@@ -601,14 +601,14 @@ class TestResponseMigrations:
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
-        latest_module: ModuleType,
+        head_module: ModuleType,
         router: VersionedAPIRouter,
     ):
-        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        @router.post(test_path, response_model=head_module.AnyResponseSchema)
         async def post_endpoint(request: Request):
             return Response(status_code=200)
 
-        @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
+        @convert_response_to_previous_version_for(head_module.AnyResponseSchema)
         def migrator(response: ResponseInfo):
             response.status_code = 201
 
@@ -638,14 +638,14 @@ class TestResponseMigrations:
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
-        latest_module: ModuleType,
+        head_module: ModuleType,
         router: VersionedAPIRouter,
     ):
-        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        @router.post(test_path, response_model=head_module.AnyResponseSchema)
         async def post_endpoint(request: Request):
             return StreamingResponse(StringIO("streaming response"), status_code=200)
 
-        @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
+        @convert_response_to_previous_version_for(head_module.AnyResponseSchema)
         def migrator(response: ResponseInfo):
             response.status_code = 201
 
@@ -665,10 +665,10 @@ class TestResponseMigrations:
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
-        latest_module: ModuleType,
+        head_module: ModuleType,
         router: VersionedAPIRouter,
     ):
-        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        @router.post(test_path, response_model=head_module.AnyResponseSchema)
         async def post_endpoint(request: Request):
             return Response(status_code=200)
 
@@ -714,14 +714,12 @@ class TestHowAndWhenMigrationsApply:
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
-        latest_module,
+        head_module,
         router: VersionedAPIRouter,
     ):
-        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
-        async def endpoint(foo: latest_module.AnyRequestSchema):
-            assert isinstance(
-                foo, latest_module.AnyRequestSchema
-            ), f"Request schema is from: {foo.__class__.__module__}"
+        @router.post(test_path, response_model=head_module.AnyResponseSchema)
+        async def endpoint(foo: head_module.AnyRequestSchema):
+            assert isinstance(foo, head_module.AnyRequestSchema), f"Request schema is from: {foo.__class__.__module__}"
             return {}
 
         clients = create_versioned_clients(version_change(), version_change())
@@ -847,7 +845,7 @@ class TestHowAndWhenMigrationsApply:
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
         _post_endpoint,
-        latest_module,
+        head_module,
     ):
         def bad_req(request: RequestInfo):
             raise NotImplementedError("I was not supposed to be ever called! This is very bad!")
@@ -859,8 +857,8 @@ class TestHowAndWhenMigrationsApply:
             [
                 version_change_1,
                 version_change(
-                    wrong_body_schema=convert_request_to_next_version_for(latest_module.AnyResponseSchema)(bad_req),
-                    wrong_resp_schema=convert_response_to_previous_version_for(latest_module.AnyRequestSchema)(
+                    wrong_body_schema=convert_request_to_next_version_for(head_module.AnyResponseSchema)(bad_req),
+                    wrong_resp_schema=convert_response_to_previous_version_for(head_module.AnyRequestSchema)(
                         bad_resp,
                     ),
                     wrong_req_path=convert_request_to_next_version_for("/wrong_path", ["POST"])(bad_req),
@@ -881,15 +879,15 @@ class TestHowAndWhenMigrationsApply:
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
-        latest_module,
+        head_module,
         router: VersionedAPIRouter,
     ):
-        @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+        @router.post(test_path, response_model=head_module.AnyResponseSchema)
         async def endpoint(response: Response):
             response.set_cookie("cookie_key", "cookie_val")
             return 83
 
-        @convert_response_to_previous_version_for(latest_module.AnyResponseSchema)
+        @convert_response_to_previous_version_for(head_module.AnyResponseSchema)
         def migration(response: ResponseInfo):
             response.delete_cookie("cookie_key")
 
@@ -933,29 +931,29 @@ def test__invalid_path_migration_syntax():
         convert_request_to_next_version_for("/test")  # pyright: ignore[reportArgumentType]
 
 
-def test__schema_migration_syntax__with_methods_after_a_schema__should_raise_error(latest_module):
+def test__schema_migration_syntax__with_methods_after_a_schema__should_raise_error(head_module):
     with pytest.raises(
         TypeError,
         match=re.escape("If schema was provided as a first argument, all other arguments must also be schemas"),
     ):
-        convert_request_to_next_version_for(latest_module.AnyRequestSchema, ["POST"])
+        convert_request_to_next_version_for(head_module.AnyRequestSchema, ["POST"])
 
 
-def test__schema_migration_syntax__with_additional_schemas_after_methods__should_raise_error(latest_module):
+def test__schema_migration_syntax__with_additional_schemas_after_methods__should_raise_error(head_module):
     with pytest.raises(
         TypeError,
         match=re.escape("If path was provided as a first argument, then additional schemas cannot be added"),
     ):
-        convert_request_to_next_version_for("/v1/test", ["POST"], latest_module.AnyRequestSchema)  # pyright: ignore[reportArgumentType]
+        convert_request_to_next_version_for("/v1/test", ["POST"], head_module.AnyRequestSchema)  # pyright: ignore[reportArgumentType]
 
 
 def test__uploadfile_can_work(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
-    latest_module,
+    head_module,
     router: VersionedAPIRouter,
 ):
-    @router.post(test_path, response_model=latest_module.AnyResponseSchema)
+    @router.post(test_path, response_model=head_module.AnyResponseSchema)
     async def endpoint(file: UploadFile = File(...)):
         # PydanticV2 can no longer serialize files directly like it could in v1
         file_dict = {k: v for k, v in file.__dict__.items() if not k.startswith("_") and k != "file"}
@@ -986,7 +984,7 @@ def test__uploadfile_can_work(
 
 def test__request_and_response_migrations__for_paths_with_variables__can_match(
     create_versioned_clients: CreateVersionedClients,
-    latest_module,
+    head_module,
     router: VersionedAPIRouter,
 ):
     @router.post("/test/{id}")
@@ -1008,7 +1006,7 @@ def test__request_and_response_migrations__for_paths_with_variables__can_match(
 
 def test__request_and_response_migrations__for_endpoint_with_http_exception__can_migrate_to_200(
     create_versioned_clients: CreateVersionedClients,
-    latest_module,
+    head_module,
     router: VersionedAPIRouter,
 ):
     @router.post("/test")
@@ -1035,7 +1033,7 @@ def test__request_and_response_migrations__for_endpoint_with_http_exception__can
 
 def test__request_and_response_migrations__for_endpoint_with_http_exception_and_no_error_migrations__wont_migrate(
     create_versioned_clients: CreateVersionedClients,
-    latest_module,
+    head_module,
     router: VersionedAPIRouter,
 ):
     @router.post("/test")
@@ -1056,7 +1054,7 @@ def test__request_and_response_migrations__for_endpoint_with_http_exception_and_
 
 def test__request_and_response_migrations__for_endpoint_with_http_exception__can_migrate_to_another_error(
     create_versioned_clients: CreateVersionedClients,
-    latest_module,
+    head_module,
     router: VersionedAPIRouter,
 ):
     @router.post("/test")
@@ -1080,7 +1078,7 @@ def test__request_and_response_migrations__for_endpoint_with_http_exception__can
 
 def test__request_and_response_migrations__for_endpoint_with_no_default_status_code__response_should_contain_default(
     create_versioned_clients: CreateVersionedClients,
-    latest_module,
+    head_module,
     router: VersionedAPIRouter,
 ):
     @router.post("/test")
@@ -1104,7 +1102,7 @@ def test__request_and_response_migrations__for_endpoint_with_no_default_status_c
 
 def test__request_and_response_migrations__for_endpoint_with_custom_status_code__response_should_contain_default(
     create_versioned_clients: CreateVersionedClients,
-    latest_module,
+    head_module,
     router: VersionedAPIRouter,
 ):
     @router.post("/test", status_code=201)
@@ -1128,7 +1126,7 @@ def test__request_and_response_migrations__for_endpoint_with_custom_status_code_
 
 def test__request_and_response_migrations__for_endpoint_with_modified_status_code__response_should_not_change(
     create_versioned_clients: CreateVersionedClients,
-    latest_module,
+    head_module,
     router: VersionedAPIRouter,
 ):
     @router.post("/test")
@@ -1152,12 +1150,12 @@ def test__request_and_response_migrations__for_endpoint_with_modified_status_cod
 
 
 def test__manual_response_migrations(
-    latest_with_empty_classes: _FakeModuleWithEmptyClasses,
-    latest_package_path: str,
+    head_with_empty_classes: _FakeModuleWithEmptyClasses,
+    head_package_path: str,
 ):
-    latest_package = importlib.import_module(latest_package_path)
+    latest_package = importlib.import_module(head_package_path)
 
-    @convert_response_to_previous_version_for(latest_with_empty_classes.EmptySchema)
+    @convert_response_to_previous_version_for(head_with_empty_classes.EmptySchema)
     def response_converter(response: ResponseInfo):
         response.body["amount"] = 83
 
@@ -1165,10 +1163,10 @@ def test__manual_response_migrations(
         Version(
             date(2001, 1, 1),
             version_change(
-                schema(latest_with_empty_classes.EmptySchema)
+                schema(head_with_empty_classes.EmptySchema)
                 .field("name")
                 .existed_as(type=str, info=Field(default="Apples")),
-                schema(latest_with_empty_classes.EmptySchema).field("amount").existed_as(type=int),
+                schema(head_with_empty_classes.EmptySchema).field("amount").existed_as(type=int),
                 convert=response_converter,
             ),
         ),
@@ -1178,7 +1176,7 @@ def test__manual_response_migrations(
     generate_code_for_versioned_packages(latest_package, version_bundle)
 
     new_response = version_bundle.migrate_response_body(
-        latest_with_empty_classes.EmptySchema, latest_body={"id": "hewwo"}, version=date(2000, 1, 1)
+        head_with_empty_classes.EmptySchema, latest_body={"id": "hewwo"}, version=date(2000, 1, 1)
     )
     assert new_response.dict() == {
         "name": "Apples",
@@ -1188,7 +1186,7 @@ def test__manual_response_migrations(
 
     with pytest.raises(CadwynError):
         new_response = version_bundle.migrate_response_body(
-            latest_with_empty_classes.EmptySchema, latest_body={"id": "hewwo"}, version=date(1999, 1, 1)
+            head_with_empty_classes.EmptySchema, latest_body={"id": "hewwo"}, version=date(1999, 1, 1)
         )
 
 
@@ -1201,9 +1199,9 @@ def test__manual_response_migrations__without_attached_latest_package__should_ra
 def test__request_and_response_migrations__with_multiple_schemas_in_converters(
     create_versioned_clients: CreateVersionedClients,
     router: VersionedAPIRouter,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ) -> None:
-    latest = latest_module_for(
+    latest = head_module_for(
         """
     from pydantic import BaseModel
 

@@ -9,12 +9,12 @@ from pydantic import root_validator, validator
 from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure import schema
-from tests.conftest import CreateLocalSimpleVersionedPackages, LatestModuleFor
+from tests.conftest import CreateLocalSimpleVersionedPackages, HeadModuleFor
 
 
 def test__schema_validator_existed(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: Any,
+    head_with_one_str_field: Any,
 ):
     @root_validator(pre=True)
     def hewwo(cls, values):
@@ -25,8 +25,8 @@ def test__schema_validator_existed(
         raise NotImplementedError
 
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_one_str_field.SchemaWithOneStrField).validator(hewwo).existed,
-        schema(latest_with_one_str_field.SchemaWithOneStrField).validator(dawkness).existed,
+        schema(head_with_one_str_field.SchemaWithOneStrField).validator(hewwo).existed,
+        schema(head_with_one_str_field.SchemaWithOneStrField).validator(dawkness).existed,
     )
 
     assert inspect.getsource(v1.SchemaWithOneStrField) == (
@@ -43,7 +43,7 @@ def test__schema_validator_existed(
 
 def test__schema_validator_existed__with_root_validator_without_call(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: Any,
+    head_with_one_str_field: Any,
 ):
     if PYDANTIC_V2:
         pytest.skip("This test is only for Pydantic v1.")
@@ -53,7 +53,7 @@ def test__schema_validator_existed__with_root_validator_without_call(
         raise NotImplementedError
 
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_one_str_field.SchemaWithOneStrField).validator(hewwo).existed,
+        schema(head_with_one_str_field.SchemaWithOneStrField).validator(hewwo).existed,
     )
 
     assert inspect.getsource(v1.SchemaWithOneStrField) == (
@@ -66,8 +66,8 @@ def test__schema_validator_existed__with_root_validator_without_call(
 
 
 @pytest.fixture()
-def latest_with_validator(latest_module_for: LatestModuleFor):
-    return latest_module_for(
+def head_with_validator(head_module_for: HeadModuleFor):
+    return head_module_for(
         """
     from pydantic import BaseModel, validator
     class SchemaWithOneStrField(BaseModel):
@@ -82,11 +82,11 @@ def latest_with_validator(latest_module_for: LatestModuleFor):
 
 def test__schema_validator_didnt_exist(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_validator: Any,
+    head_with_validator: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_validator.SchemaWithOneStrField)
-        .validator(latest_with_validator.SchemaWithOneStrField.validate_foo)
+        schema(head_with_validator.SchemaWithOneStrField)
+        .validator(head_with_validator.SchemaWithOneStrField.validate_foo)
         .didnt_exist,
     )
 
@@ -95,11 +95,11 @@ def test__schema_validator_didnt_exist(
 
 def test__schema_validator_didnt_exist__applied_twice__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_validator: Any,
+    head_with_validator: Any,
 ):
     instruction = (
-        schema(latest_with_validator.SchemaWithOneStrField)
-        .validator(latest_with_validator.SchemaWithOneStrField.validate_foo)
+        schema(head_with_validator.SchemaWithOneStrField)
+        .validator(head_with_validator.SchemaWithOneStrField.validate_foo)
         .didnt_exist
     )
     with pytest.raises(
@@ -114,7 +114,7 @@ def test__schema_validator_didnt_exist__applied_twice__should_raise_error(
 
 def test__schema_validator_didnt_exist__for_nonexisting_validator__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_validator: Any,
+    head_with_validator: Any,
 ):
     @validator("foo")
     def fake_validator(cls, value):
@@ -128,13 +128,13 @@ def test__schema_validator_didnt_exist__for_nonexisting_validator__should_raise_
         ),
     ):
         create_local_simple_versioned_packages(
-            schema(latest_with_validator.SchemaWithOneStrField).validator(fake_validator).didnt_exist,
+            schema(head_with_validator.SchemaWithOneStrField).validator(fake_validator).didnt_exist,
         )
 
 
 def test__schema_validator_existed__non_validator_was_passed__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_validator: Any,
+    head_with_validator: Any,
 ):
     def fake_validator(cls, value):
         raise NotImplementedError
@@ -147,16 +147,16 @@ def test__schema_validator_existed__non_validator_was_passed__should_raise_error
         ),
     ):
         create_local_simple_versioned_packages(
-            schema(latest_with_validator.SchemaWithOneStrField).validator(fake_validator).didnt_exist,
+            schema(head_with_validator.SchemaWithOneStrField).validator(fake_validator).didnt_exist,
         )
 
 
 def test__schema_field_didnt_exist__with_validator__validator_must_be_deleted_too(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_validator: Any,
+    head_with_validator: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_validator.SchemaWithOneStrField).field("foo").didnt_exist,
+        schema(head_with_validator.SchemaWithOneStrField).field("foo").didnt_exist,
     )
 
     assert inspect.getsource(v1.SchemaWithOneStrField) == "class SchemaWithOneStrField(BaseModel):\n    pass\n"
@@ -164,9 +164,9 @@ def test__schema_field_didnt_exist__with_validator__validator_must_be_deleted_to
 
 def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__validator_loses_one_of_its_args(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
     from pydantic import BaseModel, validator
 

@@ -1,6 +1,6 @@
 from pydantic import Field
 
-from .head.users import UserCreateRequest
+from .latest.users import UserCreateRequest
 
 
 class InternalUserCreateRequest(UserCreateRequest):

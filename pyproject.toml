@@ -200,20 +200,21 @@ ignore = [
     "UP007",  # Use `X | Y` for type annotations (we need this for testing and our runtime logic)
 
     # The following rules are recommended to be ignored by ruff when using ruff format
-    "ISC001",  # Checks for implicitly concatenated strings on a single line
-    "ISC002",  # Checks for implicitly concatenated strings that span multiple lines
-    "W191",  # Checks for indentation that uses tabs
-    "E111",  # Checks for indentation with a non-multiple of 4 spaces
-    "E114",  # Checks for indentation of comments with a non-multiple of 4 spaces
-    "E117",  # Checks for over-indented code
-    "D206",  # Checks for docstrings that are indented with tabs
-    "D300",  # Checks for docstrings that use '''single quotes''' instead of """double quotes"""
-    "Q000",  # Checks for inline strings that use single quotes or double quotes
-    "Q001",  # Checks for multiline strings that use single quotes or double quotes
-    "Q002",  # Checks for docstrings that use single quotes or double quotes
-    "Q003",  # Checks for strings that include escaped quotes
-    "COM812",  # Checks for the absence of trailing commas
-    "COM819",  # Checks for the presence of prohibited trailing commas
+    "ISC001", # Checks for implicitly concatenated strings on a single line
+    "ISC002", # Checks for implicitly concatenated strings that span multiple lines
+    "W191",   # Checks for indentation that uses tabs
+    "E111",   # Checks for indentation with a non-multiple of 4 spaces
+    "E114",   # Checks for indentation of comments with a non-multiple of 4 spaces
+    "E117",   # Checks for over-indented code
+    "D206",   # Checks for docstrings that are indented with tabs
+    "D300",   # Checks for docstrings that use '''single quotes''' instead of """double quotes"""
+    "Q000",   # Checks for inline strings that use single quotes or double quotes
+    "Q001",   # Checks for multiline strings that use single quotes or double quotes
+    "Q002",   # Checks for docstrings that use single quotes or double quotes
+    "Q003",   # Checks for strings that include escaped quotes
+    "COM812", # Checks for the absence of trailing commas
+    "COM819", # Checks for the presence of prohibited trailing commas
+    "RET506", # Unnecessary `elif` after `raise` statement
 ]
 
 

@@ -17,7 +17,7 @@ from cadwyn.structure import (
 from tests.conftest import (
     CreateLocalSimpleVersionedPackages,
     CreateLocalVersionedPackages,
-    LatestModuleFor,
+    HeadModuleFor,
     _FakeModuleWithEmptyClasses,
     _FakeNamespaceWithOneStrField,
     version_change,
@@ -29,8 +29,8 @@ class _FakeNamespaceWithOneIntField:
 
 
 @pytest.fixture()
-def latest_with_one_int_field(latest_module_for: LatestModuleFor) -> _FakeNamespaceWithOneIntField:
-    return latest_module_for(
+def head_with_one_int_field(head_module_for: HeadModuleFor) -> _FakeNamespaceWithOneIntField:
+    return head_module_for(
         """
     from pydantic import BaseModel
     class SchemaWithOneIntField(BaseModel):
@@ -46,10 +46,10 @@ def latest_with_one_int_field(latest_module_for: LatestModuleFor) -> _FakeNamesp
 
 def test__schema_field_existed_as__original_schema_is_empty(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_empty_classes: _FakeModuleWithEmptyClasses,
+    head_with_empty_classes: _FakeModuleWithEmptyClasses,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_empty_classes.EmptySchema)
+        schema(head_with_empty_classes.EmptySchema)
         .field("bar")
         .existed_as(
             type=int,
@@ -69,10 +69,10 @@ def test__schema_field_existed_as__original_schema_is_empty(
 
 def test__field_existed_as__original_schema_has_a_field(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_one_str_field.SchemaWithOneStrField)
+        schema(head_with_one_str_field.SchemaWithOneStrField)
         .field("bar")
         .existed_as(type=int, info=Field(description="Hello darkness my old friend")),
     )
@@ -86,7 +86,7 @@ def test__field_existed_as__original_schema_has_a_field(
 
 def test__schema_field_existed_as__already_existing_field__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -96,16 +96,16 @@ def test__schema_field_existed_as__already_existing_field__should_raise_error(
         ),
     ):
         create_local_simple_versioned_packages(
-            schema(latest_with_one_str_field.SchemaWithOneStrField).field("foo").existed_as(type=int),
+            schema(head_with_one_str_field.SchemaWithOneStrField).field("foo").existed_as(type=int),
         )
 
 
 def test__field_existed_as__extras_are_added(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_empty_classes: _FakeModuleWithEmptyClasses,
+    head_with_empty_classes: _FakeModuleWithEmptyClasses,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_empty_classes.EmptySchema)
+        schema(head_with_empty_classes.EmptySchema)
         .field("foo")
         .existed_as(
             type=int,
@@ -127,12 +127,10 @@ def test__field_existed_as__extras_are_added(
 
 def test__schema_field_existed_as__with_default_none(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_empty_classes: _FakeModuleWithEmptyClasses,
+    head_with_empty_classes: _FakeModuleWithEmptyClasses,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_empty_classes.EmptySchema)
-        .field("foo")
-        .existed_as(type=str | None, info=Field(default=None)),
+        schema(head_with_empty_classes.EmptySchema).field("foo").existed_as(type=str | None, info=Field(default=None)),
     )
 
     assert inspect.getsource(v1.EmptySchema) == (
@@ -142,9 +140,9 @@ def test__schema_field_existed_as__with_default_none(
 
 def test__schema_field_existed_as__with_new_weird_data_types(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
         from pydantic import BaseModel, constr, Field
         from enum import Enum
@@ -195,10 +193,10 @@ def test__schema_field_existed_as__with_new_weird_data_types(
 
 def test__schema_field_didnt_exist(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_one_str_field.SchemaWithOneStrField).field("foo").didnt_exist,
+        schema(head_with_one_str_field.SchemaWithOneStrField).field("foo").didnt_exist,
     )
 
     assert inspect.getsource(v1.SchemaWithOneStrField) == "class SchemaWithOneStrField(BaseModel):\n    pass\n"
@@ -206,9 +204,9 @@ def test__schema_field_didnt_exist(
 
 def test__schema_field_didnt_exist__with_inheritance(
     create_local_versioned_packages: CreateLocalVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
     from pydantic import BaseModel
 
@@ -232,7 +230,7 @@ def test__schema_field_didnt_exist__with_inheritance(
 
 def test__schema_field_didnt_exist__field_is_missing__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -242,7 +240,7 @@ def test__schema_field_didnt_exist__field_is_missing__should_raise_error(
         ),
     ):
         create_local_simple_versioned_packages(
-            schema(latest_with_one_str_field.SchemaWithOneStrField).field("bar").didnt_exist,
+            schema(head_with_one_str_field.SchemaWithOneStrField).field("bar").didnt_exist,
         )
 
 
@@ -290,16 +288,16 @@ def test__schema_field_had__modifying_int_field(
     attr: str,
     attr_value: Any,
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_int_field: _FakeNamespaceWithOneIntField,
+    head_with_one_int_field: _FakeNamespaceWithOneIntField,
 ):
     """This test is here to guarantee that we can handle all parameter types we provide"""
 
     assert_field_had_changes_apply(
-        latest_with_one_int_field.SchemaWithOneIntField,
+        head_with_one_int_field.SchemaWithOneIntField,
         attr,
         attr_value,
         create_local_simple_versioned_packages,
-        latest_with_one_int_field,
+        head_with_one_int_field,
     )
 
 
@@ -314,31 +312,31 @@ def test__schema_field_had__str_field(
     attr: str,
     attr_value: Any,
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     assert_field_had_changes_apply(
-        latest_with_one_str_field.SchemaWithOneStrField,
+        head_with_one_str_field.SchemaWithOneStrField,
         attr,
         attr_value,
         create_local_simple_versioned_packages,
-        latest_with_one_str_field,
+        head_with_one_str_field,
     )
 
 
 def test__schema_field_had__pattern(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     if PYDANTIC_V2:
         attr_name = "pattern"
     else:
         attr_name = "regex"
     assert_field_had_changes_apply(
-        latest_with_one_str_field.SchemaWithOneStrField,
+        head_with_one_str_field.SchemaWithOneStrField,
         attr_name,
         r"hewwo darkness",
         create_local_simple_versioned_packages,
-        latest_with_one_str_field,
+        head_with_one_str_field,
     )
 
 
@@ -353,9 +351,9 @@ def test__schema_field_had__decimal_field(
     attr: str,
     attr_value: Any,
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
         from pydantic import BaseModel
         from decimal import Decimal
@@ -382,9 +380,9 @@ def test__schema_field_had__list_of_int_field(
     attr: str,
     attr_value: Any,
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
         from pydantic import BaseModel
         class SchemaWithOneListOfIntField(BaseModel):
@@ -413,11 +411,11 @@ def test__schema_field_had__list_of_int_field__with_fields_deprecated_in_pydanti
     attr: str,
     attr_value: Any,
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
     if PYDANTIC_V2:
         pytest.skip("This test is only for Pydantic v1.")
-    latest = latest_module_for(
+    latest = head_module_for(
         """
         from pydantic import BaseModel
         class SchemaWithOneListOfIntField(BaseModel):
@@ -435,9 +433,9 @@ def test__schema_field_had__list_of_int_field__with_fields_deprecated_in_pydanti
 
 def test__schema_field_had__float_field(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
         from pydantic import BaseModel
         class SchemaWithOneFloatField(BaseModel):
@@ -455,9 +453,9 @@ def test__schema_field_had__float_field(
 
 def test__schema_field_didnt_have__removing_default(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
         from pydantic import BaseModel, Field
         class SchemaWithDefaults(BaseModel):
@@ -485,7 +483,7 @@ def test__schema_field_didnt_have__using_incorrect_attribute__should_raise_error
 
 def test__schema_field_didnt_have__removing_nonexistent_attribute__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -495,13 +493,13 @@ def test__schema_field_didnt_have__removing_nonexistent_attribute__should_raise_
         ),
     ):
         create_local_simple_versioned_packages(
-            schema(latest_with_one_str_field.SchemaWithOneStrField).field("foo").didnt_have("description"),
+            schema(head_with_one_str_field.SchemaWithOneStrField).field("foo").didnt_have("description"),
         )
 
 
 @pytest.fixture()
-def latest_with_constraints(latest_module_for: LatestModuleFor):
-    return latest_module_for(
+def head_with_constraints(head_module_for: HeadModuleFor):
+    return head_module_for(
         """
         from pydantic import BaseModel, conint, Field
 
@@ -514,11 +512,11 @@ def latest_with_constraints(latest_module_for: LatestModuleFor):
 
 def test__schema_field_didnt_have__constrained_field_constraints_removed__constraints_do_not_render(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_constraints: Any,
+    head_with_constraints: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_constraints.SchemaWithConstraints).field("foo").didnt_have("lt"),
-        schema(latest_with_constraints.SchemaWithConstraints).field("bar").didnt_have("max_length", "min_length"),
+        schema(head_with_constraints.SchemaWithConstraints).field("foo").didnt_have("lt"),
+        schema(head_with_constraints.SchemaWithConstraints).field("bar").didnt_have("max_length", "min_length"),
     )
 
     assert inspect.getsource(v1.SchemaWithConstraints) == (
@@ -528,11 +526,11 @@ def test__schema_field_didnt_have__constrained_field_constraints_removed__constr
 
 def test__schema_field_had_constrained_field__only_non_constraint_field_args_were_modified(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_constraints,
+    head_with_constraints,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_constraints.SchemaWithConstraints).field("foo").had(alias="foo1"),
-        schema(latest_with_constraints.SchemaWithConstraints).field("bar").had(alias="bar1"),
+        schema(head_with_constraints.SchemaWithConstraints).field("foo").had(alias="foo1"),
+        schema(head_with_constraints.SchemaWithConstraints).field("bar").had(alias="bar1"),
     )
 
     assert inspect.getsource(v1.SchemaWithConstraints) == (
@@ -544,9 +542,9 @@ def test__schema_field_had_constrained_field__only_non_constraint_field_args_wer
 
 def test__schema_field_had_constrained_field__field_is_an_unconstrained_union(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
 from pydantic import BaseModel, Field
 
@@ -566,11 +564,11 @@ class Schema(BaseModel):
 
 def test__schema_field_had_constrained_field__constraints_have_been_modified(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_constraints,
+    head_with_constraints,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_constraints.SchemaWithConstraints).field("foo").had(gt=8),
-        schema(latest_with_constraints.SchemaWithConstraints).field("bar").had(min_length=2),
+        schema(head_with_constraints.SchemaWithConstraints).field("foo").had(gt=8),
+        schema(head_with_constraints.SchemaWithConstraints).field("bar").had(min_length=2),
     )
     if PYDANTIC_V2:
         assert inspect.getsource(v1.SchemaWithConstraints) == (
@@ -588,11 +586,11 @@ def test__schema_field_had_constrained_field__constraints_have_been_modified(
 
 def test__schema_field_had_constrained_field__both_constraints_and_non_constraints_have_been_modified(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_constraints,
+    head_with_constraints,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_constraints.SchemaWithConstraints).field("foo").had(gt=8, alias="foo1"),
-        schema(latest_with_constraints.SchemaWithConstraints).field("bar").had(min_length=2, alias="bar1"),
+        schema(head_with_constraints.SchemaWithConstraints).field("foo").had(gt=8, alias="foo1"),
+        schema(head_with_constraints.SchemaWithConstraints).field("bar").had(min_length=2, alias="bar1"),
     )
     if PYDANTIC_V2:
         # TODO Validate that this works
@@ -610,8 +608,8 @@ def test__schema_field_had_constrained_field__both_constraints_and_non_constrain
 
 
 @pytest.fixture()
-def latest_with_constraints_and_field(latest_module_for: LatestModuleFor):
-    return latest_module_for(
+def head_with_constraints_and_field(head_module_for: HeadModuleFor):
+    return head_module_for(
         """
         from pydantic import BaseModel, constr, Field
 
@@ -626,10 +624,10 @@ def latest_with_constraints_and_field(latest_module_for: LatestModuleFor):
 
 def test__schema_field_had_constrained_field__constraint_field_args_were_modified_in_type(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_constraints_and_field: Any,
+    head_with_constraints_and_field: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_constraints_and_field.SchemaWithConstraintsAndField)
+        schema(head_with_constraints_and_field.SchemaWithConstraintsAndField)
         .field("foo")
         .had(type=constr(max_length=6123123121)),
     )
@@ -648,10 +646,10 @@ def test__schema_field_had_constrained_field__constraint_field_args_were_modifie
 
 def test__schema_field_had_constrained_field__constraint_only_args_were_modified_in_type(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_constraints_and_field: Any,
+    head_with_constraints_and_field: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_constraints_and_field.SchemaWithConstraintsAndField)
+        schema(head_with_constraints_and_field.SchemaWithConstraintsAndField)
         .field("foo")
         .had(type=constr(max_length=6, strip_whitespace=True)),
     )
@@ -668,8 +666,8 @@ def test__schema_field_had_constrained_field__constraint_only_args_were_modified
 
 
 @pytest.fixture()
-def latest_with_annotated_constraints(latest_module_for: LatestModuleFor):
-    return latest_module_for(
+def head_with_annotated_constraints(head_module_for: HeadModuleFor):
+    return head_module_for(
         """
         from pydantic import BaseModel, conint, Field
         from typing import Annotated
@@ -683,10 +681,10 @@ def latest_with_annotated_constraints(latest_module_for: LatestModuleFor):
 
 def test__schema_field_didnt_have_annotated_constrained_field(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_annotated_constraints: Any,
+    head_with_annotated_constraints: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").didnt_have("lt"),
+        schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").didnt_have("lt"),
     )
 
     assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
@@ -696,10 +694,10 @@ def test__schema_field_didnt_have_annotated_constrained_field(
 
 def test__schema_field_had_annotated_constrained_field(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_annotated_constraints: Any,
+    head_with_annotated_constraints: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(alias="foo1"),
+        schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(alias="foo1"),
     )
 
     assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
@@ -710,10 +708,10 @@ def test__schema_field_had_annotated_constrained_field(
 
 def test__schema_field_had_annotated_constrained_field__adding_default_default_should_be_added_outside_of_annotation(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_annotated_constraints: Any,
+    head_with_annotated_constraints: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(default=2),
+        schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(default=2),
     )
 
     assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
@@ -724,10 +722,10 @@ def test__schema_field_had_annotated_constrained_field__adding_default_default_s
 
 def test__schema_field_had_annotated_constrained_field__adding_one_other_constraint(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_annotated_constraints: Any,
+    head_with_annotated_constraints: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(gt=8),
+        schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(gt=8),
     )
     if PYDANTIC_V2:
         assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
@@ -743,10 +741,10 @@ def test__schema_field_had_annotated_constrained_field__adding_one_other_constra
 
 def test__schema_field_had_annotated_constrained_field__adding_another_constraint_and_an_attribute(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_annotated_constraints: Any,
+    head_with_annotated_constraints: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(gt=8, alias="foo1"),
+        schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(gt=8, alias="foo1"),
     )
     if PYDANTIC_V2:
         assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
@@ -762,9 +760,9 @@ def test__schema_field_had_annotated_constrained_field__adding_another_constrain
 
 def test__schema_field_had_constrained_field__schema_has_special_constraints_constraints_have_been_modified(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
         from pydantic import BaseModel, constr, Field
 
@@ -790,12 +788,12 @@ def test__schema_field_had_constrained_field__schema_has_special_constraints_con
 
 def test__schema_field_had_constrained_field__schema_has_special_constraints_constraints_have_been_modified__pydantic2(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
     if not PYDANTIC_V2:
         pytest.skip("This test is only for Pydantic 2")
 
-    latest = latest_module_for(
+    latest = head_module_for(
         """
         from pydantic import BaseModel, Field, StringConstraints
         from typing import Annotated
@@ -821,8 +819,8 @@ def test__schema_field_had_constrained_field__schema_has_special_constraints_con
 
 
 @pytest.fixture()
-def latest_with_var(latest_module_for: LatestModuleFor):
-    return latest_module_for(
+def head_with_var(head_module_for: HeadModuleFor):
+    return head_module_for(
         """
         from pydantic import BaseModel, constr, Field
 
@@ -837,10 +835,10 @@ def latest_with_var(latest_module_for: LatestModuleFor):
 
 def test__schema_field_had__field_has_var_in_ast_and_keyword_was_added(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_var: Any,
+    head_with_var: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_var.SchemaWithVar).field("foo").had(alias="bar"),
+        schema(head_with_var.SchemaWithVar).field("foo").had(alias="bar"),
     )
 
     assert inspect.getsource(v1.SchemaWithVar) == (
@@ -851,10 +849,10 @@ def test__schema_field_had__field_has_var_in_ast_and_keyword_was_added(
 
 def test__schema_field_had__field_has_var_in_ast_and_existing_keyword_was_changed(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_var: Any,
+    head_with_var: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_var.SchemaWithVar).field("foo").had(description="Hello sunshine my old friend"),
+        schema(head_with_var.SchemaWithVar).field("foo").had(description="Hello sunshine my old friend"),
     )
 
     assert inspect.getsource(v1.SchemaWithVar) == (
@@ -865,10 +863,10 @@ def test__schema_field_had__field_has_var_in_ast_and_existing_keyword_was_change
 
 def test__schema_field_had__field_has_var_in_ast_and_keyword_with_var_was_changed(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_var: Any,
+    head_with_var: Any,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_var.SchemaWithVar).field("foo").had(default=128),
+        schema(head_with_var.SchemaWithVar).field("foo").had(default=128),
     )
 
     assert inspect.getsource(v1.SchemaWithVar) == (
@@ -878,8 +876,8 @@ def test__schema_field_had__field_has_var_in_ast_and_keyword_with_var_was_change
 
 
 @pytest.fixture()
-def latest_with_var_instead_of_field(latest_module_for: LatestModuleFor):
-    return latest_module_for(
+def head_with_var_instead_of_field(head_module_for: HeadModuleFor):
+    return head_module_for(
         """
         from pydantic import BaseModel, constr, Field
 
@@ -894,10 +892,10 @@ def latest_with_var_instead_of_field(latest_module_for: LatestModuleFor):
 
 def test__schema_field_had__field_has_var_instead_of_field_and_keyword_was_added(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_var_instead_of_field,
+    head_with_var_instead_of_field,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_var_instead_of_field.SchemaWithVarInsteadOfField)
+        schema(head_with_var_instead_of_field.SchemaWithVarInsteadOfField)
         .field("foo")
         .had(description="Hello darkness my old friend"),
     )
@@ -909,10 +907,10 @@ def test__schema_field_had__field_has_var_instead_of_field_and_keyword_was_added
 
 def test__schema_field_had__field_has_var_instead_of_field_and_keyword_with_var_was_changed(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_var_instead_of_field,
+    head_with_var_instead_of_field,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_var_instead_of_field.SchemaWithVarInsteadOfField).field("foo").had(default=128),
+        schema(head_with_var_instead_of_field.SchemaWithVarInsteadOfField).field("foo").had(default=128),
     )
 
     assert inspect.getsource(v1.SchemaWithVarInsteadOfField) == (
@@ -922,10 +920,10 @@ def test__schema_field_had__field_has_var_instead_of_field_and_keyword_with_var_
 
 def test__schema_field_had__default_factory(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     v1 = create_local_simple_versioned_packages(  # pragma: no branch
-        schema(latest_with_one_str_field.SchemaWithOneStrField).field("foo").had(default_factory=lambda: "mew"),
+        schema(head_with_one_str_field.SchemaWithOneStrField).field("foo").had(default_factory=lambda: "mew"),
     )
 
     assert v1.SchemaWithOneStrField().foo == "mew"
@@ -933,10 +931,10 @@ def test__schema_field_had__default_factory(
 
 def test__schema_field_had__type(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_one_str_field.SchemaWithOneStrField).field("foo").had(type=bytes),
+        schema(head_with_one_str_field.SchemaWithOneStrField).field("foo").had(type=bytes),
     )
 
     assert inspect.getsource(v1.SchemaWithOneStrField) == "class SchemaWithOneStrField(BaseModel):\n    foo: bytes\n"
@@ -944,10 +942,10 @@ def test__schema_field_had__type(
 
 def test__schema_field_had_name(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     v1 = create_local_simple_versioned_packages(
-        schema(latest_with_one_str_field.SchemaWithOneStrField).field("foo").had(name="doo"),
+        schema(head_with_one_str_field.SchemaWithOneStrField).field("foo").had(name="doo"),
     )
 
     assert inspect.getsource(v1.SchemaWithOneStrField) == "class SchemaWithOneStrField(BaseModel):\n    doo: str\n"
@@ -955,7 +953,7 @@ def test__schema_field_had_name(
 
 def test__schema_field_had_name__name_is_the_same_as_before__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -965,13 +963,13 @@ def test__schema_field_had_name__name_is_the_same_as_before__should_raise_error(
         ),
     ):
         create_local_simple_versioned_packages(
-            schema(latest_with_one_str_field.SchemaWithOneStrField).field("foo").had(name="foo"),
+            schema(head_with_one_str_field.SchemaWithOneStrField).field("foo").had(name="foo"),
         )
 
 
 def test__schema_field_had__change_to_the_same_field_type__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -981,15 +979,15 @@ def test__schema_field_had__change_to_the_same_field_type__should_raise_error(
         ),
     ):
         create_local_simple_versioned_packages(
-            schema(latest_with_one_str_field.SchemaWithOneStrField).field("foo").had(type=str),
+            schema(head_with_one_str_field.SchemaWithOneStrField).field("foo").had(type=str),
         )
 
 
 def test__schema_field_had__change_attr_to_same_value__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for,
+    head_module_for,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
     from pydantic import BaseModel, Field
     class SchemaWithOneStrField(BaseModel):
@@ -1010,7 +1008,7 @@ def test__schema_field_had__change_attr_to_same_value__should_raise_error(
 
 def test__schema_field_had__change_metadata_attr_to_same_value__should_raise_error(
     create_local_versioned_packages: CreateLocalVersionedPackages,
-    latest_with_empty_classes,
+    head_with_empty_classes,
 ):
     if not PYDANTIC_V2:
         pytest.skip("This test is only for Pydantic 2")
@@ -1023,18 +1021,16 @@ def test__schema_field_had__change_metadata_attr_to_same_value__should_raise_err
         ),
     ):
         create_local_versioned_packages(
-            version_change(schema(latest_with_empty_classes.EmptySchema).field("foo").had(gt=8)),
+            version_change(schema(head_with_empty_classes.EmptySchema).field("foo").had(gt=8)),
             version_change(
-                schema(latest_with_empty_classes.EmptySchema)
-                .field("foo")
-                .existed_as(type=int, info=Field(gt=8, lt=12)),
+                schema(head_with_empty_classes.EmptySchema).field("foo").existed_as(type=int, info=Field(gt=8, lt=12)),
             ),
         )
 
 
 def test__schema_field_had__nonexistent_field__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_one_str_field: _FakeNamespaceWithOneStrField,
+    head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -1044,13 +1040,13 @@ def test__schema_field_had__nonexistent_field__should_raise_error(
         ),
     ):
         create_local_simple_versioned_packages(
-            schema(latest_with_one_str_field.SchemaWithOneStrField).field("boo").had(type=int),
+            schema(head_with_one_str_field.SchemaWithOneStrField).field("boo").had(type=int),
         )
 
 
 @pytest.fixture()
-def latest_module_with_weird_types(latest_module_for: LatestModuleFor):
-    return latest_module_for(
+def latest_module_with_weird_types(head_module_for: HeadModuleFor):
+    return head_module_for(
         """
 from pydantic import Field, BaseModel
 from typing_extensions import Literal
@@ -1108,9 +1104,9 @@ def test__schema_field_had__with_weird_data_types__with_all_fields_modified(
 
 def test__union_fields(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
 from pydantic import BaseModel
 
@@ -1139,9 +1135,9 @@ class SchemaWithUnionFields(BaseModel):
 
 def test__schema_that_overrides_fields_from_mro(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
 from pydantic import BaseModel, Field
 

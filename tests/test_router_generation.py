@@ -21,7 +21,7 @@ from starlette.responses import FileResponse
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn._compat import PYDANTIC_V2, model_fields
-from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
+from cadwyn.exceptions import CadwynError, CadwynStructureError, RouterGenerationError, RouterPathParamsModifiedError
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.enums import enum
@@ -33,7 +33,7 @@ from tests.conftest import (
     CreateSimpleVersionedPackages,
     CreateVersionedApp,
     CreateVersionedClients,
-    LatestModuleFor,
+    HeadModuleFor,
     RunSchemaCodegen,
     client,
     version_change,
@@ -77,8 +77,8 @@ def test_endpoint(router: VersionedAPIRouter, test_path: str, random_uuid: UUID)
 
 
 @pytest.fixture(autouse=True)
-def latest(latest_module_for: LatestModuleFor) -> Any:
-    return latest_module_for(
+def latest(head_module_for: HeadModuleFor) -> Any:
+    return head_module_for(
         """
 from pydantic import BaseModel, Field
 from enum import Enum, auto
@@ -749,9 +749,9 @@ def test__router_generation__using_non_latest_version_of_schema__should_raise_er
     with pytest.raises(
         RouterGenerationError,
         match=f"\"<class \\'{temp_data_package_path}.v2000_01_01\\.SchemaWithOnePydanticField\\'>\" "
-        f'is not defined in ".+latest" even though it must be\\. It is defined in ".+v2000_01_01"\\. '
+        f'is not defined in ".+head" even though it must be\\. It is defined in ".+v2000_01_01"\\. '
         "It probably means that you used a specific version of the class in "
-        'fastapi dependencies or pydantic schemas instead of "latest"\\.',
+        'fastapi dependencies or pydantic schemas instead of "head"\\.',
     ):
         generate_versioned_routers(
             router,
@@ -778,28 +778,28 @@ def test__router_generation__using_unversioned_schema_from_versioned_base_dir__s
     create_versioned_app()
 
 
-def test__router_generation__passing_a_module_instead_of_package_for_latest__should_raise_error(
+def test__router_generation__passing_a_module_instead_of_package_for_head__should_raise_error(
     api_version_var: ContextVar[date | None],
     run_schema_codegen: RunSchemaCodegen,
     router: VersionedAPIRouter,
     temp_data_package_path: str,
-    latest_dir: Path,
+    head_dir: Path,
 ):
+    versions = VersionBundle(
+        Version(date(2001, 1, 1)),
+        Version(date(2000, 1, 1)),
+        api_version_var=api_version_var,
+    )
+    head_dir.joinpath("hewwo.py").touch()
+    run_schema_codegen(versions)
+    module = importlib.import_module(temp_data_package_path + ".head.hewwo")
+
     with pytest.raises(
-        RouterGenerationError,
+        CadwynStructureError,
         match=re.escape(
-            f'The latest schemas module must be a package. "{temp_data_package_path}.latest.hewwo" is not a package.',
+            f'The head schemas module must be a package. "{temp_data_package_path}.head.hewwo" is not a package.',
         ),
     ):
-        versions = VersionBundle(
-            Version(date(2001, 1, 1)),
-            Version(date(2000, 1, 1)),
-            api_version_var=api_version_var,
-        )
-        latest_dir.joinpath("hewwo.py").touch()
-        run_schema_codegen(versions)
-        module = importlib.import_module(temp_data_package_path + ".latest.hewwo")
-
         generate_versioned_routers(
             router,
             versions=versions,
@@ -807,16 +807,16 @@ def test__router_generation__passing_a_module_instead_of_package_for_latest__sho
         )
 
 
-def test__router_generation__passing_a_package_with_wrong_name_instead_of_latest__should_raise_error(
+def test__router_generation__passing_a_package_with_wrong_name_instead_of_head__should_raise_error(
     temp_data_package_path: str,
     api_version_var: ContextVar[date | None],
     run_schema_codegen: RunSchemaCodegen,
     router: VersionedAPIRouter,
 ):
     with pytest.raises(
-        RouterGenerationError,
+        CadwynStructureError,
         match=re.escape(
-            f'The name of the latest schemas module must be "latest". Received "{temp_data_package_path}" instead.',
+            f'The name of the head schemas module must be "head". Received "{temp_data_package_path}" instead.',
         ),
     ):
         versions = VersionBundle(
@@ -1117,7 +1117,7 @@ def test__router_generation__updating_callbacks(
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
-    assert generated_callback.dependant.body_params[0].type_.__module__.endswith(".latest")
+    assert generated_callback.dependant.body_params[0].type_.__module__.endswith(".v2001_01_01")
 
 
 def test__cascading_router_exists(

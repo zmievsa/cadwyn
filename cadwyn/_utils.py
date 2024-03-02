@@ -72,16 +72,16 @@ def get_pythonpath_to_another_version_of_module(
     new_version_dir: Path,
     version_dirs: frozenset[Path] | tuple[Path, ...],
 ) -> str:
-    # ['package', 'companies', 'latest', 'schemas']
+    # ['package', 'companies', 'head', 'schemas']
     #                           ^^^^^^
     #                           index = 2
-    index_of_base_schema_dir = get_index_of_latest_schema_dir_in_module_python_path(
+    index_of_base_schema_dir = get_index_of_head_schema_dir_in_module_python_path(
         module_from_old_version,
         new_version_dir,
         version_dirs,
     )
 
-    # ['package', 'companies', 'latest', 'schemas']
+    # ['package', 'companies', 'head', 'schemas']
     model_split_python_path = module_from_old_version.__name__.split(".")
     # ['package', 'companies', 'v2021_01_01', 'schemas']
     model_split_python_path[index_of_base_schema_dir] = new_version_dir.name
@@ -90,7 +90,7 @@ def get_pythonpath_to_another_version_of_module(
 
 
 @functools.cache
-def get_index_of_latest_schema_dir_in_module_python_path(
+def get_index_of_head_schema_dir_in_module_python_path(
     module_from_old_version: ModuleType,
     parallel_dir: Path,
     version_dirs: frozenset[Path] = frozenset(),
@@ -104,22 +104,22 @@ def get_index_of_latest_schema_dir_in_module_python_path(
             "which Cadwyn couldn't migrate to an older version. "
             "If you are seeing this error -- you've encountered a bug in Cadwyn.",
         )
-    # /home/myuser/package/companies/latest/__init__.py
+    # /home/myuser/package/companies/head/__init__.py
     file = Path(file)
     _validate_that_module_is_versioned(file, version_dirs)
     is_package = file.name == "__init__.py"
     if is_package:
-        # /home/myuser/package/companies/latest/
+        # /home/myuser/package/companies/head/
         file = file.parent
     # /home/myuser/package/companies
     root_dir = parallel_dir.parent
-    # latest/schemas
+    # head/schemas
     relative_file = file.relative_to(root_dir).with_suffix("")
-    # ['latest', 'schemas']
+    # ['head', 'schemas']
     relative_file_parts = relative_file.parts
-    # package.companies.latest.schemas.payables
+    # package.companies.head.schemas.payables
     module_python_path = module_from_old_version.__name__
-    # ['package', 'companies', 'latest', 'schemas']
+    # ['package', 'companies', 'head', 'schemas']
     module_split_python_path = module_python_path.split(".")
 
     index = len(module_split_python_path) - len(relative_file_parts) - int(is_package)

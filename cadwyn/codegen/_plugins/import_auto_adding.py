@@ -45,8 +45,6 @@ class ImportAutoAddingPlugin:
 
     @staticmethod
     def __call__(node: ast.Module, context: CodegenContext):
-        if context.current_version_is_latest:
-            return node
         source = ast.unparse(node)
         extra_lib_imports = [
             import_

@@ -5,7 +5,7 @@ from cadwyn import VersionedAPIRouter
 from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import InternalRepresentationOf
 
-from .data.head.users import (
+from .data.latest.users import (
     UserAddressResourceList,
     UserCreateRequest,
     UserResource,
