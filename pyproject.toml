@@ -109,7 +109,7 @@ exclude_lines = [
     "__rich_repr__",
     "__repr__",
 ]
-omit = ["./docs/plugin.py", "./site/plugin.py", "./tests/_data/_temp/**/*", "tests/tutorial/data/**/*"]
+omit = ["./docs/plugin.py", "./site/plugin.py", "./tests/_data/_temp/**/*", "tests/tutorial/data/**/*", "scripts/*.py"]
 
 [tool.pyright]
 reportMissingImports = true
@@ -137,6 +137,7 @@ reportCircularImports = true
 [tool.ruff]
 target-version = "py310"
 line-length = 120
+extend-exclude = ["scripts/*.py"]
 
 [tool.ruff.lint]
 select = [
@@ -214,6 +215,7 @@ ignore = [
     "COM812",  # Checks for the absence of trailing commas
     "COM819",  # Checks for the presence of prohibited trailing commas
 ]
+
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
