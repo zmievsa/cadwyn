@@ -151,7 +151,7 @@ Notice how we specified the schema for `InvoiceResource` in our migration? This 
 
 Now our request comes, Cadwyn migrates it to the latest version using our request migration, then we do our business logic, return the latest response from it, and Cadwyn migrates it back to the request version. Does our business logic or database know about the fact that we have two versions? No, not at all! It is zero-cost. Imagine how beneficial it is when you support not two but two hundred versions.
 
-![The diagram showing how it works](<../img/simplified_migration_model.png>)
+![The diagram showing how it works](../img/simplified_migration_model.png)
 
 **Notice** how we used the **latest** versions of our schemas in our migration -- this pattern can be found everywhere in Cadwyn. You use the latest version of your schemas to describe what happened to all other versions because other versions might not exist when you are defining migrations for them.
 
