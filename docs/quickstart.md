@@ -219,7 +219,7 @@ class ChangeAddressToList(VersionChange):
 
 See how we are popping the first address from the list? This is only guaranteed to be possible because we specified earlier that `min_items` for `addresses` must be `1`. If we didn't, then the user would be able to create a user in a newer version that would be impossible to represent in the older version. I.e. If anyone tried to get that user from the older version, they would get a `ResponseValidationError` because the user wouldn't have data for a mandatory `address` field. You need to always keep in mind that API versioning is only for versioning your **API**, your interface. Your versions must still be completely compatible in terms of data. If they are not, then you are versioning your data and you should really go with a separate app instance. Otherwise, your users will have a hard time migrating back and forth between API versions and so many unexpected errors.
 
-See how we added a migration not only for response but also for request? This will allow our business logic to stay completely the same, no matter which version it was called from. Cadwyn will always give your business logic the request model from the latest version or from a custom schema [if you want to](./concepts#internal-representations).
+See how we added a migration not only for response but also for request? This will allow our business logic to stay completely the same, no matter which version it was called from. Cadwyn will always give your business logic the request model from the latest version or from a custom schema [if you want to](./concepts/version_changes.md#internal-representations).
 
 ## Grouping Version Changes
 
@@ -247,4 +247,4 @@ Let's run code generation, run our app, and then take a look at the generated da
 
 The endpoint above is from the `2001-01-01` version. As you see, our routes and business logic are for the latest version but our openapi has all information about all API versions which is the main goal of cadwyn: a large number of long-living API versions without placing any burden on your business logic.
 
-Obviously, this was just a simple example and cadwyn has a lot more features so if you're interested -- take a look at the [reference](./concepts.md) and [how-to](./how_to.md) sections.
+Obviously, this was just a simple example and cadwyn has a lot more features so if you're interested -- take a look at the [reference](./concepts/index.md) and [how-to](./how_to.md) sections.

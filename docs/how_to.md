@@ -4,9 +4,9 @@ This section serves as a guide to help you create new versions effectively and m
 
 To follow this guide, choose a type of an entity that you'd like to alter (an endpoint, a schema, etc), find the respective level two subheading, and follow its instructions. Repeat for every breaking change you would like to do.
 
-The guide will assume [this directory structure](./concepts.md#service-structure).
+The guide will assume [this directory structure](./concepts/service_structure.md).
 
-Versioning is a complex topic with more pitfalls than you'd expect so please: **do not try to skip this guide**. Otherwise, your code will quickly get unmaintainable. Please also note that any of these scenarios can be combined in any way even within a single version change, though it's recommended to keep the version changes atomic as described in [methodology](./concepts.md#methodology) section.
+Versioning is a complex topic with more pitfalls than you'd expect so please: **do not try to skip this guide**. Otherwise, your code will quickly get unmaintainable. Please also note that any of these scenarios can be combined in any way even within a single version change, though it's recommended to keep the version changes atomic as described in [methodology](./concepts/methodology.md) section.
 
 ## Schemas (openapi data type)
 
@@ -50,7 +50,7 @@ Let's say that we had a "summary" field before but now we want to rename it to "
             response.body["bio"] = response.body.pop("summary")
     ```
 
-3. [Regenerate](./concepts.md#code-generation) the versioned schemas
+3. [Regenerate](./concepts/code_generation.md) the versioned schemas
 
 #### Addition, narrowing, or removal of constraints
 
@@ -76,19 +76,19 @@ Let's say that we previously allowed users to have a name of arbitrary length bu
         )
     ```
 
-3. [Regenerate](./concepts.md#code-generation) the versioned schemas
+3. [Regenerate](./concepts/code_generation.md) the versioned schemas
 
 Note, however, that anyone using the old API versions will also not be able  will still be able to use arbitrary length names in older API versions. If you want to prevent that, then the correct approach would instead be the following:
 
 0. Check whether any users have names longer than 250 characters. If there are few or no users that have such long names, then it may make sense to skip step 1. The other steps, however, cannot be skipped if you want to guarantee that your API gives no 500s at any point in the process.
 1. Issue a 3-6 month warning to all users stating that you will make a breaking change affecting older versions. Mention that you will truncate old names that are longer than 250 characters and that users will no longer be able to create such long names even in old API versions.
 2. After the deadline, add a `max_length` constraint to `data.latest.users.UserCreateRequest.name`
-3. [Regenerate](./concepts.md#code-generation) the versioned schemas
+3. [Regenerate](./concepts/code_generation.md) the versioned schemas
 4. Release it to production
 5. Truncate all names that are too long in the database (preferably using a migration and a separate release)
 6. Remove the `max_length` constraint from `data.latest.users.UserCreateRequest.name`
 7. Add the `max_length` constraint to `data.latest.users.User.name`
-8. [Regenerate](./concepts.md#code-generation) the versioned schemas
+8. [Regenerate](./concepts/code_generation.md) the versioned schemas
 
 This process seems quite complex but it's not Cadwyn-specific: if you want to safely and nicely version for your users, you will have to follow such a process even if you don't use any versioning framework at all.
 
@@ -99,19 +99,19 @@ Let's say that we previously only allowed users to have a name of length 50 but 
 The recommended approach:
 
 1. Change `max_length` of `data.latest.users.User.name` to 250
-2. [Regenerate](./concepts.md#code-generation) the versioned schemas
+2. [Regenerate](./concepts/code_generation.md) the versioned schemas
 
 However, sometimes it can be considered a breaking change if a large portion of your users use your system to verify their data and rely on your system to return status code `422` if this field is invalid. If that's the case, use the same approach as in [constraint addition](#add-or-narrow-constraints) but use `50` instead of `schema(UserCreateRequest).field("name").didnt_have("max_length")` for the old value.
 
 ##### Add or remove validators
 
-The same approach as above could be used to add or remove pydantic validator functions using [validator code generation](./concepts.md#add-a-validator).
+The same approach as above could be used to add or remove pydantic validator functions using [validator code generation](./concepts/schema_migrations.md#add-a-validator-to-the-older-version).
 
 #### Remove fields from schemas
 
 ##### Remove optional fields from schemas
 
-Let's say that we had a nullable `middle_name` field but we decided that it does not make sense anymore and want to remove it now from both requests and responses. We can solve this with [internal body request schemas](./concepts.md#internal-request-schemas).
+Let's say that we had a nullable `middle_name` field but we decided that it does not make sense anymore and want to remove it now from both requests and responses. We can solve this with [internal body request schemas](./concepts/version_changes.md#internal-request-body-representations).
 
 1. Remove `middle_name` field from `data.latest.users.User`
 2. Add a `data.unversioned.users.UserInternalCreateRequest` that we will use later to wrap migrated data instead of the latest request schema.
@@ -164,7 +164,7 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
         )
     ```
 
-5. [Regenerate](./concepts.md#code-generation) the versioned schemas
+5. [Regenerate](./concepts/code_generation.md) the versioned schemas
 
 Note that in order for this to work, you would still have to store `middle_name` in your database and return it with your responses.
 
@@ -181,7 +181,7 @@ The first one is simple to solve: just use the approach [above](#remove-optional
 
 Now what about case 2?
 
-Let's say that you have company resources in your system. Let's also say that each company has a `tax_id` and now you would like to remove the `tax_id` field or make it optional. If `tax_id` was required in your responses, you can't really do this with traditional API versioning because you cannot come up with a sane non-null default for `tax_id`. It is a case of [data versioning](./concepts.md#beware-of-data-versioning) where you try to make an API version that is inconsistent with other API versions in terms of its data. You deal with this using one of the following approaches:
+Let's say that you have company resources in your system. Let's also say that each company has a `tax_id` and now you would like to remove the `tax_id` field or make it optional. If `tax_id` was required in your responses, you can't really do this with traditional API versioning because you cannot come up with a sane non-null default for `tax_id`. It is a case of [data versioning](./concepts/beware_of_data_versioning.md) where you try to make an API version that is inconsistent with other API versions in terms of its data. You deal with this using one of the following approaches:
 
 0. Talk to your users. In any API versioning problem, talking to your users is the best first step. See whether this is actually a breaking change for them. Maybe only a small subset of your users is using this field and you can migrate this subset manually without much investment, which will allow you to make the breaking changes without breaking anyone's API. Though this approach becomes impossible to use once you get a lot of clients.
 1. Issue a warning to your users that `tax_id` is going to become optional in all API versions in `N` months and then make it so. This will allow you to avoid data versioning and your users will have a grace period to fix their issues. Then you can simply follow the [approach above](#remove-optional-fields-from-schemas).
@@ -197,7 +197,7 @@ Let's say we want our users to be able to specify a middle name but it is nullab
 The recommended approach:
 
 1. Add a nullable `middle_name` field into `data.latest.users.User`
-2. [Regenerate](./concepts.md#code-generation) the versioned schemas
+2. [Regenerate](./concepts/code_generation.md) the versioned schemas
 
 #### Add required fields to schemas
 
@@ -228,13 +228,13 @@ Let's say that our users had a field `country` that defaulted to `USA` but our p
             request.body["country"] = request.body.get("country", "USA")
     ```
 
-3. [Regenerate](./concepts.md#code-generation) the versioned schemas
+3. [Regenerate](./concepts/code_generation.md) the versioned schemas
 
-That's it! Our old schemas will now contain a default but in `latest` country will be required. You might notice a weirdness: if we set a default in the old version, why would we also write a migration? That's because of a sad implementation detail of pydantic that [prevents us](./concepts.md#defaults-warning) from using defaults from old versions.
+That's it! Our old schemas will now contain a default but in `latest` country will be required. You might notice a weirdness: if we set a default in the old version, why would we also write a migration? That's because of a sad implementation detail of pydantic that [prevents us](./concepts/schema_migrations.md#change-a-field-in-the-older-version) from using defaults from old versions.
 
 ##### With incompatible default value in older versions
 
-Let's say that we want to add a required field `phone` to our users. However, older versions did not have such a field at all. This means that the field is going to be nullable in the old versions but required in the latest version. This also means that older versions contain a wider type (`str | None`) than the latest version (`str`). So when we try to migrate request bodies from the older versions to latest -- we might receive a `ValidationError` because `None` is not an acceptable value for `phone` field in the new version. Whenever we have a problem like this, when older version contains more data or a wider type set of data,  we use [internal body request schemas](./concepts.md#internal-request-schemas).
+Let's say that we want to add a required field `phone` to our users. However, older versions did not have such a field at all. This means that the field is going to be nullable in the old versions but required in the latest version. This also means that older versions contain a wider type (`str | None`) than the latest version (`str`). So when we try to migrate request bodies from the older versions to latest -- we might receive a `ValidationError` because `None` is not an acceptable value for `phone` field in the new version. Whenever we have a problem like this, when older version contains more data or a wider type set of data,  we use [internal body request schemas](./concepts/version_changes.md#internal-request-body-representations).
 
 1. Add `phone` field of type `str` to `data.latest.users.UserCreateRequest`
 2. Add `phone` field of type `str | None` with a `default=None` to `data.latest.users.UserResource` because all users created with older versions of our API won't have phone numbers.
@@ -291,7 +291,7 @@ Let's say that we want to add a required field `phone` to our users. However, ol
         )
     ```
 
-6. [Regenerate](./concepts.md#code-generation) the versioned schemas
+6. [Regenerate](./concepts/code_generation.md) the versioned schemas
 
 See how we didn't remove the `phone` field from old versions? Instead, we allowed a nullable `phone` field to be passed into both old `UserResource` and old `UserCreateRequest`. This gives our users new functionality without needing to update their API version! It is one of the best parts of Cadwyn's approach: our users can get years worth of updates without switching their API version and without their integration getting broken.
 
@@ -299,7 +299,7 @@ See how we didn't remove the `phone` field from old versions? Instead, we allowe
 
 ##### Compatible narrowing
 
-Let's say that previously users could specify their date of birth as a datetime instead of a date. We wish to rectify that. We can solve this with [internal body request schemas](./concepts.md#internal-request-schemas).
+Let's say that previously users could specify their date of birth as a datetime instead of a date. We wish to rectify that. We can solve this with [internal body request schemas](./concepts/version_changes.md#internal-request-body-representations).
 
 0. Continue storing `date_of_birth` as a datetime in your database to avoid breaking any old behavior
 1. Change the type of `date_of_birth` field to `datetime.date` in `data.latest.users.User`
@@ -359,10 +359,10 @@ Let's say that previously users could specify their date of birth as a datetime 
             request.body["time_of_birth"] = request.body["date_of_birth"].time()
     ```
 
-5. [Regenerate](./concepts.md#code-generation) the versioned schemas
+5. [Regenerate](./concepts/code_generation.md) the versioned schemas
 6. Within your business logic, create the datetime that you will put into the database by combining `date_of_birth` field and `time_of_birth` field
 
-See how we did not need to use [convert_response_to_previous_version_for](./concepts.md#data-migrations)? We do not need to migrate anything because moving from `datetime` to `date` is easy: our database data already contains datetimes so pydantic will automatically narrow them to dates for responses if necessary. We also do not need to change anything about `date_of_birth` in the requests of older versions because our schema of the new version will automatically cast `datetime` to `date`.
+See how we did not need to use [convert_response_to_previous_version_for](./concepts/version_changes.md#data-migrations)? We do not need to migrate anything because moving from `datetime` to `date` is easy: our database data already contains datetimes so pydantic will automatically narrow them to dates for responses if necessary. We also do not need to change anything about `date_of_birth` in the requests of older versions because our schema of the new version will automatically cast `datetime` to `date`.
 
 This whole process was a bit complex so let us break it down a little:
 
@@ -376,7 +376,7 @@ Thus, we have kept old behavior, added new constrained behavior, and minimized t
 
 ##### Incompatible narrowing/change
 
-[It is data versioning](./concepts.md#beware-of-data-versioning).
+[It is data versioning](./concepts/beware_of_data_versioning.md).
 
 #### Expand field type in schemas (including enum expansion)
 
@@ -416,7 +416,7 @@ So if you do consider it a breaking change in terms of responses, you should do 
                 response.body["role"] = "regular"
     ```
 
-3. [Regenerate](./concepts.md#code-generation) the versioned schemas
+3. [Regenerate](./concepts/code_generation.md) the versioned schemas
 
 We convert moderators to regulars in older versions because it is a safer choice for our users.
 
@@ -442,12 +442,12 @@ In these sections, we'll be working with our user's response model: `data.latest
 
 #### Add a field to response schema
 
-Let's say that we decided to expose the creation date of user's account with a `created_at` field in our API. This is **not** a breaking change so a new version is completely unnecessary. However, if you believe that you absolutely have to make a new version, then you can simply follow the recommended approach below but add a version change with [field didnt exist instruction](./concepts#remove-a-field).
+Let's say that we decided to expose the creation date of user's account with a `created_at` field in our API. This is **not** a breaking change so a new version is completely unnecessary. However, if you believe that you absolutely have to make a new version, then you can simply follow the recommended approach below but add a version change with [field didnt exist instruction](./concepts/schema_migrations.md#remove-a-field-from-the-older-version).
 
 The recommended approach:
 
 1. Add `created_at` field into `data.latest.users.UserResource`
-2. [Regenerate](./concepts.md#code-generation) the versioned schemas
+2. [Regenerate](./concepts/code_generation.md) the versioned schemas
 
 Now you have everything you need at your disposal: field `created_at` is available in all versions and your users do not even need to do any extra actions. Just make sure that the data for it is available in all versions too. If it's not: make the field optional.
 
@@ -477,7 +477,7 @@ Let's say that our API has a mandatory `UserResource.date_of_birth` field. Let's
         )
     ```
 
-3. [Regenerate](./concepts.md#code-generation) the versioned schemas
+3. [Regenerate](./concepts/code_generation.md) the versioned schemas
 
 Thanks to the version change above, your old schemas will now include `zodiac_sign` field but your new schemas will stay the same. Don't remove the zodiac business logic from your router because the old version will still need it. So you always return the zodiac sign but the schemas of the latest version will ignore it.
 
@@ -487,11 +487,11 @@ You can remove the logic for calculating and returning the zodiac sign after ver
 
 ### Add a new endpoint
 
-It is not a breaking change so it's recommended to simply add it to all versions. If you believe that you still need it, you can use the [following migration](./concepts.md#defining-endpoints-that-didnt-exist-in-old-versions).
+It is not a breaking change so it's recommended to simply add it to all versions. If you believe that you still need it, you can use the [following migration](./concepts/endpoint_migrations.md#defining-endpoints-that-didnt-exist-in-old-versions).
 
 ### Delete an old endpoint
 
-See [concepts](./concepts.md#defining-endpoints-that-didnt-exist-in-new-versions)
+See [concepts](./concepts/endpoint_migrations.md#defining-endpoints-that-didnt-exist-in-new-versions)
 
 ## Change the business logic in a new version
 
@@ -501,22 +501,22 @@ But if you are certain that you need to make a breaking behavioral change, Cadwy
 
 ### Calling endpoint causes unexpected data modifications
 
-You'd use an `if statement` with a [side effect](./concepts.md#version-changes-with-side-effects).
+You'd use an `if statement` with a [side effect](./concepts/version_changes.md#version_changes_with_side_effects).
 
 ### Calling endpoint doesn't cause expected data modifications
 
-You'd use an `if statement` with a [side effect](./concepts.md#version-changes-with-side-effects).
+You'd use an `if statement` with a [side effect](./concepts/version_changes.md#version_changes_with_side_effects).
 
 ### Calling endpoint doesn't cause expected additional actions (e.g. Webhooks)
 
-You'd use an `if statement` with a [side effect](./concepts.md#version-changes-with-side-effects).
+You'd use an `if statement` with a [side effect](./concepts/version_changes.md#version_changes_with_side_effects).
 
 ### Errors
 
 #### Change the status code or a message in an HTTP error
 
-You can [migrate anything about the error](./concepts.md#migration-of-http-errors) in a version change.
+You can [migrate anything about the error](./concepts/version_changes.md#migration-of-http-errors) in a version change.
 
 #### Introduce a new error or remove an old error
 
-You'd use an `if statement` with a [side effect](./concepts.md#version-changes-with-side-effects).
+You'd use an `if statement` with a [side effect](./concepts/version_changes.md#version_changes_with_side_effects).
