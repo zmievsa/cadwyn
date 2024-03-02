@@ -69,10 +69,26 @@ nav:
     - "index.md"
     - "Contributing": "home/CONTRIBUTING.md"
     - "Changelog": "home/CHANGELOG.md"
-  - "Quickstart": "quickstart.md"
-  - "How to...": "how_to.md"
+
+  - "Quickstart":
+    - "quickstart/index.md"
+    - "Setup": "quickstart/setup.md"
+    - "Making the breaking change": "quickstart/making_the_breaking_change.md"
+    - "Going back in time before the breaking change": "quickstart/going_back_in_time_before_the_breaking_change.md"
+
+  - "How to...":
+    - "how_to/index.md"
+    - "Change OpenAPI Schemas":
+      - "Add a field": "how_to/change_openapi_schemas/add_field.md"
+      - "Remove a field": "how_to/change_openapi_schemas/remove_field.md"
+      - "Rename a field": "how_to/change_openapi_schemas/rename_a_field_in_schema.md"
+      - "Change field type": "how_to/change_openapi_schemas/change_field_type.md"
+      - "Change field constraints or validators": "how_to/change_openapi_schemas/changing_constraints.md"
+    - "Change business logic": "how_to/change_business_logic/index.md"
+    - "Change endpoints": "how_to/change_endpoints/index.md"
+
   - "Concepts":
-    - "Mission": "concepts/mission.md"
+    - "concepts/index.md"
     - "Methodology": "concepts/methodology.md"
     - "Service structure": "concepts/service_structure.md"
     - "Beware of data versioning": "concepts/beware_of_data_versioning.md"
@@ -87,9 +103,9 @@ nav:
     - "API Version header and context variables": "concepts/api_version_header_and_context_variables.md"
 
   - "Theory":
-    - How we got here: "theory/how_we_got_here.md"
-    - Literature: "theory/literature.md"
-    - Design decisions: "theory/design_decisions.md"
+    - "How we got here": "theory/how_we_got_here.md"
+    - "Literature": "theory/literature.md"
+    - "Design decisions": "theory/design_decisions.md"
 
 watch:
 - docs
