@@ -30,6 +30,7 @@ PossibleFieldAttributes = Literal[
     "ge",
     "lt",
     "le",
+    "strict",
     "multiple_of",
     "allow_inf_nan",
     "max_digits",
@@ -61,6 +62,7 @@ class FieldChanges:
     ge: float
     lt: float
     le: float
+    strict: bool
     multiple_of: float
     allow_inf_nan: bool
     max_digits: int
@@ -130,6 +132,7 @@ class AlterFieldInstructionFactory:
         ge: float = Sentinel,
         lt: float = Sentinel,
         le: float = Sentinel,
+        strict: bool = Sentinel,
         multiple_of: float = Sentinel,
         allow_inf_nan: bool = Sentinel,
         max_digits: int = Sentinel,
@@ -180,6 +183,7 @@ class AlterFieldInstructionFactory:
                 ge=ge,
                 lt=lt,
                 le=le,
+                strict=strict,
                 multiple_of=multiple_of,
                 allow_inf_nan=allow_inf_nan,
                 max_digits=max_digits,

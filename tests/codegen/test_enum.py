@@ -13,15 +13,15 @@ from cadwyn.structure import (
 )
 from tests.conftest import (
     CreateLocalSimpleVersionedPackages,
-    LatestModuleFor,
+    HeadModuleFor,
     _FakeModuleWithEmptyClasses,
     serialize,
 )
 
 
 @pytest.fixture()
-def latest(latest_module_for: LatestModuleFor):
-    return latest_module_for(
+def latest(head_module_for: HeadModuleFor):
+    return head_module_for(
         """
     from enum import Enum
 
@@ -37,18 +37,18 @@ def latest(latest_module_for: LatestModuleFor):
 
 def test__enum_had__original_enum_is_empty(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_empty_classes: Any,
+    head_with_empty_classes: Any,
 ):
-    v1 = create_local_simple_versioned_packages(enum(latest_with_empty_classes.EmptyEnum).had(b=auto()))
+    v1 = create_local_simple_versioned_packages(enum(head_with_empty_classes.EmptyEnum).had(b=auto()))
 
     assert serialize(v1.EmptyEnum) == {"b": 1}
 
 
 def test__enum_had__original_enum_has_methods__all_methods_are_preserved(
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
 ):
-    latest = latest_module_for(
+    latest = head_module_for(
         """
     from enum import Enum
 
@@ -110,10 +110,10 @@ def test__enum_didnt_have__original_enum_has_two_members(
 
 def test__enum_had__original_schema_is_empty(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    latest_with_empty_classes: _FakeModuleWithEmptyClasses,
+    head_with_empty_classes: _FakeModuleWithEmptyClasses,
 ):
     v1 = create_local_simple_versioned_packages(
-        enum(latest_with_empty_classes.EmptyEnum).had(b=7),
+        enum(head_with_empty_classes.EmptyEnum).had(b=7),
     )
 
     assert serialize(v1.EmptyEnum) == {"b": 7}

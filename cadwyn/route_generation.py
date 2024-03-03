@@ -43,7 +43,7 @@ from starlette.routing import (
     BaseRoute,
     request_response,
 )
-from typing_extensions import Self, assert_never
+from typing_extensions import Self, assert_never, deprecated
 
 from cadwyn._compat import model_fields, rebuild_fastapi_body_param
 from cadwyn._package_utils import get_version_dir_path
@@ -84,6 +84,7 @@ class _RouterInfo(Generic[_R]):
     route_bodies_with_migrated_requests: set[type[BaseModel]]
 
 
+@deprecated("It will soon be deleted. Use HeadVersion version changes instead.")
 class InternalRepresentationOf:
     def __class_getitem__(cls, original_schema: type, /) -> type[Self]:
         return cast(Any, type("InternalRepresentationOf", (cls, original_schema), {}))
@@ -92,9 +93,11 @@ class InternalRepresentationOf:
 def generate_versioned_routers(
     router: _R,
     versions: VersionBundle,
-    latest_schemas_package: ModuleType,
+    head_schemas_package: ModuleType,
 ) -> dict[VersionDate, _R]:
-    return _EndpointTransformer(router, versions, latest_schemas_package).transform()
+    versions.head_schemas_package = head_schemas_package
+    versions._validate_head_schemas_package_structure()
+    return _EndpointTransformer(router, versions, head_schemas_package).transform()
 
 
 class VersionedAPIRouter(fastapi.routing.APIRouter):
@@ -116,12 +119,12 @@ class _EndpointTransformer(Generic[_R]):
         self,
         parent_router: _R,
         versions: VersionBundle,
-        latest_schemas_package: ModuleType,
+        head_schemas_package: ModuleType,
     ) -> None:
         super().__init__()
         self.parent_router = parent_router
         self.versions = versions
-        self.annotation_transformer = _AnnotationTransformer(latest_schemas_package, versions)
+        self.annotation_transformer = _AnnotationTransformer(head_schemas_package, versions)
 
         self.routes_that_never_existed = [
             route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
@@ -160,11 +163,11 @@ class _EndpointTransformer(Generic[_R]):
                 f"{self.routes_that_never_existed}",
             )
 
-        for route_index, latest_route in enumerate(self.parent_router.routes):
-            if not isinstance(latest_route, APIRoute):
+        for route_index, head_route in enumerate(self.parent_router.routes):
+            if not isinstance(head_route, APIRoute):
                 continue
-            _add_request_and_response_params(latest_route)
-            copy_of_dependant = deepcopy(latest_route.dependant)
+            _add_request_and_response_params(head_route)
+            copy_of_dependant = deepcopy(head_route.dependant)
             # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
             if len(copy_of_dependant.body_params) == 1:
                 self._replace_internal_representation_with_the_versioned_schema(
@@ -176,20 +179,20 @@ class _EndpointTransformer(Generic[_R]):
                 older_route = older_router_info.router.routes[route_index]
 
                 # We know they are APIRoutes because of the check at the very beginning of the top loop.
-                # I.e. Because latest_route is an APIRoute, both routes are  APIRoutes too
+                # I.e. Because head_route is an APIRoute, both routes are  APIRoutes too
                 older_route = cast(APIRoute, older_route)
                 # Wait.. Why do we need this code again?
                 if older_route.body_field is not None and len(older_route.dependant.body_params) == 1:
                     template_older_body_model = self.annotation_transformer._change_version_of_annotations(
                         older_route.body_field.type_,
-                        self.annotation_transformer.template_version_dir,
+                        self.annotation_transformer.head_version_dir,
                     )
                 else:
                     template_older_body_model = None
                 _add_data_migrations_to_route(
                     older_route,
                     # NOTE: The fact that we use latest here assumes that the route can never change its response schema
-                    latest_route,
+                    head_route,
                     template_older_body_model,
                     older_route.body_field.alias if older_route.body_field is not None else None,
                     copy_of_dependant,
@@ -383,29 +386,17 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
 class _AnnotationTransformer:
     __slots__ = (
         "versions",
-        "latest_schemas_package",
-        "template_version_dir",
+        "head_schemas_package",
+        "head_version_dir",
         "latest_version_dir",
         "change_versions_of_a_non_container_annotation",
     )
 
-    def __init__(self, latest_schemas_package: ModuleType, versions: VersionBundle) -> None:
-        if not hasattr(latest_schemas_package, "__path__"):
-            raise RouterGenerationError(
-                f'The latest schemas module must be a package. "{latest_schemas_package.__name__}" is not a package.',
-            )
-        if not latest_schemas_package.__name__.endswith(".latest"):
-            raise RouterGenerationError(
-                'The name of the latest schemas module must be "latest". '
-                f'Received "{latest_schemas_package.__name__}" instead.',
-            )
+    def __init__(self, head_schemas_package: ModuleType, versions: VersionBundle) -> None:
         self.versions = versions
-        self.versions.latest_schemas_package = latest_schemas_package
-        self.latest_schemas_package = latest_schemas_package
-        # Okay, the naming is confusing, I know. Essentially template_version_dir is a dir of
-        # latest_schemas_package while latest_version_dir is a version equivalent to latest but
-        # with its own directory. Pick a better naming and make a PR, I am at your mercy.
-        self.template_version_dir = min(versions.versioned_directories)  # "latest" < "v0000_00_00"
+        self.versions.head_schemas_package = head_schemas_package
+        self.head_schemas_package = head_schemas_package
+        self.head_version_dir = min(versions.versioned_directories)  # "head" < "v0000_00_00"
         self.latest_version_dir = max(versions.versioned_directories)  # "v2005_11_11" > "v2000_11_11"
 
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
@@ -416,7 +407,7 @@ class _AnnotationTransformer:
         )
 
     def migrate_router_to_version(self, router: fastapi.routing.APIRouter, version: Version):
-        version_dir = get_version_dir_path(self.latest_schemas_package, version.value)
+        version_dir = get_version_dir_path(self.head_schemas_package, version.value)
         if not version_dir.is_dir():
             raise RouterGenerationError(
                 f"Versioned schema directory '{version_dir}' does not exist.",
@@ -490,7 +481,7 @@ class _AnnotationTransformer:
         """Recursively go through all annotations and if they were taken from any versioned package, change them to the
         annotations corresponding to the version_dir passed.
 
-        So if we had a annotation "UserResponse" from "latest" version, and we passed version_dir of "v1_0_1", it would
+        So if we had a annotation "UserResponse" from "head" version, and we passed version_dir of "v1_0_1", it would
         replace "UserResponse" with the the same class but from the "v1_0_1" version.
 
         """
@@ -525,10 +516,10 @@ class _AnnotationTransformer:
             return annotation
 
     def _validate_source_file_is_located_in_template_dir(self, annotation: type, source_file: str):
-        template_dir = str(self.template_version_dir)
-        dir_with_versions = str(self.template_version_dir.parent)
+        template_dir = str(self.head_version_dir)
+        dir_with_versions = str(self.head_version_dir.parent)
         # So if it is somewhere close to version dirs (either within them or next to them),
-        # but not located in "latest",
+        # but not located in "head",
         # but also not located in any other version dir
         if (
             source_file.startswith(dir_with_versions)
@@ -536,10 +527,10 @@ class _AnnotationTransformer:
             and any(source_file.startswith(str(d)) for d in self.versions.versioned_directories)
         ):
             raise RouterGenerationError(
-                f'"{annotation}" is not defined in "{self.template_version_dir}" even though it must be. '
+                f'"{annotation}" is not defined in "{self.head_version_dir}" even though it must be. '
                 f'It is defined in "{Path(source_file).parent}". '
                 "It probably means that you used a specific version of the class in fastapi dependencies "
-                'or pydantic schemas instead of "latest".',
+                'or pydantic schemas instead of "head".',
             )
 
 
@@ -584,7 +575,7 @@ def _add_request_and_response_params(route: APIRoute):
 
 def _add_data_migrations_to_route(
     route: APIRoute,
-    latest_route: Any,
+    head_route: Any,
     template_body_field: type[BaseModel] | None,
     template_body_field_name: str | None,
     dependant_for_request_migrations: Dependant,
@@ -600,7 +591,7 @@ def _add_data_migrations_to_route(
         template_body_field,
         template_body_field_name,
         route,
-        latest_route,
+        head_route,
         dependant_for_request_migrations,
         request_param_name=route.dependant.request_param_name,
         response_param_name=route.dependant.response_param_name,

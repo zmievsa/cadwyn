@@ -5,6 +5,18 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.10.0]
+
+### Added
+
+* The new approach to internal schemas: instead of having them duplicate certain fields from `latest`, we introduced a new `HEAD` version -- the only one the user maintains by hand. All requests get migrated to `HEAD` and latest schemas are generated from `HEAD`. `cadwyn.structure.HeadVersion` was added to give us the ability to have migrations between `HEAD` and latest, thus eliminating the need for `InternalRepresentationOf` because all the used schemas are now the internal representations
+
+### Changed
+
+* `latest` is now named `head` because it no longer represents the newest version. Instead, it is the the `internally used` version and the version that is used for generating all other versions.
+* the newest version is not aliased from `latest` anymore. Instead, it is generated like all the rest
+* deprecated `InternalRepresentationOf` and the concept of `internal schemas` in favor of `HeadVersion` migrations
+
 ## [3.9.1]
 
 ### Fixed
@@ -32,7 +44,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-* `h11._util.LocalProtocolError` when raising `HTTPException(status_code=500)`.
+* `h11._util.LocalProtocolError` when raising `HTTPException(status_code=500)`
 
 ## [3.7.1]
 
@@ -224,13 +236,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Changed
 
-* internal request representation is now done using [an annotation](https://docs.cadwyn.dev/reference#internal-request-body-representations)
+* internal request representation is now done using an annotation
 * `latest_schemas_module` was renamed to `latest_schemas_package` everywhere
 * `api_version_var` in `VersionBundle` is now an optional argument instead of a required one
 
 ### Removed
 
-* `cadwyn.internal_body_representation_of` because it is now done using [an annotation](https://docs.cadwyn.dev/reference#internal-request-body-representations)
+* `cadwyn.internal_body_representation_of` because it is now done using an annotation
 
 ## [2.3.4]
 
@@ -344,7 +356,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Added
 
 * Recipes documentation section
-* `schema(...).field(...).had(name=...)` functionality to [rename fields](https://docs.cadwyn.dev/reference/#rename-a-schema)
+* `schema(...).field(...).had(name=...)` functionality to rename fields
 
 ### Changed
 

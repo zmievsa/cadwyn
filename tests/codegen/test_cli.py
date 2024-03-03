@@ -11,7 +11,7 @@ from tests.conftest import _FakeModuleWithEmptyClasses
 
 
 @pytest.fixture(autouse=True)
-def _resources(temp_data_dir, latest_with_empty_classes: _FakeModuleWithEmptyClasses):
+def _resources(temp_data_dir, head_with_empty_classes: _FakeModuleWithEmptyClasses):
     temp_data_dir.joinpath("__init__.py")
     temp_data_dir.joinpath("my_cli.py").write_text(
         textwrap.dedent(
@@ -21,7 +21,7 @@ def _resources(temp_data_dir, latest_with_empty_classes: _FakeModuleWithEmptyCla
 
     from cadwyn.structure import Version, VersionBundle, VersionChange, schema
 
-    from . import latest
+    from . import head
 
     api_version_var = ContextVar("api_version")
 
@@ -29,14 +29,14 @@ def _resources(temp_data_dir, latest_with_empty_classes: _FakeModuleWithEmptyCla
     class VersionChange1(VersionChange):
         description = "..."
         instructions_to_migrate_to_previous_version = [
-            schema(latest.EmptySchema).field("foo").existed_as(type=str),
+            schema(head.EmptySchema).field("foo").existed_as(type=str),
         ]
 
 
     version_bundle = VersionBundle(
         Version(date(2001, 1, 1), VersionChange1),
         Version(date(2000, 1, 1)),
-        latest_schemas_package=latest,
+        head_schemas_package=head,
     )
 
 
@@ -77,8 +77,8 @@ def test__cli_get_version(arg: str) -> None:
 def test__cli_codegen(
     temp_data_package_path: str,
     variable_name_to_use: str,
-    latest_with_empty_classes,
-    latest_package_path,
+    head_with_empty_classes,
+    head_package_path,
     data_package_path,
 ) -> None:
     result = CliRunner().invoke(
@@ -97,8 +97,8 @@ def test__cli_codegen(
 def test__deprecated_cli_codegen_should_raise_deprecation_warning(
     temp_data_package_path: str,
     variable_name_to_use: str,
-    latest_with_empty_classes,
-    latest_package_path,
+    head_with_empty_classes,
+    head_package_path,
     data_package_path,
 ) -> None:
     with pytest.warns(DeprecationWarning, match="`cadwyn generate-code-for-versioned-packages` is deprecated"):
@@ -106,7 +106,7 @@ def test__deprecated_cli_codegen_should_raise_deprecation_warning(
             cadwyn_typer_app,
             [
                 "generate-code-for-versioned-packages",
-                latest_package_path,
+                head_package_path,
                 temp_data_package_path + f".my_cli:{variable_name_to_use}",
             ],
         )
@@ -121,14 +121,14 @@ def test__deprecated_cli_codegen_should_raise_deprecation_warning(
 )
 def test__deprecated_cli_codegen__with_invalid_version_bundle_arg__should_raise_type_error(
     temp_data_package_path,
-    latest_package_path: str,
+    head_package_path: str,
     variable_name_to_use: str,
 ) -> None:
     result = CliRunner(mix_stderr=False).invoke(
         cadwyn_typer_app,
         [
             "generate-code-for-versioned-packages",
-            latest_package_path,
+            head_package_path,
             temp_data_package_path + f".my_cli:{variable_name_to_use}",
         ],
     )

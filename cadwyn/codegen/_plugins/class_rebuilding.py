@@ -15,11 +15,7 @@ class ClassRebuildingPlugin:
 
     @staticmethod
     def __call__(node: ast.Module, context: CodegenContext) -> Any:
-        if context.current_version_is_latest:
-            return node
-
         node.body = [_migrate_ast_node_to_another_version(n, context) for n in node.body]
-
         return node
 
 

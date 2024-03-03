@@ -16,7 +16,7 @@ from cadwyn._package_utils import IdentifierPythonPath
 from cadwyn.exceptions import CodeGenerationError
 
 if TYPE_CHECKING:
-    from cadwyn.structure.versions import Version
+    from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
 
 from .._asts import _ValidatorWrapper, get_validator_info_or_none
 
@@ -128,26 +128,23 @@ class _ModuleWrapper:
 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class GlobalCodegenContext:
-    current_version: "Version"
+    current_version: "Version | HeadVersion"
     latest_version: "Version" = dataclasses.field(init=False)
     versions: "list[Version]"
     schemas: dict[IdentifierPythonPath, PydanticModelWrapper] = dataclasses.field(repr=False)
     enums: dict[IdentifierPythonPath, _EnumWrapper] = dataclasses.field(repr=False)
     modules: dict[IdentifierPythonPath, _ModuleWrapper] = dataclasses.field(repr=False)
+    version_bundle: "VersionBundle"
     extra: dict[str, Any]
 
     def __post_init__(self):
         self.latest_version = max(self.versions, key=lambda v: v.value)
 
-    @property
-    def current_version_is_latest(self):
-        return self.latest_version == self.current_version
-
 
 @dataclasses.dataclass(slots=True, kw_only=True)
 class CodegenContext(GlobalCodegenContext):
     # This attribute is extremely useful for calculating relative imports
-    index_of_latest_package_dir_in_module_python_path: int
+    index_of_head_package_dir_in_module_python_path: int
     module_python_path: str
     module_path: Path
     template_module: ModuleType

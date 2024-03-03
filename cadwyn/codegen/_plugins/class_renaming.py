@@ -13,8 +13,6 @@ class ClassRenamingPlugin:
         node: ast.Module,
         context: CodegenContext,
     ):
-        if context.current_version_is_latest:
-            return node
         return _AnnotationASTNodeTransformerWithSchemaRenaming(
             context.schemas,
             context.all_names_defined_on_toplevel_of_file,

@@ -9,7 +9,8 @@ from cadwyn.structure import (
     endpoint,
     schema,
 )
-from tests.tutorial.data.head.users import BaseUser, UserCreateRequest, UserResource
+
+from ..data.latest.users import BaseUser, UserCreateRequest, UserResource
 
 
 class ChangeAddressesToSubresource(VersionChange):
@@ -29,11 +30,3 @@ class ChangeAddressesToSubresource(VersionChange):
     @convert_response_to_previous_version_for(UserResource)
     def change_addresses_to_list(response: ResponseInfo) -> None:
         response.body["addresses"] = [id["value"] for id in response.body["_prefetched_addresses"]]
-
-
-class RemoveAddressesToCreateFromLatest(VersionChange):
-    description = (
-        "In order to support old versions, we gotta have `addresses_to_create` located in "
-        "head schemas but we do not need this field in latest schemas."
-    )
-    instructions_to_migrate_to_previous_version = (schema(UserCreateRequest).field("addresses_to_create").didnt_exist,)

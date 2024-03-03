@@ -1,12 +1,17 @@
 # Version Changes
 
-Version changes are the backbone of Cadwyn. They give you an ability to describe things like "This field in that schema had a different name in an older version" or "this endpoint was deleted in the latest version". Whenever add a new version, it means that you wish to make a bunch of breaking changes in your API without affecting your users.
+Version changes are the backbone of Cadwyn. They give you an ability to describe things like "This field in that schema had a different name in an older version" or "this endpoint did not exist in all earlier versions".
 
-First, you apply the breaking changes to your schemas and endpoints. In Cadwyn, you always work on the **latest** version of your application so you change your schemas first, just like you would do in an app without API Versioning.
+In Cadwyn, your business logic always only works with a single version -- HEAD, which is essentially your representation of your latest version. This approach decouples your business logic from versioning and allows you to have hundreds of API versions using the same database models and business logic while also staying sane at the same time.
 
-Second, you need to gather your breaking changes into groups. Let's say that you want to rename the field "creation_date" into "created_at" but you also want to delete the endpoint "GET /v1/tax_ids": these changes are unrelated so they should be put into different groups. On the other hand, deletion of "POST /v1/tax_ids" endpoint should go into the same group as its *GET* counterpart. These groups are very important to make the changes easily understandable for both your users and your developers.
+Whenever add a new version, you go through the following steps:
 
-Then, you describe each group with a version change:
+1. Make a breaking change in your HEAD version
+2. Reverse it for all your older versions using special "migration instructions" so that your current users are not affected by the breaking changes
+
+These migration instructions for reverting the breaking changes are gathered into groups to make them easier to maintain. Let's say that you want to rename the field "creation_date" into "created_at" but you also want to delete the endpoint "GET /v1/tax_ids": these changes are unrelated so they should be put into different groups. On the other hand, deletion of "POST /v1/tax_ids" endpoint should go into the same group as the deleetion of "GET /v1/tax_ids". These groups are very important to make the changes easily understandable for both your users and your developers.
+
+Each such group is called a **version change**:
 
 ```python
 # versions/v2023_02_10.py
@@ -21,7 +26,7 @@ class RemoveTaxIDEndpoints(VersionChange):
     )
 ```
 
-Then you add your version change class(es) into your version bundle to activate it:
+After you have described them, you add your version change class(es) into your version bundle to activate them:
 
 ```python
 # versions/__init__.py
@@ -34,13 +39,59 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 
 
 versions = VersionBundle(
+    HeadVersion(),
     Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
     Version(date(2022, 11, 16)),
-    latest_schemas_package=latest,
+    head_schemas_package=latest,
 )
 ```
 
+This instructs Cadwyn to **un**delete these endpoints in all versions older than 2023-02-10.
+
 Now let's discuss what each of these parts does and why:
+
+## VersionBundle
+
+`VersionBundle` is your single source of truth for your list of versions. It contains your list of versions and all [version changes](#version-changes) associated with them. Each version change is a single group of breaking changes. Each `Version` contains a group of version changes that caused this version to be created. So for example, if I deleted an endpoint `POST /v1/tax_ids` in version `2023-02-10`, then I'll add the version change for deleting that endpoint into `2023-02-10`. For example:
+
+```python
+# versions/__init__.py
+
+from cadwyn.structure import VersionBundle, Version
+from datetime import date
+from data import latest
+
+from .v2023_02_10 import RemoveTaxIDEndpoints
+
+
+versions = VersionBundle(
+    HeadVersion(),
+    Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
+    Version(date(2022, 11, 16)),
+    head_schemas_package=latest,
+)
+```
+
+See how our first version, `2022-11-16` does not have any version changes? That is intentional! How can it have breaking changes if there are no versions before it?
+
+## Version
+
+`Version` is simply an ordered collection of version changes that allows you to describe when each version change happened so that Cadwyn is able to generate your schemas and routes for all versions correctly --  based on which version changes are located in which versions.
+
+### HeadVersion
+
+Cadwyn has a special HEAD version: it is the only version you will write by hand and use directly in your business logic. It is also the version that is used by Cadwyn for generating all other versions.
+
+When handling an HTTP request, Cadwyn will first validate it with the appropriate API version, then Cadwyn will apply all converters from the request's API version and until the latest API version to it, and then finally Cadwyn will convert the request to the appropriate schema from HEAD (the schema that was used for generating the versioned schema from request's API version).
+
+So Cadwyn will migrate all requests from all versions to HEAD version to make sure that your business logic knows about only one version.
+
+HEAD is very similar to your latest version with a few key differences:
+
+* Latest is user-facing while HEAD is only used internally by you and Cadwyn
+* Latest is generated while HEAD is maintained by you by hand
+* Latest only includes the fields that our user is supposed to see in the latest version while HEAD can include some fields missing from latest. For example, if an earlier version contained a field completely incompatible with latest -- HEAD will have it too to make sure that old versions can function same as before. This also applies to field types: if a field became required in latest but was nullable in an earlier version, then HEAD will have it as nullable to make sure that any earlier version request can easily be converted into a HEAD request
+* Latest can include constraints that are incompatible with older versions while HEAD can contain no constraints at all if you want -- the user-facing schemas are used for validation before the request is converted to HEAD so HEAD does not need to re-validate anything if you do not want it to
 
 ## VersionChange
 
@@ -56,7 +107,7 @@ versions = VersionBundle(
     Version(date(2023, 4, 2), DeleteEndpoint, ChangeFields, RenameFields),
     Version(date(2023, 2, 10), RenameEndpoints, RefactorFields),
     Version(date(2022, 11, 16)),
-    latest_schemas_package=latest,
+    head_schemas_package=latest,
 )
 ```
 
@@ -96,7 +147,7 @@ from cadwyn.structure import (
     schema,
     convert_request_to_next_version_for,
 )
-from data.latest.invoices import InvoiceCreateRequest
+from data.head.invoices import InvoiceCreateRequest
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -125,7 +176,7 @@ from cadwyn.structure import (
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
 )
-from data.latest.invoices import (
+from data.head.invoices import (
     BaseInvoice,
     InvoiceCreateRequest,
     InvoiceResource,
@@ -166,7 +217,7 @@ from cadwyn.structure import (
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
 )
-from data.latest.invoices import BaseInvoice
+from data.head.invoices import BaseInvoice
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -197,7 +248,7 @@ from cadwyn.structure import (
     VersionChange,
     convert_response_to_previous_version_for,
 )
-from data.latest.invoices import BaseInvoice
+from data.head.invoices import BaseInvoice
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -244,33 +295,33 @@ from cadwyn.structure import (
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
 )
-from data.latest.users import User
+from data.head.users import BaseUser, UserCreateRequest, UserResource
 
 # THIS IS AN EXAMPLE OF A BAD MIGRATION
 class RemoveTaxIDEndpoints(VersionChange):
     description = "Users now have `address` field instead of `addresses`"
     instructions_to_migrate_to_previous_version = (
-        schema(User).field("address").didnt_exist,
-        schema(User).field("addresses").existed_as(type=list[str]),
+        schema(BaseUser).field("address").didnt_exist,
+        schema(BaseUser).field("addresses").existed_as(type=list[str]),
     )
 
-    @convert_request_to_next_version_for(User)
+    @convert_request_to_next_version_for(BaseUser)
     def turn_addresses_into_a_single_item(request: RequestInfo):
         addresses = request.body.pop("addresses")
         # The list could have been empty in the past so new "address"
         # field must be nullable.
         request.body["address"] = addresses[0] if addresses else None
 
-    @convert_response_to_previous_version_for(User)
+    @convert_response_to_previous_version_for(BaseUser)
     def turn_address_into_a_list(response: ResponseInfo):
         response.body["addresses"] = [response.body.pop("address")]
 ```
 
 But this will not work. Now when the user from the old version asks us to save three addresses, we will in fact save only one. Old data is also going to be affected -- if old users had multiple addresses, we will only be able to return one of them. This is bad -- we have made a breaking change!
 
-In order to solve this problem, Cadwyn uses a concept of **internal representations**. An internal representation of your data is like a database entry of your data -- it is its **latest** version plus all the fields that are incompatible with the latest API version. If we were talking about classes, then internal representation would be a child of your latest schemas -- it has all the same data and a little more. Essentially your internal representation of user object can contain much more data than your latest schemas.
+In order to solve this problem, Cadwyn uses a concept of **internal representations**. An internal representation of your data is like a database entry of your data -- it is its **latest** version plus all the fields that are incompatible with the latest API version. If we were talking about classes, then internal representation would be a child of your latest schemas -- it has all the same data and a little more, it expands its functionality. Essentially your internal representation of user object can contain much more data than your latest schemas.
 
-The [migrations diagram we showed before](#data-migrations) is in fact a simplified version of truth. In fact, your requests do not get migrated to latest -- they get migrated to the **internal representation** of their data that is really similar to latest. Same happens with your responses -- you do not respond with and migrate from the latest version of your data, you respond with its **internal representation** which is really close to the actual latest schemas.
+So all your requests get migrated to HEAD, which is the internal representation of latest -- but not exactly the latest itself. So its data is really similar to latest. Same happens with your responses -- you do not respond with and migrate from the latest version of your data, you respond with its **internal representation** which is really close to the actual latest schemas.
 
 In responses, returning the internal representation is simple: just return your database model or a dict with everything you need for all your versions. In the user address example, we would continue storing the list of addresses in our database but then add the single address to our response. Latest schemas will simply strip it but our older schemas will be able to use it!
 
@@ -284,7 +335,7 @@ So now your migration will look like the following:
 
 ```python
 from cadwyn.structure import VersionChange, schema
-from data.latest.users import User
+from data.head.users import User
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -295,61 +346,14 @@ class RemoveTaxIDEndpoints(VersionChange):
     )
 ```
 
-Yes, we do not need any of the migrations anymore because responses are handled automatically. But why don't we need request migrations? That's because we use an **internal representation** there too.
-
-##### Internal request body representations
-
-Let's remember that our `User` model [had](#internal-representations) multiple addresses in the old version but now has only one address in the new version. We [handled it in responses](#internal-representations) by continuing to store the list of addresses and then returning all of them with each response. In requests, we have a similar trick. When you create the version with only one address, you need to define the internal representation of your user's creation request which will effectively store all addresses consistently for all versions instead of just one address:
-
-```python
-# In data/unversioned/users.py
-
-from .versioned_schemas.latest import User
-from pydantic import root_validator, PrivateAttr
-
-
-class InternalUserCreateRequest(User):
-    addresses: list[str] = Field(default_factory=list)
-    # This helps us delete address from our fields
-    address = PrivateAttr()
-
-    @root_validator(pre=True)
-    def move_address_from_latest_into_addresses(
-        cls, values: dict[str, Any]
-    ) -> dict[str, Any]:
-        if values.get("address") is not None:
-            values["addresses"] = [values.pop("address")]
-        return values
-```
-
-Whenever this model receives an `address`, it will add it into `addresses` so now our latest requests can also be converted into our internal representation. Now all that's left is to tell Cadwyn to wrap all requests into this schema. Let's go to the definition of `POST /v1/users`
-
-```python
-from cadwyn import VersionedAPIRouter, InternalRepresentationOf
-from typing import Annotated
-from data.latest.users import User
-from data.unversioned.users import InternalUserCreateRequest
-
-router = VersionedAPIRouter(prefix="/v1/users")
-
-
-@router.post("", response_model=User)
-def create_user(
-    payload: Annotated[
-        InternalUserCreateRequest, InternalRepresentationOf[User]
-    ]
-):
-    ...
-```
-
-This type hint will tell Cadwyn that this route has public-facing schema of `User` that Cadwyn will use for validating all requests. Cadwyn will always use `InternalUserCreateRequest` when pushing body field into your business logic instead of `User`. Note that users will not be able to use any fields from the internal representation and their requests will still be validated by your regular schemas. So even if you added a field `foo` in an internal representation, and your user has passed this field in the body of the request, this field will not get to the internal representation because it will be removed at the moment of request validation (or even an error will occur if you use `extra="ignore"`). OpenAPI will also only use the public schemas, not the internal ones.
+Yes, we do not need any of the migrations anymore because responses are handled automatically. See how-to section for an example of how we would achieve the same feat for requests.
 
 #### Manual body migrations
 
 Oftentimes you will have a need to migrate your data outside of routing, manually. For example, when you need to send a versioned response to your client via webhook or inside a worker/cronjob. In these instances, you can use `cadwyn.VersionBundle.migrate_response_body`:
 
 ```python
-from data.latest.users import UserResource
+from data.head.users import UserResource
 from versions import version_bundle
 
 body_from_2000_01_01 = version_bundle.migrate_response_body(
@@ -368,7 +372,7 @@ Migrations for the bodies of `fastapi.responses.StreamingResponse` and `fastapi.
 Pydantic 2 has an interesting implementation detail: `pydantic.RootModel` instances are memoized. So the following code is going to output `True`:
 
 ```python
-from data.latest.users import User
+from data.head.users import User
 from pydantic import RootModel
 
 BulkCreateUsersRequestBody = RootModel[list[User]]
@@ -380,7 +384,7 @@ print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # True
 So if you make a migration that should only affect one of these schemas -- it will automatically affect both. A recommended alternative is to either use subclassing:
 
 ```python
-from data.latest.users import User
+from data.head.users import User
 from pydantic import RootModel
 
 UserList = RootModel[list[User]]
@@ -398,29 +402,6 @@ print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # False
 ```
 
 or to specify migrations using [endpoint path](#path-based-migration-specification) instead of a schema.
-
-## VersionBundle
-
-`VersionBundle` is your single source of truth for your list of versions. It contains your list of versions and all [version changes](#version-changes) associated with them. Each version change is a single group of breaking changes. Each `Version` contains a group of version changes that caused this version to be created. So for example, if I deleted an endpoint `POST /v1/tax_ids` in version `2023-02-10`, then I'll add the version change for deleting that endpoint into `2023-02-10`. For example:
-
-```python
-# versions/__init__.py
-
-from cadwyn.structure import VersionBundle, Version
-from datetime import date
-from data import latest
-
-from .v2023_02_10 import RemoveTaxIDEndpoints
-
-
-versions = VersionBundle(
-    Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
-    Version(date(2022, 11, 16)),
-    latest_schemas_package=latest,
-)
-```
-
-See how our first version, `2022-11-16` does not have any version changes? That is intentional! How can it have breaking changes if there are no versions before it?
 
 ## Version changes with side effects
 

@@ -3,7 +3,7 @@ import inspect
 from typing import Any
 
 from cadwyn.codegen import DEFAULT_CODEGEN_PLUGINS, CodegenContext
-from tests.conftest import CreateLocalSimpleVersionedPackages, LatestModuleFor
+from tests.conftest import CreateLocalSimpleVersionedPackages, HeadModuleFor
 
 
 class VariableRenamerPlugin:
@@ -17,11 +17,11 @@ class VariableRenamerPlugin:
         return node
 
 
-def test__ccustom_per_assignment_codegen_plugin(
-    latest_module_for: LatestModuleFor,
+def test__custom_per_assignment_codegen_plugin(
+    head_module_for: HeadModuleFor,
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
 ):
-    latest_module_for("hello: int =2\ndarkness: int =3; my = 4\nold: int=5")
+    head_module_for("hello: int =2\ndarkness: int =3; my = 4\nold: int=5")
     v1 = create_local_simple_versioned_packages(
         codegen_plugins=(*DEFAULT_CODEGEN_PLUGINS, VariableRenamerPlugin()),
         extra_context={"variable_renaming_mapping": {"hello": "pew", "old": "doo", "darkness": "zoo", "my": "boo"}},
@@ -33,10 +33,10 @@ def test__ccustom_per_assignment_codegen_plugin(
 
 
 def test__ccustom_per_assignment_codegen_plugin__with_nested_nodes__should_not_work(
-    latest_module_for: LatestModuleFor,
+    head_module_for: HeadModuleFor,
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
 ):
-    latest_module_for("if 1 == 0 + 1: hello: int = 11")
+    head_module_for("if 1 == 0 + 1: hello: int = 11")
     v1 = create_local_simple_versioned_packages(
         codegen_plugins=(*DEFAULT_CODEGEN_PLUGINS, VariableRenamerPlugin()),
         extra_context={"variable_renaming_mapping": {"hello": "pew"}},

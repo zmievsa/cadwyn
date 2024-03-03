@@ -17,7 +17,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
-from typing_extensions import Self
+from typing_extensions import Self, deprecated
 
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
 from cadwyn.route_generation import generate_versioned_routers
@@ -76,9 +76,9 @@ class Cadwyn(FastAPI):
     ) -> None:
         self.versions = versions
         # TODO: Remove argument entirely in any major version.
-        latest_schemas_package = extra.pop("latest_schemas_package", None) or self.versions.latest_schemas_package
-        self.versions.latest_schemas_package = latest_schemas_package
-        self.latest_schemas_package = cast(ModuleType, latest_schemas_package)
+        latest_schemas_package = extra.pop("latest_schemas_package", None) or self.versions.head_schemas_package
+        self.versions.head_schemas_package = latest_schemas_package
+        self._latest_schemas_package = cast(ModuleType, latest_schemas_package)
 
         super().__init__(
             debug=debug,
@@ -145,6 +145,16 @@ class Cadwyn(FastAPI):
             default_response_class=default_response_class,
         )
 
+    @property  # pragma: no cover
+    @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
+    def latest_schemas_package(self):
+        return self._latest_schemas_package
+
+    @latest_schemas_package.setter  # pragma: no cover
+    @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
+    def latest_schemas_package(self, value: ModuleType | None):
+        self._latest_schemas_package = value
+
     def _add_openapi_endpoints(self, unversioned_router: APIRouter):
         if self.openapi_url is not None:
             unversioned_router.add_route(
@@ -172,7 +182,7 @@ class Cadwyn(FastAPI):
         router_versions = generate_versioned_routers(
             root_router,
             versions=self.versions,
-            latest_schemas_package=self.latest_schemas_package,
+            head_schemas_package=self.versions.head_schemas_package,  # pyright: ignore[reportArgumentType],
         )
         for version, router in router_versions.items():
             self.add_header_versioned_routers(router, header_value=version.isoformat())
