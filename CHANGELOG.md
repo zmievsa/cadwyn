@@ -236,13 +236,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Changed
 
-* internal request representation is now done using [an annotation](https://docs.cadwyn.dev/reference#internal-request-body-representations)
+* internal request representation is now done using an annotation
 * `latest_schemas_module` was renamed to `latest_schemas_package` everywhere
 * `api_version_var` in `VersionBundle` is now an optional argument instead of a required one
 
 ### Removed
 
-* `cadwyn.internal_body_representation_of` because it is now done using [an annotation](https://docs.cadwyn.dev/reference#internal-request-body-representations)
+* `cadwyn.internal_body_representation_of` because it is now done using an annotation
 
 ## [2.3.4]
 
@@ -356,7 +356,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Added
 
 * Recipes documentation section
-* `schema(...).field(...).had(name=...)` functionality to [rename fields](https://docs.cadwyn.dev/reference/#rename-a-schema)
+* `schema(...).field(...).had(name=...)` functionality to rename fields
 
 ### Changed
 
