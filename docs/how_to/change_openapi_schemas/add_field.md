@@ -19,7 +19,7 @@ Let's say we want our users to be able to specify a middle name but it is nullab
 
 The recommended approach:
 
-1. Add a nullable `middle_name` field into `data.head.users.User`
+1. Add a nullable `middle_name` field into `data.head.users.BaseUser`
 2. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 ### Field is required
@@ -51,17 +51,35 @@ Let's say that our users had a field `country` that defaulted to `USA` but our p
             request.body["country"] = request.body.get("country", "USA")
     ```
 
-3. [Regenerate](../../concepts/code_generation.md) the versioned schemas
+3. Add this migration into the version bundle:
+
+    ```python
+    # versions/__init__.py
+
+    from cadwyn.structure import Version, VersionBundle, HeadVersion
+    from datetime import date
+    from data import head
+    from .v2001_01_01 import MakeUserCountryRequired
+
+    version_bundle = VersionBundle(
+        HeadVersion(),
+        Version(date(2001, 1, 1), MakeUserCountryRequired),
+        Version(date(2000, 1, 1)),
+        head_schemas_package=head,
+    )
+    ```
+
+4. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 That's it! Our old schemas will now contain a default but in HEAD country will be required. You might notice a weirdness: if we set a default in the old version, why would we also write a migration? That's because of a sad implementation detail of pydantic that [prevents us](../../concepts/schema_migrations.md#change-a-field-in-the-older-version) from using defaults from old versions.
 
 #### With incompatible default value in older versions
 
-Let's say that we want to add a required field `phone` to our users. However, older versions did not have such a field at all. This means that the field is going to be nullable in the old versions but required in the HEAD version. This also means that older versions contain a wider type (`str | None`) than the HEAD version (`str`). So when we try to migrate request bodies from the older versions to HEAD -- we might receive a `ValidationError` because `None` is not an acceptable value for `phone` field in the new version. Whenever we have a problem like this, when older version contains more data or a wider type set of data,  we can simply define a wider type in our HEAD version and then narrow it in latest.
+Let's say that we want to add a required field `phone` to our users. However, older versions did not have such a field at all. This means that the field is going to be nullable (or nonexistent) in the old versions but required in the HEAD version. This also means that older versions contain a wider type (`str | None`) than the HEAD version (`str`). So when we try to migrate request bodies from the older versions to HEAD -- we might receive a `ValidationError` because `None` is not an acceptable value for `phone` field in the new version. Whenever we have a problem like this, when older version contains more data or a wider type set of data,  we can simply define a wider type in our HEAD version and then narrow it in latest.
 
 So we will make `phone` nullable in HEAD, then make it required in `latest`, and then make it nullable again in older versions, thus making it possible to convert all of our requests to HEAD.
 
-1. Add `phone` field of type `str | None` to `data.head.users.User`
+1. Add `phone` field of type `str | None` to `data.head.users.BaseUser`
 2. Add `phone` field of type `str | None` with a `default=None` to `data.head.users.UserResource` because all users created with older versions of our API won't have phone numbers.
 3. Add the following migration to `versions.v2001_01_01` which will make sure that `phone` is not nullable in 2001_01_01:
 
@@ -92,10 +110,7 @@ So we will make `phone` nullable in HEAD, then make it required in `latest`, and
         instructions_to_migrate_to_previous_version = (
             schema(UserCreateRequest)
             .field("phone")
-            .had(
-                type=str | None,
-                default=None,
-            ),
+            .had(type=str | None, default=None),
         )
     ```
 

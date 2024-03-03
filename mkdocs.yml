@@ -101,6 +101,7 @@ nav:
     - "Schema migrations": "concepts/schema_migrations.md"
     - "Module migrations": "concepts/module_migrations.md"
     - "API Version header and context variables": "concepts/api_version_header_and_context_variables.md"
+    - "Testing": concepts/testing.md
 
   - "Theory":
     - "How we got here": "theory/how_we_got_here.md"
