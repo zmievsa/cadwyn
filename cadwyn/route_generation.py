@@ -43,7 +43,7 @@ from starlette.routing import (
     BaseRoute,
     request_response,
 )
-from typing_extensions import Self, assert_never
+from typing_extensions import Self, assert_never, deprecated
 
 from cadwyn._compat import model_fields, rebuild_fastapi_body_param
 from cadwyn._package_utils import get_version_dir_path
@@ -84,6 +84,7 @@ class _RouterInfo(Generic[_R]):
     route_bodies_with_migrated_requests: set[type[BaseModel]]
 
 
+@deprecated("It will soon be deleted. Use HeadVersion version changes instead.")
 class InternalRepresentationOf:
     def __class_getitem__(cls, original_schema: type, /) -> type[Self]:
         return cast(Any, type("InternalRepresentationOf", (cls, original_schema), {}))

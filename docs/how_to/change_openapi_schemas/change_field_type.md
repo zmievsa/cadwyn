@@ -12,7 +12,7 @@ This is not a breaking change in terms of requests but it [**can be**](#why-enum
 
 So if you do consider it a breaking change in terms of responses, you should do the following:
 
-1. Add `moderator` value into `data.latest.users.UserRoleEnum`
+1. Add `moderator` value into `data.head.users.UserRoleEnum`
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
@@ -22,7 +22,7 @@ So if you do consider it a breaking change in terms of responses, you should do 
         convert_response_to_previous_version_for,
         ResponseInfo,
     )
-    from data.latest.users import UserRoleEnum, UserResource
+    from data.head.users import UserRoleEnum, UserResource
     import datetime
 
 
@@ -62,56 +62,34 @@ Additional resources:
 * <https://github.com/graphql/graphql-js/issues/968>
 * <https://medium.com/@jakob.fiegerl/java-jackson-enum-de-serialization-with-rest-backward-compatibility-9c3ec85ac13d>
 
-In these sections, we'll be working with our user's response model: `data.latest.users.UserResource`. Note that the main theme here is "Will I be able to serialize this change to any of my versions?" as any change to responses can make them incompatible with the data in your database.
+In these sections, we'll be working with our user's response model: `data.head.users.UserResource`. Note that the main theme here is "Will I be able to serialize this change to any of my versions?" as any change to responses can make them incompatible with the data in your database.
 
 ## Narrow the type
 
-Let's say that previously users could specify their date of birth as a datetime instead of a date. We wish to rectify that. We can solve this with [internal body request schemas](../../concepts/version_changes.md#internal-request-body-representations).
+Let's say that previously users could specify their date of birth as a datetime instead of a date. We wish to rectify that. We can solve this by making it a datetime in HEAD version, converting it to date in latest version, and then making it a datetime again in the old versions. So whenever we receive a request in an old version, it will get converted to HEAD version where it is a datetime. And whenever we receive a request in latest version, it will also be converted to HEAD where date will simply be casted to datetime with time = 00:00:00.
 
 0. Continue storing `date_of_birth` as a datetime in your database to avoid breaking any old behavior
-1. Change the type of `date_of_birth` field to `datetime.date` in `data.latest.users.User`
-2. Add a `data.unversioned.users.UserInternalCreateRequest` that we will use later to wrap migrated data instead of the latest request schema. This schema will allow us to keep time information from older versions without allowing users in new versions to provide it. This allows us to guarantee that old requests function in the same manner as before while new requests have the narrowed types.
+1. Add the following migration to `versions.v2001_01_01` which will turn `date_of_birth` into a date in 2001_01_01:
 
     ```python
-    from pydantic import Field
-    from ..latest.users import UserCreateRequest
+    from cadwyn.structure import VersionChange, schema
+    from data.head.users import User
     import datetime
 
 
-    class UserInternalCreateRequest(UserCreateRequest):
-        time_of_birth: datetime.time = Field(default=datetime.time(0, 0, 0))
+    class ChangeDateOfBirthToDateInUserInLatest(VersionChange):
+        description = (
+            "Change 'User.date_of_birth' field type to datetime in HEAD "
+            "to support versions and data before 2001-01-01. "
+        )
+        instructions_to_migrate_to_previous_version = (
+            schema(User).field("date_of_birth").had(type=datetime.date),
+        )
     ```
 
-3. Replace `UserCreateRequest` in your routes with `Annotated[UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]]`:
+2. Add the following version change to `versions.v2001_01_01` (right under the version change above) which will make sure that `date_of_birth` is a datetime in 2000_01_01:
 
     ```python
-    from data.latest.users import UserCreateRequest, UserResource
-    from cadwyn import InternalRepresentationOf
-    from typing import Annotated
-
-
-    @router.post("/users", response_model=UserResource)
-    async def create_user(
-        user: Annotated[
-            UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]
-        ]
-    ):
-        ...
-    ```
-
-4. Add the following migration to `versions.v2001_01_01`:
-
-    ```python
-    from cadwyn.structure import (
-        VersionChange,
-        schema,
-        convert_request_to_next_version_for,
-        RequestInfo,
-    )
-    from data.latest.users import User, UserCreateRequest
-    import datetime
-
-
     class ChangeDateOfBirthToDateInUser(VersionChange):
         description = (
             "Change 'User.date_of_birth' field type to date instead of "
@@ -126,8 +104,26 @@ Let's say that previously users could specify their date of birth as a datetime 
             request.body["time_of_birth"] = request.body["date_of_birth"].time()
     ```
 
-5. [Regenerate](../../concepts/code_generation.md) the versioned schemas
-6. Within your business logic, create the datetime that you will put into the database by combining `date_of_birth` field and `time_of_birth` field
+5. Add both migrations into our VersionBundle:
+
+    ```python
+    # versions/__init__.py
+    from cadwyn.structure import Version, VersionBundle, HeadVersion
+    from datetime import date
+    from data import head
+    from .v2001_01_01 import MakePhoneNonNullableInLatest, AddPhoneToUser
+
+
+    version_bundle = VersionBundle(
+        HeadVersion(ChangeDateOfBirthToDateInUserInLatest),
+        Version(date(2001, 1, 1), ChangeDateOfBirthToDateInUser),
+        Version(date(2000, 1, 1)),
+        head_schemas_package=head,
+    )
+    ```
+
+3. [Regenerate](../../concepts/code_generation.md) the versioned schemas
+4. Within your business logic, create the datetime that you will put into the database by combining `date_of_birth` field and `time_of_birth` field
 
 See how we did not need to use [convert_response_to_previous_version_for](../../concepts/version_changes.md#data-migrations)? We do not need to migrate anything because moving from `datetime` to `date` is easy: our database data already contains datetimes so pydantic will automatically narrow them to dates for responses if necessary. We also do not need to change anything about `date_of_birth` in the requests of older versions because our schema of the new version will automatically cast `datetime` to `date`.
 

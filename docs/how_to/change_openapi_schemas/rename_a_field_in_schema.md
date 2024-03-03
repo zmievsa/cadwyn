@@ -2,7 +2,7 @@
 
 Let's say that we had a "summary" field before but now we want to rename it to "bio".
 
-1. Rename `summary` field to `bio` in `data.latest.users.User`
+1. Rename `summary` field to `bio` in `data.head.users.User`
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
@@ -14,7 +14,7 @@ Let's say that we had a "summary" field before but now we want to rename it to "
         ResponseInfo,
         RequestInfo,
     )
-    from data.latest.users import User, UserCreateRequest, UserResource
+    from data.head.users import User, UserCreateRequest, UserResource
 
 
     class RenameSummaryIntoBioInUser(VersionChange):

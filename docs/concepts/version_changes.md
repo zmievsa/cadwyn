@@ -96,7 +96,7 @@ from cadwyn.structure import (
     schema,
     convert_request_to_next_version_for,
 )
-from data.latest.invoices import InvoiceCreateRequest
+from data.head.invoices import InvoiceCreateRequest
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -125,7 +125,7 @@ from cadwyn.structure import (
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
 )
-from data.latest.invoices import (
+from data.head.invoices import (
     BaseInvoice,
     InvoiceCreateRequest,
     InvoiceResource,
@@ -166,7 +166,7 @@ from cadwyn.structure import (
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
 )
-from data.latest.invoices import BaseInvoice
+from data.head.invoices import BaseInvoice
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -197,7 +197,7 @@ from cadwyn.structure import (
     VersionChange,
     convert_response_to_previous_version_for,
 )
-from data.latest.invoices import BaseInvoice
+from data.head.invoices import BaseInvoice
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -244,7 +244,7 @@ from cadwyn.structure import (
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
 )
-from data.latest.users import User
+from data.head.users import User
 
 # THIS IS AN EXAMPLE OF A BAD MIGRATION
 class RemoveTaxIDEndpoints(VersionChange):
@@ -284,7 +284,7 @@ So now your migration will look like the following:
 
 ```python
 from cadwyn.structure import VersionChange, schema
-from data.latest.users import User
+from data.head.users import User
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -327,7 +327,7 @@ Whenever this model receives an `address`, it will add it into `addresses` so no
 ```python
 from cadwyn import VersionedAPIRouter, InternalRepresentationOf
 from typing import Annotated
-from data.latest.users import User
+from data.head.users import User
 from data.unversioned.users import InternalUserCreateRequest
 
 router = VersionedAPIRouter(prefix="/v1/users")
@@ -349,7 +349,7 @@ This type hint will tell Cadwyn that this route has public-facing schema of `Use
 Oftentimes you will have a need to migrate your data outside of routing, manually. For example, when you need to send a versioned response to your client via webhook or inside a worker/cronjob. In these instances, you can use `cadwyn.VersionBundle.migrate_response_body`:
 
 ```python
-from data.latest.users import UserResource
+from data.head.users import UserResource
 from versions import version_bundle
 
 body_from_2000_01_01 = version_bundle.migrate_response_body(
@@ -368,7 +368,7 @@ Migrations for the bodies of `fastapi.responses.StreamingResponse` and `fastapi.
 Pydantic 2 has an interesting implementation detail: `pydantic.RootModel` instances are memoized. So the following code is going to output `True`:
 
 ```python
-from data.latest.users import User
+from data.head.users import User
 from pydantic import RootModel
 
 BulkCreateUsersRequestBody = RootModel[list[User]]
@@ -380,7 +380,7 @@ print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # True
 So if you make a migration that should only affect one of these schemas -- it will automatically affect both. A recommended alternative is to either use subclassing:
 
 ```python
-from data.latest.users import User
+from data.head.users import User
 from pydantic import RootModel
 
 UserList = RootModel[list[User]]

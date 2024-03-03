@@ -4,12 +4,12 @@
 
 Let's say that our API has a mandatory `UserResource.date_of_birth` field. Let's also say that our API has previously exposed user's zodiac sign. Our analysts have decided that it does not make sense to store or send this information as it does not affect the functionality and can be inferred from date of birth.
 
-1. Remove `zodiac_sign` field from `data.latest.users.UserResource`
+1. Remove `zodiac_sign` field from `data.head.users.UserResource`
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
     from cadwyn.structure import VersionChange, schema
-    from data.latest.users import UserResource
+    from data.head.users import UserResource
     from pydantic import Field
 
 
@@ -38,7 +38,7 @@ You can remove the logic for calculating and returning the zodiac sign after ver
 
 Let's say that we had a nullable `middle_name` field but we decided that it does not make sense anymore and want to remove it now from both requests and responses. We can solve this with [internal body request schemas](../../concepts/version_changes.md#internal-request-body-representations).
 
-1. Remove `middle_name` field from `data.latest.users.User`
+1. Remove `middle_name` field from `data.head.users.User`
 2. Add a `data.unversioned.users.UserInternalCreateRequest` that we will use later to wrap migrated data instead of the latest request schema.
 
     ```python
@@ -53,7 +53,7 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
 3. Replace `UserCreateRequest` in your routes with `Annotated[UserInternalCreateRequest, InternalRepresentationOf[UserCreateRequest]]`:
 
     ```python
-    from data.latest.users import UserCreateRequest, UserResource
+    from data.head.users import UserCreateRequest, UserResource
     from cadwyn import InternalRepresentationOf
     from typing import Annotated
 
@@ -75,7 +75,7 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
         schema,
         RequestInfo,
     )
-    from data.latest.users import User
+    from data.head.users import User
 
 
     class RemoveMiddleNameFromUser(VersionChange):

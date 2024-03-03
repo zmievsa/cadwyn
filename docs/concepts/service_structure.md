@@ -26,7 +26,7 @@ The recommended directory structure for cadwyn is as follows:
     └── v2001_01_01.py  # Your version changes go here
 ```
 
-Schemas, enums, and any other versioned data are inside the `data.latest` package, version changes are inside the `versions.vXXXX_XX_XX` modules, and version bundle is inside the `versions.__init__` module. It includes all versions with all version changes -- including the ones you add in the recipes.
+Schemas, enums, and any other versioned data are inside the `data.head` package, version changes are inside the `versions.vXXXX_XX_XX` modules, and version bundle is inside the `versions.__init__` module. It includes all versions with all version changes -- including the ones you add in the recipes.
 
 You can assume for the purpose of our guides that we already have a version **2000-01-01** and we are making a new version **2001-01-01** with the changes from our scenarios.
 

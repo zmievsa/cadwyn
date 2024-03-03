@@ -23,7 +23,7 @@ class UserResource(BaseUser):
 
 ```python
 # routes.py
-from data.latest.users import UserCreateRequest, UserResource
+from data.head.users import UserCreateRequest, UserResource
 from versions import version_bundle
 from cadwyn import VersionedAPIRouter, Cadwyn
 import uuid
