@@ -145,10 +145,15 @@ class Cadwyn(FastAPI):
             default_response_class=default_response_class,
         )
 
-    @property
+    @property  # pragma: no cover
     @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
     def latest_schemas_package(self):
         return self._latest_schemas_package
+
+    @latest_schemas_package.setter  # pragma: no cover
+    @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
+    def latest_schemas_package(self, value: ModuleType | None):
+        self._latest_schemas_package = value
 
     def _add_openapi_endpoints(self, unversioned_router: APIRouter):
         if self.openapi_url is not None:

@@ -310,7 +310,7 @@ class VersionBundle:
                     )
                 version_change._bound_version_bundle = self
 
-    @property
+    @property  # pragma: no cover
     @deprecated("Use head_version_package instead.")
     def latest_schemas_package(self):
         return self.head_schemas_package
