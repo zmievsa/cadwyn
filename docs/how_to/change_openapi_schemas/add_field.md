@@ -83,7 +83,7 @@ So we will make `phone` nullable in HEAD, then make it required in `latest`, and
 2. Add `phone` field of type `str | None` with a `default=None` to `data.head.users.UserResource` because all users created with older versions of our API won't have phone numbers.
 3. Add the following migration to `versions.v2001_01_01` which will make sure that `phone` is not nullable in 2001_01_01:
 
-   ```python
+    ```python
     from cadwyn.structure import VersionChange, schema
     from data.head.users import UserCreateRequest
 
