@@ -47,7 +47,7 @@ Let's say that our users had a field `country` that defaulted to `USA` but our p
         )
 
         @convert_request_to_next_version_for(UserCreateRequest)
-        def add_time_field_to_request(request: RequestInfo):
+        def add_default_value_to_country_field_in_request(request: RequestInfo):
             request.body["country"] = request.body.get("country", "USA")
     ```
 
