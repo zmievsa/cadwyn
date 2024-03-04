@@ -323,10 +323,9 @@ class VersionBundle:
         # upon receiving `latest`.
 
         head_schemas_package = cast(ModuleType, self.head_schemas_package)
-
         if not hasattr(head_schemas_package, "__path__"):
             raise CadwynStructureError(
-                f'The head schemas module must be a package. "{head_schemas_package.__name__}" is not a package.',
+                f'The head schemas package must be a package. "{head_schemas_package.__name__}" is not a package.',
             )
         elif head_schemas_package.__name__.endswith(".head"):
             return "head"

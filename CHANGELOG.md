@@ -5,7 +5,15 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.10.1]
+
+### Fixed
+
+* Previous version introduced a minor breaking change: if any old users depended on the pure `generate_versioned_routers` interface, their work would receive a minor yet simple breaking change.
+
 ## [3.10.0]
+
+**Yanked** due to a minor breaking change that we fixed in 3.10.1.
 
 ### Added
 

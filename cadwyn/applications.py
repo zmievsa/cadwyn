@@ -182,7 +182,6 @@ class Cadwyn(FastAPI):
         router_versions = generate_versioned_routers(
             root_router,
             versions=self.versions,
-            head_schemas_package=self.versions.head_schemas_package,  # pyright: ignore[reportArgumentType],
         )
         for version, router in router_versions.items():
             self.add_header_versioned_routers(router, header_value=version.isoformat())

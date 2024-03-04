@@ -22,6 +22,7 @@ from typing import (
     final,
     get_args,
     get_origin,
+    overload,
 )
 
 import fastapi.params
@@ -90,11 +91,38 @@ class InternalRepresentationOf:
         return cast(Any, type("InternalRepresentationOf", (cls, original_schema), {}))
 
 
+@overload
 def generate_versioned_routers(
     router: _R,
     versions: VersionBundle,
-    head_schemas_package: ModuleType,
 ) -> dict[VersionDate, _R]:
+    ...
+
+
+@overload
+@deprecated("Do not use the latest_schemas_package argument. Put head_schemas_package into your VersionBundle instead")
+def generate_versioned_routers(
+    router: _R,
+    versions: VersionBundle,
+    latest_schemas_package: ModuleType | None,
+) -> dict[VersionDate, _R]:
+    ...
+
+
+def generate_versioned_routers(
+    router: _R,
+    versions: VersionBundle,
+    latest_schemas_package: ModuleType | None = None,
+) -> dict[VersionDate, _R]:
+    if versions.head_schemas_package is not None:
+        head_schemas_package = versions.head_schemas_package
+    elif latest_schemas_package is not None:  # pragma: no cover
+        head_schemas_package = latest_schemas_package
+    else:  # pragma: no cover
+        raise TypeError(
+            "TypeError: generate_versioned_routers() must be called with a VersionBundle "
+            "that contains a non-null head_schemas_package."
+        )
     versions.head_schemas_package = head_schemas_package
     versions._validate_head_schemas_package_structure()
     return _EndpointTransformer(router, versions, head_schemas_package).transform()

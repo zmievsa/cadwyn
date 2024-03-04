@@ -32,6 +32,6 @@ ci_supertest:
 
 supertest:
 	poetry install --all-extras
-	make ci_supertest && \
+	make ci_supertest || rm coverage.xml .coverage && exit 1; \
 	poetry run pip install 'pydantic==2.5.3' && \
 	rm coverage.xml .coverage;
