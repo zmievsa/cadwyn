@@ -1,6 +1,7 @@
 import bisect
 from collections import OrderedDict
 from collections.abc import Sequence
+from contextvars import ContextVar
 from datetime import date
 from functools import cached_property
 from logging import getLogger
@@ -35,11 +36,18 @@ class _RootHeaderAPIRouter(APIRouter):
     matched to the higher versioned route
     """
 
-    def __init__(self, *args: Any, api_version_header_name: str, **kwargs: Any):
+    def __init__(
+        self,
+        *args: Any,
+        api_version_header_name: str,
+        api_version_var: ContextVar[date] | ContextVar[date | None],
+        **kwargs: Any,
+    ):
         super().__init__(*args, **kwargs)
         self.versioned_routes: dict[date, list[BaseRoute]] = {}
         self.unversioned_routes: list[BaseRoute] = []
         self.api_version_header_name = api_version_header_name.lower()
+        self.api_version_var = api_version_var
 
     @cached_property
     def sorted_versioned_routes(self):
@@ -90,10 +98,7 @@ class _RootHeaderAPIRouter(APIRouter):
             await self.lifespan(scope, receive, send)
             return
 
-        request_headers = dict(scope["headers"])
-        header_value = request_headers.get(self.api_version_header_name.encode(), b"").decode()
-        if header_value:
-            header_value = date.fromisoformat(header_value)
+        header_value = self.api_version_var.get(None)
 
         # if header_value is None, then it's an unversioned request and we need to use the unversioned routes
         # if there will be a value, we search for the most suitable version

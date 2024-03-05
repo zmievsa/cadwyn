@@ -127,6 +127,7 @@ class Cadwyn(FastAPI):
             deprecated=deprecated,
             responses=responses,
             api_version_header_name=api_version_header_name,
+            api_version_var=self.versions.api_version_var,
             lifespan=lifespan,
         )
         self.docs_url = docs_url
