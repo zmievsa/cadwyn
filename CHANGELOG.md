@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.11.1]
+
+### Fixed
+
+* Modules and enums from head versions not being detected and thus causing errors
+
 ## [3.11.0]
 
 ### Changed

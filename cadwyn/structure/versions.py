@@ -344,17 +344,21 @@ class VersionBundle:
             )
 
     @functools.cached_property
+    def _all_versions(self):
+        return (self.head_version, *self.versions)
+
+    @functools.cached_property
     def versioned_schemas(self) -> dict[IdentifierPythonPath, type[VersionedModel]]:
         altered_schemas = {
             get_cls_pythonpath(instruction.schema): instruction.schema
-            for version in (self.head_version, *self.versions)
+            for version in self._all_versions
             for version_change in version.version_changes
             for instruction in list(version_change.alter_schema_instructions)
         }
 
         migrated_schemas = {
             get_cls_pythonpath(schema): schema
-            for version in self.versions
+            for version in self._all_versions
             for version_change in version.version_changes
             for schema in list(version_change.alter_request_by_schema_instructions.keys())
         }
@@ -365,7 +369,7 @@ class VersionBundle:
     def versioned_enums(self) -> dict[IdentifierPythonPath, type[Enum]]:
         return {
             get_cls_pythonpath(instruction.enum): instruction.enum
-            for version in self.versions
+            for version in self._all_versions
             for version_change in version.version_changes
             for instruction in version_change.alter_enum_instructions
         }
@@ -377,7 +381,7 @@ class VersionBundle:
             # the __init__.py file directly instead of the package itself
             # which results in this extra `.__init__` suffix in the name
             instruction.module.__name__.removesuffix(".__init__"): instruction.module
-            for version in self.versions
+            for version in self._all_versions
             for version_change in version.version_changes
             for instruction in version_change.alter_module_instructions
         }
