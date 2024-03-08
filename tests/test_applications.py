@@ -54,9 +54,9 @@ def test__header_routing_fastapi_init__changing_openapi_url__docs_still_return_2
 def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empty__version_should_not_have_any_routes():
     app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
     app.add_header_versioned_routers(APIRouter(), header_value="2022-11-16")
-    assert len(app.router.versioned_routes) == 1
-    assert len(app.router.versioned_routes[date(2022, 11, 16)]) == 1
-    route = cast(APIRoute, app.router.versioned_routes[date(2022, 11, 16)][0])
+    assert len(app.router.versioned_routers) == 1
+    assert len(app.router.versioned_routers[date(2022, 11, 16)].routes) == 1
+    route = cast(APIRoute, app.router.versioned_routers[date(2022, 11, 16)].routes[0])
     assert route.path == "/openapi.json"
 
 

@@ -361,7 +361,7 @@ class TestRequestMigrations:
         clients = create_versioned_clients(version_change())
 
         # [-1] route is /openapi.json
-        last_route = clients[date(2000, 1, 1)].app.routes[-2]
+        last_route = clients[date(2000, 1, 1)].app.router.versioned_routers[date(2000, 1, 1)].routes[-1]
         assert isinstance(last_route, APIRoute)
         payload_arg = last_route.endpoint.__annotations__["payload"]
         assert get_args(payload_arg)[1] == str
@@ -462,7 +462,7 @@ class TestRequestMigrations:
         )
 
         # [-1] route is /openapi.json
-        last_route = clients[date(2000, 1, 1)].app.routes[-2]
+        last_route = clients[date(2000, 1, 1)].app.router.versioned_routers[date(2000, 1, 1)].routes[-1]
         assert isinstance(last_route, APIRoute)
 
         assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
@@ -880,7 +880,7 @@ class TestHowAndWhenMigrationsApply:
         clients = create_versioned_clients(version_change_1, version_change_2)
         app = clients[date(2000, 1, 1)].app
         none_client = client(
-            APIRouter(routes=app.router.versioned_routes[date(2000, 1, 1)]),
+            APIRouter(routes=app.router.versioned_routers[date(2000, 1, 1)].routes),
             api_version=None,
             api_version_var=api_version_var,
         )
@@ -907,7 +907,7 @@ class TestHowAndWhenMigrationsApply:
         clients = create_versioned_clients(version_change_1, version_change_2)
         app = clients[date(2000, 1, 1)].app
         earlier_client = client(
-            APIRouter(routes=app.router.versioned_routes[date(2000, 1, 1)]),
+            APIRouter(routes=app.router.versioned_routers[date(2000, 1, 1)].routes),
             api_version=date(1998, 2, 10),
             api_version_var=api_version_var,
         )

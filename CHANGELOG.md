@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.12.0]
+
+### Changed
+
+* Rewritten header routing logic and structure to support the full feature set of FastAPI
+
 ## [3.11.1]
 
 ### Fixed

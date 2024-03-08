@@ -1,5 +1,4 @@
 import bisect
-from collections import OrderedDict
 from collections.abc import Sequence
 from contextvars import ContextVar
 from datetime import date
@@ -44,32 +43,25 @@ class _RootHeaderAPIRouter(APIRouter):
         **kwargs: Any,
     ):
         super().__init__(*args, **kwargs)
-        self.versioned_routes: dict[date, list[BaseRoute]] = {}
-        self.unversioned_routes: list[BaseRoute] = []
+        self.versioned_routers: dict[date, APIRouter] = {}
         self.api_version_header_name = api_version_header_name.lower()
         self.api_version_var = api_version_var
 
     @cached_property
-    def sorted_versioned_routes(self):
-        sorted_routes = sorted(self.versioned_routes.items())
-        return OrderedDict(sorted_routes)
+    def sorted_versions(self):
+        return sorted(self.versioned_routers.keys())
 
     @cached_property
     def min_routes_version(self):
-        return min(self.sorted_versioned_routes.keys())
+        return min(self.sorted_versions)
 
-    def find_closest_date_but_not_new(self, request_version: date):
-        routes = list(self.sorted_versioned_routes.keys())
-        index = bisect.bisect_left(routes, request_version)
+    def find_closest_date_but_not_new(self, request_version: date) -> date:
+        index = bisect.bisect_left(self.sorted_versions, request_version)
         # as bisect_left returns the index where to insert item x in list a, assuming a is sorted
         # we need to get the previous item and that will be a match
-        return routes[index - 1]
+        return self.sorted_versions[index - 1]
 
-    def pick_version(
-        self,
-        request_header_value: date,
-    ) -> list[BaseRoute]:
-        routes = []
+    def pick_version(self, request_header_value: date) -> list[BaseRoute]:
         request_version = request_header_value.isoformat()
 
         if self.min_routes_version > request_header_value:
@@ -79,13 +71,13 @@ class _RootHeaderAPIRouter(APIRouter):
                 f"is older than the oldest "
                 f"version {self.min_routes_version.isoformat()} ",
             )
-            return routes
+            return []
         version_chosen = self.find_closest_date_but_not_new(request_header_value)
         _logger.info(
             f"Partial match. The endpoint with {version_chosen} "
             f"version was selected for API call version {request_version}",
         )
-        return self.versioned_routes[version_chosen]
+        return self.versioned_routers[version_chosen].routes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """
@@ -103,9 +95,9 @@ class _RootHeaderAPIRouter(APIRouter):
         # if header_value is None, then it's an unversioned request and we need to use the unversioned routes
         # if there will be a value, we search for the most suitable version
         if not header_value:
-            routes = self.unversioned_routes
-        elif header_value in self.versioned_routes:
-            routes = self.versioned_routes[header_value]
+            routes = self.routes
+        elif header_value in self.versioned_routers:
+            routes = self.versioned_routers[header_value].routes
         else:
             routes = self.pick_version(request_header_value=header_value)
         await self.process_request(scope=scope, receive=receive, send=send, routes=routes)

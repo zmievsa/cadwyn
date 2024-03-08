@@ -108,8 +108,8 @@ class CreateVersionedAPIRoutes:
     ) -> tuple[list[APIRoute], list[APIRoute]]:
         app = self.create_versioned_app(*version_changes)
         return (
-            cast(list[APIRoute], app.router.versioned_routes.get(date(2000, 1, 1), [])),
-            cast(list[APIRoute], app.router.versioned_routes.get(date(2001, 1, 1), [])),
+            cast(list[APIRoute], app.router.versioned_routers.get(date(2000, 1, 1), APIRouter()).routes),
+            cast(list[APIRoute], app.router.versioned_routers.get(date(2001, 1, 1), APIRouter()).routes),
         )
 
 
@@ -686,9 +686,9 @@ def test__router_generation__non_api_route_added(
         raise NotImplementedError
 
     app = create_versioned_app(version_change(endpoint(test_path, ["GET"]).didnt_exist))
-    assert len(app.router.versioned_routes[date(2000, 1, 1)]) == 2
-    assert len(app.router.versioned_routes[date(2001, 1, 1)]) == 3
-    route = app.router.versioned_routes[date(2001, 1, 1)][1]
+    assert len(app.router.versioned_routers[date(2000, 1, 1)].routes) == 2
+    assert len(app.router.versioned_routers[date(2001, 1, 1)].routes) == 3
+    route = app.router.versioned_routers[date(2001, 1, 1)].routes[1]
     assert isinstance(route, APIRoute)
     assert endpoints_equal(route.endpoint, test_endpoint)
 
@@ -1092,13 +1092,13 @@ def test__router_generation__updating_callbacks(
         version_change(schema(head.SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
 
-    route = app.router.versioned_routes[date(2000, 1, 1)][1]
+    route = app.router.versioned_routers[date(2000, 1, 1)].routes[1]
     assert isinstance(route, APIRoute)
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
     assert generated_callback.dependant.body_params[0].type_.__module__.endswith(".v2000_01_01")
-    route = app.router.versioned_routes[date(2001, 1, 1)][1]
+    route = app.router.versioned_routers[date(2001, 1, 1)].routes[1]
     assert isinstance(route, APIRoute)
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
@@ -1255,7 +1255,7 @@ def test__basic_router_generation__using_http_security_dependency__should_genera
 
     client_2000, *_ = create_versioned_clients().values()
 
-    dependant = cast(APIRoute, client_2000.app.routes[-1]).dependant
+    dependant = cast(APIRoute, client_2000.app.router.versioned_routers[date(2000, 1, 1)].routes[-1]).dependant
     assert dependant.dependencies[1].dependencies[0].security_requirements[0].security_scheme is auth_header_scheme
     response = client_2000.get("/test")
     assert response.status_code == expected_status_code

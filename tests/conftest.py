@@ -354,7 +354,7 @@ class CreateVersionedClients:
         app = self.create_versioned_app(*version_changes, head_version_changes=head_version_changes)
         return {
             version: CadwynTestClient(app, headers={app.router.api_version_header_name: version.isoformat()})
-            for version in reversed(app.router.versioned_routes)
+            for version in reversed(app.router.versioned_routers)
         }
 
 

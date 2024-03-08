@@ -19,6 +19,7 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
 from typing_extensions import Self, deprecated
 
+from cadwyn._utils import same_definition_as_in
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.routing import _RootHeaderAPIRouter
@@ -117,26 +118,34 @@ class Cadwyn(FastAPI):
             separate_input_output_schemas=separate_input_output_schemas,
             **extra,
         )
+        self._kwargs_to_router: dict[str, Any] = {
+            "routes": routes,
+            "redirect_slashes": redirect_slashes,
+            "dependency_overrides_provider": self,
+            "on_startup": on_startup,
+            "on_shutdown": on_shutdown,
+            "lifespan": lifespan,
+            "default_response_class": default_response_class,
+            "dependencies": dependencies,
+            "callbacks": callbacks,
+            "deprecated": deprecated,
+            "include_in_schema": include_in_schema,
+            "responses": responses,
+            "generate_unique_id_function": generate_unique_id_function,
+        }
         self.router: _RootHeaderAPIRouter = _RootHeaderAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
-            routes=self.routes,
-            on_startup=on_startup,
-            on_shutdown=on_shutdown,
-            default_response_class=default_response_class,
-            dependencies=dependencies,
-            callbacks=callbacks,
-            deprecated=deprecated,
-            responses=responses,
+            **self._kwargs_to_router,
             api_version_header_name=api_version_header_name,
             api_version_var=self.versions.api_version_var,
-            lifespan=lifespan,
         )
+
         self.docs_url = docs_url
         self.redoc_url = redoc_url
         self.openapi_url = openapi_url
         self.redoc_url = redoc_url
         self.swaggers = {}
 
-        unversioned_router = APIRouter(routes=routes)
+        unversioned_router = APIRouter(**self._kwargs_to_router)
         self._add_openapi_endpoints(unversioned_router)
         self.add_unversioned_routers(unversioned_router)
         self.add_middleware(
@@ -202,14 +211,14 @@ class Cadwyn(FastAPI):
             terms_of_service=self.terms_of_service,
             contact=self.contact,
             license_info=self.license_info,
-            routes=self.router.unversioned_routes,
+            routes=self.router.routes,
             tags=self.openapi_tags,
             servers=self.servers,
         )
         if unversioned_routes_openapi["paths"]:
             self.swaggers["unversioned"] = unversioned_routes_openapi
 
-        for header_value, routes in self.router.versioned_routes.items():
+        for header_value, router in self.router.versioned_routers.items():
             header_value_str = header_value.isoformat()
             openapi = get_openapi(
                 title=self.title,
@@ -219,7 +228,7 @@ class Cadwyn(FastAPI):
                 terms_of_service=self.terms_of_service,
                 contact=self.contact,
                 license_info=self.license_info,
-                routes=routes,
+                routes=router.routes,
                 tags=self.openapi_tags,
                 servers=self.servers,
             )
@@ -272,33 +281,109 @@ class Cadwyn(FastAPI):
         except ValueError as e:
             raise ValueError("header_value should be in ISO 8601 format") from e
 
-        if header_value_as_dt not in self.router.versioned_routes:  # pragma: no branch
-            self.router.versioned_routes[header_value_as_dt] = []
+        if header_value_as_dt not in self.router.versioned_routers:  # pragma: no branch
+            self.router.versioned_routers[header_value_as_dt] = APIRouter(**self._kwargs_to_router)
             if self.openapi_url is not None:  # pragma: no branch
-                self.router.versioned_routes[header_value_as_dt].append(
-                    Route(path=self.openapi_url, endpoint=self.openapi_jsons, include_in_schema=False)
+                self.router.versioned_routers[header_value_as_dt].add_route(
+                    path=self.openapi_url,
+                    endpoint=self.openapi_jsons,
+                    include_in_schema=False,
                 )
 
         added_routes: list[BaseRoute] = []
         for router in (first_router, *other_routers):
-            added_route_count = len(router.routes)
-
-            self.include_router(
+            self.router.versioned_routers[header_value_as_dt].include_router(
                 router,
                 dependencies=[Depends(_get_api_version_dependency(self.router.api_version_header_name, header_value))],
             )
-            added_routes.extend(self.routes[len(self.routes) - added_route_count :])
-        for route in added_routes:
-            self.router.versioned_routes[header_value_as_dt].append(route)
 
         self.enrich_swagger()
         return added_routes
 
+    @same_definition_as_in(FastAPI.include_router)
+    def include_router(self, *args: Any, **kwargs: Any):
+        route = super().include_router(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.post)
+    def post(self, *args: Any, **kwargs: Any):
+        route = super().post(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.get)
+    def get(self, *args: Any, **kwargs: Any):
+        route = super().get(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.patch)
+    def patch(self, *args: Any, **kwargs: Any):
+        route = super().patch(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.delete)
+    def delete(self, *args: Any, **kwargs: Any):
+        route = super().delete(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.put)
+    def put(self, *args: Any, **kwargs: Any):
+        route = super().put(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.trace)
+    def trace(self, *args: Any, **kwargs: Any):  # pragma: no cover
+        route = super().trace(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.options)
+    def options(self, *args: Any, **kwargs: Any):
+        route = super().options(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.head)
+    def head(self, *args: Any, **kwargs: Any):
+        route = super().head(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.add_api_route)
+    def add_api_route(self, *args: Any, **kwargs: Any):
+        route = super().add_api_route(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.api_route)
+    def api_route(self, *args: Any, **kwargs: Any):
+        route = super().api_route(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.add_api_websocket_route)
+    def add_api_websocket_route(self, *args: Any, **kwargs: Any):  # pragma: no cover
+        route = super().add_api_websocket_route(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
+    @same_definition_as_in(FastAPI.websocket)
+    def websocket(self, *args: Any, **kwargs: Any):  # pragma: no cover
+        route = super().websocket(*args, **kwargs)
+        self.enrich_swagger()
+        return route
+
     def add_unversioned_routers(self, *routers: APIRouter):
         for router in routers:
-            self.include_router(router)
-            self.router.unversioned_routes.extend(router.routes)
+            self.router.include_router(router)
         self.enrich_swagger()
 
+    @deprecated("Use add add_unversioned_routers instead")
     def add_unversioned_routes(self, *routes: Route):
-        self.router.unversioned_routes.extend(routes)
+        router = APIRouter(routes=list(routes))
+        self.include_router(router)

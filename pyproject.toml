@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cadwyn"
-version = "3.11.1"
+version = "3.12.0"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -189,14 +189,15 @@ unfixable = [
 ]
 ignore = [
     "D203",   # 1 blank line required before class docstring
+    "ARG001", # Unused first argument
     "ARG002", # Unused method argument
     "TRY003", # Avoid specifying long messages outside the exception class
     "TRY300", # Consider moving statement into the else clause
-    "ARG001", # Unused first argument
     "PT019",  # Fixture without value is injected as parameter, use @pytest.mark.usefixtures instead
+              # (usefixtures doesn't play well with IDE features such as auto-renaming)
     "SIM108", # Use ternary operator instead of if-else block (ternaries lie to coverage)
     "RET505", # Unnecessary `else` after `return` statement
-    "N805",   # First argument of a method should be named `self`
+    "N805",   # First argument of a method should be named `self` (pydantic validators don't play well with this)
     "UP007",  # Use `X | Y` for type annotations (we need this for testing and our runtime logic)
 
     # The following rules are recommended to be ignored by ruff when using ruff format
