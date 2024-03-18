@@ -115,8 +115,7 @@ def _get_version_bundle(possibly_version_bundle: Any) -> VersionBundle:
 @app.callback()
 def main(
     version: bool = typer.Option(None, "-V", "--version", callback=version_callback, is_eager=True),
-):
-    ...
+): ...
 
 
 if __name__ == "__main__":

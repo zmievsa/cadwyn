@@ -95,8 +95,7 @@ class InternalRepresentationOf:
 def generate_versioned_routers(
     router: _R,
     versions: VersionBundle,
-) -> dict[VersionDate, _R]:
-    ...
+) -> dict[VersionDate, _R]: ...
 
 
 @overload
@@ -105,8 +104,7 @@ def generate_versioned_routers(
     router: _R,
     versions: VersionBundle,
     latest_schemas_package: ModuleType | None,
-) -> dict[VersionDate, _R]:
-    ...
+) -> dict[VersionDate, _R]: ...
 
 
 def generate_versioned_routers(

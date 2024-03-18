@@ -53,8 +53,7 @@ def generate_code_for_versioned_packages(
     codegen_plugins: Sequence[CodegenPlugin] = DEFAULT_CODEGEN_PLUGINS,
     migration_plugins: Sequence[MigrationPlugin] = DEFAULT_CODEGEN_MIGRATION_PLUGINS,
     extra_context: dict[str, Any] | None = None,
-):
-    ...
+): ...
 
 
 @overload
@@ -70,8 +69,7 @@ def generate_code_for_versioned_packages(
     codegen_plugins: Sequence[CodegenPlugin] = DEFAULT_CODEGEN_PLUGINS,
     migration_plugins: Sequence[MigrationPlugin] = DEFAULT_CODEGEN_MIGRATION_PLUGINS,
     extra_context: dict[str, Any] | None = None,
-):
-    ...
+): ...
 
 
 def generate_code_for_versioned_packages(

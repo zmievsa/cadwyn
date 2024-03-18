@@ -109,13 +109,11 @@ class AlterRequestByPathInstruction(_BaseAlterRequestInstruction):
 @overload
 def convert_request_to_next_version_for(
     first_schema: type, /, *additional_schemas: type
-) -> "type[staticmethod[_P, None]]":
-    ...
+) -> "type[staticmethod[_P, None]]": ...
 
 
 @overload
-def convert_request_to_next_version_for(path: str, methods: list[str], /) -> "type[staticmethod[_P, None]]":
-    ...
+def convert_request_to_next_version_for(path: str, methods: list[str], /) -> "type[staticmethod[_P, None]]": ...
 
 
 def convert_request_to_next_version_for(
@@ -174,8 +172,7 @@ def convert_response_to_previous_version_for(
     /,
     *schemas: type,
     migrate_http_errors: bool = False,
-) -> "type[staticmethod[_P, None]]":
-    ...
+) -> "type[staticmethod[_P, None]]": ...
 
 
 @overload
@@ -185,8 +182,7 @@ def convert_response_to_previous_version_for(
     /,
     *,
     migrate_http_errors: bool = False,
-) -> "type[staticmethod[_P, None]]":
-    ...
+) -> "type[staticmethod[_P, None]]": ...
 
 
 def convert_response_to_previous_version_for(

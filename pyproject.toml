@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cadwyn"
-version = "3.12.0"
+version = "3.13.0"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -64,7 +64,6 @@ cli = ["typer"]
 
 
 [tool.poetry.group.dev.dependencies]
-ruff = "*"
 pytest = ">=7.2.1"
 pytest-cov = ">=4.0.0"
 uvicorn = "*"
@@ -72,7 +71,6 @@ devtools = "*"
 pdbpp = "^0.10.3"
 httpx = "*"
 pytest-fixture-classes = ">=1.0.3"
-pre-commit = ">=3.4.0"
 dirty-equals = ">=0.6.0"
 mkdocs = ">=1.5.2"
 mkdocs-material = ">=9.3.1"
@@ -133,114 +131,6 @@ reportMissingSuperCall = true
 reportFunctionMemberAccess = false
 reportCircularImports = true
 
-
-[tool.ruff]
-target-version = "py310"
-line-length = 120
-extend-exclude = ["scripts/*.py"]
-
-[tool.ruff.lint]
-select = [
-    "F",       # pyflakes
-    "E",       # pycodestyle errors
-    "W",       # pycodestyle warnings
-    "C90",     # mccabe
-    "I",       # isort
-    "N",       # pep8-naming
-    "UP",      # pyupgrade
-    "YTT",     # flake8-2020
-    "S",       # flake8-bandit
-    "BLE",     # flake8-blind-except
-    "FBT003",  # flake8-boolean-trap
-    "B",       # flake8-bugbear
-    "COM",     # flake8-commas
-    "C4",      # flake8-comprehensions
-    "T10",     # flake8-debugger
-    "ISC",     # flake8-implicit-str-concat
-    "G010",    # Logging statement uses warn instead of warning
-    "G201",    # Logging .exception(...) should be used instead of .error(..., exc_info=True)
-    "G202",    # Logging statement has redundant exc_info
-    "INP",     # flake8-no-pep420
-    "PIE",     # flake8-pie
-    "T20",     # flake8-print
-    "PYI",     # flake8-pyi
-    "PT",      # flake8-pytest-style
-    "Q",       # flake8-quotes
-    "RSE",     # flake8-raise
-    "RET",     # flake8-return
-    "SIM",     # flake8-simplify
-    "TCH",     # flake8-type-checking
-    "ARG",     # flake8-unused-arguments
-    "PTH",     # flake8-use-pathlib
-    "ERA",     # flake8-eradicate
-    "PGH",     # pygrep-hooks
-    "PLC0414", # Import alias does not rename original package
-    "PLE",     # Error
-    "PLW",     # Warning
-    "TRY",     # tryceratops
-    "FLY",     # flynt
-    "RUF",     # ruff-specific rules
-    "ANN001",  # missing type annotation for arguments
-    "ANN002",  # missing type annotation for *args
-    "ANN003",  # missing type annotation for **kwargs
-]
-unfixable = [
-    "ERA001", # eradicate: found commented out code (can be dangerous if fixed automatically)
-]
-ignore = [
-    "D203",   # 1 blank line required before class docstring
-    "ARG001", # Unused first argument
-    "ARG002", # Unused method argument
-    "TRY003", # Avoid specifying long messages outside the exception class
-    "TRY300", # Consider moving statement into the else clause
-    "PT019",  # Fixture without value is injected as parameter, use @pytest.mark.usefixtures instead
-              # (usefixtures doesn't play well with IDE features such as auto-renaming)
-    "SIM108", # Use ternary operator instead of if-else block (ternaries lie to coverage)
-    "RET505", # Unnecessary `else` after `return` statement
-    "N805",   # First argument of a method should be named `self` (pydantic validators don't play well with this)
-    "UP007",  # Use `X | Y` for type annotations (we need this for testing and our runtime logic)
-
-    # The following rules are recommended to be ignored by ruff when using ruff format
-    "ISC001", # Checks for implicitly concatenated strings on a single line
-    "ISC002", # Checks for implicitly concatenated strings that span multiple lines
-    "W191",   # Checks for indentation that uses tabs
-    "E111",   # Checks for indentation with a non-multiple of 4 spaces
-    "E114",   # Checks for indentation of comments with a non-multiple of 4 spaces
-    "E117",   # Checks for over-indented code
-    "D206",   # Checks for docstrings that are indented with tabs
-    "D300",   # Checks for docstrings that use '''single quotes''' instead of """double quotes"""
-    "Q000",   # Checks for inline strings that use single quotes or double quotes
-    "Q001",   # Checks for multiline strings that use single quotes or double quotes
-    "Q002",   # Checks for docstrings that use single quotes or double quotes
-    "Q003",   # Checks for strings that include escaped quotes
-    "COM812", # Checks for the absence of trailing commas
-    "COM819", # Checks for the presence of prohibited trailing commas
-    "RET506", # Unnecessary `elif` after `raise` statement
-]
-
-
-[tool.ruff.lint.per-file-ignores]
-"tests/*" = [
-    "S",      # ignore bandit security issues in tests
-    "B018",   # ignore useless expressions in tests
-    "PT012",  # ignore complex with pytest.raises clauses
-    "RUF012", # ignore mutable class attributes ClassVar typehint requirement
-    "ANN001", # Missing type annotation for function argument
-    "ANN002", # Missing type annotation for *args
-    "ANN003", # Missing type annotation for **kwargs
-    "PGH003", # Use specific rule codes when ignoring type issues
-    "B008",   # Do not perform function call in argument defaults
-]
-"cadwyn/_utils.py" = [
-    "ERA001", # Found commented-out code (it's not actually commented out. It's just comments)
-]
-
-[tool.ruff.lint.mccabe]
-max-complexity = 14
-
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

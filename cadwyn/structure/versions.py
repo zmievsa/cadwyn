@@ -74,9 +74,9 @@ class VersionChange:
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
     alter_module_instructions: ClassVar[list[AlterModuleInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[list[AlterEndpointSubInstruction]] = Sentinel
-    alter_request_by_schema_instructions: ClassVar[
-        dict[type[BaseModel], list[AlterRequestBySchemaInstruction]]
-    ] = Sentinel
+    alter_request_by_schema_instructions: ClassVar[dict[type[BaseModel], list[AlterRequestBySchemaInstruction]]] = (
+        Sentinel
+    )
     alter_request_by_path_instructions: ClassVar[dict[str, list[AlterRequestByPathInstruction]]] = Sentinel
     alter_response_by_schema_instructions: ClassVar[dict[type, list[AlterResponseBySchemaInstruction]]] = Sentinel
     alter_response_by_path_instructions: ClassVar[dict[str, list[AlterResponseByPathInstruction]]] = Sentinel
@@ -245,8 +245,7 @@ class VersionBundle:
         *other_versions: Version,
         api_version_var: APIVersionVarType | None = None,
         head_schemas_package: ModuleType | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @overload
     @deprecated("Pass head_version_package instead of latest_schemas_package.")
@@ -257,8 +256,7 @@ class VersionBundle:
         *other_versions: Version,
         api_version_var: APIVersionVarType | None = None,
         latest_schemas_package: ModuleType | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def __init__(
         self,

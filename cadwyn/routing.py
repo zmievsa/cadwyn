@@ -67,15 +67,14 @@ class _RootHeaderAPIRouter(APIRouter):
         if self.min_routes_version > request_header_value:
             # then the request version is older that the oldest route we have
             _logger.info(
-                f"Request version {request_version} "
-                f"is older than the oldest "
-                f"version {self.min_routes_version.isoformat()} ",
+                "Request version is older than the oldest version. No route can match this version",
+                extra={"oldest_version": self.min_routes_version.isoformat(), "request_version": request_version},
             )
             return []
         version_chosen = self.find_closest_date_but_not_new(request_header_value)
         _logger.info(
-            f"Partial match. The endpoint with {version_chosen} "
-            f"version was selected for API call version {request_version}",
+            "Partial match. The endpoint with a lower version was selected for the API call",
+            extra={"version_chosen": version_chosen, "request_version": request_version},
         )
         return self.versioned_routers[version_chosen].routes
 

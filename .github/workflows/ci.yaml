@@ -45,7 +45,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-python-poetry
       - uses: pre-commit/action@v3.0.0
 
   Typecheck:
