@@ -39,12 +39,12 @@ from cadwyn.exceptions import CadwynError, CadwynHeadRequestValidationError, Cad
 from .._utils import Sentinel
 from .common import Endpoint, VersionDate, VersionedModel
 from .data import (
-    AlterRequestByPathInstruction,
-    AlterRequestBySchemaInstruction,
-    AlterResponseByPathInstruction,
-    AlterResponseBySchemaInstruction,
     RequestInfo,
     ResponseInfo,
+    _AlterRequestByPathInstruction,
+    _AlterRequestBySchemaInstruction,
+    _AlterResponseByPathInstruction,
+    _AlterResponseBySchemaInstruction,
     _BaseAlterResponseInstruction,
 )
 from .endpoints import AlterEndpointSubInstruction
@@ -74,12 +74,12 @@ class VersionChange:
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
     alter_module_instructions: ClassVar[list[AlterModuleInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[list[AlterEndpointSubInstruction]] = Sentinel
-    alter_request_by_schema_instructions: ClassVar[dict[type[BaseModel], list[AlterRequestBySchemaInstruction]]] = (
+    alter_request_by_schema_instructions: ClassVar[dict[type[BaseModel], list[_AlterRequestBySchemaInstruction]]] = (
         Sentinel
     )
-    alter_request_by_path_instructions: ClassVar[dict[str, list[AlterRequestByPathInstruction]]] = Sentinel
-    alter_response_by_schema_instructions: ClassVar[dict[type, list[AlterResponseBySchemaInstruction]]] = Sentinel
-    alter_response_by_path_instructions: ClassVar[dict[str, list[AlterResponseByPathInstruction]]] = Sentinel
+    alter_request_by_path_instructions: ClassVar[dict[str, list[_AlterRequestByPathInstruction]]] = Sentinel
+    alter_response_by_schema_instructions: ClassVar[dict[type, list[_AlterResponseBySchemaInstruction]]] = Sentinel
+    alter_response_by_path_instructions: ClassVar[dict[str, list[_AlterResponseByPathInstruction]]] = Sentinel
     _bound_version_bundle: "VersionBundle | None"
 
     def __init_subclass__(cls, _abstract: bool = False) -> None:
@@ -96,15 +96,15 @@ class VersionChange:
     @classmethod
     def _extract_body_instructions_into_correct_containers(cls):
         for instruction in cls.__dict__.values():
-            if isinstance(instruction, AlterRequestBySchemaInstruction):
+            if isinstance(instruction, _AlterRequestBySchemaInstruction):
                 for schema in instruction.schemas:
                     cls.alter_request_by_schema_instructions[schema].append(instruction)
-            elif isinstance(instruction, AlterRequestByPathInstruction):
+            elif isinstance(instruction, _AlterRequestByPathInstruction):
                 cls.alter_request_by_path_instructions[instruction.path].append(instruction)
-            elif isinstance(instruction, AlterResponseBySchemaInstruction):
+            elif isinstance(instruction, _AlterResponseBySchemaInstruction):
                 for schema in instruction.schemas:
                     cls.alter_response_by_schema_instructions[schema].append(instruction)
-            elif isinstance(instruction, AlterResponseByPathInstruction):
+            elif isinstance(instruction, _AlterResponseByPathInstruction):
                 cls.alter_response_by_path_instructions[instruction.path].append(instruction)
 
     @classmethod
@@ -154,10 +154,10 @@ class VersionChange:
         for attr_name, attr_value in cls.__dict__.items():
             if not isinstance(
                 attr_value,
-                AlterRequestBySchemaInstruction
-                | AlterRequestByPathInstruction
-                | AlterResponseBySchemaInstruction
-                | AlterResponseByPathInstruction,
+                _AlterRequestBySchemaInstruction
+                | _AlterRequestByPathInstruction
+                | _AlterResponseBySchemaInstruction
+                | _AlterResponseByPathInstruction,
             ) and attr_name not in {
                 "description",
                 "side_effects",
@@ -385,7 +385,7 @@ class VersionBundle:
         }
 
     @functools.cached_property
-    def versioned_directories(self) -> tuple[Path, ...]:
+    def versioned_directories_with_head(self) -> tuple[Path, ...]:
         if self.head_schemas_package is None:
             raise CadwynError(
                 f"You cannot call 'VersionBundle.{self.migrate_response_body.__name__}' because it has no access to "
@@ -396,6 +396,10 @@ class VersionBundle:
             [get_package_path_from_module(self.head_schemas_package)]
             + [get_version_dir_path(self.head_schemas_package, version.value) for version in self]
         )
+
+    @functools.cached_property
+    def versioned_directories_without_head(self) -> tuple[Path, ...]:
+        return self.versioned_directories_with_head[1:]
 
     def migrate_response_body(self, latest_response_model: type[BaseModel], *, latest_body: Any, version: VersionDate):
         """Convert the data to a specific version by applying all version changes from latest until that version
@@ -411,11 +415,10 @@ class VersionBundle:
         )
 
         version = self._get_closest_lesser_version(version)
-        # + 1 comes from latest also being in the versioned_directories list
-        version_dir = self.versioned_directories[self.version_dates.index(version) + 1]
+        version_dir = self.versioned_directories_without_head[self.version_dates.index(version)]
 
         versioned_response_model: type[BaseModel] = get_another_version_of_cls(
-            latest_response_model, version_dir, self.versioned_directories
+            latest_response_model, version_dir, self.versioned_directories_with_head
         )
         return versioned_response_model.parse_obj(migrated_response.body)
 
@@ -666,14 +669,15 @@ class VersionBundle:
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
                 response_info._response.body = json.dumps(response_info.body).encode()
 
+            # It makes more sense to re-calculate content length because the previously calculated one
+            # might slightly differ.
+            del response_info.headers["content-length"]
+
             if raised_exception is not None and response_info.status_code >= 400:
                 if isinstance(response_info.body, dict) and "detail" in response_info.body:
                     detail = response_info.body["detail"]
                 else:
                     detail = response_info.body
-                # It makes more sense to re-calculate content length because the previously calculated one
-                # might slightly differ.
-                del response_info.headers["content-length"]
 
                 raise HTTPException(
                     status_code=response_info.status_code,

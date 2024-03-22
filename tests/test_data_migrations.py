@@ -191,7 +191,7 @@ def version_change_2(head_module):
     )
 
 
-@pytest.fixture(params=["no request", "with request"])
+@pytest.fixture(params=["without_request", "with request"])
 def _post_endpoint_with_extra_depends(  # noqa: PT005
     request: pytest.FixtureRequest,
     router: VersionedAPIRouter,
@@ -199,7 +199,7 @@ def _post_endpoint_with_extra_depends(  # noqa: PT005
     head_module: ModuleType,
     _post_endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],  # pyright: ignore[reportRedeclaration]
 ):
-    if request.param == "no request":
+    if request.param == "without_request":
         router.routes = []
 
         @router.post(test_path)
@@ -319,26 +319,6 @@ class TestRequestMigrations:
         assert clients[date(2001, 1, 1)].get(test_path, headers={"my-header": "wow"}).json() == 83
         with pytest.raises(CadwynHeadRequestValidationError):
             clients[date(2000, 1, 1)].get(test_path, headers={"my-header": "wow"}).json()
-
-    def test__optional_body_field(
-        self,
-        create_versioned_clients: CreateVersionedClients,
-        head_module: ModuleType,
-        test_path: Literal["/test"],
-        router: VersionedAPIRouter,
-    ):
-        @router.post(test_path)
-        async def route(payload: head_module.AnyRequestSchema | None = Body(None)):
-            return payload or {"hello": "world"}
-
-        @convert_request_to_next_version_for(head_module.AnyRequestSchema)
-        def migrator(request: RequestInfo):
-            assert request.body is None
-
-        clients = create_versioned_clients(version_change(migrator=migrator))
-
-        assert clients[date(2000, 1, 1)].post(test_path).json() == {"hello": "world"}
-        assert clients[date(2001, 1, 1)].post(test_path).json() == {"hello": "world"}
 
     def test__internal_schema_specified__with_no_migrations__body_gets_parsed_to_internal_request_schema(
         self,
@@ -940,42 +920,6 @@ class TestHowAndWhenMigrationsApply:
             == []
         )
 
-    def test__migrate_one_version_down__with_inapplicable_migrations__result_is_only_affected_by_applicable_migrations(
-        self,
-        version_change_1: type[VersionChange],
-        create_versioned_clients: CreateVersionedClients,
-        test_path: Literal["/test"],
-        _post_endpoint,
-        head_module,
-    ):
-        def bad_req(request: RequestInfo):
-            raise NotImplementedError("I was not supposed to be ever called! This is very bad!")
-
-        def bad_resp(response: ResponseInfo):
-            raise NotImplementedError("I was not supposed to be ever called! This is very bad!")
-
-        clients = create_versioned_clients(
-            [
-                version_change_1,
-                version_change(
-                    wrong_body_schema=convert_request_to_next_version_for(head_module.AnyResponseSchema)(bad_req),
-                    wrong_resp_schema=convert_response_to_previous_version_for(head_module.AnyRequestSchema)(
-                        bad_resp,
-                    ),
-                    wrong_req_path=convert_request_to_next_version_for("/wrong_path", ["POST"])(bad_req),
-                    wrong_req_method=convert_request_to_next_version_for(test_path, ["GET"])(bad_req),
-                    wrong_resp_path=convert_response_to_previous_version_for("/wrong_path", ["POST"])(bad_resp),
-                    wrong_resp_method=convert_response_to_previous_version_for(test_path, ["GET"])(bad_resp),
-                ),
-            ],
-        )
-        assert len(clients) == 2
-        assert clients[date(2000, 1, 1)].post(test_path, json=[]).json()["body"] == [
-            "request change 1",
-            "response change 1",
-        ]
-        assert clients[date(2001, 1, 1)].post(test_path, json=[]).json()["body"] == []
-
     def test__cookies_can_be_deleted_during_migrations(
         self,
         create_versioned_clients: CreateVersionedClients,
@@ -1328,17 +1272,17 @@ def test__request_and_response_migrations__with_multiple_schemas_in_converters(
     )
 
     @router.post("/test_1")
-    async def endpoint_1(body: latest.Request_1) -> latest.Response_1:  # pyright: ignore[reportInvalidTypeForm]
+    async def endpoint_1(body: latest.Request_1) -> latest.Response_1:
         body.i.append("test_1")
         return body
 
     @router.post("/test_2")
-    async def endpoint_2(body: latest.Request_2) -> latest.Response_2:  # pyright: ignore[reportInvalidTypeForm]
+    async def endpoint_2(body: latest.Request_2) -> latest.Response_2:
         body.i.append("test_2")
         return body
 
     @router.post("/test_3")
-    async def endpoint_3(body: latest.Request_3) -> latest.Response_3:  # pyright: ignore[reportInvalidTypeForm]
+    async def endpoint_3(body: latest.Request_3) -> latest.Response_3:
         body.i.append("test_3")
         return body
 

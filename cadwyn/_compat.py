@@ -61,7 +61,7 @@ class PydanticFieldWrapper:
 
     annotation: Any
 
-    init_model_field: dataclasses.InitVar[ModelField]  # pyright: ignore[reportInvalidTypeForm]
+    init_model_field: dataclasses.InitVar[ModelField]
     field_info: FieldInfo = dataclasses.field(init=False)
 
     annotation_ast: ast.expr | None = None
@@ -69,7 +69,7 @@ class PydanticFieldWrapper:
     # the value_ast is "None" and "Field(default=None)" respectively
     value_ast: ast.expr | None = None
 
-    def __post_init__(self, init_model_field: ModelField):  # pyright: ignore[reportInvalidTypeForm]
+    def __post_init__(self, init_model_field: ModelField):
         if isinstance(init_model_field, FieldInfo):
             self.field_info = init_model_field
         else:

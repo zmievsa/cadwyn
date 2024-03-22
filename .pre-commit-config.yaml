@@ -18,7 +18,7 @@ repos:
       - id: python-check-blanket-noqa
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.2
+    rev: v0.3.3
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
@@ -37,3 +37,8 @@ repos:
     hooks:
       - id: markdownlint
         args: ["--disable", "MD013"]
+
+  - repo: https://github.com/zmievsa/pre-commit-pyright
+    rev: v1.1.355
+    hooks:
+      - id: poetry

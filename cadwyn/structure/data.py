@@ -8,6 +8,7 @@ from fastapi import Request, Response
 from starlette.datastructures import MutableHeaders
 
 from cadwyn._utils import same_definition_as_in
+from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
 
 _P = ParamSpec("_P")
 
@@ -96,14 +97,15 @@ class _BaseAlterRequestInstruction(_AlterDataInstruction):
 
 
 @dataclass
-class AlterRequestBySchemaInstruction(_BaseAlterRequestInstruction):
+class _AlterRequestBySchemaInstruction(_BaseAlterRequestInstruction):
     schemas: tuple[Any, ...]
 
 
 @dataclass
-class AlterRequestByPathInstruction(_BaseAlterRequestInstruction):
+class _AlterRequestByPathInstruction(_BaseAlterRequestInstruction):
     path: str
     methods: set[str]
+    repr_name = "Request by path converter"
 
 
 @overload
@@ -126,7 +128,7 @@ def convert_request_to_next_version_for(
 
     def decorator(transformer: Callable[[RequestInfo], None]) -> Any:
         if isinstance(schema_or_path, str):
-            return AlterRequestByPathInstruction(
+            return _AlterRequestByPathInstruction(
                 path=schema_or_path,
                 methods=set(cast(list, methods_or_second_schema)),
                 transformer=transformer,
@@ -136,7 +138,7 @@ def convert_request_to_next_version_for(
                 schemas = (schema_or_path,)
             else:
                 schemas = (schema_or_path, methods_or_second_schema, *additional_schemas)
-            return AlterRequestBySchemaInstruction(
+            return _AlterRequestBySchemaInstruction(
                 schemas=schemas,
                 transformer=transformer,
             )
@@ -156,14 +158,15 @@ class _BaseAlterResponseInstruction(_AlterDataInstruction):
 
 
 @dataclass
-class AlterResponseBySchemaInstruction(_BaseAlterResponseInstruction):
+class _AlterResponseBySchemaInstruction(_BaseAlterResponseInstruction):
     schemas: tuple[Any, ...]
 
 
 @dataclass
-class AlterResponseByPathInstruction(_BaseAlterResponseInstruction):
+class _AlterResponseByPathInstruction(_BaseAlterResponseInstruction):
     path: str
     methods: set[str]
+    repr_name = "Response by path converter"
 
 
 @overload
@@ -197,7 +200,7 @@ def convert_response_to_previous_version_for(
     def decorator(transformer: Callable[[ResponseInfo], None]) -> Any:
         if isinstance(schema_or_path, str):
             # The validation above checks that methods is not None
-            return AlterResponseByPathInstruction(
+            return _AlterResponseByPathInstruction(
                 path=schema_or_path,
                 methods=set(cast(list, methods_or_second_schema)),
                 transformer=transformer,
@@ -208,7 +211,7 @@ def convert_response_to_previous_version_for(
                 schemas = (schema_or_path,)
             else:
                 schemas = (schema_or_path, methods_or_second_schema, *additional_schemas)
-            return AlterResponseBySchemaInstruction(
+            return _AlterResponseBySchemaInstruction(
                 schemas=schemas,
                 transformer=transformer,
                 migrate_http_errors=migrate_http_errors,
@@ -219,10 +222,11 @@ def convert_response_to_previous_version_for(
 
 def _validate_decorator_args(
     schema_or_path: type | str, methods_or_second_schema: list[str] | type | None, additional_schemas: tuple[type, ...]
-):
+) -> None:
     if isinstance(schema_or_path, str):
         if not isinstance(methods_or_second_schema, list):
             raise TypeError("If path was provided as a first argument, methods must be provided as a second argument")
+        _validate_that_strings_are_valid_http_methods(methods_or_second_schema)
         if additional_schemas:
             raise TypeError("If path was provided as a first argument, then additional schemas cannot be added")
 
