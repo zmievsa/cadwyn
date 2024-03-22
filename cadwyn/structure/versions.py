@@ -666,14 +666,15 @@ class VersionBundle:
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
                 response_info._response.body = json.dumps(response_info.body).encode()
 
+            # It makes more sense to re-calculate content length because the previously calculated one
+            # might slightly differ.
+            del response_info.headers["content-length"]
+
             if raised_exception is not None and response_info.status_code >= 400:
                 if isinstance(response_info.body, dict) and "detail" in response_info.body:
                     detail = response_info.body["detail"]
                 else:
                     detail = response_info.body
-                # It makes more sense to re-calculate content length because the previously calculated one
-                # might slightly differ.
-                del response_info.headers["content-length"]
 
                 raise HTTPException(
                     status_code=response_info.status_code,

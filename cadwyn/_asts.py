@@ -32,7 +32,7 @@ _RE_CAMEL_TO_SNAKE = re.compile(r"(?<!^)(?=[A-Z])")
 
 
 # A parent type of typing._GenericAlias
-_BaseGenericAlias = type(List[int]).mro()[1]  # noqa: UP006
+_BaseGenericAlias = type(List[int]).mro()[1]  # noqa: UP006 # pyright: ignore[reportCallIssue]
 
 # type(list[int]) and type(List[int]) are different which is why we have to do this.
 # Please note that this problem is much wider than just lists which is why we use typing._BaseGenericAlias
