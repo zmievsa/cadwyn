@@ -46,6 +46,18 @@ class RouterPathParamsModifiedError(RouterGenerationError):
     pass
 
 
+class RouteResponseBySchemaConverterDoesNotApplyToAnythingError(RouterGenerationError):
+    pass
+
+
+class RouteRequestBySchemaConverterDoesNotApplyToAnythingError(RouterGenerationError):
+    pass
+
+
+class RouteByPathConverterDoesNotApplyToAnythingError(RouterGenerationError):
+    pass
+
+
 class RouteAlreadyExistsError(RouterGenerationError):
     def __init__(self, *routes: APIRoute):
         self.routes = routes

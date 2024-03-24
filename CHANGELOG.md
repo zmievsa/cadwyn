@@ -5,6 +5,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.13.0]
+
+### Added
+
+* Validation for path converters to make sure that impossible HTTP methods cannot be used
+* Validation for both path and schema converters to make sure that they are used at some point. Otherwise, router generation will raise an error
+
 ## [3.12.1]
 
 ### Fixed

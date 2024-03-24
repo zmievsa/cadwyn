@@ -10,6 +10,7 @@ from typing import (  # noqa: UP035
     TYPE_CHECKING,
     Any,
     List,
+    cast,
     get_args,
     get_origin,
 )
@@ -32,7 +33,7 @@ _RE_CAMEL_TO_SNAKE = re.compile(r"(?<!^)(?=[A-Z])")
 
 
 # A parent type of typing._GenericAlias
-_BaseGenericAlias = type(List[int]).mro()[1]  # noqa: UP006
+_BaseGenericAlias = cast(type, type(List[int])).mro()[1]  # noqa: UP006
 
 # type(list[int]) and type(List[int]) are different which is why we have to do this.
 # Please note that this problem is much wider than just lists which is why we use typing._BaseGenericAlias
@@ -134,7 +135,7 @@ def transform_auto(_: auto) -> Any:
     return PlainRepr("auto()")
 
 
-def transform_union(value: UnionType) -> Any:  # pyright: ignore[reportInvalidTypeForm]
+def transform_union(value: UnionType) -> Any:
     return "typing.Union[" + (", ".join(get_fancy_repr(a) for a in get_args(value))) + "]"
 
 

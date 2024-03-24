@@ -85,7 +85,7 @@ class CreateVersionedPackages:
 
     def __call__(
         self,
-        *version_changes: type[VersionChange] | list[type[VersionChange]],
+        *version_changes: type[VersionChange],
     ) -> tuple[ModuleType, ...]:
         created_versions = versions(version_changes)
         latest = importlib.import_module(self.temp_data_package_path + ".head")
@@ -211,7 +211,7 @@ class CreateLocalVersionedPackages:
 
     def __call__(
         self,
-        *version_changes: type[VersionChange] | list[type[VersionChange]],
+        *version_changes: type[VersionChange],
         codegen_plugins: Sequence[CodegenPlugin] = DEFAULT_CODEGEN_PLUGINS,
         migration_plugins: Sequence[MigrationPlugin] = DEFAULT_CODEGEN_MIGRATION_PLUGINS,
         extra_context: dict[str, Any] | None = None,
@@ -316,7 +316,7 @@ class CreateVersionedApp:
 
     def __call__(
         self,
-        *version_changes: type[VersionChange] | list[type[VersionChange]],
+        *version_changes: type[VersionChange],
         head_version_changes: Sequence[type[VersionChange]] = (),
     ) -> Cadwyn:
         bundle = VersionBundle(
@@ -334,10 +334,7 @@ class CreateVersionedApp:
 def versions(version_changes):
     versions = [Version(date(2000, 1, 1))]
     for i, change in enumerate(version_changes):
-        if isinstance(change, list):
-            versions.append(Version(date(2001 + i, 1, 1), *change))
-        else:
-            versions.append(Version(date(2001 + i, 1, 1), change))
+        versions.append(Version(date(2001 + i, 1, 1), change))
     return list(reversed(versions))
 
 
@@ -348,7 +345,7 @@ class CreateVersionedClients:
 
     def __call__(
         self,
-        *version_changes: type[VersionChange] | list[type[VersionChange]],
+        *version_changes: type[VersionChange],
         head_version_changes: Sequence[type[VersionChange]] = (),
     ) -> dict[date, CadwynTestClient]:
         app = self.create_versioned_app(*version_changes, head_version_changes=head_version_changes)

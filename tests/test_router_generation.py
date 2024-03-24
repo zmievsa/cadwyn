@@ -734,7 +734,7 @@ def test__router_generation__using_non_latest_version_of_schema__should_raise_er
     schemas_2000, _ = create_simple_versioned_packages()
 
     @router.post("/testik")
-    async def testik(body: schemas_2000.SchemaWithOnePydanticField):  # pyright: ignore
+    async def testik(body: schemas_2000.SchemaWithOnePydanticField):
         raise NotImplementedError
 
     with pytest.raises(
@@ -763,7 +763,7 @@ def test__router_generation__using_unversioned_schema_from_versioned_base_dir__s
     module = importlib.import_module("tests._data.unversioned_schema_dir")
 
     @router.post("/testik")
-    async def testik(body: module.UnversionedSchema2):  # pyright: ignore
+    async def testik(body: module.UnversionedSchema2):
         raise NotImplementedError
 
     create_versioned_app()
@@ -1016,7 +1016,7 @@ class MySchema(BaseModel):
     other_module = importlib.import_module(temp_data_package_path + ".other_module")
 
     @router.post("/test")
-    async def test_with_dep1(dep: other_module.MySchema):  # pyright: ignore[reportInvalidTypeForm]
+    async def test_with_dep1(dep: other_module.MySchema):
         return dep
 
     app = create_versioned_app(version_change())

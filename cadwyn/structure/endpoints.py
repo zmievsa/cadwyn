@@ -1,4 +1,4 @@
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -148,6 +148,12 @@ class EndpointInstructionFactory:
 
 
 def endpoint(path: str, methods: list[str], /, *, func_name: str | None = None) -> EndpointInstructionFactory:
+    _validate_that_strings_are_valid_http_methods(methods)
+
+    return EndpointInstructionFactory(path, set(methods), func_name)
+
+
+def _validate_that_strings_are_valid_http_methods(methods: Collection[str]):
     invalid_methods = set(methods) - HTTP_METHODS
     if invalid_methods:
         invalid_methods = ", ".join(sorted(invalid_methods))
@@ -155,8 +161,6 @@ def endpoint(path: str, methods: list[str], /, *, func_name: str | None = None) 
             f"The following HTTP methods are not valid: {invalid_methods}. "
             "Please use valid HTTP methods such as GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD.",
         )
-
-    return EndpointInstructionFactory(path, set(methods), func_name)
 
 
 AlterEndpointSubInstruction = EndpointDidntExistInstruction | EndpointExistedInstruction | EndpointHadInstruction
