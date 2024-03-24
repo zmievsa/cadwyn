@@ -28,6 +28,7 @@ import fastapi.params
 import fastapi.routing
 import fastapi.security.base
 import fastapi.utils
+from fastapi import APIRouter
 from fastapi._compat import ModelField as FastAPIModelField
 from fastapi._compat import create_body_model
 from fastapi.dependencies.models import Dependant
@@ -46,12 +47,15 @@ from starlette.routing import (
 )
 from typing_extensions import Self, assert_never, deprecated
 
-from cadwyn._compat import model_fields, rebuild_fastapi_body_param
+from cadwyn._compat import get_annotation_from_model_field, model_fields, rebuild_fastapi_body_param
 from cadwyn._package_utils import get_version_dir_path
 from cadwyn._utils import Sentinel, UnionType, get_another_version_of_cls
 from cadwyn.exceptions import (
     CadwynError,
     RouteAlreadyExistsError,
+    RouteByPathConverterDoesNotApplyToAnythingError,
+    RouteRequestBySchemaConverterDoesNotApplyToAnythingError,
+    RouteResponseBySchemaConverterDoesNotApplyToAnythingError,
     RouterGenerationError,
     RouterPathParamsModifiedError,
 )
@@ -157,86 +161,7 @@ class _EndpointTransformer(Generic[_R]):
         for version in self.versions:
             self.annotation_transformer.migrate_router_to_version(router, version)
 
-            response_models = set()
-            request_bodies = set()
-            path_to_route_methods_mapping = defaultdict(set)
-
-            for route in router.routes:
-                if isinstance(route, APIRoute):
-                    if route.response_model is not None and lenient_issubclass(route.response_model, BaseModel):
-                        # FIXME: This is going to fail on Pydantic 1
-                        response_models.add(route.response_model)
-                    # Not sure if it can ever be None when it's a simple schema. Eh, I would rather be safe than sorry
-                    if (
-                        _route_has_a_simple_body_schema(route)
-                        and route.body_field is not None
-                        and route.body_field.field_info.annotation is not None
-                        and lenient_issubclass(route.body_field.field_info.annotation, BaseModel)
-                    ):
-                        # FIXME: This is going to fail on Pydantic 1
-                        request_bodies.add(route.body_field.field_info.annotation)
-                    path_to_route_methods_mapping[route.path] |= route.methods
-
-            head_response_models = {
-                get_another_version_of_cls(
-                    model,
-                    self.versions.versioned_directories_with_head[0],
-                    self.versions.versioned_directories_with_head,
-                )
-                for model in response_models
-            }
-            head_request_bodies = {
-                get_another_version_of_cls(
-                    body,
-                    self.versions.versioned_directories_with_head[0],
-                    self.versions.versioned_directories_with_head,
-                )
-                for body in request_bodies
-            }
-
-            for version_change in version.version_changes:
-                for by_path_converters in [
-                    *version_change.alter_response_by_path_instructions.values(),
-                    *version_change.alter_request_by_path_instructions.values(),
-                ]:
-                    for by_path_converter in by_path_converters:
-                        missing_methods = path_to_route_methods_mapping[by_path_converter.path].difference(
-                            by_path_converter.methods
-                        )
-
-                        if missing_methods:
-                            raise RouterGenerationError(
-                                f"{by_path_converter.repr_name} "
-                                f'"{version_change.__name__}.{by_path_converter.transformer.__name__}" '
-                                f"failed to find routes with the following methods: {list(missing_methods)}. "
-                                f"This means that you are trying to apply this converter to non-existing endpoint(s). "
-                                "Please, check whether the path and methods are correct. (hint: path must include "
-                                "all path variables and have a name that was used in the version that this "
-                                "VersionChange resides in)"
-                            )
-
-                for by_schema_converters in version_change.alter_request_by_schema_instructions.values():
-                    for by_schema_converter in by_schema_converters:
-                        missing_models = set(by_schema_converter.schemas) - head_request_bodies
-                        # if missing_models:
-                        #     raise RouterGenerationError(
-                        #         f"Request by body schema converter "
-                        #         f'"{version_change.__name__}.{by_schema_converter.transformer.__name__}" '
-                        #         f"failed to find routes with the following body schemas: "
-                        #         f"{[m.__name__ for m in missing_models]}. "
-                        #         f"This means that you are trying to apply this converter to non-existing endpoint(s). "
-                        #     )
-                for by_schema_converters in version_change.alter_response_by_schema_instructions.values():
-                    for by_schema_converter in by_schema_converters:
-                        missing_models = set(by_schema_converter.schemas) - head_response_models
-                        if missing_models:
-                            raise RouterGenerationError(
-                                f"Response by response model converter "
-                                f'"{version_change.__name__}.{by_schema_converter.transformer.__name__}" '
-                                f"failed to find routes with the following response models: "
-                                f"{[m.__name__ for m in missing_models]}. "
-                                f"This means that you are trying to apply this converter to non-existing endpoint(s). "
-                            )
+            self._validate_all_data_converters_are_applied(router, version)
 
             routers[version.value] = router
             # Applying changes for the next version
@@ -294,6 +219,92 @@ class _EndpointTransformer(Generic[_R]):
                 if not (isinstance(route, fastapi.routing.APIRoute) and _DELETED_ROUTE_TAG in route.tags)
             ]
         return routers
+
+    def _validate_all_data_converters_are_applied(self, router: APIRouter, version: Version):
+        path_to_route_methods_mapping, head_response_models, head_request_bodies = self._extract_all_routes_identifiers(
+            router
+        )
+
+        for version_change in version.version_changes:
+            for by_path_converters in [
+                *version_change.alter_response_by_path_instructions.values(),
+                *version_change.alter_request_by_path_instructions.values(),
+            ]:
+                for by_path_converter in by_path_converters:
+                    missing_methods = by_path_converter.methods.difference(
+                        path_to_route_methods_mapping[by_path_converter.path]
+                    )
+
+                    if missing_methods:
+                        raise RouteByPathConverterDoesNotApplyToAnythingError(
+                            f"{by_path_converter.repr_name} "
+                            f'"{version_change.__name__}.{by_path_converter.transformer.__name__}" '
+                            f"failed to find routes with the following methods: {list(missing_methods)}. "
+                            f"This means that you are trying to apply this converter to non-existing endpoint(s). "
+                            "Please, check whether the path and methods are correct. (hint: path must include "
+                            "all path variables and have a name that was used in the version that this "
+                            "VersionChange resides in)"
+                        )
+
+            for by_schema_converters in version_change.alter_request_by_schema_instructions.values():
+                for by_schema_converter in by_schema_converters:
+                    missing_models = set(by_schema_converter.schemas) - head_request_bodies
+                    if missing_models:
+                        raise RouteRequestBySchemaConverterDoesNotApplyToAnythingError(
+                            f"Request by body schema converter "
+                            f'"{version_change.__name__}.{by_schema_converter.transformer.__name__}" '
+                            f"failed to find routes with the following body schemas: "
+                            f"{[m.__name__ for m in missing_models]}. "
+                            f"This means that you are trying to apply this converter to non-existing endpoint(s). "
+                        )
+            for by_schema_converters in version_change.alter_response_by_schema_instructions.values():
+                for by_schema_converter in by_schema_converters:
+                    missing_models = set(by_schema_converter.schemas) - head_response_models
+                    if missing_models:
+                        raise RouteResponseBySchemaConverterDoesNotApplyToAnythingError(
+                            f"Response by response model converter "
+                            f'"{version_change.__name__}.{by_schema_converter.transformer.__name__}" '
+                            f"failed to find routes with the following response models: "
+                            f"{[m.__name__ for m in missing_models]}. "
+                            f"This means that you are trying to apply this converter to non-existing endpoint(s). "
+                        )
+
+    def _extract_all_routes_identifiers(
+        self, router: APIRouter
+    ) -> tuple[defaultdict[str, set[str]], set[Any], set[Any]]:
+        response_models: set[Any] = set()
+        request_bodies: set[Any] = set()
+        path_to_route_methods_mapping: dict[str, set[str]] = defaultdict(set)
+
+        for route in router.routes:
+            if isinstance(route, APIRoute):
+                if route.response_model is not None and lenient_issubclass(route.response_model, BaseModel):
+                    # FIXME: This is going to fail on Pydantic 1
+                    response_models.add(route.response_model)
+                    # Not sure if it can ever be None when it's a simple schema. Eh, I would rather be safe than sorry
+                if _route_has_a_simple_body_schema(route) and route.body_field is not None:
+                    annotation = get_annotation_from_model_field(route.body_field)
+                    if lenient_issubclass(annotation, BaseModel):
+                        # FIXME: This is going to fail on Pydantic 1
+                        request_bodies.add(annotation)
+                path_to_route_methods_mapping[route.path] |= route.methods
+
+        head_response_models = {
+            self.annotation_transformer._change_version_of_annotations(
+                model,
+                self.versions.versioned_directories_with_head[0],
+            )
+            for model in response_models
+        }
+        head_request_bodies = {
+            self.annotation_transformer._change_version_of_annotations(
+                body,
+                self.versions.versioned_directories_with_head[0],
+            )
+            for body in request_bodies
+        }
+
+        return path_to_route_methods_mapping, head_response_models, head_request_bodies
 
     def _replace_internal_representation_with_the_versioned_schema(
         self,

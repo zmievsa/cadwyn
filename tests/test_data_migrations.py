@@ -19,7 +19,13 @@ from starlette.responses import StreamingResponse
 
 from cadwyn import VersionedAPIRouter, generate_code_for_versioned_packages
 from cadwyn._compat import PYDANTIC_V2, model_dump
-from cadwyn.exceptions import CadwynError, CadwynHeadRequestValidationError
+from cadwyn.exceptions import (
+    CadwynError,
+    CadwynHeadRequestValidationError,
+    RouteByPathConverterDoesNotApplyToAnythingError,
+    RouteRequestBySchemaConverterDoesNotApplyToAnythingError,
+    RouteResponseBySchemaConverterDoesNotApplyToAnythingError,
+)
 from cadwyn.route_generation import InternalRepresentationOf
 from cadwyn.structure import (
     VersionChange,
@@ -1216,6 +1222,82 @@ def test__request_and_response_migrations__for_endpoint_with_modified_status_cod
     resp_2001 = clients[date(2001, 1, 1)].post("/test")
     assert resp_2001.status_code == 201
     assert resp_2001.json() == 83
+
+
+@pytest.mark.parametrize(("path", "method"), [("/NOT_test", "POST"), ("/test", "PUT")])
+def test__request_by_path_migration__for_nonexistent_endpoint_path__should_raise_error(
+    create_versioned_clients: CreateVersionedClients,
+    head_module,
+    router: VersionedAPIRouter,
+    path: str,
+    method: str,
+):
+    @router.post("/test")
+    async def endpoint():
+        raise NotImplementedError
+
+    @convert_request_to_next_version_for(path, [method])
+    def request_converter(request: RequestInfo):
+        raise NotImplementedError
+
+    with pytest.raises(RouteByPathConverterDoesNotApplyToAnythingError):
+        create_versioned_clients(version_change(converter=request_converter))
+
+
+@pytest.mark.parametrize(("path", "method"), [("/NOT_test", "POST"), ("/test", "PUT")])
+def test__response_by_path_migration__for_nonexistent_endpoint_path__should_raise_error(
+    create_versioned_clients: CreateVersionedClients,
+    head_module,
+    router: VersionedAPIRouter,
+    path: str,
+    method: str,
+):
+    @router.post("/test")
+    async def endpoint():
+        raise NotImplementedError
+
+    @convert_response_to_previous_version_for(path, [method])
+    def response_converter(response: ResponseInfo):
+        raise NotImplementedError
+
+    with pytest.raises(RouteByPathConverterDoesNotApplyToAnythingError):
+        create_versioned_clients(version_change(converter=response_converter))
+
+
+def test__request_by_schema_migration__for_nonexistent_schema__should_raise_error(
+    create_versioned_clients: CreateVersionedClients,
+    head_module,
+    router: VersionedAPIRouter,
+):
+    @router.post("/test", response_model=head_module.AnyResponseSchema)
+    async def endpoint(body: head_module.AnyRequestSchema):
+        raise NotImplementedError
+
+    # Using response model for requests to cause an error
+    @convert_request_to_next_version_for(head_module.AnyResponseSchema)
+    def request_converter(request: RequestInfo):
+        raise NotImplementedError
+
+    with pytest.raises(RouteRequestBySchemaConverterDoesNotApplyToAnythingError):
+        create_versioned_clients(version_change(converter=request_converter))
+
+
+def test__response_by_schema_migration__for_nonexistent_schema__should_raise_error(
+    create_versioned_clients: CreateVersionedClients,
+    head_module,
+    router: VersionedAPIRouter,
+):
+    @router.post("/test", response_model=head_module.AnyResponseSchema)
+    async def endpoint(body: head_module.AnyRequestSchema):
+        raise NotImplementedError
+
+    # Using request model for responses to cause an error
+    @convert_response_to_previous_version_for(head_module.AnyRequestSchema)
+    def response_converter(response: ResponseInfo):
+        raise NotImplementedError
+
+    with pytest.raises(RouteResponseBySchemaConverterDoesNotApplyToAnythingError):
+        create_versioned_clients(version_change(converter=response_converter))
 
 
 def test__manual_response_migrations(

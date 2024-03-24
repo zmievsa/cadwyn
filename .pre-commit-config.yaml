@@ -37,8 +37,3 @@ repos:
     hooks:
       - id: markdownlint
         args: ["--disable", "MD013"]
-
-  - repo: https://github.com/zmievsa/pre-commit-pyright
-    rev: v1.1.355
-    hooks:
-      - id: poetry

@@ -111,6 +111,13 @@ class PydanticFieldWrapper:
             return attributes | extras
 
 
+def get_annotation_from_model_field(model: ModelField) -> Any:
+    if PYDANTIC_V2:
+        return model.field_info.annotation
+    else:
+        return model.annotation
+
+
 def model_fields(model: type[BaseModel]) -> dict[str, FieldInfo]:
     if PYDANTIC_V2:
         return model.model_fields

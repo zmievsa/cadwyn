@@ -458,7 +458,7 @@ class VersionBundle:
                         instruction(request_info)
                 if path in version_change.alter_request_by_path_instructions:
                     for instruction in version_change.alter_request_by_path_instructions[path]:
-                        if method in instruction.methods:
+                        if method in instruction.methods:  # pragma: no branch # safe branch to skip
                             instruction(request_info)
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
@@ -510,7 +510,7 @@ class VersionBundle:
 
                 if path in version_change.alter_response_by_path_instructions:
                     for instruction in version_change.alter_response_by_path_instructions[path]:
-                        if method in instruction.methods:
+                        if method in instruction.methods:  # pragma: no branch # Safe branch to skip
                             migrations_to_apply.append(instruction)
 
                 for migration in migrations_to_apply:
@@ -684,10 +684,6 @@ class VersionBundle:
                 # might slightly differ. If it differs -- uvicorn will break.
                 response_info.headers["content-length"] = str(len(response_info._response.body))
 
-            # It makes more sense to re-calculate content length because the previously calculated one
-            # might slightly differ.
-            del response_info.headers["content-length"]
-
             if raised_exception is not None and response_info.status_code >= 400:
                 if isinstance(response_info.body, dict) and "detail" in response_info.body:
                     detail = response_info.body["detail"]
@@ -730,7 +726,7 @@ class VersionBundle:
             and body_field_alias in kwargs
         ):
             raw_body: BaseModel | None = kwargs.get(body_field_alias)
-            if raw_body is None:
+            if raw_body is None:  # pragma: no cover # This is likely an impossible case but we would like to be safe
                 body = None
             # It means we have a dict or a list instead of a full model.
             # This covers the following use case in the endpoint definition: "payload: dict = Body(None)"
