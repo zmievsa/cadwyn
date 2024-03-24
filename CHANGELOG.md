@@ -10,6 +10,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Fixed
 
 * `fastapi.Response` subclasses with non-null bodies and 500 response causing the response to not get returned
+* `fastapi.Response` subclasses had invalid content length if migration affected it
 
 ## [3.12.0]
 

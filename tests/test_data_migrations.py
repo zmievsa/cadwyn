@@ -678,7 +678,7 @@ class TestResponseMigrations:
         assert dict(resp.headers) == (
             {
                 "header-key": "header-val2",
-                "content-length": "20",
+                "content-length": "39",
                 "content-type": "application/json",
                 "x-api-version": "2000-01-01",
             }
@@ -793,6 +793,30 @@ class TestResponseMigrations:
                 "x-api-version": "2001-01-01",
             }
         )
+        assert resp.status_code == 200
+
+    def test__fastapi_response_migration__with_custom_response(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        head_module: ModuleType,
+        router: VersionedAPIRouter,
+    ):
+        @router.post(test_path)
+        async def post_endpoint(request: Request):
+            return Response(status_code=200, content="Hello, world")
+
+        @convert_response_to_previous_version_for(test_path, ["POST"])
+        def converter(response: ResponseInfo):
+            assert response.body == "Hello, world"
+
+        client_2000, client_2001 = create_versioned_clients(version_change(converter=converter)).values()
+        resp = client_2000.post(test_path, json={})
+        assert resp.content == b"Hello, world"
+        assert resp.status_code == 200
+
+        resp = client_2001.post(test_path, json={})
+        assert resp.content == b"Hello, world"
         assert resp.status_code == 200
 
 
