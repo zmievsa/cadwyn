@@ -20,7 +20,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import solve_dependencies
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
 from starlette._utils import is_async_callable
@@ -621,7 +621,10 @@ class VersionBundle:
             if isinstance(response_or_response_body, StreamingResponse | FileResponse):
                 body = None
             elif response_or_response_body.body:
-                body = json.loads(response_or_response_body.body)
+                if isinstance(response_or_response_body, JSONResponse) or raised_exception is not None:
+                    body = json.loads(response_or_response_body.body)
+                else:
+                    body = response_or_response_body.body.decode(response_or_response_body.charset)
             else:
                 body = None
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
@@ -667,7 +670,19 @@ class VersionBundle:
             # that do not have it. We don't support it too.
             if response_info.body is not None and hasattr(response_info._response, "body"):
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
-                response_info._response.body = json.dumps(response_info.body).encode()
+                if isinstance(response_info.body, str):
+                    response_info._response.body = response_info.body.encode(response_info._response.charset)
+                else:
+                    response_info._response.body = json.dumps(
+                        response_info.body,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        indent=None,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                # It makes sense to re-calculate content length because the previously calculated one
+                # might slightly differ. If it differs -- uvicorn will break.
+                response_info.headers["content-length"] = str(len(response_info._response.body))
 
             # It makes more sense to re-calculate content length because the previously calculated one
             # might slightly differ.
