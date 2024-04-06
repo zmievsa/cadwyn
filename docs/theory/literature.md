@@ -8,6 +8,7 @@ During Cadwyn's development, I went through countless resources on API Versionin
 
 * <https://stripe.com/blog/api-versioning>
 * <https://www.intercom.com/blog/api-versioning/>
+* <https://getconvoy.io/blog/rolling-versions>
 * <https://keygen.sh/blog/breaking-things-without-breaking-things/>
 * <https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market>
 * <https://rescale.com/blog/api-versioning-with-the-django-rest-framework/>
@@ -15,6 +16,7 @@ During Cadwyn's development, I went through countless resources on API Versionin
 ### Projects
 
 * <https://github.com/sjkaliski/pinned>
+* <https://github.com/subomi/requestmigrations>
 * <https://github.com/phillbaker/gates>
 * <https://github.com/lukepolo/laravel-api-migrations>
 * <https://github.com/tomschlick/request-migrations>
