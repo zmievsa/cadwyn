@@ -15,13 +15,24 @@ During Cadwyn's development, I went through countless resources on API Versionin
 
 ### Projects
 
+#### Python
+
+* <https://github.com/binnev/djangorestframework_versioning>
+
+#### Golang
+
 * <https://github.com/sjkaliski/pinned>
 * <https://github.com/subomi/requestmigrations>
+
+#### Ruby
+
 * <https://github.com/phillbaker/gates>
+* <https://github.com/keygen-sh/request_migrations>
+
+#### PHP
+
 * <https://github.com/lukepolo/laravel-api-migrations>
 * <https://github.com/tomschlick/request-migrations>
-* <https://github.com/keygen-sh/request_migrations>
-* <https://github.com/binnev/djangorestframework_versioning>
 
 ## Overview articles on API Versioning
 
