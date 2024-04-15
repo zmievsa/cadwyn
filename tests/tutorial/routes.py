@@ -10,7 +10,7 @@ from .data.head.users import (
 )
 from .versions import version_bundle
 
-router = VersionedAPIRouter()
+router = VersionedAPIRouter(tags=["Users"])
 database_parody = {}
 
 
@@ -40,4 +40,4 @@ async def get_user_addresses(user_id: uuid.UUID):
     return {"data": database_parody[f"addr_{user_id}"]}
 
 
-app = Cadwyn(versions=version_bundle)
+app = Cadwyn(versions=version_bundle, title="My amazing API")

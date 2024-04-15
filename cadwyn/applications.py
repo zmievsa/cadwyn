@@ -222,7 +222,7 @@ class Cadwyn(FastAPI):
             header_value_str = header_value.isoformat()
             openapi = get_openapi(
                 title=self.title,
-                version=self.version,
+                version=header_value.isoformat(),
                 openapi_version=self.openapi_version,
                 description=self.description,
                 terms_of_service=self.terms_of_service,

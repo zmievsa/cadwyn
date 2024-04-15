@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.14.0]
+
+### Added
+
+* Current API version to per-version openapi.json
+
 ## [3.13.0]
 
 ### Added
