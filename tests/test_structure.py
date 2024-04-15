@@ -1,11 +1,12 @@
 import re
 from contextvars import ContextVar
 from datetime import date
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from pydantic import BaseModel
 
+from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import CadwynError, CadwynStructureError, LintingError
 from cadwyn.structure import (
     Version,
@@ -17,7 +18,7 @@ from cadwyn.structure import (
     endpoint,
     schema,
 )
-from cadwyn.structure.data import internal_body_representation_of
+from cadwyn.structure.schemas import FieldChanges, PossibleFieldAttributes
 
 
 class DummySubClass2000_001(VersionChangeWithSideEffects):  # noqa: N801
@@ -100,7 +101,7 @@ class TestVersionChange:
 
             class DummySubClass(VersionChange):
                 description = "dummy description"
-                instructions_to_migrate_to_previous_version = True  # pyright: ignore[reportGeneralTypeIssues]
+                instructions_to_migrate_to_previous_version = True  # pyright: ignore[reportAssignmentType]
 
     def test__instructions_to_migrate_to_previous_version__non_instruction_specified_in_list__should_raise_error(self):
         with pytest.raises(
@@ -112,7 +113,7 @@ class TestVersionChange:
 
             class DummySubClass(VersionChange):
                 description = "dummy description"
-                instructions_to_migrate_to_previous_version = [True]  # pyright: ignore[reportGeneralTypeIssues]
+                instructions_to_migrate_to_previous_version = [True]  # pyright: ignore[reportAssignmentType]
 
     def test__non_instruction_attribute_set__should_raise_error(self):
         with pytest.raises(
@@ -338,12 +339,12 @@ def test__convert_response_to_previous_version_for__with_incorrect_args__should_
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Method 'my_conversion_method' must have 2 parameters: cls and response",
+            "Method 'my_conversion_method' must have only 1 parameter: response",
         ),
     ):
 
         @convert_response_to_previous_version_for(SomeSchema)
-        def my_conversion_method(cls: Any, payload: Any):
+        def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
             raise NotImplementedError
 
 
@@ -351,12 +352,12 @@ def test__convert_response_to_previous_version_for__with_no_args__should_raise_e
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Method 'my_conversion_method2' must have 2 parameters: cls and response",
+            "Method 'my_conversion_method2' must have only 1 parameter: response",
         ),
     ):
 
         @convert_response_to_previous_version_for(SomeSchema)
-        def my_conversion_method2():
+        def my_conversion_method2():  # pragma: no branch
             raise NotImplementedError
 
 
@@ -364,12 +365,12 @@ def test__convert_request_to_next_version_for__with_incorrect_args__should_raise
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Method 'my_conversion_method' must have 2 parameters: cls and request",
+            "Method 'my_conversion_method' must have only 1 parameter: request",
         ),
     ):
 
         @convert_request_to_next_version_for(SomeSchema)
-        def my_conversion_method(cls: Any, payload: Any):
+        def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
             raise NotImplementedError
 
 
@@ -377,39 +378,43 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Method 'my_conversion_method2' must have 2 parameters: cls and request",
+            "Method 'my_conversion_method2' must have only 1 parameter: request",
         ),
     ):
 
         @convert_request_to_next_version_for(SomeSchema)
-        def my_conversion_method2():
+        def my_conversion_method2():  # pragma: no branch
             raise NotImplementedError
 
 
-def test__schema_field_existed_as_import_as__without_import_from__should_raise_error():
-    with pytest.raises(
-        CadwynStructureError,
-        match=re.escape('Field "baz" has "import_as" but not "import_from" which is prohibited'),
-    ):
-        schema(SomeSchema).field("baz").existed_as(type=str, import_as="MyStr")
+@pytest.mark.parametrize(
+    ("attr_name", "attr_value"),
+    [
+        ("regex", r"hewwo"),
+        ("include", ["a", "b"]),
+        ("min_items", 3),
+        ("max_items", 4),
+        ("unique_items", True),
+    ],
+)
+def test__schema_field_had_pydantic_1_field_in_pydantic_2__should_raise_error(attr_name: str, attr_value: Any):
+    if not PYDANTIC_V2:
+        pytest.skip("This test is only for Pydantic v2.")
+    with pytest.raises(CadwynStructureError, match=f"`{attr_name}` was removed in Pydantic 2. Use `"):
+        schema(SomeSchema).field("foo").had(**{attr_name: attr_value})
 
 
-def test__internal_body_representation_of__specifying_schema_twice():
-    class A(BaseModel):
-        pass
+def test__schema_field_had_pydantic_2_field_in_pydantic_1__should_raise_error():
+    if PYDANTIC_V2:
+        pytest.skip("This test is only for Pydantic v1.")
+    with pytest.raises(CadwynStructureError, match="`pattern` is only available in Pydantic 2. use `regex` instead"):
+        schema(SomeSchema).field("foo").had(pattern=r"rawr")
 
-    @internal_body_representation_of(A)
-    class B(A):
-        pass
 
-    with pytest.raises(
-        TypeError,
-        match=re.escape("A already has an internal request body representation: tests.test_structure.B"),
-    ):
-
-        @internal_body_representation_of(A)
-        class C(A):
-            pass
+def test__schema_field_had_arguments_are_in_sync_with_schema_field_didnt_have_typehints():
+    parameter_names_in_field_had = FieldChanges.__dataclass_fields__
+    parameter_names_in_field_didnt_have = get_args(PossibleFieldAttributes)
+    assert set(parameter_names_in_field_had) == set(parameter_names_in_field_didnt_have)
 
 
 def test__endpoint_instruction_factory_interface__with_wrong_http_methods__should_raise_error():
@@ -421,3 +426,16 @@ def test__endpoint_instruction_factory_interface__with_wrong_http_methods__shoul
         ),
     ):
         endpoint("/test", ["DEATH", "STRAND"])
+
+
+def test__schema_validator_existed__non_validator_was_passed__should_raise_error():
+    def fake_validator(cls, value):
+        raise NotImplementedError
+
+    with pytest.raises(CadwynStructureError, match=re.escape("The passed function must be a pydantic validator")):
+        schema(BaseModel).validator(fake_validator).existed
+
+
+def test__schema_validator_existed__non_function_was_passed__should_raise_error():
+    with pytest.raises(CadwynStructureError, match=re.escape("The passed validator must be a function")):
+        schema(BaseModel).validator(CadwynStructureError).existed

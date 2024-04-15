@@ -1,17 +1,36 @@
 [tool.poetry]
 name = "cadwyn"
-version = "2.3.2"
-description = "Modern Stripe-like API versioning in FastAPI"
+version = "3.14.0"
+description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/zmievsa/cadwyn"
+documentation = "https://docs.cadwyn.dev"
+keywords = [
+    "python",
+    "api",
+    "json-schema",
+    "stripe",
+    "versioning",
+    "code-generation",
+    "hints",
+    "api-versioning",
+    "pydantic",
+    "fastapi",
+    "python310",
+    "python311",
+    "python312",
+]
 classifiers = [
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
     "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Internet",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -33,38 +52,35 @@ classifiers = [
 [tool.poetry.dependencies]
 python = "^3.10"
 typing-extensions = "*"
-fastapi = ">=0.96.1"
-pydantic = "^1.10.0"
+fastapi = ">=0.110.0"
+starlette = ">=0.36.3"
+pydantic = ">=1.0.0"
 typer = {version = ">=0.7.0", optional = true}
-verselect = ">=0.0.6"
+better-ast-comments = "~1.2.1"
+jinja2 = ">=3.1.2"
+issubclass = "^0.1.2"
 
 [tool.poetry.extras]
 cli = ["typer"]
 
+
 [tool.poetry.group.dev.dependencies]
-black = "*"
-ruff = "*"
 pytest = ">=7.2.1"
 pytest-cov = ">=4.0.0"
 uvicorn = "*"
 devtools = "*"
 pdbpp = "^0.10.3"
-pytest-pretty = "^1.2.0"
-pytest-asyncio = "^0.21.0"
 httpx = "*"
-pytest-fixture-classes = "^1.0.3"
-pre-commit = "^3.4.0"
-dirty-equals = "^0.6.0"
-mkdocs = "^1.5.2"
-mkdocs-material = "^9.3.1"
-python-multipart = "^0.0.6"
+pytest-fixture-classes = ">=1.0.3"
+dirty-equals = ">=0.6.0"
+mkdocs = ">=1.5.2"
+mkdocs-material = ">=9.3.1"
+python-multipart = ">=0.0.6"
+mkdocs-simple-hooks = ">=0.1.5"
+pytest-sugar = "^1.0.0"
 
 [tool.poetry.scripts]
 cadwyn = "cadwyn.__main__:app"
-
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
 
 [tool.coverage.report]
 skip_covered = true
@@ -82,25 +98,13 @@ exclude_lines = [
     "if 0:",
     "class .*\\bProtocol\\):",
     "if __name__ == .__main__.:",
-    # Impossible to cover
-    # It is impossible to cover "if TYPE_CHECKING" statements because they never actually run
     "if TYPE_CHECKING:",
     "@(abc\\.)?abstractmethod",
     "@(typing\\.)?overload",
     "__rich_repr__",
     "__repr__",
 ]
-omit = [
-    "tests/test_tutorial/test_users_example003/*",
-    "tests/_data/*",
-    "tests/_temp/*",
-    "tests/test_tutorial/*/schemas/*",
-]
-
-[tool.black]
-color = true
-line-length = 120
-target-version = ["py310"]
+omit = ["./docs/plugin.py", "./site/plugin.py", "./tests/_data/_temp/**/*", "tests/tutorial/data/**/*", "scripts/*.py"]
 
 [tool.pyright]
 reportMissingImports = true
@@ -121,89 +125,10 @@ reportAssertAlwaysTrue = true
 reportUnsupportedDunderAll = true
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingSuperCall = true
+reportFunctionMemberAccess = false
+reportCircularImports = true
+reportInvalidTypeForm = false
 
-
-[tool.ruff]
-target-version = "py310"
-line-length = 120
-select = [
-    "F",       # pyflakes
-    "E",       # pycodestyle errors
-    "W",       # pycodestyle warnings
-    "C90",     # mccabe
-    "I",       # isort
-    "N",       # pep8-naming
-    "UP",      # pyupgrade
-    "YTT",     # flake8-2020
-    "S",       # flake8-bandit
-    "BLE",     # flake8-blind-except
-    "FBT003",  # flake8-boolean-trap
-    "B",       # flake8-bugbear
-    "COM",     # flake8-commas
-    "C4",      # flake8-comprehensions
-    "T10",     # flake8-debugger
-    "ISC",     # flake8-implicit-str-concat
-    "G010",    # Logging statement uses warn instead of warning
-    "G201",    # Logging .exception(...) should be used instead of .error(..., exc_info=True)
-    "G202",    # Logging statement has redundant exc_info
-    "INP",     # flake8-no-pep420
-    "PIE",     # flake8-pie
-    "T20",     # flake8-print
-    "PYI",     # flake8-pyi
-    "PT",      # flake8-pytest-style
-    "Q",       # flake8-quotes
-    "RSE",     # flake8-raise
-    "RET",     # flake8-return
-    "SIM",     # flake8-simplify
-    "TCH",     # flake8-type-checking
-    "ARG",     # flake8-unused-arguments
-    "PTH",     # flake8-use-pathlib
-    "ERA",     # flake8-eradicate
-    "PGH",     # pygrep-hooks
-    "PLC0414", # Import alias does not rename original package
-    "PLE",     # Error
-    "PLW",     # Warning
-    "TRY",     # tryceratops
-    "FLY",     # flynt
-    "RUF",     # ruff-specific rules
-    "ANN001",  # missing type annotation for arguments
-    "ANN002",  # missing type annotation for *args
-    "ANN003",  # missing type annotation for **kwargs
-]
-unfixable = [
-    "ERA001", # eradicate: found commented out code (can be dangerous if fixed automatically)
-]
-ignore = [
-    "D203",   # 1 blank line required before class docstring
-    "ARG002", # Unused method argument
-    "TRY003", # Avoid specifying long messages outside the exception class
-    "TRY300", # Consider moving statement into the else clause
-    "ARG001", # Unused first argument
-    "PT019",  # Fixture without value is injected as parameter, use @pytest.mark.usefixtures instead
-    "SIM108", # Use ternary operator instead of if-else block (ternaries lie to coverage)
-    "RET505", # Unnecessary `else` after `return` statement
-    "N805",   # First argument of a method should be named `self`
-    "UP007",  # Use `X | Y` for type annotations (we need this for testing and our runtime logic)
-]
-
-[tool.ruff.per-file-ignores]
-"tests/*" = [
-    "S",      # ignore bandit security issues in tests
-    "B018",   # ignore useless expressions in tests
-    "PT012",  # ignore complex with pytest.raises clauses
-    "RUF012", # ignore mutable class attributes ClassVar typehint requirement
-    "ANN001", # Missing type annotation for function argument
-    "ANN002", # Missing type annotation for *args
-    "ANN003", # Missing type annotation for **kwargs
-    "PGH003", # Use specific rule codes when ignoring type issues
-    "B008",   # Do not perform function call in argument defaults
-]
-"cadwyn/_utils.py" = [
-    "ERA001", # Found commented-out code (it's not actually commented out. It's just comments)
-]
-
-[tool.ruff.mccabe]
-max-complexity = 14
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

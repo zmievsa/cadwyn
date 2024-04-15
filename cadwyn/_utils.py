@@ -1,10 +1,11 @@
 import functools
 import importlib
 import inspect
+import sys
 from collections.abc import Callable, Collection
 from pathlib import Path
 from types import ModuleType
-from typing import Any, TypeVar, Union
+from typing import Any, Generic, TypeVar, Union
 
 from cadwyn.exceptions import CadwynError, ModuleIsNotVersionedError
 
@@ -13,17 +14,50 @@ UnionType = type(int | str) | type(Union[int, str])
 _T = TypeVar("_T", bound=Callable)
 
 
+_P_T = TypeVar("_P_T")
+_P_R = TypeVar("_P_R")
+
+
+class classproperty(Generic[_P_T, _P_R]):  # noqa: N801
+    def __init__(self, func: Callable[[_P_T], _P_R]) -> None:
+        super().__init__()
+        self.func = func
+
+    def __get__(self, obj: Any, cls: _P_T) -> _P_R:
+        return self.func(cls)
+
+
+class PlainRepr(str):
+    """String class where repr doesn't include quotes"""
+
+    def __repr__(self) -> str:
+        return str(self)
+
+
 def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
     def decorator(f: Callable) -> _T:
-        return f  # pyright: ignore[reportGeneralTypeIssues]
+        return f  # pyright: ignore[reportReturnType]
 
     return decorator
+
+
+@functools.cache
+def get_another_version_of_cls(
+    cls_from_old_version: type[Any], new_version_dir: Path, version_dirs: frozenset[Path] | tuple[Path, ...]
+):
+    # version_dir = /home/myuser/package/companies/v2021_01_01
+    module_from_old_version = sys.modules[cls_from_old_version.__module__]
+    try:
+        module = get_another_version_of_module(module_from_old_version, new_version_dir, version_dirs)
+    except ModuleIsNotVersionedError:
+        return cls_from_old_version
+    return getattr(module, cls_from_old_version.__name__)
 
 
 def get_another_version_of_module(
     module_from_old_version: ModuleType,
     new_version_dir: Path,
-    version_dirs: frozenset[Path],
+    version_dirs: frozenset[Path] | tuple[Path, ...],
 ):
     new_model_module_python_path = get_pythonpath_to_another_version_of_module(
         module_from_old_version,
@@ -36,18 +70,18 @@ def get_another_version_of_module(
 def get_pythonpath_to_another_version_of_module(
     module_from_old_version: ModuleType,
     new_version_dir: Path,
-    version_dirs: frozenset[Path],
+    version_dirs: frozenset[Path] | tuple[Path, ...],
 ) -> str:
-    # ['package', 'companies', 'latest', 'schemas']
+    # ['package', 'companies', 'head', 'schemas']
     #                           ^^^^^^
     #                           index = 2
-    index_of_base_schema_dir = get_index_of_base_schema_dir_in_pythonpath(
+    index_of_base_schema_dir = get_index_of_head_schema_dir_in_module_python_path(
         module_from_old_version,
         new_version_dir,
         version_dirs,
     )
 
-    # ['package', 'companies', 'latest', 'schemas']
+    # ['package', 'companies', 'head', 'schemas']
     model_split_python_path = module_from_old_version.__name__.split(".")
     # ['package', 'companies', 'v2021_01_01', 'schemas']
     model_split_python_path[index_of_base_schema_dir] = new_version_dir.name
@@ -56,7 +90,7 @@ def get_pythonpath_to_another_version_of_module(
 
 
 @functools.cache
-def get_index_of_base_schema_dir_in_pythonpath(
+def get_index_of_head_schema_dir_in_module_python_path(
     module_from_old_version: ModuleType,
     parallel_dir: Path,
     version_dirs: frozenset[Path] = frozenset(),
@@ -70,24 +104,30 @@ def get_index_of_base_schema_dir_in_pythonpath(
             "which Cadwyn couldn't migrate to an older version. "
             "If you are seeing this error -- you've encountered a bug in Cadwyn.",
         )
-    # /home/myuser/package/companies/latest/__init__.py
+    # /home/myuser/package/companies/head/__init__.py
     file = Path(file)
     _validate_that_module_is_versioned(file, version_dirs)
-    if file.name == "__init__.py":
-        # /home/myuser/package/companies/latest/
+    is_package = file.name == "__init__.py"
+    if is_package:
+        # /home/myuser/package/companies/head/
         file = file.parent
     # /home/myuser/package/companies
     root_dir = parallel_dir.parent
-    # latest/schemas
+    # head/schemas
     relative_file = file.relative_to(root_dir).with_suffix("")
-    # ['latest', 'schemas']
+    # ['head', 'schemas']
     relative_file_parts = relative_file.parts
-    # package.companies.latest.schemas.payables
+    # package.companies.head.schemas.payables
     module_python_path = module_from_old_version.__name__
-    # ['package', 'companies', 'latest', 'schemas']
+    # ['package', 'companies', 'head', 'schemas']
     module_split_python_path = module_python_path.split(".")
 
-    return len(module_split_python_path) - len(relative_file_parts)
+    index = len(module_split_python_path) - len(relative_file_parts) - int(is_package)
+
+    # When we are in latest/__init__.py, we have this special case
+    if len(relative_file_parts) == 1 and is_package:
+        index += 1
+    return index
 
 
 def _validate_that_module_is_versioned(file: Path, version_dirs: Collection[Path]):

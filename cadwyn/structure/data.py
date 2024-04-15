@@ -2,34 +2,18 @@ import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, ParamSpec, TypeVar, cast, overload
+from typing import Any, ClassVar, ParamSpec, cast, overload
 
 from fastapi import Request, Response
-from pydantic import BaseModel
 from starlette.datastructures import MutableHeaders
 
 from cadwyn._utils import same_definition_as_in
+from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
 
 _P = ParamSpec("_P")
-_T_MODEL = TypeVar("_T_MODEL", bound=type[BaseModel])
-_SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING = {}
 
 
-def internal_body_representation_of(represents: type[BaseModel], /) -> Callable[[_T_MODEL], _T_MODEL]:
-    def inner(cls: _T_MODEL) -> _T_MODEL:
-        if represents in _SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING:
-            preexisting_representation = _SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING[represents]
-            raise TypeError(
-                f"{represents.__name__} already has an internal request body representation: "
-                f"{preexisting_representation.__module__}.{preexisting_representation.__name__}",
-            )
-        _SCHEMA_TO_INTERNAL_REQUEST_BODY_REPRESENTATION_MAPPING[represents] = cls
-        return cls
-
-    return inner
-
-
-# TODO: Add form handling https://github.com/zmievsa/cadwyn/issues/49
+# TODO (https://github.com/zmievsa/cadwyn/issues/49): Add form handling
 class RequestInfo:
     __slots__ = ("body", "headers", "_cookies", "_query_params", "_request")
 
@@ -50,7 +34,7 @@ class RequestInfo:
         return self._query_params
 
 
-# TODO: handle media_type and background
+# TODO (https://github.com/zmievsa/cadwyn/issues/111): handle _response.media_type and _response.background
 class ResponseInfo:
     __slots__ = ("body", "_response")
 
@@ -90,7 +74,7 @@ class _AlterDataInstruction:
         signature = inspect.signature(self.transformer)
         if list(signature.parameters) != [self._payload_arg_name]:
             raise ValueError(
-                f"Method '{self.transformer.__name__}' must have 2 parameters: cls and {self._payload_arg_name}",
+                f"Method '{self.transformer.__name__}' must have only 1 parameter: {self._payload_arg_name}",
             )
 
         functools.update_wrapper(self, self.transformer)
@@ -113,47 +97,53 @@ class _BaseAlterRequestInstruction(_AlterDataInstruction):
 
 
 @dataclass
-class AlterRequestBySchemaInstruction(_BaseAlterRequestInstruction):
-    schema: Any
+class _AlterRequestBySchemaInstruction(_BaseAlterRequestInstruction):
+    schemas: tuple[Any, ...]
 
 
 @dataclass
-class AlterRequestByPathInstruction(_BaseAlterRequestInstruction):
+class _AlterRequestByPathInstruction(_BaseAlterRequestInstruction):
     path: str
     methods: set[str]
+    repr_name = "Request by path converter"
 
 
 @overload
-def convert_request_to_next_version_for(schema: type, /) -> "type[staticmethod[_P, None]]":
-    ...
+def convert_request_to_next_version_for(
+    first_schema: type, /, *additional_schemas: type
+) -> "type[staticmethod[_P, None]]": ...
 
 
 @overload
-def convert_request_to_next_version_for(path: str, methods: list[str], /) -> "type[staticmethod[_P, None]]":
-    ...
+def convert_request_to_next_version_for(path: str, methods: list[str], /) -> "type[staticmethod[_P, None]]": ...
 
 
 def convert_request_to_next_version_for(
     schema_or_path: type | str,
-    methods: list[str] | None = None,
+    methods_or_second_schema: list[str] | None | type = None,
     /,
+    *additional_schemas: type,
 ) -> "type[staticmethod[_P, None]]":
-    _validate_decorator_args(schema_or_path, methods)
+    _validate_decorator_args(schema_or_path, methods_or_second_schema, additional_schemas)
 
     def decorator(transformer: Callable[[RequestInfo], None]) -> Any:
         if isinstance(schema_or_path, str):
-            return AlterRequestByPathInstruction(
+            return _AlterRequestByPathInstruction(
                 path=schema_or_path,
-                methods=set(cast(list, methods)),
+                methods=set(cast(list, methods_or_second_schema)),
                 transformer=transformer,
             )
         else:
-            return AlterRequestBySchemaInstruction(
-                schema=schema_or_path,
+            if methods_or_second_schema is None:
+                schemas = (schema_or_path,)
+            else:
+                schemas = (schema_or_path, methods_or_second_schema, *additional_schemas)
+            return _AlterRequestBySchemaInstruction(
+                schemas=schemas,
                 transformer=transformer,
             )
 
-    return decorator  # pyright: ignore[reportGeneralTypeIssues]
+    return decorator  # pyright: ignore[reportReturnType]
 
 
 ############
@@ -161,56 +151,84 @@ def convert_request_to_next_version_for(
 ############
 
 
+@dataclass
 class _BaseAlterResponseInstruction(_AlterDataInstruction):
     _payload_arg_name = "response"
+    migrate_http_errors: bool
 
 
 @dataclass
-class AlterResponseBySchemaInstruction(_BaseAlterResponseInstruction):
-    schema: Any
+class _AlterResponseBySchemaInstruction(_BaseAlterResponseInstruction):
+    schemas: tuple[Any, ...]
 
 
 @dataclass
-class AlterResponseByPathInstruction(_BaseAlterResponseInstruction):
+class _AlterResponseByPathInstruction(_BaseAlterResponseInstruction):
     path: str
     methods: set[str]
+    repr_name = "Response by path converter"
 
 
 @overload
-def convert_response_to_previous_version_for(schema: type, /) -> "type[staticmethod[_P, None]]":
-    ...
+def convert_response_to_previous_version_for(
+    first_schema: type,
+    /,
+    *schemas: type,
+    migrate_http_errors: bool = False,
+) -> "type[staticmethod[_P, None]]": ...
 
 
 @overload
-def convert_response_to_previous_version_for(path: str, methods: list[str], /) -> "type[staticmethod[_P, None]]":
-    ...
+def convert_response_to_previous_version_for(
+    path: str,
+    methods: list[str],
+    /,
+    *,
+    migrate_http_errors: bool = False,
+) -> "type[staticmethod[_P, None]]": ...
 
 
 def convert_response_to_previous_version_for(
     schema_or_path: type | str,
-    methods: list[str] | None = None,
+    methods_or_second_schema: list[str] | type | None = None,
     /,
+    *additional_schemas: type,
+    migrate_http_errors: bool = False,
 ) -> "type[staticmethod[_P, None]]":
-    _validate_decorator_args(schema_or_path, methods)
+    _validate_decorator_args(schema_or_path, methods_or_second_schema, additional_schemas)
 
     def decorator(transformer: Callable[[ResponseInfo], None]) -> Any:
         if isinstance(schema_or_path, str):
             # The validation above checks that methods is not None
-            return AlterResponseByPathInstruction(
+            return _AlterResponseByPathInstruction(
                 path=schema_or_path,
-                methods=set(cast(list, methods)),
+                methods=set(cast(list, methods_or_second_schema)),
                 transformer=transformer,
+                migrate_http_errors=migrate_http_errors,
             )
         else:
-            return AlterResponseBySchemaInstruction(schema=schema_or_path, transformer=transformer)
+            if methods_or_second_schema is None:
+                schemas = (schema_or_path,)
+            else:
+                schemas = (schema_or_path, methods_or_second_schema, *additional_schemas)
+            return _AlterResponseBySchemaInstruction(
+                schemas=schemas,
+                transformer=transformer,
+                migrate_http_errors=migrate_http_errors,
+            )
 
-    return decorator  # pyright: ignore[reportGeneralTypeIssues]
+    return decorator  # pyright: ignore[reportReturnType]
 
 
-def _validate_decorator_args(schema_or_path: type | str, methods: list[str] | None):
+def _validate_decorator_args(
+    schema_or_path: type | str, methods_or_second_schema: list[str] | type | None, additional_schemas: tuple[type, ...]
+) -> None:
     if isinstance(schema_or_path, str):
-        if methods is None:
-            raise ValueError("If path was provided as a first argument, methods must be provided as a second argument")
+        if not isinstance(methods_or_second_schema, list):
+            raise TypeError("If path was provided as a first argument, methods must be provided as a second argument")
+        _validate_that_strings_are_valid_http_methods(methods_or_second_schema)
+        if additional_schemas:
+            raise TypeError("If path was provided as a first argument, then additional schemas cannot be added")
 
-    elif methods is not None:
-        raise ValueError("If schema was provided as a first argument, methods argument should not be provided")
+    elif methods_or_second_schema is not None and not isinstance(methods_or_second_schema, type):
+        raise TypeError("If schema was provided as a first argument, all other arguments must also be schemas")

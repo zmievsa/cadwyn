@@ -1,0 +1,58 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.py"
+      - "**.toml"
+      - "**.lock"
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+    paths:
+      - "**.py"
+      - "**.toml"
+      - "**.lock"
+      - ".pre-commit-config.yaml"
+
+jobs:
+  Tests:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.10"
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.10"
+          - os: macos-latest
+            python-version: "3.10"
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-poetry
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - run: make ci_supertest
+
+  Lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pre-commit/action@v3.0.0
+
+  Typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-poetry
+
+      - uses: jakebailey/pyright-action@v1
+        with:
+          pylance-version: latest-release

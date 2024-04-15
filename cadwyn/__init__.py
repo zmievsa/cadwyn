@@ -1,9 +1,9 @@
 import importlib.metadata
 
+from .applications import Cadwyn
 from .codegen import generate_code_for_versioned_packages
-from .main import Cadwyn
-from .routing import VersionedAPIRouter, generate_versioned_routers
-from .structure import VersionBundle, internal_body_representation_of
+from .route_generation import InternalRepresentationOf, VersionedAPIRouter, generate_versioned_routers
+from .structure import VersionBundle
 
 __version__ = importlib.metadata.version("cadwyn")
 __all__ = [
@@ -12,5 +12,5 @@ __all__ = [
     "generate_code_for_versioned_packages",
     "VersionBundle",
     "generate_versioned_routers",
-    "internal_body_representation_of",
+    "InternalRepresentationOf",
 ]

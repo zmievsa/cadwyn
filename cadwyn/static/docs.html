@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenAPI Contracts</title>
+    <meta name="robots" content="noindex">
+
+    <!-- Favicon -->
+    <link rel="shortcut icon" type="image/x-icon"
+      href="https://cpwebassets.codepen.io/assets/favicon/favicon-aec34940fbc1a6e787974dcd360f2c6b63348d4b1f4e06c77743096d55480f33.ico">
+    <link rel="mask-icon"
+      href="https://cpwebassets.codepen.io/assets/favicon/logo-pin-8f3771b1072e3c38bd662872f6b673a722f4b3ca2421637d5596661b4e2132cc.svg"
+      color="#111">
+    <link rel="canonical" href="https://codepen.io/faaezahmd/pen/dJeRex">
+
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css?family=Lato" rel="stylesheet">
+
+    <!-- Reset CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/meyer-reset/2.0/reset.min.css">
+
+    <!-- Custom Styles -->
+    <style>
+      body {
+        font-family: "Lato", sans-serif;
+        background-color: #f4f4f4;
+        color: #333;
+        margin: 0;
+        padding: 0;
+      }
+
+      .container {
+        max-width: 800px;
+        margin: 50px auto;
+        padding: 20px;
+        background-color: #fff;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        border-radius: 5px;
+      }
+
+      h2 {
+        font-size: 32px;
+        margin: 0 0 20px;
+        text-align: center;
+        color: #3498db;
+      }
+
+      h2 small {
+        display: block;
+        font-size: 14px;
+        color: #555;
+      }
+
+      .responsive-table li {
+        border-radius: 5px;
+        padding: 20px;
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        background-color: #ecf0f1;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      }
+
+      .responsive-table .table-header {
+        background-color: #3498db;
+        font-size: 16px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #fff;
+      }
+
+      .responsive-table .col-1,
+      .responsive-table .col-2 {
+        flex-basis: 50%;
+        text-align: left;
+      }
+
+      .responsive-table .col-1 {
+        font-weight: bold;
+      }
+
+      .responsive-table .col-2 a {
+        color: black;
+        /* Задаем цвет текста черным */
+        text-decoration: none;
+        font-weight: bold;
+      }
+
+      @media all and (max-width: 767px) {
+        .responsive-table .table-header {
+          display: none;
+        }
+
+        .responsive-table li {
+          display: block;
+        }
+
+        .responsive-table .col {
+          flex-basis: 100%;
+          display: flex;
+          padding: 10px 0;
+        }
+
+        .responsive-table .col:before {
+          color: #6C7A89;
+          padding-right: 10px;
+          content: attr(data-label);
+          flex-basis: 50%;
+          text-align: right;
+        }
+      }
+
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <h2>OpenAPI Contracts</h2>
+      <ul class="responsive-table">
+        <li class="table-header">
+          <div class="col col-1">Version</div>
+          <div class="col col-2">URL</div>
+        </li>
+        {% for name, url in table.items() %}
+        <li class="table-row">
+          <div class="col col-1">{{ name }}</div>
+          <div class="col col-2"><a href="{{ url }}">{{ url }}</a></div>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </body>
+
+</html>

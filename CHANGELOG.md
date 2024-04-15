@@ -5,9 +5,306 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.14.0]
+
+### Added
+
+* Current API version to per-version openapi.json
+
+## [3.13.0]
+
+### Added
+
+* Validation for path converters to make sure that impossible HTTP methods cannot be used
+* Validation for both path and schema converters to make sure that they are used at some point. Otherwise, router generation will raise an error
+
+## [3.12.1]
+
+### Fixed
+
+* `fastapi.Response` subclasses with non-null bodies and 500 response causing the response to not get returned
+* `fastapi.Response` subclasses had invalid content length if migration affected it
+
+## [3.12.0]
+
+### Changed
+
+* Rewritten header routing logic and structure to support the full feature set of FastAPI
+
+## [3.11.1]
+
+### Fixed
+
+* Modules and enums from head versions not being detected and thus causing errors
+
+## [3.11.0]
+
+### Changed
+
+* Header router is no longer reliant on the API version header -- now it simply takes the API version from the `VersionBundle.api_version_var`, thus making it easy for someone to extend header routing and set their own rules for how the default version is chosen
+
+## [3.10.1]
+
+### Fixed
+
+* Previous version introduced a minor breaking change: if any old users depended on the pure `generate_versioned_routers` interface, their work would receive a minor yet simple breaking change.
+
+## [3.10.0]
+
+**Yanked** due to a minor breaking change that we fixed in 3.10.1.
+
+### Added
+
+* The new approach to internal schemas: instead of having them duplicate certain fields from `latest`, we introduced a new `HEAD` version -- the only one the user maintains by hand. All requests get migrated to `HEAD` and latest schemas are generated from `HEAD`. `cadwyn.structure.HeadVersion` was added to give us the ability to have migrations between `HEAD` and latest, thus eliminating the need for `InternalRepresentationOf` because all the used schemas are now the internal representations
+
+### Changed
+
+* `latest` is now named `head` because it no longer represents the newest version. Instead, it is the the `internally used` version and the version that is used for generating all other versions.
+* the newest version is not aliased from `latest` anymore. Instead, it is generated like all the rest
+* deprecated `InternalRepresentationOf` and the concept of `internal schemas` in favor of `HeadVersion` migrations
+
+## [3.9.1]
+
+### Fixed
+
+* A broken link to docs in README.md
+
+## [3.9.0]
+
+### Added
+
+* Support for getting openapi.json routes using API version headers instead of path query params
+
+## [3.8.0]
+
+### Added
+
+* Discord status badge in README
+* Logos to existing status badges in README
+* An ability to specify multiple schemas when using `convert_request_to_next_version_for` and `convert_response_to_next_version_for` to be able to migrate multiple types of schemas using the same converter
+* Redoc support
+
+### Removed
+
+* Dependency from verselect. Now it is included as a part of Cadwyn
+
+### Fixed
+
+* `h11._util.LocalProtocolError` when raising `HTTPException(status_code=500)`
+
+## [3.7.1]
+
+### Fixed
+
+* Error message for changing path params of an endpoint in an incompatible manner which listed methods instead of path params
+
+### Changed
+
+* Deprecated `cadwyn generate-code-for-versioned-packages` and added `cadwyn codegen` instead. It doesn't require `template_package` argument anymore and does not have the `ignore_coverage_for_latest_aliases` argument as we plan to remove this feature in the future. So it only requires `version_bundle`.
+
+## [3.7.0]
+
+### Changed
+
+* Deprecated `cadwyn generate-code-for-versioned-packages` and added `cadwyn codegen` instead. It doesn't require `template_package` argument anymore and does not have the `ignore_coverage_for_latest_aliases` argument as we plan to remove this feature in the future. So it only requires `version_bundle`.
+
+## [3.6.6]
+
+### Fixed
+
+* When a class-based dependency from **fastapi** was used (anything security related), FastAPI had hardcoded `isinstance` checks for it which it used to enrich swagger with functionality. But when the dependencies were wrapped into our function wrappers, these checks stopped passing, thus breaking this functionality in swagger. Now we ignore all dependencies that FastAPI creates. This also introduces a hard-to-solve bug: if fastapi's class-based security dependency was subclassed and then `__call__` was overriden with new dependencies that are versioned -- we will not migrate them from version to version. I hope this is an extremely rare use case though. In fact, such use case breaks Liskov Substitution Principle and doesn't make much sense because security classes already include `request` parameter which means that no extra dependencies or parameters are necessary.
+
+## [3.6.5]
+
+### Fixed
+
+* When a class-based dependency was used, its dependant was incorrectly generated, causing all affected endpoints to completely stop functioning
+
+## [3.6.4] <!-- Test release -->
+
+## [3.6.3]
+
+### Fixed
+
+* A rare pydantic 2 bug that caused `BaseModel` annotations to be corrupted when new fields were added to the schema
+
+## [3.6.2]
+
+### Fixed
+
+* Removed exception when creating `cadwyn.Cadwyn` without `latest_schemas_package` as it was a minor breaking change
+
+## [3.6.0]
+
+### Added
+
+* Add `cadwyn.VersionBundle.migrate_response_body` that allows us to migrate response bodies outside of routing and FastAPI
+* `latest_schemas_package` argument to `cadwyn.VersionBundle` to support the migration above
+
+### Removed
+
+### Changed
+
+* We now raise a 5xx error (`cadwyn.exceptions.CadwynLatestRequestValidationError`) whenever a request migration caused our payload to be incompatible with latest request schemas
+* Deprecated `cadwyn.main` and use `cadwyn.applications` instead
+* Deprecated `latest_schemas_package` argument in `cadwyn.Cadwyn`
+
+## [3.5.0]
+
+### Fixed
+
+* Previously, Cadwyn did not set the default status code for ResponseInfo
+
+### Added
+
+* HTTP status error handling in response converters using `convert_response_to_previous_version_for(...,  migrate_http_errors=True)`
+
+## [3.4.4]
+
+### Fixed
+
+* Request and response converters were not applied when path params were present
+
+## [3.4.3]
+
+### Added
+
+* `RouterPathParamsModifiedError` is now raised if `endpoint(...).had(path=...)` has different path params than the original route
+
+## [3.4.2]
+
+### Fixed
+
+* Fix import aliases in nested `__init__.py` files generating incorrectly for latest version
+
+## [3.4.1]
+
+### Fixed
+
+* If the endpoint specified a single non-pydantic (list/dict) body parameter, Cadwyn failed to serialize the body
+
+## [3.4.0]
+
+### Added
+
+* `schema(...).validator(...).existed` and `schema(...).validator(...).didnt_exist` instructions for simplistic manipulation of validators
+* Automatic deletion of validators when the fields they validate get deleted
+* `schema(...).field(...).didnt_have` for unsetting field attributes
+* Improved support for `typing.Annotated` in schemas
+* Full preservation of original abstract syntax trees for all field values and annotations
+
+### Fixed
+
+* If the user wrote a wrong signature in a transformer decorated by `convert_request_to_next_version_for` or `convert_response_to_previous_version_for`, the text of the error suggested the wrong argument count and names
+
+## [3.3.4]
+
+### Fixed
+
+* Added backwards compatibility for FastAPI < 0.106.0
+
+## [3.3.3]
+
+### Fixed
+
+* Guaranteed that it is impossible to release cadwyn with the wrong pydantic dependency
+
+## [3.3.2]
+
+### Fixed
+
+* Downgrade required version of verselect for backwards compatibility
+
+## [3.3.1]
+
+### Fixed
+
+* Removed lazy migrations as they were producing incorrect results when there were no migrations but when there were schema changes
+* Added compatibility with fastapi>=0.109.0
+
+## [3.3.0]
+
+### Fixed
+
+* If a user used a FastAPI/Starlette `StreamingResponse` or `FileResponse`, we still tried to access its `body` attribute which caused an `AttributeError`
+
+## [3.2.0]
+
+### Added
+
+* Sponsors section to README and docs, along with Monite as our main and only current sponsor ✨
+
+## [3.1.3]
+
+### Fixed
+
+* Switched to `better-ast-comments` because `ast-comments` had no license listed on pypi (even though its actual license was MIT) which caused some dependency checking tools to report it as unlicensed
+
+## [3.1.2]
+
+### Changed
+
+* Migrate from black to ruff-format
+
+### Fixed
+
+* A rare Pydantic 2 bug in internal body schema handling when it was applied too early, causing partially incomplete data to arrive to the handler
+
+## [3.1.1]
+
+### Fixed
+
+* Previously we did not pass `dependency_overrides_provider`, `response_model_exclude_unset` `response_model_exclude_defaults`, and `response_model_exclude_none` to `fastapi` which could cause erroneous behaviour during serialization in rare cases.
+
+## [3.1.0]
+
+### Added
+
+* `module(...).had(import_=...)` construct for adding imports in older versions
+* Codegen plugin system that allows easily customizing code generation for any purpose. It also significantly simplifies the core code of code generation
+
+## [3.0.2]
+
+### Fixed
+
+* If a user returned a FastAPI/Starlette `Response` with an empty body, we still tried to serialize it which caused an invalid response body
+
+## [Unreleased]
+
+## [3.0.0]
+
+### Added
+
+* Pydantic 2 support
+* Expanded reference section to docs
+* Contributor docs
+* Expanded makefile commands
+
+### Changed
+
+* internal request representation is now done using an annotation
+* `latest_schemas_module` was renamed to `latest_schemas_package` everywhere
+* `api_version_var` in `VersionBundle` is now an optional argument instead of a required one
+
+### Removed
+
+* `cadwyn.internal_body_representation_of` because it is now done using an annotation
+
+## [2.3.4]
+
+### Fixed
+
+* `schema(...).field(...).had(ge=...)` for union fields previously raised an `AttributeError` on code generation
+
+## [2.3.3]
+
 ### Fixed
 
 * Field ASTs not preserving the original structure when constrained fields were changed
+
+### Added
+
+* Support for synchronous endpoints
 
 ## [2.3.2]
 
@@ -105,7 +402,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Added
 
 * Recipes documentation section
-* `schema(...).field(...).had(name=...)` functionality to [rename fields](https://docs.cadwyn.dev/reference/#rename-a-schema)
+* `schema(...).field(...).had(name=...)` functionality to rename fields
 
 ### Changed
 

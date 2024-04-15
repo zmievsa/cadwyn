@@ -132,3 +132,6 @@ dmypy.json
 
 .vscode
 .idea
+
+docs/home/CHANGELOG.md
+local.py
