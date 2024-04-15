@@ -107,6 +107,7 @@ nav:
     - "How we got here": "theory/how_we_got_here.md"
     - "Literature": "theory/literature.md"
     - "Design decisions": "theory/design_decisions.md"
+    - "How to build a versioning framework": "theory/how_to_build_versioning_framework.md"
 
 watch:
 - docs
