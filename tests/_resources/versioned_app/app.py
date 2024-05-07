@@ -25,6 +25,7 @@ versioned_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), life
 versioned_app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
 versioned_app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
 versioned_app.add_unversioned_routers(webhooks_router)
+versioned_app.enrich_swagger()
 
 versioned_app_with_custom_api_version_var = Cadwyn(
     versions=VersionBundle(Version(date(2022, 11, 16))), lifespan=lifespan, api_version_var=ContextVar("My api version")

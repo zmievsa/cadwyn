@@ -47,6 +47,7 @@ def test__header_routing_fastapi_init__changing_openapi_url__docs_still_return_2
     client = TestClient(app)
     app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
     app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
+    app.enrich_swagger()
     assert client.get("/openpapi?version=2021-01-01").status_code == 200
     assert client.get("/openapi.json?version=2021-01-01").status_code == 404
 
