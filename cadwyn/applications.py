@@ -19,7 +19,6 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
 from typing_extensions import Self, deprecated
 
-from cadwyn._utils import same_definition_as_in
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.routing import _RootHeaderAPIRouter
@@ -138,6 +137,8 @@ class Cadwyn(FastAPI):
             api_version_header_name=api_version_header_name,
             api_version_var=self.versions.api_version_var,
         )
+
+        self.add_event_handler("startup", self.enrich_swagger)
 
         self.docs_url = docs_url
         self.redoc_url = redoc_url
@@ -297,91 +298,11 @@ class Cadwyn(FastAPI):
                 dependencies=[Depends(_get_api_version_dependency(self.router.api_version_header_name, header_value))],
             )
 
-        self.enrich_swagger()
         return added_routes
-
-    @same_definition_as_in(FastAPI.include_router)
-    def include_router(self, *args: Any, **kwargs: Any):
-        route = super().include_router(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.post)
-    def post(self, *args: Any, **kwargs: Any):
-        route = super().post(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.get)
-    def get(self, *args: Any, **kwargs: Any):
-        route = super().get(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.patch)
-    def patch(self, *args: Any, **kwargs: Any):
-        route = super().patch(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.delete)
-    def delete(self, *args: Any, **kwargs: Any):
-        route = super().delete(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.put)
-    def put(self, *args: Any, **kwargs: Any):
-        route = super().put(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.trace)
-    def trace(self, *args: Any, **kwargs: Any):  # pragma: no cover
-        route = super().trace(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.options)
-    def options(self, *args: Any, **kwargs: Any):
-        route = super().options(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.head)
-    def head(self, *args: Any, **kwargs: Any):
-        route = super().head(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.add_api_route)
-    def add_api_route(self, *args: Any, **kwargs: Any):
-        route = super().add_api_route(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.api_route)
-    def api_route(self, *args: Any, **kwargs: Any):
-        route = super().api_route(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.add_api_websocket_route)
-    def add_api_websocket_route(self, *args: Any, **kwargs: Any):  # pragma: no cover
-        route = super().add_api_websocket_route(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.websocket)
-    def websocket(self, *args: Any, **kwargs: Any):  # pragma: no cover
-        route = super().websocket(*args, **kwargs)
-        self.enrich_swagger()
-        return route
 
     def add_unversioned_routers(self, *routers: APIRouter):
         for router in routers:
             self.router.include_router(router)
-        self.enrich_swagger()
 
     @deprecated("Use add add_unversioned_routers instead")
     def add_unversioned_routes(self, *routes: Route):

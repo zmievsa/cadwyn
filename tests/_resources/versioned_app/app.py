@@ -21,7 +21,8 @@ async def lifespan(app: FastAPI):
     yield  # pragma: no cover
 
 
-versioned_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), lifespan=lifespan)
+lifespan_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), lifespan=lifespan)
+versioned_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
 versioned_app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
 versioned_app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
 versioned_app.add_unversioned_routers(webhooks_router)
@@ -34,7 +35,8 @@ versioned_app_with_custom_api_version_var.add_header_versioned_routers(v2022_01_
 versioned_app_with_custom_api_version_var.add_unversioned_routers(webhooks_router)
 
 client = TestClient(versioned_app, raise_server_exceptions=False, headers=BASIC_HEADERS)
-client_without_headers = TestClient(versioned_app)
+with TestClient(versioned_app) as client_without_headers:
+    pass
 client_without_headers_and_with_custom_api_version_var = TestClient(versioned_app_with_custom_api_version_var)
 
 if __name__ == "__main__":
