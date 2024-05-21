@@ -20,6 +20,7 @@ async def lifespan(app: FastAPI):
     # to run the lifespan scope during test runs
     yield  # pragma: no cover
 
+
 lifespan_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), lifespan=lifespan)
 versioned_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
 versioned_app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
