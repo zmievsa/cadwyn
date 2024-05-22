@@ -113,7 +113,7 @@ def test__lifespan_async():
         on_startup=[run_startup],
         on_shutdown=[run_shutdown],
     )
-    app.add_unversioned_routes(Route("/v1/", hello_world))
+    app.add_unversioned_routes(Route("/v1/", hello_world))  # pyright: ignore[reportDeprecated]
 
     assert not startup_complete
     assert not shutdown_complete
@@ -135,35 +135,35 @@ def test__host_routing__partial_match__404():
 def test__fwefefe():
     app = Cadwyn(versions=VersionBundle(Version(date(2000, 1, 1))))
 
-    @app.post("/post")
+    @app.post("/post")  # pyright: ignore[reportUntypedFunctionDecorator]
     async def post():
         return "post"
 
-    @app.get("/get")
+    @app.get("/get")  # pyright: ignore[reportUntypedFunctionDecorator]
     async def get():
         return "get"
 
-    @app.patch("/patch")
+    @app.patch("/patch")  # pyright: ignore[reportUntypedFunctionDecorator]
     async def patch():
         return "patch"
 
-    @app.delete("/delete")
+    @app.delete("/delete")  # pyright: ignore[reportUntypedFunctionDecorator]
     async def delete():
         return "delete"
 
-    @app.put("/put")
+    @app.put("/put")  # pyright: ignore[reportUntypedFunctionDecorator]
     async def put():
         return "put"
 
-    @app.options("/options")
+    @app.options("/options")  # pyright: ignore[reportUntypedFunctionDecorator]
     async def options():
         return "options"
 
-    @app.head("/head")
+    @app.head("/head")  # pyright: ignore[reportUntypedFunctionDecorator]
     async def head():
         return "head"
 
-    @app.api_route("/api_route", methods=["POST"])
+    @app.api_route("/api_route", methods=["POST"])  # pyright: ignore[reportUntypedFunctionDecorator]
     async def api_route():
         return "api_route"
 

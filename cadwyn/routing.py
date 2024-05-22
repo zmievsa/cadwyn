@@ -12,7 +12,7 @@ from starlette.responses import RedirectResponse
 from starlette.routing import BaseRoute, Match
 from starlette.types import Receive, Scope, Send
 
-from .route_generation import InternalRepresentationOf, generate_versioned_routers
+from .route_generation import InternalRepresentationOf, generate_versioned_routers  # pyright: ignore[reportDeprecated]
 
 # TODO: Remove this in a major version. This is only here for backwards compatibility
 __all__ = ["InternalRepresentationOf", "generate_versioned_routers"]

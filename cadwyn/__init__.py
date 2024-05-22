@@ -2,7 +2,11 @@ import importlib.metadata
 
 from .applications import Cadwyn
 from .codegen import generate_code_for_versioned_packages
-from .route_generation import InternalRepresentationOf, VersionedAPIRouter, generate_versioned_routers
+from .route_generation import (
+    InternalRepresentationOf,  # pyright: ignore[reportDeprecated]
+    VersionedAPIRouter,
+    generate_versioned_routers,
+)
 from .structure import VersionBundle
 
 __version__ = importlib.metadata.version("cadwyn")

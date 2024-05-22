@@ -60,7 +60,7 @@ def deprecated_generate_versioned_packages(
     possibly_version_bundle = getattr(version_bundle_module, version_bundle_variable_name)
     version_bundle = _get_version_bundle(possibly_version_bundle)
 
-    return generate_code_for_versioned_packages(
+    return generate_code_for_versioned_packages(  # pyright: ignore[reportDeprecated]
         template_package,
         version_bundle,
         ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,

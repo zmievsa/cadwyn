@@ -420,7 +420,7 @@ class VersionBundle:
         versioned_response_model: type[BaseModel] = get_another_version_of_cls(
             latest_response_model, version_dir, self.versioned_directories_with_head
         )
-        return versioned_response_model.parse_obj(migrated_response.body)
+        return versioned_response_model.parse_obj(migrated_response.body)  # pyright: ignore[reportDeprecated]
 
     def _get_closest_lesser_version(self, version: VersionDate):
         for defined_version in self.version_dates:
