@@ -105,8 +105,9 @@ class CreateVersionedAPIRoutes:
     def __call__(
         self,
         *version_changes: type[VersionChange],
+        router: VersionedAPIRouter | None = None,
     ) -> tuple[list[APIRoute], list[APIRoute]]:
-        app = self.create_versioned_app(*version_changes)
+        app = self.create_versioned_app(*version_changes, router=router)
         return (
             cast(list[APIRoute], app.router.versioned_routers.get(date(2000, 1, 1), APIRouter()).routes),
             cast(list[APIRoute], app.router.versioned_routers.get(date(2001, 1, 1), APIRouter()).routes),
@@ -306,6 +307,41 @@ def test__endpoint_had_dependencies(
     assert len(routes_2001[1].dependencies) == 1
 
 
+def test__endpoint_had_dependencies__with_extra_deps_added_at_router_level__router_deps_should_be_preserved(
+    create_versioned_clients: CreateVersionedClients,
+):
+    async def validation_buffer_dependency():
+        return []
+
+    async def add_to_validation_buffer_dependency_router_level(
+        validation_buffer: Annotated[list[str], Depends(validation_buffer_dependency)],
+    ):
+        validation_buffer.append("router")
+
+    async def add_to_validation_buffer_dependency_route_level(
+        validation_buffer: Annotated[list[str], Depends(validation_buffer_dependency)],
+    ):
+        validation_buffer.append("route")
+
+    router = VersionedAPIRouter(dependencies=[Depends(add_to_validation_buffer_dependency_router_level)])
+
+    @router.post("/hello")
+    def route(
+        validation_buffer: Annotated[list[str], Depends(validation_buffer_dependency)],
+    ):
+        return validation_buffer
+
+    client_2000, client_2001 = create_versioned_clients(
+        version_change(
+            endpoint("/hello", ["POST"]).had(dependencies=[Depends(add_to_validation_buffer_dependency_route_level)]),
+        ),
+        router=router,
+    ).values()
+
+    assert client_2000.post("/hello").json() == ["router", "route"]
+    assert client_2001.post("/hello").json() == ["router"]
+
+
 def test__only_exists_in_older_versions__endpoint_is_not_a_route__error(
     router: VersionedAPIRouter,
     test_endpoint: Endpoint,
@@ -326,7 +362,6 @@ def test__only_exists_in_older_versions__applied_twice__should_raise_error(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
 ):
-    # with insert_pytest_raises():
     with pytest.raises(
         CadwynError,
         match=re.escape('The route "test_endpoint" was already deleted. You can\'t delete it again.'),
@@ -355,6 +390,19 @@ def test__router_generation__changing_a_deleted_endpoint__error(
         ),
     ):
         create_versioned_app(version_change(endpoint("/test", ["GET"]).had(description="Hewwo")))
+
+
+def test__router_generation__changing_a_non_existent_endpoint__error(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    with pytest.raises(
+        RouterGenerationError,
+        match=re.escape(
+            'Endpoint "[\'GET\'] /test" you tried to change in "MyVersionChange" doesn\'t exist',
+        ),
+    ):
+        create_versioned_app(version_change(endpoint("/test", ["GET"]).had(dependencies=[])))
 
 
 def test__router_generation__re_creating_an_existing_endpoint__error(
