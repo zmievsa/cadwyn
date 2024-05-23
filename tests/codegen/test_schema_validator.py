@@ -4,7 +4,7 @@ from typing import Any
 
 import pydantic
 import pytest
-from pydantic import root_validator, validator  # pyright: ignore[reportDeprecated]
+from pydantic import root_validator, validator
 
 from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import InvalidGenerationInstructionError
@@ -16,11 +16,11 @@ def test__schema_validator_existed(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
     head_with_one_str_field: Any,
 ):
-    @root_validator(pre=True)  # pyright: ignore[reportDeprecated]
+    @root_validator(pre=True)
     def hewwo(cls, values):
         raise NotImplementedError
 
-    @validator("foo")  # pyright: ignore[reportDeprecated]
+    @validator("foo")
     def dawkness(cls, value):
         raise NotImplementedError
 
@@ -48,7 +48,7 @@ def test__schema_validator_existed__with_root_validator_without_call(
     if PYDANTIC_V2:
         pytest.skip("This test is only for Pydantic v1.")
 
-    @pydantic.root_validator  # pyright: ignore[reportCallIssue, reportUntypedFunctionDecorator, reportDeprecated]
+    @pydantic.root_validator  # pyright: ignore[reportCallIssue, reportUntypedFunctionDecorator]
     def hewwo(cls, values):
         raise NotImplementedError
 
@@ -116,7 +116,7 @@ def test__schema_validator_didnt_exist__for_nonexisting_validator__should_raise_
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
     head_with_validator: Any,
 ):
-    @validator("foo")  # pyright: ignore[reportDeprecated]
+    @validator("foo")
     def fake_validator(cls, value):
         raise NotImplementedError
 
