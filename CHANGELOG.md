@@ -9,7 +9,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Changed
 
-* Optimized the call to enrich_swagger, now happens on the startup event, once for the whole application.
+* Optimized the calls to enrich_swagger which now happen on the startup event, once for the whole application
 
 ## [3.14.0]
 

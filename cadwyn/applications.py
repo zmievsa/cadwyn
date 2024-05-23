@@ -132,7 +132,7 @@ class Cadwyn(FastAPI):
             "responses": responses,
             "generate_unique_id_function": generate_unique_id_function,
         }
-        self.router: _RootHeaderAPIRouter = _RootHeaderAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
+        self.router: _RootHeaderAPIRouter = _RootHeaderAPIRouter(
             **self._kwargs_to_router,
             api_version_header_name=api_version_header_name,
             api_version_var=self.versions.api_version_var,
