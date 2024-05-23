@@ -14,9 +14,9 @@ from tests._resources.versioned_app.app import (
     client_without_headers,
     client_without_headers_and_with_custom_api_version_var,
     lifespan,
+    lifespan_app,
     v2021_01_01_router,
     v2022_01_02_router,
-    versioned_app,
 )
 
 
@@ -44,11 +44,11 @@ def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_ope
 
 def test__header_routing_fastapi_init__changing_openapi_url__docs_still_return_200():
     app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), openapi_url="/openpapi")
-    client = TestClient(app)
     app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
     app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
-    assert client.get("/openpapi?version=2021-01-01").status_code == 200
-    assert client.get("/openapi.json?version=2021-01-01").status_code == 404
+    with TestClient(app) as client:
+        assert client.get("/openpapi?version=2021-01-01").status_code == 200
+        assert client.get("/openapi.json?version=2021-01-01").status_code == 404
 
 
 def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empty__version_should_not_have_any_routes():
@@ -144,4 +144,4 @@ def test__empty_root():
 
 
 def test__lifespan_context_exists():
-    assert versioned_app.router.lifespan_context is lifespan
+    assert lifespan_app.router.lifespan_context is lifespan
