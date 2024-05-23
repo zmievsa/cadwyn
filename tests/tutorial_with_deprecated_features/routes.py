@@ -3,7 +3,7 @@ from typing import Annotated
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.applications import Cadwyn
-from cadwyn.route_generation import InternalRepresentationOf
+from cadwyn.route_generation import InternalRepresentationOf  # pyright: ignore[reportDeprecated]
 
 from .data.latest.users import (
     UserAddressResourceList,
@@ -18,7 +18,9 @@ database_parody = {}
 
 
 @router.post("/users", response_model=UserResource)
-async def create_user(user: Annotated[InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]]):
+async def create_user(
+    user: Annotated[InternalUserCreateRequest, InternalRepresentationOf[UserCreateRequest]],  # pyright: ignore[reportDeprecated]
+):
     id_ = uuid.uuid4()
     database_parody[id_] = {"id": id_}
     addresses = create_user_addresses(id_, [user.default_address, *user.addresses_to_create])

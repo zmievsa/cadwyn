@@ -452,7 +452,10 @@ def _extract_internal_request_schemas_from_router(
         for key, annotation in annotations.items():
             if isinstance(annotation, type(Annotated[int, int])):
                 args = get_args(annotation)
-                if isinstance(args[1], type) and issubclass(args[1], InternalRepresentationOf):  # pragma: no branch
+                if isinstance(args[1], type) and issubclass(  # pragma: no branch
+                    args[1],
+                    InternalRepresentationOf,  # pyright: ignore[reportDeprecated]
+                ):
                     internal_schema = args[0]
                     original_schema = args[1].mro()[2]
                     schema_to_internal_request_body_representation[original_schema] = internal_schema

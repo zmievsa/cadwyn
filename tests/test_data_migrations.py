@@ -26,7 +26,7 @@ from cadwyn.exceptions import (
     RouteRequestBySchemaConverterDoesNotApplyToAnythingError,
     RouteResponseBySchemaConverterDoesNotApplyToAnythingError,
 )
-from cadwyn.route_generation import InternalRepresentationOf
+from cadwyn.route_generation import InternalRepresentationOf  # pyright: ignore[reportDeprecated]
 from cadwyn.structure import (
     VersionChange,
     convert_request_to_next_version_for,
@@ -338,7 +338,7 @@ class TestRequestMigrations:
         async def route(
             payload: Annotated[
                 head_module.InternalSchema,
-                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],
+                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],  # pyright: ignore[reportDeprecated]
                 str,
             ],
         ):
@@ -376,7 +376,7 @@ class TestRequestMigrations:
         async def route(
             payload: Annotated[
                 head_module.InternalSchema,
-                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],
+                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],  # pyright: ignore[reportDeprecated]
             ],
         ):
             return {"type": type(payload).__name__, **model_dump(payload)}
@@ -410,7 +410,7 @@ class TestRequestMigrations:
         async def route(
             payload: Annotated[
                 head_module.InternalSchema,
-                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],
+                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],  # pyright: ignore[reportDeprecated]
             ],
         ):
             return {"type": type(payload).__name__, **model_dump(payload)}
@@ -1329,11 +1329,11 @@ def test__manual_response_migrations(
     new_response = version_bundle.migrate_response_body(
         head_with_empty_classes.EmptySchema, latest_body={"id": "hewwo"}, version=date(2000, 1, 1)
     )
-    assert new_response.dict() == {
+    assert new_response.dict() == {  # pyright: ignore[reportDeprecated]
         "name": "Apples",
         "amount": 83,
     }
-    assert new_response.dict(exclude_unset=True) == {"amount": 83}
+    assert new_response.dict(exclude_unset=True) == {"amount": 83}  # pyright: ignore[reportDeprecated]
 
     with pytest.raises(CadwynError):
         new_response = version_bundle.migrate_response_body(

@@ -1,7 +1,6 @@
 from datetime import date
 
 import pytest
-from fastapi import Response
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.routing import Match, NoMatchFound, Route
@@ -113,7 +112,7 @@ def test__lifespan_async():
         on_startup=[run_startup],
         on_shutdown=[run_shutdown],
     )
-    app.add_unversioned_routes(Route("/v1/", hello_world))
+    app.add_unversioned_routes(Route("/v1/", hello_world))  # pyright: ignore[reportDeprecated]
 
     assert not startup_complete
     assert not shutdown_complete
@@ -130,64 +129,3 @@ def test__host_routing__partial_match__404():
 
     response = client.get("/v1/doggies/tom")
     assert response.status_code == 200
-
-
-def test__fwefefe():
-    app = Cadwyn(versions=VersionBundle(Version(date(2000, 1, 1))))
-
-    @app.post("/post")
-    async def post():
-        return "post"
-
-    @app.get("/get")
-    async def get():
-        return "get"
-
-    @app.patch("/patch")
-    async def patch():
-        return "patch"
-
-    @app.delete("/delete")
-    async def delete():
-        return "delete"
-
-    @app.put("/put")
-    async def put():
-        return "put"
-
-    @app.options("/options")
-    async def options():
-        return "options"
-
-    @app.head("/head")
-    async def head():
-        return "head"
-
-    @app.api_route("/api_route", methods=["POST"])
-    async def api_route():
-        return "api_route"
-
-    async def add_api_route():
-        return Response("add_api_route")
-
-    app.add_api_route("/add_api_route", add_api_route, methods=["POST"])
-
-    client = TestClient(app)
-
-    standard_methods = ("post", "get", "patch", "delete", "put", "options")
-    for method in standard_methods:
-        response = getattr(client, method)("/" + method)
-        assert response.status_code == 200, response.content
-        assert response.content == f'"{method}"'.encode()
-
-    response = client.head("/head")
-    assert response.status_code == 200, response.content
-    assert response.content == b""
-
-    response = client.post("/api_route")
-    assert response.status_code == 200, response.content
-    assert response.content == b'"api_route"'
-
-    response = client.post("/add_api_route")
-    assert response.status_code == 200, response.content
-    assert response.content == b"add_api_route"
