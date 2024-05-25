@@ -56,6 +56,12 @@ class MyChange(VersionChange):
     )
 ```
 
+### Dependency alteration warning
+
+Note that changing endpoint `dependencies` is only going to affect the initial validation. So Cadwyn will take your altered dependencies and run them on each request to the endpoint but ultimately your endpoint code is always going to use the HEAD version of your dependencies. So be careful.
+
+Note also that if some of your dependencies were added at app/router level -- they **are** going to be overwritten by this instruction. Most of the time it is rather safe, however, as all the necessary dependencies will still run on HEAD version.
+
 ## Dealing with endpoint duplicates
 
 Sometimes, when you're doing some advanced changes in between versions, you will need to rewrite your endpoint function entirely. So essentially you'd have the following structure:
