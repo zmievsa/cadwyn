@@ -320,8 +320,7 @@ class CreateVersionedApp:
         head_version_changes: Sequence[type[VersionChange]] = (),
         router: VersionedAPIRouter | None = None,
     ) -> Cadwyn:
-        if router is None:
-            router = self.router
+        router = router or self.router
         bundle = VersionBundle(
             HeadVersion(*head_version_changes),
             *versions(version_changes),
