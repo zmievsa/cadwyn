@@ -105,8 +105,9 @@ class CreateVersionedAPIRoutes:
     def __call__(
         self,
         *version_changes: type[VersionChange],
+        router: VersionedAPIRouter | None = None,
     ) -> tuple[list[APIRoute], list[APIRoute]]:
-        app = self.create_versioned_app(*version_changes)
+        app = self.create_versioned_app(*version_changes, router=router)
         return (
             cast(list[APIRoute], app.router.versioned_routers.get(date(2000, 1, 1), APIRouter()).routes),
             cast(list[APIRoute], app.router.versioned_routers.get(date(2001, 1, 1), APIRouter()).routes),
@@ -326,7 +327,6 @@ def test__only_exists_in_older_versions__applied_twice__should_raise_error(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
 ):
-    # with insert_pytest_raises():
     with pytest.raises(
         CadwynError,
         match=re.escape('The route "test_endpoint" was already deleted. You can\'t delete it again.'),
@@ -355,6 +355,19 @@ def test__router_generation__changing_a_deleted_endpoint__error(
         ),
     ):
         create_versioned_app(version_change(endpoint("/test", ["GET"]).had(description="Hewwo")))
+
+
+def test__router_generation__changing_a_non_existent_endpoint__error(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    with pytest.raises(
+        RouterGenerationError,
+        match=re.escape(
+            'Endpoint "[\'GET\'] /test" you tried to change in "MyVersionChange" doesn\'t exist',
+        ),
+    ):
+        create_versioned_app(version_change(endpoint("/test", ["GET"]).had(dependencies=[])))
 
 
 def test__router_generation__re_creating_an_existing_endpoint__error(

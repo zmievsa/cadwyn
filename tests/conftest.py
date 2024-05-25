@@ -318,7 +318,9 @@ class CreateVersionedApp:
         self,
         *version_changes: type[VersionChange],
         head_version_changes: Sequence[type[VersionChange]] = (),
+        router: VersionedAPIRouter | None = None,
     ) -> Cadwyn:
+        router = router or self.router
         bundle = VersionBundle(
             HeadVersion(*head_version_changes),
             *versions(version_changes),
@@ -327,7 +329,7 @@ class CreateVersionedApp:
         )
         self.run_schema_codegen(bundle)
         app = Cadwyn(versions=bundle)
-        app.generate_and_include_versioned_routers(self.router)
+        app.generate_and_include_versioned_routers(router)
         return app
 
 
@@ -347,8 +349,9 @@ class CreateVersionedClients:
         self,
         *version_changes: type[VersionChange],
         head_version_changes: Sequence[type[VersionChange]] = (),
+        router: VersionedAPIRouter | None = None,
     ) -> dict[date, CadwynTestClient]:
-        app = self.create_versioned_app(*version_changes, head_version_changes=head_version_changes)
+        app = self.create_versioned_app(*version_changes, head_version_changes=head_version_changes, router=router)
         return {
             version: CadwynTestClient(app, headers={app.router.api_version_header_name: version.isoformat()})
             for version in reversed(app.router.versioned_routers)

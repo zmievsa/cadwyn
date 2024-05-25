@@ -8,7 +8,7 @@ If you had an endpoint in old version but do not have it in a new one, you must 
 
 ```python
 @router.only_exists_in_older_versions
-@router.get("/my_old_endpoint")
+@router.get("/users/{user_id}")
 async def my_old_endpoint():
     ...
 ```
@@ -22,7 +22,7 @@ from cadwyn.structure import VersionChange, endpoint
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        endpoint("/my_old_endpoint", ["GET"]).existed,
+        endpoint("/users/{user_id}", ["GET"]).existed,
     )
 ```
 
@@ -37,7 +37,7 @@ from cadwyn.structure import VersionChange, endpoint
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        endpoint("/my_new_endpoint", ["GET"]).didnt_exist,
+        endpoint("/companies/{company_id}", ["GET"]).didnt_exist,
     )
 ```
 
@@ -52,9 +52,17 @@ from cadwyn.structure import VersionChange, endpoint
 class MyChange(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
-        endpoint("/my_endpoint", ["GET"]).had(description="My old description"),
+        endpoint("/users/{user_id}", ["GET"]).had(
+            description="My old description"
+        ),
     )
 ```
+
+### Dependency alteration warning
+
+Note that changing endpoint `dependencies` is only going to affect the initial validation. So Cadwyn will take your altered dependencies and run them on each request to the endpoint but ultimately your endpoint code is always going to use the HEAD version of your dependencies. So be careful.
+
+Note also that if some of your dependencies were added at app/router level -- they **are** going to be overwritten by this instruction. Most of the time it is rather safe, however, as all the necessary dependencies will still run on HEAD version.
 
 ## Dealing with endpoint duplicates
 
