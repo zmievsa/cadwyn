@@ -98,7 +98,7 @@ def get_fields_and_validators_from_model(
     cls: type,
 ) -> tuple[dict[_FieldName, PydanticFieldWrapper], dict[_FieldName, _ValidatorWrapper]]:
     cls_ast, fields, validators = _extract_raw_source_fields_and_validators_from_model(cls)
-    if cls_ast is None:
+    if cls_ast is None:  # pragma: no cover # It is covered by tests but not on every platform
         return (
             {
                 field_name: PydanticFieldWrapper(annotation=field.annotation, init_model_field=field)
