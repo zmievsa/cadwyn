@@ -107,7 +107,7 @@ versions = VersionBundle(
     Version(date(2023, 4, 2), DeleteEndpoint, ChangeFields, RenameFields),
     Version(date(2023, 2, 10), RenameEndpoints, RefactorFields),
     Version(date(2022, 11, 16)),
-    head_schemas_package=head,
+    head_schemas_package=latest,
 )
 ```
 

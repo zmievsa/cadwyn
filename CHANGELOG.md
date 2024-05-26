@@ -5,11 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
-## [3.15.0a1]
+## [3.15.0]
 
 ### Changed
 
-* Code generation now runs automatically on app creation so it no longer needs to be run by hand
 * Optimized the calls to enrich_swagger which now happen on the startup event, once for the whole application
 
 ## [3.14.0]

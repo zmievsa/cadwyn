@@ -44,6 +44,8 @@ Let's say that our API has a mandatory `UserResource.date_of_birth` field. Let's
     )
     ```
 
+4. [Regenerate](../../concepts/code_generation.md) the versioned schemas
+
 Thanks to the version change above, your old schemas will now include `zodiac_sign` field but your new schemas will stay the same. Don't remove the zodiac business logic from your router because the old version will still need it. So you always return the zodiac sign but the schemas of the latest version will ignore it.
 
 You can remove the logic for calculating and returning the zodiac sign after version `2000-01-01` gets deleted.
@@ -107,6 +109,8 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
         head_schemas_package=head,
     )
     ```
+
+4. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 We added a new version with a breaking change but neither the HEAD schema that we use in business logic, neither has the business logic itself have changed one bit.
 

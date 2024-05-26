@@ -312,6 +312,7 @@ class CreateVersionedApp:
     api_version_var: ContextVar[date | None]
     router: VersionedAPIRouter
     temp_data_package_path: str
+    run_schema_codegen: RunSchemaCodegen
 
     def __call__(
         self,
@@ -326,6 +327,7 @@ class CreateVersionedApp:
             api_version_var=self.api_version_var,
             head_schemas_package=importlib.import_module(self.temp_data_package_path + ".head"),
         )
+        self.run_schema_codegen(bundle)
         app = Cadwyn(versions=bundle)
         app.generate_and_include_versioned_routers(router)
         return app

@@ -42,6 +42,8 @@ So if you do consider it a breaking change in terms of responses, you should do 
                 response.body["role"] = "regular"
     ```
 
+3. [Regenerate](../../concepts/code_generation.md) the versioned schemas
+
 We convert moderators to regulars in older versions because it is a safer choice for our users.
 
 ### Why enum expansion is a breaking change for responses
@@ -127,6 +129,8 @@ Let's say that previously users could specify their date of birth as a datetime 
         head_schemas_package=head,
     )
     ```
+
+4. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 This whole process was a bit complex so let us break it down a little:
 

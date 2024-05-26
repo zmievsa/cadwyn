@@ -64,7 +64,11 @@ version_bundle = VersionBundle(
 
 ## Generating versioned schemas
 
-Once you create your app, Cadwyn is going to generate versioned copies of your head package -- based on the migrations within your versions.
+Now let's generate the only version of our schemas -- the one we created in the [first step](./setup.md#setup):
+
+```bash
+cadwyn codegen versions:version_bundle
+```
 
 **WARNING** Cadwyn doesn't edit your imports when generating schemas so if you make any imports from versioned code to versioned code, I would suggest using [relative imports](https://docs.python.org/3/reference/import.html#package-relative-imports) to make sure that they will still work as expected after code generation.
 

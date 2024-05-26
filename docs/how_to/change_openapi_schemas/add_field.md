@@ -4,7 +4,10 @@
 
 Let's say that we decided to expose the creation date of user's account with a `created_at` field in our API. This is **not** a breaking change so a new version is completely unnecessary. However, if you believe that you absolutely have to make a new version, then you can simply follow the recommended approach below but add a version change with [field didnt exist instruction](../../concepts/schema_migrations.md#remove-a-field-from-the-older-version).
 
-Solution: add `created_at` field into `data.head.users.UserResource`.
+The recommended approach:
+
+1. Add `created_at` field into `data.head.users.UserResource`
+2. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 Now you have everything you need at your disposal: field `created_at` is available in all versions and your users do not even need to do any extra actions. Just make sure that the data for it is available in all versions too. If it's not: make the field optional.
 
@@ -14,7 +17,10 @@ Now you have everything you need at your disposal: field `created_at` is availab
 
 Let's say we want our users to be able to specify a middle name but it is nullable. It is not a breaking change so no new version is necessary whether it is requests or responses.
 
-Solution: add a nullable `middle_name` field into `data.head.users.BaseUser`
+The recommended approach:
+
+1. Add a nullable `middle_name` field into `data.head.users.BaseUser`
+2. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 ### Field is required
 
@@ -62,6 +68,8 @@ Let's say that our users had a field `country` that defaulted to `USA` but our p
         head_schemas_package=head,
     )
     ```
+
+4. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 That's it! Our old schemas will now contain a default but in HEAD country will be required. You might notice a weirdness: if we set a default in the old version, why would we also write a migration? That's because of a sad implementation detail of pydantic that [prevents us](../../concepts/schema_migrations.md#change-a-field-in-the-older-version) from using defaults from old versions.
 
@@ -123,5 +131,7 @@ So we will make `phone` nullable in HEAD, then make it required in `latest`, and
         head_schemas_package=head,
     )
     ```
+
+6. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 See how we didn't remove the `phone` field from old versions? Instead, we allowed a nullable `phone` field to be passed into both old `UserResource` and old `UserCreateRequest`. This gives our users new functionality without needing to update their API version! It is one of the best parts of Cadwyn's approach: our users can get years worth of updates without switching their API version and without their integration getting broken.
