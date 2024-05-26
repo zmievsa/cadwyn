@@ -71,9 +71,7 @@ class PydanticModelWrapper:
 
 
 @cache
-def get_fields_and_validators_from_model(
-    cls: type,
-) -> tuple[dict[_FieldName, PydanticFieldWrapper], dict[_FieldName, _ValidatorWrapper]]:
+def _extract_raw_source_fields_and_validators_from_model(cls: type):
     if not isinstance(cls, type) or not issubclass(cls, BaseModel):
         raise CodeGenerationError(f"Model {cls} is not a subclass of BaseModel")
 
@@ -81,13 +79,7 @@ def get_fields_and_validators_from_model(
     try:
         source = inspect.getsource(cls)
     except OSError:  # pragma: no cover # It is covered by tests but not on every platform
-        return (
-            {
-                field_name: PydanticFieldWrapper(annotation=field.annotation, init_model_field=field)
-                for field_name, field in fields.items()
-            },
-            {},
-        )
+        return (None, fields, {})
     else:
         cls_ast = cast(ast.ClassDef, ast.parse(source).body[0])
         validators: dict[str, _ValidatorWrapper] = {}
@@ -99,6 +91,22 @@ def get_fields_and_validators_from_model(
         )
         validators = {validator.func_ast.name: validator for validator in validators_and_nones if validator is not None}
 
+        return (cls_ast, fields, validators)
+
+
+def get_fields_and_validators_from_model(
+    cls: type,
+) -> tuple[dict[_FieldName, PydanticFieldWrapper], dict[_FieldName, _ValidatorWrapper]]:
+    cls_ast, fields, validators = _extract_raw_source_fields_and_validators_from_model(cls)
+    if cls_ast is None:  # pragma: no cover # It is covered by tests but not on every platform
+        return (
+            {
+                field_name: PydanticFieldWrapper(annotation=field.annotation, init_model_field=field)
+                for field_name, field in fields.items()
+            },
+            {},
+        )
+    else:
         return (
             {
                 node.target.id: PydanticFieldWrapper(

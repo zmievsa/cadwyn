@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cadwyn"
-version = "3.14.0"
+version = "3.15.0a1"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -55,7 +55,7 @@ typing-extensions = "*"
 fastapi = ">=0.110.0"
 starlette = ">=0.36.3"
 pydantic = ">=1.0.0"
-typer = {version = ">=0.7.0", optional = true}
+typer = { version = ">=0.7.0", optional = true }
 better-ast-comments = "~1.2.1"
 jinja2 = ">=3.1.2"
 issubclass = "^0.1.2"
@@ -104,7 +104,13 @@ exclude_lines = [
     "__rich_repr__",
     "__repr__",
 ]
-omit = ["./docs/plugin.py", "./site/plugin.py", "./tests/_data/_temp/**/*", "tests/tutorial/data/**/*", "scripts/*.py"]
+omit = [
+    "./docs/plugin.py",
+    "./site/plugin.py",
+    "./tests/_data/_temp/**/*",
+    "tests/tutorial/data/**/*",
+    "scripts/*.py",
+]
 
 [tool.pyright]
 reportMissingImports = true

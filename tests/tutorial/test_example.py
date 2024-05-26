@@ -4,16 +4,12 @@ import pytest
 from dirty_equals import IsUUID
 from fastapi.testclient import TestClient
 
-from cadwyn.codegen._main import generate_code_for_versioned_packages
-
-from .data import head
 from .routes import app, router
 from .utils import clean_versions
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _prepare_versioned_schemas():
-    generate_code_for_versioned_packages(head, app.versions)
     app.generate_and_include_versioned_routers(router)
     try:
         yield
