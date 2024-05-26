@@ -55,6 +55,8 @@ Let's say that we previously allowed users to have a name of arbitrary length bu
     )
     ```
 
+4. [Regenerate](../../concepts/code_generation.md) the versioned schemas
+
 So our HEAD version does not have this constraint, our latest does, and earlier versions do not.
 
 * Requests from 2000 will be converted directly to HEAD and will not face this constraint because HEAD does not have it
@@ -65,10 +67,12 @@ Note, however, that anyone using the old API versions will will still be able to
 0. Check whether any users have names longer than 250 characters. If there are few or no users that have such long names, then it may make sense to skip step 1. The other steps, however, cannot be skipped if you want to guarantee that your API gives no 500s at any point in the process.
 1. Issue a 3-6 month warning to all users stating that you will make a breaking change affecting older versions. Mention that you will truncate old names that are longer than 250 characters and that users will no longer be able to create such long names even in old API versions.
 2. After the deadline, add a `max_length` constraint to `data.head.users.UserCreateRequest.name`
-3. Release it to production
-4. Truncate all names that are too long in the database (preferably using a migration and a separate release)
-5. Remove the `max_length` constraint from `data.head.users.UserCreateRequest.name`
-6. Add the `max_length` constraint to `data.head.users.BaseUser.name`
+3. [Regenerate](../../concepts/code_generation.md) the versioned schemas
+4. Release it to production
+5. Truncate all names that are too long in the database (preferably using a migration and a separate release)
+6. Remove the `max_length` constraint from `data.head.users.UserCreateRequest.name`
+7. Add the `max_length` constraint to `data.head.users.BaseUser.name`
+8. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 This process seems quite complex but it's not Cadwyn-specific: if you want to safely and nicely version for your users, you will have to follow such a process even if you don't use any versioning framework at all.
 
@@ -76,7 +80,10 @@ This process seems quite complex but it's not Cadwyn-specific: if you want to sa
 
 Let's say that we previously only allowed users to have a name of length 50 but now we want to allow names of length 250 too. It does not make sense to add this to a new API version. Just add it into all API versions because it is not a breaking change.
 
-Solution: change `max_length` of `data.head.users.BaseUser.name` to 250
+The recommended approach:
+
+1. Change `max_length` of `data.head.users.BaseUser.name` to 250
+2. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 However, sometimes it can be considered a breaking change if a large portion of your users use your system to verify their data and rely on your system to return status code `422` if this field is invalid. If that's the case, use the same approach as in [constraint addition](#add-or-narrow-constraints) but use `schema(UserCreateRequest).field("name").had(max_length=50)` instead.
 
