@@ -48,7 +48,7 @@ PossibleFieldAttributes = Literal[
 ]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True, unsafe_hash=True)
 class FieldChanges:
     default: Any
     default_factory: Any
@@ -79,7 +79,7 @@ class FieldChanges:
     repr: bool
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True, unsafe_hash=True)
 class FieldHadInstruction:
     schema: type[BaseModel]
     name: str
@@ -88,20 +88,20 @@ class FieldHadInstruction:
     new_name: str
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True, unsafe_hash=True)
 class FieldDidntHaveInstruction:
     schema: type[BaseModel]
     name: str
     attributes: tuple[str, ...]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True, unsafe_hash=True)
 class FieldDidntExistInstruction:
     schema: type[BaseModel]
     name: str
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True, unsafe_hash=True)
 class FieldExistedAsInstruction:
     schema: type[BaseModel]
     name: str
@@ -227,7 +227,7 @@ class AlterFieldInstructionFactory:
         )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True, unsafe_hash=True)
 class ValidatorExistedInstruction:
     schema: type[BaseModel]
     validator: Callable[..., Any]
@@ -245,7 +245,7 @@ class ValidatorExistedInstruction:
         self.validator_info = validator_info
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True, unsafe_hash=True)
 class ValidatorDidntExistInstruction:
     schema: type[BaseModel]
     name: str
@@ -275,7 +275,7 @@ AlterSchemaSubInstruction = (
 )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True, unsafe_hash=True)
 class SchemaHadInstruction:
     schema: type[BaseModel]
     name: str

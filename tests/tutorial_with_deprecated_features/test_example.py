@@ -1,20 +1,13 @@
-from pathlib import Path
-
 import pytest
 from dirty_equals import IsUUID
 from fastapi.testclient import TestClient
 
 from .routes import app, router
-from .utils import clean_versions
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _prepare_versioned_schemas():
     app.generate_and_include_versioned_routers(router)
-    try:
-        yield
-    finally:
-        clean_versions(Path(__file__).parent / "data")
 
 
 @pytest.fixture()

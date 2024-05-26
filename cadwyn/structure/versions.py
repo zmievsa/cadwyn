@@ -94,6 +94,16 @@ class VersionChange:
         cls._bound_version_bundle = None
 
     @classmethod
+    def cls_hash(cls) -> int:
+        return hash(
+            (
+                tuple(cls.alter_schema_instructions),
+                tuple(cls.alter_enum_instructions),
+                tuple(cls.alter_module_instructions),
+            )
+        )
+
+    @classmethod
     def _extract_body_instructions_into_correct_containers(cls):
         for instruction in cls.__dict__.values():
             if isinstance(instruction, _AlterRequestBySchemaInstruction):
@@ -216,6 +226,9 @@ class Version:
     def __repr__(self) -> str:
         return f"Version('{self.value}')"
 
+    def __hash__(self):
+        return hash((self.value, self.version_changes))
+
 
 class HeadVersion:
     def __init__(self, *version_changes: type[VersionChange]) -> None:
@@ -234,6 +247,9 @@ class HeadVersion:
                 raise NotImplementedError(
                     f"HeadVersion does not support request or response migrations but {version_change} contained one."
                 )
+
+    def __hash__(self):
+        return hash(self.version_changes)
 
 
 class VersionBundle:
@@ -315,6 +331,12 @@ class VersionBundle:
 
     def __iter__(self) -> Iterator[Version]:
         yield from self.versions
+
+    def __hash__(self) -> int:
+        head_schemas_path = None
+        if self.head_schemas_package is not None:
+            head_schemas_path = inspect.getsourcefile(self.head_schemas_package)
+        return hash((self.head_version, self.versions, head_schemas_path))
 
     def _validate_head_schemas_package_structure(self):
         # This entire function won't be necessary once we start raising an exception

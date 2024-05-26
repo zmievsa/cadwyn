@@ -4,13 +4,13 @@ from enum import Enum
 from typing import Any
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True, unsafe_hash=True)
 class EnumHadMembersInstruction:
     enum: type[Enum]
     members: Mapping[str, Any]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True, unsafe_hash=True)
 class EnumDidntHaveMembersInstruction:
     enum: type[Enum]
     members: tuple[str, ...]
