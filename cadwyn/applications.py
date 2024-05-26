@@ -19,6 +19,7 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
 from typing_extensions import Self, deprecated
 
+from cadwyn.codegen._main import generate_code_for_versioned_packages
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.routing import _RootHeaderAPIRouter
@@ -155,6 +156,8 @@ class Cadwyn(FastAPI):
             api_version_var=self.versions.api_version_var,
             default_response_class=default_response_class,
         )
+        if self.versions.head_schemas_package is not None:
+            generate_code_for_versioned_packages(self.versions.head_schemas_package, self.versions)
 
     @property  # pragma: no cover
     @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
