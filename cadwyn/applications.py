@@ -187,7 +187,9 @@ class Cadwyn(FastAPI):
                 if self.swagger_ui_oauth2_redirect_url:
 
                     async def swagger_ui_redirect(req: Request) -> HTMLResponse:
-                        return get_swagger_ui_oauth2_redirect_html()
+                        return (
+                            get_swagger_ui_oauth2_redirect_html()  # pragma: no cover # unimportant right now but # TODO
+                        )
 
                     self.add_route(
                         self.swagger_ui_oauth2_redirect_url,
@@ -263,28 +265,38 @@ class Cadwyn(FastAPI):
         return JSONResponse(openapi_of_a_version)
 
     async def swagger_dashboard(self, req: Request) -> Response:
-        return self._render_docs_dashboard_or_concrete_verssion(get_swagger_ui_html, req, cast(str, self.docs_url))
-
-    async def redoc_dashboard(self, req: Request) -> Response:
-        return self._render_docs_dashboard_or_concrete_verssion(get_redoc_html, req, cast(str, self.redoc_url))
-
-    def _render_docs_dashboard_or_concrete_verssion(self, render_docs: Callable[..., Any], req: Request, docs_url: str):
-        base_url = str(req.base_url).rstrip("/")
         version = req.query_params.get("version")
 
         if version:
-            root_path = req.scope.get("root_path", "").rstrip("/")
+            root_path = self._extract_root_path(req)
             openapi_url = root_path + f"{self.openapi_url}?version={version}"
             oauth2_redirect_url = self.swagger_ui_oauth2_redirect_url
             if oauth2_redirect_url:
                 oauth2_redirect_url = root_path + oauth2_redirect_url
-            return render_docs(
+            return get_swagger_ui_html(
                 openapi_url=openapi_url,
                 title=f"{self.title} - Swagger UI",
                 oauth2_redirect_url=oauth2_redirect_url,
                 init_oauth=self.swagger_ui_init_oauth,
                 swagger_ui_parameters=self.swagger_ui_parameters,
             )
+        return self._render_docs_dashboard(req, cast(str, self.docs_url))
+
+    async def redoc_dashboard(self, req: Request) -> Response:
+        version = req.query_params.get("version")
+
+        if version:
+            root_path = self._extract_root_path(req)
+            openapi_url = root_path + f"{self.openapi_url}?version={version}"
+            return get_redoc_html(openapi_url=openapi_url, title=f"{self.title} - ReDoc")
+
+        return self._render_docs_dashboard(req, docs_url=cast(str, self.redoc_url))
+
+    def _extract_root_path(self, req: Request):
+        return req.scope.get("root_path", "").rstrip("/")
+
+    def _render_docs_dashboard(self, req: Request, docs_url: str):
+        base_url = str(req.base_url).rstrip("/")
         return self._templates.TemplateResponse(
             "docs.html",
             {
