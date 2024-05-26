@@ -61,7 +61,7 @@ version_bundle = VersionBundle(
 )
 ```
 
-Let's run code generation, run our app, and then take a look at the generated dashboard and openapi schemas:
+Let's run our app and take a look at the generated dashboard and openapi schemas:
 
 ![Dashboard with two versions](../img/dashboard_with_two_versions.png)
 ![GET /users/{user_id} endpoint in openapi](../img/get_users_endpoint_from_prior_version.png)

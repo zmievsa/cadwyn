@@ -1,6 +1,10 @@
 # Code generation
 
-Cadwyn generates versioned schemas and everything related to them from latest version. These versioned schemas will be automatically used in requests and responses for [versioned API routes](./main_app.md#main-app). There are two methods of generating code: using a function and using the CLI:
+Cadwyn generates versioned schemas and everything related to them from latest version. These versioned schemas will be automatically used in requests and responses for [versioned API routes](./main_app.md#main-app). There are two methods of generating code: using a function and using the CLI.
+
+## Deprecation warning
+
+Cadwyn no longer requires you to generate your schemas by hand. It will generate everything for you on your app's startup. Manual code generation is not guaranteed to stay in Cadwyn in the long run.
 
 ## Command-line interface
 

@@ -6,7 +6,7 @@ from collections.abc import Collection, Generator, Sequence
 from copy import deepcopy
 from pathlib import Path
 from types import ModuleType
-from typing import Any, overload
+from typing import Any
 
 import ast_comments
 from typing_extensions import deprecated
@@ -45,33 +45,7 @@ DEFAULT_CODEGEN_MIGRATION_PLUGINS: tuple[MigrationPlugin, ...] = (
 )
 
 
-@overload
-def generate_code_for_versioned_packages(
-    head_package: ModuleType,
-    versions: VersionBundle,
-    *,
-    codegen_plugins: Sequence[CodegenPlugin] = DEFAULT_CODEGEN_PLUGINS,
-    migration_plugins: Sequence[MigrationPlugin] = DEFAULT_CODEGEN_MIGRATION_PLUGINS,
-    extra_context: dict[str, Any] | None = None,
-): ...
-
-
-@overload
-@deprecated(
-    "ignore_coverage_for_latest_aliases is deprecated. "
-    "You do not need to pass it any longer and it is going to be deleted in the future."
-)
-def generate_code_for_versioned_packages(
-    head_package: ModuleType,
-    versions: VersionBundle,
-    *,
-    ignore_coverage_for_latest_aliases: bool | None = None,
-    codegen_plugins: Sequence[CodegenPlugin] = DEFAULT_CODEGEN_PLUGINS,
-    migration_plugins: Sequence[MigrationPlugin] = DEFAULT_CODEGEN_MIGRATION_PLUGINS,
-    extra_context: dict[str, Any] | None = None,
-): ...
-
-
+@deprecated("Generation of versioned packages now happens automatically during the creation of Cadwyn application")
 def generate_code_for_versioned_packages(
     head_package: ModuleType,
     versions: VersionBundle,
