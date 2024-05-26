@@ -11,6 +11,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 * Optimized the calls to enrich_swagger which now happen on the startup event, once for the whole application
 
+### Fixed
+
+* Oauth2 authentication parameters did not get passed to swagger
+
 ## [3.14.0]
 
 ### Added
