@@ -8,8 +8,8 @@ Production-ready community-driven modern [Stripe-like](https://stripe.com/blog/a
 <a href="https://github.com/zmievsa/cadwyn/actions/workflows/ci.yaml?branch=main&event=push" target="_blank">
     <img src="https://github.com/zmievsa/cadwyn/actions/workflows/ci.yaml/badge.svg?branch=main&event=push" alt="Test">
 </a>
-<a href="https://codecov.io/gh/ovsyanka83/cadwyn" target="_blank">
-    <img src="https://img.shields.io/codecov/c/github/ovsyanka83/cadwyn?color=%2334D058&logo=codecov" alt="Coverage">
+<a href="https://codecov.io/gh/zmievsa/cadwyn" target="_blank">
+    <img src="https://img.shields.io/codecov/c/github/zmievsa/cadwyn?color=%2334D058&logo=codecov" alt="Coverage">
 </a>
 <a href="https://pypi.org/project/cadwyn/" target="_blank">
     <img alt="PyPI" src="https://img.shields.io/pypi/v/cadwyn?color=%2334D058&logo=pypi&label=PyPI package" alt="Package version">

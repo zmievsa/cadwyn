@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.15.1]
+
+### Fixed
+
+* Badge links in the readme
+
 ## [3.15.0]
 
 ### Changed
