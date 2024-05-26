@@ -7,9 +7,14 @@ from typing import Any, cast
 
 from fastapi import APIRouter, FastAPI, HTTPException, routing
 from fastapi.datastructures import Default
-from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.openapi.docs import (
+    get_redoc_html,
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
+)
 from fastapi.openapi.utils import get_openapi
 from fastapi.params import Depends
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.utils import generate_unique_id
 from starlette.middleware import Middleware
@@ -179,6 +184,18 @@ class Cadwyn(FastAPI):
                     endpoint=self.swagger_dashboard,
                     include_in_schema=False,
                 )
+                if self.swagger_ui_oauth2_redirect_url:
+
+                    async def swagger_ui_redirect(req: Request) -> HTMLResponse:
+                        return (
+                            get_swagger_ui_oauth2_redirect_html()  # pragma: no cover # unimportant right now but # TODO
+                        )
+
+                    self.add_route(
+                        self.swagger_ui_oauth2_redirect_url,
+                        swagger_ui_redirect,
+                        include_in_schema=False,
+                    )
             if self.redoc_url is not None:
                 unversioned_router.add_route(
                     path=self.redoc_url,
@@ -248,20 +265,38 @@ class Cadwyn(FastAPI):
         return JSONResponse(openapi_of_a_version)
 
     async def swagger_dashboard(self, req: Request) -> Response:
-        return self._render_docs_dashboard_or_concrete_verssion(get_swagger_ui_html, req, cast(str, self.docs_url))
-
-    async def redoc_dashboard(self, req: Request) -> Response:
-        return self._render_docs_dashboard_or_concrete_verssion(get_redoc_html, req, cast(str, self.redoc_url))
-
-    def _render_docs_dashboard_or_concrete_verssion(self, render_docs: Callable[..., Any], req: Request, docs_url: str):
-        base_url = str(req.base_url).rstrip("/")
         version = req.query_params.get("version")
 
         if version:
-            return render_docs(
-                openapi_url=f"{self.openapi_url}?version={version}",
-                title="Swagger UI",
+            root_path = self._extract_root_path(req)
+            openapi_url = root_path + f"{self.openapi_url}?version={version}"
+            oauth2_redirect_url = self.swagger_ui_oauth2_redirect_url
+            if oauth2_redirect_url:
+                oauth2_redirect_url = root_path + oauth2_redirect_url
+            return get_swagger_ui_html(
+                openapi_url=openapi_url,
+                title=f"{self.title} - Swagger UI",
+                oauth2_redirect_url=oauth2_redirect_url,
+                init_oauth=self.swagger_ui_init_oauth,
+                swagger_ui_parameters=self.swagger_ui_parameters,
             )
+        return self._render_docs_dashboard(req, cast(str, self.docs_url))
+
+    async def redoc_dashboard(self, req: Request) -> Response:
+        version = req.query_params.get("version")
+
+        if version:
+            root_path = self._extract_root_path(req)
+            openapi_url = root_path + f"{self.openapi_url}?version={version}"
+            return get_redoc_html(openapi_url=openapi_url, title=f"{self.title} - ReDoc")
+
+        return self._render_docs_dashboard(req, docs_url=cast(str, self.redoc_url))
+
+    def _extract_root_path(self, req: Request):
+        return req.scope.get("root_path", "").rstrip("/")
+
+    def _render_docs_dashboard(self, req: Request, docs_url: str):
+        base_url = str(req.base_url).rstrip("/")
         return self._templates.TemplateResponse(
             "docs.html",
             {

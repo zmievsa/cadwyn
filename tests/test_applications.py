@@ -29,6 +29,7 @@ def test__header_routing__invalid_version_format__error():
 
 def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_openapi_routes():
     assert [cast(APIRoute, r).path for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16)))).routes] == [
+        "/docs/oauth2-redirect",
         "/openapi.json",
         "/docs",
         "/redoc",
@@ -40,6 +41,19 @@ def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_ope
         "/openapi.json",
     ]
     assert Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), openapi_url=None).routes == []
+
+
+def test__header_routing_fastapi_init__passing_null_to_oauth2__should_not_add_oauth2_redirect_route():
+    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), swagger_ui_oauth2_redirect_url=None)
+    assert [cast(APIRoute, r).path for r in app.routes] == [
+        "/openapi.json",
+        "/docs",
+        "/redoc",
+    ]
+    app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
+
+    with TestClient(app) as client:
+        assert client.get("/docs?version=2021-01-01").status_code == 200
 
 
 def test__header_routing_fastapi_init__changing_openapi_url__docs_still_return_200():

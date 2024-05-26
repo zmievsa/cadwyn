@@ -9,7 +9,6 @@ from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
 from uuid import UUID
 
 import pytest
-from dirty_equals import IsStr
 from fastapi import APIRouter, Body, Depends, UploadFile
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -976,7 +975,6 @@ def test__router_generation__updating_request_depends(
                     "loc": ["body", "foo"],
                     "msg": "Field required",
                     "input": {},
-                    "url": IsStr,
                 },
             ],
         }
@@ -987,7 +985,6 @@ def test__router_generation__updating_request_depends(
                     "loc": ["body", "foo"],
                     "msg": "Field required",
                     "input": {},
-                    "url": IsStr,
                 },
             ],
         }
