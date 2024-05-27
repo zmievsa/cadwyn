@@ -5,6 +5,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+
+## [3.15.2]
+
+### Fixed
+
+* Openapi not being generated when lifespan was used
+
 ## [3.15.1]
 
 ### Fixed

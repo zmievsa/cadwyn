@@ -14,15 +14,13 @@ from tests._resources.versioned_app.v2022_01_02 import router as v2022_01_02_rou
 from tests._resources.versioned_app.webhooks import router as webhooks_router
 
 
+# TODO: Add better tests for covering lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # this cannot be covered, because it is not possible
-    # to run the lifespan scope during test runs
     yield  # pragma: no cover
 
 
-lifespan_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), lifespan=lifespan)
-versioned_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
+versioned_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), lifespan=lifespan)
 versioned_app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
 versioned_app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
 versioned_app.add_unversioned_routers(webhooks_router)
@@ -34,9 +32,9 @@ versioned_app_with_custom_api_version_var.add_header_versioned_routers(v2021_01_
 versioned_app_with_custom_api_version_var.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
 versioned_app_with_custom_api_version_var.add_unversioned_routers(webhooks_router)
 
+# TODO: We should not have any clients that are run like this. Instead, all of them must run using "with"
 client = TestClient(versioned_app, raise_server_exceptions=False, headers=BASIC_HEADERS)
-with TestClient(versioned_app) as client_without_headers:
-    pass
+client_without_headers = TestClient(versioned_app)
 client_without_headers_and_with_custom_api_version_var = TestClient(versioned_app_with_custom_api_version_var)
 
 if __name__ == "__main__":

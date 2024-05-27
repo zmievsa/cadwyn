@@ -14,9 +14,9 @@ from tests._resources.versioned_app.app import (
     client_without_headers,
     client_without_headers_and_with_custom_api_version_var,
     lifespan,
-    lifespan_app,
     v2021_01_01_router,
     v2022_01_02_router,
+    versioned_app,
 )
 
 
@@ -158,4 +158,4 @@ def test__empty_root():
 
 
 def test__lifespan_context_exists():
-    assert lifespan_app.router.lifespan_context is lifespan
+    assert versioned_app.router.lifespan_context is lifespan
