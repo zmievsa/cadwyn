@@ -12,6 +12,18 @@ from cadwyn.structure.versions import Version, VersionBundle
 from tests._resources.app_for_testing_routing import mixed_hosts_app
 
 
+def test__populate_routes():
+    versioned_routes = [
+        route
+        for router in mixed_hosts_app.router.versioned_routers.values()
+        for route in router.routes
+    ]
+    assert sorted(mixed_hosts_app.router.routes, key=lambda r: id(r)) == sorted(
+        mixed_hosts_app.router.unversioned_routes + versioned_routes,
+        key=lambda r: id(r),
+    )
+
+
 def test__header_routing():
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "2022-02-11"})
 
@@ -65,7 +77,9 @@ def test__host_routing__lowest_version__404():
 
 
 def test__host_routing__non_http():
-    assert mixed_hosts_app.routes[-1].matches({"type": "websocket", "path": "/v1/"}) == (Match.NONE, {})
+    assert mixed_hosts_app.routes[-1].matches(
+        {"type": "websocket", "path": "/v1/"}
+    ) == (Match.NONE, {})
 
 
 def test__host_routing__non_date_api_version_header__not_valid_format():
@@ -84,12 +98,18 @@ def test__host_routing__partial_match__error():
 
 
 def test__url_path_for__not_enough_params__error():
-    with pytest.raises(NoMatchFound, match='No route exists for name "api:users" and params "username".'):
+    with pytest.raises(
+        NoMatchFound,
+        match='No route exists for name "api:users" and params "username".',
+    ):
         mixed_hosts_app.url_path_for("api:users", username="tom")
 
 
 def test__url_path_for__not_enough_params__error2():
-    with pytest.raises(NoMatchFound, match='No route exists for name "api" and params "path, username".'):
+    with pytest.raises(
+        NoMatchFound,
+        match='No route exists for name "api" and params "path, username".',
+    ):
         mixed_hosts_app.url_path_for("api", path="hellow", username="tom")
 
 
@@ -113,7 +133,9 @@ def test__lifespan_async():
         on_startup=[run_startup],
         on_shutdown=[run_shutdown],
     )
-    app.add_unversioned_routes(Route("/v1/", hello_world))  # pyright: ignore[reportDeprecated]
+    app.add_unversioned_routes(
+        Route("/v1/", hello_world)
+    )  # pyright: ignore[reportDeprecated]
 
     assert not startup_complete
     assert not shutdown_complete

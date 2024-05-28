@@ -102,19 +102,19 @@ class _RootHeaderAPIRouter(APIRouter):
             routes = self.pick_version(request_header_value=header_value)
         await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
 
-    def add_api_route(self, *args, **kwargs): 
+    def add_api_route(self, *args, **kwargs):
         super().add_api_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
-    def add_route(self, *args, **kwargs): 
+    def add_route(self, *args, **kwargs):
         super().add_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
-    def add_api_websocket_route(self, *args, **kwargs): 
-        super().add_api_websocket_route(*args, **kwargs)
+    def add_api_websocket_route(self, *args, **kwargs):
+        super().add_api_websocket_route(*args, **kwargs) #pragma: no cover
         self.unversioned_routes.append(self.routes[-1])
 
-    def add_websocket_route(self, *args, **kwargs): 
+    def add_websocket_route(self, *args, **kwargs):
         super().add_websocket_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 

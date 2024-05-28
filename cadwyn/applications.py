@@ -83,7 +83,7 @@ class Cadwyn(FastAPI):
         swagger_ui_parameters: dict[str, Any] | None = None,
         generate_unique_id_function: Callable[[routing.APIRoute], str] = Default(
             generate_unique_id
-        ),  # noqa: B008
+        ),
         separate_input_output_schemas: bool = True,
         **extra: Any,
     ) -> None:
@@ -339,19 +339,21 @@ class Cadwyn(FastAPI):
         except ValueError as e:
             raise ValueError("header_value should be in ISO 8601 format") from e
 
+        added_routes: list[BaseRoute] = []
         if header_value_as_dt not in self.router.versioned_routers:  # pragma: no branch
             self.router.versioned_routers[header_value_as_dt] = APIRouter(
                 **self._kwargs_to_router
             )
-            if self.openapi_url is not None:  # pragma: no branch
-                self.router.versioned_routers[header_value_as_dt].add_route(
-                    path=self.openapi_url,
-                    endpoint=self.openapi_jsons,
-                    include_in_schema=False,
-                )
 
-        version_router = self.router.versioned_routers[header_value_as_dt]
-        added_routes: list[BaseRoute] = []
+        versioned_router = self.router.versioned_routers[header_value_as_dt]
+        if self.openapi_url is not None:  # pragma: no branch
+            versioned_router.add_route(
+                path=self.openapi_url,
+                endpoint=self.openapi_jsons,
+                include_in_schema=False,
+            )
+            added_routes.append(versioned_router.routes[-1])
+
         added_route_count = 0
         for router in (first_router, *other_routers):
             self.router.versioned_routers[header_value_as_dt].include_router(
@@ -366,9 +368,7 @@ class Cadwyn(FastAPI):
             )
             added_route_count += len(router.routes)
 
-        added_routes = (
-            version_router.routes[-added_route_count :]
-        )
+        added_routes.extend(versioned_router.routes[-added_route_count:])
         self.router.routes.extend(added_routes)
 
         self.enrich_swagger()
