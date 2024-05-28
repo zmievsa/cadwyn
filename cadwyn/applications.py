@@ -59,8 +59,13 @@ class Cadwyn(FastAPI):
         swagger_ui_oauth2_redirect_url: str | None = "/docs/oauth2-redirect",
         swagger_ui_init_oauth: dict[str, Any] | None = None,
         middleware: Sequence[Middleware] | None = None,
-        exception_handlers: dict[int | type[Exception], Callable[[Request, Any], Coroutine[Any, Any, Response]]]
-        | None = None,
+        exception_handlers: (
+            dict[
+                int | type[Exception],
+                Callable[[Request, Any], Coroutine[Any, Any, Response]],
+            ]
+            | None
+        ) = None,
         on_startup: Sequence[Callable[[], Any]] | None = None,
         on_shutdown: Sequence[Callable[[], Any]] | None = None,
         lifespan: Lifespan[Self] | None = None,
@@ -76,7 +81,9 @@ class Cadwyn(FastAPI):
         deprecated: bool | None = None,
         include_in_schema: bool = True,
         swagger_ui_parameters: dict[str, Any] | None = None,
-        generate_unique_id_function: Callable[[routing.APIRoute], str] = Default(generate_unique_id),  # noqa: B008
+        generate_unique_id_function: Callable[[routing.APIRoute], str] = Default(  # noqa: B008
+            generate_unique_id
+        ),
         separate_input_output_schemas: bool = True,
         **extra: Any,
     ) -> None:
@@ -228,7 +235,7 @@ class Cadwyn(FastAPI):
             terms_of_service=self.terms_of_service,
             contact=self.contact,
             license_info=self.license_info,
-            routes=self.router.routes,
+            routes=self.router.unversioned_routes,
             tags=self.openapi_tags,
             servers=self.servers,
         )
@@ -316,21 +323,30 @@ class Cadwyn(FastAPI):
         except ValueError as e:
             raise ValueError("header_value should be in ISO 8601 format") from e
 
+        added_routes: list[BaseRoute] = []
         if header_value_as_dt not in self.router.versioned_routers:  # pragma: no branch
             self.router.versioned_routers[header_value_as_dt] = APIRouter(**self._kwargs_to_router)
-            if self.openapi_url is not None:  # pragma: no branch
-                self.router.versioned_routers[header_value_as_dt].add_route(
-                    path=self.openapi_url,
-                    endpoint=self.openapi_jsons,
-                    include_in_schema=False,
-                )
 
-        added_routes: list[BaseRoute] = []
+        versioned_router = self.router.versioned_routers[header_value_as_dt]
+        if self.openapi_url is not None:  # pragma: no branch
+            versioned_router.add_route(
+                path=self.openapi_url,
+                endpoint=self.openapi_jsons,
+                include_in_schema=False,
+            )
+            added_routes.append(versioned_router.routes[-1])
+
+        added_route_count = 0
         for router in (first_router, *other_routers):
             self.router.versioned_routers[header_value_as_dt].include_router(
                 router,
                 dependencies=[Depends(_get_api_version_dependency(self.router.api_version_header_name, header_value))],
             )
+            added_route_count += len(router.routes)
+
+        added_routes.extend(versioned_router.routes[-added_route_count:])
+        self.router.routes.extend(added_routes)
+
         self.enrich_swagger()
         return added_routes
 

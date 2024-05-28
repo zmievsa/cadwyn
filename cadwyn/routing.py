@@ -9,10 +9,15 @@ from typing import Any
 from fastapi.routing import APIRouter
 from starlette.datastructures import URL
 from starlette.responses import RedirectResponse
-from starlette.routing import BaseRoute, Match
+from starlette.routing import BaseRoute, Match, Route
 from starlette.types import Receive, Scope, Send
 
-from .route_generation import InternalRepresentationOf, generate_versioned_routers  # pyright: ignore[reportDeprecated]
+from cadwyn._utils import same_definition_as_in
+
+from .route_generation import (
+    InternalRepresentationOf,
+    generate_versioned_routers,
+)
 
 # TODO: Remove this in a major version. This is only here for backwards compatibility
 __all__ = ["InternalRepresentationOf", "generate_versioned_routers"]
@@ -46,6 +51,7 @@ class _RootHeaderAPIRouter(APIRouter):
         self.versioned_routers: dict[date, APIRouter] = {}
         self.api_version_header_name = api_version_header_name.lower()
         self.api_version_var = api_version_var
+        self.unversioned_routes: list[Route] = []
 
     @cached_property
     def sorted_versions(self):
@@ -68,13 +74,19 @@ class _RootHeaderAPIRouter(APIRouter):
             # then the request version is older that the oldest route we have
             _logger.info(
                 "Request version is older than the oldest version. No route can match this version",
-                extra={"oldest_version": self.min_routes_version.isoformat(), "request_version": request_version},
+                extra={
+                    "oldest_version": self.min_routes_version.isoformat(),
+                    "request_version": request_version,
+                },
             )
             return []
         version_chosen = self.find_closest_date_but_not_new(request_header_value)
         _logger.info(
             "Partial match. The endpoint with a lower version was selected for the API call",
-            extra={"version_chosen": version_chosen, "request_version": request_version},
+            extra={
+                "version_chosen": version_chosen,
+                "request_version": request_version,
+            },
         )
         return self.versioned_routers[version_chosen].routes
 
@@ -94,12 +106,32 @@ class _RootHeaderAPIRouter(APIRouter):
         # if header_value is None, then it's an unversioned request and we need to use the unversioned routes
         # if there will be a value, we search for the most suitable version
         if not header_value:
-            routes = self.routes
+            routes = self.unversioned_routes
         elif header_value in self.versioned_routers:
             routes = self.versioned_routers[header_value].routes
         else:
             routes = self.pick_version(request_header_value=header_value)
         await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
+
+    @same_definition_as_in(APIRouter.add_api_route)
+    def add_api_route(self, *args: Any, **kwargs: Any):
+        super().add_api_route(*args, **kwargs)
+        self.unversioned_routes.append(self.routes[-1])
+
+    @same_definition_as_in(APIRouter.add_route)
+    def add_route(self, *args: Any, **kwargs: Any):
+        super().add_route(*args, **kwargs)
+        self.unversioned_routes.append(self.routes[-1])
+
+    @same_definition_as_in(APIRouter.add_api_websocket_route)
+    def add_api_websocket_route(self, *args: Any, **kwargs: Any):  # pragma: no cover
+        super().add_api_websocket_route(*args, **kwargs)
+        self.unversioned_routes.append(self.routes[-1])
+
+    @same_definition_as_in(APIRouter.add_websocket_route)
+    def add_websocket_route(self, *args: Any, **kwargs: Any):  # pragma: no cover
+        super().add_websocket_route(*args, **kwargs)
+        self.unversioned_routes.append(self.routes[-1])
 
     async def process_request(self, scope: Scope, receive: Receive, send: Send, routes: Sequence[BaseRoute]) -> None:
         """
