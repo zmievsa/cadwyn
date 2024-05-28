@@ -6,12 +6,13 @@ from functools import cached_property
 from logging import getLogger
 from typing import Any
 
-from _utils import same_definition_as_in
 from fastapi.routing import APIRouter
 from starlette.datastructures import URL
 from starlette.responses import RedirectResponse
 from starlette.routing import BaseRoute, Match, Route
 from starlette.types import Receive, Scope, Send
+
+from cadwyn._utils import same_definition_as_in
 
 from .route_generation import (
     InternalRepresentationOf,

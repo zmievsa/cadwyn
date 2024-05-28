@@ -14,9 +14,7 @@ from tests._resources.app_for_testing_routing import mixed_hosts_app
 
 def test__populate_routes():
     versioned_routes = [
-        route
-        for router in mixed_hosts_app.router.versioned_routers.values()
-        for route in router.routes
+        route for router in mixed_hosts_app.router.versioned_routers.values() for route in router.routes
     ]
     assert sorted(mixed_hosts_app.router.routes, key=lambda r: id(r)) == sorted(
         mixed_hosts_app.router.unversioned_routes + versioned_routes,
@@ -77,9 +75,7 @@ def test__host_routing__lowest_version__404():
 
 
 def test__host_routing__non_http():
-    assert mixed_hosts_app.routes[-1].matches(
-        {"type": "websocket", "path": "/v1/"}
-    ) == (Match.NONE, {})
+    assert mixed_hosts_app.routes[-1].matches({"type": "websocket", "path": "/v1/"}) == (Match.NONE, {})
 
 
 def test__host_routing__non_date_api_version_header__not_valid_format():
@@ -133,9 +129,7 @@ def test__lifespan_async():
         on_startup=[run_startup],
         on_shutdown=[run_shutdown],
     )
-    app.add_unversioned_routes(
-        Route("/v1/", hello_world)
-    )  # pyright: ignore[reportDeprecated]
+    app.add_unversioned_routes(Route("/v1/", hello_world))  # pyright: ignore[reportDeprecated]
 
     assert not startup_complete
     assert not shutdown_complete
