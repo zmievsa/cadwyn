@@ -81,7 +81,7 @@ class Cadwyn(FastAPI):
         deprecated: bool | None = None,
         include_in_schema: bool = True,
         swagger_ui_parameters: dict[str, Any] | None = None,
-        generate_unique_id_function: Callable[[routing.APIRoute], str] = Default(
+        generate_unique_id_function: Callable[[routing.APIRoute], str] = Default(  # noqa: B008
             generate_unique_id
         ),
         separate_input_output_schemas: bool = True,
@@ -89,10 +89,7 @@ class Cadwyn(FastAPI):
     ) -> None:
         self.versions = versions
         # TODO: Remove argument entirely in any major version.
-        latest_schemas_package = (
-            extra.pop("latest_schemas_package", None)
-            or self.versions.head_schemas_package
-        )
+        latest_schemas_package = extra.pop("latest_schemas_package", None) or self.versions.head_schemas_package
         self.versions.head_schemas_package = latest_schemas_package
         self._latest_schemas_package = cast(ModuleType, latest_schemas_package)
 
@@ -148,12 +145,10 @@ class Cadwyn(FastAPI):
             "responses": responses,
             "generate_unique_id_function": generate_unique_id_function,
         }
-        self.router: _RootHeaderAPIRouter = (
-            _RootHeaderAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
-                **self._kwargs_to_router,
-                api_version_header_name=api_version_header_name,
-                api_version_var=self.versions.api_version_var,
-            )
+        self.router: _RootHeaderAPIRouter = _RootHeaderAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
+            **self._kwargs_to_router,
+            api_version_header_name=api_version_header_name,
+            api_version_var=self.versions.api_version_var,
         )
 
         self.docs_url = docs_url
@@ -173,16 +168,12 @@ class Cadwyn(FastAPI):
         )
 
     @property  # pragma: no cover
-    @deprecated(
-        "It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead"
-    )
+    @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
     def latest_schemas_package(self):
         return self._latest_schemas_package
 
     @latest_schemas_package.setter  # pragma: no cover
-    @deprecated(
-        "It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead"
-    )
+    @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
     def latest_schemas_package(self, value: ModuleType | None):
         self._latest_schemas_package = value
 
@@ -269,9 +260,7 @@ class Cadwyn(FastAPI):
             self.swaggers[header_value_str] = openapi
 
     async def openapi_jsons(self, req: Request) -> JSONResponse:
-        version = req.query_params.get("version") or req.headers.get(
-            self.router.api_version_header_name
-        )
+        version = req.query_params.get("version") or req.headers.get(self.router.api_version_header_name)
         openapi_of_a_version = self.swaggers.get(version)
         if not openapi_of_a_version:
             raise HTTPException(
@@ -305,9 +294,7 @@ class Cadwyn(FastAPI):
         if version:
             root_path = self._extract_root_path(req)
             openapi_url = root_path + f"{self.openapi_url}?version={version}"
-            return get_redoc_html(
-                openapi_url=openapi_url, title=f"{self.title} - ReDoc"
-            )
+            return get_redoc_html(openapi_url=openapi_url, title=f"{self.title} - ReDoc")
 
         return self._render_docs_dashboard(req, docs_url=cast(str, self.redoc_url))
 
@@ -320,10 +307,7 @@ class Cadwyn(FastAPI):
             "docs.html",
             {
                 "request": req,
-                "table": {
-                    version: f"{base_url}{docs_url}?version={version}"
-                    for version in sorted(self.swaggers)
-                },
+                "table": {version: f"{base_url}{docs_url}?version={version}" for version in sorted(self.swaggers)},
             },
         )
 
@@ -341,9 +325,7 @@ class Cadwyn(FastAPI):
 
         added_routes: list[BaseRoute] = []
         if header_value_as_dt not in self.router.versioned_routers:  # pragma: no branch
-            self.router.versioned_routers[header_value_as_dt] = APIRouter(
-                **self._kwargs_to_router
-            )
+            self.router.versioned_routers[header_value_as_dt] = APIRouter(**self._kwargs_to_router)
 
         versioned_router = self.router.versioned_routers[header_value_as_dt]
         if self.openapi_url is not None:  # pragma: no branch
@@ -358,13 +340,7 @@ class Cadwyn(FastAPI):
         for router in (first_router, *other_routers):
             self.router.versioned_routers[header_value_as_dt].include_router(
                 router,
-                dependencies=[
-                    Depends(
-                        _get_api_version_dependency(
-                            self.router.api_version_header_name, header_value
-                        )
-                    )
-                ],
+                dependencies=[Depends(_get_api_version_dependency(self.router.api_version_header_name, header_value))],
             )
             added_route_count += len(router.routes)
 
