@@ -106,6 +106,18 @@ class _RootHeaderAPIRouter(APIRouter):
         super().add_api_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
+    def add_route(self, *args, **kwargs): 
+        super().add_route(*args, **kwargs)
+        self.unversioned_routes.append(self.routes[-1])
+
+    def add_api_websocket_route(self, *args, **kwargs): 
+        super().add_api_websocket_route(*args, **kwargs)
+        self.unversioned_routes.append(self.routes[-1])
+
+    def add_websocket_route(self, *args, **kwargs): 
+        super().add_websocket_route(*args, **kwargs)
+        self.unversioned_routes.append(self.routes[-1])
+
     async def process_request(self, scope: Scope, receive: Receive, send: Send, routes: Sequence[BaseRoute]) -> None:
         """
         its a copy-paste from starlette.routing.Router
