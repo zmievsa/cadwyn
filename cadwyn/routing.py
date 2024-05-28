@@ -9,7 +9,7 @@ from typing import Any
 from fastapi.routing import APIRouter
 from starlette.datastructures import URL
 from starlette.responses import RedirectResponse
-from starlette.routing import BaseRoute, Match
+from starlette.routing import BaseRoute, Match, Route
 from starlette.types import Receive, Scope, Send
 
 from .route_generation import InternalRepresentationOf, generate_versioned_routers  # pyright: ignore[reportDeprecated]
@@ -46,6 +46,7 @@ class _RootHeaderAPIRouter(APIRouter):
         self.versioned_routers: dict[date, APIRouter] = {}
         self.api_version_header_name = api_version_header_name.lower()
         self.api_version_var = api_version_var
+        self.unversioned_routes: list[Route] = []
 
     @cached_property
     def sorted_versions(self):
@@ -94,12 +95,16 @@ class _RootHeaderAPIRouter(APIRouter):
         # if header_value is None, then it's an unversioned request and we need to use the unversioned routes
         # if there will be a value, we search for the most suitable version
         if not header_value:
-            routes = self.routes
+            routes = self.unversioned_routes
         elif header_value in self.versioned_routers:
             routes = self.versioned_routers[header_value].routes
         else:
             routes = self.pick_version(request_header_value=header_value)
         await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
+
+    def add_api_route(self, *args, **kwargs): 
+        super().add_api_route(*args, **kwargs)
+        self.unversioned_routes.append(self.routes[-1])
 
     async def process_request(self, scope: Scope, receive: Receive, send: Send, routes: Sequence[BaseRoute]) -> None:
         """
