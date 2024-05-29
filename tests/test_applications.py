@@ -1,13 +1,15 @@
 import re
 from datetime import date
-from typing import cast
+from types import ModuleType
+from typing import Annotated, cast
 
 import pytest
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from cadwyn import Cadwyn
+from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure.versions import Version, VersionBundle
 from tests._resources.utils import BASIC_HEADERS, DEFAULT_API_VERSION
 from tests._resources.versioned_app.app import (
@@ -18,6 +20,7 @@ from tests._resources.versioned_app.app import (
     v2022_01_02_router,
     versioned_app,
 )
+from tests.conftest import RunSchemaCodegen
 
 
 def test__cadwyn_enrich_swagger__still_exists_and_is_deprecated():
@@ -93,6 +96,46 @@ def test__header_routing_fastapi__calling_openapi_incorrectly__docs_should_retur
             raise NotImplementedError
 
         assert client.get("/openapi.json?version=unversioned").status_code == 200
+
+
+def test__cadwyn__with_dependency_overrides__overrides_should_be_applied(
+    head_with_empty_classes: ModuleType,
+    run_schema_codegen: RunSchemaCodegen,
+):
+    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16)), head_schemas_package=head_with_empty_classes))
+    run_schema_codegen(app.versions)
+
+    async def old_dependency():
+        return "old"
+
+    async def new_dependency():
+        return "new"
+
+    @app.post("/hello")
+    async def hello(dependency: Annotated[str, Depends(old_dependency)]):
+        return dependency
+
+    regular_router = APIRouter()
+
+    @regular_router.post("/darkness")
+    async def darkness(dependency: Annotated[str, Depends(old_dependency)]):
+        return dependency
+
+    app.add_header_versioned_routers(regular_router, header_value="2022-11-16")
+
+    versioned_router = VersionedAPIRouter()
+
+    @versioned_router.post("/my_old_friend")
+    async def my_old_friend(dependency: Annotated[str, Depends(old_dependency)]):
+        return dependency
+
+    app.generate_and_include_versioned_routers(versioned_router)
+
+    app.dependency_overrides = {old_dependency: new_dependency}
+    with TestClient(app) as client:
+        assert client.post("/hello").json() == "new"
+        assert client.post("/darkness", headers={"x-api-version": "2022-11-16"}).json() == "new"
+        assert client.post("/my_old_friend", headers={"x-api-version": "2022-11-16"}).json() == "new"
 
 
 def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empty__version_should_not_have_any_routes():
