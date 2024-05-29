@@ -9,13 +9,13 @@ from typing import Any
 from fastapi.routing import APIRouter
 from starlette.datastructures import URL
 from starlette.responses import RedirectResponse
-from starlette.routing import BaseRoute, Match, Route
+from starlette.routing import BaseRoute, Match
 from starlette.types import Receive, Scope, Send
 
 from cadwyn._utils import same_definition_as_in
 
 from .route_generation import (
-    InternalRepresentationOf,
+    InternalRepresentationOf,  # pyright: ignore[reportDeprecated]
     generate_versioned_routers,
 )
 
@@ -51,7 +51,7 @@ class _RootHeaderAPIRouter(APIRouter):
         self.versioned_routers: dict[date, APIRouter] = {}
         self.api_version_header_name = api_version_header_name.lower()
         self.api_version_var = api_version_var
-        self.unversioned_routes: list[Route] = []
+        self.unversioned_routes: list[BaseRoute] = []
 
     @cached_property
     def sorted_versions(self):

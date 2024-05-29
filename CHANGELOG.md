@@ -5,12 +5,26 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.15.4]
+
+### Changed
+
+* `Cadwyn.enrich_swagger` is now completely unnecessary: openapi is now generated at runtime. It also now does not do anything, is deprecated, and will be removed in a future version
+
+### Fixed
+
+* fastapi-pagination now does not require an explicit call to `Cadwyn.enrich_swagger`
+
+
+
 ## [3.15.3]
 
 ### Changed
+
 * `Cadwyn.router.routes` now includes all existing routers within the application instead of just unversioned routes
 
 ### Fixed
+
 * Compatibility with fastapi-pagination
 * High cardinality of metrics for routers with path variables in starlette-exporter
 
