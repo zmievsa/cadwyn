@@ -5,6 +5,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.15.5]
+
+### Fixed
+
+* Fix dependency overrides not working for versioned routes
+
+
 ## [3.15.4]
 
 ### Changed
@@ -14,7 +21,6 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Fixed
 
 * fastapi-pagination now does not require an explicit call to `Cadwyn.enrich_swagger`
-
 
 
 ## [3.15.3]
