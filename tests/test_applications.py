@@ -20,6 +20,12 @@ from tests._resources.versioned_app.app import (
 )
 
 
+def test__cadwyn_enrich_swagger__still_exists_and_is_deprecated():
+    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
+    with pytest.deprecated_call():
+        app.enrich_swagger()  # pyright: ignore[reportDeprecated]
+
+
 def test__header_routing__invalid_version_format__error():
     main_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
     main_app.add_header_versioned_routers(APIRouter(), header_value=DEFAULT_API_VERSION)
@@ -63,6 +69,30 @@ def test__header_routing_fastapi_init__changing_openapi_url__docs_still_return_2
     with TestClient(app) as client:
         assert client.get("/openpapi?version=2021-01-01").status_code == 200
         assert client.get("/openapi.json?version=2021-01-01").status_code == 404
+
+
+def test__header_routing_fastapi__calling_openapi_incorrectly__docs_should_return_404():
+    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
+    app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
+    app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
+    with TestClient(app) as client:
+        assert client.get("/openapi.json?version=2021-01-01").status_code == 200
+        # - Nonexisting version
+        assert client.get("/openapi.json?version=2019-01-01").status_code == 404
+        # - Nonexisting but compatible version
+        assert client.get("/openapi.json?version=2024-01-01").status_code == 404
+        # - version = null
+        assert client.get("/openapi.json?version=").status_code == 404
+        # - version not passed at all
+        assert client.get("/openapi.json").status_code == 404
+        # - Unversioned when we haven't added any
+        assert client.get("/openapi.json?version=unversioned").status_code == 404
+
+        @app.post("/my_unversioned_route")
+        def my_unversioned_route():
+            raise NotImplementedError
+
+        assert client.get("/openapi.json?version=unversioned").status_code == 200
 
 
 def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empty__version_should_not_have_any_routes():
@@ -118,14 +148,44 @@ def test__get_openapi__nonexisting_version__error():
     assert resp.json() == {"detail": "OpenApi file of with version `2023-01-01` not found"}
 
 
-def test__get_docs__all_versions():
-    resp = client_without_headers.get("/docs")
+def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_urls():
+    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
+    app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
+    app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
+
+    client = TestClient(app)
+
+    resp = client.get("/docs")
+    assert resp.status_code == 200
+    assert "http://testserver/docs?version=2021-01-01" in resp.text
+    assert "http://testserver/docs?version=2022-02-02" in resp.text
+    assert "http://testserver/docs?version=unversioned" not in resp.text
+
+    resp = client.get("/redoc")
+    assert resp.status_code == 200
+    assert "http://testserver/redoc?version=2021-01-01" in resp.text
+    assert "http://testserver/redoc?version=2022-02-02" in resp.text
+    assert "http://testserver/redoc?version=unversioned" not in resp.text
+
+
+def test__get_docs__with_unversioned_routes__should_return_all_versioned_doc_urls():
+    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
+    app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
+    app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
+
+    @app.post("/my_unversioned_route")
+    def my_unversioned_route():
+        raise NotImplementedError
+
+    client = TestClient(app)
+
+    resp = client.get("/docs")
     assert resp.status_code == 200
     assert "http://testserver/docs?version=2022-02-02" in resp.text
     assert "http://testserver/docs?version=2021-01-01" in resp.text
     assert "http://testserver/docs?version=unversioned" in resp.text
 
-    resp = client_without_headers.get("/redoc")
+    resp = client.get("/redoc")
     assert resp.status_code == 200
     assert "http://testserver/redoc?version=2022-02-02" in resp.text
     assert "http://testserver/redoc?version=2021-01-01" in resp.text

@@ -1,3 +1,4 @@
+import datetime
 from collections.abc import Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
@@ -24,7 +25,6 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
 from typing_extensions import Self, deprecated
 
-from cadwyn._utils import same_definition_as_in
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.routing import _RootHeaderAPIRouter
@@ -155,11 +155,10 @@ class Cadwyn(FastAPI):
         self.redoc_url = redoc_url
         self.openapi_url = openapi_url
         self.redoc_url = redoc_url
-        self.swaggers = {}
 
         unversioned_router = APIRouter(**self._kwargs_to_router)
         self._add_openapi_endpoints(unversioned_router)
-        self.add_unversioned_routers(unversioned_router)
+        self.include_router(unversioned_router)
         self.add_middleware(
             HeaderVersioningMiddleware,
             api_version_header_name=self.router.api_version_header_name,
@@ -220,55 +219,45 @@ class Cadwyn(FastAPI):
         for version, router in router_versions.items():
             self.add_header_versioned_routers(router, header_value=version.isoformat())
 
-    def enrich_swagger(self):
-        """
-        This method goes through all header-based apps and collect a dict[openapi_version, openapi_json]
-
-        For each route a `X-API-VERSION` header with value is added
-
-        """
-        unversioned_routes_openapi = get_openapi(
-            title=self.title,
-            version=self.version,
-            openapi_version=self.openapi_version,
-            description=self.description,
-            terms_of_service=self.terms_of_service,
-            contact=self.contact,
-            license_info=self.license_info,
-            routes=self.router.unversioned_routes,
-            tags=self.openapi_tags,
-            servers=self.servers,
+    async def openapi_jsons(self, req: Request) -> JSONResponse:
+        raw_version = req.query_params.get("version") or req.headers.get(self.router.api_version_header_name)
+        not_found_error = HTTPException(
+            status_code=404,
+            detail=f"OpenApi file of with version `{raw_version}` not found",
         )
-        if unversioned_routes_openapi["paths"]:
-            self.swaggers["unversioned"] = unversioned_routes_openapi
+        try:
+            version = datetime.date.fromisoformat(raw_version)  # pyright: ignore[reportArgumentType]
+        # TypeError when raw_version is None
+        # ValueError when raw_version is of the non-iso format
+        except (ValueError, TypeError):
+            version = raw_version
 
-        for header_value, router in self.router.versioned_routers.items():
-            header_value_str = header_value.isoformat()
-            openapi = get_openapi(
+        if version in self.router.versioned_routers:
+            routes = self.router.versioned_routers[version].routes
+            formatted_version = version.isoformat()
+        elif version == "unversioned" and self._there_are_public_unversioned_routes():
+            routes = self.router.unversioned_routes
+            formatted_version = "unversioned"
+        else:
+            raise not_found_error
+
+        return JSONResponse(
+            get_openapi(
                 title=self.title,
-                version=header_value.isoformat(),
+                version=formatted_version,
                 openapi_version=self.openapi_version,
                 description=self.description,
                 terms_of_service=self.terms_of_service,
                 contact=self.contact,
                 license_info=self.license_info,
-                routes=router.routes,
+                routes=routes,
                 tags=self.openapi_tags,
                 servers=self.servers,
             )
-            # in current implementation we expect header_value to be a date
-            self.swaggers[header_value_str] = openapi
+        )
 
-    async def openapi_jsons(self, req: Request) -> JSONResponse:
-        version = req.query_params.get("version") or req.headers.get(self.router.api_version_header_name)
-        openapi_of_a_version = self.swaggers.get(version)
-        if not openapi_of_a_version:
-            raise HTTPException(
-                status_code=404,
-                detail=f"OpenApi file of with version `{version}` not found",
-            )
-
-        return JSONResponse(openapi_of_a_version)
+    def _there_are_public_unversioned_routes(self):
+        return any(isinstance(route, Route) and route.include_in_schema for route in self.router.unversioned_routes)
 
     async def swagger_dashboard(self, req: Request) -> Response:
         version = req.query_params.get("version")
@@ -303,12 +292,12 @@ class Cadwyn(FastAPI):
 
     def _render_docs_dashboard(self, req: Request, docs_url: str):
         base_url = str(req.base_url).rstrip("/")
+        table = {version: f"{base_url}{docs_url}?version={version}" for version in self.router.sorted_versions}
+        if self._there_are_public_unversioned_routes():
+            table |= {"unversioned": f"{base_url}{docs_url}?version=unversioned"}
         return self._templates.TemplateResponse(
             "docs.html",
-            {
-                "request": req,
-                "table": {version: f"{base_url}{docs_url}?version={version}" for version in sorted(self.swaggers)},
-            },
+            {"request": req, "table": table},
         )
 
     def add_header_versioned_routers(
@@ -347,94 +336,17 @@ class Cadwyn(FastAPI):
         added_routes.extend(versioned_router.routes[-added_route_count:])
         self.router.routes.extend(added_routes)
 
-        self.enrich_swagger()
         return added_routes
 
+    @deprecated("Use builtin FastAPI methods such as include_router instead")
     def add_unversioned_routers(self, *routers: APIRouter):
         for router in routers:
-            self.router.include_router(router)
-        self.enrich_swagger()
+            self.include_router(router)
 
-    @deprecated("Use add add_unversioned_routers instead")
+    @deprecated("Use builtin FastAPI methods such as add_api_route instead")
     def add_unversioned_routes(self, *routes: Route):
         router = APIRouter(routes=list(routes))
         self.include_router(router)
-        self.enrich_swagger()
 
-    @same_definition_as_in(FastAPI.include_router)
-    def include_router(self, *args: Any, **kwargs: Any):
-        route = super().include_router(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.post)
-    def post(self, *args: Any, **kwargs: Any):
-        route = super().post(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.get)
-    def get(self, *args: Any, **kwargs: Any):
-        route = super().get(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.patch)
-    def patch(self, *args: Any, **kwargs: Any):
-        route = super().patch(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.delete)
-    def delete(self, *args: Any, **kwargs: Any):
-        route = super().delete(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.put)
-    def put(self, *args: Any, **kwargs: Any):
-        route = super().put(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.trace)
-    def trace(self, *args: Any, **kwargs: Any):  # pragma: no cover
-        route = super().trace(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.options)
-    def options(self, *args: Any, **kwargs: Any):
-        route = super().options(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.head)
-    def head(self, *args: Any, **kwargs: Any):
-        route = super().head(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.add_api_route)
-    def add_api_route(self, *args: Any, **kwargs: Any):
-        route = super().add_api_route(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.api_route)
-    def api_route(self, *args: Any, **kwargs: Any):
-        route = super().api_route(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.add_api_websocket_route)
-    def add_api_websocket_route(self, *args: Any, **kwargs: Any):  # pragma: no cover
-        route = super().add_api_websocket_route(*args, **kwargs)
-        self.enrich_swagger()
-        return route
-
-    @same_definition_as_in(FastAPI.websocket)
-    def websocket(self, *args: Any, **kwargs: Any):  # pragma: no cover
-        route = super().websocket(*args, **kwargs)
-        self.enrich_swagger()
-        return route
+    @deprecated("It no longer does anything")
+    def enrich_swagger(self): ...
