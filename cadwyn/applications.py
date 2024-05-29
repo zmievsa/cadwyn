@@ -1,3 +1,4 @@
+import dataclasses
 import datetime
 from collections.abc import Callable, Coroutine, Sequence
 from datetime import date
@@ -32,6 +33,11 @@ from cadwyn.structure import VersionBundle
 
 CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
+
+
+@dataclasses.dataclass(slots=True)
+class FakeDependencyOverridesProvider:
+    dependency_overrides: dict[Callable[..., Any], Callable[..., Any]]
 
 
 class Cadwyn(FastAPI):
@@ -92,6 +98,7 @@ class Cadwyn(FastAPI):
         latest_schemas_package = extra.pop("latest_schemas_package", None) or self.versions.head_schemas_package
         self.versions.head_schemas_package = latest_schemas_package
         self._latest_schemas_package = cast(ModuleType, latest_schemas_package)
+        self._dependency_overrides_provider = FakeDependencyOverridesProvider({})
 
         super().__init__(
             debug=debug,
@@ -166,6 +173,20 @@ class Cadwyn(FastAPI):
             default_response_class=default_response_class,
         )
 
+    @property
+    def dependency_overrides(self) -> dict[Callable[..., Any], Callable[..., Any]]:
+        # This is only necessary because we cannot send self to versioned router generator
+        # because it takes a deepcopy of the router and self.versions.head_schemas_package is a module
+        # which cannot be copied.
+        return self._dependency_overrides_provider.dependency_overrides
+
+    @dependency_overrides.setter
+    def dependency_overrides(  # pyright: ignore[reportIncompatibleVariableOverride]
+        self,
+        value: dict[Callable[..., Any], Callable[..., Any]],
+    ) -> None:
+        self._dependency_overrides_provider.dependency_overrides = value
+
     @property  # pragma: no cover
     @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
     def latest_schemas_package(self):
@@ -209,7 +230,7 @@ class Cadwyn(FastAPI):
                 )
 
     def generate_and_include_versioned_routers(self, *routers: APIRouter) -> None:
-        root_router = APIRouter()
+        root_router = APIRouter(dependency_overrides_provider=self._dependency_overrides_provider)
         for router in routers:
             root_router.include_router(router)
         router_versions = generate_versioned_routers(
