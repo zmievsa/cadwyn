@@ -96,6 +96,22 @@ files = [
 ]
 
 [[package]]
+name = "better-devtools"
+version = "0.13.3"
+description = "Python's missing debug print command, and more."
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "better_devtools-0.13.3-py3-none-any.whl", hash = "sha256:f343b62ff119fd659494f44a63247bcc71ecdec6dbc2c497e6df9471081e08e6"},
+    {file = "better_devtools-0.13.3.tar.gz", hash = "sha256:cf7fb105ed83c70902f6d82307fdd7f42512e3a99cfd7e80dd9c2d9edf4b44cf"},
+]
+
+[package.dependencies]
+asttokens = ">=2.0.0,<3.0.0"
+executing = ">=1.1.1"
+pygments = ">=2.15.0"
+
+[[package]]
 name = "certifi"
 version = "2024.2.2"
 description = "Python package for providing Mozilla's CA Bundle."
@@ -296,22 +312,6 @@ tomli = {version = "*", optional = true, markers = "python_full_version <= \"3.1
 
 [package.extras]
 toml = ["tomli"]
-
-[[package]]
-name = "devtools"
-version = "0.12.2"
-description = "Python's missing debug print command, and more."
-optional = false
-python-versions = ">=3.7"
-files = [
-    {file = "devtools-0.12.2-py3-none-any.whl", hash = "sha256:c366e3de1df4cdd635f1ad8cbcd3af01a384d7abda71900e68d43b04eb6aaca7"},
-    {file = "devtools-0.12.2.tar.gz", hash = "sha256:efceab184cb35e3a11fa8e602cc4fadacaa2e859e920fc6f87bf130b69885507"},
-]
-
-[package.dependencies]
-asttokens = ">=2.0.0,<3.0.0"
-executing = ">=1.1.1"
-pygments = ">=2.15.0"
 
 [[package]]
 name = "dirty-equals"
@@ -1533,6 +1533,26 @@ anyio = ">=3.4.0,<5"
 full = ["httpx (>=0.22.0)", "itsdangerous", "jinja2", "python-multipart (>=0.0.7)", "pyyaml"]
 
 [[package]]
+name = "svcs"
+version = "24.1.0"
+description = "A Flexible Service Locator"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "svcs-24.1.0-py3-none-any.whl", hash = "sha256:f050f4a6fcf163aa3a5d5e17b66bbf5efa3ed2164018aebecd70fc27794ecf6b"},
+    {file = "svcs-24.1.0.tar.gz", hash = "sha256:7419980475dd6b8e256e072c895c84cfe40d4da1ee944145f98724f2985dfd1f"},
+]
+
+[package.dependencies]
+attrs = ">=21.3.0"
+
+[package.extras]
+dev = ["httpx", "svcs[tests,typing]", "tox (>4)"]
+docs = ["aiohttp", "fastapi", "flask", "furo (>=2023.8.17)", "httpx", "myst-parser", "pyramid", "pytest", "sphinx (>=7.2.2)", "sphinx-copybutton", "sphinx-design", "sphinx-notfound-page", "sphinxext-opengraph", "sqlalchemy", "starlette", "sybil"]
+tests = ["pytest", "pytest-asyncio", "sybil (>=6)", "typing-extensions"]
+typing = ["aiohttp", "fastapi", "flask", "mypy (>=1.4)", "pyramid", "starlette"]
+
+[[package]]
 name = "termcolor"
 version = "2.4.0"
 description = "ANSI color formatting for output in terminal"
@@ -1991,4 +2011,4 @@ cli = ["typer"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "684d4adb9baa9f0af53670bc266e8dd80b35c3c1727c61632da13a1aba7708b7"
+content-hash = "9431e97be17b7d2f68ceaa760f5a8d584ccb86a3782650f18113c4661093bcfc"

@@ -12,6 +12,7 @@ from enum import Enum
 from pathlib import Path
 from types import GenericAlias, MappingProxyType, ModuleType
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Any,
     Generic,
@@ -28,23 +29,18 @@ import fastapi.params
 import fastapi.routing
 import fastapi.security.base
 import fastapi.utils
-from fastapi import APIRouter
+from fastapi import (
+    APIRouter,
+    Request,  # noqa: F401 # We import Request for libraries like svcs that expect it to be in globals
+    Response,  # noqa: F401 # We import Request for libraries like svcs that expect it to be in globals
+)
 from fastapi._compat import ModelField as FastAPIModelField
 from fastapi._compat import create_body_model
-from fastapi.dependencies.models import Dependant
-from fastapi.dependencies.utils import (
-    get_body_field,
-    get_dependant,
-    get_parameterless_sub_dependant,
-)
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel
-from starlette.routing import (
-    BaseRoute,
-    request_response,
-)
+from starlette.routing import BaseRoute
 from typing_extensions import Self, assert_never, deprecated
 
 from cadwyn._compat import get_annotation_from_model_field, model_fields, rebuild_fastapi_body_param
@@ -67,6 +63,9 @@ from cadwyn.structure.endpoints import (
     EndpointHadInstruction,
 )
 from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionChange
+
+if TYPE_CHECKING:
+    from fastapi.dependencies.models import Dependant
 
 _T = TypeVar("_T", bound=Callable[..., Any])
 _R = TypeVar("_R", bound=fastapi.routing.APIRouter)
@@ -308,7 +307,7 @@ class _EndpointTransformer(Generic[_R]):
 
     def _replace_internal_representation_with_the_versioned_schema(
         self,
-        copy_of_dependant: Dependant,
+        copy_of_dependant: "Dependant",
         schema_to_internal_request_body_representation: dict[type[BaseModel], type[BaseModel]],
     ):
         body_param: FastAPIModelField = copy_of_dependant.body_params[0]
@@ -658,15 +657,12 @@ def _modify_callable(
 
 
 def _remake_endpoint_dependencies(route: fastapi.routing.APIRoute):
-    route.dependant = get_dependant(path=route.path_format, call=route.endpoint)
+    # Unlike get_dependant, APIRoute is the public API of FastAPI and it's (almost) guaranteed to be stable.
+
+    route_copy = fastapi.routing.APIRoute(route.path, route.endpoint, dependencies=route.dependencies)
+    route.dependant = route_copy.dependant
+    route.body_field = route_copy.body_field
     _add_request_and_response_params(route)
-    route.body_field = get_body_field(dependant=route.dependant, name=route.unique_id)
-    for depends in route.dependencies[::-1]:
-        route.dependant.dependencies.insert(
-            0,
-            get_parameterless_sub_dependant(depends=depends, path=route.path_format),
-        )
-    route.app = request_response(route.get_route_handler())
 
 
 def _add_request_and_response_params(route: APIRoute):
@@ -681,7 +677,7 @@ def _add_data_migrations_to_route(
     head_route: Any,
     template_body_field: type[BaseModel] | None,
     template_body_field_name: str | None,
-    dependant_for_request_migrations: Dependant,
+    dependant_for_request_migrations: "Dependant",
     versions: VersionBundle,
 ):
     if not (route.dependant.request_param_name and route.dependant.response_param_name):  # pragma: no cover

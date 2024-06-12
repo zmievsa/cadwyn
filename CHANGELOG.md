@@ -5,6 +5,17 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.15.6]
+
+### Added
+
+* `HeadVersion` and `Version` into `cadwyn.__init__` so now they are directly importable from `cadwyn`
+
+### Fixed
+
+* Fix dependencies from other libraries not resolving if they use fastapi.Request or fastapi.Response (added svcs-specific test)
+* Now a proper exception is used when no dated version was passed into `VersionBundle`
+
 ## [3.15.5]
 
 ### Fixed

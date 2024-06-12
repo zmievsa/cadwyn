@@ -68,7 +68,6 @@ cli = ["typer"]
 pytest = ">=7.2.1"
 pytest-cov = ">=4.0.0"
 uvicorn = "*"
-devtools = "*"
 pdbpp = "^0.10.3"
 httpx = "*"
 pytest-fixture-classes = ">=1.0.3"
@@ -78,6 +77,8 @@ mkdocs-material = ">=9.3.1"
 python-multipart = ">=0.0.6"
 mkdocs-simple-hooks = ">=0.1.5"
 pytest-sugar = "^1.0.0"
+better-devtools = "^0.13.3"
+svcs = "^24.1.0"
 
 [tool.poetry.scripts]
 cadwyn = "cadwyn.__main__:app"

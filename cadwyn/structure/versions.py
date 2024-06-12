@@ -285,6 +285,8 @@ class VersionBundle:
             raise CadwynStructureError(
                 "Versions are not sorted correctly. Please sort them in descending order.",
             )
+        if not self.versions:
+            raise CadwynStructureError("You must define at least one non-head version in a VersionBundle.")
         if self.versions[-1].version_changes:
             raise CadwynStructureError(
                 f'The first version "{self.versions[-1].value}" cannot have any version changes. '
@@ -325,7 +327,7 @@ class VersionBundle:
             raise CadwynStructureError(
                 f'The head schemas package must be a package. "{head_schemas_package.__name__}" is not a package.',
             )
-        elif head_schemas_package.__name__.endswith(".head"):
+        elif head_schemas_package.__name__.endswith(".head") or head_schemas_package.__name__ == "head":
             return "head"
         elif head_schemas_package.__name__.endswith(".latest"):
             warnings.warn(
@@ -463,7 +465,6 @@ class VersionBundle:
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
-
         dependencies, errors, _, _, _ = await solve_dependencies(
             request=request,
             response=response,
@@ -803,7 +804,7 @@ async def _get_body(
         ) from e
     except HTTPException:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise HTTPException(status_code=400, detail="There was an error parsing the body") from e
     return body
 

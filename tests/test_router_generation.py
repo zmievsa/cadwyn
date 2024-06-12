@@ -9,6 +9,7 @@ from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
 from uuid import UUID
 
 import pytest
+import svcs
 from fastapi import APIRouter, Body, Depends, UploadFile
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -1346,3 +1347,22 @@ def test__basic_router_generation__subclass_of_security_class_based_dependency_w
         {"foo": 3},  # client_2001
         {"foo": 3},  # client_2001
     ]
+
+
+######################
+# External lib testing
+######################
+
+
+def test__router_generation__using_svcs_in_dependencies(
+    router: VersionedAPIRouter,
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+):
+    # This makes sure that svcs is compatible with Cadwyn
+    @router.api_route("/test")
+    async def test(my_dep: svcs.fastapi.DepContainer):
+        raise NotImplementedError
+
+    # We are simply validating that the routes were generated without errors
+    routes_2000, routes_2001 = create_versioned_api_routes(version_change())
+    assert len(routes_2000) == len(routes_2001) == 2
