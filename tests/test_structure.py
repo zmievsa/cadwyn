@@ -19,6 +19,7 @@ from cadwyn.structure import (
     schema,
 )
 from cadwyn.structure.schemas import FieldChanges, PossibleFieldAttributes
+from cadwyn.structure.versions import HeadVersion
 
 
 class DummySubClass2000_001(VersionChangeWithSideEffects):  # noqa: N801
@@ -311,6 +312,13 @@ class TestVersionBundle:
                 Version(date(2000, 1, 1)),
                 api_version_var=api_version_var,
             )
+
+    def test__init__no_dated_versions_defined__should_raise_error(self, api_version_var: ContextVar[date | None]):
+        with pytest.raises(
+            CadwynStructureError,
+            match=re.escape("You must define at least one non-head version in a VersionBundle."),
+        ):
+            VersionBundle(HeadVersion(), api_version_var=api_version_var)
 
     def test__init__version_change_in_the_first_version__should_raise_error(
         self,

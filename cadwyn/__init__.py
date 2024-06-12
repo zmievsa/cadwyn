@@ -7,7 +7,7 @@ from .route_generation import (
     VersionedAPIRouter,
     generate_versioned_routers,
 )
-from .structure import VersionBundle
+from .structure import HeadVersion, Version, VersionBundle
 
 __version__ = importlib.metadata.version("cadwyn")
 __all__ = [
@@ -15,6 +15,8 @@ __all__ = [
     "VersionedAPIRouter",
     "generate_code_for_versioned_packages",
     "VersionBundle",
+    "HeadVersion",
+    "Version",
     "generate_versioned_routers",
     "InternalRepresentationOf",
 ]
