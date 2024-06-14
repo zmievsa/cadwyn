@@ -848,7 +848,7 @@ class _CallableWrapper:
         return hash(self._original_callable)
 
     def __eq__(self, value: object) -> bool:
-        return self._original_callable == value
+        return self._original_callable == value  # pyright: ignore[reportUnnecessaryComparison]
 
 
 class _AsyncCallableWrapper(_CallableWrapper):
