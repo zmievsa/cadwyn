@@ -51,8 +51,6 @@ else:
 def get_wrapped_endpoint(endpoint: Endpoint) -> Endpoint:
     while hasattr(endpoint, "__wrapped__"):
         endpoint = endpoint.__wrapped__
-    while hasattr(endpoint, "__alt_wrapped__"):
-        endpoint = endpoint.__alt_wrapped__
     return endpoint
 
 
