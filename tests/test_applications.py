@@ -106,7 +106,7 @@ def test__cadwyn__with_dependency_overrides__overrides_should_be_applied(
     run_schema_codegen(app.versions)
 
     async def old_dependency():
-        return "old"
+        raise NotImplementedError
 
     async def new_dependency():
         return "new"
