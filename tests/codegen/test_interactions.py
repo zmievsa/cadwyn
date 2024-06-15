@@ -39,7 +39,6 @@ def test__with_file_instead_of_package__error(
     importlib.invalidate_caches()
     wrong_latest_module = importlib.import_module(head_package_path + ".hello")
 
-    # with insert_pytest_raises():
     with pytest.raises(
         CodeGenerationError,
         match=re.escape(f'"{wrong_latest_module}" is not a package'),

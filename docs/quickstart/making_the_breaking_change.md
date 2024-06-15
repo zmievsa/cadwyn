@@ -4,7 +4,7 @@
 During our development, we have realized that the initial API design was wrong and that addresses should have always been a list because the user wants to have multiple addresses to choose from so now we have to change the type of the "address" field to the list of strings.
 
 ```python
-# data/latest/users.py
+# data/head/users.py
 from pydantic import BaseModel, Field
 import uuid
 

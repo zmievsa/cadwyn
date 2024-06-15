@@ -2,6 +2,7 @@ import email.message
 import functools
 import inspect
 import json
+import sys
 import warnings
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
@@ -33,8 +34,14 @@ from cadwyn._package_utils import (
     get_package_path_from_module,
     get_version_dir_path,
 )
-from cadwyn._utils import classproperty, get_another_version_of_cls
-from cadwyn.exceptions import CadwynError, CadwynHeadRequestValidationError, CadwynStructureError
+from cadwyn._utils import classproperty, get_another_version_of_module
+from cadwyn.exceptions import (
+    CadwynError,
+    CadwynHeadRequestValidationError,
+    CadwynStructureError,
+    ModuleIsNotVersionedError,
+)
+from cadwyn.schema_generation import _generate_versioned_schemas
 
 from .._utils import Sentinel
 from .common import Endpoint, VersionDate, VersionedModel
@@ -245,6 +252,7 @@ class VersionBundle:
         *other_versions: Version,
         api_version_var: APIVersionVarType | None = None,
         head_schemas_package: ModuleType | None = None,
+        enable_runtime_schema_generation: bool = False,
     ) -> None: ...
 
     @overload
@@ -256,6 +264,7 @@ class VersionBundle:
         *other_versions: Version,
         api_version_var: APIVersionVarType | None = None,
         latest_schemas_package: ModuleType | None = None,
+        enable_runtime_schema_generation: bool = False,
     ) -> None: ...
 
     def __init__(
@@ -266,6 +275,7 @@ class VersionBundle:
         api_version_var: APIVersionVarType | None = None,
         head_schemas_package: ModuleType | None = None,
         latest_schemas_package: ModuleType | None = None,
+        enable_runtime_schema_generation: bool = False,
     ) -> None:
         super().__init__()
 
@@ -309,6 +319,14 @@ class VersionBundle:
                         "It is prohibited.",
                     )
                 version_change._bound_version_bundle = self
+        self._enable_runtime_schema_generation = enable_runtime_schema_generation
+        if self._enable_runtime_schema_generation:
+            warnings.warn(
+                "The 'enable_deprecated_codegen' parameter is deprecated and will likely be removed in the future.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self._generated_classes = _generate_versioned_schemas(self)
 
     @property  # pragma: no cover
     @deprecated("Use head_version_package instead.")
@@ -758,6 +776,19 @@ class VersionBundle:
             new_kwargs.pop(_CADWYN_REQUEST_PARAM_NAME)
 
         return new_kwargs
+
+    @functools.cache
+    def get_another_version_of_cls(self, cls_from_old_version: type[Any], new_version_dir: Path):
+        if self._enable_runtime_schema_generation:
+            pass
+        else:
+            # version_dir = /home/myuser/package/companies/v2021_01_01
+            module_from_old_version = sys.modules[cls_from_old_version.__module__]
+            try:
+                module = get_another_version_of_module(module_from_old_version, new_version_dir, version_dirs)
+            except ModuleIsNotVersionedError:
+                return cls_from_old_version
+            return getattr(module, cls_from_old_version.__name__)
 
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form

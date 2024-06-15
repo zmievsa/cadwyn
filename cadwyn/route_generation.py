@@ -106,6 +106,8 @@ def generate_versioned_routers(
         head_schemas_package = versions.head_schemas_package
     elif latest_schemas_package is not None:  # pragma: no cover
         head_schemas_package = latest_schemas_package
+    elif versions._enable_runtime_schema_generation:
+        head_schemas_package = None
     else:  # pragma: no cover
         raise TypeError(
             "TypeError: generate_versioned_routers() must be called with a VersionBundle "
@@ -135,7 +137,7 @@ class _EndpointTransformer(Generic[_R]):
         self,
         parent_router: _R,
         versions: VersionBundle,
-        head_schemas_package: ModuleType,
+        head_schemas_package: ModuleType | None,
     ) -> None:
         super().__init__()
         self.parent_router = parent_router
@@ -491,7 +493,7 @@ class _AnnotationTransformer:
         "change_versions_of_a_non_container_annotation",
     )
 
-    def __init__(self, head_schemas_package: ModuleType, versions: VersionBundle) -> None:
+    def __init__(self, head_schemas_package: ModuleType | None, versions: VersionBundle) -> None:
         self.versions = versions
         self.versions.head_schemas_package = head_schemas_package
         self.head_schemas_package = head_schemas_package
@@ -502,7 +504,7 @@ class _AnnotationTransformer:
         # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
         # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
         self.change_versions_of_a_non_container_annotation = functools.cache(
-            self._change_versions_of_a_non_container_annotation,
+            self._change_version_of_a_non_container_annotation,
         )
 
     def migrate_router_to_version(self, router: fastapi.routing.APIRouter, version: Version):
@@ -539,7 +541,7 @@ class _AnnotationTransformer:
             self.migrate_route_to_version(callback, version_dir, ignore_response_model=ignore_response_model)
         _remake_endpoint_dependencies(route)
 
-    def _change_versions_of_a_non_container_annotation(self, annotation: Any, version_dir: Path) -> Any:
+    def _change_version_of_a_non_container_annotation(self, annotation: Any, version_dir: Path) -> Any:
         if isinstance(annotation, _BaseGenericAlias | GenericAlias):
             return get_origin(annotation)[
                 tuple(self._change_version_of_annotations(arg, version_dir) for arg in get_args(annotation))

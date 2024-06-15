@@ -12,11 +12,6 @@ pip install cadwyn
 The recommended directory structure for cadwyn is as follows:
 
 ```tree
-├── data    # Any name or structure could be used here
-│   ├── __init__.py
-│   └── head    # This is the `head_schemas_package` and it must be named `head`
-│       ├── __init__.py
-│       └── users.py
 └── versions
     ├── __init__.py     # Your version bundle goes here
     └── v2001_01_01.py  # Your version changes go here for each new version
@@ -52,25 +47,13 @@ Then we create our version bundle which will keep track of our API versions:
 # versions/__init__.py
 from cadwyn.structure import Version, VersionBundle, HeadVersion
 from datetime import date
-from data import head
 
 
 version_bundle = VersionBundle(
     HeadVersion(),
     Version(date(2001, 1, 1)),
-    head_schemas_package=head,
 )
 ```
-
-## Generating versioned schemas
-
-Now let's generate the only version of our schemas -- the one we created in the [first step](./setup.md#setup):
-
-```bash
-cadwyn codegen versions:version_bundle
-```
-
-**WARNING** Cadwyn doesn't edit your imports when generating schemas so if you make any imports from versioned code to versioned code, I would suggest using [relative imports](https://docs.python.org/3/reference/import.html#package-relative-imports) to make sure that they will still work as expected after code generation.
 
 ## Generating versioned routes
 

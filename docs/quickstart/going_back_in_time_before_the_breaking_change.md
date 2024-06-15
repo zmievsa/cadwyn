@@ -51,17 +51,15 @@ Finally, we group the version changes in the `VersionBundle` class.
 from versions.v2002_01_01 import ChangeAddressToList
 from cadwyn.structure import Version, VersionBundle
 from datetime import date
-from data import head
 
 
 version_bundle = VersionBundle(
     Version(date(2002, 1, 1), ChangeAddressToList),
     Version(date(2001, 1, 1)),
-    head_schemas_package=head,
 )
 ```
 
-Let's run code generation, run our app, and then take a look at the generated dashboard and openapi schemas:
+Let's run our app and take a look at the generated dashboard and openapi schemas:
 
 ![Dashboard with two versions](../img/dashboard_with_two_versions.png)
 ![GET /users/{user_id} endpoint in openapi](../img/get_users_endpoint_from_prior_version.png)
