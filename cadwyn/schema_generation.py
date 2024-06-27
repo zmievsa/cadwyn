@@ -1,10 +1,11 @@
 import ast
-import copy
 import dataclasses
 from collections.abc import Callable, Sequence
 from copy import deepcopy
+from enum import Enum
 from typing import TYPE_CHECKING, Any, cast, get_args
 
+from issubclass import issubclass
 from pydantic import BaseModel
 from typing_extensions import Self, assert_never
 
@@ -19,11 +20,6 @@ from cadwyn._compat import (
     is_constrained_type,
 )
 from cadwyn._utils import Sentinel
-from cadwyn.codegen._common import (
-    _EnumWrapper,
-    _FieldName,
-    get_fields_and_validators_from_model,
-)
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
 from cadwyn.structure.schemas import (
@@ -36,10 +32,16 @@ from cadwyn.structure.schemas import (
     ValidatorDidntExistInstruction,
     ValidatorExistedInstruction,
 )
-from cadwyn.structure.versions import Version, VersionBundle
 
 if TYPE_CHECKING:
+    from cadwyn.codegen._common import _FieldName
     from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
+
+
+@dataclasses.dataclass(slots=True)
+class _EnumWrapper:
+    cls: type[Enum]
+    members: "dict[_FieldName, Enum | object]"
 
 
 @dataclasses.dataclass(slots=True)
@@ -49,11 +51,11 @@ class _ValidatorWrapper:
 
 
 @dataclasses.dataclass(slots=True)
-class PydanticRuntimeModelWrapper:
+class _PydanticRuntimeModelWrapper:
     cls: type[BaseModel]
     name: str
-    fields: dict[_FieldName, PydanticFieldWrapper]
-    validators: dict[_FieldName, _ValidatorWrapper]
+    fields: "dict[_FieldName, PydanticFieldWrapper]"
+    validators: "dict[_FieldName, _ValidatorWrapper]"
     annotations: dict[str, Any] = dataclasses.field(init=False, repr=False)
     _parents: list[Self] | None = dataclasses.field(init=False, default=None)
 
@@ -90,84 +92,69 @@ class PydanticRuntimeModelWrapper:
         return annotations | self.annotations
 
 
+@dataclasses.dataclass(slots=True)
+class _ModelBundle:
+    enums: dict[type[Enum], _EnumWrapper]
+    schemas: dict[type[BaseModel], _PydanticRuntimeModelWrapper]
+
+
 @dataclasses.dataclass(slots=True, kw_only=True)
 class RuntimeSchemaGenContext:
     version_bundle: "VersionBundle"
     current_version: "Version | HeadVersion"
-    schemas: dict[type, PydanticRuntimeModelWrapper] = dataclasses.field(repr=False)
-    enums: dict[type, _EnumWrapper] = dataclasses.field(repr=False)
+    models: _ModelBundle
     latest_version: "Version" = dataclasses.field(init=False)
 
     def __post_init__(self):
         self.latest_version = max(self.version_bundle.versions, key=lambda v: v.value)
 
 
-def _generate_versioned_schemas(versions: VersionBundle):
-    """
-    Args:
-        head_package: The head package from which we will generate the versioned packages
-        versions: Version bundle to generate versions from the head package.
-    """
-    schemas = {}
-    for schema in deepcopy(versions.versioned_schemas).values():
-        fields, validators = get_fields_and_validators_from_model(schema)
-        schemas[schema] = PydanticRuntimeModelWrapper(schema, schema.__name__, fields, validators)
+def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, dict[type, Any]]":
+    models = _create_model_bundle(versions)
 
-    return _generate_version_to_context_map(
-        versions,
-        schemas=schemas,
-        enums={
-            enum: _EnumWrapper(enum, {member.name: member.value for member in enum})
-            for enum in deepcopy(versions.versioned_enums).values()
-        },
-    )
+    version_to_context_map = {"head": _copy_classes(models.schemas, models.enums)}
+    context = RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
+    _migrate_classes(context)
 
-
-# TODO: Horrible naming
-def _generate_version_to_context_map(
-    version_bundle: VersionBundle,
-    schemas: dict[type, PydanticRuntimeModelWrapper],
-    enums: dict[type, _EnumWrapper],
-):
-    context = RuntimeSchemaGenContext(
-        current_version=version_bundle.head_version,
-        schemas=schemas,
-        enums=enums,
-        version_bundle=version_bundle,
-    )
-    migrate_classes(context)
-
-    version_to_context_map = {}
-    for version in version_bundle.versions:
-        context = RuntimeSchemaGenContext(
-            current_version=version,
-            schemas=schemas,
-            enums=enums,
-            version_bundle=version_bundle,
-        )
-        version_to_context_map[version] = copy.deepcopy((schemas, enums))
+    for version in versions.versions:
+        context = RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
+        version_to_context_map[str(version.value)] = _copy_classes(models.schemas, models.enums)
         # note that the last migration will not contain any version changes so we don't need to save the results
-        migrate_classes(context)
+        _migrate_classes(context)
 
     return version_to_context_map
 
 
-def migrate_classes(context: RuntimeSchemaGenContext) -> None:
+def _create_model_bundle(versions: "VersionBundle"):
+    schemas = {}
+    for schema in deepcopy(versions.versioned_schemas).values():
+        fields, validators = None, None
+        schemas[schema] = _PydanticRuntimeModelWrapper(schema, schema.__name__, fields, validators)
+    return _ModelBundle(
+        enums={
+            enum: _EnumWrapper(enum, {member.name: member.value for member in enum})
+            for enum in deepcopy(versions.versioned_enums).values()
+        },
+        schemas=schemas,
+    )
+
+
+def _migrate_classes(context: RuntimeSchemaGenContext) -> None:
     for version_change in context.current_version.version_changes:
-        _apply_alter_schema_instructions(
-            context.schemas,
-            version_change.alter_schema_instructions,
-            version_change.__name__,
-        )
+        # _apply_alter_schema_instructions(
+        #     context.models.schemas,
+        #     version_change.alter_schema_instructions,
+        #     version_change.__name__,
+        # )
         _apply_alter_enum_instructions(
-            context.enums,
+            context.models.enums,
             version_change.alter_enum_instructions,
             version_change.__name__,
         )
 
 
 def _apply_alter_schema_instructions(
-    modified_schemas: dict[type, PydanticRuntimeModelWrapper],
+    modified_schemas: dict[type, _PydanticRuntimeModelWrapper],
     alter_schema_instructions: Sequence[AlterSchemaSubInstruction | SchemaHadInstruction],
     version_change_name: str,
 ) -> None:
@@ -236,7 +223,7 @@ def _apply_alter_enum_instructions(
 
 
 def _change_model(
-    model: PydanticRuntimeModelWrapper,
+    model: _PydanticRuntimeModelWrapper,
     alter_schema_instruction: SchemaHadInstruction,
     version_change_name: str,
 ):
@@ -251,8 +238,8 @@ def _change_model(
 
 
 def _add_field_to_model(
-    model: PydanticRuntimeModelWrapper,
-    schemas: "dict[type, PydanticRuntimeModelWrapper]",
+    model: _PydanticRuntimeModelWrapper,
+    schemas: "dict[type, _PydanticRuntimeModelWrapper]",
     alter_schema_instruction: FieldExistedAsInstruction,
     version_change_name: str,
 ):
@@ -275,8 +262,8 @@ def _add_field_to_model(
 
 
 def _change_field_in_model(
-    model: PydanticRuntimeModelWrapper,
-    schemas: "dict[type, PydanticRuntimeModelWrapper]",
+    model: _PydanticRuntimeModelWrapper,
+    schemas: "dict[type, _PydanticRuntimeModelWrapper]",
     alter_schema_instruction: FieldHadInstruction | FieldDidntHaveInstruction,
     version_change_name: str,
 ):
@@ -326,7 +313,7 @@ def _change_field_in_model(
 
 
 def _change_field(
-    model: PydanticRuntimeModelWrapper,
+    model: _PydanticRuntimeModelWrapper,
     alter_schema_instruction: FieldHadInstruction,
     version_change_name: str,
     defined_annotations: dict[str, Any],
@@ -385,7 +372,7 @@ def _setattr_on_constrained_type(constrained_type_annotation: Any, attr_name: st
 
 
 def _delete_field_attributes(
-    model: PydanticRuntimeModelWrapper,
+    model: _PydanticRuntimeModelWrapper,
     alter_schema_instruction: FieldDidntHaveInstruction,
     version_change_name: str,
     field: PydanticFieldWrapper,
@@ -407,7 +394,7 @@ def _delete_field_attributes(
             )
 
 
-def _delete_field_from_model(model: PydanticRuntimeModelWrapper, field_name: str, version_change_name: str):
+def _delete_field_from_model(model: _PydanticRuntimeModelWrapper, field_name: str, version_change_name: str):
     if field_name not in model.fields:
         raise InvalidGenerationInstructionError(
             f'You tried to delete a field "{field_name}" from "{model.name}" '
@@ -427,3 +414,39 @@ def _delete_field_from_model(model: PydanticRuntimeModelWrapper, field_name: str
             validator.func_ast.decorator_list[0]
             if not validator.field_names:
                 model.validators[validator_name].is_deleted = True
+
+
+def _copy_classes(schemas: dict[type[BaseModel], _PydanticRuntimeModelWrapper], enums: dict[type[Enum], _EnumWrapper]):
+    return {k: _copy_enum(wrapper.cls, wrapper.members) for k, wrapper in enums.items()} | {
+        k: wrapper.cls for k, wrapper in schemas.items()
+    }
+
+
+class _DummyEnum(Enum):
+    pass
+
+
+def _get_initialization_namespace_for_enum(enum_cls: type[Enum]):
+    mro_without_the_class_itself = enum_cls.mro()[1:]
+
+    mro_dict = {}
+    for cls in reversed(mro_without_the_class_itself):
+        mro_dict.update(cls.__dict__)
+
+    methods = {
+        k: v
+        for k, v in enum_cls.__dict__.items()
+        if k not in enum_cls._member_names_
+        and k not in _DummyEnum.__dict__
+        and (k not in mro_dict or mro_dict[k] is not v)
+    }
+    return methods
+
+
+def _copy_enum(enum_cls: type[Enum], member_map: dict[str, Any]):
+    enum_dict = Enum.__prepare__(enum_cls.__name__, enum_cls.__bases__)
+    raw_member_map = {k: v.value if isinstance(v, Enum) else v for k, v in member_map.items()}
+    initialization_namespace = _get_initialization_namespace_for_enum(enum_cls) | raw_member_map
+    for attr_name, attr in initialization_namespace.items():
+        enum_dict[attr_name] = attr
+    return type(enum_cls.__name__, enum_cls.__bases__, enum_dict)

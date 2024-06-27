@@ -11,7 +11,7 @@ from contextvars import ContextVar
 from enum import Enum
 from pathlib import Path
 from types import ModuleType
-from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, cast, overload
+from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, overload
 
 from fastapi import HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -41,7 +41,7 @@ from cadwyn.exceptions import (
     CadwynStructureError,
     ModuleIsNotVersionedError,
 )
-from cadwyn.schema_generation import _generate_versioned_schemas
+from cadwyn.schema_generation import _generate_versioned_models
 
 from .._utils import Sentinel
 from .common import Endpoint, VersionDate, VersionedModel
@@ -252,7 +252,6 @@ class VersionBundle:
         *other_versions: Version,
         api_version_var: APIVersionVarType | None = None,
         head_schemas_package: ModuleType | None = None,
-        enable_runtime_schema_generation: bool = False,
     ) -> None: ...
 
     @overload
@@ -264,7 +263,6 @@ class VersionBundle:
         *other_versions: Version,
         api_version_var: APIVersionVarType | None = None,
         latest_schemas_package: ModuleType | None = None,
-        enable_runtime_schema_generation: bool = False,
     ) -> None: ...
 
     def __init__(
@@ -275,7 +273,6 @@ class VersionBundle:
         api_version_var: APIVersionVarType | None = None,
         head_schemas_package: ModuleType | None = None,
         latest_schemas_package: ModuleType | None = None,
-        enable_runtime_schema_generation: bool = False,
     ) -> None:
         super().__init__()
 
@@ -319,14 +316,6 @@ class VersionBundle:
                         "It is prohibited.",
                     )
                 version_change._bound_version_bundle = self
-        self._enable_runtime_schema_generation = enable_runtime_schema_generation
-        if self._enable_runtime_schema_generation:
-            warnings.warn(
-                "The 'enable_deprecated_codegen' parameter is deprecated and will likely be removed in the future.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self._generated_classes = _generate_versioned_schemas(self)
 
     @property  # pragma: no cover
     @deprecated("Use head_version_package instead.")
@@ -340,17 +329,19 @@ class VersionBundle:
         # This entire function won't be necessary once we start raising an exception
         # upon receiving `latest`.
 
-        head_schemas_package = cast(ModuleType, self.head_schemas_package)
-        if not hasattr(head_schemas_package, "__path__"):
+        if self.head_schemas_package is None:
+            # This means that we are not using codegen, we are using runtime generation
+            return None
+        if not hasattr(self.head_schemas_package, "__path__"):
             raise CadwynStructureError(
-                f'The head schemas package must be a package. "{head_schemas_package.__name__}" is not a package.',
+                f'The head schemas package must be a package. "{self.head_schemas_package.__name__}" is not a package.',
             )
-        elif head_schemas_package.__name__.endswith(".head") or head_schemas_package.__name__ == "head":
+        elif self.head_schemas_package.__name__.endswith(".head") or self.head_schemas_package.__name__ == "head":
             return "head"
-        elif head_schemas_package.__name__.endswith(".latest"):
+        elif self.head_schemas_package.__name__.endswith(".latest"):
             warnings.warn(
                 'The name of the head schemas module must be "head". '
-                f'Received "{head_schemas_package.__name__}" instead.',
+                f'Received "{self.head_schemas_package.__name__}" instead.',
                 DeprecationWarning,
                 stacklevel=4,
             )
@@ -358,7 +349,7 @@ class VersionBundle:
         else:
             raise CadwynStructureError(
                 'The name of the head schemas module must be "head". '
-                f'Received "{head_schemas_package.__name__}" instead.',
+                f'Received "{self.head_schemas_package.__name__}" instead.',
             )
 
     @functools.cached_property
@@ -405,6 +396,7 @@ class VersionBundle:
         }
 
     @functools.cached_property
+    @deprecated("Code generation is deprecated and will be removed in Cadwyn 4.0")
     def versioned_directories_with_head(self) -> tuple[Path, ...]:
         if self.head_schemas_package is None:
             raise CadwynError(
@@ -418,6 +410,7 @@ class VersionBundle:
         )
 
     @functools.cached_property
+    @deprecated("Code generation is deprecated and will be removed in Cadwyn 4.0")
     def versioned_directories_without_head(self) -> tuple[Path, ...]:
         return self.versioned_directories_with_head[1:]
 
@@ -435,10 +428,9 @@ class VersionBundle:
         )
 
         version = self._get_closest_lesser_version(version)
-        version_dir = self.versioned_directories_without_head[self.version_dates.index(version)]
 
-        versioned_response_model: type[BaseModel] = get_another_version_of_cls(
-            latest_response_model, version_dir, self.versioned_directories_with_head
+        versioned_response_model: type[BaseModel] = self._get_another_version_of_cls(
+            latest_response_model, str(version)
         )
         return versioned_response_model.parse_obj(migrated_response.body)  # pyright: ignore[reportDeprecated]
 
@@ -447,6 +439,29 @@ class VersionBundle:
             if defined_version <= version:
                 return defined_version
         raise CadwynError("You tried to migrate to version that is earlier than the first version which is prohibited.")
+
+    @functools.cache
+    def _get_another_version_of_cls(self, cls_from_old_version: type[Any], new_version: str):
+        if self.head_schemas_package is not None:
+            module_from_old_version = sys.modules[cls_from_old_version.__module__]
+            try:
+                module = get_another_version_of_module(
+                    module_from_old_version,
+                    # version_dir = /home/myuser/package/companies/v2021_01_01
+                    self._get_version_dir(new_version),
+                    self.versioned_directories_without_head,
+                )
+            except ModuleIsNotVersionedError:
+                return cls_from_old_version
+            return getattr(module, cls_from_old_version.__name__)
+        else:
+            return _generate_versioned_models(self)[new_version].get(cls_from_old_version, cls_from_old_version)
+
+    def _get_version_dir(self, version: str) -> Path:
+        if version == "head":
+            return self.versioned_directories_with_head[0]
+        else:
+            return self.versioned_directories_without_head[self.version_dates.index(version)]
 
     @functools.cached_property
     def _version_changes_to_version_mapping(
@@ -776,19 +791,6 @@ class VersionBundle:
             new_kwargs.pop(_CADWYN_REQUEST_PARAM_NAME)
 
         return new_kwargs
-
-    @functools.cache
-    def get_another_version_of_cls(self, cls_from_old_version: type[Any], new_version_dir: Path):
-        if self._enable_runtime_schema_generation:
-            pass
-        else:
-            # version_dir = /home/myuser/package/companies/v2021_01_01
-            module_from_old_version = sys.modules[cls_from_old_version.__module__]
-            try:
-                module = get_another_version_of_module(module_from_old_version, new_version_dir, version_dirs)
-            except ModuleIsNotVersionedError:
-                return cls_from_old_version
-            return getattr(module, cls_from_old_version.__name__)
 
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form

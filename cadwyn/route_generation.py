@@ -40,8 +40,7 @@ from starlette.routing import BaseRoute
 from typing_extensions import Self, assert_never, deprecated
 
 from cadwyn._compat import get_annotation_from_model_field, model_fields, rebuild_fastapi_body_param
-from cadwyn._package_utils import get_version_dir_path
-from cadwyn._utils import Sentinel, UnionType, get_another_version_of_cls
+from cadwyn._utils import Sentinel, UnionType
 from cadwyn.exceptions import (
     CadwynError,
     RouteAlreadyExistsError,
@@ -58,7 +57,11 @@ from cadwyn.structure.endpoints import (
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionChange
+from cadwyn.structure.versions import (
+    _CADWYN_REQUEST_PARAM_NAME,
+    _CADWYN_RESPONSE_PARAM_NAME,
+    VersionChange,
+)
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
@@ -106,13 +109,8 @@ def generate_versioned_routers(
         head_schemas_package = versions.head_schemas_package
     elif latest_schemas_package is not None:  # pragma: no cover
         head_schemas_package = latest_schemas_package
-    elif versions._enable_runtime_schema_generation:
+    else:
         head_schemas_package = None
-    else:  # pragma: no cover
-        raise TypeError(
-            "TypeError: generate_versioned_routers() must be called with a VersionBundle "
-            "that contains a non-null head_schemas_package."
-        )
     versions.head_schemas_package = head_schemas_package
     versions._validate_head_schemas_package_structure()
     return _EndpointTransformer(router, versions, head_schemas_package).transform()
@@ -142,7 +140,7 @@ class _EndpointTransformer(Generic[_R]):
         super().__init__()
         self.parent_router = parent_router
         self.versions = versions
-        self.annotation_transformer = _AnnotationTransformer(head_schemas_package, versions)
+        self.annotation_transformer = _AnnotationTransformer(versions, head_schemas_package)
 
         self.routes_that_never_existed = [
             route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
@@ -156,7 +154,7 @@ class _EndpointTransformer(Generic[_R]):
         routers: dict[VersionDate, _R] = {}
 
         for version in self.versions:
-            self.annotation_transformer.migrate_router_to_version(router, version)
+            self.annotation_transformer.migrate_router_to_version(router, str(version))
 
             self._validate_all_data_converters_are_applied(router, version)
 
@@ -196,7 +194,7 @@ class _EndpointTransformer(Generic[_R]):
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
                     template_older_body_model = self.annotation_transformer._change_version_of_annotations(
                         older_route.body_field.type_,
-                        self.annotation_transformer.head_version_dir,
+                        "head",
                     )
                 else:
                     template_older_body_model = None
@@ -287,18 +285,10 @@ class _EndpointTransformer(Generic[_R]):
                 path_to_route_methods_mapping[route.path] |= route.methods
 
         head_response_models = {
-            self.annotation_transformer._change_version_of_annotations(
-                model,
-                self.versions.versioned_directories_with_head[0],
-            )
-            for model in response_models
+            self.annotation_transformer._change_version_of_annotations(model, "head") for model in response_models
         }
         head_request_bodies = {
-            self.annotation_transformer._change_version_of_annotations(
-                body,
-                self.versions.versioned_directories_with_head[0],
-            )
-            for body in request_bodies
+            self.annotation_transformer._change_version_of_annotations(body, "head") for body in request_bodies
         }
 
         return path_to_route_methods_mapping, head_response_models, head_request_bodies
@@ -483,143 +473,18 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
         route_map[route_info] = route
 
 
-@final
-class _AnnotationTransformer:
-    __slots__ = (
-        "versions",
-        "head_schemas_package",
-        "head_version_dir",
-        "latest_version_dir",
-        "change_versions_of_a_non_container_annotation",
-    )
+class _CodegenInfo:
+    def __init__(self, versions: VersionBundle, head_schemas_package: ModuleType):
+        super().__init__()
 
-    def __init__(self, head_schemas_package: ModuleType | None, versions: VersionBundle) -> None:
+        versions.head_schemas_package = head_schemas_package
         self.versions = versions
-        self.versions.head_schemas_package = head_schemas_package
         self.head_schemas_package = head_schemas_package
         self.head_version_dir = min(versions.versioned_directories_with_head)  # "head" < "v0000_00_00"
         self.latest_version_dir = max(versions.versioned_directories_with_head)  # "v2005_11_11" > "v2000_11_11"
-
-        # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
-        # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
-        # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
-        self.change_versions_of_a_non_container_annotation = functools.cache(
-            self._change_version_of_a_non_container_annotation,
-        )
-
-    def migrate_router_to_version(self, router: fastapi.routing.APIRouter, version: Version):
-        version_dir = get_version_dir_path(self.head_schemas_package, version.value)
-        if not version_dir.is_dir():
-            raise RouterGenerationError(
-                f"Versioned schema directory '{version_dir}' does not exist.",
-            )
-        for route in router.routes:
-            if not isinstance(route, fastapi.routing.APIRoute):
-                continue
-            self.migrate_route_to_version(route, version_dir)
-
-    def migrate_route_to_version(
-        self,
-        route: fastapi.routing.APIRoute,
-        version_dir: Path,
-        *,
-        ignore_response_model: bool = False,
-    ):
-        if route.response_model is not None and not ignore_response_model:
-            route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
-            route.response_field = fastapi.utils.create_response_field(
-                name="Response_" + route.unique_id,
-                type_=route.response_model,
-                mode="serialization",
-            )
-            route.secure_cloned_response_field = fastapi.utils.create_cloned_field(route.response_field)
-        route.dependencies = self._change_version_of_annotations(route.dependencies, version_dir)
-        route.endpoint = self._change_version_of_annotations(route.endpoint, version_dir)
-        for callback in route.callbacks or []:
-            if not isinstance(callback, APIRoute):
-                continue
-            self.migrate_route_to_version(callback, version_dir, ignore_response_model=ignore_response_model)
-        _remake_endpoint_dependencies(route)
-
-    def _change_version_of_a_non_container_annotation(self, annotation: Any, version_dir: Path) -> Any:
-        if isinstance(annotation, _BaseGenericAlias | GenericAlias):
-            return get_origin(annotation)[
-                tuple(self._change_version_of_annotations(arg, version_dir) for arg in get_args(annotation))
-            ]
-        elif isinstance(annotation, Depends):
-            return Depends(
-                self._change_version_of_annotations(annotation.dependency, version_dir),
-                use_cache=annotation.use_cache,
-            )
-        elif isinstance(annotation, UnionType):
-            getitem = typing.Union.__getitem__  # pyright: ignore[reportAttributeAccessIssue]
-            return getitem(
-                tuple(self._change_version_of_annotations(a, version_dir) for a in get_args(annotation)),
-            )
-        elif annotation is typing.Any or isinstance(annotation, typing.NewType):
-            return annotation
-        elif isinstance(annotation, type):
-            if annotation.__module__ == "pydantic.main" and issubclass(annotation, BaseModel):
-                return create_body_model(
-                    fields=self._change_version_of_annotations(model_fields(annotation), version_dir).values(),
-                    model_name=annotation.__name__,
-                )
-            return self._change_version_of_type(annotation, version_dir)
-        elif callable(annotation):
-            if type(annotation).__module__.startswith(
-                ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
-            ) or isinstance(annotation, fastapi.params.Security | fastapi.security.base.SecurityBase):
-                return annotation
-
-            def modifier(annotation: Any):
-                return self._change_version_of_annotations(annotation, version_dir)
-
-            return _modify_callable_annotations(
-                annotation,
-                modifier,
-                modifier,
-                annotation_modifying_wrapper_factory=_copy_function_through_class_based_wrapper,
-            )
-        else:
-            return annotation
-
-    def _change_version_of_annotations(self, annotation: Any, version_dir: Path) -> Any:
-        """Recursively go through all annotations and if they were taken from any versioned package, change them to the
-        annotations corresponding to the version_dir passed.
-
-        So if we had a annotation "UserResponse" from "head" version, and we passed version_dir of "v1_0_1", it would
-        replace "UserResponse" with the the same class but from the "v1_0_1" version.
-
-        """
-        if isinstance(annotation, dict):
-            return {
-                self._change_version_of_annotations(key, version_dir): self._change_version_of_annotations(
-                    value,
-                    version_dir,
-                )
-                for key, value in annotation.items()
-            }
-
-        elif isinstance(annotation, list | tuple):
-            return type(annotation)(self._change_version_of_annotations(v, version_dir) for v in annotation)
-        else:
-            return self.change_versions_of_a_non_container_annotation(annotation, version_dir)
-
-    def _change_version_of_type(self, annotation: type, version_dir: Path):
-        if issubclass(annotation, BaseModel | Enum):
-            if version_dir == self.latest_version_dir:
-                source_file = inspect.getsourcefile(annotation)
-                if source_file is None:  # pragma: no cover # I am not even sure how to cover this
-                    warnings.warn(
-                        f'Failed to find where the type annotation "{annotation}" is located.'
-                        "Please, double check that it's located in the right directory",
-                        stacklevel=7,
-                    )
-                else:
-                    self._validate_source_file_is_located_in_template_dir(annotation, source_file)
-            return get_another_version_of_cls(annotation, version_dir, self.versions.versioned_directories_with_head)
-        else:
-            return annotation
+        for directory in versions.versioned_directories_with_head:
+            if not directory.is_dir():
+                raise RouterGenerationError(f"Versioned schema directory '{directory}' does not exist.")
 
     def _validate_source_file_is_located_in_template_dir(self, annotation: type, source_file: str):
         template_dir = str(self.head_version_dir)
@@ -638,6 +503,130 @@ class _AnnotationTransformer:
                 "It probably means that you used a specific version of the class in fastapi dependencies "
                 'or pydantic schemas instead of "head".',
             )
+
+
+@final
+class _AnnotationTransformer:
+    def __init__(self, versions: VersionBundle, head_schemas_package: ModuleType | None) -> None:
+        # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
+        # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
+        # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
+        if head_schemas_package is not None:
+            self.codegen_info = _CodegenInfo(versions, head_schemas_package)
+        else:
+            self.codegen_info = None
+        self.versions = versions
+        self.change_versions_of_a_non_container_annotation = functools.cache(
+            self._change_version_of_a_non_container_annotation,
+        )
+
+    def migrate_router_to_version(self, router: fastapi.routing.APIRouter, version: str):
+        for route in router.routes:
+            if not isinstance(route, fastapi.routing.APIRoute):
+                continue
+            self.migrate_route_to_version(route, version)
+
+    def migrate_route_to_version(
+        self,
+        route: fastapi.routing.APIRoute,
+        version: str,
+        *,
+        ignore_response_model: bool = False,
+    ):
+        if route.response_model is not None and not ignore_response_model:
+            route.response_model = self._change_version_of_annotations(route.response_model, version)
+            route.response_field = fastapi.utils.create_response_field(
+                name="Response_" + route.unique_id,
+                type_=route.response_model,
+                mode="serialization",
+            )
+            route.secure_cloned_response_field = fastapi.utils.create_cloned_field(route.response_field)
+        route.dependencies = self._change_version_of_annotations(route.dependencies, version)
+        route.endpoint = self._change_version_of_annotations(route.endpoint, version)
+        for callback in route.callbacks or []:
+            if not isinstance(callback, APIRoute):
+                continue
+            self.migrate_route_to_version(callback, version, ignore_response_model=ignore_response_model)
+        _remake_endpoint_dependencies(route)
+
+    def _change_version_of_a_non_container_annotation(self, annotation: Any, version: str) -> Any:
+        if isinstance(annotation, _BaseGenericAlias | GenericAlias):
+            return get_origin(annotation)[
+                tuple(self._change_version_of_annotations(arg, version) for arg in get_args(annotation))
+            ]
+        elif isinstance(annotation, Depends):
+            return Depends(
+                self._change_version_of_annotations(annotation.dependency, version),
+                use_cache=annotation.use_cache,
+            )
+        elif isinstance(annotation, UnionType):
+            getitem = typing.Union.__getitem__  # pyright: ignore[reportAttributeAccessIssue]
+            return getitem(
+                tuple(self._change_version_of_annotations(a, version) for a in get_args(annotation)),
+            )
+        elif annotation is typing.Any or isinstance(annotation, typing.NewType):
+            return annotation
+        elif isinstance(annotation, type):
+            if annotation.__module__ == "pydantic.main" and issubclass(annotation, BaseModel):
+                return create_body_model(
+                    fields=self._change_version_of_annotations(model_fields(annotation), version).values(),
+                    model_name=annotation.__name__,
+                )
+            return self._change_version_of_type(annotation, version)
+        elif callable(annotation):
+            if type(annotation).__module__.startswith(
+                ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
+            ) or isinstance(annotation, fastapi.params.Security | fastapi.security.base.SecurityBase):
+                return annotation
+
+            def modifier(annotation: Any):
+                return self._change_version_of_annotations(annotation, version)
+
+            return _modify_callable_annotations(
+                annotation,
+                modifier,
+                modifier,
+                annotation_modifying_wrapper_factory=_copy_function_through_class_based_wrapper,
+            )
+        else:
+            return annotation
+
+    def _change_version_of_annotations(self, annotation: Any, version: str) -> Any:
+        """Recursively go through all annotations and if they were taken from any versioned package, change them to the
+        annotations corresponding to the version_dir passed.
+
+        So if we had a annotation "UserResponse" from "head" version, and we passed version_dir of "v1_0_1", it would
+        replace "UserResponse" with the the same class but from the "v1_0_1" version.
+
+        """
+        if isinstance(annotation, dict):
+            return {
+                self._change_version_of_annotations(key, version): self._change_version_of_annotations(value, version)
+                for key, value in annotation.items()
+            }
+
+        elif isinstance(annotation, list | tuple):
+            return type(annotation)(self._change_version_of_annotations(v, version) for v in annotation)
+        else:
+            return self.change_versions_of_a_non_container_annotation(annotation, version)
+
+    def _change_version_of_type(self, annotation: type, version: str):
+        if issubclass(annotation, BaseModel | Enum):
+            # These can only be true or false together so the "and" is only here for type hints
+            if self.codegen_info is not None:
+                if self.versions._get_version_dir(version) == self.codegen_info.latest_version_dir:
+                    source_file = inspect.getsourcefile(annotation)
+                    if source_file is None:  # pragma: no cover # I am not even sure how to cover this
+                        warnings.warn(
+                            f'Failed to find where the type annotation "{annotation}" is located.'
+                            "Please, double check that it's located in the right directory",
+                            stacklevel=7,
+                        )
+                    else:
+                        self.codegen_info._validate_source_file_is_located_in_template_dir(annotation, source_file)
+            return self.versions._get_another_version_of_cls(annotation, version)
+        else:
+            return annotation
 
 
 def _modify_callable_annotations(
