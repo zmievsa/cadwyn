@@ -27,11 +27,11 @@ class EnumWithOneMemberAndMethods(Enum):
     foo = 83
 
     def _hello(self):
-        return self.hello_member
+        return self.hello_member  # pyright: ignore[reportAttributeAccessIssue]
 
     @classmethod
     def world(cls) -> int:
-        return cls.world_member
+        return cls.world_member  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def test__enum_had__original_enum_is_empty(create_runtime_schemas: CreateRuntimeSchemas):

@@ -10,7 +10,7 @@ from datetime import date
 from enum import Enum
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, TypeVar
 
 import pytest
 from fastapi import APIRouter, FastAPI
@@ -38,6 +38,7 @@ from cadwyn.structure.versions import HeadVersion
 
 CURRENT_DIR = Path(__file__).parent
 Undefined = object()
+_T_MODEL = TypeVar("_T_MODEL", bound=type[BaseModel | Enum])
 
 
 @pytest.fixture()
@@ -249,7 +250,7 @@ def import_all_schemas(head_package_path: str, created_versions: Sequence[Versio
 
 @fixture_class(name="create_runtime_schemas")
 class CreateRuntimeSchemas:
-    def __call__(self, *version_changes: type[VersionChange]) -> dict[str, dict[type, Any]]:
+    def __call__(self, *version_changes: type[VersionChange]) -> dict[str, dict[_T_MODEL, _T_MODEL]]:
         return _generate_versioned_models(VersionBundle(*versions(version_changes)))
 
 

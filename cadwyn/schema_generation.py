@@ -1,17 +1,14 @@
 import ast
 import dataclasses
 from collections.abc import Callable, Sequence
-from copy import deepcopy
 from enum import Enum
-from typing import TYPE_CHECKING, Any, cast, get_args
+from typing import TYPE_CHECKING, Any, TypeVar, cast, get_args
 
 from issubclass import issubclass
 from pydantic import BaseModel
 from typing_extensions import Self, assert_never
 
-from cadwyn._asts import (
-    get_fancy_repr,
-)
+from cadwyn._asts import get_fancy_repr
 from cadwyn._compat import (
     PYDANTIC_V2,
     FieldInfo,
@@ -36,6 +33,8 @@ from cadwyn.structure.schemas import (
 if TYPE_CHECKING:
     from cadwyn.codegen._common import _FieldName
     from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
+
+_T_MODEL = TypeVar("_T_MODEL", bound=type[BaseModel | Enum])
 
 
 @dataclasses.dataclass(slots=True)
@@ -109,7 +108,7 @@ class RuntimeSchemaGenContext:
         self.latest_version = max(self.version_bundle.versions, key=lambda v: v.value)
 
 
-def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, dict[type, Any]]":
+def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, dict[_T_MODEL, _T_MODEL]]":
     models = _create_model_bundle(versions)
 
     version_to_context_map = {"head": _copy_classes(models.schemas, models.enums)}
@@ -127,13 +126,14 @@ def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, dict[typ
 
 def _create_model_bundle(versions: "VersionBundle"):
     schemas = {}
-    for schema in deepcopy(versions.versioned_schemas).values():
+    for schema in versions.versioned_schemas:
+        breakpoint()
         fields, validators = None, None
         schemas[schema] = _PydanticRuntimeModelWrapper(schema, schema.__name__, fields, validators)
     return _ModelBundle(
         enums={
             enum: _EnumWrapper(enum, {member.name: member.value for member in enum})
-            for enum in deepcopy(versions.versioned_enums).values()
+            for enum in versions.versioned_enums.values()
         },
         schemas=schemas,
     )
