@@ -1,8 +1,9 @@
+import ast
 import dataclasses
 import inspect
 from collections.abc import Callable
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeAlias, TypeVar
 
 import pydantic
 from issubclass import issubclass
@@ -26,7 +27,7 @@ from pydantic._internal._decorators import (
     ValidatorDecoratorInfo,
 )
 from pydantic.fields import ComputedFieldInfo
-from typing_extensions import Self
+from typing_extensions import Doc, Self
 
 from cadwyn._compat import (
     PYDANTIC_V2,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from cadwyn.codegen._common import _FieldName
 
 _T_MODEL = TypeVar("_T_MODEL", bound=type[BaseModel | Enum])
+_T_PYDANTIC_MODEL = TypeVar("_T_PYDANTIC_MODEL", bound=BaseModel)
 
 ModelField: TypeAlias = Any  # pyright: ignore[reportRedeclaration]
 PydanticUndefined: TypeAlias = Any
@@ -92,24 +94,26 @@ class PydanticFieldWrapper:
 
     init_model_field: dataclasses.InitVar[ModelField]
 
-    field_info: FieldInfo = dataclasses.field(init=False, repr=False)
-    annotation: FieldInfo = dataclasses.field(init=False)
+    annotation: Any = dataclasses.field(init=False)
     passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
 
     def __post_init__(self, init_model_field: ModelField):
         if isinstance(init_model_field, FieldInfo):
-            self.field_info = init_model_field
+            field_info = init_model_field
             self.annotation = init_model_field.annotation
         else:
-            self.field_info = init_model_field.field_info
+            field_info = init_model_field.field_info
             self.annotation = init_model_field.field_info.annotation
-        self.passed_field_attributes = _extract_passed_field_attributes(self.field_info)
+        self.passed_field_attributes = _extract_passed_field_attributes(field_info)
 
     def update_attribute(self, *, name: str, value: Any):
         self.passed_field_attributes[name] = value
 
     def delete_attribute(self, *, name: str) -> None:
         self.passed_field_attributes.pop(name)
+
+    def generate_field_copy(self) -> pydantic.fields.FieldInfo:
+        return pydantic.Field(**self.passed_field_attributes)
 
 
 def _extract_passed_field_attributes(field_info):
@@ -134,15 +138,11 @@ def _extract_passed_field_attributes(field_info):
         return attributes | extras
 
 
-def _extract_fields_and_validators_from_model(model: BaseModel):
-    fields = {field_name: PydanticFieldWrapper(field) for field_name, field in model.__fields__.items()}
-    validators = model.__pydantic_validator__
-
-
 @dataclasses.dataclass(slots=True, kw_only=True)
 class _ValidatorWrapper:
     kwargs: dict[str, Any]
     func: Callable
+    decorator: Callable
     is_deleted: bool = False  # TODO: Maybe remove is_deleted?
 
 
@@ -152,13 +152,19 @@ class _PerFieldValidatorWrapper(_ValidatorWrapper):
 
 
 @dataclasses.dataclass(slots=True)
-class _PydanticRuntimeModelWrapper:
-    cls: type[BaseModel]
+class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
+    cls: type[_T_PYDANTIC_MODEL]
     name: str
-    fields: "dict[_FieldName, PydanticFieldWrapper]"
-    per_field_validators: list[_PerFieldValidatorWrapper]
-    root_validators: list[_ValidatorWrapper]
-    methods: list[Callable]
+    doc: str | None
+    fields: Annotated[
+        dict["_FieldName", PydanticFieldWrapper],
+        Doc(
+            "Fields that belong to this model, not to its parents. I.e. The ones that were either defined or overriden "
+        ),
+    ]
+    per_field_validators: dict[str, _PerFieldValidatorWrapper]
+    root_validators: dict[str, _ValidatorWrapper]
+    other_attributes: dict[str, Any]
     annotations: dict[str, Any] = dataclasses.field(init=False, repr=False)
     _parents: list[Self] | None = dataclasses.field(init=False, default=None)
 
@@ -194,6 +200,28 @@ class _PydanticRuntimeModelWrapper:
 
         return annotations | self.annotations
 
+    def generate_model_copy(self) -> type[_T_PYDANTIC_MODEL]:
+        per_field_validators = {
+            name: validator.decorator(*validator.fields, **validator.kwargs)(validator.func)
+            for name, validator in self.per_field_validators.items()
+            if not validator.is_deleted
+        }
+        root_validators = {
+            name: validator.decorator(**validator.kwargs)(validator.func)
+            for name, validator in self.root_validators.items()
+            if not validator.is_deleted
+        }
+        fields = {name: field.generate_field_copy() for name, field in self.fields.items()}
+        return type(self.cls)(
+            self.name,
+            self.cls.__bases__,
+            self.other_attributes
+            | per_field_validators
+            | root_validators
+            | fields
+            | {"__annotations__": self.annotations, "__doc__": self.doc},
+        )
+
 
 class A(BaseModel):
     doo: int
@@ -204,8 +232,12 @@ class A(BaseModel):
     def gar(cls, value):
         return value
 
+    @staticmethod
+    def aa():
+        return 11
 
-class Schema(A, extra="ignore"):
+
+class AAAAAA(A, extra="ignore"):
     foo: str
 
     @validator("foo", "doo")
@@ -218,17 +250,22 @@ class Schema(A, extra="ignore"):
     def baz(cls, value):
         return value
 
+    @staticmethod
+    def bb():
+        return 93
+
+
+class DummyEmptyModel(BaseModel):
+    cadwyn_fake_attribute: str = ""
+
+
+DUMMY_EMPTY_MODEL = DummyEmptyModel()
+SENTINEL = object()
+
 
 # TODO: Add a test where we delete a parent field for which we have a child validator. To handle this correctly, we have to first initialize the parents, and only then the children. Or maybe even process validator changes AFTER the migrations have been done.
-def get_validators(model: type[BaseModel]):
-    from pydantic._internal._core_utils import get_type_ref
-
-    print(model.__fields__)
-    model_type_ref = get_type_ref(model)
-    print(model.__pydantic_decorators__.validators["bar"])
-    print(model.__pydantic_decorators__.field_validators["baz"])
-
-    extras = model.__pydantic_extra__ or {}
+def wrap_model(model: type[_T_PYDANTIC_MODEL]) -> _PydanticRuntimeModelWrapper[_T_PYDANTIC_MODEL]:
+    defined_names = _get_all_class_attributes(model)
     decorators = [
         *model.__pydantic_decorators__.validators.values(),
         *model.__pydantic_decorators__.field_validators.values(),
@@ -238,26 +275,102 @@ def get_validators(model: type[BaseModel]):
         *model.__pydantic_decorators__.model_validators.values(),
         *model.__pydantic_decorators__.computed_fields.values(),
     ]
-    root_validators = []
-    per_field_validators = []
-    model_type_ref = get_type_ref(model)
-    for decorator in decorators:
-        if decorator.cls_ref != model_type_ref:
+    root_validators = {}
+    per_field_validators = {}
+    for decorator_wrapper in decorators:
+        if defined_names:
+            if decorator_wrapper.cls_var_name in defined_names:
+                # This is only possible if this validator overrides a field name from parent class
+                func = decorator_wrapper.func
+                # This is only for pydantic v1 style validators
+                if decorator_wrapper.shim and func.__closure__:
+                    func = func.__closure__[0].cell_contents
+            else:
+                continue
+        elif decorator_wrapper.cls_var_name in model.__dict__:
+            func = model.__dict__[decorator_wrapper.cls_var_name]
+        else:
             continue
-        kwargs = decorator.info.__dataclass_fields__.copy()
-        fields = kwargs.pop("fields", None)
-        if fields is not None:
-            per_field_validators.append(
-                _PerFieldValidatorWrapper(func=decorator.func, fields=list(fields), kwargs=kwargs)
+
+        kwargs = dataclasses.asdict(decorator_wrapper.info)
+        decorator_fields = kwargs.pop("fields", None)
+        actual_decorator = PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP[type(decorator_wrapper.info)]
+        if decorator_wrapper.shim:
+            # There's an inconsistency in their interfaces so we gotta resort to this
+            mode = kwargs.pop("mode", "after")
+            kwargs["pre"] = mode != "after"
+        if decorator_fields is not None:
+            per_field_validators[decorator_wrapper.cls_var_name] = _PerFieldValidatorWrapper(
+                func=func, fields=list(decorator_fields), decorator=actual_decorator, kwargs=kwargs
             )
         else:
-            root_validators.append(_ValidatorWrapper(func=decorator.func, kwargs=kwargs))
+            root_validators[decorator_wrapper.cls_var_name] = _ValidatorWrapper(
+                func=func, decorator=actual_decorator, kwargs=kwargs
+            )
+    fields = {
+        field_name: PydanticFieldWrapper(model.model_fields[field_name]) for field_name in model.__annotations__.keys()
+    }
 
-    _PydanticRuntimeModelWrapper(
-        model, model.__name__, ..., per_field_validators=per_field_validators, root_validators=root_validators
+    main_attributes = fields | per_field_validators | root_validators
+    other_attributes = {
+        attr_name: attr_val
+        for attr_name, attr_val in model.__dict__.items()
+        if attr_name not in main_attributes
+        and (
+            (defined_names and attr_name in defined_names)
+            or not (_is_dunder(attr_name) or attr_name in {"_abc_impl", "model_fields", "model_computed_fields"})
+        )
+    }
+    other_attributes |= {
+        "model_config": model.model_config,
+        "__module__": model.__module__,
+        "__qualname__": model.__qualname__,
+    }
+    return _PydanticRuntimeModelWrapper(
+        model,
+        name=model.__name__,
+        doc=model.__doc__,
+        fields=fields,
+        other_attributes=other_attributes,
+        per_field_validators=per_field_validators,
+        root_validators=root_validators,
     )
 
-    type(model)(model.__name__, model.__bases__, dict_, **extras)
+
+def _is_dunder(attr_name):
+    return attr_name.startswith("__") and attr_name.endswith("__")
+
+
+def _get_all_class_attributes(cls: type) -> set[str]:
+    try:
+        source = inspect.getsource(cls)
+    except OSError:
+        return set()
+
+    cls_ast = ast.parse(source).body[0]
+    if not isinstance(cls_ast, ast.ClassDef):
+        return set()
+
+    defined_names = set()
+    for node in cls_ast.body:
+        defined_names.update(_get_names_defined_in_node(node))
+    return defined_names
+
+
+def _get_names_defined_in_node(node: ast.stmt):
+    defined_names = set()
+
+    if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+        defined_names.add(node.name)
+    elif isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                defined_names.add(target.id)
+    elif isinstance(node, ast.AnnAssign):
+        if isinstance(node.target, ast.Name):
+            defined_names.add(node.target.id)
+
+    return defined_names
 
 
 PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
@@ -270,15 +383,37 @@ PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
     ComputedFieldInfo: computed_field,
 }
 
-PYDANTIC_PER_FIELD_DECORATORS = {
-    ValidatorDecoratorInfo,
-    FieldValidatorDecoratorInfo,
-    FieldSerializerDecoratorInfo,
-    FieldSerializerDecoratorInfo,
-}
 
-# get_validators(Schema)
+new_model = wrap_model(AAAAAA)
+print(AAAAAA)
 
 
-def copy_pydantic_model(model: type[BaseModel]):
-    pass
+def test_hello():
+    assert_models_are_equal(AAAAAA, new_model.generate_model_copy())
+
+
+def assert_models_are_equal(model1: type[BaseModel], model2: type[BaseModel]):
+    model1_schema = serialize_model_schema(model1)
+    model2_schema = serialize_model_schema(model2)
+    assert model1_schema == model2_schema
+    assert model1.__dict__ == model2.__dict__
+
+
+def serialize_model_schema(model: type[BaseModel]):
+    model.__pydantic_core_schema__
+    return walk_through(model.__pydantic_core_schema__)
+
+
+def walk_through(model: dict | list):
+    if isinstance(model, dict):
+        if "ref" in model:
+            model["ref"] = model["ref"].split(":")[0]
+        return {k: str(v).rsplit(" at 0x", 1)[0] if callable(v) else walk_through(v) for k, v in model.items()}
+    elif isinstance(model, list):
+        return [str(v).rsplit(" at 0x", 1)[0] if callable(v) else walk_through(v) for v in model]
+    else:
+        return model
+
+
+# class A(BaseModel):
+#     a: Annotated[str, StringConstraints(max_length=8, min_length=4), StringConstraints(min_length=None, max_length=3)]
