@@ -342,21 +342,3 @@ PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
     ModelSerializerDecoratorInfo: model_serializer,
     ComputedFieldInfo: computed_field,
 }
-
-
-def assert_models_are_equal(model1: type[BaseModel], model2: type[BaseModel]):
-    model1_schema = serialize_dict(model1.__pydantic_core_schema__)
-    model2_schema = serialize_dict(model2.__pydantic_core_schema__)
-    assert model1_schema == model2_schema
-
-
-@classmethod
-def serialize_dict(model: Any):
-    if isinstance(model, dict):
-        if "ref" in model:
-            model["ref"] = model["ref"].split(":")[0]
-        return {k: str(v).rsplit(" at 0x", 1)[0] if callable(v) else serialize_dict(v) for k, v in model.items()}
-    elif isinstance(model, list):
-        return [str(v).rsplit(" at 0x", 1)[0] if callable(v) else serialize_dict(v) for v in model]
-    else:
-        return model

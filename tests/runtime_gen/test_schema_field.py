@@ -1,5 +1,6 @@
 import inspect
 import re
+from functools import partial
 from typing import Any, Literal, Union
 
 import pytest
@@ -11,9 +12,7 @@ from cadwyn.exceptions import (
     CadwynStructureError,
     InvalidGenerationInstructionError,
 )
-from cadwyn.structure import (
-    schema,
-)
+from cadwyn.structure import schema
 from tests.conftest import (
     CreateLocalVersionedPackages,
     CreateRuntimeSchemas,
@@ -22,14 +21,31 @@ from tests.conftest import (
     _FakeNamespaceWithOneStrField,
     version_change,
 )
+from tests.runtime_gen import base_schemas
 
 
-class EmptySchema(BaseModel):
-    pass
+def assert_models_are_equal(model1: type[BaseModel], model2: type[BaseModel]):
+    model1_schema = serialize_object(model1.__pydantic_core_schema__)
+    model2_schema = serialize_object(model2.__pydantic_core_schema__)
+    assert model1_schema == model2_schema
 
 
-class SchemaWithOneStrField(BaseModel):
-    foo: str
+def serialize_object(obj: Any):
+    if isinstance(obj, dict):
+        if "ref" in obj:
+            obj["ref"] = obj["ref"].split(":")[0].rsplit(".")[-1]
+        return {k: v.__name__ if callable(v) else serialize_object(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        modified_list = []
+        for v in obj:
+            if callable(v):
+                while hasattr(v, "func"):
+                    v = v.func
+                v = v.__name__
+            modified_list.append(v)
+        return modified_list
+    else:
+        return obj
 
 
 @pytest.fixture()
@@ -49,9 +65,9 @@ def head_with_one_int_field(head_module_for: HeadModuleFor):
 
 
 def test__schema_field_existed_as__original_schema_is_empty(create_runtime_schemas: CreateRuntimeSchemas):
-    v1 = create_runtime_schemas(
+    schemas = create_runtime_schemas(
         version_change(
-            schema(EmptySchema)
+            schema(base_schemas.EmptySchema)
             .field("bar")
             .existed_as(
                 type=int,
@@ -59,116 +75,74 @@ def test__schema_field_existed_as__original_schema_is_empty(create_runtime_schem
             )
         ),
     )
-    if PYDANTIC_V2:
-        assert inspect.getsource(EmptySchema) == (
-            "class EmptySchema(pydantic.BaseModel):\n"
-            "    bar: int = Field(alias='boo', serialization_alias='boo', validation_alias='boo')\n"
-        )
-    else:
-        assert inspect.getsource(EmptySchema) == (
-            "class EmptySchema(pydantic.BaseModel):\n    bar: int = Field(alias='boo', alias_priority=2)\n"
-        )
+
+    class EmptySchema(BaseModel):
+        bar: int = Field(alias="boo")
+
+    assert_models_are_equal(EmptySchema, schemas["2000-01-01"][base_schemas.EmptySchema])
 
 
 def test__field_existed_as__original_schema_has_a_field(create_runtime_schemas: CreateRuntimeSchemas):
-    models = create_runtime_schemas(
+    schemas = create_runtime_schemas(
         version_change(
-            schema(SchemaWithOneStrField)
+            schema(base_schemas.SchemaWithOneStrField)
             .field("bar")
             .existed_as(type=int, info=Field(description="Hello darkness my old friend")),
         )
     )
-    model = models["2000-01-01"][SchemaWithOneStrField]
-    assert model.__fields__["foo"].annotation == str
-    assert model.__fields__["bar"].annotation == int
-    assert model.__fields__["bar"].description == "Hello darkness my old friend"
-    assert model(foo="Hello", bar=83).dict() == {"foo": "Hello", "bar": 83}
+
+    class SchemaWithOneStrField(BaseModel):
+        foo: str
+        bar: int = Field(description="Hello darkness my old friend")
+
+    assert_models_are_equal(SchemaWithOneStrField, schemas["2000-01-01"][base_schemas.SchemaWithOneStrField])
 
 
-def test__field_existed_as__extras_are_added(
-    create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_empty_classes: _FakeModuleWithEmptyClasses,
-):
-    v1 = create_runtime_schemas(
-        schema(head_with_empty_classes.EmptySchema)
-        .field("foo")
-        .existed_as(
-            type=int,
-            info=Field(
-                deflolbtt="hewwo",  # pyright: ignore[reportCallIssue]
-            ),
-        ),
-    )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.EmptySchema) == (
-            "class EmptySchema(pydantic.BaseModel):\n"
-            "    foo: int = Field(json_schema_extra={'deflolbtt': 'hewwo'})\n"
+def test__field_existed_as__extras_are_added(create_runtime_schemas: CreateRuntimeSchemas):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(base_schemas.EmptySchema).field("foo").existed_as(type=int, info=Field(deflolbtt="hewwo")),
         )
-    else:
-        assert inspect.getsource(v1.EmptySchema) == (
-            "class EmptySchema(pydantic.BaseModel):\n    foo: int = Field(deflolbtt='hewwo')\n"
+    )
+
+    class EmptySchema(BaseModel):
+        foo: int = Field(json_schema_extra={"deflolbtt": "hewwo"})
+
+    assert_models_are_equal(EmptySchema, schemas["2000-01-01"][base_schemas.EmptySchema])
+
+
+def test__schema_field_existed_as__with_default_none(create_runtime_schemas: CreateRuntimeSchemas):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(base_schemas.EmptySchema).field("foo").existed_as(type=str | None, info=Field(default=None)),
         )
-
-
-def test__schema_field_existed_as__with_default_none(
-    create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_empty_classes: _FakeModuleWithEmptyClasses,
-):
-    v1 = create_runtime_schemas(
-        schema(head_with_empty_classes.EmptySchema).field("foo").existed_as(type=str | None, info=Field(default=None)),
     )
 
-    assert inspect.getsource(v1.EmptySchema) == (
-        "class EmptySchema(pydantic.BaseModel):\n    foo: typing.Union[str, None] = Field(default=None)\n"
+    class EmptySchema(BaseModel):
+        foo: str | None = Field(default=None)
+
+    assert_models_are_equal(EmptySchema, schemas["2000-01-01"][base_schemas.EmptySchema])
+
+
+def test__schema_field_existed_as__with_new_weird_data_types(create_runtime_schemas: CreateRuntimeSchemas):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(base_schemas.EmptySchema)
+            .field("foo")
+            .existed_as(type=dict[str, int], info=Field(default={"a": "b"})),
+            schema(base_schemas.EmptySchema)
+            .field("bar")
+            .existed_as(type=list[int], info=Field(default_factory=lambda: 83)),
+            schema(base_schemas.EmptySchema).field("baz").existed_as(type=Literal[base_schemas.MyEnum.foo]),
+        )
     )
 
+    class EmptySchema(BaseModel):
+        foo: dict[str, int] = Field(default={"a": "b"})
+        bar: list[int] = Field(default_factory=lambda: 83)
+        baz: Literal[base_schemas.MyEnum.foo]
 
-def test__schema_field_existed_as__with_new_weird_data_types(
-    create_runtime_schemas: CreateRuntimeSchemas,
-    head_module_for: HeadModuleFor,
-):
-    latest = head_module_for(
-        """
-        from pydantic import BaseModel, constr, Field
-        from enum import Enum
-
-        class MyEnum(Enum):
-            foo = 2
-
-        def my_default_factory():
-            return 83
-
-        class EmptySchema(BaseModel):
-            pass
-
-        """,
-    )
-    v1 = create_runtime_schemas(
-        schema(latest.EmptySchema)
-        .field("foo")
-        .existed_as(
-            type=dict[str, int],
-            info=Field(default={"a": "b"}),
-        ),
-        schema(latest.EmptySchema)
-        .field("bar")
-        .existed_as(
-            type=list[int],
-            info=Field(default_factory=latest.my_default_factory),
-        ),
-        schema(latest.EmptySchema)
-        .field("baz")
-        .existed_as(
-            type=Literal[latest.MyEnum.foo],  # pyright: ignore
-        ),
-    )
-
-    assert inspect.getsource(v1.EmptySchema) == (
-        "class EmptySchema(BaseModel):\n"
-        "    foo: dict[str, int] = Field(default={'a': 'b'})\n"
-        "    bar: list[int] = Field(default_factory=my_default_factory)\n"
-        "    baz: typing.Literal[MyEnum.foo]\n"
-    )
+    assert_models_are_equal(EmptySchema, schemas["2000-01-01"][base_schemas.EmptySchema])
 
 
 ################
@@ -176,15 +150,17 @@ def test__schema_field_existed_as__with_new_weird_data_types(
 ################
 
 
-def test__schema_field_didnt_exist(
-    create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_one_str_field: _FakeNamespaceWithOneStrField,
-):
-    v1 = create_runtime_schemas(
-        schema(head_with_one_str_field.SchemaWithOneStrField).field("foo").didnt_exist,
+def test__schema_field_didnt_exist(create_runtime_schemas: CreateRuntimeSchemas):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(base_schemas.SchemaWithOneStrField).field("foo").didnt_exist,
+        )
     )
 
-    assert inspect.getsource(v1.SchemaWithOneStrField) == "class SchemaWithOneStrField(BaseModel):\n    pass\n"
+    class SchemaWithOneStrField(BaseModel):
+        pass
+
+    assert_models_are_equal(SchemaWithOneStrField, schemas["2000-01-01"][base_schemas.SchemaWithOneStrField])
 
 
 def test__schema_field_didnt_exist__with_inheritance(
@@ -203,7 +179,7 @@ def test__schema_field_didnt_exist__with_inheritance(
     """,
     )
 
-    v1, v2, v3 = create_local_versioned_packages(
+    schemas = create_local_versioned_packages(
         version_change(schema(latest.ParentSchema).field("foo").didnt_exist),
         version_change(schema(latest.ChildSchema).field("bar").existed_as(type=int)),
     )

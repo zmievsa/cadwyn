@@ -229,16 +229,16 @@ def _change_field_in_model(
     constrained_type_annotation = None
 
     # This is only gonna be true if the field is Annotated
-    if annotated_first_arg_ast is not None:
-        # PydanticV2 changed field annotation handling so field.annotation lies to us
-        real_annotation = model._get_defined_annotations_through_mro(schemas)[alter_schema_instruction.name]
-        type_annotation = get_args(real_annotation)[0]
-        if is_constrained_type(type_annotation):
-            constrained_type_annotation = type_annotation
-    else:
-        type_annotation = field.annotation
-        if is_constrained_type(type_annotation):
-            constrained_type_annotation = type_annotation
+    # if annotated_first_arg_ast is not None:
+    #     # PydanticV2 changed field annotation handling so field.annotation lies to us
+    #     real_annotation = model._get_defined_annotations_through_mro(schemas)[alter_schema_instruction.name]
+    #     type_annotation = get_args(real_annotation)[0]
+    #     if is_constrained_type(type_annotation):
+    #         constrained_type_annotation = type_annotation
+    # else:
+    #     type_annotation = field.annotation
+    #     if is_constrained_type(type_annotation):
+    #         constrained_type_annotation = type_annotation
     if isinstance(alter_schema_instruction, FieldHadInstruction):
         # TODO: This naming sucks
         _change_field(
@@ -322,7 +322,7 @@ def _delete_field_attributes(
             field.delete_attribute(name=attr_name)
         # In case annotation_ast is a conint/constr/etc. Notice how we do not support
         # the same operation for **adding** constraints for simplicity.
-        elif (hasattr(constrained_type_annotation, attr_name)) or contype_is_definitely_used:
+        elif hasattr(constrained_type_annotation, attr_name):  # TODO:  or contype_is_definitely_used:
             if hasattr(constrained_type_annotation, attr_name):
                 _setattr_on_constrained_type(constrained_type_annotation, attr_name, None)
         else:
