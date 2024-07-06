@@ -1,23 +1,23 @@
-import ast
 import dataclasses
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeVar, cast, get_args
 
-from issubclass import issubclass
+import pydantic
+import pydantic._internal._decorators
 from pydantic import BaseModel
-from typing_extensions import Self, assert_never
+from typing_extensions import assert_never
 
-from cadwyn._asts import get_fancy_repr
-from cadwyn._compat import (
-    PYDANTIC_V2,
-    FieldInfo,
-    PydanticFieldWrapper,
-    dict_of_empty_field_info,
-    is_constrained_type,
-)
 from cadwyn._utils import Sentinel
 from cadwyn.exceptions import InvalidGenerationInstructionError
+from cadwyn.runtime_compat import (
+    PydanticFieldWrapper,
+    _PerFieldValidatorWrapper,
+    _PydanticRuntimeModelWrapper,
+    _wrap_validator,
+    is_constrained_type,
+    wrap_pydantic_model,
+)
 from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
 from cadwyn.structure.schemas import (
     AlterSchemaSubInstruction,
@@ -34,61 +34,15 @@ if TYPE_CHECKING:
     from cadwyn.codegen._common import _FieldName
     from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
 
-_T_MODEL = TypeVar("_T_MODEL", bound=type[BaseModel | Enum])
+_T_ANY_MODEL = TypeVar("_T_ANY_MODEL", bound=BaseModel | Enum)
+_T_ENUM = TypeVar("_T_ENUM", bound=Enum)
+_T_PYDANTIC_MODEL = TypeVar("_T_PYDANTIC_MODEL", bound=BaseModel)
 
 
 @dataclasses.dataclass(slots=True)
 class _EnumWrapper:
     cls: type[Enum]
     members: "dict[_FieldName, Enum | object]"
-
-
-@dataclasses.dataclass(slots=True)
-class _ValidatorWrapper:
-    validator: Callable
-    is_deleted: bool = False
-
-
-@dataclasses.dataclass(slots=True)
-class _PydanticRuntimeModelWrapper:
-    cls: type[BaseModel]
-    name: str
-    fields: "dict[_FieldName, PydanticFieldWrapper]"
-    validators: "dict[_FieldName, _ValidatorWrapper]"
-    annotations: dict[str, Any] = dataclasses.field(init=False, repr=False)
-    _parents: list[Self] | None = dataclasses.field(init=False, default=None)
-
-    def __post_init__(self) -> None:
-        self.annotations = self.cls.__annotations__.copy()
-
-    def _get_parents(self, schemas: "dict[type, Self]"):
-        if self._parents is not None:
-            return self._parents
-        parents = []
-        for base in self.cls.mro()[1:]:
-            if base in schemas:
-                parents.append(schemas[base])
-            elif issubclass(base, BaseModel):
-                fields, validators = get_fields_and_validators_from_model(base)
-                parents.append(type(self)(base, base.__name__, fields, validators))
-        self._parents = parents
-        return parents
-
-    def _get_defined_fields_through_mro(self, schemas: "dict[type, Self]") -> dict[str, PydanticFieldWrapper]:
-        fields = {}
-
-        for parent in reversed(self._get_parents(schemas)):
-            fields |= parent.fields
-
-        return fields | self.fields
-
-    def _get_defined_annotations_through_mro(self, schemas: "dict[type, Self]") -> dict[str, Any]:
-        annotations = {}
-
-        for parent in reversed(self._get_parents(schemas)):
-            annotations |= parent.annotations
-
-        return annotations | self.annotations
 
 
 @dataclasses.dataclass(slots=True)
@@ -108,7 +62,7 @@ class RuntimeSchemaGenContext:
         self.latest_version = max(self.version_bundle.versions, key=lambda v: v.value)
 
 
-def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, dict[_T_MODEL, _T_MODEL]]":
+def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, dict[type[_T_ANY_MODEL], type[_T_ANY_MODEL]]]":
     models = _create_model_bundle(versions)
 
     version_to_context_map = {"head": _copy_classes(models.schemas, models.enums)}
@@ -125,27 +79,22 @@ def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, dict[_T_
 
 
 def _create_model_bundle(versions: "VersionBundle"):
-    schemas = {}
-    for schema in versions.versioned_schemas:
-        breakpoint()
-        fields, validators = None, None
-        schemas[schema] = _PydanticRuntimeModelWrapper(schema, schema.__name__, fields, validators)
     return _ModelBundle(
         enums={
             enum: _EnumWrapper(enum, {member.name: member.value for member in enum})
             for enum in versions.versioned_enums.values()
         },
-        schemas=schemas,
+        schemas={schema: wrap_pydantic_model(schema) for schema in versions.versioned_schemas.values()},
     )
 
 
 def _migrate_classes(context: RuntimeSchemaGenContext) -> None:
     for version_change in context.current_version.version_changes:
-        # _apply_alter_schema_instructions(
-        #     context.models.schemas,
-        #     version_change.alter_schema_instructions,
-        #     version_change.__name__,
-        # )
+        _apply_alter_schema_instructions(
+            context.models.schemas,
+            version_change.alter_schema_instructions,
+            version_change.__name__,
+        )
         _apply_alter_enum_instructions(
             context.models.enums,
             version_change.alter_enum_instructions,
@@ -173,9 +122,13 @@ def _apply_alter_schema_instructions(
             _delete_field_from_model(schema_info, alter_schema_instruction.name, version_change_name)
         elif isinstance(alter_schema_instruction, ValidatorExistedInstruction):
             validator_name = alter_schema_instruction.validator.__name__
-            schema_info.validators[validator_name] = _ValidatorWrapper(
-                alter_schema_instruction.validator,
-                alter_schema_instruction.validator_info.is_deleted,
+            raw_validator = cast(
+                pydantic._internal._decorators.PydanticDescriptorProxy, alter_schema_instruction.validator
+            )
+            schema_info.validators[validator_name] = _wrap_validator(
+                raw_validator.wrapped,
+                is_pydantic_v1_style_validator=raw_validator.shim,
+                decorator_info=raw_validator.decorator_info,
             )
         elif isinstance(alter_schema_instruction, ValidatorDidntExistInstruction):
             if alter_schema_instruction.name not in schema_info.validators:
@@ -250,13 +203,7 @@ def _add_field_to_model(
             f'in "{version_change_name}" but there is already a field with that name.',
         )
 
-    fancy_type_repr = get_fancy_repr(alter_schema_instruction.type)
-    field = PydanticFieldWrapper(
-        annotation_ast=ast.parse(fancy_type_repr, mode="eval").body,
-        annotation=alter_schema_instruction.type,
-        init_model_field=alter_schema_instruction.field,
-        value_ast=None,
-    )
+    field = PydanticFieldWrapper(alter_schema_instruction.field)
     model.fields[alter_schema_instruction.name] = field
     model.annotations[alter_schema_instruction.name] = alter_schema_instruction.type
 
@@ -343,12 +290,6 @@ def _change_field(
             defined_annotations[alter_schema_instruction.name],
         )
 
-    field_info = field.field_info
-
-    dict_of_field_info = {k: getattr(field_info, k) for k in field_info.__slots__}
-    if dict_of_field_info == dict_of_empty_field_info:
-        field_info = FieldInfo()
-        field.field_info = field_info
     for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
         attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
         if attr_value is not Sentinel:
@@ -361,8 +302,6 @@ def _change_field(
                 )
             if constrained_type_annotation is not None and hasattr(constrained_type_annotation, attr_name):
                 _setattr_on_constrained_type(constrained_type_annotation, attr_name, attr_value)
-                if not PYDANTIC_V2 and not type_is_call:  # pragma: no branch
-                    field.update_attribute(name=attr_name, value=attr_value)
             else:
                 field.update_attribute(name=attr_name, value=attr_value)
 
@@ -402,24 +341,20 @@ def _delete_field_from_model(model: _PydanticRuntimeModelWrapper, field_name: st
         )
     model.fields.pop(field_name)
     for validator_name, validator in model.validators.copy().items():
-        if validator.field_names is not None and field_name in validator.field_names:
-            validator.field_names.remove(field_name)
-
-            validator_decorator = cast(
-                ast.Call, validator.func_ast.decorator_list[validator.index_of_validator_decorator]
-            )
-            for arg in validator_decorator.args.copy():
-                if isinstance(arg, ast.Constant) and arg.value == field_name:
-                    validator_decorator.args.remove(arg)
-            validator.func_ast.decorator_list[0]
-            if not validator.field_names:
+        if isinstance(validator, _PerFieldValidatorWrapper) and field_name in validator.fields:
+            validator.fields.remove(field_name)
+            # TODO: This behavior doesn't feel natural
+            if not validator.fields:
                 model.validators[validator_name].is_deleted = True
 
 
-def _copy_classes(schemas: dict[type[BaseModel], _PydanticRuntimeModelWrapper], enums: dict[type[Enum], _EnumWrapper]):
-    return {k: _copy_enum(wrapper.cls, wrapper.members) for k, wrapper in enums.items()} | {
-        k: wrapper.cls for k, wrapper in schemas.items()
+def _copy_classes(
+    schemas: dict[type[BaseModel], _PydanticRuntimeModelWrapper], enums: dict[type[Enum], _EnumWrapper]
+) -> dict[type[_T_ANY_MODEL], type[_T_ANY_MODEL]]:
+    models = {k: _copy_enum(wrapper.cls, wrapper.members) for k, wrapper in enums.items()} | {
+        k: wrapper.generate_model_copy() for k, wrapper in schemas.items()
     }
+    return cast(dict[type[_T_ANY_MODEL], type[_T_ANY_MODEL]], models)
 
 
 class _DummyEnum(Enum):
@@ -443,10 +378,10 @@ def _get_initialization_namespace_for_enum(enum_cls: type[Enum]):
     return methods
 
 
-def _copy_enum(enum_cls: type[Enum], member_map: dict[str, Any]):
+def _copy_enum(enum_cls: type[_T_ENUM], member_map: dict[str, Any]) -> type[_T_ENUM]:
     enum_dict = Enum.__prepare__(enum_cls.__name__, enum_cls.__bases__)
     raw_member_map = {k: v.value if isinstance(v, Enum) else v for k, v in member_map.items()}
     initialization_namespace = _get_initialization_namespace_for_enum(enum_cls) | raw_member_map
     for attr_name, attr in initialization_namespace.items():
         enum_dict[attr_name] = attr
-    return type(enum_cls.__name__, enum_cls.__bases__, enum_dict)
+    return cast(type[_T_ENUM], type(enum_cls.__name__, enum_cls.__bases__, enum_dict))
