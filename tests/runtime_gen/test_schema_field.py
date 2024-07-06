@@ -150,6 +150,10 @@ def test__schema_field_existed_as__with_new_weird_data_types(create_runtime_sche
 ################
 
 
+def test__ADD_A_TEST_THAT_CHECKS_THAT_WHEN_PARENT_SCHEMA_IS_ALTERED__ALL_OF_ITS_CHILDREN_GET_ALTERED_AS_WELL__BECAUSE_WITH_RUNTIME_GENERATION_THE_SIMPLE_APPROACH_OF_JUST_REBUILDING_THE_SCHEMAS_MENTIONED_IN_VERSION_CHANGES_NO_LONGER_WORKS():
+    assert False
+
+
 def test__schema_field_didnt_exist(create_runtime_schemas: CreateRuntimeSchemas):
     schemas = create_runtime_schemas(
         version_change(
