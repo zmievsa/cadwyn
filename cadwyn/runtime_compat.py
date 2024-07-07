@@ -1,10 +1,11 @@
 import ast
+import copy
 import dataclasses
 import functools
 import inspect
 from collections.abc import Callable
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeAlias, TypeVar, cast, final
 
 import pydantic
 from issubclass import issubclass
@@ -40,8 +41,10 @@ from cadwyn._compat import (
 if TYPE_CHECKING:
     from cadwyn.codegen._common import _FieldName
 
-_T_MODEL = TypeVar("_T_MODEL", bound=type[BaseModel | Enum])
+_T_ANY_MODEL = TypeVar("_T_ANY_MODEL", bound=BaseModel | Enum)
+_T_ENUM = TypeVar("_T_ENUM", bound=Enum)
 _T_PYDANTIC_MODEL = TypeVar("_T_PYDANTIC_MODEL", bound=BaseModel)
+
 
 ModelField: TypeAlias = Any  # pyright: ignore[reportRedeclaration]
 PydanticUndefined: TypeAlias = Any
@@ -153,6 +156,7 @@ class _PerFieldValidatorWrapper(_ValidatorWrapper):
     fields: list[str]
 
 
+@final
 @dataclasses.dataclass(slots=True)
 class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     cls: type[_T_PYDANTIC_MODEL]
@@ -166,11 +170,19 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     ]
     validators: dict[str, _PerFieldValidatorWrapper | _ValidatorWrapper]
     other_attributes: dict[str, Any]
-    annotations: dict[str, Any] = dataclasses.field(init=False, repr=False)
+    annotations: dict[str, Any]
     _parents: list[Self] | None = dataclasses.field(init=False, default=None)
 
-    def __post_init__(self) -> None:
-        self.annotations = self.cls.__annotations__.copy()
+    def __deepcopy__(self, memo):
+        return _PydanticRuntimeModelWrapper(
+            self.cls,
+            name=self.name,
+            doc=self.doc,
+            fields=copy.deepcopy(self.fields),
+            validators=copy.deepcopy(self.validators),
+            other_attributes=self.other_attributes.copy(),
+            annotations=self.annotations.copy(),
+        )
 
     def _get_parents(self, schemas: "dict[type, Self]"):
         if self._parents is not None:
@@ -200,7 +212,7 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return annotations | self.annotations
 
-    def generate_model_copy(self) -> type[_T_PYDANTIC_MODEL]:
+    def generate_model_copy(self, generator: "_SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {
             name: validator.decorator(*validator.fields, **validator.kwargs)(validator.func)
             for name, validator in self.validators.items()
@@ -214,7 +226,7 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         fields = {name: field.generate_field_copy() for name, field in self.fields.items()}
         return type(self.cls)(
             self.name,
-            self.cls.__bases__,
+            tuple(generator[base] for base in self.cls.__bases__),
             self.other_attributes
             | per_field_validators
             | root_validators
@@ -223,8 +235,81 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         )
 
 
+class _DummyEnum(Enum):
+    pass
+
+
+@final
+class _EnumWrapper(Generic[_T_ENUM]):
+    __slots__ = "cls", "members"
+
+    def __init__(self, cls: type[_T_ENUM]):
+        self.cls = cls
+        self.members = {member.name: member.value for member in cls}
+
+    def generate_model_copy(self, generator: "_SchemaGenerator") -> type[_T_ENUM]:
+        enum_dict = Enum.__prepare__(self.cls.__name__, self.cls.__bases__)
+
+        raw_member_map = {k: v.value if isinstance(v, Enum) else v for k, v in self.members.items()}
+        initialization_namespace = _get_initialization_namespace_for_enum(self.cls) | raw_member_map
+        for attr_name, attr in initialization_namespace.items():
+            enum_dict[attr_name] = attr
+        return cast(type[_T_ENUM], type(self.cls.__name__, self.cls.__bases__, enum_dict))
+
+
+def _get_initialization_namespace_for_enum(enum_cls: type[Enum]):
+    mro_without_the_class_itself = enum_cls.mro()[1:]
+
+    mro_dict = {}
+    for cls in reversed(mro_without_the_class_itself):
+        mro_dict.update(cls.__dict__)
+
+    methods = {
+        k: v
+        for k, v in enum_cls.__dict__.items()
+        if k not in enum_cls._member_names_
+        and k not in _DummyEnum.__dict__
+        and (k not in mro_dict or mro_dict[k] is not v)
+    }
+    return methods
+
+
+@dataclasses.dataclass(slots=True)
+class _ModelBundle:
+    enums: dict[type[Enum], _EnumWrapper]
+    schemas: dict[type[BaseModel], _PydanticRuntimeModelWrapper]
+
+
+@final
+class _SchemaGenerator:
+    __slots__ = "model_bundle", "concrete_models"
+
+    def __init__(self, model_bundle: _ModelBundle) -> None:
+        self.model_bundle = model_bundle
+        self.concrete_models = {}  # This is here because the call to generate_model_copy below tries to use this attr
+        self.concrete_models = {
+            k: wrapper.generate_model_copy(self)
+            for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
+        }
+
+    def __getitem__(self, model: type, /) -> Any:
+        if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model is BaseModel:
+            return model
+        if model in self.concrete_models:
+            return self.concrete_models[model]
+
+        if issubclass(model, BaseModel):
+            wrapper = wrap_pydantic_model(model)
+            self.model_bundle.schemas[model] = wrapper
+        elif issubclass(model, Enum):
+            wrapper = _EnumWrapper(model)
+            self.model_bundle.enums[model] = wrapper
+        model_copy = wrapper.generate_model_copy(self)
+        self.concrete_models[model] = model_copy
+        return model_copy
+
+
 # TODO: Add a test where we delete a parent field for which we have a child validator. To handle this correctly, we have to first initialize the parents, and only then the children. Or maybe even process validator changes AFTER the migrations have been done.
-@functools.cache
 def wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> _PydanticRuntimeModelWrapper[_T_PYDANTIC_MODEL]:
     defined_names = _get_all_class_attributes(model)
     decorators = [
@@ -273,6 +358,7 @@ def wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> _PydanticRuntimeModel
         fields=fields,
         other_attributes=other_attributes,
         validators=validators,
+        annotations=model.__annotations__.copy(),
     )
 
 
@@ -304,10 +390,10 @@ def _is_dunder(attr_name):
 def _get_all_class_attributes(cls: type) -> set[str]:
     try:
         source = inspect.getsource(cls)
-    except OSError:
+        cls_ast = ast.parse(source).body[0]
+    except (OSError, SyntaxError, ValueError):
         return set()
 
-    cls_ast = ast.parse(source).body[0]
     if not isinstance(cls_ast, ast.ClassDef):
         return set()
 

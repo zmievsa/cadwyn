@@ -28,6 +28,7 @@ from cadwyn.codegen import (
 from cadwyn.codegen._common import CodegenPlugin, MigrationPlugin
 from cadwyn.codegen._main import generate_code_for_versioned_packages
 from cadwyn.main import Cadwyn
+from cadwyn.runtime_compat import _SchemaGenerator
 from cadwyn.schema_generation import _generate_versioned_models
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
@@ -250,7 +251,7 @@ def import_all_schemas(head_package_path: str, created_versions: Sequence[Versio
 
 @fixture_class(name="create_runtime_schemas")
 class CreateRuntimeSchemas:
-    def __call__(self, *version_changes: type[VersionChange]) -> dict[str, dict[_T_MODEL, _T_MODEL]]:
+    def __call__(self, *version_changes: type[VersionChange]) -> dict[str, _SchemaGenerator]:
         return _generate_versioned_models(VersionBundle(*versions(version_changes)))
 
 

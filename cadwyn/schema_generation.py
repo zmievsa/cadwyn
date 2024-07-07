@@ -1,3 +1,4 @@
+import copy
 import dataclasses
 from collections.abc import Sequence
 from enum import Enum
@@ -12,8 +13,11 @@ from cadwyn._utils import Sentinel
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.runtime_compat import (
     PydanticFieldWrapper,
+    _EnumWrapper,
+    _ModelBundle,
     _PerFieldValidatorWrapper,
     _PydanticRuntimeModelWrapper,
+    _SchemaGenerator,
     _wrap_validator,
     is_constrained_type,
     wrap_pydantic_model,
@@ -31,24 +35,7 @@ from cadwyn.structure.schemas import (
 )
 
 if TYPE_CHECKING:
-    from cadwyn.codegen._common import _FieldName
     from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
-
-_T_ANY_MODEL = TypeVar("_T_ANY_MODEL", bound=BaseModel | Enum)
-_T_ENUM = TypeVar("_T_ENUM", bound=Enum)
-_T_PYDANTIC_MODEL = TypeVar("_T_PYDANTIC_MODEL", bound=BaseModel)
-
-
-@dataclasses.dataclass(slots=True)
-class _EnumWrapper:
-    cls: type[Enum]
-    members: "dict[_FieldName, Enum | object]"
-
-
-@dataclasses.dataclass(slots=True)
-class _ModelBundle:
-    enums: dict[type[Enum], _EnumWrapper]
-    schemas: dict[type[BaseModel], _PydanticRuntimeModelWrapper]
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
@@ -62,16 +49,16 @@ class RuntimeSchemaGenContext:
         self.latest_version = max(self.version_bundle.versions, key=lambda v: v.value)
 
 
-def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, dict[type[_T_ANY_MODEL], type[_T_ANY_MODEL]]]":
+def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, _SchemaGenerator]":
     models = _create_model_bundle(versions)
 
-    version_to_context_map = {"head": _copy_classes(models.schemas, models.enums)}
+    version_to_context_map = {"head": _SchemaGenerator(copy.deepcopy(models))}
     context = RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
     _migrate_classes(context)
 
     for version in versions.versions:
         context = RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
-        version_to_context_map[str(version.value)] = _copy_classes(models.schemas, models.enums)
+        version_to_context_map[str(version.value)] = _SchemaGenerator(copy.deepcopy(models))
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
 
@@ -80,10 +67,7 @@ def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, dict[typ
 
 def _create_model_bundle(versions: "VersionBundle"):
     return _ModelBundle(
-        enums={
-            enum: _EnumWrapper(enum, {member.name: member.value for member in enum})
-            for enum in versions.versioned_enums.values()
-        },
+        enums={enum: _EnumWrapper(enum) for enum in versions.versioned_enums.values()},
         schemas={schema: wrap_pydantic_model(schema) for schema in versions.versioned_schemas.values()},
     )
 
@@ -340,48 +324,10 @@ def _delete_field_from_model(model: _PydanticRuntimeModelWrapper, field_name: st
             f'in "{version_change_name}" but it doesn\'t have such a field.',
         )
     model.fields.pop(field_name)
+    model.annotations.pop(field_name)
     for validator_name, validator in model.validators.copy().items():
         if isinstance(validator, _PerFieldValidatorWrapper) and field_name in validator.fields:
             validator.fields.remove(field_name)
             # TODO: This behavior doesn't feel natural
             if not validator.fields:
                 model.validators[validator_name].is_deleted = True
-
-
-def _copy_classes(
-    schemas: dict[type[BaseModel], _PydanticRuntimeModelWrapper], enums: dict[type[Enum], _EnumWrapper]
-) -> dict[type[_T_ANY_MODEL], type[_T_ANY_MODEL]]:
-    models = {k: _copy_enum(wrapper.cls, wrapper.members) for k, wrapper in enums.items()} | {
-        k: wrapper.generate_model_copy() for k, wrapper in schemas.items()
-    }
-    return cast(dict[type[_T_ANY_MODEL], type[_T_ANY_MODEL]], models)
-
-
-class _DummyEnum(Enum):
-    pass
-
-
-def _get_initialization_namespace_for_enum(enum_cls: type[Enum]):
-    mro_without_the_class_itself = enum_cls.mro()[1:]
-
-    mro_dict = {}
-    for cls in reversed(mro_without_the_class_itself):
-        mro_dict.update(cls.__dict__)
-
-    methods = {
-        k: v
-        for k, v in enum_cls.__dict__.items()
-        if k not in enum_cls._member_names_
-        and k not in _DummyEnum.__dict__
-        and (k not in mro_dict or mro_dict[k] is not v)
-    }
-    return methods
-
-
-def _copy_enum(enum_cls: type[_T_ENUM], member_map: dict[str, Any]) -> type[_T_ENUM]:
-    enum_dict = Enum.__prepare__(enum_cls.__name__, enum_cls.__bases__)
-    raw_member_map = {k: v.value if isinstance(v, Enum) else v for k, v in member_map.items()}
-    initialization_namespace = _get_initialization_namespace_for_enum(enum_cls) | raw_member_map
-    for attr_name, attr in initialization_namespace.items():
-        enum_dict[attr_name] = attr
-    return cast(type[_T_ENUM], type(enum_cls.__name__, enum_cls.__bases__, enum_dict))
