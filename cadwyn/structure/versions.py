@@ -455,7 +455,7 @@ class VersionBundle:
                 return cls_from_old_version
             return getattr(module, cls_from_old_version.__name__)
         else:
-            return _generate_versioned_models(self)[new_version].get(cls_from_old_version, cls_from_old_version)
+            return _generate_versioned_models(self)[new_version][cls_from_old_version]
 
     def _get_version_dir(self, version: str) -> Path:
         if version == "head":

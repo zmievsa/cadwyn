@@ -6,6 +6,7 @@ import textwrap
 import uuid
 from collections.abc import Sequence
 from contextvars import ContextVar
+from copy import deepcopy
 from datetime import date
 from enum import Enum
 from pathlib import Path
@@ -386,5 +387,43 @@ def version_change(
     )
 
 
-def serialize(enum: type[Enum]) -> dict[str, Any]:
+def serialize_enum(enum: type[Enum]) -> dict[str, Any]:
     return {member.name: member.value for member in enum}
+
+
+def assert_models_are_equal(model1: type[BaseModel], model2: type[BaseModel]):
+    model1_schema = serialize_schema(model1.__pydantic_core_schema__)
+    model2_schema = serialize_schema(model2.__pydantic_core_schema__)
+    assert model1_schema == model2_schema
+
+
+def serialize_schema(schema: Any):
+    schema = deepcopy(schema)
+    if "cls" in schema:
+        schema_to_modify = schema
+    else:
+        schema_to_modify = schema["schema"]
+    del schema_to_modify["cls"]
+    del schema_to_modify["ref"]
+    if "model_name" in schema_to_modify["schema"]:
+        del schema_to_modify["schema"]["model_name"]
+    elif "schema" in schema_to_modify["schema"]:
+        del schema_to_modify["schema"]["schema"]["model_name"]
+    del schema_to_modify["config"]["title"]
+    return serialize_object(schema)
+
+
+def serialize_object(obj: Any):
+    if isinstance(obj, dict):
+        return {k: v.__name__ if callable(v) else serialize_object(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        modified_list = []
+        for v in obj:
+            if callable(v):
+                while hasattr(v, "func"):
+                    v = v.func
+                v = v.__name__
+            modified_list.append(serialize_object(v))
+        return modified_list
+    else:
+        return obj

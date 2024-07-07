@@ -1,11 +1,13 @@
+import copy
 import inspect
 import re
-from copy import deepcopy
+from enum import Enum, auto
 from functools import partial
-from typing import Any, Literal, Union
+from typing import Annotated, Any, Literal, Union, get_args
 
 import pytest
-from pydantic import BaseModel, Field, ValidationError, constr
+from annotated_types import Interval
+from pydantic import BaseModel, Field, StringConstraints, ValidationError, conint, constr
 from pydantic.fields import FieldInfo
 from pydantic_core.core_schema import ModelSchema
 
@@ -21,55 +23,14 @@ from tests.conftest import (
     HeadModuleFor,
     _FakeModuleWithEmptyClasses,
     _FakeNamespaceWithOneStrField,
+    assert_models_are_equal,
     version_change,
 )
-from tests.runtime_gen import base_schemas
 
 
-def assert_models_are_equal(model1: type[BaseModel], model2: type[BaseModel]):
-    model1_schema = serialize_schema(model1.__pydantic_core_schema__)
-    model2_schema = serialize_schema(model2.__pydantic_core_schema__)
-    assert model1_schema == model2_schema
-
-
-def serialize_schema(schema: Any):
-    schema = deepcopy(schema)
-    if "cls" in schema:
-        schema_to_modify = schema
-    else:
-        schema_to_modify = schema["schema"]
-    del schema_to_modify["cls"]
-    del schema_to_modify["ref"]
-    del schema_to_modify["schema"]["model_name"]
-    del schema_to_modify["config"]["title"]
-    return serialize_object(schema)
-
-
-def serialize_object(obj: Any):
-    if isinstance(obj, dict):
-        return {k: v.__name__ if callable(v) else serialize_object(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        modified_list = []
-        for v in obj:
-            if callable(v):
-                while hasattr(v, "func"):
-                    v = v.func
-                v = v.__name__
-            modified_list.append(serialize_object(v))
-        return modified_list
-    else:
-        return obj
-
-
-@pytest.fixture()
-def head_with_one_int_field(head_module_for: HeadModuleFor):
-    return head_module_for(
-        """
-    from pydantic import BaseModel
-    class SchemaWithOneIntField(BaseModel):
-        foo: int
-    """,
-    )
+class MyEnum(Enum):
+    foo = auto()
+    baz = auto()
 
 
 class EmptySchema(BaseModel):
@@ -97,7 +58,7 @@ def test__schema_field_existed_as__original_schema_is_empty(create_runtime_schem
     class ExpectedSchema(BaseModel):
         bar: int = Field(alias="boo")
 
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][EmptySchema])
+    assert_models_are_equal(schemas["2000-01-01"][EmptySchema], ExpectedSchema)
 
 
 def test__field_existed_as__original_schema_has_a_field(create_runtime_schemas: CreateRuntimeSchemas):
@@ -113,7 +74,7 @@ def test__field_existed_as__original_schema_has_a_field(create_runtime_schemas: 
         foo: str
         bar: int = Field(description="Hello darkness my old friend")
 
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][SchemaWithOneStrField])
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithOneStrField], ExpectedSchema)
 
 
 def test__field_existed_as__extras_are_added(create_runtime_schemas: CreateRuntimeSchemas):
@@ -131,7 +92,7 @@ def test__field_existed_as__extras_are_added(create_runtime_schemas: CreateRunti
     class ExpectedSchema(BaseModel):
         foo: int = Field(json_schema_extra={"deflolbtt": "hewwo"})
 
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][EmptySchema])
+    assert_models_are_equal(schemas["2000-01-01"][EmptySchema], ExpectedSchema)
 
 
 def test__schema_field_existed_as__with_default_none(create_runtime_schemas: CreateRuntimeSchemas):
@@ -144,7 +105,7 @@ def test__schema_field_existed_as__with_default_none(create_runtime_schemas: Cre
     class ExpectedSchema(BaseModel):
         foo: str | None = Field(default=None)
 
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][EmptySchema])
+    assert_models_are_equal(schemas["2000-01-01"][EmptySchema], ExpectedSchema)
 
 
 def test__schema_field_existed_as__with_new_weird_data_types(create_runtime_schemas: CreateRuntimeSchemas):
@@ -152,16 +113,16 @@ def test__schema_field_existed_as__with_new_weird_data_types(create_runtime_sche
         version_change(
             schema(EmptySchema).field("foo").existed_as(type=dict[str, int], info=Field(default={"a": "b"})),
             schema(EmptySchema).field("bar").existed_as(type=list[int], info=Field(default_factory=lambda: 83)),
-            schema(EmptySchema).field("baz").existed_as(type=Literal[base_schemas.MyEnum.foo]),
+            schema(EmptySchema).field("baz").existed_as(type=Literal[MyEnum.foo]),
         )
     )
 
     class ExpectedSchema(BaseModel):
         foo: dict[str, int] = Field(default={"a": "b"})
         bar: list[int] = Field(default_factory=lambda: 83)
-        baz: Literal[base_schemas.MyEnum.foo]
+        baz: Literal[MyEnum.foo]
 
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][EmptySchema])
+    assert_models_are_equal(schemas["2000-01-01"][EmptySchema], ExpectedSchema)
 
 
 ################
@@ -174,17 +135,13 @@ def test__NOTE_TO_ADD_THIS_TEST_TO_ROUTER_GENERATION_NOT_JUST_HERE_ADD_A_TEST_TH
 
 
 def test__schema_field_didnt_exist(create_runtime_schemas: CreateRuntimeSchemas):
-    schemas = create_runtime_schemas(
-        version_change(
-            schema(SchemaWithOneStrField).field("foo").didnt_exist,
-        )
-    )
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithOneStrField).field("foo").didnt_exist))
 
     class ExpectedSchema(BaseModel):
         pass
 
     schemas["2000-01-01"][SchemaWithOneStrField]()
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][SchemaWithOneStrField])
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithOneStrField], ExpectedSchema)
 
 
 class ParentSchema(BaseModel):
@@ -206,8 +163,8 @@ def test__schema_field_didnt_exist__with_inheritance(create_runtime_schemas: Cre
     ):
         bar: int
 
-    assert_models_are_equal(EmptySchema, schemas["2000-01-01"][ParentSchema])
-    assert_models_are_equal(ExpectedChildSchema, schemas["2000-01-01"][ChildSchema])
+    assert_models_are_equal(schemas["2000-01-01"][ParentSchema], EmptySchema)
+    assert_models_are_equal(schemas["2000-01-01"][ChildSchema], ExpectedChildSchema)
     assert set(schemas["2000-01-01"][ChildSchema].model_fields) == {"bar"}
 
 
@@ -216,7 +173,7 @@ def test__schema_field_didnt_exist__with_inheritance_and_child_not_versioned__ch
 ):
     schemas = create_runtime_schemas(version_change(schema(ParentSchema).field("foo").didnt_exist))
 
-    assert_models_are_equal(EmptySchema, schemas["2000-01-01"][ParentSchema])
+    assert_models_are_equal(schemas["2000-01-01"][ParentSchema], EmptySchema)
     assert "foo" not in schemas["2000-01-01"][ChildSchema].model_fields
     assert schemas["2000-01-01"][ChildSchema]().json() == "{}"
 
@@ -355,7 +312,7 @@ def test__schema_field_didnt_have__removing_default(create_runtime_schemas: Crea
         foo: str = "hewwo"
         bar: int = Field(default=83)
 
-    v1 = create_runtime_schemas(
+    schemas = create_runtime_schemas(
         version_change(
             schema(SchemaWithDefaults).field("foo").didnt_have("default"),
             schema(SchemaWithDefaults).field("bar").didnt_have("default"),
@@ -366,328 +323,227 @@ def test__schema_field_didnt_have__removing_default(create_runtime_schemas: Crea
         foo: str
         bar: int
 
-    assert_models_are_equal(ExpectedSchema, v1["2000-01-01"][SchemaWithDefaults])
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithDefaults], ExpectedSchema)
 
 
-@pytest.fixture()
-def head_with_constraints(head_module_for: HeadModuleFor):
-    return head_module_for(
-        """
-        from pydantic import BaseModel, conint, Field
-
-        class SchemaWithConstraints(BaseModel):
-            foo: conint(lt=2 + 5)
-            bar: str = Field(min_length=0, max_length=2 + 5)
-        """,
-    )
+class SchemaWithConstraints(BaseModel):
+    foo: conint(lt=7)
+    bar: str = Field(min_length=0, max_length=7)
 
 
 def test__schema_field_didnt_have__constrained_field_constraints_removed__constraints_do_not_render(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_constraints: Any,
 ):
-    v1 = create_runtime_schemas(
-        schema(head_with_constraints.SchemaWithConstraints).field("foo").didnt_have("lt"),
-        schema(head_with_constraints.SchemaWithConstraints).field("bar").didnt_have("max_length", "min_length"),
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithConstraints).field("foo").didnt_have("lt"),
+            schema(SchemaWithConstraints).field("bar").didnt_have("max_length", "min_length"),
+        )
     )
 
-    assert inspect.getsource(v1.SchemaWithConstraints) == (
-        "class SchemaWithConstraints(BaseModel):\n" "    foo: conint()\n" "    bar: str = Field()\n"
-    )
+    class ExpectedSchema(BaseModel):
+        foo: conint()
+        bar: str
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
 
 
 def test__schema_field_had_constrained_field__only_non_constraint_field_args_were_modified(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_constraints,
 ):
-    v1 = create_runtime_schemas(
-        schema(head_with_constraints.SchemaWithConstraints).field("foo").had(alias="foo1"),
-        schema(head_with_constraints.SchemaWithConstraints).field("bar").had(alias="bar1"),
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithConstraints).field("foo").had(alias="foo1"),
+            schema(SchemaWithConstraints).field("bar").had(alias="bar1"),
+        )
     )
 
-    assert inspect.getsource(v1.SchemaWithConstraints) == (
-        "class SchemaWithConstraints(BaseModel):\n"
-        "    foo: conint(lt=2 + 5) = Field(alias='foo1')\n"
-        "    bar: str = Field(min_length=0, max_length=2 + 5, alias='bar1')\n"
-    )
+    class ExpectedSchema(BaseModel):
+        foo: conint(lt=7) = Field(alias="foo1")
+        bar: str = Field(min_length=0, max_length=7, alias="bar1")
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
 
 
 def test__schema_field_had_constrained_field__field_is_an_unconstrained_union(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_module_for: HeadModuleFor,
 ):
-    latest = head_module_for(
-        """
-from pydantic import BaseModel, Field
+    class Schema(BaseModel):
+        foo: int | None = Field(default=None)
 
-class Schema(BaseModel):
-    foo: int | None = Field(default=None)
+    schemas = create_runtime_schemas(version_change(schema(Schema).field("foo").had(ge=0)))
 
-                      """,
-    )
-    v1 = create_runtime_schemas(
-        schema(latest.Schema).field("foo").had(ge=0),
-    )
+    class ExpectedSchema(BaseModel):
+        foo: int | None = Field(default=None, ge=0)
 
-    assert inspect.getsource(v1.Schema) == (
-        "class Schema(BaseModel):\n    foo: int | None = Field(default=None, ge=0)\n"
-    )
+    assert_models_are_equal(schemas["2000-01-01"][Schema], ExpectedSchema)
 
 
 def test__schema_field_had_constrained_field__constraints_have_been_modified(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_constraints,
 ):
-    v1 = create_runtime_schemas(
-        schema(head_with_constraints.SchemaWithConstraints).field("foo").had(gt=8),
-        schema(head_with_constraints.SchemaWithConstraints).field("bar").had(min_length=2),
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithConstraints).field("foo").had(gt=8),
+            schema(SchemaWithConstraints).field("bar").had(min_length=2),
+        )
     )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithConstraints) == (
-            "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=2 + 5) = Field(gt=8)\n"
-            "    bar: str = Field(min_length=2, max_length=2 + 5)\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithConstraints) == (
-            "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=2 + 5, gt=8)\n"
-            "    bar: str = Field(min_length=2, max_length=2 + 5)\n"
-        )
+
+    class ExpectedSchema(BaseModel):
+        foo: conint(lt=7) = Field(gt=8)
+        bar: str = Field(min_length=2, max_length=7)
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
 
 
 def test__schema_field_had_constrained_field__both_constraints_and_non_constraints_have_been_modified(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_constraints,
 ):
-    v1 = create_runtime_schemas(
-        schema(head_with_constraints.SchemaWithConstraints).field("foo").had(gt=8, alias="foo1"),
-        schema(head_with_constraints.SchemaWithConstraints).field("bar").had(min_length=2, alias="bar1"),
-    )
-    if PYDANTIC_V2:
-        # TODO Validate that this works
-        assert inspect.getsource(v1.SchemaWithConstraints) == (
-            "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=2 + 5) = Field(alias='foo1', gt=8)\n"
-            "    bar: str = Field(min_length=2, max_length=2 + 5, alias='bar1')\n"
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithConstraints).field("foo").had(gt=8, alias="foo1"),
+            schema(SchemaWithConstraints).field("bar").had(min_length=2, alias="bar1"),
         )
-    else:
-        assert inspect.getsource(v1.SchemaWithConstraints) == (
-            "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=2 + 5, gt=8) = Field(alias='foo1')\n"
-            "    bar: str = Field(min_length=2, max_length=2 + 5, alias='bar1')\n"
-        )
-
-
-@pytest.fixture()
-def head_with_constraints_and_field(head_module_for: HeadModuleFor):
-    return head_module_for(
-        """
-        from pydantic import BaseModel, constr, Field
-
-        MY_VAR = "hewwo"
-
-        class SchemaWithConstraintsAndField(BaseModel):
-            foo: constr(max_length=5) = Field(default=MY_VAR)
-
-        """,
     )
+
+    class ExpectedSchema(BaseModel):
+        foo: conint(lt=7) = Field(alias="foo1", gt=8)
+        bar: str = Field(min_length=2, max_length=7, alias="bar1")
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
+
+
+class SchemaWithConstraintsAndField(BaseModel):
+    foo: constr(max_length=5) = Field(default="hewwo")
 
 
 def test__schema_field_had_constrained_field__constraint_field_args_were_modified_in_type(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_constraints_and_field: Any,
 ):
-    v1 = create_runtime_schemas(
-        schema(head_with_constraints_and_field.SchemaWithConstraintsAndField)
-        .field("foo")
-        .had(type=constr(max_length=6123123121)),
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithConstraintsAndField).field("foo").had(type=constr(max_length=6123123121)),
+        )
     )
 
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithConstraintsAndField) == (
-            "class SchemaWithConstraintsAndField(BaseModel):\n"
-            "    foo: Annotated[str, StringConstraints(max_length=6123123121)] = Field(default=MY_VAR)\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithConstraintsAndField) == (
-            "class SchemaWithConstraintsAndField(BaseModel):\n"
-            "    foo: constr(max_length=6123123121) = Field(default=MY_VAR)\n"
-        )
+    class ExpectedSchema(BaseModel):
+        foo: Annotated[str, StringConstraints(max_length=6123123121)] = Field(default="hewwo")
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraintsAndField], ExpectedSchema)
 
 
 def test__schema_field_had_constrained_field__constraint_only_args_were_modified_in_type(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_constraints_and_field: Any,
 ):
-    v1 = create_runtime_schemas(
-        schema(head_with_constraints_and_field.SchemaWithConstraintsAndField)
-        .field("foo")
-        .had(type=constr(max_length=6, strip_whitespace=True)),
-    )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithConstraintsAndField) == (
-            "class SchemaWithConstraintsAndField(BaseModel):\n"
-            "    foo: Annotated[str, StringConstraints(strip_whitespace=True, max_length=6)] = Field(default=MY_VAR)\n"
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithConstraintsAndField).field("foo").had(type=constr(max_length=6, strip_whitespace=True)),
         )
-    else:
-        assert inspect.getsource(v1.SchemaWithConstraintsAndField) == (
-            "class SchemaWithConstraintsAndField(BaseModel):\n"
-            "    foo: constr(strip_whitespace=True, max_length=6) = Field(default=MY_VAR)\n"
-        )
-
-
-@pytest.fixture()
-def head_with_annotated_constraints(head_module_for: HeadModuleFor):
-    return head_module_for(
-        """
-        from pydantic import BaseModel, conint, Field
-        from typing import Annotated
-        import annotated_types
-
-        class SchemaWithAnnotatedConstraints(BaseModel):
-            foo: Annotated[conint(lt=2 + 5), Field(description='awaw')]
-        """
     )
 
+    class ExpectedSchema(BaseModel):
+        foo: Annotated[str, StringConstraints(strip_whitespace=True, max_length=6)] = Field(default="hewwo")
 
-def test__schema_field_didnt_have_annotated_constrained_field(
-    create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_annotated_constraints: Any,
-):
-    v1 = create_runtime_schemas(
-        schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").didnt_have("lt"),
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraintsAndField], ExpectedSchema)
+
+
+class SchemaWithAnnotatedConstraints(BaseModel):
+    foo: Annotated[conint(lt=7), Field(description="awaw")]
+
+
+def test__schema_field_didnt_have_annotated_constrained_field(create_runtime_schemas: CreateRuntimeSchemas):
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithAnnotatedConstraints).field("foo").didnt_have("lt"))
     )
 
-    assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
-        "class SchemaWithAnnotatedConstraints(BaseModel):\n" "    foo: Annotated[conint(), Field(description='awaw')]\n"
-    )
+    class ExpectedSchema(BaseModel):
+        foo: Annotated[conint(), Field(description="awaw")]
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
 
-def test__schema_field_had_annotated_constrained_field(
-    create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_annotated_constraints: Any,
-):
-    v1 = create_runtime_schemas(
-        schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(alias="foo1"),
+def test__schema_field_had_annotated_constrained_field(create_runtime_schemas: CreateRuntimeSchemas):
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithAnnotatedConstraints).field("foo").had(alias="foo1"))
     )
 
-    assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
-        "class SchemaWithAnnotatedConstraints(BaseModel):\n"
-        "    foo: Annotated[conint(lt=2 + 5), Field(description='awaw', alias='foo1')]\n"
-    )
+    class ExpectedSchema(BaseModel):
+        foo: Annotated[conint(lt=7), Field(description="awaw", alias="foo1")]
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
 
 def test__schema_field_had_annotated_constrained_field__adding_default_default_should_be_added_outside_of_annotation(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_annotated_constraints: Any,
 ):
-    v1 = create_runtime_schemas(
-        schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(default=2),
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithAnnotatedConstraints).field("foo").had(default=2)),
     )
 
-    assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
-        "class SchemaWithAnnotatedConstraints(BaseModel):\n"
-        "    foo: Annotated[conint(lt=2 + 5), Field(description='awaw')] = 2\n"
-    )
+    class ExpectedSchema(BaseModel):
+        foo: Annotated[conint(lt=7), Field(description="awaw")] = 2
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
 
 def test__schema_field_had_annotated_constrained_field__adding_one_other_constraint(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_annotated_constraints: Any,
 ):
-    v1 = create_runtime_schemas(
-        schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(gt=8),
-    )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
-            "class SchemaWithAnnotatedConstraints(BaseModel):\n"
-            "    foo: Annotated[conint(lt=2 + 5), Field(description='awaw', gt=8)]\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
-            "class SchemaWithAnnotatedConstraints(BaseModel):\n"
-            "    foo: Annotated[conint(lt=2 + 5, gt=8), Field(description='awaw')]\n"
-        )
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithAnnotatedConstraints).field("foo").had(gt=8)))
+
+    class ExpectedSchema(BaseModel):
+        foo: Annotated[conint(lt=7), Field(description="awaw", gt=8)]
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
 
 def test__schema_field_had_annotated_constrained_field__adding_another_constraint_and_an_attribute(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_with_annotated_constraints: Any,
 ):
-    v1 = create_runtime_schemas(
-        schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(gt=8, alias="foo1"),
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithAnnotatedConstraints).field("foo").had(gt=8, alias="foo1"))
     )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
-            "class SchemaWithAnnotatedConstraints(BaseModel):\n"
-            "    foo: Annotated[conint(lt=2 + 5), Field(description='awaw', alias='foo1', gt=8)]\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
-            "class SchemaWithAnnotatedConstraints(BaseModel):\n"
-            "    foo: Annotated[conint(lt=2 + 5, gt=8), Field(description='awaw', alias='foo1')]\n"
-        )
+
+    class ExpectedSchema(BaseModel):
+        foo: Annotated[conint(lt=7), Field(description="awaw", alias="foo1", gt=8)]
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
 
 def test__schema_field_had_constrained_field__schema_has_special_constraints_constraints_have_been_modified(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_module_for: HeadModuleFor,
 ):
-    latest = head_module_for(
-        """
-        from pydantic import BaseModel, constr, Field
+    class SchemaWithSpecialConstraints(BaseModel):
+        foo: constr(to_upper=True)
 
-        MY_VAR = "hewwo"
-
-        class SchemaWithSpecialConstraints(BaseModel):
-            foo: constr(to_upper=True)
-
-        """,
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithSpecialConstraints).field("foo").had(max_length=8))
     )
-    v1 = create_runtime_schemas(
-        schema(latest.SchemaWithSpecialConstraints).field("foo").had(max_length=8),
-    )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithSpecialConstraints) == (
-            "class SchemaWithSpecialConstraints(BaseModel):\n    foo: constr(to_upper=True) = Field(max_length=8)\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithSpecialConstraints) == (
-            "class SchemaWithSpecialConstraints(BaseModel):\n    foo: constr(to_upper=True, max_length=8)\n"
-        )
+
+    class ExpectedSchema(BaseModel):
+        foo: constr(to_upper=True) = Field(max_length=8)
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithSpecialConstraints], ExpectedSchema)
 
 
 def test__schema_field_had_constrained_field__schema_has_special_constraints_constraints_have_been_modified__pydantic2(
     create_runtime_schemas: CreateRuntimeSchemas,
-    head_module_for: HeadModuleFor,
 ):
-    if not PYDANTIC_V2:
-        pytest.skip("This test is only for Pydantic 2")
+    class SchemaWithSpecialConstraints(BaseModel):
+        foo: Annotated[str, StringConstraints(to_upper=True)]
 
-    latest = head_module_for(
-        """
-        from pydantic import BaseModel, Field, StringConstraints
-        from typing import Annotated
-
-        MY_VAR = "hewwo"
-
-        class SchemaWithSpecialConstraints(BaseModel):
-            foo: Annotated[str, StringConstraints(to_upper=True)]
-
-        """,
-    )
-    v1 = create_runtime_schemas(
-        schema(latest.SchemaWithSpecialConstraints).field("foo").had(max_length=8),
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithSpecialConstraints).field("foo").had(max_length=8))
     )
 
-    assert inspect.getsource(v1.SchemaWithSpecialConstraints) == (
-        "class SchemaWithSpecialConstraints(BaseModel):\n"
-        "    foo: Annotated[str, StringConstraints(to_upper=True)] = Field(max_length=8)\n"
-    )
-    assert v1.SchemaWithSpecialConstraints(foo="hewwo").foo == "HEWWO"
+    class ExpectedSchema(BaseModel):
+        foo: Annotated[str, StringConstraints(to_upper=True)] = Field(max_length=8)
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithSpecialConstraints], ExpectedSchema)
+
+    assert schemas["2000-01-01"][SchemaWithSpecialConstraints](foo="hewwo").foo == "HEWWO"
     with pytest.raises(ValidationError):
-        assert v1.SchemaWithSpecialConstraints(foo="sdwdwewdwd").foo
+        assert schemas["2000-01-01"][SchemaWithSpecialConstraints](foo="sdwdwewdwd").foo
 
 
 def test__schema_field_had__default_factory(create_runtime_schemas: CreateRuntimeSchemas):
@@ -704,7 +560,7 @@ def test__schema_field_had__type(create_runtime_schemas: CreateRuntimeSchemas):
     class ExpectedSchema(BaseModel):
         foo: bytes
 
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][SchemaWithOneStrField])
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithOneStrField], ExpectedSchema)
 
 
 def test__schema_field_had_name(create_runtime_schemas: CreateRuntimeSchemas):
@@ -713,20 +569,11 @@ def test__schema_field_had_name(create_runtime_schemas: CreateRuntimeSchemas):
     class ExpectedSchema(BaseModel):
         doo: str
 
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][SchemaWithOneStrField])
-
-
-from enum import Enum, auto
-
-from typing_extensions import Literal
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithOneStrField], ExpectedSchema)
 
 
 def my_default_factory():
     raise NotImplementedError
-
-
-class MyEnum(Enum):
-    baz = auto()
 
 
 class ModelWithWeirdFields(BaseModel):
@@ -744,7 +591,7 @@ def test__schema_field_had__with_pre_existing_weird_data_types(create_runtime_sc
         baz: Literal[MyEnum.baz]
         bad: int
 
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][ModelWithWeirdFields])
+    assert_models_are_equal(schemas["2000-01-01"][ModelWithWeirdFields], ExpectedSchema)
 
 
 def test__schema_field_had__with_weird_data_types__with_all_fields_modified(
@@ -763,7 +610,7 @@ def test__schema_field_had__with_weird_data_types__with_all_fields_modified(
         bar: list[int] = Field(default_factory=my_default_factory, description="...")
         baz: Literal[MyEnum.baz] = Field(description="...")
 
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][ModelWithWeirdFields])
+    assert_models_are_equal(schemas["2000-01-01"][ModelWithWeirdFields], ExpectedSchema)
 
 
 def test__union_fields(create_runtime_schemas: CreateRuntimeSchemas):
@@ -784,7 +631,7 @@ def test__union_fields(create_runtime_schemas: CreateRuntimeSchemas):
         baz: int | EmptySchema
         daz: int | EmptySchema
 
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][SchemaWithUnionFields])
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithUnionFields], ExpectedSchema)
 
 
 def test__schema_that_overrides_fields_from_mro(create_runtime_schemas: CreateRuntimeSchemas):
@@ -809,7 +656,7 @@ def test__schema_that_overrides_fields_from_mro(create_runtime_schemas: CreateRu
         foo: bytes = Field(description="What?")
         bar: str = Field(description="What?", alias="baz")
 
-    assert_models_are_equal(ExpectedSchema, schemas["2000-01-01"][SchemaThatOverridesField])
+    assert_models_are_equal(schemas["2000-01-01"][SchemaThatOverridesField], ExpectedSchema)
 
 
 def test__schema_field_existed_as__already_existing_field__should_raise_error(

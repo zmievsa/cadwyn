@@ -2,12 +2,12 @@ import copy
 import dataclasses
 from collections.abc import Sequence
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeVar, cast, get_args
+from typing import TYPE_CHECKING, Any, TypeVar, cast, get_args, get_origin
 
 import pydantic
 import pydantic._internal._decorators
 from pydantic import BaseModel
-from typing_extensions import assert_never
+from typing_extensions import Annotated, assert_never
 
 from cadwyn._utils import Sentinel
 from cadwyn.exceptions import InvalidGenerationInstructionError
@@ -210,19 +210,6 @@ def _change_field_in_model(
     model.fields[alter_schema_instruction.name] = field
     model.annotations[alter_schema_instruction.name] = defined_annotations[alter_schema_instruction.name]
 
-    constrained_type_annotation = None
-
-    # This is only gonna be true if the field is Annotated
-    # if annotated_first_arg_ast is not None:
-    #     # PydanticV2 changed field annotation handling so field.annotation lies to us
-    #     real_annotation = model._get_defined_annotations_through_mro(schemas)[alter_schema_instruction.name]
-    #     type_annotation = get_args(real_annotation)[0]
-    #     if is_constrained_type(type_annotation):
-    #         constrained_type_annotation = type_annotation
-    # else:
-    #     type_annotation = field.annotation
-    #     if is_constrained_type(type_annotation):
-    #         constrained_type_annotation = type_annotation
     if isinstance(alter_schema_instruction, FieldHadInstruction):
         # TODO: This naming sucks
         _change_field(
@@ -231,7 +218,7 @@ def _change_field_in_model(
             version_change_name,
             defined_annotations,
             field,
-            constrained_type_annotation,
+            model.annotations[alter_schema_instruction.name],
         )
     else:
         _delete_field_attributes(
@@ -239,7 +226,7 @@ def _change_field_in_model(
             alter_schema_instruction,
             version_change_name,
             field,
-            constrained_type_annotation,
+            model.annotations[alter_schema_instruction.name],
         )
 
 
@@ -249,7 +236,7 @@ def _change_field(
     version_change_name: str,
     defined_annotations: dict[str, Any],
     field: PydanticFieldWrapper,
-    constrained_type_annotation: Any | None,
+    annotation: Any | None,
 ):
     if alter_schema_instruction.type is not Sentinel:
         if field.annotation == alter_schema_instruction.type:
@@ -284,14 +271,14 @@ def _change_field(
                     f'from "{model.name}" to {attr_value!r} in "{version_change_name}" '
                     "but it already has that value.",
                 )
-            if constrained_type_annotation is not None and hasattr(constrained_type_annotation, attr_name):
-                _setattr_on_constrained_type(constrained_type_annotation, attr_name, attr_value)
+            if annotation is not None and hasattr(annotation, attr_name):
+                _setattr_on_constrained_type(annotation, attr_name, attr_value)
             else:
                 field.update_attribute(name=attr_name, value=attr_value)
 
 
 def _setattr_on_constrained_type(constrained_type_annotation: Any, attr_name: str, attr_value: Any) -> None:
-    setattr(constrained_type_annotation, attr_name, attr_value)
+    object.__setattr__(constrained_type_annotation, attr_name, attr_value)
 
 
 def _delete_field_attributes(
@@ -299,16 +286,19 @@ def _delete_field_attributes(
     alter_schema_instruction: FieldDidntHaveInstruction,
     version_change_name: str,
     field: PydanticFieldWrapper,
-    constrained_type_annotation: Any,
+    annotation: Any,
 ) -> None:
     for attr_name in alter_schema_instruction.attributes:
         if attr_name in field.passed_field_attributes:
             field.delete_attribute(name=attr_name)
-        # In case annotation_ast is a conint/constr/etc. Notice how we do not support
-        # the same operation for **adding** constraints for simplicity.
-        elif hasattr(constrained_type_annotation, attr_name):  # TODO:  or contype_is_definitely_used:
-            if hasattr(constrained_type_annotation, attr_name):
-                _setattr_on_constrained_type(constrained_type_annotation, attr_name, None)
+            continue
+        elif get_origin(annotation) == Annotated and any(
+            hasattr(sub_ann, attr_name) for sub_ann in get_args(annotation)
+        ):
+            for sub_ann in get_args(annotation):
+                if hasattr(sub_ann, attr_name):
+                    _setattr_on_constrained_type(sub_ann, attr_name, None)
+            continue
         else:
             raise InvalidGenerationInstructionError(
                 f'You tried to delete the attribute "{attr_name}" of field "{alter_schema_instruction.name}" '

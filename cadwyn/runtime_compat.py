@@ -28,9 +28,10 @@ from pydantic._internal._decorators import (
     ModelValidatorDecoratorInfo,
     RootValidatorDecoratorInfo,
     ValidatorDecoratorInfo,
+    unwrap_wrapped_function,
 )
 from pydantic.fields import ComputedFieldInfo
-from typing_extensions import Doc, Self
+from typing_extensions import Doc, Self, _AnnotatedAlias, get_args, get_origin
 
 from cadwyn._compat import (
     PYDANTIC_V2,
@@ -84,13 +85,9 @@ def is_pydantic_1_constrained_type(value: object):
 
 
 def is_constrained_type(value: object):
-    if PYDANTIC_V2:
-        import annotated_types
+    import annotated_types
 
-        return isinstance(value, annotated_types.Len | annotated_types.Interval | pydantic.StringConstraints)
-
-    else:
-        return is_pydantic_1_constrained_type(value)
+    return isinstance(value, annotated_types.Len | annotated_types.Interval | pydantic.StringConstraints)
 
 
 @dataclasses.dataclass(slots=True)
@@ -173,6 +170,16 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     annotations: dict[str, Any]
     _parents: list[Self] | None = dataclasses.field(init=False, default=None)
 
+    def __post_init__(self):
+        for k, annotation in self.annotations.items():
+            if get_origin(annotation) == Annotated:
+                sub_annotations = get_args(annotation)
+                # Annotated cannot be copied and is cached based on "==" and "hash", while annotated_types.Interval are
+                # frozen and so are consistently hashed
+                self.annotations[k] = _AnnotatedAlias(
+                    copy.deepcopy(sub_annotations[0]), tuple(copy.deepcopy(sub_ann) for sub_ann in sub_annotations[1:])
+                )
+
     def __deepcopy__(self, memo):
         return _PydanticRuntimeModelWrapper(
             self.cls,
@@ -180,8 +187,8 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             doc=self.doc,
             fields=copy.deepcopy(self.fields),
             validators=copy.deepcopy(self.validators),
-            other_attributes=self.other_attributes.copy(),
-            annotations=self.annotations.copy(),
+            other_attributes=copy.deepcopy(self.other_attributes),
+            annotations=copy.deepcopy(self.annotations),
         )
 
     def _get_parents(self, schemas: "dict[type, Self]"):
@@ -364,6 +371,7 @@ def wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> _PydanticRuntimeModel
 
 def _wrap_validator(func: Callable, is_pydantic_v1_style_validator: Any, decorator_info: _decorators.DecoratorInfo):
     # This is only for pydantic v1 style validators
+    func = unwrap_wrapped_function(func)
     if is_pydantic_v1_style_validator and func.__closure__:
         func = func.__closure__[0].cell_contents
     if inspect.ismethod(func):

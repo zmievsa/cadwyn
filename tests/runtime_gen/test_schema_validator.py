@@ -4,17 +4,30 @@ from typing import Any
 
 import pydantic
 import pytest
-from pydantic import root_validator, validator
+from pydantic import BaseModel, root_validator, validator
 
 from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure import schema
-from tests.conftest import CreateLocalSimpleVersionedPackages, HeadModuleFor
+from tests.conftest import (
+    CreateLocalSimpleVersionedPackages,
+    CreateRuntimeSchemas,
+    HeadModuleFor,
+    assert_models_are_equal,
+    version_change,
+)
+
+
+class EmptySchema(BaseModel):
+    pass
+
+
+class SchemaWithOneStrField(BaseModel):
+    foo: str
 
 
 def test__schema_validator_existed(
-    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_one_str_field: Any,
+    create_runtime_schemas: CreateRuntimeSchemas,
 ):
     @root_validator(pre=True)
     def hewwo(cls, values):
@@ -24,97 +37,72 @@ def test__schema_validator_existed(
     def dawkness(cls, value):
         raise NotImplementedError
 
-    v1 = create_local_simple_versioned_packages(
-        schema(head_with_one_str_field.SchemaWithOneStrField).validator(hewwo).existed,
-        schema(head_with_one_str_field.SchemaWithOneStrField).validator(dawkness).existed,
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithOneStrField).validator(hewwo).existed,
+            schema(SchemaWithOneStrField).validator(dawkness).existed,
+        )
     )
 
-    assert inspect.getsource(v1.SchemaWithOneStrField) == (
-        "class SchemaWithOneStrField(BaseModel):\n"
-        "    foo: str\n\n"
-        "    @root_validator(pre=True)\n"
-        "    def hewwo(cls, values):\n"
-        "        raise NotImplementedError\n\n"
-        "    @validator('foo')\n"
-        "    def dawkness(cls, value):\n"
-        "        raise NotImplementedError\n"
-    )
-
-
-def test__schema_validator_existed__with_root_validator_without_call(
-    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_one_str_field: Any,
-):
-    if PYDANTIC_V2:
-        pytest.skip("This test is only for Pydantic v1.")
-
-    @pydantic.root_validator  # pyright: ignore[reportCallIssue, reportUntypedFunctionDecorator]
-    def hewwo(cls, values):
-        raise NotImplementedError
-
-    v1 = create_local_simple_versioned_packages(
-        schema(head_with_one_str_field.SchemaWithOneStrField).validator(hewwo).existed,
-    )
-
-    assert inspect.getsource(v1.SchemaWithOneStrField) == (
-        "class SchemaWithOneStrField(BaseModel):\n"
-        "    foo: str\n\n"
-        "    @pydantic.root_validator\n"
-        "    def hewwo(cls, values):\n"
-        "        raise NotImplementedError\n"
-    )
-
-
-@pytest.fixture()
-def head_with_validator(head_module_for: HeadModuleFor):
-    return head_module_for(
-        """
-    from pydantic import BaseModel, validator
-    class SchemaWithOneStrField(BaseModel):
+    class ExpectedSchema(BaseModel):
         foo: str
 
+        @root_validator(pre=True)
+        def hewwo(cls, values):
+            raise NotImplementedError
+
         @validator("foo")
-        def validate_foo(cls, value):
-            return value
-    """,
+        def dawkness(cls, value):
+            raise NotImplementedError
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithOneStrField], ExpectedSchema)
+
+
+class SchemaWithOneStrFieldAndValidator(BaseModel):
+    foo: str
+
+    @validator("foo")
+    def validate_foo(cls, value):
+        return value
+
+
+def test__schema_validator_didnt_exist(create_runtime_schemas: CreateRuntimeSchemas):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithOneStrFieldAndValidator)
+            .validator(SchemaWithOneStrFieldAndValidator.validate_foo)
+            .didnt_exist
+        ),
     )
 
+    class ExpectedSchema(BaseModel):
+        foo: str
 
-def test__schema_validator_didnt_exist(
-    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_validator: Any,
-):
-    v1 = create_local_simple_versioned_packages(
-        schema(head_with_validator.SchemaWithOneStrField)
-        .validator(head_with_validator.SchemaWithOneStrField.validate_foo)
-        .didnt_exist,
-    )
-
-    assert inspect.getsource(v1.SchemaWithOneStrField) == "class SchemaWithOneStrField(BaseModel):\n    foo: str\n"
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithOneStrFieldAndValidator], ExpectedSchema)
 
 
-def test__schema_validator_didnt_exist__applied_twice__should_raise_error(
-    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_validator: Any,
-):
-    instruction = (
-        schema(head_with_validator.SchemaWithOneStrField)
-        .validator(head_with_validator.SchemaWithOneStrField.validate_foo)
-        .didnt_exist
-    )
+def test__schema_validator_didnt_exist__applied_twice__should_raise_error(create_runtime_schemas: CreateRuntimeSchemas):
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to delete a validator "validate_foo" from "SchemaWithOneStrField" in '
+            'You tried to delete a validator "validate_foo" from "SchemaWithOneStrFieldAndValidator" in '
             '"MyVersionChange" but it is already deleted.'
         ),
     ):
-        create_local_simple_versioned_packages(instruction, instruction)
+        create_runtime_schemas(
+            version_change(
+                schema(SchemaWithOneStrFieldAndValidator)
+                .validator(SchemaWithOneStrFieldAndValidator.validate_foo)
+                .didnt_exist,
+                schema(SchemaWithOneStrFieldAndValidator)
+                .validator(SchemaWithOneStrFieldAndValidator.validate_foo)
+                .didnt_exist,
+            )
+        )
 
 
 def test__schema_validator_didnt_exist__for_nonexisting_validator__should_raise_error(
-    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_validator: Any,
+    create_runtime_schemas: CreateRuntimeSchemas,
 ):
     @validator("foo")
     def fake_validator(cls, value):
@@ -123,18 +111,17 @@ def test__schema_validator_didnt_exist__for_nonexisting_validator__should_raise_
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to delete a validator "fake_validator" from "SchemaWithOneStrField" in'
+            'You tried to delete a validator "fake_validator" from "SchemaWithOneStrFieldAndValidator" in'
             ' "MyVersionChange" but it doesn\'t have such a validator.'
         ),
     ):
-        create_local_simple_versioned_packages(
-            schema(head_with_validator.SchemaWithOneStrField).validator(fake_validator).didnt_exist,
+        create_runtime_schemas(
+            version_change(schema(SchemaWithOneStrFieldAndValidator).validator(fake_validator).didnt_exist),
         )
 
 
 def test__schema_validator_existed__non_validator_was_passed__should_raise_error(
-    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_validator: Any,
+    create_runtime_schemas: CreateRuntimeSchemas,
 ):
     def fake_validator(cls, value):
         raise NotImplementedError
@@ -142,34 +129,28 @@ def test__schema_validator_existed__non_validator_was_passed__should_raise_error
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to delete a validator "fake_validator" from "SchemaWithOneStrField" in '
+            'You tried to delete a validator "fake_validator" from "SchemaWithOneStrFieldAndValidator" in '
             '"MyVersionChange" but it doesn\'t have such a validator.'
         ),
     ):
-        create_local_simple_versioned_packages(
-            schema(head_with_validator.SchemaWithOneStrField).validator(fake_validator).didnt_exist,
+        create_runtime_schemas(
+            version_change(schema(SchemaWithOneStrFieldAndValidator).validator(fake_validator).didnt_exist),
         )
 
 
 def test__schema_field_didnt_exist__with_validator__validator_must_be_deleted_too(
-    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_validator: Any,
+    create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    v1 = create_local_simple_versioned_packages(
-        schema(head_with_validator.SchemaWithOneStrField).field("foo").didnt_exist,
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithOneStrFieldAndValidator).field("foo").didnt_exist),
     )
 
-    assert inspect.getsource(v1.SchemaWithOneStrField) == "class SchemaWithOneStrField(BaseModel):\n    pass\n"
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithOneStrFieldAndValidator], EmptySchema)
 
 
 def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__validator_loses_one_of_its_args(
-    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_module_for: HeadModuleFor,
+    create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    latest = head_module_for(
-        """
-    from pydantic import BaseModel, validator
-
     class SchemaWithOneStrField(BaseModel):
         foo: str
         bar: str
@@ -182,19 +163,17 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
         def validate_foo(cls, value):
             return value
 
-    """,
-    )
-    v1 = create_local_simple_versioned_packages(
-        schema(latest.SchemaWithOneStrField).field("foo").didnt_exist,
-    )
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithOneStrField).field("foo").didnt_exist))
 
-    assert inspect.getsource(v1.SchemaWithOneStrField) == (
-        "class SchemaWithOneStrField(BaseModel):\n"
-        "    bar: str\n\n"
-        "    @validator('bar')\n"
-        "    def validate_bar(cls, value):\n"
-        "        return value\n\n"
-        "    @validator('bar')\n"
-        "    def validate_foo(cls, value):\n"
-        "        return value\n"
-    )
+    class ExpectedSchema(BaseModel):
+        bar: str
+
+        @validator("bar")
+        def validate_bar(cls, value):
+            raise NotImplementedError
+
+        @validator("bar")
+        def validate_foo(cls, value):
+            raise NotImplementedError
+
+    assert_models_are_equal(schemas["2000-01-01"][SchemaWithOneStrField], ExpectedSchema)

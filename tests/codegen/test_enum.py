@@ -15,7 +15,7 @@ from tests.conftest import (
     CreateLocalSimpleVersionedPackages,
     HeadModuleFor,
     _FakeModuleWithEmptyClasses,
-    serialize,
+    serialize_enum,
 )
 
 
@@ -41,7 +41,7 @@ def test__enum_had__original_enum_is_empty(
 ):
     v1 = create_local_simple_versioned_packages(enum(head_with_empty_classes.EmptyEnum).had(b=auto()))
 
-    assert serialize(v1.EmptyEnum) == {"b": 1}
+    assert serialize_enum(v1.EmptyEnum) == {"b": 1}
 
 
 def test__enum_had__original_enum_has_methods__all_methods_are_preserved(
@@ -86,7 +86,7 @@ def test__enum_had__original_enum_is_nonempty(
         enum(latest.EnumWithOneMember).had(b=7),
     )
 
-    assert serialize(v1.EnumWithOneMember) == {"foo": 83, "b": 7}
+    assert serialize_enum(v1.EnumWithOneMember) == {"foo": 83, "b": 7}
 
 
 def test__enum_didnt_have__original_enum_has_one_member(
@@ -97,7 +97,7 @@ def test__enum_didnt_have__original_enum_has_one_member(
         enum(latest.EnumWithOneMember).didnt_have("foo"),
     )
 
-    assert serialize(v1.EnumWithOneMember) == {}
+    assert serialize_enum(v1.EnumWithOneMember) == {}
 
 
 def test__enum_didnt_have__original_enum_has_two_members(
@@ -105,7 +105,7 @@ def test__enum_didnt_have__original_enum_has_two_members(
     latest: Any,
 ):
     v1 = create_local_simple_versioned_packages(enum(latest.EnumWithTwoMembers).didnt_have("foo"))
-    assert serialize(v1.EnumWithTwoMembers) == {"bar": 12}
+    assert serialize_enum(v1.EnumWithTwoMembers) == {"bar": 12}
 
 
 def test__enum_had__original_schema_is_empty(
@@ -116,7 +116,7 @@ def test__enum_had__original_schema_is_empty(
         enum(head_with_empty_classes.EmptyEnum).had(b=7),
     )
 
-    assert serialize(v1.EmptyEnum) == {"b": 7}
+    assert serialize_enum(v1.EmptyEnum) == {"b": 7}
 
 
 def test__enum_had__same_name_as_other_value__error(

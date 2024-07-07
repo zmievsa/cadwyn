@@ -7,7 +7,7 @@ from cadwyn.exceptions import (
     InvalidGenerationInstructionError,
 )
 from cadwyn.structure import enum
-from tests.conftest import CreateRuntimeSchemas, serialize, version_change
+from tests.conftest import CreateRuntimeSchemas, serialize_enum, version_change
 
 
 class EmptyEnum(Enum):
@@ -36,7 +36,7 @@ class EnumWithOneMemberAndMethods(Enum):
 
 def test__enum_had__original_enum_is_empty(create_runtime_schemas: CreateRuntimeSchemas):
     models = create_runtime_schemas(version_change(enum(EmptyEnum).had(b=auto())))
-    assert serialize(models["2000-01-01"][EmptyEnum]) == {"b": 1}
+    assert serialize_enum(models["2000-01-01"][EmptyEnum]) == {"b": 1}
 
 
 def test__enum_had__original_enum_has_methods__all_methods_are_preserved(
@@ -55,22 +55,22 @@ def test__enum_had__original_enum_has_methods__all_methods_are_preserved(
 
 def test__enum_had__original_enum_is_nonempty(create_runtime_schemas: CreateRuntimeSchemas):
     models = create_runtime_schemas(version_change(enum(EnumWithOneMember).had(b=7)))
-    assert serialize(models["2000-01-01"][EnumWithOneMember]) == {"foo": 83, "b": 7}
+    assert serialize_enum(models["2000-01-01"][EnumWithOneMember]) == {"foo": 83, "b": 7}
 
 
 def test__enum_didnt_have__original_enum_has_one_member(create_runtime_schemas: CreateRuntimeSchemas):
     models = create_runtime_schemas(version_change(enum(EnumWithOneMember).didnt_have("foo")))
-    assert serialize(models["2000-01-01"][EnumWithOneMember]) == {}
+    assert serialize_enum(models["2000-01-01"][EnumWithOneMember]) == {}
 
 
 def test__enum_didnt_have__original_enum_has_two_members(create_runtime_schemas: CreateRuntimeSchemas):
     models = create_runtime_schemas(version_change(enum(EnumWithTwoMembers).didnt_have("foo")))
-    assert serialize(models["2000-01-01"][EnumWithTwoMembers]) == {"bar": 12}
+    assert serialize_enum(models["2000-01-01"][EnumWithTwoMembers]) == {"bar": 12}
 
 
 def test__enum_had__original_schema_is_empty(create_runtime_schemas: CreateRuntimeSchemas):
     models = create_runtime_schemas(version_change(enum(EmptyEnum).had(b=7)))
-    assert serialize(models["2000-01-01"][EmptyEnum]) == {"b": 7}
+    assert serialize_enum(models["2000-01-01"][EmptyEnum]) == {"b": 7}
 
 
 def test__enum_had__same_name_as_other_value__error(
