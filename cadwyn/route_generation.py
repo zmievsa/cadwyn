@@ -3,7 +3,6 @@ import inspect
 import re
 import types
 import typing
-import warnings
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from copy import deepcopy
@@ -36,7 +35,6 @@ from pydantic import BaseModel
 from starlette.routing import BaseRoute
 from typing_extensions import assert_never
 
-from cadwyn._compat import get_annotation_from_model_field, model_fields
 from cadwyn._utils import Sentinel, UnionType
 from cadwyn.exceptions import (
     CadwynError,
@@ -47,6 +45,7 @@ from cadwyn.exceptions import (
     RouterGenerationError,
     RouterPathParamsModifiedError,
 )
+from cadwyn.schema_generation import _generate_versioned_models
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionDate
 from cadwyn.structure.endpoints import (
@@ -75,7 +74,7 @@ class _EndpointInfo:
     endpoint_methods: frozenset[str]
 
 
-def generate_versioned_routers(router: _R, versions: VersionBundle) -> dict[VersionDate, _R]:
+def _generate_versioned_routers(router: _R, versions: VersionBundle) -> dict[VersionDate, _R]:
     return _EndpointTransformer(router, versions).transform()
 
 
@@ -227,13 +226,11 @@ class _EndpointTransformer(Generic[_R]):
         for route in router.routes:
             if isinstance(route, APIRoute):
                 if route.response_model is not None and lenient_issubclass(route.response_model, BaseModel):
-                    # FIXME: This is going to fail on Pydantic 1
                     response_models.add(route.response_model)
                     # Not sure if it can ever be None when it's a simple schema. Eh, I would rather be safe than sorry
                 if _route_has_a_simple_body_schema(route) and route.body_field is not None:
-                    annotation = get_annotation_from_model_field(route.body_field)
+                    annotation = route.body_field.field_info.annotation
                     if lenient_issubclass(annotation, BaseModel):
-                        # FIXME: This is going to fail on Pydantic 1
                         request_bodies.add(annotation)
                 path_to_route_methods_mapping[route.path] |= route.methods
 
@@ -377,38 +374,6 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
         route_map[route_info] = route
 
 
-class _CodegenInfo:
-    def __init__(self, versions: VersionBundle, head_schemas_package: ModuleType):
-        super().__init__()
-
-        versions.head_schemas_package = head_schemas_package
-        self.versions = versions
-        self.head_schemas_package = head_schemas_package
-        self.head_version_dir = min(versions.versioned_directories_with_head)  # "head" < "v0000_00_00"
-        self.latest_version_dir = max(versions.versioned_directories_with_head)  # "v2005_11_11" > "v2000_11_11"
-        for directory in versions.versioned_directories_with_head:
-            if not directory.is_dir():
-                raise RouterGenerationError(f"Versioned schema directory '{directory}' does not exist.")
-
-    def _validate_source_file_is_located_in_template_dir(self, annotation: type, source_file: str):
-        template_dir = str(self.head_version_dir)
-        dir_with_versions = str(self.head_version_dir.parent)
-        # So if it is somewhere close to version dirs (either within them or next to them),
-        # but not located in "head",
-        # but also not located in any other version dir
-        if (
-            source_file.startswith(dir_with_versions)
-            and not source_file.startswith(template_dir)
-            and any(source_file.startswith(str(d)) for d in self.versions.versioned_directories_with_head)
-        ):
-            raise RouterGenerationError(
-                f'"{annotation}" is not defined in "{self.head_version_dir}" even though it must be. '
-                f'It is defined in "{Path(source_file).parent}". '
-                "It probably means that you used a specific version of the class in fastapi dependencies "
-                'or pydantic schemas instead of "head".',
-            )
-
-
 @final
 class _AnnotationTransformer:
     def __init__(self, versions: VersionBundle) -> None:
@@ -470,7 +435,7 @@ class _AnnotationTransformer:
         elif isinstance(annotation, type):
             if annotation.__module__ == "pydantic.main" and issubclass(annotation, BaseModel):
                 return create_body_model(
-                    fields=self._change_version_of_annotations(model_fields(annotation), version).values(),
+                    fields=self._change_version_of_annotations(annotation.model_fields, version).values(),
                     model_name=annotation.__name__,
                 )
             return self._change_version_of_type(annotation, version)
@@ -514,7 +479,7 @@ class _AnnotationTransformer:
     def _change_version_of_type(self, annotation: type, version: str):
         if issubclass(annotation, BaseModel | Enum):
             # These can only be true or false together so the "and" is only here for type hints
-            return self.versions._get_another_version_of_cls(annotation, version)
+            return _generate_versioned_models(self.versions)[version][annotation]
         else:
             return annotation
 

@@ -13,7 +13,7 @@ from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
 from fastapi import HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
-from fastapi._compat import _normalize_errors
+from fastapi._compat import ModelField, _normalize_errors
 from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import solve_dependencies
@@ -21,10 +21,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
+from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
 from typing_extensions import assert_never
 
-from cadwyn._compat import ModelField, PydanticUndefined, model_dump
 from cadwyn._package_utils import (
     IdentifierPythonPath,
     get_cls_pythonpath,
@@ -35,7 +35,6 @@ from cadwyn.exceptions import (
     CadwynHeadRequestValidationError,
     CadwynStructureError,
 )
-from cadwyn.schema_generation import _generate_versioned_models
 
 from .._utils import Sentinel
 from .common import Endpoint, VersionDate, VersionedModel
@@ -333,35 +332,11 @@ class VersionBundle:
             for instruction in version_change.alter_module_instructions
         }
 
-    def migrate_response_body(self, latest_response_model: type[BaseModel], *, latest_body: Any, version: VersionDate):
-        """Convert the data to a specific version by applying all version changes from latest until that version
-        in reverse order and wrapping the result in the correct version of latest_response_model.
-        """
-        response = ResponseInfo(FastapiResponse(status_code=200), body=latest_body)
-        migrated_response = self._migrate_response(
-            response,
-            current_version=version,
-            head_response_model=latest_response_model,
-            path="\0\0\0",
-            method="GET",
-        )
-
-        version = self._get_closest_lesser_version(version)
-
-        versioned_response_model: type[BaseModel] = self._get_another_version_of_cls(
-            latest_response_model, str(version)
-        )
-        return versioned_response_model.parse_obj(migrated_response.body)  # pyright: ignore[reportDeprecated]
-
     def _get_closest_lesser_version(self, version: VersionDate):
         for defined_version in self.version_dates:
             if defined_version <= version:
                 return defined_version
         raise CadwynError("You tried to migrate to version that is earlier than the first version which is prohibited.")
-
-    @functools.cache
-    def _get_another_version_of_cls(self, cls_from_old_version: type[Any], new_version: str):
-        return _generate_versioned_models(self)[new_version][cls_from_old_version]
 
     @functools.cached_property
     def _version_changes_to_version_mapping(
@@ -667,7 +642,7 @@ class VersionBundle:
             elif not isinstance(raw_body, BaseModel):
                 body = raw_body
             else:
-                body = model_dump(raw_body, by_alias=True, exclude_unset=True)
+                body = raw_body.model_dump(by_alias=True, exclude_unset=True)
         else:
             # This is for requests without body or with complex body such as form or file
             body = await _get_body(request, route.body_field, exit_stack)

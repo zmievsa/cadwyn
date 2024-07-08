@@ -128,7 +128,7 @@ def test__lifespan_async():
         on_startup=[run_startup],
         on_shutdown=[run_shutdown],
     )
-    app.add_unversioned_routes(Route("/v1/", hello_world))  # pyright: ignore[reportDeprecated]
+    app.add_route("/v1/", hello_world)
 
     assert not startup_complete
     assert not shutdown_complete

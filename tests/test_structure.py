@@ -435,5 +435,5 @@ def test__schema_validator_existed__non_validator_was_passed__should_raise_error
 
 
 def test__schema_validator_existed__non_function_was_passed__should_raise_error():
-    with pytest.raises(CadwynStructureError, match=re.escape("The passed validator must be a function")):
+    with pytest.raises(CadwynStructureError, match=re.escape("The passed function must be a pydantic validator")):
         schema(BaseModel).validator(CadwynStructureError).existed

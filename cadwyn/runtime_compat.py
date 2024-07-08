@@ -30,79 +30,53 @@ from pydantic._internal._decorators import (
     ValidatorDecoratorInfo,
     unwrap_wrapped_function,
 )
-from pydantic.fields import ComputedFieldInfo
+from pydantic.fields import ComputedFieldInfo, FieldInfo
 from typing_extensions import Doc, Self, _AnnotatedAlias
 
-from cadwyn._compat import (
-    FieldInfo,
-    dict_of_empty_field_info,
-)
 from cadwyn._package_utils import get_cls_pythonpath
 
-if TYPE_CHECKING:
-    from cadwyn.codegen._common import _FieldName
-
+_FieldName: TypeAlias = str
 _T_ANY_MODEL = TypeVar("_T_ANY_MODEL", bound=BaseModel | Enum)
 _T_ENUM = TypeVar("_T_ENUM", bound=Enum)
 _T_PYDANTIC_MODEL = TypeVar("_T_PYDANTIC_MODEL", bound=BaseModel)
+PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
+    ValidatorDecoratorInfo: validator,
+    FieldValidatorDecoratorInfo: field_validator,
+    FieldSerializerDecoratorInfo: field_serializer,
+    RootValidatorDecoratorInfo: root_validator,
+    ModelValidatorDecoratorInfo: model_validator,
+    ModelSerializerDecoratorInfo: model_serializer,
+    ComputedFieldInfo: computed_field,
+}
 
 
-ModelField: TypeAlias = Any  # pyright: ignore[reportRedeclaration]
-PydanticUndefined: TypeAlias = Any
 VALIDATOR_CONFIG_KEY = "__validators__"
-
-try:
-    from pydantic.fields import FieldInfo, ModelField  # pyright: ignore # noqa: PGH003
-    from pydantic.fields import Undefined as PydanticUndefined  # pyright: ignore # noqa: PGH003
-
-    _all_field_arg_names = []
-    EXTRA_FIELD_NAME = "extra"
-except ImportError:
-    from pydantic.fields import FieldInfo
-
-    ModelField: TypeAlias = FieldInfo  # pyright: ignore # noqa: PGH003
-    _all_field_arg_names = sorted(
-        [
-            name
-            for name, param in inspect.signature(Field).parameters.items()
-            if param.kind in {inspect._ParameterKind.KEYWORD_ONLY, inspect._ParameterKind.POSITIONAL_OR_KEYWORD}
-        ],
-    )
-    EXTRA_FIELD_NAME = "json_schema_extra"
+_all_field_arg_names = sorted(
+    [
+        name
+        for name, param in inspect.signature(Field).parameters.items()
+        if param.kind in {inspect._ParameterKind.KEYWORD_ONLY, inspect._ParameterKind.POSITIONAL_OR_KEYWORD}
+    ],
+)
+EXTRA_FIELD_NAME = "json_schema_extra"
 
 
 _empty_field_info = Field()
 dict_of_empty_field_info = {k: getattr(_empty_field_info, k) for k in FieldInfo.__slots__}
 
 
-def is_pydantic_1_constrained_type(value: object):
-    """This method only works for pydanticV1. It is always False in PydanticV2"""
-    return isinstance(value, type) and value.__name__.startswith("Constrained") and value.__name__.endswith("Value")
-
-
-def is_constrained_type(value: object):
-    import annotated_types
-
-    return isinstance(value, annotated_types.Len | annotated_types.Interval | pydantic.StringConstraints)
-
-
 @dataclasses.dataclass(slots=True)
 class PydanticFieldWrapper:
     """We DO NOT maintain field.metadata at all"""
 
-    init_model_field: dataclasses.InitVar[ModelField]
+    init_model_field: dataclasses.InitVar[FieldInfo]
 
     annotation: Any = dataclasses.field(init=False)
     passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
 
-    def __post_init__(self, init_model_field: ModelField):
-        if isinstance(init_model_field, FieldInfo):
-            field_info = init_model_field
-            self.annotation = init_model_field.annotation
-        else:
-            field_info = init_model_field.field_info
-            self.annotation = init_model_field.field_info.annotation
-        self.passed_field_attributes = _extract_passed_field_attributes(field_info)
+    def __post_init__(self, init_model_field: FieldInfo):
+        self.annotation = init_model_field.annotation
+        self.passed_field_attributes = _extract_passed_field_attributes(init_model_field)
 
     def update_attribute(self, *, name: str, value: Any):
         self.passed_field_attributes[name] = value
@@ -238,12 +212,18 @@ class _DummyEnum(Enum):
     pass
 
 
+def _unwrap_model(model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
+    while hasattr(model, "__cadwyn_original_model__"):
+        model = model.__cadwyn_original_model__  # pyright: ignore[reportAttributeAccessIssue]
+    return model
+
+
 @final
 class _EnumWrapper(Generic[_T_ENUM]):
     __slots__ = "cls", "members"
 
     def __init__(self, cls: type[_T_ENUM]):
-        self.cls = cls
+        self.cls = _unwrap_model(cls)
         self.members = {member.name: member.value for member in cls}
 
     def generate_model_copy(self, generator: "_SchemaGenerator") -> type[_T_ENUM]:
@@ -253,7 +233,9 @@ class _EnumWrapper(Generic[_T_ENUM]):
         initialization_namespace = _get_initialization_namespace_for_enum(self.cls) | raw_member_map
         for attr_name, attr in initialization_namespace.items():
             enum_dict[attr_name] = attr
-        return cast(type[_T_ENUM], type(self.cls.__name__, self.cls.__bases__, enum_dict))
+        model_copy = cast(type[_T_ENUM], type(self.cls.__name__, self.cls.__bases__, enum_dict))
+        model_copy.__cadwyn_original_model__ = self.cls  # pyright: ignore[reportAttributeAccessIssue]
+        return model_copy
 
 
 def _get_initialization_namespace_for_enum(enum_cls: type[Enum]):
@@ -287,16 +269,37 @@ class _SchemaGenerator:
         self.model_bundle = model_bundle
         self.concrete_models = {}
         self.concrete_models = {
-            get_cls_pythonpath(k): wrapper.generate_model_copy(self)
+            k: wrapper.generate_model_copy(self)
             for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
         }
+        for c in self.concrete_models:
+            if hasattr(c, "__cadwyn_original_model__"):
+                raise Exception("AAAA")
 
     def __getitem__(self, model: type, /) -> Any:
         if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model in (BaseModel, RootModel):
             return model
-        pythonpath = get_cls_pythonpath(model)
-        if pythonpath in self.concrete_models:
-            return self.concrete_models[pythonpath]
+        model = _unwrap_model(model)
+
+        if model in self.concrete_models:
+            return self.concrete_models[model]
+        else:
+            wrapper = self._get_wrapper_for_model(model)
+
+        wrapper = self._get_wrapper_for_model(model)
+        model_copy = wrapper.generate_model_copy(self)
+        self.concrete_models[model] = model_copy
+        return model_copy
+
+    def _get_wrapper_for_model(
+        self, model: type[BaseModel | Enum]
+    ) -> _PydanticRuntimeModelWrapper[BaseModel] | _EnumWrapper[Enum]:
+        model = _unwrap_model(model)
+
+        if model in self.model_bundle.schemas:
+            return self.model_bundle.schemas[model]
+        elif model in self.model_bundle.enums:
+            return self.model_bundle.enums[model]
 
         if issubclass(model, BaseModel):
             wrapper = wrap_pydantic_model(model)
@@ -304,23 +307,13 @@ class _SchemaGenerator:
         elif issubclass(model, Enum):
             wrapper = _EnumWrapper(model)
             self.model_bundle.enums[model] = wrapper
-        model_copy = wrapper.generate_model_copy(self)
-        self.concrete_models[pythonpath] = model_copy
-        return model_copy
+        return wrapper
 
 
 # TODO: Add a test where we delete a parent field for which we have a child validator. To handle this correctly, we have to first initialize the parents, and only then the children. Or maybe even process validator changes AFTER the migrations have been done.
 def wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> _PydanticRuntimeModelWrapper[_T_PYDANTIC_MODEL]:
     defined_names = _get_all_class_attributes(model)
-    decorators = [
-        *model.__pydantic_decorators__.validators.values(),
-        *model.__pydantic_decorators__.field_validators.values(),
-        *model.__pydantic_decorators__.root_validators.values(),
-        *model.__pydantic_decorators__.field_serializers.values(),
-        *model.__pydantic_decorators__.model_serializers.values(),
-        *model.__pydantic_decorators__.model_validators.values(),
-        *model.__pydantic_decorators__.computed_fields.values(),
-    ]
+    decorators = _get_model_decorators(model)
     validators = {}
     for decorator_wrapper in decorators:
         if defined_names:
@@ -360,6 +353,18 @@ def wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> _PydanticRuntimeModel
         validators=validators,
         annotations=model.__annotations__.copy(),
     )
+
+
+def _get_model_decorators(model: type[BaseModel]):
+    return [
+        *model.__pydantic_decorators__.validators.values(),
+        *model.__pydantic_decorators__.field_validators.values(),
+        *model.__pydantic_decorators__.root_validators.values(),
+        *model.__pydantic_decorators__.field_serializers.values(),
+        *model.__pydantic_decorators__.model_serializers.values(),
+        *model.__pydantic_decorators__.model_validators.values(),
+        *model.__pydantic_decorators__.computed_fields.values(),
+    ]
 
 
 def _wrap_validator(func: Callable, is_pydantic_v1_style_validator: Any, decorator_info: _decorators.DecoratorInfo):
@@ -418,14 +423,3 @@ def _get_names_defined_in_node(node: ast.stmt):
             defined_names.add(node.target.id)
 
     return defined_names
-
-
-PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
-    ValidatorDecoratorInfo: validator,
-    FieldValidatorDecoratorInfo: field_validator,
-    FieldSerializerDecoratorInfo: field_serializer,
-    RootValidatorDecoratorInfo: root_validator,
-    ModelValidatorDecoratorInfo: model_validator,
-    ModelSerializerDecoratorInfo: model_serializer,
-    ComputedFieldInfo: computed_field,
-}

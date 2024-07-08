@@ -26,7 +26,7 @@ from starlette.types import Lifespan
 from typing_extensions import Self, deprecated
 
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
-from cadwyn.route_generation import generate_versioned_routers
+from cadwyn.route_generation import _generate_versioned_routers
 from cadwyn.routing import _RootHeaderAPIRouter
 from cadwyn.structure import VersionBundle
 
@@ -219,10 +219,7 @@ class Cadwyn(FastAPI):
         root_router = APIRouter(dependency_overrides_provider=self._dependency_overrides_provider)
         for router in routers:
             root_router.include_router(router)
-        router_versions = generate_versioned_routers(
-            root_router,
-            versions=self.versions,
-        )
+        router_versions = _generate_versioned_routers(root_router, versions=self.versions)
         for version, router in router_versions.items():
             self.add_header_versioned_routers(router, header_value=version.isoformat())
 
@@ -344,16 +341,3 @@ class Cadwyn(FastAPI):
         self.router.routes.extend(added_routes)
 
         return added_routes
-
-    @deprecated("Use builtin FastAPI methods such as include_router instead")
-    def add_unversioned_routers(self, *routers: APIRouter):
-        for router in routers:
-            self.include_router(router)
-
-    @deprecated("Use builtin FastAPI methods such as add_api_route instead")
-    def add_unversioned_routes(self, *routes: Route):
-        router = APIRouter(routes=list(routes))
-        self.include_router(router)
-
-    @deprecated("It no longer does anything")
-    def enrich_swagger(self): ...

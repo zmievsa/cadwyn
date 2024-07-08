@@ -85,17 +85,6 @@ files = [
 dev = ["freezegun (>=1.0,<2.0)", "pytest (>=6.0)", "pytest-cov"]
 
 [[package]]
-name = "better-ast-comments"
-version = "1.2.1"
-description = ""
-optional = false
-python-versions = ">=3.8,<4.0"
-files = [
-    {file = "better_ast_comments-1.2.1-py3-none-any.whl", hash = "sha256:c4993af37ac2655f9997d3751a95bd8a14306d4de17d03d1a89e62d18bea9836"},
-    {file = "better_ast_comments-1.2.1.tar.gz", hash = "sha256:97c0d174b062f06696b4ba63c3bb9782c95a71a02ad505f2cde54c9c7e391d8c"},
-]
-
-[[package]]
 name = "better-devtools"
 version = "0.13.3"
 description = "Python's missing debug print command, and more."
@@ -2011,4 +2000,4 @@ cli = ["typer"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "9431e97be17b7d2f68ceaa760f5a8d584ccb86a3782650f18113c4661093bcfc"
+content-hash = "8eaed6126e8d4cbb1739e7e42f7b433ed6fe1ba064998fe74ac68c0a840d3956"

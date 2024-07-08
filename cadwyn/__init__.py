@@ -1,7 +1,8 @@
 import importlib.metadata
 
 from .applications import Cadwyn
-from .route_generation import VersionedAPIRouter, generate_versioned_routers
+from .route_generation import VersionedAPIRouter
+from .schema_generation import migrate_response_body
 from .structure import HeadVersion, Version, VersionBundle
 
 __version__ = importlib.metadata.version("cadwyn")
@@ -11,5 +12,5 @@ __all__ = [
     "VersionBundle",
     "HeadVersion",
     "Version",
-    "generate_versioned_routers",
+    "migrate_response_body",
 ]

@@ -3,14 +3,26 @@ import inspect
 import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
+from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel, Field
+from pydantic._internal._decorators import (
+    FieldSerializerDecoratorInfo,
+    FieldValidatorDecoratorInfo,
+    ModelSerializerDecoratorInfo,
+    ModelValidatorDecoratorInfo,
+    PydanticDescriptorProxy,
+    RootValidatorDecoratorInfo,
+    ValidatorDecoratorInfo,
+    unwrap_wrapped_function,
+)
 from pydantic.fields import FieldInfo
 
-from cadwyn._asts import _ValidatorWrapper, get_validator_info_or_none
+from cadwyn._asts import _ValidatorWrapper
 from cadwyn._utils import Sentinel
 from cadwyn.exceptions import CadwynStructureError
+from cadwyn.runtime_compat import PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP, _get_model_decorators
 
 if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
@@ -104,7 +116,6 @@ class FieldDidntExistInstruction:
 class FieldExistedAsInstruction:
     schema: type[BaseModel]
     name: str
-    type: type
     field: FieldInfo
 
 
@@ -214,30 +225,27 @@ class AlterFieldInstructionFactory:
         type: Any,
         info: FieldInfo | None = None,
     ) -> FieldExistedAsInstruction:
-        return FieldExistedAsInstruction(
-            self.schema,
-            name=self.name,
-            type=type,
-            field=info or Field(),
-        )
+        if info is None:
+            info = cast(FieldInfo, Field())
+        info.annotation = type
+        return FieldExistedAsInstruction(self.schema, name=self.name, field=info)
 
 
 @dataclass(slots=True)
 class ValidatorExistedInstruction:
     schema: type[BaseModel]
     validator: Callable[..., Any]
-    validator_info: "_ValidatorWrapper" = field(init=False)
 
     def __post_init__(self):
-        source = textwrap.dedent(inspect.getsource(self.validator))
-        validator_ast = ast.parse(source).body[0]
-        if not isinstance(validator_ast, ast.FunctionDef):
-            raise CadwynStructureError("The passed validator must be a function")
-
-        validator_info = get_validator_info_or_none(validator_ast)
-        if validator_info is None:
+        if not isinstance(self.validator, PydanticDescriptorProxy):
+            if hasattr(self.validator, "__self__"):
+                owner = self.validator.__self__
+                func = unwrap_wrapped_function(self.validator)
+                if lenient_issubclass(owner, BaseModel) and any(
+                    unwrap_wrapped_function(decorator.func) == func for decorator in _get_model_decorators(owner)
+                ):
+                    return
             raise CadwynStructureError("The passed function must be a pydantic validator")
-        self.validator_info = validator_info
 
 
 @dataclass(slots=True)

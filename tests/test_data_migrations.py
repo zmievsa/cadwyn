@@ -1,11 +1,9 @@
 import http.cookies
-import importlib
 import re
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from datetime import date
 from io import StringIO
-from types import ModuleType
 from typing import Any, Literal
 
 import fastapi
@@ -25,6 +23,7 @@ from cadwyn.exceptions import (
     RouteRequestBySchemaConverterDoesNotApplyToAnythingError,
     RouteResponseBySchemaConverterDoesNotApplyToAnythingError,
 )
+from cadwyn.schema_generation import migrate_response_body
 from cadwyn.structure import (
     VersionChange,
     convert_request_to_next_version_for,
@@ -847,7 +846,10 @@ def test__schema_migration_syntax__with_methods_after_a_schema__should_raise_err
         TypeError,
         match=re.escape("If schema was provided as a first argument, all other arguments must also be schemas"),
     ):
-        convert_request_to_next_version_for(AnyRequestSchema, ["POST"])
+        convert_request_to_next_version_for(  # pyright: ignore[reportCallIssue]
+            AnyRequestSchema,
+            ["POST"],  # pyright: ignore[reportArgumentType]
+        )
 
 
 def test__schema_migration_syntax__with_additional_schemas_after_methods__should_raise_error():
@@ -1141,18 +1143,18 @@ def test__manual_response_migrations():
         Version(date(2000, 1, 1)),
     )
 
-    new_response = version_bundle.migrate_response_body(
-        EmptySchema, latest_body={"id": "hewwo"}, version=date(2000, 1, 1)
+    new_response = migrate_response_body(
+        version_bundle, EmptySchema, latest_body={"id": "hewwo"}, version=date(2000, 1, 1)
     )
-    assert new_response.dict() == {  # pyright: ignore[reportDeprecated]
+    assert new_response.model_dump() == {
         "name": "Apples",
         "amount": 83,
     }
-    assert new_response.dict(exclude_unset=True) == {"amount": 83}  # pyright: ignore[reportDeprecated]
+    assert new_response.model_dump(exclude_unset=True) == {"amount": 83}
 
     with pytest.raises(CadwynError):
-        new_response = version_bundle.migrate_response_body(
-            EmptySchema, latest_body={"id": "hewwo"}, version=date(1999, 1, 1)
+        new_response = migrate_response_body(
+            version_bundle, EmptySchema, latest_body={"id": "hewwo"}, version=date(1999, 1, 1)
         )
 
 
@@ -1178,18 +1180,18 @@ def test__request_and_response_migrations__with_multiple_schemas_in_converters(
     class Response_3(BaseModel):
         i: list[str]
 
-    @router.post("/test_1")
-    async def endpoint_1(body: Request_1) -> Response_1:
+    @router.post("/test_1", response_model=Response_1)
+    async def endpoint_1(body: Request_1):
         body.i.append("test_1")
         return body
 
-    @router.post("/test_2")
-    async def endpoint_2(body: Request_2) -> Response_2:
+    @router.post("/test_2", response_model=Response_2)
+    async def endpoint_2(body: Request_2):
         body.i.append("test_2")
         return body
 
-    @router.post("/test_3")
-    async def endpoint_3(body: Request_3) -> Response_3:
+    @router.post("/test_3", response_model=Response_3)
+    async def endpoint_3(body: Request_3):
         body.i.append("test_3")
         return body
 

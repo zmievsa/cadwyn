@@ -5,6 +5,18 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+
+### Removed
+
+* `VersionBundle.migrate_response_body` is no longer a method of `VersionBundle` and is now importable directly from `cadwyn` as a function
+* `cadwyn.generate_versioned_routers` because router generation must now only happen through `Cadwyn.generate_and_include_versioned_routers`
+* Cadwyn.add_unversioned_routers
+* Cadwyn.add_unversioned_routes
+* Cadwyn.enrich_swagger
+* Codegen and its typer commands
+
+
+
 ## [3.15.7]
 
 ### Fixed

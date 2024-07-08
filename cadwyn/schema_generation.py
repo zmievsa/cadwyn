@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast, get_args, get_origin
 
 import pydantic
 import pydantic._internal._decorators
+from fastapi import Response
 from typing_extensions import assert_never
 
 from cadwyn._utils import Sentinel
@@ -20,6 +21,8 @@ from cadwyn.runtime_compat import (
     _wrap_validator,
     wrap_pydantic_model,
 )
+from cadwyn.structure.common import VersionDate
+from cadwyn.structure.data import ResponseInfo
 from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
 from cadwyn.structure.schemas import (
     AlterSchemaSubInstruction,
@@ -37,7 +40,7 @@ if TYPE_CHECKING:
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
-class RuntimeSchemaGenContext:
+class _RuntimeSchemaGenContext:
     version_bundle: "VersionBundle"
     current_version: "Version | HeadVersion"
     models: _ModelBundle
@@ -47,16 +50,43 @@ class RuntimeSchemaGenContext:
         self.latest_version = max(self.version_bundle.versions, key=lambda v: v.value)
 
 
+def migrate_response_body(
+    versions: "VersionBundle",
+    latest_response_model: type[pydantic.BaseModel],
+    *,
+    latest_body: Any,
+    version: VersionDate,
+):
+    """Convert the data to a specific version by applying all version changes from latest until that version
+    in reverse order and wrapping the result in the correct version of latest_response_model.
+    """
+    response = ResponseInfo(Response(status_code=200), body=latest_body)
+    migrated_response = versions._migrate_response(
+        response,
+        current_version=version,
+        head_response_model=latest_response_model,
+        path="\0\0\0",
+        method="GET",
+    )
+
+    version = versions._get_closest_lesser_version(version)
+
+    versioned_response_model: type[pydantic.BaseModel] = _generate_versioned_models(versions)[str(version)][
+        latest_response_model
+    ]
+    return versioned_response_model.model_validate(migrated_response.body)
+
+
 @cache
 def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, _SchemaGenerator]":
     models = _create_model_bundle(versions)
 
     version_to_context_map = {}
-    context = RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
+    context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
     _migrate_classes(context)
 
     for version in versions.versions:
-        context = RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
+        context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
         version_to_context_map[str(version.value)] = _SchemaGenerator(copy.deepcopy(models))
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
@@ -71,7 +101,7 @@ def _create_model_bundle(versions: "VersionBundle"):
     )
 
 
-def _migrate_classes(context: RuntimeSchemaGenContext) -> None:
+def _migrate_classes(context: _RuntimeSchemaGenContext) -> None:
     for version_change in context.current_version.version_changes:
         _apply_alter_schema_instructions(
             context.models.schemas,
@@ -188,7 +218,7 @@ def _add_field_to_model(
 
     field = PydanticFieldWrapper(alter_schema_instruction.field)
     model.fields[alter_schema_instruction.name] = field
-    model.annotations[alter_schema_instruction.name] = alter_schema_instruction.type
+    model.annotations[alter_schema_instruction.name] = alter_schema_instruction.field.annotation
 
 
 def _change_field_in_model(

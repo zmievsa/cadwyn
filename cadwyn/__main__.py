@@ -1,18 +1,32 @@
 import importlib
 import sys
+from datetime import date
 from pathlib import Path
-from typing import Any
 
 import typer
+from rich.console import Console
+from rich.syntax import Syntax
+from typing_extensions import Annotated, Any
 
+from cadwyn._render import render_model_by_path
 from cadwyn.exceptions import CadwynError
 from cadwyn.structure.versions import VersionBundle
+
+_CONSOLE = Console()
 
 app = typer.Typer(
     name="cadwyn",
     add_completion=False,
     help="Modern Stripe-like API versioning in FastAPI",
 )
+
+render_subapp = typer.Typer(
+    name="render",
+    add_completion=False,
+    help="Render pydantic models and enums from a certainn version and output them to stdout",
+)
+
+app.add_typer(render_subapp)
 
 
 def version_callback(value: bool):
@@ -23,49 +37,18 @@ def version_callback(value: bool):
         raise typer.Exit
 
 
-@app.command(
-    name="codegen",
-    help=(
-        "For each version in the version bundle, generate a versioned package based on the "
-        "`head_schema_package` package"
-    ),
-    short_help="Generate code for all versions of schemas",
+@render_subapp.command(
+    name="model",
+    help="Render a concrete pydantic model or enum from a certain version and output it to stdout",
+    short_help="Render a single model or enum",
 )
-def generate_versioned_packages(
-    full_path_to_version_bundle: str = typer.Argument(
-        ...,
-        help="The python path to the version bundle. Format: 'path.to.version_bundle:my_version_bundle_var'",
-        show_default=False,
-    ),
+def render(
+    model: Annotated[str, typer.Argument(metavar="<module>:<attribute>", help="Python path to the model to render")],
+    app: Annotated[str, typer.Option(metavar="<module>:<attribute>", help="Python path to the main Cadwyn app")],
+    version: Annotated[str, typer.Option(parser=lambda s: str(date.fromisoformat(s)), metavar="ISO-VERSION")],
 ) -> None:
-    from .codegen._main import generate_code_for_versioned_packages
-
-    sys.path.append(str(Path.cwd()))
-    path_to_version_bundle, version_bundle_variable_name = full_path_to_version_bundle.split(":")
-    version_bundle_module = importlib.import_module(path_to_version_bundle)
-    possibly_version_bundle = getattr(version_bundle_module, version_bundle_variable_name)
-    version_bundle = _get_version_bundle(possibly_version_bundle)
-
-    if version_bundle.head_schemas_package is None:  # pragma: no cover
-        raise CadwynError("VersionBundle requires a 'head_schemas_package' argument to generate schemas.")
-
-    return generate_code_for_versioned_packages(version_bundle.head_schemas_package, version_bundle)
-
-
-def _get_version_bundle(possibly_version_bundle: Any) -> VersionBundle:
-    if not isinstance(possibly_version_bundle, VersionBundle):
-        err = TypeError(
-            "The provided version bundle is not a version bundle and "
-            "is not a zero-argument callable that returns the version bundle. "
-            f"Instead received: {possibly_version_bundle}",
-        )
-        if callable(possibly_version_bundle):
-            try:
-                return _get_version_bundle(possibly_version_bundle())
-            except TypeError as e:
-                raise err from e
-        raise err
-    return possibly_version_bundle
+    rendered_model = render_model_by_path(model, app, version)
+    _CONSOLE.print(Syntax(rendered_model, "python"))
 
 
 @app.callback()

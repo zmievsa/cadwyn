@@ -6,7 +6,6 @@ import pytest
 from pydantic import BaseModel, Field, StringConstraints, ValidationError, conint, constr
 from pydantic.fields import FieldInfo
 
-from cadwyn._compat import model_fields
 from cadwyn.exceptions import (
     CadwynStructureError,
     InvalidGenerationInstructionError,
@@ -182,7 +181,7 @@ def assert_field_had_changes_apply(
 ):
     schemas = create_runtime_schemas(version_change(schema(model).field("foo").had(**{attr: attr_value})))
 
-    field_info = model_fields(schemas["2000-01-01"][model])["foo"]
+    field_info = schemas["2000-01-01"][model].model_fields["foo"]
     if attr in FieldInfo.metadata_lookup:
         # We do this because _PydanticGeneralMetadata does not have a proper `__eq__`
         assert repr(FieldInfo._collect_metadata({attr: attr_value})[0]) in [repr(obj) for obj in field_info.metadata]

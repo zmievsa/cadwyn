@@ -22,12 +22,6 @@ from tests._resources.versioned_app.app import (
 )
 
 
-def test__cadwyn_enrich_swagger__still_exists_and_is_deprecated():
-    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
-    with pytest.deprecated_call():
-        app.enrich_swagger()  # pyright: ignore[reportDeprecated]
-
-
 def test__header_routing__invalid_version_format__error():
     main_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
     main_app.add_header_versioned_routers(APIRouter(), header_value=DEFAULT_API_VERSION)
