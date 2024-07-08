@@ -4,7 +4,7 @@ from datetime import date
 from pathlib import Path
 from types import ModuleType
 
-from cadwyn.exceptions import CodeGenerationError
+from cadwyn.exceptions import SchemaGenerationError
 
 IdentifierPythonPath = str
 
@@ -34,10 +34,10 @@ def get_package_path_from_module(template_package: ModuleType) -> Path:
 
     # I am too lazy to reproduce this error correctly
     if file is None:  # pragma: no cover
-        raise CodeGenerationError(f'Package "{template_package}" has no source file')
+        raise SchemaGenerationError(f'Package "{template_package}" has no source file')
     file = Path(file)
     if not file.name == "__init__.py":
-        raise CodeGenerationError(f'"{template_package}" is not a package')
+        raise SchemaGenerationError(f'"{template_package}" is not a package')
     return file.parent
 
 

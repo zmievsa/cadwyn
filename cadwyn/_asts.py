@@ -16,7 +16,7 @@ import annotated_types
 
 from cadwyn._package_utils import get_absolute_python_path_of_import
 from cadwyn._utils import PlainRepr, UnionType
-from cadwyn.exceptions import CodeGenerationError, InvalidGenerationInstructionError, ModuleIsNotAvailableAsTextError
+from cadwyn.exceptions import InvalidGenerationInstructionError, ModuleIsNotAvailableAsTextError, SchemaGenerationError
 from cadwyn.runtime_compat import _ValidatorWrapper
 
 _LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
@@ -148,7 +148,7 @@ def read_python_module(module: ModuleType) -> str:
         return inspect.getsource(module)
     except OSError as e:
         if module.__file__ is None:  # pragma: no cover
-            raise CodeGenerationError(f"Failed to get file path to the module {module}") from e
+            raise SchemaGenerationError(f"Failed to get file path to the module {module}") from e
         path = Path(module.__file__)
         if path.is_file() and path.read_text() == "":
             return ""
