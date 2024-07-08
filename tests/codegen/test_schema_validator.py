@@ -2,11 +2,9 @@ import inspect
 import re
 from typing import Any
 
-import pydantic
 import pytest
 from pydantic import root_validator, validator
 
-from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure import schema
 from tests.conftest import CreateLocalSimpleVersionedPackages, HeadModuleFor
@@ -37,30 +35,6 @@ def test__schema_validator_existed(
         "        raise NotImplementedError\n\n"
         "    @validator('foo')\n"
         "    def dawkness(cls, value):\n"
-        "        raise NotImplementedError\n"
-    )
-
-
-def test__schema_validator_existed__with_root_validator_without_call(
-    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_one_str_field: Any,
-):
-    if PYDANTIC_V2:
-        pytest.skip("This test is only for Pydantic v1.")
-
-    @pydantic.root_validator  # pyright: ignore[reportCallIssue, reportUntypedFunctionDecorator]
-    def hewwo(cls, values):
-        raise NotImplementedError
-
-    v1 = create_local_simple_versioned_packages(
-        schema(head_with_one_str_field.SchemaWithOneStrField).validator(hewwo).existed,
-    )
-
-    assert inspect.getsource(v1.SchemaWithOneStrField) == (
-        "class SchemaWithOneStrField(BaseModel):\n"
-        "    foo: str\n\n"
-        "    @pydantic.root_validator\n"
-        "    def hewwo(cls, values):\n"
         "        raise NotImplementedError\n"
     )
 

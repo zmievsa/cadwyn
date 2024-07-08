@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel, Field, ValidationError, constr
 from pydantic.fields import FieldInfo
 
-from cadwyn._compat import PYDANTIC_V2, model_fields
+from cadwyn._compat import model_fields
 from cadwyn.exceptions import (
     CadwynStructureError,
     InvalidGenerationInstructionError,
@@ -19,7 +19,6 @@ from tests.conftest import (
     CreateLocalVersionedPackages,
     HeadModuleFor,
     _FakeModuleWithEmptyClasses,
-    _FakeNamespaceWithOneStrField,
     version_change,
 )
 
@@ -56,15 +55,10 @@ def test__schema_field_existed_as__original_schema_is_empty(
             info=Field(alias="boo"),
         ),
     )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.EmptySchema) == (
-            "class EmptySchema(pydantic.BaseModel):\n"
-            "    bar: int = Field(alias='boo', serialization_alias='boo', validation_alias='boo')\n"
-        )
-    else:
-        assert inspect.getsource(v1.EmptySchema) == (
-            "class EmptySchema(pydantic.BaseModel):\n    bar: int = Field(alias='boo', alias_priority=2)\n"
-        )
+    assert inspect.getsource(v1.EmptySchema) == (
+        "class EmptySchema(pydantic.BaseModel):\n"
+        "    bar: int = Field(alias='boo', serialization_alias='boo', validation_alias='boo')\n"
+    )
 
 
 def test__field_existed_as__original_schema_has_a_field(
@@ -114,15 +108,9 @@ def test__field_existed_as__extras_are_added(
             ),
         ),
     )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.EmptySchema) == (
-            "class EmptySchema(pydantic.BaseModel):\n"
-            "    foo: int = Field(json_schema_extra={'deflolbtt': 'hewwo'})\n"
-        )
-    else:
-        assert inspect.getsource(v1.EmptySchema) == (
-            "class EmptySchema(pydantic.BaseModel):\n    foo: int = Field(deflolbtt='hewwo')\n"
-        )
+    assert inspect.getsource(v1.EmptySchema) == (
+        "class EmptySchema(pydantic.BaseModel):\n" "    foo: int = Field(json_schema_extra={'deflolbtt': 'hewwo'})\n"
+    )
 
 
 def test__schema_field_existed_as__with_default_none(
@@ -260,9 +248,7 @@ def assert_field_had_changes_apply(
         schema(getattr(latest, model.__name__)).field("foo").had(**{attr: attr_value}),
     )
     field_info = model_fields(getattr(v1, model.__name__))["foo"]
-    if not PYDANTIC_V2:
-        field_info = field_info.field_info  # pyright: ignore[reportAttributeAccessIssue]
-    if PYDANTIC_V2 and attr in FieldInfo.metadata_lookup:
+    if attr in FieldInfo.metadata_lookup:
         # We do this because _PydanticGeneralMetadata does not have a proper `__eq__`
         assert repr(FieldInfo._collect_metadata({attr: attr_value})[0]) in [repr(obj) for obj in field_info.metadata]
     else:
@@ -327,13 +313,9 @@ def test__schema_field_had__pattern(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
     head_with_one_str_field: _FakeNamespaceWithOneStrField,
 ):
-    if PYDANTIC_V2:
-        attr_name = "pattern"
-    else:
-        attr_name = "regex"
     assert_field_had_changes_apply(
         head_with_one_str_field.SchemaWithOneStrField,
-        attr_name,
+        "pattern",
         r"hewwo darkness",
         create_local_simple_versioned_packages,
         head_with_one_str_field,
@@ -382,39 +364,6 @@ def test__schema_field_had__list_of_int_field(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
     head_module_for: HeadModuleFor,
 ):
-    latest = head_module_for(
-        """
-        from pydantic import BaseModel
-        class SchemaWithOneListOfIntField(BaseModel):
-            foo: list[int]
-        """,
-    )
-    assert_field_had_changes_apply(
-        latest.SchemaWithOneListOfIntField,
-        attr,
-        attr_value,
-        create_local_simple_versioned_packages,
-        latest,
-    )
-
-
-@pytest.mark.parametrize(
-    ("attr", "attr_value"),
-    [
-        ("include", [19, 20, 21]),
-        ("min_items", 10),
-        ("max_items", 15),
-        ("unique_items", True),
-    ],
-)
-def test__schema_field_had__list_of_int_field__with_fields_deprecated_in_pydantic_2(
-    attr: str,
-    attr_value: Any,
-    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_module_for: HeadModuleFor,
-):
-    if PYDANTIC_V2:
-        pytest.skip("This test is only for Pydantic v1.")
     latest = head_module_for(
         """
         from pydantic import BaseModel
@@ -570,18 +519,11 @@ def test__schema_field_had_constrained_field__constraints_have_been_modified(
         schema(head_with_constraints.SchemaWithConstraints).field("foo").had(gt=8),
         schema(head_with_constraints.SchemaWithConstraints).field("bar").had(min_length=2),
     )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithConstraints) == (
-            "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=2 + 5) = Field(gt=8)\n"
-            "    bar: str = Field(min_length=2, max_length=2 + 5)\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithConstraints) == (
-            "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=2 + 5, gt=8)\n"
-            "    bar: str = Field(min_length=2, max_length=2 + 5)\n"
-        )
+    assert inspect.getsource(v1.SchemaWithConstraints) == (
+        "class SchemaWithConstraints(BaseModel):\n"
+        "    foo: conint(lt=2 + 5) = Field(gt=8)\n"
+        "    bar: str = Field(min_length=2, max_length=2 + 5)\n"
+    )
 
 
 def test__schema_field_had_constrained_field__both_constraints_and_non_constraints_have_been_modified(
@@ -592,19 +534,11 @@ def test__schema_field_had_constrained_field__both_constraints_and_non_constrain
         schema(head_with_constraints.SchemaWithConstraints).field("foo").had(gt=8, alias="foo1"),
         schema(head_with_constraints.SchemaWithConstraints).field("bar").had(min_length=2, alias="bar1"),
     )
-    if PYDANTIC_V2:
-        # TODO Validate that this works
-        assert inspect.getsource(v1.SchemaWithConstraints) == (
-            "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=2 + 5) = Field(alias='foo1', gt=8)\n"
-            "    bar: str = Field(min_length=2, max_length=2 + 5, alias='bar1')\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithConstraints) == (
-            "class SchemaWithConstraints(BaseModel):\n"
-            "    foo: conint(lt=2 + 5, gt=8) = Field(alias='foo1')\n"
-            "    bar: str = Field(min_length=2, max_length=2 + 5, alias='bar1')\n"
-        )
+    assert inspect.getsource(v1.SchemaWithConstraints) == (
+        "class SchemaWithConstraints(BaseModel):\n"
+        "    foo: conint(lt=2 + 5) = Field(alias='foo1', gt=8)\n"
+        "    bar: str = Field(min_length=2, max_length=2 + 5, alias='bar1')\n"
+    )
 
 
 @pytest.fixture()
@@ -632,16 +566,10 @@ def test__schema_field_had_constrained_field__constraint_field_args_were_modifie
         .had(type=constr(max_length=6123123121)),
     )
 
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithConstraintsAndField) == (
-            "class SchemaWithConstraintsAndField(BaseModel):\n"
-            "    foo: Annotated[str, StringConstraints(max_length=6123123121)] = Field(default=MY_VAR)\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithConstraintsAndField) == (
-            "class SchemaWithConstraintsAndField(BaseModel):\n"
-            "    foo: constr(max_length=6123123121) = Field(default=MY_VAR)\n"
-        )
+    assert inspect.getsource(v1.SchemaWithConstraintsAndField) == (
+        "class SchemaWithConstraintsAndField(BaseModel):\n"
+        "    foo: Annotated[str, StringConstraints(max_length=6123123121)] = Field(default=MY_VAR)\n"
+    )
 
 
 def test__schema_field_had_constrained_field__constraint_only_args_were_modified_in_type(
@@ -653,16 +581,10 @@ def test__schema_field_had_constrained_field__constraint_only_args_were_modified
         .field("foo")
         .had(type=constr(max_length=6, strip_whitespace=True)),
     )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithConstraintsAndField) == (
-            "class SchemaWithConstraintsAndField(BaseModel):\n"
-            "    foo: Annotated[str, StringConstraints(strip_whitespace=True, max_length=6)] = Field(default=MY_VAR)\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithConstraintsAndField) == (
-            "class SchemaWithConstraintsAndField(BaseModel):\n"
-            "    foo: constr(strip_whitespace=True, max_length=6) = Field(default=MY_VAR)\n"
-        )
+    assert inspect.getsource(v1.SchemaWithConstraintsAndField) == (
+        "class SchemaWithConstraintsAndField(BaseModel):\n"
+        "    foo: Annotated[str, StringConstraints(strip_whitespace=True, max_length=6)] = Field(default=MY_VAR)\n"
+    )
 
 
 @pytest.fixture()
@@ -727,16 +649,10 @@ def test__schema_field_had_annotated_constrained_field__adding_one_other_constra
     v1 = create_local_simple_versioned_packages(
         schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(gt=8),
     )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
-            "class SchemaWithAnnotatedConstraints(BaseModel):\n"
-            "    foo: Annotated[conint(lt=2 + 5), Field(description='awaw', gt=8)]\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
-            "class SchemaWithAnnotatedConstraints(BaseModel):\n"
-            "    foo: Annotated[conint(lt=2 + 5, gt=8), Field(description='awaw')]\n"
-        )
+    assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
+        "class SchemaWithAnnotatedConstraints(BaseModel):\n"
+        "    foo: Annotated[conint(lt=2 + 5), Field(description='awaw', gt=8)]\n"
+    )
 
 
 def test__schema_field_had_annotated_constrained_field__adding_another_constraint_and_an_attribute(
@@ -746,16 +662,10 @@ def test__schema_field_had_annotated_constrained_field__adding_another_constrain
     v1 = create_local_simple_versioned_packages(
         schema(head_with_annotated_constraints.SchemaWithAnnotatedConstraints).field("foo").had(gt=8, alias="foo1"),
     )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
-            "class SchemaWithAnnotatedConstraints(BaseModel):\n"
-            "    foo: Annotated[conint(lt=2 + 5), Field(description='awaw', alias='foo1', gt=8)]\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
-            "class SchemaWithAnnotatedConstraints(BaseModel):\n"
-            "    foo: Annotated[conint(lt=2 + 5, gt=8), Field(description='awaw', alias='foo1')]\n"
-        )
+    assert inspect.getsource(v1.SchemaWithAnnotatedConstraints) == (
+        "class SchemaWithAnnotatedConstraints(BaseModel):\n"
+        "    foo: Annotated[conint(lt=2 + 5), Field(description='awaw', alias='foo1', gt=8)]\n"
+    )
 
 
 def test__schema_field_had_constrained_field__schema_has_special_constraints_constraints_have_been_modified(
@@ -776,23 +686,15 @@ def test__schema_field_had_constrained_field__schema_has_special_constraints_con
     v1 = create_local_simple_versioned_packages(
         schema(latest.SchemaWithSpecialConstraints).field("foo").had(max_length=8),
     )
-    if PYDANTIC_V2:
-        assert inspect.getsource(v1.SchemaWithSpecialConstraints) == (
-            "class SchemaWithSpecialConstraints(BaseModel):\n    foo: constr(to_upper=True) = Field(max_length=8)\n"
-        )
-    else:
-        assert inspect.getsource(v1.SchemaWithSpecialConstraints) == (
-            "class SchemaWithSpecialConstraints(BaseModel):\n    foo: constr(to_upper=True, max_length=8)\n"
-        )
+    assert inspect.getsource(v1.SchemaWithSpecialConstraints) == (
+        "class SchemaWithSpecialConstraints(BaseModel):\n    foo: constr(to_upper=True) = Field(max_length=8)\n"
+    )
 
 
 def test__schema_field_had_constrained_field__schema_has_special_constraints_constraints_have_been_modified__pydantic2(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
     head_module_for: HeadModuleFor,
 ):
-    if not PYDANTIC_V2:
-        pytest.skip("This test is only for Pydantic 2")
-
     latest = head_module_for(
         """
         from pydantic import BaseModel, Field, StringConstraints
@@ -1010,9 +912,6 @@ def test__schema_field_had__change_metadata_attr_to_same_value__should_raise_err
     create_local_versioned_packages: CreateLocalVersionedPackages,
     head_with_empty_classes,
 ):
-    if not PYDANTIC_V2:
-        pytest.skip("This test is only for Pydantic 2")
-
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(

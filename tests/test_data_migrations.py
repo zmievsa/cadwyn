@@ -6,7 +6,7 @@ from contextvars import ContextVar
 from datetime import date
 from io import StringIO
 from types import ModuleType
-from typing import Annotated, Any, Literal, get_args
+from typing import Any, Literal
 
 import fastapi
 import pytest
@@ -17,8 +17,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
-from cadwyn import VersionedAPIRouter, generate_code_for_versioned_packages
-from cadwyn._compat import PYDANTIC_V2, model_dump
+from cadwyn import VersionedAPIRouter
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -26,7 +25,6 @@ from cadwyn.exceptions import (
     RouteRequestBySchemaConverterDoesNotApplyToAnythingError,
     RouteResponseBySchemaConverterDoesNotApplyToAnythingError,
 )
-from cadwyn.route_generation import InternalRepresentationOf  # pyright: ignore[reportDeprecated]
 from cadwyn.structure import (
     VersionChange,
     convert_request_to_next_version_for,
@@ -51,59 +49,30 @@ def test_path():
 
 @pytest.fixture()
 def head_module(head_module_for: HeadModuleFor):
-    if PYDANTIC_V2:
-        return head_module_for(
-            """
-    from pydantic import BaseModel, Field, RootModel
-    from typing import Any
+    return head_module_for(
+        """
+        from pydantic import BaseModel, Field, RootModel
+        from typing import Any
 
-        # so `RootModel[Any] is RootModel[Any]`. This causes dire consequences if you try to make "different"
-        # request and response root models with the same definitions
-    class AnyRequestSchema(RootModel[Any]):
-        pass
+            # so `RootModel[Any] is RootModel[Any]`. This causes dire consequences if you try to make "different"
+            # request and response root models with the same definitions
+        class AnyRequestSchema(RootModel[Any]):
+            pass
 
-    class AnyResponseSchema(RootModel[Any]):
-        pass
+        class AnyResponseSchema(RootModel[Any]):
+            pass
 
-    class SchemaWithHeadMigrations(BaseModel):
-        foo: int
-        bar: str | None = Field(default=None)
+        class SchemaWithHeadMigrations(BaseModel):
+            foo: int
+            bar: str | None = Field(default=None)
 
-    class SchemaWithInternalRepresentation(BaseModel):
-        foo: int
+        class SchemaWithInternalRepresentation(BaseModel):
+            foo: int
 
-    class InternalSchema(SchemaWithInternalRepresentation):
-        bar: str | None = Field(default=None)
-
-
-            """,
-        )
-    else:
-        return head_module_for(
-            """
-    from pydantic import BaseModel, Field
-    from typing import Any
-
-    class AnyRequestSchema(BaseModel):
-        __root__: Any
-
-
-    class AnyResponseSchema(BaseModel):
-        __root__: Any
-
-    class SchemaWithHeadMigrations(BaseModel):
-        foo: int
-        bar: str | None = Field(default=None)
-
-    class SchemaWithInternalRepresentation(BaseModel):
-        foo: int
-
-    class InternalSchema(SchemaWithInternalRepresentation):
-        bar: str | None = Field(default=None)
-
-
-            """,
-        )
+        class InternalSchema(SchemaWithInternalRepresentation):
+            bar: str | None = Field(default=None)
+    """,
+    )
 
 
 @pytest.fixture(params=["is_async", "is_sync"])
@@ -136,8 +105,6 @@ def _get_endpoint(
 @pytest.fixture(params=["is_async", "is_sync"])
 def _post_endpoint(request, test_path: str, router: VersionedAPIRouter, head_module: ModuleType):
     def _get_request_data(request: Request, body: head_module.AnyRequestSchema):
-        if not PYDANTIC_V2:
-            body = body.__root__
         return {
             "body": body,
             "headers": dict(request.headers),
@@ -226,8 +193,6 @@ def _post_endpoint_with_extra_depends(  # noqa: PT005
                 headers["3"] = n_header
                 cookies["5"] = n_cookie
                 query_params["7"] = n_query
-            if not PYDANTIC_V2:
-                body = body.__root__
             return {
                 "body": body,
                 "headers": dict(headers),
@@ -325,108 +290,6 @@ class TestRequestMigrations:
         assert clients[date(2001, 1, 1)].get(test_path, headers={"my-header": "wow"}).json() == 83
         with pytest.raises(CadwynHeadRequestValidationError):
             clients[date(2000, 1, 1)].get(test_path, headers={"my-header": "wow"}).json()
-
-    def test__internal_schema_specified__with_no_migrations__body_gets_parsed_to_internal_request_schema(
-        self,
-        create_versioned_clients: CreateVersionedClients,
-        head_module: ModuleType,
-        temp_data_package_path: str,
-        test_path: Literal["/test"],
-        router: VersionedAPIRouter,
-    ):
-        @router.post(test_path)
-        async def route(
-            payload: Annotated[
-                head_module.InternalSchema,
-                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],  # pyright: ignore[reportDeprecated]
-                str,
-            ],
-        ):
-            return {"type": type(payload).__name__, **model_dump(payload)}
-
-        clients = create_versioned_clients(version_change())
-
-        # [-1] route is /openapi.json
-        last_route = clients[date(2000, 1, 1)].app.router.versioned_routers[date(2000, 1, 1)].routes[-1]
-        assert isinstance(last_route, APIRoute)
-        payload_arg = last_route.endpoint.__annotations__["payload"]
-        assert get_args(payload_arg)[1] == str
-
-        assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
-            "type": "InternalSchema",
-            "foo": 1,
-            # we expect for the passed "bar" attribute to not get passed because it's not in the public schema
-            "bar": None,
-        }
-        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
-            "type": "InternalSchema",
-            "foo": 1,
-            "bar": None,
-        }
-
-    def test__internal_schema_specified__with_migrations__body_gets_parsed_to_internal_request_schema(
-        self,
-        create_versioned_clients: CreateVersionedClients,
-        head_module: ModuleType,
-        temp_data_package_path: str,
-        test_path: Literal["/test"],
-        router: VersionedAPIRouter,
-    ):
-        @router.post(test_path)
-        async def route(
-            payload: Annotated[
-                head_module.InternalSchema,
-                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],  # pyright: ignore[reportDeprecated]
-            ],
-        ):
-            return {"type": type(payload).__name__, **model_dump(payload)}
-
-        @convert_request_to_next_version_for(head_module.SchemaWithInternalRepresentation)
-        def migrator(request: RequestInfo):
-            request.body["bar"] = "world"
-
-        clients = create_versioned_clients(version_change(migrator=migrator))
-
-        assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
-            "type": "InternalSchema",
-            "foo": 1,
-            "bar": "world",
-        }
-        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
-            "type": "InternalSchema",
-            "foo": 1,
-            "bar": None,
-        }
-
-    def test__internal_schema_specified__with_invalid_migrations__internal_schema_validation_error(
-        self,
-        create_versioned_clients: CreateVersionedClients,
-        head_module: ModuleType,
-        temp_data_package_path: str,
-        test_path: Literal["/test"],
-        router: VersionedAPIRouter,
-    ):
-        @router.post(test_path)
-        async def route(
-            payload: Annotated[
-                head_module.InternalSchema,
-                InternalRepresentationOf[head_module.SchemaWithInternalRepresentation],  # pyright: ignore[reportDeprecated]
-            ],
-        ):
-            return {"type": type(payload).__name__, **model_dump(payload)}
-
-        @convert_request_to_next_version_for(head_module.SchemaWithInternalRepresentation)
-        def migrator(request: RequestInfo):
-            request.body["bar"] = [1, 2, 3]
-
-        clients = create_versioned_clients(version_change(migrator=migrator))
-        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
-            "type": "InternalSchema",
-            "foo": 1,
-            "bar": None,
-        }
-        with pytest.raises(CadwynHeadRequestValidationError):
-            clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json()
 
     def test__head_schema_migration__with_no_versioned_migrations__body_gets_parsed_to_head_schema(
         self,
@@ -1322,7 +1185,6 @@ def test__manual_response_migrations(
             ),
         ),
         Version(date(2000, 1, 1)),
-        head_schemas_package=head_package,
     )
     generate_code_for_versioned_packages(head_package, version_bundle)
 

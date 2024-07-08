@@ -102,7 +102,7 @@ def test__cadwyn__with_dependency_overrides__overrides_should_be_applied(
     head_with_empty_classes: ModuleType,
     run_schema_codegen: RunSchemaCodegen,
 ):
-    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16)), head_schemas_package=head_with_empty_classes))
+    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
     run_schema_codegen(app.versions)
 
     async def old_dependency():

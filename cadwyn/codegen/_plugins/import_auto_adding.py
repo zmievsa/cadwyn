@@ -1,6 +1,5 @@
 import ast
 
-from cadwyn._compat import PYDANTIC_V2
 from cadwyn.codegen._common import CodegenContext
 
 _extra_imports: list[tuple[str, str]] = [
@@ -19,23 +18,17 @@ _extra_imports: list[tuple[str, str]] = [
     ("condate", "from pydantic import condate"),
     ("validator", "from pydantic import validator"),
     ("root_validator", "from pydantic import root_validator"),
+    ("confrozenset", "from pydantic import conset"),
+    ("StringConstraints", "from pydantic import StringConstraints"),
+    ("StrictBool", "from pydantic import StrictBool"),
+    ("StrictBytes", "from pydantic import StrictBytes"),
+    ("StrictFloat", "from pydantic import StrictFloat"),
+    ("StrictInt", "from pydantic import StrictInt"),
+    ("StrictStr", "from pydantic import StrictStr"),
+    ("model_validator", "from pydantic import model_validator"),
+    ("field_validator", "from pydantic import field_validator"),
 ]
 
-
-if PYDANTIC_V2:
-    _extra_imports.extend(
-        [
-            ("confrozenset", "from pydantic import conset"),
-            ("StringConstraints", "from pydantic import StringConstraints"),
-            ("StrictBool", "from pydantic import StrictBool"),
-            ("StrictBytes", "from pydantic import StrictBytes"),
-            ("StrictFloat", "from pydantic import StrictFloat"),
-            ("StrictInt", "from pydantic import StrictInt"),
-            ("StrictStr", "from pydantic import StrictStr"),
-            ("model_validator", "from pydantic import model_validator"),
-            ("field_validator", "from pydantic import field_validator"),
-        ],
-    )
 
 _rendered_extra_imports = [(seek_str, ast.parse(imp).body[0]) for seek_str, imp in _extra_imports]
 

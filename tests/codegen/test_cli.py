@@ -7,11 +7,10 @@ from typer.testing import CliRunner
 
 from cadwyn import __version__
 from cadwyn.__main__ import app as cadwyn_typer_app
-from tests.conftest import _FakeModuleWithEmptyClasses
 
 
 @pytest.fixture(autouse=True)
-def _resources(temp_data_dir, head_with_empty_classes: _FakeModuleWithEmptyClasses):
+def _resources(temp_data_dir):
     temp_data_dir.joinpath("__init__.py")
     temp_data_dir.joinpath("my_cli.py").write_text(
         textwrap.dedent(

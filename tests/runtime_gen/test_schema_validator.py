@@ -1,18 +1,12 @@
-import inspect
 import re
-from typing import Any
 
-import pydantic
 import pytest
 from pydantic import BaseModel, root_validator, validator
 
-from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure import schema
 from tests.conftest import (
-    CreateLocalSimpleVersionedPackages,
     CreateRuntimeSchemas,
-    HeadModuleFor,
     assert_models_are_equal,
     version_change,
 )

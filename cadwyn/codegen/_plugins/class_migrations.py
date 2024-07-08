@@ -6,7 +6,6 @@ from typing_extensions import assert_never
 
 from cadwyn._asts import add_keyword_to_call, delete_keyword_from_call, get_fancy_repr
 from cadwyn._compat import (
-    PYDANTIC_V2,
     FieldInfo,
     PydanticFieldWrapper,
     dict_of_empty_field_info,
@@ -227,7 +226,7 @@ def _change_field_in_model(
         )
 
 
-def _change_field(  # noqa: C901
+def _change_field(
     model: PydanticModelWrapper,
     alter_schema_instruction: FieldHadInstruction,
     version_change_name: str,
@@ -284,10 +283,6 @@ def _change_field(  # noqa: C901
                 _setattr_on_constrained_type(constrained_type_annotation, attr_name, attr_value)
                 if isinstance(annotation_ast, ast.Call):
                     add_keyword_to_call(attr_name, attr_value, annotation_ast)
-                elif not PYDANTIC_V2:  # pragma: no branch
-                    field.update_attribute(name=attr_name, value=attr_value)
-                    if isinstance(field_call_ast, ast.Call):  # pragma: no branch
-                        add_keyword_to_call(attr_name, attr_value, field_call_ast)
 
             else:
                 field.update_attribute(name=attr_name, value=attr_value)

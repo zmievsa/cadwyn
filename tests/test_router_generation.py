@@ -20,7 +20,7 @@ from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
 
 from cadwyn import VersionBundle, VersionedAPIRouter
-from cadwyn._compat import PYDANTIC_V2, model_fields
+from cadwyn._compat import model_fields
 from cadwyn.exceptions import CadwynError, CadwynStructureError, RouterGenerationError, RouterPathParamsModifiedError
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
@@ -42,10 +42,7 @@ from tests.conftest import (
 Default = object()
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
 
-if PYDANTIC_V2:
-    TYPE_ATTR, ANNOTATION_ATTR = "type_", "annotation"
-else:
-    TYPE_ATTR, ANNOTATION_ATTR = "annotation", "type_"
+TYPE_ATTR, ANNOTATION_ATTR = "type_", "annotation"
 
 
 def get_wrapped_endpoint(endpoint: Endpoint) -> Endpoint:
@@ -966,34 +963,26 @@ def test__router_generation__updating_request_depends(
     client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
     resp_from_test1 = client_2000.post("/test1", json={}).json()
     resp_from_test2 = client_2000.post("/test2", json={}).json()
-    if PYDANTIC_V2:
-        assert resp_from_test1 == {
-            "detail": [
-                {
-                    "type": "missing",
-                    "loc": ["body", "foo"],
-                    "msg": "Field required",
-                    "input": {},
-                },
-            ],
-        }
-        assert resp_from_test2 == {
-            "detail": [
-                {
-                    "type": "missing",
-                    "loc": ["body", "foo"],
-                    "msg": "Field required",
-                    "input": {},
-                },
-            ],
-        }
-    else:
-        assert resp_from_test1 == {
-            "detail": [{"loc": ["body", "foo"], "msg": "field required", "type": "value_error.missing"}],
-        }
-        assert resp_from_test2 == {
-            "detail": [{"loc": ["body", "foo"], "msg": "field required", "type": "value_error.missing"}],
-        }
+    assert resp_from_test1 == {
+        "detail": [
+            {
+                "type": "missing",
+                "loc": ["body", "foo"],
+                "msg": "Field required",
+                "input": {},
+            },
+        ],
+    }
+    assert resp_from_test2 == {
+        "detail": [
+            {
+                "type": "missing",
+                "loc": ["body", "foo"],
+                "msg": "Field required",
+                "input": {},
+            },
+        ],
+    }
 
     assert client_2000.post("/test1", json={"foo": "bar"}).json() == {}
     assert client_2000.post("/test2", json={"foo": "bar"}).json() == {}

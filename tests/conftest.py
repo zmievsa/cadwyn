@@ -1,7 +1,4 @@
 import importlib
-import random
-import shutil
-import string
 import textwrap
 import uuid
 from collections.abc import Sequence
@@ -51,35 +48,8 @@ def api_version_var():
 
 
 @pytest.fixture()
-def temp_dir():
-    temp_dir = CURRENT_DIR / "_data/_temp"
-    temp_dir.mkdir(exist_ok=True)
-    try:
-        yield temp_dir
-    finally:
-        shutil.rmtree(temp_dir)
-
-
-@pytest.fixture()
 def random_uuid():
     return uuid.uuid4()
-
-
-@pytest.fixture()
-def created_modules():
-    # This a really-really bad pattern! I am very lazy and evil for doing this
-    return []
-
-
-@fixture_class(name="run_schema_codegen")
-class RunSchemaCodegen:
-    temp_data_package_path: str
-
-    def __call__(self, versions: VersionBundle) -> Any:
-        head_package = importlib.import_module(self.temp_data_package_path + ".head")
-        versions.head_schemas_package = head_package
-        generate_code_for_versioned_packages(versions.head_schemas_package, versions)
-        return versions.head_schemas_package
 
 
 @fixture_class(name="create_versioned_packages")
@@ -112,36 +82,6 @@ class CreateVersionedPackages:
         )
 
 
-@pytest.fixture()
-def temp_data_dir(temp_dir: Path) -> Path:
-    data_dir_name = "".join(random.choices(string.ascii_letters, k=15))
-    data_dir = temp_dir / data_dir_name
-    data_dir.mkdir()
-    return data_dir
-
-
-@pytest.fixture()
-def data_package_path() -> str:
-    return "tests._data"
-
-
-@pytest.fixture()
-def temp_data_package_path(data_package_path: str, temp_dir: Path, temp_data_dir: Path) -> str:
-    return f"{data_package_path}.{temp_dir.name}.{temp_data_dir.name}"
-
-
-@pytest.fixture()
-def head_dir(temp_data_dir: Path):
-    head = temp_data_dir.joinpath("head")
-    head.mkdir(parents=True)
-    return head
-
-
-@pytest.fixture()
-def head_package_path(head_dir: Path, temp_data_package_path: str) -> str:
-    return f"{temp_data_package_path}.{head_dir.name}"
-
-
 @fixture_class(name="head_module_for")
 class HeadModuleFor:
     temp_dir: Path
@@ -158,52 +98,6 @@ class HeadModuleFor:
             raise NotImplementedError("You cannot write latest twice")
         self.created_modules.append(latest)
         return latest
-
-
-class _FakeModuleWithEmptyClasses:
-    EmptyEnum: type[Enum]
-    EmptySchema: type[BaseModel]
-
-
-@pytest.fixture()
-def head_with_empty_classes(head_module_for: HeadModuleFor) -> _FakeModuleWithEmptyClasses:
-    return head_module_for(
-        """
-        from enum import Enum, auto
-        import pydantic
-
-        class EmptyEnum(Enum):
-            pass
-
-        class EmptySchema(pydantic.BaseModel):
-            pass
-        """,
-    )
-
-
-class _FakeNamespaceWithOneStrField:
-    SchemaWithOneStrField: type[BaseModel]
-
-
-@pytest.fixture()
-def head_with_one_str_field(head_module_for: HeadModuleFor) -> _FakeNamespaceWithOneStrField:
-    return head_module_for(
-        """
-    from pydantic import BaseModel
-    class SchemaWithOneStrField(BaseModel):
-        foo: str
-    """,
-    )
-
-
-@fixture_class(name="create_simple_versioned_packages")
-class CreateSimpleVersionedPackages:
-    api_version_var: ContextVar[date | None]
-    temp_data_package_path: str
-    create_versioned_packages: CreateVersionedPackages
-
-    def __call__(self, *instructions: Any) -> tuple[ModuleType, ...]:
-        return self.create_versioned_packages(version_change(*instructions))
 
 
 @fixture_class(name="create_local_versioned_packages")
@@ -321,8 +215,6 @@ def router() -> VersionedAPIRouter:
 class CreateVersionedApp:
     api_version_var: ContextVar[date | None]
     router: VersionedAPIRouter
-    temp_data_package_path: str
-    run_schema_codegen: RunSchemaCodegen
 
     def __call__(
         self,

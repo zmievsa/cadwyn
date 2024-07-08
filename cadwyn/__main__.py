@@ -1,6 +1,5 @@
 import importlib
 import sys
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -22,49 +21,6 @@ def version_callback(value: bool):
 
         typer.echo(f"Cadwyn {__version__}")
         raise typer.Exit
-
-
-@app.command(name="generate-code-for-versioned-packages", hidden=True)
-def deprecated_generate_versioned_packages(
-    path_to_template_package: str = typer.Argument(
-        ...,
-        help=(
-            "The python path to the template package, from which we will generate the versioned packages. "
-            "Format: 'path.to.template_package'"
-        ),
-        show_default=False,
-    ),
-    full_path_to_version_bundle: str = typer.Argument(
-        ...,
-        help="The python path to the version bundle. Format: 'path.to.version_bundle:my_version_bundle_variable'",
-        show_default=False,
-    ),
-    ignore_coverage_for_latest_aliases: bool = typer.Option(
-        default=True,
-        help="Add a pragma: no cover comment to the star imports in the generated version of the latest module.",
-    ),
-) -> None:
-    """For each version in the version bundle, generate a versioned package based on the template package"""
-    warnings.warn(
-        "`cadwyn generate-code-for-versioned-packages` is deprecated. Please, use `cadwyn codegen` instead",
-        DeprecationWarning,
-        stacklevel=1,
-    )
-
-    from .codegen._main import generate_code_for_versioned_packages
-
-    sys.path.append(str(Path.cwd()))
-    template_package = importlib.import_module(path_to_template_package)
-    path_to_version_bundle, version_bundle_variable_name = full_path_to_version_bundle.split(":")
-    version_bundle_module = importlib.import_module(path_to_version_bundle)
-    possibly_version_bundle = getattr(version_bundle_module, version_bundle_variable_name)
-    version_bundle = _get_version_bundle(possibly_version_bundle)
-
-    return generate_code_for_versioned_packages(  # pyright: ignore[reportDeprecated]
-        template_package,
-        version_bundle,
-        ignore_coverage_for_latest_aliases=ignore_coverage_for_latest_aliases,
-    )
 
 
 @app.command(

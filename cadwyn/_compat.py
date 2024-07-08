@@ -3,6 +3,7 @@ import dataclasses
 import inspect
 from typing import Any, TypeAlias
 
+import annotated_types
 import pydantic
 from fastapi._compat import ModelField as FastAPIModelField
 from pydantic import BaseModel, Field
@@ -12,18 +13,13 @@ PydanticUndefined: TypeAlias = Any
 VALIDATOR_CONFIG_KEY = "__validators__"
 
 try:
-    PYDANTIC_V2 = False
-
     from pydantic.fields import FieldInfo, ModelField  # pyright: ignore # noqa: PGH003
     from pydantic.fields import Undefined as PydanticUndefined  # pyright: ignore # noqa: PGH003
 
     _all_field_arg_names = []
     EXTRA_FIELD_NAME = "extra"
 except ImportError:
-    PYDANTIC_V2 = True
-
     from pydantic.fields import FieldInfo
-    from pydantic_core import PydanticUndefined  # pyright: ignore # noqa: PGH003
 
     ModelField: TypeAlias = FieldInfo  # pyright: ignore # noqa: PGH003
     _all_field_arg_names = sorted(
@@ -46,13 +42,7 @@ def is_pydantic_1_constrained_type(value: object):
 
 
 def is_constrained_type(value: object):
-    if PYDANTIC_V2:
-        import annotated_types
-
-        return isinstance(value, annotated_types.Len | annotated_types.Interval | pydantic.StringConstraints)
-
-    else:
-        return is_pydantic_1_constrained_type(value)
+    return isinstance(value, annotated_types.Len | annotated_types.Interval | pydantic.StringConstraints)
 
 
 @dataclasses.dataclass(slots=True)
@@ -76,76 +66,37 @@ class PydanticFieldWrapper:
             self.field_info = init_model_field.field_info
 
     def update_attribute(self, *, name: str, value: Any):
-        if PYDANTIC_V2:
-            self.field_info._attributes_set[name] = value
-        else:
-            setattr(self.field_info, name, value)
+        self.field_info._attributes_set[name] = value
 
     def delete_attribute(self, *, name: str) -> None:
-        if PYDANTIC_V2:
-            self.field_info._attributes_set.pop(name)
-        else:
-            setattr(self.field_info, name, PydanticUndefined)
+        self.field_info._attributes_set.pop(name)
 
     @property
     def passed_field_attributes(self):
-        if PYDANTIC_V2:
-            attributes = {
-                attr_name: self.field_info._attributes_set[attr_name]
-                for attr_name in _all_field_arg_names
-                if attr_name in self.field_info._attributes_set
-            }
-            # PydanticV2 always adds frozen to _attributes_set but we don't want it if it wasn't explicitly set
-            if attributes.get("frozen", ...) is None:
-                attributes.pop("frozen")
-            return attributes
-
-        else:
-            attributes = {
-                attr_name: attr_val
-                for attr_name, default_attr_val in dict_of_empty_field_info.items()
-                if attr_name != EXTRA_FIELD_NAME
-                and (attr_val := getattr(self.field_info, attr_name)) != default_attr_val
-            }
-            extras = getattr(self.field_info, EXTRA_FIELD_NAME) or {}
-            return attributes | extras
+        attributes = {
+            attr_name: self.field_info._attributes_set[attr_name]
+            for attr_name in _all_field_arg_names
+            if attr_name in self.field_info._attributes_set
+        }
+        # PydanticV2 always adds frozen to _attributes_set but we don't want it if it wasn't explicitly set
+        if attributes.get("frozen", ...) is None:
+            attributes.pop("frozen")
+        return attributes
 
 
 def get_annotation_from_model_field(model: ModelField) -> Any:
-    if PYDANTIC_V2:
-        return model.field_info.annotation
-    else:
-        return model.annotation
+    return model.field_info.annotation
 
 
 def model_fields(model: type[BaseModel]) -> dict[str, FieldInfo]:
-    if PYDANTIC_V2:
-        return model.model_fields
-    else:
-        return model.__fields__  # pyright: ignore[reportDeprecated]
+    return model.model_fields
 
 
 def model_dump(model: BaseModel, by_alias: bool = False, exclude_unset: bool = False) -> dict[str, Any]:
-    if PYDANTIC_V2:
-        return model.model_dump(by_alias=by_alias, exclude_unset=exclude_unset)
-    else:
-        return model.dict(by_alias=by_alias, exclude_unset=exclude_unset)  # pyright: ignore[reportDeprecated]
+    return model.model_dump(by_alias=by_alias, exclude_unset=exclude_unset)
 
 
 def rebuild_fastapi_body_param(old_body_param: FastAPIModelField, new_body_param_type: type[BaseModel]):
     kwargs: dict[str, Any] = {"name": old_body_param.name, "field_info": old_body_param.field_info}
-    if PYDANTIC_V2:
-        old_body_param.field_info.annotation = new_body_param_type
-        kwargs.update({"mode": old_body_param.mode})
-    else:
-        kwargs.update(
-            {
-                "type_": new_body_param_type,
-                "class_validators": old_body_param.class_validators,  # pyright: ignore[reportAttributeAccessIssue]
-                "default": old_body_param.default,
-                "required": old_body_param.required,
-                "model_config": old_body_param.model_config,  # pyright: ignore[reportAttributeAccessIssue]
-                "alias": old_body_param.alias,
-            },
-        )
-    return FastAPIModelField(**kwargs)
+    old_body_param.field_info.annotation = new_body_param_type
+    kwargs.update({"mode": old_body_param.mode})

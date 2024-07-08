@@ -46,10 +46,7 @@ directory structure as the `cadwyn` module. If you are adding a test
 case, it should be located within the correct submodule of `tests`. E.g.
 tests for `cadwyn/codegen.py` reside in `tests/codegen`.
 
-The `Makefile` includes several commands for running tests:
-
-* `make test` to run tests located in `tests`
-* `make supertest` will run tests on both pydantic 1 and pydantic 2
+`make test` to run tests located in `tests`
 
 ### Running type checkers
 

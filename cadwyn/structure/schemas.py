@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 from pydantic.fields import FieldInfo
 
 from cadwyn._asts import _ValidatorWrapper, get_validator_info_or_none
-from cadwyn._compat import PYDANTIC_V2
 from cadwyn._utils import Sentinel
 from cadwyn.exceptions import CadwynStructureError
 
@@ -148,23 +147,19 @@ class AlterFieldInstructionFactory:
         discriminator: str = Sentinel,
         repr: bool = Sentinel,
     ) -> FieldHadInstruction:
-        if PYDANTIC_V2:
-            if regex is not Sentinel:
-                raise CadwynStructureError("`regex` was removed in Pydantic 2. Use `pattern` instead")
-            if include is not Sentinel:
-                raise CadwynStructureError("`include` was removed in Pydantic 2. Use `exclude` instead")
-            if min_items is not Sentinel:
-                raise CadwynStructureError("`min_items` was removed in Pydantic 2. Use `min_length` instead")
-            if max_items is not Sentinel:
-                raise CadwynStructureError("`max_items` was removed in Pydantic 2. Use `max_length` instead")
-            if unique_items is not Sentinel:
-                raise CadwynStructureError(
-                    "`unique_items` was removed in Pydantic 2. Use `Set` type annotation instead"
-                    "(this feature is discussed in https://github.com/pydantic/pydantic-core/issues/296)",
-                )
-        else:
-            if pattern is not Sentinel:
-                raise CadwynStructureError("`pattern` is only available in Pydantic 2. use `regex` instead")
+        if regex is not Sentinel:
+            raise CadwynStructureError("`regex` was removed in Pydantic 2. Use `pattern` instead")
+        if include is not Sentinel:
+            raise CadwynStructureError("`include` was removed in Pydantic 2. Use `exclude` instead")
+        if min_items is not Sentinel:
+            raise CadwynStructureError("`min_items` was removed in Pydantic 2. Use `min_length` instead")
+        if max_items is not Sentinel:
+            raise CadwynStructureError("`max_items` was removed in Pydantic 2. Use `max_length` instead")
+        if unique_items is not Sentinel:
+            raise CadwynStructureError(
+                "`unique_items` was removed in Pydantic 2. Use `Set` type annotation instead"
+                "(this feature is discussed in https://github.com/pydantic/pydantic-core/issues/296)",
+            )
         return FieldHadInstruction(
             schema=self.schema,
             name=self.name,

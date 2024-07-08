@@ -4,7 +4,6 @@ from collections.abc import Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from types import ModuleType
 from typing import Any, cast
 
 from fastapi import APIRouter, FastAPI, HTTPException, routing
@@ -97,7 +96,6 @@ class Cadwyn(FastAPI):
         # TODO: Remove argument entirely in any major version.
         latest_schemas_package = extra.pop("latest_schemas_package", None) or self.versions.head_schemas_package
         self.versions.head_schemas_package = latest_schemas_package
-        self._latest_schemas_package = cast(ModuleType, latest_schemas_package)
         self._dependency_overrides_provider = FakeDependencyOverridesProvider({})
 
         super().__init__(
@@ -186,16 +184,6 @@ class Cadwyn(FastAPI):
         value: dict[Callable[..., Any], Callable[..., Any]],
     ) -> None:
         self._dependency_overrides_provider.dependency_overrides = value
-
-    @property  # pragma: no cover
-    @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
-    def latest_schemas_package(self):
-        return self._latest_schemas_package
-
-    @latest_schemas_package.setter  # pragma: no cover
-    @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
-    def latest_schemas_package(self, value: ModuleType | None):
-        self._latest_schemas_package = value
 
     def _add_openapi_endpoints(self, unversioned_router: APIRouter):
         if self.openapi_url is not None:

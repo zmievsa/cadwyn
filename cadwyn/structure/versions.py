@@ -2,16 +2,13 @@ import email.message
 import functools
 import inspect
 import json
-import sys
-import warnings
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from enum import Enum
-from pathlib import Path
 from types import ModuleType
-from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, overload
+from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
 
 from fastapi import HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -25,21 +22,18 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
 from starlette._utils import is_async_callable
-from typing_extensions import assert_never, deprecated
+from typing_extensions import assert_never
 
-from cadwyn._compat import PYDANTIC_V2, ModelField, PydanticUndefined, model_dump
+from cadwyn._compat import ModelField, PydanticUndefined, model_dump
 from cadwyn._package_utils import (
     IdentifierPythonPath,
     get_cls_pythonpath,
-    get_package_path_from_module,
-    get_version_dir_path,
 )
-from cadwyn._utils import classproperty, get_another_version_of_module
+from cadwyn._utils import classproperty
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
     CadwynStructureError,
-    ModuleIsNotVersionedError,
 )
 from cadwyn.schema_generation import _generate_versioned_models
 
@@ -244,35 +238,12 @@ class HeadVersion:
 
 
 class VersionBundle:
-    @overload
     def __init__(
         self,
         latest_version_or_head_version: Version | HeadVersion,
         /,
         *other_versions: Version,
         api_version_var: APIVersionVarType | None = None,
-        head_schemas_package: ModuleType | None = None,
-    ) -> None: ...
-
-    @overload
-    @deprecated("Pass head_version_package instead of latest_schemas_package.")
-    def __init__(
-        self,
-        latest_version_or_head_version: Version | HeadVersion,
-        /,
-        *other_versions: Version,
-        api_version_var: APIVersionVarType | None = None,
-        latest_schemas_package: ModuleType | None = None,
-    ) -> None: ...
-
-    def __init__(
-        self,
-        latest_version_or_head_version: Version | HeadVersion,
-        /,
-        *other_versions: Version,
-        api_version_var: APIVersionVarType | None = None,
-        head_schemas_package: ModuleType | None = None,
-        latest_schemas_package: ModuleType | None = None,
     ) -> None:
         super().__init__()
 
@@ -283,7 +254,6 @@ class VersionBundle:
             self.head_version = HeadVersion()
             self.versions = (latest_version_or_head_version, *other_versions)
 
-        self.head_schemas_package = head_schemas_package or latest_schemas_package
         self.version_dates = tuple(version.value for version in self.versions)
         if api_version_var is None:
             api_version_var = ContextVar("cadwyn_api_version")
@@ -317,40 +287,8 @@ class VersionBundle:
                     )
                 version_change._bound_version_bundle = self
 
-    @property  # pragma: no cover
-    @deprecated("Use head_version_package instead.")
-    def latest_schemas_package(self):
-        return self.head_schemas_package
-
     def __iter__(self) -> Iterator[Version]:
         yield from self.versions
-
-    def _validate_head_schemas_package_structure(self):
-        # This entire function won't be necessary once we start raising an exception
-        # upon receiving `latest`.
-
-        if self.head_schemas_package is None:
-            # This means that we are not using codegen, we are using runtime generation
-            return None
-        if not hasattr(self.head_schemas_package, "__path__"):
-            raise CadwynStructureError(
-                f'The head schemas package must be a package. "{self.head_schemas_package.__name__}" is not a package.',
-            )
-        elif self.head_schemas_package.__name__.endswith(".head") or self.head_schemas_package.__name__ == "head":
-            return "head"
-        elif self.head_schemas_package.__name__.endswith(".latest"):
-            warnings.warn(
-                'The name of the head schemas module must be "head". '
-                f'Received "{self.head_schemas_package.__name__}" instead.',
-                DeprecationWarning,
-                stacklevel=4,
-            )
-            return "latest"
-        else:
-            raise CadwynStructureError(
-                'The name of the head schemas module must be "head". '
-                f'Received "{self.head_schemas_package.__name__}" instead.',
-            )
 
     @functools.cached_property
     def _all_versions(self):
@@ -395,25 +333,6 @@ class VersionBundle:
             for instruction in version_change.alter_module_instructions
         }
 
-    @functools.cached_property
-    @deprecated("Code generation is deprecated and will be removed in Cadwyn 4.0")
-    def versioned_directories_with_head(self) -> tuple[Path, ...]:
-        if self.head_schemas_package is None:
-            raise CadwynError(
-                f"You cannot call 'VersionBundle.{self.migrate_response_body.__name__}' because it has no access to "
-                "'head_schemas_package'. It likely means that it was not attached "
-                "to any Cadwyn application which attaches 'head_schemas_package' during initialization."
-            )
-        return tuple(
-            [get_package_path_from_module(self.head_schemas_package)]
-            + [get_version_dir_path(self.head_schemas_package, version.value) for version in self]
-        )
-
-    @functools.cached_property
-    @deprecated("Code generation is deprecated and will be removed in Cadwyn 4.0")
-    def versioned_directories_without_head(self) -> tuple[Path, ...]:
-        return self.versioned_directories_with_head[1:]
-
     def migrate_response_body(self, latest_response_model: type[BaseModel], *, latest_body: Any, version: VersionDate):
         """Convert the data to a specific version by applying all version changes from latest until that version
         in reverse order and wrapping the result in the correct version of latest_response_model.
@@ -442,26 +361,7 @@ class VersionBundle:
 
     @functools.cache
     def _get_another_version_of_cls(self, cls_from_old_version: type[Any], new_version: str):
-        if self.head_schemas_package is not None:
-            module_from_old_version = sys.modules[cls_from_old_version.__module__]
-            try:
-                module = get_another_version_of_module(
-                    module_from_old_version,
-                    # version_dir = /home/myuser/package/companies/v2021_01_01
-                    self._get_version_dir(new_version),
-                    self.versioned_directories_without_head,
-                )
-            except ModuleIsNotVersionedError:
-                return cls_from_old_version
-            return getattr(module, cls_from_old_version.__name__)
-        else:
-            return _generate_versioned_models(self)[new_version][cls_from_old_version]
-
-    def _get_version_dir(self, version: str) -> Path:
-        if version == "head":
-            return self.versioned_directories_with_head[0]
-        else:
-            return self.versioned_directories_without_head[self.version_dates.index(version)]
+        return _generate_versioned_models(self)[new_version][cls_from_old_version]
 
     @functools.cached_property
     def _version_changes_to_version_mapping(
@@ -768,8 +668,6 @@ class VersionBundle:
                 body = raw_body
             else:
                 body = model_dump(raw_body, by_alias=True, exclude_unset=True)
-                if not PYDANTIC_V2 and raw_body.__custom_root_type__:  # pyright: ignore[reportAttributeAccessIssue]
-                    body = body["__root__"]
         else:
             # This is for requests without body or with complex body such as form or file
             body = await _get_body(request, route.body_field, exit_stack)

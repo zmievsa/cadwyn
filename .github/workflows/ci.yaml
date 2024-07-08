@@ -39,7 +39,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - run: make ci_supertest
+      - run: make test
 
   Lint:
     runs-on: ubuntu-latest

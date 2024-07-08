@@ -1,28 +1,19 @@
-import copy
-import inspect
 import re
 from enum import Enum, auto
-from functools import partial
-from typing import Annotated, Any, Literal, Union, get_args
+from typing import Annotated, Any, Literal, Union
 
 import pytest
-from annotated_types import Interval
 from pydantic import BaseModel, Field, StringConstraints, ValidationError, conint, constr
 from pydantic.fields import FieldInfo
-from pydantic_core.core_schema import ModelSchema
 
-from cadwyn._compat import PYDANTIC_V2, model_fields
+from cadwyn._compat import model_fields
 from cadwyn.exceptions import (
     CadwynStructureError,
     InvalidGenerationInstructionError,
 )
 from cadwyn.structure import schema
 from tests.conftest import (
-    CreateLocalVersionedPackages,
     CreateRuntimeSchemas,
-    HeadModuleFor,
-    _FakeModuleWithEmptyClasses,
-    _FakeNamespaceWithOneStrField,
     assert_models_are_equal,
     version_change,
 )
@@ -244,13 +235,9 @@ def test__schema_field_had__str_field(attr: str, attr_value: Any, create_runtime
 
 
 def test__schema_field_had__pattern(create_runtime_schemas: CreateRuntimeSchemas):
-    if PYDANTIC_V2:
-        attr_name = "pattern"
-    else:
-        attr_name = "regex"
     assert_field_had_changes_apply(
         SchemaWithOneStrField,
-        attr_name,
+        "pattern",
         r"hewwo darkness",
         create_runtime_schemas,
     )

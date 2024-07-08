@@ -13,7 +13,6 @@ from pathlib import Path
 from types import GenericAlias, MappingProxyType, ModuleType
 from typing import (
     TYPE_CHECKING,
-    Annotated,
     Any,
     Generic,
     TypeVar,
@@ -22,7 +21,6 @@ from typing import (
     final,
     get_args,
     get_origin,
-    overload,
 )
 
 import fastapi.params
@@ -30,16 +28,15 @@ import fastapi.routing
 import fastapi.security.base
 import fastapi.utils
 from fastapi import APIRouter
-from fastapi._compat import ModelField as FastAPIModelField
 from fastapi._compat import create_body_model
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel
 from starlette.routing import BaseRoute
-from typing_extensions import Self, assert_never, deprecated
+from typing_extensions import assert_never
 
-from cadwyn._compat import get_annotation_from_model_field, model_fields, rebuild_fastapi_body_param
+from cadwyn._compat import get_annotation_from_model_field, model_fields
 from cadwyn._utils import Sentinel, UnionType
 from cadwyn.exceptions import (
     CadwynError,
@@ -78,37 +75,9 @@ class _EndpointInfo:
     endpoint_methods: frozenset[str]
 
 
-@deprecated("It will soon be deleted. Use HeadVersion version changes instead.")
-class InternalRepresentationOf:
-    def __class_getitem__(cls, original_schema: type, /) -> type[Self]:
-        return cast(Any, type("InternalRepresentationOf", (cls, original_schema), {}))
-
-
-@overload
-def generate_versioned_routers(
-    router: _R,
-    versions: VersionBundle,
-) -> dict[VersionDate, _R]: ...
-
-
-@overload
-@deprecated("Do not use the latest_schemas_package argument. Put head_schemas_package into your VersionBundle instead")
-def generate_versioned_routers(
-    router: _R,
-    versions: VersionBundle,
-    latest_schemas_package: ModuleType | None,
-) -> dict[VersionDate, _R]: ...
-
-
-def generate_versioned_routers(
-    router: _R,
-    versions: VersionBundle,
-    latest_schemas_package: ModuleType | None = None,
-) -> dict[VersionDate, _R]:
+def generate_versioned_routers(router: _R, versions: VersionBundle) -> dict[VersionDate, _R]:
     if versions.head_schemas_package is not None:
         head_schemas_package = versions.head_schemas_package
-    elif latest_schemas_package is not None:  # pragma: no cover
-        head_schemas_package = latest_schemas_package
     else:
         head_schemas_package = None
     versions.head_schemas_package = head_schemas_package
@@ -147,14 +116,11 @@ class _EndpointTransformer(Generic[_R]):
         ]
 
     def transform(self) -> dict[VersionDate, _R]:
-        schema_to_internal_request_body_representation = _extract_internal_request_schemas_from_router(
-            self.parent_router
-        )
         router = deepcopy(self.parent_router)
         routers: dict[VersionDate, _R] = {}
 
         for version in self.versions:
-            self.annotation_transformer.migrate_router_to_version(router, str(version))
+            self.annotation_transformer.migrate_router_to_version(router, str(version.value))
 
             self._validate_all_data_converters_are_applied(router, version)
 
@@ -178,12 +144,6 @@ class _EndpointTransformer(Generic[_R]):
             _add_request_and_response_params(head_route)
             copy_of_dependant = deepcopy(head_route.dependant)
 
-            if _route_has_a_simple_body_schema(head_route):
-                self._replace_internal_representation_with_the_versioned_schema(
-                    copy_of_dependant,
-                    schema_to_internal_request_body_representation,
-                )
-
             for older_router in list(routers.values()):
                 older_route = older_router.routes[route_index]
 
@@ -192,10 +152,7 @@ class _EndpointTransformer(Generic[_R]):
                 older_route = cast(APIRoute, older_route)
                 # Wait.. Why do we need this code again?
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
-                    template_older_body_model = self.annotation_transformer._change_version_of_annotations(
-                        older_route.body_field.type_,
-                        "head",
-                    )
+                    template_older_body_model = older_route.body_field.type_.__cadwyn_original_model__
                 else:
                     template_older_body_model = None
                 _add_data_migrations_to_route(
@@ -256,6 +213,7 @@ class _EndpointTransformer(Generic[_R]):
                 for by_schema_converter in by_schema_converters:
                     missing_models = set(by_schema_converter.schemas) - head_response_models
                     if missing_models:
+                        breakpoint()
                         raise RouteResponseBySchemaConverterDoesNotApplyToAnythingError(
                             f"Response by response model converter "
                             f'"{version_change.__name__}.{by_schema_converter.transformer.__name__}" '
@@ -284,25 +242,10 @@ class _EndpointTransformer(Generic[_R]):
                         request_bodies.add(annotation)
                 path_to_route_methods_mapping[route.path] |= route.methods
 
-        head_response_models = {
-            self.annotation_transformer._change_version_of_annotations(model, "head") for model in response_models
-        }
-        head_request_bodies = {
-            self.annotation_transformer._change_version_of_annotations(body, "head") for body in request_bodies
-        }
+        head_response_models = {model.__cadwyn_original_model__ for model in response_models}
+        head_request_bodies = {body.__cadwyn_original_model__ for body in request_bodies}
 
         return path_to_route_methods_mapping, head_response_models, head_request_bodies
-
-    def _replace_internal_representation_with_the_versioned_schema(
-        self,
-        copy_of_dependant: "Dependant",
-        schema_to_internal_request_body_representation: dict[type[BaseModel], type[BaseModel]],
-    ):
-        body_param: FastAPIModelField = copy_of_dependant.body_params[0]
-        body_schema = body_param.type_
-        new_type = schema_to_internal_request_body_representation.get(body_schema, body_schema)
-        new_body_param = rebuild_fastapi_body_param(body_param, new_type)
-        copy_of_dependant.body_params = [new_body_param]
 
     # TODO (https://github.com/zmievsa/cadwyn/issues/28): Simplify
     def _apply_endpoint_changes_to_router(  # noqa: C901
@@ -427,40 +370,6 @@ class _EndpointTransformer(Generic[_R]):
                             version_change_name=version_change.__name__,
                         ),
                     )
-
-
-def _extract_internal_request_schemas_from_router(
-    router: fastapi.routing.APIRouter,
-) -> dict[type[BaseModel], type[BaseModel]]:
-    """Please note that this functon replaces internal bodies with original bodies in the router"""
-    schema_to_internal_request_body_representation = {}
-
-    def _extract_internal_request_schemas_from_annotations(annotations: dict[str, Any]):
-        for key, annotation in annotations.items():
-            if isinstance(annotation, type(Annotated[int, int])):
-                args = get_args(annotation)
-                if isinstance(args[1], type) and issubclass(  # pragma: no branch
-                    args[1],
-                    InternalRepresentationOf,  # pyright: ignore[reportDeprecated]
-                ):
-                    internal_schema = args[0]
-                    original_schema = args[1].mro()[2]
-                    schema_to_internal_request_body_representation[original_schema] = internal_schema
-                    if len(args[2:]) != 0:
-                        annotations[key] = Annotated[(original_schema, *args[2:])]
-                    else:
-                        annotations[key] = original_schema
-        return annotations
-
-    for route in router.routes:
-        if isinstance(route, APIRoute):  # pragma: no branch
-            route.endpoint = _modify_callable_annotations(
-                route.endpoint,
-                modify_annotations=_extract_internal_request_schemas_from_annotations,
-                annotation_modifying_wrapper_factory=_copy_endpoint,
-            )
-            _remake_endpoint_dependencies(route)
-    return schema_to_internal_request_body_representation
 
 
 def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):

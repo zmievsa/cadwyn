@@ -1,13 +1,12 @@
 import copy
 import dataclasses
 from collections.abc import Sequence
-from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeVar, cast, get_args, get_origin
+from functools import cache
+from typing import TYPE_CHECKING, Annotated, Any, cast, get_args, get_origin
 
 import pydantic
 import pydantic._internal._decorators
-from pydantic import BaseModel
-from typing_extensions import Annotated, assert_never
+from typing_extensions import assert_never
 
 from cadwyn._utils import Sentinel
 from cadwyn.exceptions import InvalidGenerationInstructionError
@@ -19,7 +18,6 @@ from cadwyn.runtime_compat import (
     _PydanticRuntimeModelWrapper,
     _SchemaGenerator,
     _wrap_validator,
-    is_constrained_type,
     wrap_pydantic_model,
 )
 from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
@@ -49,10 +47,11 @@ class RuntimeSchemaGenContext:
         self.latest_version = max(self.version_bundle.versions, key=lambda v: v.value)
 
 
+@cache
 def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, _SchemaGenerator]":
     models = _create_model_bundle(versions)
 
-    version_to_context_map = {"head": _SchemaGenerator(copy.deepcopy(models))}
+    version_to_context_map = {}
     context = RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
     _migrate_classes(context)
 

@@ -16,7 +16,6 @@ from typing import (  # noqa: UP035
 )
 
 from cadwyn._compat import (
-    PYDANTIC_V2,
     is_pydantic_1_constrained_type,
 )
 from cadwyn._package_utils import (
@@ -42,11 +41,10 @@ GenericAliasUnion = GenericAlias | _BaseGenericAlias
 
 
 def get_fancy_repr(value: Any):
-    if PYDANTIC_V2:
-        import annotated_types
+    import annotated_types
 
-        if isinstance(value, annotated_types.GroupedMetadata) and hasattr(type(value), "__dataclass_fields__"):
-            return transform_grouped_metadata(value)
+    if isinstance(value, annotated_types.GroupedMetadata) and hasattr(type(value), "__dataclass_fields__"):
+        return transform_grouped_metadata(value)
     if isinstance(value, list | tuple | set | frozenset):
         return transform_collection(value)
     if isinstance(value, dict):

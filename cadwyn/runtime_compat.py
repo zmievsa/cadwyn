@@ -1,11 +1,10 @@
 import ast
 import copy
 import dataclasses
-import functools
 import inspect
 from collections.abc import Callable
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeAlias, TypeVar, cast, final
+from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeAlias, TypeVar, cast, final, get_args, get_origin
 
 import pydantic
 from issubclass import issubclass
@@ -31,13 +30,13 @@ from pydantic._internal._decorators import (
     unwrap_wrapped_function,
 )
 from pydantic.fields import ComputedFieldInfo
-from typing_extensions import Doc, Self, _AnnotatedAlias, get_args, get_origin
+from typing_extensions import Doc, Self, _AnnotatedAlias
 
 from cadwyn._compat import (
-    PYDANTIC_V2,
     FieldInfo,
     dict_of_empty_field_info,
 )
+from cadwyn._package_utils import get_cls_pythonpath
 
 if TYPE_CHECKING:
     from cadwyn.codegen._common import _FieldName
@@ -52,16 +51,12 @@ PydanticUndefined: TypeAlias = Any
 VALIDATOR_CONFIG_KEY = "__validators__"
 
 try:
-    PYDANTIC_V2 = False
-
     from pydantic.fields import FieldInfo, ModelField  # pyright: ignore # noqa: PGH003
     from pydantic.fields import Undefined as PydanticUndefined  # pyright: ignore # noqa: PGH003
 
     _all_field_arg_names = []
     EXTRA_FIELD_NAME = "extra"
 except ImportError:
-    PYDANTIC_V2 = True
-
     from pydantic.fields import FieldInfo
 
     ModelField: TypeAlias = FieldInfo  # pyright: ignore # noqa: PGH003
@@ -119,25 +114,15 @@ class PydanticFieldWrapper:
 
 
 def _extract_passed_field_attributes(field_info):
-    if PYDANTIC_V2:
-        attributes = {
-            attr_name: field_info._attributes_set[attr_name]
-            for attr_name in _all_field_arg_names
-            if attr_name in field_info._attributes_set
-        }
-        # PydanticV2 always adds frozen to _attributes_set but we don't want it if it wasn't explicitly set
-        if attributes.get("frozen", ...) is None:
-            attributes.pop("frozen")
-        return attributes
-
-    else:
-        attributes = {
-            attr_name: attr_val
-            for attr_name, default_attr_val in dict_of_empty_field_info.items()
-            if attr_name != EXTRA_FIELD_NAME and (attr_val := getattr(field_info, attr_name)) != default_attr_val
-        }
-        extras = getattr(field_info, EXTRA_FIELD_NAME) or {}
-        return attributes | extras
+    attributes = {
+        attr_name: field_info._attributes_set[attr_name]
+        for attr_name in _all_field_arg_names
+        if attr_name in field_info._attributes_set
+    }
+    # PydanticV2 always adds frozen to _attributes_set but we don't want it if it wasn't explicitly set
+    if attributes.get("frozen", ...) is None:
+        attributes.pop("frozen")
+    return attributes
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
@@ -171,6 +156,9 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     _parents: list[Self] | None = dataclasses.field(init=False, default=None)
 
     def __post_init__(self):
+        while hasattr(self.cls, "__cadwyn_original_model__"):
+            self.cls = self.cls.__cadwyn_original_model__  # pyright: ignore[reportAttributeAccessIssue]
+
         for k, annotation in self.annotations.items():
             if get_origin(annotation) == Annotated:
                 sub_annotations = get_args(annotation)
@@ -231,7 +219,7 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             if not validator.is_deleted and type(validator) == _ValidatorWrapper
         }
         fields = {name: field.generate_field_copy() for name, field in self.fields.items()}
-        return type(self.cls)(
+        model_copy = type(self.cls)(
             self.name,
             tuple(generator[base] for base in self.cls.__bases__),
             self.other_attributes
@@ -240,6 +228,9 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             | fields
             | {"__annotations__": self.annotations, "__doc__": self.doc},
         )
+
+        model_copy.__cadwyn_original_model__ = self.cls
+        return model_copy
 
 
 class _DummyEnum(Enum):
@@ -293,17 +284,18 @@ class _SchemaGenerator:
 
     def __init__(self, model_bundle: _ModelBundle) -> None:
         self.model_bundle = model_bundle
-        self.concrete_models = {}  # This is here because the call to generate_model_copy below tries to use this attr
+        self.concrete_models = {}
         self.concrete_models = {
-            k: wrapper.generate_model_copy(self)
+            get_cls_pythonpath(k): wrapper.generate_model_copy(self)
             for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
         }
 
     def __getitem__(self, model: type, /) -> Any:
         if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model is BaseModel:
             return model
-        if model in self.concrete_models:
-            return self.concrete_models[model]
+        pythonpath = get_cls_pythonpath(model)
+        if pythonpath in self.concrete_models:
+            return self.concrete_models[pythonpath]
 
         if issubclass(model, BaseModel):
             wrapper = wrap_pydantic_model(model)
@@ -312,7 +304,7 @@ class _SchemaGenerator:
             wrapper = _EnumWrapper(model)
             self.model_bundle.enums[model] = wrapper
         model_copy = wrapper.generate_model_copy(self)
-        self.concrete_models[model] = model_copy
+        self.concrete_models[pythonpath] = model_copy
         return model_copy
 
 

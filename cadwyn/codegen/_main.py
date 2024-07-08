@@ -8,7 +8,6 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, overload
 
-import ast_comments
 from typing_extensions import deprecated
 
 from cadwyn._asts import get_all_names_defined_at_toplevel_of_module, read_python_module
@@ -171,7 +170,7 @@ def _generate_directory_for_version(
 
         parsed_file = _apply_module_level_plugins(plugins, parsed_file, context)
         new_module = _apply_per_node_plugins(plugins, parsed_file, context)
-        parallel_file.write_text(_AUTO_GENERATION_WARNING + ast_comments.unparse(new_module))
+        parallel_file.write_text(_AUTO_GENERATION_WARNING + ast.unparse(new_module))
 
 
 def _apply_module_level_plugins(

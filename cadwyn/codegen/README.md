@@ -7,4 +7,4 @@ plugins/class_rebuilding.py -- plugin for building enums + schemas from their ve
 plugins/class_renaming.py -- plugin for globally renaming classes such as schemas or enums
 plugins/import_auto_adding.py -- plugin for adding missing imports from other files or libraries
 
-You are free to overwrite any and all default plugins using the optional arguments of `generate_code_for_versioned_packages`. Please note our use of `ast_comments` module for preserving comments that we add. Please also note that codegen migrations apply strictly to the toplevel of the module. So if you want to visit some inner structure -- you'd have to find it yourself.
+You are free to overwrite any and all default plugins using the optional arguments of `generate_code_for_versioned_packages`.

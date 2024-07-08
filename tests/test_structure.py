@@ -6,7 +6,6 @@ from typing import Any, get_args
 import pytest
 from pydantic import BaseModel
 
-from cadwyn._compat import PYDANTIC_V2
 from cadwyn.exceptions import CadwynError, CadwynStructureError, LintingError
 from cadwyn.structure import (
     Version,
@@ -406,17 +405,8 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
     ],
 )
 def test__schema_field_had_pydantic_1_field_in_pydantic_2__should_raise_error(attr_name: str, attr_value: Any):
-    if not PYDANTIC_V2:
-        pytest.skip("This test is only for Pydantic v2.")
     with pytest.raises(CadwynStructureError, match=f"`{attr_name}` was removed in Pydantic 2. Use `"):
         schema(SomeSchema).field("foo").had(**{attr_name: attr_value})
-
-
-def test__schema_field_had_pydantic_2_field_in_pydantic_1__should_raise_error():
-    if PYDANTIC_V2:
-        pytest.skip("This test is only for Pydantic v1.")
-    with pytest.raises(CadwynStructureError, match="`pattern` is only available in Pydantic 2. use `regex` instead"):
-        schema(SomeSchema).field("foo").had(pattern=r"rawr")
 
 
 def test__schema_field_had_arguments_are_in_sync_with_schema_field_didnt_have_typehints():
