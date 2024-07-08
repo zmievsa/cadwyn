@@ -7,13 +7,10 @@ from pydantic import root_validator, validator
 
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure import schema
-from tests.conftest import CreateLocalSimpleVersionedPackages, HeadModuleFor
+from tests.conftest import CreateLocalSimpleVersionedPackages
 
 
-def test__schema_validator_existed(
-    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_one_str_field: Any,
-):
+def test__schema_validator_existed(create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages):
     @root_validator(pre=True)
     def hewwo(cls, values):
         raise NotImplementedError
@@ -40,7 +37,7 @@ def test__schema_validator_existed(
 
 
 @pytest.fixture()
-def head_with_validator(head_module_for: HeadModuleFor):
+def head_with_validator():
     return head_module_for(
         """
     from pydantic import BaseModel, validator
@@ -56,7 +53,6 @@ def head_with_validator(head_module_for: HeadModuleFor):
 
 def test__schema_validator_didnt_exist(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_validator: Any,
 ):
     v1 = create_local_simple_versioned_packages(
         schema(head_with_validator.SchemaWithOneStrField)
@@ -69,7 +65,6 @@ def test__schema_validator_didnt_exist(
 
 def test__schema_validator_didnt_exist__applied_twice__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_validator: Any,
 ):
     instruction = (
         schema(head_with_validator.SchemaWithOneStrField)
@@ -88,7 +83,6 @@ def test__schema_validator_didnt_exist__applied_twice__should_raise_error(
 
 def test__schema_validator_didnt_exist__for_nonexisting_validator__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_validator: Any,
 ):
     @validator("foo")
     def fake_validator(cls, value):
@@ -108,7 +102,6 @@ def test__schema_validator_didnt_exist__for_nonexisting_validator__should_raise_
 
 def test__schema_validator_existed__non_validator_was_passed__should_raise_error(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_validator: Any,
 ):
     def fake_validator(cls, value):
         raise NotImplementedError
@@ -127,7 +120,6 @@ def test__schema_validator_existed__non_validator_was_passed__should_raise_error
 
 def test__schema_field_didnt_exist__with_validator__validator_must_be_deleted_too(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_with_validator: Any,
 ):
     v1 = create_local_simple_versioned_packages(
         schema(head_with_validator.SchemaWithOneStrField).field("foo").didnt_exist,
@@ -138,7 +130,6 @@ def test__schema_field_didnt_exist__with_validator__validator_must_be_deleted_to
 
 def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__validator_loses_one_of_its_args(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
-    head_module_for: HeadModuleFor,
 ):
     latest = head_module_for(
         """

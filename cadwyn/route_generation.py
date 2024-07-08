@@ -76,13 +76,7 @@ class _EndpointInfo:
 
 
 def generate_versioned_routers(router: _R, versions: VersionBundle) -> dict[VersionDate, _R]:
-    if versions.head_schemas_package is not None:
-        head_schemas_package = versions.head_schemas_package
-    else:
-        head_schemas_package = None
-    versions.head_schemas_package = head_schemas_package
-    versions._validate_head_schemas_package_structure()
-    return _EndpointTransformer(router, versions, head_schemas_package).transform()
+    return _EndpointTransformer(router, versions).transform()
 
 
 class VersionedAPIRouter(fastapi.routing.APIRouter):
@@ -104,12 +98,11 @@ class _EndpointTransformer(Generic[_R]):
         self,
         parent_router: _R,
         versions: VersionBundle,
-        head_schemas_package: ModuleType | None,
     ) -> None:
         super().__init__()
         self.parent_router = parent_router
         self.versions = versions
-        self.annotation_transformer = _AnnotationTransformer(versions, head_schemas_package)
+        self.annotation_transformer = _AnnotationTransformer(versions)
 
         self.routes_that_never_existed = [
             route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
@@ -152,7 +145,10 @@ class _EndpointTransformer(Generic[_R]):
                 older_route = cast(APIRoute, older_route)
                 # Wait.. Why do we need this code again?
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
-                    template_older_body_model = older_route.body_field.type_.__cadwyn_original_model__
+                    if hasattr(older_route.body_field.type_, "__cadwyn_original_model__"):
+                        template_older_body_model = older_route.body_field.type_.__cadwyn_original_model__
+                    else:
+                        template_older_body_model = older_route.body_field.type_
                 else:
                     template_older_body_model = None
                 _add_data_migrations_to_route(
@@ -213,7 +209,6 @@ class _EndpointTransformer(Generic[_R]):
                 for by_schema_converter in by_schema_converters:
                     missing_models = set(by_schema_converter.schemas) - head_response_models
                     if missing_models:
-                        breakpoint()
                         raise RouteResponseBySchemaConverterDoesNotApplyToAnythingError(
                             f"Response by response model converter "
                             f'"{version_change.__name__}.{by_schema_converter.transformer.__name__}" '
@@ -243,7 +238,7 @@ class _EndpointTransformer(Generic[_R]):
                 path_to_route_methods_mapping[route.path] |= route.methods
 
         head_response_models = {model.__cadwyn_original_model__ for model in response_models}
-        head_request_bodies = {body.__cadwyn_original_model__ for body in request_bodies}
+        head_request_bodies = {getattr(body, "__cadwyn_original_model__", body) for body in request_bodies}
 
         return path_to_route_methods_mapping, head_response_models, head_request_bodies
 
@@ -416,14 +411,11 @@ class _CodegenInfo:
 
 @final
 class _AnnotationTransformer:
-    def __init__(self, versions: VersionBundle, head_schemas_package: ModuleType | None) -> None:
+    def __init__(self, versions: VersionBundle) -> None:
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
         # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
         # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
-        if head_schemas_package is not None:
-            self.codegen_info = _CodegenInfo(versions, head_schemas_package)
-        else:
-            self.codegen_info = None
+        self.codegen_info = None
         self.versions = versions
         self.change_versions_of_a_non_container_annotation = functools.cache(
             self._change_version_of_a_non_container_annotation,
@@ -522,17 +514,6 @@ class _AnnotationTransformer:
     def _change_version_of_type(self, annotation: type, version: str):
         if issubclass(annotation, BaseModel | Enum):
             # These can only be true or false together so the "and" is only here for type hints
-            if self.codegen_info is not None:
-                if self.versions._get_version_dir(version) == self.codegen_info.latest_version_dir:
-                    source_file = inspect.getsourcefile(annotation)
-                    if source_file is None:  # pragma: no cover # I am not even sure how to cover this
-                        warnings.warn(
-                            f'Failed to find where the type annotation "{annotation}" is located.'
-                            "Please, double check that it's located in the right directory",
-                            stacklevel=7,
-                        )
-                    else:
-                        self.codegen_info._validate_source_file_is_located_in_template_dir(annotation, source_file)
             return self.versions._get_another_version_of_cls(annotation, version)
         else:
             return annotation

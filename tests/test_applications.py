@@ -20,7 +20,6 @@ from tests._resources.versioned_app.app import (
     v2022_01_02_router,
     versioned_app,
 )
-from tests.conftest import RunSchemaCodegen
 
 
 def test__cadwyn_enrich_swagger__still_exists_and_is_deprecated():
@@ -98,12 +97,8 @@ def test__header_routing_fastapi__calling_openapi_incorrectly__docs_should_retur
         assert client.get("/openapi.json?version=unversioned").status_code == 200
 
 
-def test__cadwyn__with_dependency_overrides__overrides_should_be_applied(
-    head_with_empty_classes: ModuleType,
-    run_schema_codegen: RunSchemaCodegen,
-):
+def test__cadwyn__with_dependency_overrides__overrides_should_be_applied():
     app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
-    run_schema_codegen(app.versions)
 
     async def old_dependency():
         raise NotImplementedError

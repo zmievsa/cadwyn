@@ -11,6 +11,7 @@ from issubclass import issubclass
 from pydantic import (
     BaseModel,
     Field,
+    RootModel,
     computed_field,
     field_serializer,
     field_validator,
@@ -291,7 +292,7 @@ class _SchemaGenerator:
         }
 
     def __getitem__(self, model: type, /) -> Any:
-        if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model is BaseModel:
+        if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model in (BaseModel, RootModel):
             return model
         pythonpath = get_cls_pythonpath(model)
         if pythonpath in self.concrete_models:

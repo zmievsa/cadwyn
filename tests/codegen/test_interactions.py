@@ -94,7 +94,6 @@ def test__schema_defined_in_nested_files(
     head_dir: Path,
     head_package_path: str,
     temp_data_dir: Path,
-    temp_data_package_path: str,
 ):
     head_dir.joinpath("level0.py").write_text(
         textwrap.dedent(
@@ -189,7 +188,6 @@ def test__schema_defined_in_nested_files(
 
 @pytest.fixture()
 def head_with_dependent_schemas(
-    temp_data_package_path: str,
     create_local_versioned_packages: CreateLocalVersionedPackages,
     head_module_for: HeadModuleFor,
     head_dir: Path,
@@ -216,7 +214,6 @@ class SchemaThatDependsOnAnotherSchema(SchemaWithOneFloatField):
 
 
 def test__schema_had_name__with_dependent_schema_not_altered(
-    temp_data_package_path: str,
     create_local_versioned_packages: CreateLocalVersionedPackages,
     head_with_dependent_schemas,
 ):
@@ -263,7 +260,6 @@ def test__schema_had_name__with_dependent_schema_not_altered(
 
 
 def test__schema_had_name__with_dependent_schema_altered(
-    temp_data_package_path: str,
     create_local_versioned_packages: CreateLocalVersionedPackages,
     head_module_for: HeadModuleFor,
     head_dir: Path,

@@ -82,24 +82,6 @@ class CreateVersionedPackages:
         )
 
 
-@fixture_class(name="head_module_for")
-class HeadModuleFor:
-    temp_dir: Path
-    head_dir: Path
-    head_package_path: str
-    created_modules: list[ModuleType]
-
-    def __call__(self, source: str) -> Any:
-        source = textwrap.dedent(source).strip()
-        self.head_dir.joinpath("__init__.py").write_text(source)
-        importlib.invalidate_caches()
-        latest = importlib.import_module(self.head_package_path)
-        if self.created_modules:
-            raise NotImplementedError("You cannot write latest twice")
-        self.created_modules.append(latest)
-        return latest
-
-
 @fixture_class(name="create_local_versioned_packages")
 class CreateLocalVersionedPackages:
     api_version_var: ContextVar[date | None]
@@ -142,12 +124,6 @@ def import_all_schemas(head_package_path: str, created_versions: Sequence[Versio
             ],
         ),
     )
-
-
-@fixture_class(name="create_runtime_schemas")
-class CreateRuntimeSchemas:
-    def __call__(self, *version_changes: type[VersionChange]) -> dict[str, _SchemaGenerator]:
-        return _generate_versioned_models(VersionBundle(*versions(version_changes)))
 
 
 @fixture_class(name="create_local_simple_versioned_packages")
@@ -211,6 +187,12 @@ def router() -> VersionedAPIRouter:
     return VersionedAPIRouter()
 
 
+@fixture_class(name="create_runtime_schemas")
+class CreateRuntimeSchemas:
+    def __call__(self, *version_changes: type[VersionChange]) -> dict[str, _SchemaGenerator]:
+        return _generate_versioned_models(VersionBundle(*versions(version_changes)))
+
+
 @fixture_class(name="create_versioned_app")
 class CreateVersionedApp:
     api_version_var: ContextVar[date | None]
@@ -223,14 +205,13 @@ class CreateVersionedApp:
         router: VersionedAPIRouter | None = None,
     ) -> Cadwyn:
         router = router or self.router
-        bundle = VersionBundle(
-            HeadVersion(*head_version_changes),
-            *versions(version_changes),
-            api_version_var=self.api_version_var,
-            head_schemas_package=importlib.import_module(self.temp_data_package_path + ".head"),
+        app = Cadwyn(
+            versions=VersionBundle(
+                HeadVersion(*head_version_changes),
+                *versions(version_changes),
+                api_version_var=self.api_version_var,
+            )
         )
-        self.run_schema_codegen(bundle)
-        app = Cadwyn(versions=bundle)
         app.generate_and_include_versioned_routers(router)
         return app
 

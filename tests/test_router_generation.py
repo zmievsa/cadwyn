@@ -3,6 +3,7 @@ import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from datetime import date
+from enum import Enum, auto
 from pathlib import Path
 from types import ModuleType
 from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
@@ -30,11 +31,8 @@ from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
 from tests.conftest import (
-    CreateSimpleVersionedPackages,
     CreateVersionedApp,
     CreateVersionedClients,
-    HeadModuleFor,
-    RunSchemaCodegen,
     client,
     version_change,
 )
@@ -43,6 +41,22 @@ Default = object()
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
 
 TYPE_ATTR, ANNOTATION_ATTR = "type_", "annotation"
+
+
+class StrEnum(str, Enum):
+    a = auto()
+
+
+class EmptySchema(BaseModel):
+    pass
+
+
+class SchemaWithOneIntField(BaseModel):
+    foo: int
+
+
+class SchemaWithOnePydanticField(BaseModel):
+    foo: SchemaWithOneIntField
 
 
 def get_wrapped_endpoint(endpoint: Endpoint) -> Endpoint:
@@ -71,28 +85,6 @@ def test_endpoint(router: VersionedAPIRouter, test_path: str, random_uuid: UUID)
     return test
 
 
-@pytest.fixture(autouse=True)
-def head(head_module_for: HeadModuleFor) -> Any:
-    return head_module_for(
-        """
-from pydantic import BaseModel, Field
-from enum import Enum, auto
-
-class StrEnum(str, Enum):
-    a = auto()
-
-class EmptySchema(BaseModel):
-    pass
-
-class SchemaWithOneIntField(BaseModel):
-    foo: int
-
-class SchemaWithOnePydanticField(BaseModel):
-    foo: SchemaWithOneIntField
-                             """,
-    )
-
-
 @fixture_class(name="create_versioned_api_routes")
 class CreateVersionedAPIRoutes:
     create_versioned_app: CreateVersionedApp
@@ -106,26 +98,6 @@ class CreateVersionedAPIRoutes:
         return (
             cast(list[APIRoute], app.router.versioned_routers.get(date(2000, 1, 1), APIRouter()).routes),
             cast(list[APIRoute], app.router.versioned_routers.get(date(2001, 1, 1), APIRouter()).routes),
-        )
-
-
-def test__router_generation__forgot_to_generate_schemas__error(
-    create_versioned_api_routes: CreateVersionedAPIRoutes,
-    api_version_var: ContextVar[date | None],
-    router: VersionedAPIRouter,
-    head: ModuleType,
-):
-    with pytest.raises(
-        RouterGenerationError,
-        match="Versioned schema directory '.+' does not exist.",
-    ):
-        generate_versioned_routers(
-            router,
-            versions=VersionBundle(
-                Version(date(2000, 1, 1)),
-                api_version_var=api_version_var,
-                head_schemas_package=head,
-            ),
         )
 
 
@@ -193,7 +165,6 @@ def test__endpoint_existed__endpoint_removed_in_latest_but_never_restored__shoul
 def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
     router: VersionedAPIRouter,
     api_version_var: ContextVar[date | None],
-    run_schema_codegen: RunSchemaCodegen,
 ):
     @router.only_exists_in_older_versions
     @router.get("/test")
@@ -219,7 +190,6 @@ def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
     )
-    run_schema_codegen(versions)
     routers = generate_versioned_routers(router, versions=versions)
 
     assert len(routers[date(2003, 1, 1)].routes) == 0
@@ -607,7 +577,6 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
     api_version_var: ContextVar[date | None],
     two_deleted_routes: tuple[Endpoint, Endpoint],
     route_index_to_restore_first: int,
-    run_schema_codegen: RunSchemaCodegen,
 ):
     route_to_restore_first = two_deleted_routes[route_index_to_restore_first]
     route_to_restore_second = two_deleted_routes[route_index_to_restore_first - 1]
@@ -630,7 +599,6 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
     )
-    run_schema_codegen(versions)
     routers = generate_versioned_routers(router, versions=versions)
 
     assert len(routers[date(2002, 1, 1)].routes) == 0
@@ -704,8 +672,6 @@ def test__router_generation__non_api_route_added(
 def test__router_generation__updating_response_model(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
-    temp_data_package_path: str,
-    head: ModuleType,
 ):
     @router.get(
         "/test",
@@ -732,40 +698,8 @@ def test__router_generation__updating_response_model(
     assert get_nested_field_type(routes_2001[1].response_model) == int
 
 
-def test__router_generation__using_non_latest_version_of_schema__should_raise_error(
-    router: VersionedAPIRouter,
-    create_simple_versioned_packages: CreateSimpleVersionedPackages,
-    temp_data_package_path: str,
-    head: ModuleType,
-    api_version_var: ContextVar[Any],
-):
-    schemas_2000, _ = create_simple_versioned_packages()
-
-    @router.post("/testik")
-    async def testik(body: schemas_2000.SchemaWithOnePydanticField):
-        raise NotImplementedError
-
-    with pytest.raises(
-        RouterGenerationError,
-        match=f"\"<class \\'{temp_data_package_path}.v2000_01_01\\.SchemaWithOnePydanticField\\'>\" "
-        f'is not defined in ".+head" even though it must be\\. It is defined in ".+v2000_01_01"\\. '
-        "It probably means that you used a specific version of the class in "
-        'fastapi dependencies or pydantic schemas instead of "head"\\.',
-    ):
-        generate_versioned_routers(
-            router,
-            versions=VersionBundle(
-                Version(date(2001, 1, 1)),
-                Version(date(2000, 1, 1)),
-                api_version_var=api_version_var,
-                head_schemas_package=head,
-            ),
-        )
-
-
 def test__router_generation__using_unversioned_schema_from_versioned_base_dir__should_not_raise_error(
     router: VersionedAPIRouter,
-    temp_data_package_path: str,
     create_versioned_app: CreateVersionedApp,
 ):
     module = importlib.import_module("tests._data.unversioned_schema_dir")
@@ -777,62 +711,10 @@ def test__router_generation__using_unversioned_schema_from_versioned_base_dir__s
     create_versioned_app()
 
 
-def test__router_generation__passing_a_module_instead_of_package_for_head__should_raise_error(
-    api_version_var: ContextVar[date | None],
-    run_schema_codegen: RunSchemaCodegen,
-    router: VersionedAPIRouter,
-    temp_data_package_path: str,
-    head_dir: Path,
-):
-    head_dir.joinpath("hewwo.py").touch()
-    module = importlib.import_module(temp_data_package_path + ".head.hewwo")
-    versions = VersionBundle(
-        Version(date(2001, 1, 1)),
-        Version(date(2000, 1, 1)),
-        api_version_var=api_version_var,
-        head_schemas_package=module,
-    )
-    run_schema_codegen(versions)  # This function assigns head_schemas_package to versions. Probably need to fix this...
-    versions.head_schemas_package = module
-    with pytest.raises(
-        CadwynStructureError,
-        match=re.escape(
-            f'The head schemas package must be a package. "{temp_data_package_path}.head.hewwo" is not a package.',
-        ),
-    ):
-        generate_versioned_routers(router, versions=versions)
-
-
-def test__router_generation__passing_a_package_with_wrong_name_instead_of_head__should_raise_error(
-    temp_data_package_path: str,
-    api_version_var: ContextVar[date | None],
-    run_schema_codegen: RunSchemaCodegen,
-    router: VersionedAPIRouter,
-):
-    module = importlib.import_module(temp_data_package_path)
-    versions = VersionBundle(
-        Version(date(2001, 1, 1)),
-        Version(date(2000, 1, 1)),
-        api_version_var=api_version_var,
-        head_schemas_package=module,
-    )
-    run_schema_codegen(versions)
-
-    versions.head_schemas_package = module
-    with pytest.raises(
-        CadwynStructureError,
-        match=re.escape(
-            f'The name of the head schemas module must be "head". Received "{temp_data_package_path}" instead.',
-        ),
-    ):
-        generate_versioned_routers(router, versions=versions)
-
-
 def test__router_generation__updating_request_models(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
     head: ModuleType,
-    temp_data_package_path: str,
 ):
     @router.get("/test")
     async def test(body: dict[str, list[head.SchemaWithOnePydanticField]]):
@@ -930,9 +812,7 @@ def test__router_generation__using_oydantic_typehints(
 
 
 def test__router_generation__updating_request_depends(
-    router: VersionedAPIRouter,
-    create_versioned_app: CreateVersionedApp,
-    head: ModuleType,
+    router: VersionedAPIRouter, create_versioned_app: CreateVersionedApp
 ):
     def sub_dependency1(my_schema: head.EmptySchema) -> head.EmptySchema:
         return my_schema
@@ -995,12 +875,7 @@ def test__router_generation__updating_request_depends(
 
 
 def test__router_generation__using_unversioned_schema_in_body(
-    router: VersionedAPIRouter,
-    create_versioned_app: CreateVersionedApp,
-    head: Any,
-    temp_data_dir: Path,
-    temp_data_package_path: str,
-    created_modules: list[Any],
+    router: VersionedAPIRouter, create_versioned_app: CreateVersionedApp
 ):
     temp_data_dir.joinpath("other_module.py").write_text(
         """
@@ -1108,7 +983,6 @@ def test__cascading_router_exists(
     router: VersionedAPIRouter,
     api_version_var: ContextVar[date | None],
     head: ModuleType,
-    run_schema_codegen: RunSchemaCodegen,
 ):
     @router.only_exists_in_older_versions
     @router.get("/test")
@@ -1124,7 +998,6 @@ def test__cascading_router_exists(
         Version(date(2001, 1, 1)),
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
-        head_schemas_package=head,
     )
     run_schema_codegen(versions)
     routers = generate_versioned_routers(router, versions=versions)
@@ -1142,7 +1015,6 @@ def test__cascading_router_didnt_exist(
     router: VersionedAPIRouter,
     api_version_var: ContextVar[date | None],
     head: ModuleType,
-    run_schema_codegen: RunSchemaCodegen,
 ):
     @router.get("/test")
     async def test_with_dep1():
@@ -1159,7 +1031,6 @@ def test__cascading_router_didnt_exist(
         Version(date(2001, 1, 1)),
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
-        head_schemas_package=head,
     )
     run_schema_codegen(versions)
     routers = generate_versioned_routers(router, versions=versions)
@@ -1180,8 +1051,6 @@ def test__generate_versioned_routers__two_routers(
     test_endpoint: Endpoint,
     test_path: str,
     api_version_var: ContextVar[date | None],
-    head: ModuleType,
-    run_schema_codegen: RunSchemaCodegen,
 ):
     router2 = VersionedAPIRouter(prefix="/api2")
 
@@ -1200,9 +1069,7 @@ def test__generate_versioned_routers__two_routers(
         Version(date(2001, 1, 1), V2001),
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
-        head_schemas_package=head,
     )
-    run_schema_codegen(versions)
 
     root_router = APIRouter()
     root_router.include_router(router)

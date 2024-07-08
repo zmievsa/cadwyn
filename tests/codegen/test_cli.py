@@ -74,7 +74,6 @@ def test__cli_get_version(arg: str) -> None:
 
 @pytest.mark.parametrize("variable_name_to_use", ["version_bundle", "callable_that_returns_version_bundle"])
 def test__cli_codegen(
-    temp_data_package_path: str,
     variable_name_to_use: str,
     head_with_empty_classes,
     head_package_path,
@@ -94,7 +93,6 @@ def test__cli_codegen(
 
 @pytest.mark.parametrize("variable_name_to_use", ["version_bundle", "callable_that_returns_version_bundle"])
 def test__deprecated_cli_codegen_should_raise_deprecation_warning(
-    temp_data_package_path: str,
     variable_name_to_use: str,
     head_with_empty_classes,
     head_package_path,

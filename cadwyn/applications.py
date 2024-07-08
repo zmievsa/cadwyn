@@ -94,8 +94,6 @@ class Cadwyn(FastAPI):
     ) -> None:
         self.versions = versions
         # TODO: Remove argument entirely in any major version.
-        latest_schemas_package = extra.pop("latest_schemas_package", None) or self.versions.head_schemas_package
-        self.versions.head_schemas_package = latest_schemas_package
         self._dependency_overrides_provider = FakeDependencyOverridesProvider({})
 
         super().__init__(
