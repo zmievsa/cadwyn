@@ -36,7 +36,12 @@ from cadwyn.exceptions import (
     RouterGenerationError,
     RouterPathParamsModifiedError,
 )
-from cadwyn.schema_generation import _AnnotationTransformer
+from cadwyn.schema_generation import (
+    _add_request_and_response_params,
+    _AnnotationTransformer,
+    _generate_versioned_models,
+    _SchemaGenerator,
+)
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionDate
 from cadwyn.structure.endpoints import (
@@ -82,15 +87,11 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
 
 
 class _EndpointTransformer(Generic[_R]):
-    def __init__(
-        self,
-        parent_router: _R,
-        versions: VersionBundle,
-    ) -> None:
+    def __init__(self, parent_router: _R, versions: VersionBundle) -> None:
         super().__init__()
         self.parent_router = parent_router
         self.versions = versions
-        self.annotation_transformer = _AnnotationTransformer(versions)
+        self.schema_generators = _generate_versioned_models(versions)
 
         self.routes_that_never_existed = [
             route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
@@ -101,7 +102,7 @@ class _EndpointTransformer(Generic[_R]):
         routers: dict[VersionDate, _R] = {}
 
         for version in self.versions:
-            self.annotation_transformer.migrate_router_to_version(router, str(version.value))
+            self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(router)
 
             self._validate_all_data_converters_are_applied(router, version)
 
@@ -122,7 +123,7 @@ class _EndpointTransformer(Generic[_R]):
         for route_index, head_route in enumerate(self.parent_router.routes):
             if not isinstance(head_route, APIRoute):
                 continue
-            self.annotation_transformer._add_request_and_response_params(head_route)
+            _add_request_and_response_params(head_route)
             copy_of_dependant = deepcopy(head_route.dependant)
 
             for older_router in list(routers.values()):

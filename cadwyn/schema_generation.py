@@ -131,9 +131,7 @@ class PydanticFieldWrapper:
 
     def generate_field_copy(self, generator: "_SchemaGenerator") -> pydantic.fields.FieldInfo:
         return pydantic.Field(
-            **generator.annotation_transformer.change_version_of_annotation(
-                self.passed_field_attributes, generator.version
-            )
+            **generator.annotation_transformer.change_version_of_annotation(self.passed_field_attributes)
         )
 
 
@@ -270,7 +268,7 @@ def _get_all_class_attributes(cls: type) -> set[str]:
     return defined_names
 
 
-def wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeModelWrapper[_T_PYDANTIC_MODEL]":
+def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeModelWrapper[_T_PYDANTIC_MODEL]":
     # TODO: Add a test where we delete a parent field for which we have a child validator. To handle this correctly, we have to first initialize the parents, and only then the children. Or maybe even process validator changes AFTER the migrations have been done.
     defined_names = _get_all_class_attributes(model)
     decorators = _get_model_decorators(model)
@@ -364,7 +362,7 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             if base in schemas:
                 parents.append(schemas[base])
             elif issubclass(base, BaseModel):
-                parents.append(wrap_pydantic_model(base))
+                parents.append(_wrap_pydantic_model(base))
         self._parents = parents
         return parents
 
@@ -404,9 +402,7 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             | root_validators
             | fields
             | {
-                "__annotations__": generator.annotation_transformer.change_version_of_annotation(
-                    self.annotations, generator.version
-                ),
+                "__annotations__": generator.annotation_transformer.change_version_of_annotation(self.annotations),
                 "__doc__": self.doc,
             },
         )
@@ -452,16 +448,16 @@ class _AsyncCallableWrapper(_CallableWrapper):
 
 @final
 class _AnnotationTransformer:
-    def __init__(self, versions: VersionBundle) -> None:
+    def __init__(self, generator: "_SchemaGenerator") -> None:
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
         # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
         # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
-        self.versions = versions
+        self.generator = generator
         self.change_versions_of_a_non_container_annotation = functools.cache(
             self._change_version_of_a_non_container_annotation
         )
 
-    def change_version_of_annotation(self, annotation: Any, version: str) -> Any:
+    def change_version_of_annotation(self, annotation: Any) -> Any:
         """Recursively go through all annotations and change them to the
         annotations corresponding to the version passed.
 
@@ -471,68 +467,60 @@ class _AnnotationTransformer:
         """
         if isinstance(annotation, dict):
             return {
-                self.change_version_of_annotation(key, version): self.change_version_of_annotation(value, version)
+                self.change_version_of_annotation(key): self.change_version_of_annotation(value)
                 for key, value in annotation.items()
             }
 
         elif isinstance(annotation, list | tuple):
-            return type(annotation)(self.change_version_of_annotation(v, version) for v in annotation)
+            return type(annotation)(self.change_version_of_annotation(v) for v in annotation)
         else:
-            return self.change_versions_of_a_non_container_annotation(annotation, version)
+            return self.change_versions_of_a_non_container_annotation(annotation)
 
-    def migrate_router_to_version(self, router: fastapi.routing.APIRouter, version: str):
+    def migrate_router_to_version(self, router: fastapi.routing.APIRouter):
         for route in router.routes:
             if not isinstance(route, fastapi.routing.APIRoute):
                 continue
-            self.migrate_route_to_version(route, version)
+            self.migrate_route_to_version(route)
 
-    def migrate_route_to_version(
-        self,
-        route: fastapi.routing.APIRoute,
-        version: str,
-        *,
-        ignore_response_model: bool = False,
-    ):
+    def migrate_route_to_version(self, route: fastapi.routing.APIRoute, *, ignore_response_model: bool = False):
         if route.response_model is not None and not ignore_response_model:
-            route.response_model = self.change_version_of_annotation(route.response_model, version)
+            route.response_model = self.change_version_of_annotation(route.response_model)
             route.response_field = fastapi.utils.create_response_field(
                 name="Response_" + route.unique_id,
                 type_=route.response_model,
                 mode="serialization",
             )
             route.secure_cloned_response_field = fastapi.utils.create_cloned_field(route.response_field)
-        route.dependencies = self.change_version_of_annotation(route.dependencies, version)
-        route.endpoint = self.change_version_of_annotation(route.endpoint, version)
+        route.dependencies = self.change_version_of_annotation(route.dependencies)
+        route.endpoint = self.change_version_of_annotation(route.endpoint)
         for callback in route.callbacks or []:
             if not isinstance(callback, fastapi.routing.APIRoute):
                 continue
-            self.migrate_route_to_version(callback, version, ignore_response_model=ignore_response_model)
+            self.migrate_route_to_version(callback, ignore_response_model=ignore_response_model)
         self._remake_endpoint_dependencies(route)
 
-    def _change_version_of_a_non_container_annotation(self, annotation: Any, version: str) -> Any:
+    def _change_version_of_a_non_container_annotation(self, annotation: Any) -> Any:
         if isinstance(annotation, _BaseGenericAlias | types.GenericAlias):
-            return get_origin(annotation)[
-                tuple(self.change_version_of_annotation(arg, version) for arg in get_args(annotation))
-            ]
+            return get_origin(annotation)[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
         elif isinstance(annotation, fastapi.params.Depends):
             return fastapi.params.Depends(
-                self.change_version_of_annotation(annotation.dependency, version),
+                self.change_version_of_annotation(annotation.dependency),
                 use_cache=annotation.use_cache,
             )
         elif isinstance(annotation, UnionType):
             getitem = typing.Union.__getitem__  # pyright: ignore[reportAttributeAccessIssue]
             return getitem(
-                tuple(self.change_version_of_annotation(a, version) for a in get_args(annotation)),
+                tuple(self.change_version_of_annotation(a) for a in get_args(annotation)),
             )
         elif annotation is Any or isinstance(annotation, typing.NewType):
             return annotation
         elif isinstance(annotation, type):
             if annotation.__module__ == "pydantic.main" and issubclass(annotation, BaseModel):
                 return create_body_model(
-                    fields=self.change_version_of_annotation(annotation.model_fields, version).values(),
+                    fields=self.change_version_of_annotation(annotation.model_fields).values(),
                     model_name=annotation.__name__,
                 )
-            return self._change_version_of_type(annotation, version)
+            return self._change_version_of_type(annotation)
         elif callable(annotation):
             if type(annotation).__module__.startswith(
                 ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
@@ -540,7 +528,7 @@ class _AnnotationTransformer:
                 return annotation
 
             def modifier(annotation: Any):
-                return self.change_version_of_annotation(annotation, version)
+                return self.change_version_of_annotation(annotation)
 
             return self._modify_callable_annotations(
                 annotation,
@@ -551,10 +539,9 @@ class _AnnotationTransformer:
         else:
             return annotation
 
-    def _change_version_of_type(self, annotation: type, version: str):
+    def _change_version_of_type(self, annotation: type):
         if issubclass(annotation, BaseModel | Enum):
-            # These can only be true or false together so the "and" is only here for type hints
-            return _generate_versioned_models(self.versions)[version][annotation]
+            return self.generator[annotation]
         else:
             return annotation
 
@@ -565,14 +552,7 @@ class _AnnotationTransformer:
         route_copy = fastapi.routing.APIRoute(route.path, route.endpoint, dependencies=route.dependencies)
         route.dependant = route_copy.dependant
         route.body_field = route_copy.body_field
-        cls._add_request_and_response_params(route)
-
-    @staticmethod
-    def _add_request_and_response_params(route: APIRoute):
-        if not route.dependant.request_param_name:
-            route.dependant.request_param_name = _CADWYN_REQUEST_PARAM_NAME
-        if not route.dependant.response_param_name:
-            route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
+        _add_request_and_response_params(route)
 
     @classmethod
     def _modify_callable_annotations(
@@ -654,14 +634,20 @@ class _AnnotationTransformer:
         return call
 
 
+def _add_request_and_response_params(route: APIRoute):
+    if not route.dependant.request_param_name:
+        route.dependant.request_param_name = _CADWYN_REQUEST_PARAM_NAME
+    if not route.dependant.response_param_name:
+        route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
+
+
 @final
 class _SchemaGenerator:
-    __slots__ = "annotation_transformer", "model_bundle", "concrete_models", "version"
+    __slots__ = "annotation_transformer", "model_bundle", "concrete_models"
 
-    def __init__(self, versions: VersionBundle, model_bundle: _ModelBundle, version: str) -> None:
-        self.annotation_transformer = _AnnotationTransformer(versions)
+    def __init__(self, model_bundle: _ModelBundle) -> None:
+        self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
-        self.version = version
         self.concrete_models = {}
         self.concrete_models = {
             k: wrapper.generate_model_copy(self)
@@ -697,7 +683,7 @@ class _SchemaGenerator:
             return self.model_bundle.enums[model]
 
         if issubclass(model, BaseModel):
-            wrapper = wrap_pydantic_model(model)
+            wrapper = _wrap_pydantic_model(model)
             self.model_bundle.schemas[model] = wrapper
         elif issubclass(model, Enum):
             wrapper = _EnumWrapper(model)
@@ -715,9 +701,7 @@ def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, _SchemaG
 
     for version in versions.versions:
         context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
-        version_to_context_map[str(version.value)] = _SchemaGenerator(
-            versions, copy.deepcopy(models), str(version.value)
-        )
+        version_to_context_map[str(version.value)] = _SchemaGenerator(copy.deepcopy(models))
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
 
@@ -727,7 +711,7 @@ def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, _SchemaG
 def _create_model_bundle(versions: "VersionBundle"):
     return _ModelBundle(
         enums={enum: _EnumWrapper(enum) for enum in versions.versioned_enums.values()},
-        schemas={schema: wrap_pydantic_model(schema) for schema in versions.versioned_schemas.values()},
+        schemas={schema: _wrap_pydantic_model(schema) for schema in versions.versioned_schemas.values()},
     )
 
 

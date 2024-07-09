@@ -175,7 +175,6 @@ def serialize_schema(schema: Any):
     else:
         schema_to_modify = schema["schema"]
     del schema_to_modify["cls"]
-    del schema_to_modify["ref"]
     if "model_name" in schema_to_modify["schema"]:
         del schema_to_modify["schema"]["model_name"]
     elif "schema" in schema_to_modify["schema"]:
@@ -186,6 +185,8 @@ def serialize_schema(schema: Any):
 
 def serialize_object(obj: Any):
     if isinstance(obj, dict):
+        obj.pop("schema_ref", None)
+        obj.pop("ref", None)
         return {k: v.__name__ if callable(v) else serialize_object(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         modified_list = []

@@ -120,10 +120,6 @@ def test__schema_field_existed_as__with_new_weird_data_types(create_runtime_sche
 ################
 
 
-def test__NOTE_TO_ADD_THIS_TEST_TO_ROUTER_GENERATION_NOT_JUST_HERE_ADD_A_TEST_THAT_CHECKS_THAT_WHEN_PARENT_SCHEMA_IS_ALTERED__ALL_OF_ITS_CHILDREN_GET_ALTERED_AS_WELL__BECAUSE_WITH_RUNTIME_GENERATION_THE_SIMPLE_APPROACH_OF_JUST_REBUILDING_THE_SCHEMAS_MENTIONED_IN_VERSION_CHANGES_NO_LONGER_WORKS():
-    assert False
-
-
 def test__schema_field_didnt_exist(create_runtime_schemas: CreateRuntimeSchemas):
     schemas = create_runtime_schemas(version_change(schema(SchemaWithOneStrField).field("foo").didnt_exist))
 
@@ -136,9 +132,10 @@ def test__schema_field_didnt_exist(create_runtime_schemas: CreateRuntimeSchemas)
 
 class ParentSchema(BaseModel):
     foo: str
+    baz: int
 
 
-class ChildSchema(BaseModel):
+class ChildSchema(ParentSchema):
     pass
 
 
@@ -153,9 +150,12 @@ def test__schema_field_didnt_exist__with_inheritance(create_runtime_schemas: Cre
     ):
         bar: int
 
-    assert_models_are_equal(schemas["2000-01-01"][ParentSchema], EmptySchema)
+    class ExpectedParentSchema(BaseModel):
+        baz: int
+
+    assert_models_are_equal(schemas["2000-01-01"][ParentSchema], ExpectedParentSchema)
     assert_models_are_equal(schemas["2000-01-01"][ChildSchema], ExpectedChildSchema)
-    assert set(schemas["2000-01-01"][ChildSchema].model_fields) == {"bar"}
+    assert set(schemas["2000-01-01"][ChildSchema].model_fields) == {"bar", "baz"}
 
 
 def test__schema_field_didnt_exist__with_inheritance_and_child_not_versioned__child_must_still_change(
@@ -163,9 +163,12 @@ def test__schema_field_didnt_exist__with_inheritance_and_child_not_versioned__ch
 ):
     schemas = create_runtime_schemas(version_change(schema(ParentSchema).field("foo").didnt_exist))
 
-    assert_models_are_equal(schemas["2000-01-01"][ParentSchema], EmptySchema)
-    assert "foo" not in schemas["2000-01-01"][ChildSchema].model_fields
-    assert schemas["2000-01-01"][ChildSchema]().json() == "{}"
+    class ExpectedParentSchema(BaseModel):
+        baz: int
+
+    assert_models_are_equal(schemas["2000-01-01"][ParentSchema], ExpectedParentSchema)
+    assert set(schemas["2000-01-01"][ChildSchema].model_fields) == {"baz"}
+    assert schemas["2000-01-01"][ChildSchema](baz=83)
 
 
 #######

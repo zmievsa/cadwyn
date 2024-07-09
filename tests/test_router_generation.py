@@ -687,8 +687,8 @@ def test__router_generation__updating_response_model(
     routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
 
     assert len(routes_2000) == len(routes_2001) == 2
-    assert routes_2000[1].response_model == dict[str, list[schemas["2000-01-01"][SchemaWithOnePydanticField]]]
-    assert routes_2001[1].response_model == dict[str, list[schemas["2001-01-01"][SchemaWithOnePydanticField]]]
+    assert routes_2000[1].response_model == dict[str, list[schemas["2000-01-01"][SchemaWithOnePydanticField]]]  # pyright: ignore[reportGeneralTypeIssues]
+    assert routes_2001[1].response_model == dict[str, list[schemas["2001-01-01"][SchemaWithOnePydanticField]]]  # pyright: ignore[reportGeneralTypeIssues]
 
     assert get_nested_field_type(routes_2000[1].response_model) == list[str]
     assert get_nested_field_type(routes_2001[1].response_model) == int
@@ -724,11 +724,38 @@ def test__router_generation__updating_request_models(
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
     body_param_2001 = routes_2001[1].dependant.body_params[0]
-    assert getattr(body_param_2000, TYPE_ATTR) == dict[str, list[schemas["2000-01-01"][SchemaWithOnePydanticField]]]
-    assert getattr(body_param_2001, TYPE_ATTR) == dict[str, list[schemas["2001-01-01"][SchemaWithOnePydanticField]]]
+    assert getattr(body_param_2000, TYPE_ATTR) == dict[str, list[schemas["2000-01-01"][SchemaWithOnePydanticField]]]  # pyright: ignore[reportGeneralTypeIssues]
+    assert getattr(body_param_2001, TYPE_ATTR) == dict[str, list[schemas["2001-01-01"][SchemaWithOnePydanticField]]]  # pyright: ignore[reportGeneralTypeIssues]
 
     assert get_nested_field_type(getattr(routes_2000[1].dependant.body_params[0], TYPE_ATTR)) == list[str]
     assert get_nested_field_type(getattr(routes_2001[1].dependant.body_params[0], TYPE_ATTR)) == int
+
+
+def test__router_generation__updating_request_models_with_inheritance(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    class ParentSchema(BaseModel):
+        foo: str
+        bar: int
+
+    class ChildSchema(ParentSchema):
+        pass
+
+    @router.get("/test")
+    async def test(body: ChildSchema):
+        raise NotImplementedError
+
+    app = create_versioned_app(version_change(schema(ParentSchema).field("foo").didnt_exist))
+
+    routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
+    routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
+    assert len(routes_2000) == len(routes_2001) == 2
+
+    body_param_2000 = routes_2000[1].dependant.body_params[0]
+    body_param_2001 = routes_2001[1].dependant.body_params[0]
+    assert set(getattr(body_param_2000, TYPE_ATTR).model_fields) == {"bar"}
+    assert set(getattr(body_param_2001, TYPE_ATTR).model_fields) == {"foo", "bar"}
 
 
 def test__router_generation__using_unversioned_models(
@@ -788,7 +815,7 @@ def test__router_generation__using_weird_typehints(
     assert getattr(routes_2001[1].dependant.body_params[1], TYPE_ATTR) == str | int
 
 
-def test__router_generation__using_oydantic_typehints(
+def test__router_generation__using_pydantic_typehints(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
 ):
@@ -819,7 +846,7 @@ def test__router_generation__updating_request_depends(
 
     # TASK: What if "a" gets deleted? https://github.com/zmievsa/cadwyn/issues/25
     def dependency2(
-        dep: Annotated[EmptySchema, Depends(sub_dependency2)] = None,
+        dep: Annotated[EmptySchema, Depends(sub_dependency2)] = None,  # pyright: ignore[reportArgumentType]
     ):
         return dep
 
@@ -1109,7 +1136,7 @@ def test__basic_router_generation__using_custom_class_based_dependency__should_m
 
     class MyCustomDependency:
         def __call__(self, my_body: SchemaWithOneIntField):
-            payloads_dependency_was_called_with.append(my_body.dict())
+            payloads_dependency_was_called_with.append(my_body.model_dump())
             return my_body
 
     @router.post("/test")
