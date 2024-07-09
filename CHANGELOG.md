@@ -14,6 +14,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 * Cadwyn.add_unversioned_routes
 * Cadwyn.enrich_swagger
 * Codegen and its typer commands
+* module() for codegen
 
 
 

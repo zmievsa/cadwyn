@@ -102,14 +102,16 @@ def test__schema_field_existed_as__with_new_weird_data_types(create_runtime_sche
     schemas = create_runtime_schemas(
         version_change(
             schema(EmptySchema).field("foo").existed_as(type=dict[str, int], info=Field(default={"a": "b"})),
-            schema(EmptySchema).field("bar").existed_as(type=list[int], info=Field(default_factory=lambda: 83)),
+            schema(EmptySchema)
+            .field("bar")
+            .existed_as(type=list[int], info=Field(default_factory=lambda: 83)),  # pragma: no cover
             schema(EmptySchema).field("baz").existed_as(type=Literal[MyEnum.foo]),
         )
     )
 
     class ExpectedSchema(BaseModel):
         foo: dict[str, int] = Field(default={"a": "b"})
-        bar: list[int] = Field(default_factory=lambda: 83)
+        bar: list[int] = Field(default_factory=lambda: 83)  # pragma: no branch
         baz: Literal[MyEnum.foo]
 
     assert_models_are_equal(schemas["2000-01-01"][EmptySchema], ExpectedSchema)

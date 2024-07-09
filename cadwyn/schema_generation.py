@@ -15,7 +15,7 @@ from typing import (
     Generic,
     TypeAlias,
     TypeVar,
-    _BaseGenericAlias,
+    _BaseGenericAlias,  # pyright: ignore[reportAttributeAccessIssue]
     cast,
     final,
     get_args,
@@ -51,12 +51,11 @@ from pydantic._internal._decorators import (
     ModelValidatorDecoratorInfo,
     RootValidatorDecoratorInfo,
     ValidatorDecoratorInfo,
-    unwrap_wrapped_function,
 )
 from pydantic.fields import ComputedFieldInfo, FieldInfo
 from typing_extensions import Doc, Self, _AnnotatedAlias, assert_never, final
 
-from cadwyn._utils import Sentinel, UnionType
+from cadwyn._utils import Sentinel, UnionType, _fully_unwrap_decorator
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure.common import VersionDate
 from cadwyn.structure.data import ResponseInfo
@@ -212,9 +211,7 @@ class _PerFieldValidatorWrapper(_ValidatorWrapper):
 
 def _wrap_validator(func: Callable, is_pydantic_v1_style_validator: Any, decorator_info: _decorators.DecoratorInfo):
     # This is only for pydantic v1 style validators
-    func = unwrap_wrapped_function(func)
-    if is_pydantic_v1_style_validator and func.__closure__:
-        func = func.__closure__[0].cell_contents
+    func = _fully_unwrap_decorator(func, is_pydantic_v1_style_validator)
     if inspect.ismethod(func):
         func = func.__func__
     kwargs = dataclasses.asdict(decorator_info)

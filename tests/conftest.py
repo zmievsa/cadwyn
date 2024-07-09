@@ -17,13 +17,11 @@ from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
 
 from cadwyn import Cadwyn, VersionBundle, VersionedAPIRouter
-from cadwyn._package_utils import get_version_dir_name
 from cadwyn._utils import same_definition_as_in
 from cadwyn.schema_generation import _generate_versioned_models, _SchemaGenerator
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
-from cadwyn.structure.modules import AlterModuleInstruction
 from cadwyn.structure.schemas import AlterSchemaSubInstruction, SchemaHadInstruction
 from cadwyn.structure.versions import HeadVersion
 
@@ -143,8 +141,7 @@ def version_change(
     *instructions: SchemaHadInstruction
     | AlterSchemaSubInstruction
     | AlterEndpointSubInstruction
-    | AlterEnumSubInstruction
-    | AlterModuleInstruction,
+    | AlterEnumSubInstruction,
     **body_items: Any,
 ):
     return type(VersionChange)(
@@ -177,7 +174,7 @@ def serialize_schema(schema: Any):
     del schema_to_modify["cls"]
     if "model_name" in schema_to_modify["schema"]:
         del schema_to_modify["schema"]["model_name"]
-    elif "schema" in schema_to_modify["schema"]:
+    if "schema" in schema_to_modify["schema"]:
         del schema_to_modify["schema"]["schema"]["model_name"]
     del schema_to_modify["config"]["title"]
     return serialize_object(schema)

@@ -11,6 +11,7 @@ format:
 	poetry run ruff . --fix && poetry run ruff format .;
 
 test:
+	rm -f .coverage coverage.xml; \
 	poetry run pytest tests \
 		--cov=. \
 		--cov-report=term-missing:skip-covered \

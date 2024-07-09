@@ -1,7 +1,7 @@
 import re
 
 import pytest
-from pydantic import BaseModel, root_validator, validator
+from pydantic import BaseModel, field_validator, root_validator, validator
 
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure import schema
@@ -57,7 +57,7 @@ class SchemaWithOneStrFieldAndValidator(BaseModel):
 
     @validator("foo")
     def validate_foo(cls, value):
-        return value
+        raise NotImplementedError
 
 
 def test__schema_validator_didnt_exist(create_runtime_schemas: CreateRuntimeSchemas):
@@ -117,6 +117,7 @@ def test__schema_validator_didnt_exist__for_nonexisting_validator__should_raise_
 def test__schema_validator_existed__non_validator_was_passed__should_raise_error(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
+    @field_validator("foo")
     def fake_validator(cls, value):
         raise NotImplementedError
 
@@ -151,11 +152,11 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
 
         @validator("bar")
         def validate_bar(cls, value):
-            return value
+            raise NotImplementedError
 
         @validator("foo", "bar")
         def validate_foo(cls, value):
-            return value
+            raise NotImplementedError
 
     schemas = create_runtime_schemas(version_change(schema(SchemaWithOneStrField).field("foo").didnt_exist))
 

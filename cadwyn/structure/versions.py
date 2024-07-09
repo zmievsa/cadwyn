@@ -49,7 +49,6 @@ from .data import (
 )
 from .endpoints import AlterEndpointSubInstruction
 from .enums import AlterEnumSubInstruction
-from .modules import AlterModuleInstruction
 from .schemas import AlterSchemaSubInstruction, SchemaHadInstruction
 
 _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
@@ -61,7 +60,6 @@ PossibleInstructions: TypeAlias = (
     | AlterEndpointSubInstruction
     | AlterEnumSubInstruction
     | SchemaHadInstruction
-    | AlterModuleInstruction
     | staticmethod
 )
 APIVersionVarType: TypeAlias = ContextVar[VersionDate | None] | ContextVar[VersionDate]
@@ -72,7 +70,6 @@ class VersionChange:
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
     alter_schema_instructions: ClassVar[list[AlterSchemaSubInstruction | SchemaHadInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
-    alter_module_instructions: ClassVar[list[AlterModuleInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[list[AlterEndpointSubInstruction]] = Sentinel
     alter_request_by_schema_instructions: ClassVar[dict[type[BaseModel], list[_AlterRequestBySchemaInstruction]]] = (
         Sentinel
@@ -111,7 +108,6 @@ class VersionChange:
     def _extract_list_instructions_into_correct_containers(cls):
         cls.alter_schema_instructions = []
         cls.alter_enum_instructions = []
-        cls.alter_module_instructions = []
         cls.alter_endpoint_instructions = []
         cls.alter_request_by_schema_instructions = defaultdict(list)
         cls.alter_request_by_path_instructions = defaultdict(list)
@@ -122,8 +118,6 @@ class VersionChange:
                 cls.alter_schema_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, AlterEnumSubInstruction):
                 cls.alter_enum_instructions.append(alter_instruction)
-            elif isinstance(alter_instruction, AlterModuleInstruction):
-                cls.alter_module_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, AlterEndpointSubInstruction):
                 cls.alter_endpoint_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, staticmethod):  # pragma: no cover
@@ -320,18 +314,6 @@ class VersionBundle:
             for instruction in version_change.alter_enum_instructions
         }
 
-    @functools.cached_property
-    def versioned_modules(self) -> dict[IdentifierPythonPath, ModuleType]:
-        return {
-            # We do this because when users import their modules, they might import
-            # the __init__.py file directly instead of the package itself
-            # which results in this extra `.__init__` suffix in the name
-            instruction.module.__name__.removesuffix(".__init__"): instruction.module
-            for version in self._all_versions
-            for version_change in version.version_changes
-            for instruction in version_change.alter_module_instructions
-        }
-
     def _get_closest_lesser_version(self, version: VersionDate):
         for defined_version in self.version_dates:
             if defined_version <= version:
@@ -485,7 +467,7 @@ class VersionBundle:
             if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
 
-            return decorator  # pyright: ignore[reportReturnType]
+            return decorator
 
         return wrapper
 

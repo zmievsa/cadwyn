@@ -6,7 +6,6 @@ from .data import (
 )
 from .endpoints import endpoint
 from .enums import enum
-from .modules import module
 from .schemas import schema
 from .versions import (
     HeadVersion,
