@@ -911,14 +911,7 @@ def _change_field(
                     f'from "{model.name}" to {attr_value!r} in "{version_change_name}" '
                     "but it already has that value.",
                 )
-            if annotation is not None and hasattr(annotation, attr_name):
-                _setattr_on_constrained_type(annotation, attr_name, attr_value)
-            else:
-                field.update_attribute(name=attr_name, value=attr_value)
-
-
-def _setattr_on_constrained_type(constrained_type_annotation: Any, attr_name: str, attr_value: Any) -> None:
-    object.__setattr__(constrained_type_annotation, attr_name, attr_value)
+            field.update_attribute(name=attr_name, value=attr_value)
 
 
 def _delete_field_attributes(
@@ -937,7 +930,7 @@ def _delete_field_attributes(
         ):
             for sub_ann in get_args(annotation):
                 if hasattr(sub_ann, attr_name):
-                    _setattr_on_constrained_type(sub_ann, attr_name, None)
+                    object.__setattr__(sub_ann, attr_name, None)
             continue
         else:
             raise InvalidGenerationInstructionError(
