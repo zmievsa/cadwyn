@@ -17,7 +17,7 @@ import annotated_types
 from cadwyn._package_utils import get_absolute_python_path_of_import
 from cadwyn._utils import PlainRepr, UnionType
 from cadwyn.exceptions import InvalidGenerationInstructionError, ModuleIsNotAvailableAsTextError, SchemaGenerationError
-from cadwyn.runtime_compat import _ValidatorWrapper
+from cadwyn.schema_generation import _ValidatorWrapper
 
 _LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
 

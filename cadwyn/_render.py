@@ -11,8 +11,7 @@ from cadwyn._asts import get_fancy_repr, pop_docstring_from_cls_body
 from cadwyn._package_utils import get_cls_pythonpath
 from cadwyn.applications import Cadwyn
 from cadwyn.exceptions import CadwynRenderError
-from cadwyn.runtime_compat import PydanticFieldWrapper, _EnumWrapper, _PydanticRuntimeModelWrapper
-from cadwyn.schema_generation import _generate_versioned_models
+from cadwyn.schema_generation import _generate_versioned_models, _PydanticRuntimeModelWrapper
 from cadwyn.structure.versions import VersionBundle
 
 from ._importer import import_attribute_from_string, import_module_from_string

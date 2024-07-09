@@ -1,28 +1,14 @@
-import ast
-import inspect
-import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel, Field
-from pydantic._internal._decorators import (
-    FieldSerializerDecoratorInfo,
-    FieldValidatorDecoratorInfo,
-    ModelSerializerDecoratorInfo,
-    ModelValidatorDecoratorInfo,
-    PydanticDescriptorProxy,
-    RootValidatorDecoratorInfo,
-    ValidatorDecoratorInfo,
-    unwrap_wrapped_function,
-)
+from pydantic._internal._decorators import PydanticDescriptorProxy, unwrap_wrapped_function
 from pydantic.fields import FieldInfo
 
-from cadwyn._asts import _ValidatorWrapper
 from cadwyn._utils import Sentinel
 from cadwyn.exceptions import CadwynStructureError
-from cadwyn.runtime_compat import PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP, _get_model_decorators
 
 if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
@@ -229,6 +215,18 @@ class AlterFieldInstructionFactory:
             info = cast(FieldInfo, Field())
         info.annotation = type
         return FieldExistedAsInstruction(self.schema, name=self.name, field=info)
+
+
+def _get_model_decorators(model: type[BaseModel]):
+    return [
+        *model.__pydantic_decorators__.validators.values(),
+        *model.__pydantic_decorators__.field_validators.values(),
+        *model.__pydantic_decorators__.root_validators.values(),
+        *model.__pydantic_decorators__.field_serializers.values(),
+        *model.__pydantic_decorators__.model_serializers.values(),
+        *model.__pydantic_decorators__.model_validators.values(),
+        *model.__pydantic_decorators__.computed_fields.values(),
+    ]
 
 
 @dataclass(slots=True)

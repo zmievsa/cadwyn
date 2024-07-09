@@ -1,26 +1,63 @@
+import ast
 import copy
 import dataclasses
-from collections.abc import Sequence
+import functools
+import inspect
+import types
+import typing
+from collections.abc import Callable, Sequence
+from enum import Enum
 from functools import cache
-from typing import TYPE_CHECKING, Annotated, Any, cast, get_args, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Generic,
+    TypeAlias,
+    TypeVar,
+    _BaseGenericAlias,
+    cast,
+    final,
+    get_args,
+    get_origin,
+)
 
+import fastapi.params
+import fastapi.security.base
+import fastapi.utils
 import pydantic
 import pydantic._internal._decorators
 from fastapi import Response
-from typing_extensions import assert_never
-
-from cadwyn._utils import Sentinel
-from cadwyn.exceptions import InvalidGenerationInstructionError
-from cadwyn.runtime_compat import (
-    PydanticFieldWrapper,
-    _EnumWrapper,
-    _ModelBundle,
-    _PerFieldValidatorWrapper,
-    _PydanticRuntimeModelWrapper,
-    _SchemaGenerator,
-    _wrap_validator,
-    wrap_pydantic_model,
+from fastapi._compat import create_body_model
+from fastapi.routing import APIRoute
+from issubclass import issubclass
+from pydantic import (
+    BaseModel,
+    Field,
+    RootModel,
+    computed_field,
+    field_serializer,
+    field_validator,
+    model_serializer,
+    model_validator,
+    root_validator,
+    validator,
 )
+from pydantic._internal import _decorators
+from pydantic._internal._decorators import (
+    FieldSerializerDecoratorInfo,
+    FieldValidatorDecoratorInfo,
+    ModelSerializerDecoratorInfo,
+    ModelValidatorDecoratorInfo,
+    RootValidatorDecoratorInfo,
+    ValidatorDecoratorInfo,
+    unwrap_wrapped_function,
+)
+from pydantic.fields import ComputedFieldInfo, FieldInfo
+from typing_extensions import Doc, Self, _AnnotatedAlias, assert_never, final
+
+from cadwyn._utils import Sentinel, UnionType
+from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure.common import VersionDate
 from cadwyn.structure.data import ResponseInfo
 from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
@@ -33,10 +70,89 @@ from cadwyn.structure.schemas import (
     SchemaHadInstruction,
     ValidatorDidntExistInstruction,
     ValidatorExistedInstruction,
+    _get_model_decorators,
 )
+from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionBundle
 
 if TYPE_CHECKING:
     from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
+
+_Call = TypeVar("_Call", bound=Callable[..., Any])
+
+_FieldName: TypeAlias = str
+_T_ANY_MODEL = TypeVar("_T_ANY_MODEL", bound=BaseModel | Enum)
+_T_ENUM = TypeVar("_T_ENUM", bound=Enum)
+
+_T_PYDANTIC_MODEL = TypeVar("_T_PYDANTIC_MODEL", bound=BaseModel)
+PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
+    ValidatorDecoratorInfo: validator,
+    FieldValidatorDecoratorInfo: field_validator,
+    FieldSerializerDecoratorInfo: field_serializer,
+    RootValidatorDecoratorInfo: root_validator,
+    ModelValidatorDecoratorInfo: model_validator,
+    ModelSerializerDecoratorInfo: model_serializer,
+    ComputedFieldInfo: computed_field,
+}
+
+
+VALIDATOR_CONFIG_KEY = "__validators__"
+_all_field_arg_names = sorted(
+    [
+        name
+        for name, param in inspect.signature(Field).parameters.items()
+        if param.kind in {inspect._ParameterKind.KEYWORD_ONLY, inspect._ParameterKind.POSITIONAL_OR_KEYWORD}
+    ],
+)
+EXTRA_FIELD_NAME = "json_schema_extra"
+
+
+_empty_field_info = Field()
+dict_of_empty_field_info = {k: getattr(_empty_field_info, k) for k in FieldInfo.__slots__}
+
+
+@dataclasses.dataclass(slots=True)
+class PydanticFieldWrapper:
+    """We DO NOT maintain field.metadata at all"""
+
+    init_model_field: dataclasses.InitVar[FieldInfo]
+
+    annotation: Any = dataclasses.field(init=False)
+    passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
+
+    def __post_init__(self, init_model_field: FieldInfo):
+        self.annotation = init_model_field.annotation
+        self.passed_field_attributes = _extract_passed_field_attributes(init_model_field)
+
+    def update_attribute(self, *, name: str, value: Any):
+        self.passed_field_attributes[name] = value
+
+    def delete_attribute(self, *, name: str) -> None:
+        self.passed_field_attributes.pop(name)
+
+    def generate_field_copy(self, generator: "_SchemaGenerator") -> pydantic.fields.FieldInfo:
+        return pydantic.Field(
+            **generator.annotation_transformer.change_version_of_annotation(
+                self.passed_field_attributes, generator.version
+            )
+        )
+
+
+def _extract_passed_field_attributes(field_info):
+    attributes = {
+        attr_name: field_info._attributes_set[attr_name]
+        for attr_name in _all_field_arg_names
+        if attr_name in field_info._attributes_set
+    }
+    # PydanticV2 always adds frozen to _attributes_set but we don't want it if it wasn't explicitly set
+    if attributes.get("frozen", ...) is None:
+        attributes.pop("frozen")
+    return attributes
+
+
+@dataclasses.dataclass(slots=True)
+class _ModelBundle:
+    enums: dict[type[Enum], "_EnumWrapper"]
+    schemas: dict[type[BaseModel], "_PydanticRuntimeModelWrapper"]
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
@@ -77,6 +193,518 @@ def migrate_response_body(
     return versioned_response_model.model_validate(migrated_response.body)
 
 
+def _unwrap_model(model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
+    while hasattr(model, "__cadwyn_original_model__"):
+        model = model.__cadwyn_original_model__  # pyright: ignore[reportAttributeAccessIssue]
+    return model
+
+
+@dataclasses.dataclass(slots=True, kw_only=True)
+class _ValidatorWrapper:
+    kwargs: dict[str, Any]
+    func: Callable
+    decorator: Callable
+    is_deleted: bool = False
+
+
+@dataclasses.dataclass(slots=True, kw_only=True)
+class _PerFieldValidatorWrapper(_ValidatorWrapper):
+    fields: list[str]
+
+
+def _wrap_validator(func: Callable, is_pydantic_v1_style_validator: Any, decorator_info: _decorators.DecoratorInfo):
+    # This is only for pydantic v1 style validators
+    func = unwrap_wrapped_function(func)
+    if is_pydantic_v1_style_validator and func.__closure__:
+        func = func.__closure__[0].cell_contents
+    if inspect.ismethod(func):
+        func = func.__func__
+    kwargs = dataclasses.asdict(decorator_info)
+    decorator_fields = kwargs.pop("fields", None)
+    actual_decorator = PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP[type(decorator_info)]
+    if is_pydantic_v1_style_validator:
+        # There's an inconsistency in their interfaces so we gotta resort to this
+        mode = kwargs.pop("mode", "after")
+        kwargs["pre"] = mode != "after"
+    if decorator_fields is not None:
+        return _PerFieldValidatorWrapper(
+            func=func, fields=list(decorator_fields), decorator=actual_decorator, kwargs=kwargs
+        )
+    else:
+        return _ValidatorWrapper(func=func, decorator=actual_decorator, kwargs=kwargs)
+
+
+def _is_dunder(attr_name):
+    return attr_name.startswith("__") and attr_name.endswith("__")
+
+
+def _get_names_defined_in_node(node: ast.stmt):
+    defined_names = set()
+
+    if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+        defined_names.add(node.name)
+    elif isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                defined_names.add(target.id)
+    elif isinstance(node, ast.AnnAssign):
+        if isinstance(node.target, ast.Name):
+            defined_names.add(node.target.id)
+
+    return defined_names
+
+
+def _get_all_class_attributes(cls: type) -> set[str]:
+    try:
+        source = inspect.getsource(cls)
+        cls_ast = ast.parse(source).body[0]
+    except (OSError, SyntaxError, ValueError):
+        return set()
+
+    if not isinstance(cls_ast, ast.ClassDef):
+        return set()
+
+    defined_names = set()
+    for node in cls_ast.body:
+        defined_names.update(_get_names_defined_in_node(node))
+    return defined_names
+
+
+def wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeModelWrapper[_T_PYDANTIC_MODEL]":
+    # TODO: Add a test where we delete a parent field for which we have a child validator. To handle this correctly, we have to first initialize the parents, and only then the children. Or maybe even process validator changes AFTER the migrations have been done.
+    defined_names = _get_all_class_attributes(model)
+    decorators = _get_model_decorators(model)
+    validators = {}
+    for decorator_wrapper in decorators:
+        if defined_names:
+            # This is a fix for cases when this validator overrides a field name from parent class
+            if decorator_wrapper.cls_var_name not in defined_names:
+                continue
+        elif decorator_wrapper.cls_var_name not in model.__dict__:
+            continue
+
+        wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
+        validators[decorator_wrapper.cls_var_name] = wrapped_validator
+    fields = {
+        field_name: PydanticFieldWrapper(model.model_fields[field_name]) for field_name in model.__annotations__.keys()
+    }
+
+    main_attributes = fields | validators
+    other_attributes = {
+        attr_name: attr_val
+        for attr_name, attr_val in model.__dict__.items()
+        if attr_name not in main_attributes
+        and (
+            (defined_names and attr_name in defined_names)
+            or not (_is_dunder(attr_name) or attr_name in {"_abc_impl", "model_fields", "model_computed_fields"})
+        )
+    }
+    other_attributes |= {
+        "model_config": model.model_config,
+        "__module__": model.__module__,
+        "__qualname__": model.__qualname__,
+    }
+    return _PydanticRuntimeModelWrapper(
+        model,
+        name=model.__name__,
+        doc=model.__doc__,
+        fields=fields,
+        other_attributes=other_attributes,
+        validators=validators,
+        annotations=model.__annotations__.copy(),
+    )
+
+
+@final
+@dataclasses.dataclass(slots=True)
+class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
+    cls: type[_T_PYDANTIC_MODEL]
+    name: str
+    doc: str | None
+    fields: Annotated[
+        dict["_FieldName", PydanticFieldWrapper],
+        Doc(
+            "Fields that belong to this model, not to its parents. I.e. The ones that were either defined or overriden "
+        ),
+    ]
+    validators: dict[str, _PerFieldValidatorWrapper | _ValidatorWrapper]
+    other_attributes: dict[str, Any]
+    annotations: dict[str, Any]
+    _parents: list[Self] | None = dataclasses.field(init=False, default=None)
+
+    def __post_init__(self):
+        while hasattr(self.cls, "__cadwyn_original_model__"):
+            self.cls = self.cls.__cadwyn_original_model__  # pyright: ignore[reportAttributeAccessIssue]
+
+        for k, annotation in self.annotations.items():
+            if get_origin(annotation) == Annotated:
+                sub_annotations = get_args(annotation)
+                # Annotated cannot be copied and is cached based on "==" and "hash", while annotated_types.Interval are
+                # frozen and so are consistently hashed
+                self.annotations[k] = _AnnotatedAlias(
+                    copy.deepcopy(sub_annotations[0]), tuple(copy.deepcopy(sub_ann) for sub_ann in sub_annotations[1:])
+                )
+
+    def __deepcopy__(self, memo):
+        return _PydanticRuntimeModelWrapper(
+            self.cls,
+            name=self.name,
+            doc=self.doc,
+            fields=copy.deepcopy(self.fields),
+            validators=copy.deepcopy(self.validators),
+            other_attributes=copy.deepcopy(self.other_attributes),
+            annotations=copy.deepcopy(self.annotations),
+        )
+
+    def _get_parents(self, schemas: "dict[type, Self]"):
+        if self._parents is not None:
+            return self._parents
+        parents = []
+        for base in self.cls.mro()[1:]:
+            if base in schemas:
+                parents.append(schemas[base])
+            elif issubclass(base, BaseModel):
+                parents.append(wrap_pydantic_model(base))
+        self._parents = parents
+        return parents
+
+    def _get_defined_fields_through_mro(self, schemas: "dict[type, Self]") -> dict[str, PydanticFieldWrapper]:
+        fields = {}
+
+        for parent in reversed(self._get_parents(schemas)):
+            fields |= parent.fields
+
+        return fields | self.fields
+
+    def _get_defined_annotations_through_mro(self, schemas: "dict[type, Self]") -> dict[str, Any]:
+        annotations = {}
+
+        for parent in reversed(self._get_parents(schemas)):
+            annotations |= parent.annotations
+
+        return annotations | self.annotations
+
+    def generate_model_copy(self, generator: "_SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
+        per_field_validators = {
+            name: validator.decorator(*validator.fields, **validator.kwargs)(validator.func)
+            for name, validator in self.validators.items()
+            if not validator.is_deleted and type(validator) == _PerFieldValidatorWrapper
+        }
+        root_validators = {
+            name: validator.decorator(**validator.kwargs)(validator.func)
+            for name, validator in self.validators.items()
+            if not validator.is_deleted and type(validator) == _ValidatorWrapper
+        }
+        fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
+        model_copy = type(self.cls)(
+            self.name,
+            tuple(generator[base] for base in self.cls.__bases__),
+            self.other_attributes
+            | per_field_validators
+            | root_validators
+            | fields
+            | {
+                "__annotations__": generator.annotation_transformer.change_version_of_annotation(
+                    self.annotations, generator.version
+                ),
+                "__doc__": self.doc,
+            },
+        )
+
+        model_copy.__cadwyn_original_model__ = self.cls
+        return model_copy
+
+
+class _CallableWrapper:
+    """__eq__ and __hash__ are needed to make sure that dependency overrides work correctly.
+    They are based on putting dependencies (functions) as keys for the dictionary so if we want to be able to
+    override the wrapper, we need to make sure that it is equivalent to the original in __hash__ and __eq__
+    """
+
+    def __init__(self, original_callable: Callable) -> None:
+        super().__init__()
+        self._original_callable = original_callable
+        functools.update_wrapper(self, original_callable)
+
+    @property
+    def __globals__(self):
+        """FastAPI uses __globals__ to resolve forward references in type hints
+        It's supposed to be an attribute on the function but we use it as property to prevent python
+        from trying to pickle globals when we deepcopy this wrapper
+        """
+        #
+        return self._original_callable.__globals__
+
+    def __call__(self, *args: Any, **kwargs: Any):
+        return self._original_callable(*args, **kwargs)
+
+    def __hash__(self):
+        return hash(self._original_callable)
+
+    def __eq__(self, value: object) -> bool:
+        return self._original_callable == value  # pyright: ignore[reportUnnecessaryComparison]
+
+
+class _AsyncCallableWrapper(_CallableWrapper):
+    async def __call__(self, *args: Any, **kwargs: Any):
+        return await self._original_callable(*args, **kwargs)
+
+
+@final
+class _AnnotationTransformer:
+    def __init__(self, versions: VersionBundle) -> None:
+        # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
+        # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
+        # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
+        self.versions = versions
+        self.change_versions_of_a_non_container_annotation = functools.cache(
+            self._change_version_of_a_non_container_annotation
+        )
+
+    def change_version_of_annotation(self, annotation: Any, version: str) -> Any:
+        """Recursively go through all annotations and change them to the
+        annotations corresponding to the version passed.
+
+        So if we had a annotation "UserResponse" from "head" version, and we passed version of "2022-11-16", it would
+        replace "UserResponse" with the the same class but from the "2022-11-16" version.
+
+        """
+        if isinstance(annotation, dict):
+            return {
+                self.change_version_of_annotation(key, version): self.change_version_of_annotation(value, version)
+                for key, value in annotation.items()
+            }
+
+        elif isinstance(annotation, list | tuple):
+            return type(annotation)(self.change_version_of_annotation(v, version) for v in annotation)
+        else:
+            return self.change_versions_of_a_non_container_annotation(annotation, version)
+
+    def migrate_router_to_version(self, router: fastapi.routing.APIRouter, version: str):
+        for route in router.routes:
+            if not isinstance(route, fastapi.routing.APIRoute):
+                continue
+            self.migrate_route_to_version(route, version)
+
+    def migrate_route_to_version(
+        self,
+        route: fastapi.routing.APIRoute,
+        version: str,
+        *,
+        ignore_response_model: bool = False,
+    ):
+        if route.response_model is not None and not ignore_response_model:
+            route.response_model = self.change_version_of_annotation(route.response_model, version)
+            route.response_field = fastapi.utils.create_response_field(
+                name="Response_" + route.unique_id,
+                type_=route.response_model,
+                mode="serialization",
+            )
+            route.secure_cloned_response_field = fastapi.utils.create_cloned_field(route.response_field)
+        route.dependencies = self.change_version_of_annotation(route.dependencies, version)
+        route.endpoint = self.change_version_of_annotation(route.endpoint, version)
+        for callback in route.callbacks or []:
+            if not isinstance(callback, fastapi.routing.APIRoute):
+                continue
+            self.migrate_route_to_version(callback, version, ignore_response_model=ignore_response_model)
+        self._remake_endpoint_dependencies(route)
+
+    def _change_version_of_a_non_container_annotation(self, annotation: Any, version: str) -> Any:
+        if isinstance(annotation, _BaseGenericAlias | types.GenericAlias):
+            return get_origin(annotation)[
+                tuple(self.change_version_of_annotation(arg, version) for arg in get_args(annotation))
+            ]
+        elif isinstance(annotation, fastapi.params.Depends):
+            return fastapi.params.Depends(
+                self.change_version_of_annotation(annotation.dependency, version),
+                use_cache=annotation.use_cache,
+            )
+        elif isinstance(annotation, UnionType):
+            getitem = typing.Union.__getitem__  # pyright: ignore[reportAttributeAccessIssue]
+            return getitem(
+                tuple(self.change_version_of_annotation(a, version) for a in get_args(annotation)),
+            )
+        elif annotation is Any or isinstance(annotation, typing.NewType):
+            return annotation
+        elif isinstance(annotation, type):
+            if annotation.__module__ == "pydantic.main" and issubclass(annotation, BaseModel):
+                return create_body_model(
+                    fields=self.change_version_of_annotation(annotation.model_fields, version).values(),
+                    model_name=annotation.__name__,
+                )
+            return self._change_version_of_type(annotation, version)
+        elif callable(annotation):
+            if type(annotation).__module__.startswith(
+                ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
+            ) or isinstance(annotation, fastapi.params.Security | fastapi.security.base.SecurityBase):
+                return annotation
+
+            def modifier(annotation: Any):
+                return self.change_version_of_annotation(annotation, version)
+
+            return self._modify_callable_annotations(
+                annotation,
+                modifier,
+                modifier,
+                annotation_modifying_wrapper_factory=self._copy_function_through_class_based_wrapper,
+            )
+        else:
+            return annotation
+
+    def _change_version_of_type(self, annotation: type, version: str):
+        if issubclass(annotation, BaseModel | Enum):
+            # These can only be true or false together so the "and" is only here for type hints
+            return _generate_versioned_models(self.versions)[version][annotation]
+        else:
+            return annotation
+
+    @classmethod
+    def _remake_endpoint_dependencies(cls, route: fastapi.routing.APIRoute):
+        # Unlike get_dependant, APIRoute is the public API of FastAPI and it's (almost) guaranteed to be stable.
+
+        route_copy = fastapi.routing.APIRoute(route.path, route.endpoint, dependencies=route.dependencies)
+        route.dependant = route_copy.dependant
+        route.body_field = route_copy.body_field
+        cls._add_request_and_response_params(route)
+
+    @staticmethod
+    def _add_request_and_response_params(route: APIRoute):
+        if not route.dependant.request_param_name:
+            route.dependant.request_param_name = _CADWYN_REQUEST_PARAM_NAME
+        if not route.dependant.response_param_name:
+            route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
+
+    @classmethod
+    def _modify_callable_annotations(
+        cls,
+        call: _Call,
+        modify_annotations: Callable[[dict[str, Any]], dict[str, Any]] = lambda a: a,
+        modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,
+        *,
+        annotation_modifying_wrapper_factory: Callable[[_Call], _Call],
+    ) -> _Call:
+        annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
+        old_params = inspect.signature(call).parameters
+        callable_annotations = annotation_modifying_wrapper.__annotations__
+        annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
+        annotation_modifying_wrapper.__defaults__ = modify_defaults(
+            tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
+        )
+        annotation_modifying_wrapper.__signature__ = cls._generate_signature(
+            annotation_modifying_wrapper,
+            old_params,
+        )
+
+        return annotation_modifying_wrapper
+
+    @staticmethod
+    def _generate_signature(
+        new_callable: Callable,
+        old_params: types.MappingProxyType[str, inspect.Parameter],
+    ):
+        parameters = []
+        default_counter = 0
+        for param in old_params.values():
+            if param.default is not inspect.Signature.empty:
+                assert new_callable.__defaults__ is not None, (  # noqa: S101
+                    "Defaults cannot be None here. If it is, you have found a bug in Cadwyn. "
+                    "Please, report it in our issue tracker."
+                )
+                default = new_callable.__defaults__[default_counter]
+                default_counter += 1
+            else:
+                default = inspect.Signature.empty
+            parameters.append(
+                inspect.Parameter(
+                    param.name,
+                    param.kind,
+                    default=default,
+                    annotation=new_callable.__annotations__.get(
+                        param.name,
+                        inspect.Signature.empty,
+                    ),
+                ),
+            )
+        return inspect.Signature(
+            parameters=parameters,
+            return_annotation=new_callable.__annotations__.get(
+                "return",
+                inspect.Signature.empty,
+            ),
+        )
+
+    @classmethod
+    def _copy_function_through_class_based_wrapper(cls, call: Any):
+        """Separate from copy_endpoint because endpoints MUST be functions in FastAPI, they cannot be cls instances"""
+        call = cls._unwrap_callable(call)
+
+        if inspect.iscoroutinefunction(call):
+            return _AsyncCallableWrapper(call)
+        else:
+            return _CallableWrapper(call)
+
+    @staticmethod
+    def _unwrap_callable(call: Any) -> Any:
+        while hasattr(call, "_original_callable"):
+            call = call._original_callable
+        if not isinstance(call, types.FunctionType | types.MethodType):
+            # This means that the callable is actually an instance of a regular class
+            call = call.__call__
+
+        return call
+
+
+@final
+class _SchemaGenerator:
+    __slots__ = "annotation_transformer", "model_bundle", "concrete_models", "version"
+
+    def __init__(self, versions: VersionBundle, model_bundle: _ModelBundle, version: str) -> None:
+        self.annotation_transformer = _AnnotationTransformer(versions)
+        self.model_bundle = model_bundle
+        self.version = version
+        self.concrete_models = {}
+        self.concrete_models = {
+            k: wrapper.generate_model_copy(self)
+            for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
+        }
+        for c in self.concrete_models:
+            if hasattr(c, "__cadwyn_original_model__"):
+                raise Exception("AAAA")
+
+    def __getitem__(self, model: type, /) -> Any:
+        if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model in (BaseModel, RootModel):
+            return model
+        model = _unwrap_model(model)
+
+        if model in self.concrete_models:
+            return self.concrete_models[model]
+        else:
+            wrapper = self._get_wrapper_for_model(model)
+
+        wrapper = self._get_wrapper_for_model(model)
+        model_copy = wrapper.generate_model_copy(self)
+        self.concrete_models[model] = model_copy
+        return model_copy
+
+    def _get_wrapper_for_model(
+        self, model: type[BaseModel | Enum]
+    ) -> "_PydanticRuntimeModelWrapper[BaseModel] | _EnumWrapper[Enum]":
+        model = _unwrap_model(model)
+
+        if model in self.model_bundle.schemas:
+            return self.model_bundle.schemas[model]
+        elif model in self.model_bundle.enums:
+            return self.model_bundle.enums[model]
+
+        if issubclass(model, BaseModel):
+            wrapper = wrap_pydantic_model(model)
+            self.model_bundle.schemas[model] = wrapper
+        elif issubclass(model, Enum):
+            wrapper = _EnumWrapper(model)
+            self.model_bundle.enums[model] = wrapper
+        return wrapper
+
+
 @cache
 def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, _SchemaGenerator]":
     models = _create_model_bundle(versions)
@@ -87,7 +715,9 @@ def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, _SchemaG
 
     for version in versions.versions:
         context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
-        version_to_context_map[str(version.value)] = _SchemaGenerator(copy.deepcopy(models))
+        version_to_context_map[str(version.value)] = _SchemaGenerator(
+            versions, copy.deepcopy(models), str(version.value)
+        )
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
 
@@ -162,7 +792,7 @@ def _apply_alter_schema_instructions(
 
 
 def _apply_alter_enum_instructions(
-    enums: dict[type, _EnumWrapper],
+    enums: "dict[type, _EnumWrapper]",
     alter_enum_instructions: Sequence[AlterEnumSubInstruction],
     version_change_name: str,
 ):
@@ -350,3 +980,44 @@ def _delete_field_from_model(model: _PydanticRuntimeModelWrapper, field_name: st
             # TODO: This behavior doesn't feel natural
             if not validator.fields:
                 model.validators[validator_name].is_deleted = True
+
+
+class _DummyEnum(Enum):
+    pass
+
+
+@final
+class _EnumWrapper(Generic[_T_ENUM]):
+    __slots__ = "cls", "members"
+
+    def __init__(self, cls: type[_T_ENUM]):
+        self.cls = _unwrap_model(cls)
+        self.members = {member.name: member.value for member in cls}
+
+    def generate_model_copy(self, generator: "_SchemaGenerator") -> type[_T_ENUM]:
+        enum_dict = Enum.__prepare__(self.cls.__name__, self.cls.__bases__)
+
+        raw_member_map = {k: v.value if isinstance(v, Enum) else v for k, v in self.members.items()}
+        initialization_namespace = self._get_initialization_namespace_for_enum(self.cls) | raw_member_map
+        for attr_name, attr in initialization_namespace.items():
+            enum_dict[attr_name] = attr
+        model_copy = cast(type[_T_ENUM], type(self.cls.__name__, self.cls.__bases__, enum_dict))
+        model_copy.__cadwyn_original_model__ = self.cls  # pyright: ignore[reportAttributeAccessIssue]
+        return model_copy
+
+    @staticmethod
+    def _get_initialization_namespace_for_enum(enum_cls: type[Enum]):
+        mro_without_the_class_itself = enum_cls.mro()[1:]
+
+        mro_dict = {}
+        for cls in reversed(mro_without_the_class_itself):
+            mro_dict.update(cls.__dict__)
+
+        methods = {
+            k: v
+            for k, v in enum_cls.__dict__.items()
+            if k not in enum_cls._member_names_
+            and k not in _DummyEnum.__dict__
+            and (k not in mro_dict or mro_dict[k] is not v)
+        }
+        return methods
