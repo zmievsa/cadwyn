@@ -74,3 +74,7 @@ class CadwynStructureError(CadwynError):
 
 class ModuleIsNotVersionedError(ValueError):
     pass
+
+
+class ImportFromStringError(CadwynError):
+    pass

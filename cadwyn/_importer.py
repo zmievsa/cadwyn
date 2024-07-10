@@ -1,9 +1,7 @@
 import importlib
 from typing import Any
 
-
-class ImportFromStringError(Exception):
-    pass
+from cadwyn.exceptions import ImportFromStringError
 
 
 def import_attribute_from_string(import_str: str) -> Any:
@@ -29,7 +27,7 @@ def import_module_from_string(module_str: str):
     try:
         return importlib.import_module(module_str)
     except ModuleNotFoundError as exc:
-        if exc.name != module_str:
+        if exc.name != module_str:  # pragma: no cover
             raise exc from None
         message = 'Could not import module "{module_str}".'
         raise ImportFromStringError(message.format(module_str=module_str))

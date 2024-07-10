@@ -115,11 +115,10 @@ class PydanticFieldWrapper:
 
     init_model_field: dataclasses.InitVar[FieldInfo]
 
-    annotation: Any = dataclasses.field(init=False)
+    annotation: Any
     passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
 
     def __post_init__(self, init_model_field: FieldInfo):
-        self.annotation = init_model_field.annotation
         self.passed_field_attributes = _extract_passed_field_attributes(init_model_field)
 
     def update_attribute(self, *, name: str, value: Any):
@@ -242,9 +241,8 @@ def _get_names_defined_in_node(node: ast.stmt):
         for target in node.targets:
             if isinstance(target, ast.Name):
                 defined_names.add(target.id)
-    elif isinstance(node, ast.AnnAssign):
-        if isinstance(node.target, ast.Name):
-            defined_names.add(node.target.id)
+    elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        defined_names.add(node.target.id)
 
     return defined_names
 
@@ -254,9 +252,6 @@ def _get_all_class_attributes(cls: type) -> set[str]:
         source = inspect.getsource(cls)
         cls_ast = ast.parse(source).body[0]
     except (OSError, SyntaxError, ValueError):
-        return set()
-
-    if not isinstance(cls_ast, ast.ClassDef):
         return set()
 
     defined_names = set()
@@ -281,7 +276,8 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeMod
         wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
         validators[decorator_wrapper.cls_var_name] = wrapped_validator
     fields = {
-        field_name: PydanticFieldWrapper(model.model_fields[field_name]) for field_name in model.__annotations__.keys()
+        field_name: PydanticFieldWrapper(model.model_fields[field_name], model.__annotations__[field_name])
+        for field_name in model.__annotations__.keys()
     }
 
     main_attributes = fields | validators
@@ -328,6 +324,7 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     _parents: list[Self] | None = dataclasses.field(init=False, default=None)
 
     def __post_init__(self):
+        # This doesn't necessarily run, it's just a precaution
         while hasattr(self.cls, "__cadwyn_original_model__"):
             self.cls = self.cls.__cadwyn_original_model__  # pyright: ignore[reportAttributeAccessIssue]
 
@@ -401,6 +398,7 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             | {
                 "__annotations__": generator.annotation_transformer.change_version_of_annotation(self.annotations),
                 "__doc__": self.doc,
+                "__qualname__": self.cls.__qualname__.removesuffix(self.cls.__name__) + self.name,
             },
         )
 
@@ -555,8 +553,8 @@ class _AnnotationTransformer:
     def _modify_callable_annotations(
         cls,
         call: _Call,
-        modify_annotations: Callable[[dict[str, Any]], dict[str, Any]] = lambda a: a,
-        modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,
+        modify_annotations: Callable[[dict[str, Any]], dict[str, Any]] = lambda a: a,  # pragma: no branch
+        modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,  # pragma: no branch
         *,
         annotation_modifying_wrapper_factory: Callable[[_Call], _Call],
     ) -> _Call:
@@ -650,9 +648,6 @@ class _SchemaGenerator:
             k: wrapper.generate_model_copy(self)
             for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
         }
-        for c in self.concrete_models:
-            if hasattr(c, "__cadwyn_original_model__"):
-                raise Exception("AAAA")
 
     def __getitem__(self, model: type, /) -> Any:
         if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model in (BaseModel, RootModel):
@@ -685,6 +680,8 @@ class _SchemaGenerator:
         elif issubclass(model, Enum):
             wrapper = _EnumWrapper(model)
             self.model_bundle.enums[model] = wrapper
+        else:
+            assert_never(model)
         return wrapper
 
 
@@ -804,7 +801,6 @@ def _change_model(
     alter_schema_instruction: SchemaHadInstruction,
     version_change_name: str,
 ):
-    # We only handle names right now so we just go ahead and check
     if alter_schema_instruction.name == model.name:
         raise InvalidGenerationInstructionError(
             f'You tried to change the name of "{model.name}" in "{version_change_name}" '
@@ -827,7 +823,7 @@ def _add_field_to_model(
             f'in "{version_change_name}" but there is already a field with that name.',
         )
 
-    field = PydanticFieldWrapper(alter_schema_instruction.field)
+    field = PydanticFieldWrapper(alter_schema_instruction.field, alter_schema_instruction.field.annotation)
     model.fields[alter_schema_instruction.name] = field
     model.annotations[alter_schema_instruction.name] = alter_schema_instruction.field.annotation
 
@@ -925,7 +921,7 @@ def _delete_field_attributes(
         if attr_name in field.passed_field_attributes:
             field.delete_attribute(name=attr_name)
             continue
-        elif get_origin(annotation) == Annotated and any(
+        elif get_origin(annotation) == Annotated and any(  # pragma: no branch
             hasattr(sub_ann, attr_name) for sub_ann in get_args(annotation)
         ):
             for sub_ann in get_args(annotation):

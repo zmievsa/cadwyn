@@ -2,8 +2,7 @@ import ast
 import inspect
 from collections.abc import Callable
 from enum import Enum, auto
-from pathlib import Path
-from types import GenericAlias, LambdaType, ModuleType, NoneType
+from types import GenericAlias, LambdaType, NoneType
 from typing import (  # noqa: UP035
     Any,
     List,
@@ -14,10 +13,8 @@ from typing import (  # noqa: UP035
 
 import annotated_types
 
-from cadwyn._package_utils import get_absolute_python_path_of_import
 from cadwyn._utils import PlainRepr, UnionType
-from cadwyn.exceptions import InvalidGenerationInstructionError, ModuleIsNotAvailableAsTextError, SchemaGenerationError
-from cadwyn.schema_generation import _ValidatorWrapper
+from cadwyn.exceptions import InvalidGenerationInstructionError
 
 _LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
 
@@ -46,7 +43,7 @@ def get_fancy_repr(value: Any):
         return transform_type(value)
     if isinstance(value, Enum):
         return transform_enum(value)
-    if isinstance(value, auto):
+    if isinstance(value, auto):  # pragma: no cover # it works but we no longer use auto
         return transform_auto(value)
     if isinstance(value, UnionType):
         return transform_union(value)
@@ -100,7 +97,7 @@ def transform_enum(value: Enum) -> Any:
     return PlainRepr(f"{value.__class__.__name__}.{value.name}")
 
 
-def transform_auto(_: auto) -> Any:
+def transform_auto(_: auto) -> Any:  # pragma: no cover # it works but we no longer use auto
     return PlainRepr("auto()")
 
 
@@ -140,45 +137,6 @@ def _get_lambda_source_from_default_factory(source: str) -> str:
         raise InvalidGenerationInstructionError(
             "More than one lambda found in default_factory. This is not supported.",
         )
-
-
-def read_python_module(module: ModuleType) -> str:
-    # Can be cached in the future to gain some speedups
-    try:
-        return inspect.getsource(module)
-    except OSError as e:
-        if module.__file__ is None:  # pragma: no cover
-            raise SchemaGenerationError(f"Failed to get file path to the module {module}") from e
-        path = Path(module.__file__)
-        if path.is_file() and path.read_text() == "":
-            return ""
-        raise ModuleIsNotAvailableAsTextError(  # pragma: no cover
-            f"Failed to get source code for module {module}. "
-            "This is likely because this module is not available as code "
-            "(it could be a compiled C extension or even a .pyc file). "
-            "Cadwyn does not support models from such code. "
-            "Please, open an issue on Cadwyn's issue tracker if you believe that your use case is valid "
-            "and if you believe that it is possible for Cadwyn to support it.",
-        ) from e
-
-
-def get_all_names_defined_at_toplevel_of_module(body: ast.Module, module_python_path: str) -> dict[str, str]:
-    """Some day we will want to use this to auto-add imports for new symbols in versions. Some day..."""
-    defined_names = {}
-    for node in body.body:
-        if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
-            defined_names[node.name] = module_python_path
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    defined_names[target.id] = module_python_path
-        elif isinstance(node, ast.ImportFrom):
-            for name in node.names:
-                defined_names[name.name] = get_absolute_python_path_of_import(node, module_python_path)
-        elif isinstance(node, ast.Import):
-            for name in node.names:
-                defined_names[name.name] = name.name
-    return defined_names
 
 
 def pop_docstring_from_cls_body(cls_body: list[ast.stmt]) -> list[ast.stmt]:

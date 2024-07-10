@@ -4,8 +4,6 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum, auto
-from pathlib import Path
-from types import ModuleType
 from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
 from uuid import UUID
 

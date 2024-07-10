@@ -1,18 +1,24 @@
 import ast
 import inspect
+import textwrap
 from enum import Enum
 from types import ModuleType
 
+import typer
 from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel
 from uvicorn import __main__
 
 from cadwyn._asts import get_fancy_repr, pop_docstring_from_cls_body
-from cadwyn._package_utils import get_cls_pythonpath
 from cadwyn.applications import Cadwyn
 from cadwyn.exceptions import CadwynRenderError
-from cadwyn.schema_generation import _generate_versioned_models, _PydanticRuntimeModelWrapper
-from cadwyn.structure.versions import VersionBundle
+from cadwyn.schema_generation import (
+    PydanticFieldWrapper,
+    _EnumWrapper,
+    _generate_versioned_models,
+    _PydanticRuntimeModelWrapper,
+)
+from cadwyn.structure.versions import VersionBundle, get_cls_pythonpath
 
 from ._importer import import_attribute_from_string, import_module_from_string
 
@@ -28,7 +34,7 @@ def render_module_by_path(module_path: str, app_path: str, version: str):
 
     try:
         module_ast = ast.parse(inspect.getsource(module))
-    except (OSError, SyntaxError, ValueError):
+    except (OSError, SyntaxError, ValueError):  # pragma: no cover
         raise CadwynRenderError(f"Failed to find the source for module {module.__name__}")
 
     return ast.unparse(
@@ -53,9 +59,9 @@ def render_model_by_path(model_path: str, app_path: str, version: str) -> str:
 
 def render_model(model: type[BaseModel | Enum], versions: VersionBundle, version: str) -> str:
     try:
-        original_cls_node = ast.parse(inspect.getsource(model)).body[0]
-    except (OSError, SyntaxError, ValueError):
-        print(f"Failed to find the source for model {get_cls_pythonpath(model)}")
+        original_cls_node = ast.parse(textwrap.dedent(inspect.getsource(model))).body[0]
+    except (OSError, SyntaxError, ValueError):  # pragma: no cover
+        typer.echo(f"Failed to find the source for model {get_cls_pythonpath(model)}")
         return f"class {model.__name__}: 'failed to find the original class source'"
     if not isinstance(original_cls_node, ast.ClassDef):
         raise ValueError(f"{get_cls_pythonpath(model)} is not a class")

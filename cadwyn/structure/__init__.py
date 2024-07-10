@@ -24,7 +24,6 @@ __all__ = [
     "endpoint",
     "schema",
     "enum",
-    "module",
     "convert_response_to_previous_version_for",
     "convert_request_to_next_version_for",
     "RequestInfo",

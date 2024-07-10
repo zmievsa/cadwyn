@@ -286,9 +286,9 @@ class AlterSchemaInstructionFactory:
         if not isinstance(func, PydanticDescriptorProxy):
             if hasattr(func, "__self__"):
                 owner = func.__self__
-                if lenient_issubclass(owner, BaseModel) and any(
+                if lenient_issubclass(owner, BaseModel) and any(  # pragma: no branch
                     _fully_unwrap_decorator(decorator.func, decorator.shim) == func
-                    for decorator in _get_model_decorators(owner)  # pragma: no branch
+                    for decorator in _get_model_decorators(owner)
                 ):
                     return AlterValidatorInstructionFactory(self.schema, func)
             raise CadwynStructureError("The passed function must be a pydantic validator")

@@ -25,10 +25,6 @@ from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
 from typing_extensions import assert_never
 
-from cadwyn._package_utils import (
-    IdentifierPythonPath,
-    get_cls_pythonpath,
-)
 from cadwyn._utils import classproperty
 from cadwyn.exceptions import (
     CadwynError,
@@ -63,6 +59,7 @@ PossibleInstructions: TypeAlias = (
     | staticmethod
 )
 APIVersionVarType: TypeAlias = ContextVar[VersionDate | None] | ContextVar[VersionDate]
+IdentifierPythonPath = str
 
 
 class VersionChange:
@@ -228,6 +225,10 @@ class HeadVersion:
                 raise NotImplementedError(
                     f"HeadVersion does not support request or response migrations but {version_change} contained one."
                 )
+
+
+def get_cls_pythonpath(cls: type) -> IdentifierPythonPath:
+    return f"{cls.__module__}.{cls.__name__}"
 
 
 class VersionBundle:
