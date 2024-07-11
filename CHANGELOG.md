@@ -5,9 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [3.15.8]
+
 ### Fixed
 
-* Invalid JSON response without quotes when the response was a raw string JSONResponse
+* Invalid unparseable JSON response without quotes when the response was a raw string JSONResponse
+* An exception raised during codegen if a pydantic model or its parent were created within some indent such as classes defined under if statements
 
 ## [3.15.7]
 
