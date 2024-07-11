@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+* Invalid JSON response without quotes when the response was a raw string JSONResponse
+
 ## [3.15.7]
 
 ### Fixed

@@ -671,7 +671,10 @@ class VersionBundle:
             # that do not have it. We don't support it too.
             if response_info.body is not None and hasattr(response_info._response, "body"):
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
-                if isinstance(response_info.body, str):
+                if (
+                    isinstance(response_info.body, str)
+                    and response_info._response.headers.get("content-type") != "application/json"
+                ):
                     response_info._response.body = response_info.body.encode(response_info._response.charset)
                 else:
                     response_info._response.body = json.dumps(
