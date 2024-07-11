@@ -122,7 +122,6 @@ def transform_other(value: Any) -> Any:
 def _get_lambda_source_from_default_factory(source: str) -> str:
     found_lambdas: list[ast.Lambda] = []
 
-    ast.parse(source)
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.keyword) and node.arg == "default_factory" and isinstance(node.value, ast.Lambda):
             found_lambdas.append(node.value)

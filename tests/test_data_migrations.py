@@ -1054,6 +1054,30 @@ def test__request_and_response_migrations__for_endpoint_with_modified_status_cod
     assert resp_2001.json() == 83
 
 
+def test__response_migrations__with_manual_string_json_response_and_migration(
+    create_versioned_clients: CreateVersionedClients,
+    head_module,
+    router: VersionedAPIRouter,
+):
+    @router.post("/test")
+    async def endpoint():
+        return JSONResponse(content="My content")
+
+    @convert_response_to_previous_version_for("/test", ["POST"])
+    def response_converter(response: ResponseInfo):
+        pass
+
+    clients = create_versioned_clients(version_change(resp=response_converter))
+
+    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    assert resp_2000.status_code == 200
+    assert resp_2000.json() == "My content"
+
+    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    assert resp_2001.status_code == 200
+    assert resp_2001.json() == "My content"
+
+
 @pytest.mark.parametrize(("path", "method"), [("/NOT_test", "POST"), ("/test", "PUT")])
 def test__request_by_path_migration__for_nonexistent_endpoint_path__should_raise_error(
     create_versioned_clients: CreateVersionedClients,

@@ -29,3 +29,16 @@ def test__schema_had_name__with_the_same_name__should_raise_error(create_runtime
         ),
     ):
         create_runtime_schemas(version_change(schema(MySchema).had(name="MySchema")))
+
+
+def test__codegen__with_indented_classes(
+    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
+) -> None:
+from pydantic import BaseModel
+if True:
+    class ConfigMixin(BaseModel):
+        pass
+class MyClass(ConfigMixin):
+    foo: str
+    v1 = create_local_simple_versioned_packages(schema(latest.MyClass).field("bar").existed_as(type=str))
+    assert inspect.getsource(v1.MyClass) == ("class MyClass(ConfigMixin):\n" "    foo: str\n    bar: str\n")

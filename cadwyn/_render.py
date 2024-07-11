@@ -7,7 +7,6 @@ from types import ModuleType
 import typer
 from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel
-from uvicorn import __main__
 
 from cadwyn._asts import get_fancy_repr, pop_docstring_from_cls_body
 from cadwyn.applications import Cadwyn
@@ -120,7 +119,7 @@ def _render_pydantic_model(wrapper: _PydanticRuntimeModelWrapper, original_cls_n
         for name, field in wrapper.fields.items()
     ]
     validator_definitions = [
-        ast.parse(inspect.getsource(validator.func)).body[0]
+        ast.parse(textwrap.dedent(inspect.getsource(validator.func))).body[0]
         for validator in wrapper.validators.values()
         if not validator.is_deleted
     ]

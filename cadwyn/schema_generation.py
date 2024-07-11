@@ -3,6 +3,7 @@ import copy
 import dataclasses
 import functools
 import inspect
+import textwrap
 import types
 import typing
 from collections.abc import Callable, Sequence
@@ -249,7 +250,7 @@ def _get_names_defined_in_node(node: ast.stmt):
 
 def _get_all_class_attributes(cls: type) -> set[str]:
     try:
-        source = inspect.getsource(cls)
+        source = textwrap.dedent(inspect.getsource(cls))
         cls_ast = ast.parse(source).body[0]
     except (OSError, SyntaxError, ValueError):
         return set()

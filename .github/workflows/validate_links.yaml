@@ -4,10 +4,11 @@ on:
   push:
     branches:
     - main
+    - 3.x.x
     paths:
     - "**.md"
   pull_request:
-      branches: [main]
+      branches: [main, 3.x.x]
       types: [opened, synchronize]
       paths:
       - "**.md"
