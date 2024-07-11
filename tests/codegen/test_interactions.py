@@ -374,6 +374,26 @@ class MyClass(BaseModel):
     )
 
 
+def test__codegen__with_indented_classes(
+    create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
+    head_module_for: HeadModuleFor,
+) -> None:
+    latest = head_module_for(
+        """
+from pydantic import BaseModel
+if True:
+    class ConfigMixin(BaseModel):
+        pass
+
+class MyClass(ConfigMixin):
+    foo: str
+
+    """,
+    )
+    v1 = create_local_simple_versioned_packages(schema(latest.MyClass).field("bar").existed_as(type=str))
+    assert inspect.getsource(v1.MyClass) == ("class MyClass(ConfigMixin):\n" "    foo: str\n    bar: str\n")
+
+
 def test__codegen_preserves_arbitrary_expressions(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
     head_module_for: HeadModuleFor,

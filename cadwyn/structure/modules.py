@@ -1,5 +1,6 @@
 import ast
 import dataclasses
+import textwrap
 from dataclasses import InitVar, dataclass
 from types import ModuleType
 
@@ -13,7 +14,7 @@ class AlterModuleInstruction:
     import_: ast.Import | ast.ImportFrom = dataclasses.field(init=False)
 
     def __post_init__(self, raw_import: str):
-        parsed_body = ast.parse(raw_import).body
+        parsed_body = ast.parse(textwrap.dedent(raw_import)).body
         if len(parsed_body) > 1:
             raise CadwynStructureError(
                 f"You have specified more than just a single import. This is prohibited. "

@@ -1,6 +1,7 @@
 import ast
 import dataclasses
 import inspect
+import textwrap
 from dataclasses import dataclass
 from enum import Enum
 from functools import cache
@@ -89,7 +90,7 @@ def get_fields_and_validators_from_model(
             {},
         )
     else:
-        cls_ast = cast(ast.ClassDef, ast.parse(source).body[0])
+        cls_ast = cast(ast.ClassDef, ast.parse(textwrap.dedent(source)).body[0])
         validators: dict[str, _ValidatorWrapper] = {}
 
         validators_and_nones = (

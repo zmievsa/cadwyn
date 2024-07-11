@@ -24,13 +24,13 @@ test:
 		--cov-fail-under=${FAIL_UNDER};
 
 ci_supertest:
-	poetry run pip install 'pydantic==1.10.13' && \
+	poetry run pip install 'pydantic==1.10.17' && \
 	make test && \
-	poetry run pip install 'pydantic==2.5.3' && \
+	poetry run pip install 'pydantic==2.8.2' && \
 	make test FAIL_UNDER=100;
 
 supertest:
 	poetry install --all-extras
 	make ci_supertest || rm coverage.xml .coverage && exit 1; \
-	poetry run pip install 'pydantic==2.5.3' && \
+	poetry run pip install 'pydantic==2.8.2' && \
 	rm coverage.xml .coverage;
