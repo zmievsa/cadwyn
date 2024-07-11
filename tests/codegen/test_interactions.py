@@ -374,7 +374,7 @@ class MyClass(BaseModel):
     )
 
 
-def test__codegen_correct_indent_handling(
+def test__codegen__with_indented_classes(
     create_local_simple_versioned_packages: CreateLocalSimpleVersionedPackages,
     head_module_for: HeadModuleFor,
 ) -> None:
