@@ -86,11 +86,11 @@ The part that causes the aforementioned problem is our usage of `exclude_unset=T
 ## Add a validator to the older version
 
 ```python
-from pydantic import Field, validator
+from pydantic import Field, field_validator
 from cadwyn.structure import VersionChange, schema
 
 
-@validator("foo")
+@field_validator("foo")
 def validate_foo(cls, value):
     if not ":" in value:
         raise TypeError

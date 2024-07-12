@@ -78,7 +78,7 @@ Let's say that previously users could specify their date of birth as a datetime 
     import datetime
 
 
-    @validator("date_of_birth", pre=True)
+    @field_validator("date_of_birth", mode="before")
     def convert_date_of_birth_to_date(cls, v: datetime.date | datetime.datetime):
         if isinstance(v, datetime.datetime):
             return v.date()

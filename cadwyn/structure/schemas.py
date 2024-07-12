@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from pydantic._internal._decorators import PydanticDescriptorProxy, unwrap_wrapped_function
 from pydantic.fields import FieldInfo
 
-from cadwyn._utils import Sentinel, _fully_unwrap_decorator
+from cadwyn._utils import Sentinel, fully_unwrap_decorator
 from cadwyn.exceptions import CadwynStructureError
 
 if TYPE_CHECKING:
@@ -287,7 +287,7 @@ class AlterSchemaInstructionFactory:
             if hasattr(func, "__self__"):
                 owner = func.__self__
                 if lenient_issubclass(owner, BaseModel) and any(  # pragma: no branch
-                    _fully_unwrap_decorator(decorator.func, decorator.shim) == func
+                    fully_unwrap_decorator(decorator.func, decorator.shim) == func
                     for decorator in _get_model_decorators(owner)
                 ):
                     return AlterValidatorInstructionFactory(self.schema, func)

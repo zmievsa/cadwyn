@@ -1056,7 +1056,6 @@ def test__request_and_response_migrations__for_endpoint_with_modified_status_cod
 
 def test__response_migrations__with_manual_string_json_response_and_migration(
     create_versioned_clients: CreateVersionedClients,
-    head_module,
     router: VersionedAPIRouter,
 ):
     @router.post("/test")

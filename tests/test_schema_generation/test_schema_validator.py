@@ -1,7 +1,7 @@
 import re
 
 import pytest
-from pydantic import BaseModel, field_validator, root_validator, validator
+from pydantic import BaseModel, field_validator, model_validator, root_validator, validator
 
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure import schema
@@ -20,16 +20,15 @@ class SchemaWithOneStrField(BaseModel):
     foo: str
 
 
-def test__schema_validator_existed(
-    create_runtime_schemas: CreateRuntimeSchemas,
-):
-    @root_validator(pre=True)
+def test__schema_validator_existed(create_runtime_schemas: CreateRuntimeSchemas):
+    @model_validator(mode="before")
     def hewwo(cls, values):
-        raise NotImplementedError
+        values["foo"] += "_root"
+        return values
 
-    @validator("foo")
+    @field_validator("foo")
     def dawkness(cls, value):
-        raise NotImplementedError
+        return value + "_field"
 
     schemas = create_runtime_schemas(
         version_change(
@@ -41,21 +40,48 @@ def test__schema_validator_existed(
     class ExpectedSchema(BaseModel):
         foo: str
 
-        @root_validator(pre=True)
+        @model_validator(mode="before")
         def hewwo(cls, values):
             raise NotImplementedError
 
-        @validator("foo")
+        @field_validator("foo")
         def dawkness(cls, value):
             raise NotImplementedError
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithOneStrField], ExpectedSchema)
+    assert schemas["2001-01-01"][SchemaWithOneStrField](foo="hello").foo == "hello"
+    assert schemas["2000-01-01"][SchemaWithOneStrField](foo="hello").foo == "hello_root_field"
+
+
+def test__schema_validator_existed__with_deprecated_validators(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    with pytest.warns(DeprecationWarning):
+
+        @root_validator(pre=True)
+        def hewwo(cls, values):
+            values["foo"] += "_root"
+            return values
+
+        @validator("foo")
+        def dawkness(cls, value):
+            return value + "_field"
+
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithOneStrField).validator(hewwo).existed,
+            schema(SchemaWithOneStrField).validator(dawkness).existed,
+        )
+    )
+
+    assert schemas["2000-01-01"][SchemaWithOneStrField](foo="hello").foo == "hello_root_field"
+    assert schemas["2001-01-01"][SchemaWithOneStrField](foo="hello").foo == "hello"
 
 
 class SchemaWithOneStrFieldAndValidator(BaseModel):
     foo: str
 
-    @validator("foo")
+    @field_validator("foo")
     def validate_foo(cls, value):
         raise NotImplementedError
 
@@ -98,7 +124,7 @@ def test__schema_validator_didnt_exist__applied_twice__should_raise_error(create
 def test__schema_validator_didnt_exist__for_nonexisting_validator__should_raise_error(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    @validator("foo")
+    @field_validator("foo")
     def fake_validator(cls, value):
         raise NotImplementedError
 
@@ -150,11 +176,13 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
         foo: str
         bar: str
 
-        @validator("bar")
-        def validate_bar(cls, value):
-            raise NotImplementedError
+        with pytest.warns(DeprecationWarning):
 
-        @validator("foo", "bar")
+            @validator("bar")
+            def validate_bar(cls, value):
+                raise NotImplementedError
+
+        @field_validator("foo", "bar")
         def validate_foo(cls, value):
             raise NotImplementedError
 
@@ -167,7 +195,7 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
         def validate_bar(cls, value):
             raise NotImplementedError
 
-        @validator("bar")
+        @field_validator("bar")
         def validate_foo(cls, value):
             raise NotImplementedError
 

@@ -56,7 +56,7 @@ from pydantic._internal._decorators import (
 from pydantic.fields import ComputedFieldInfo, FieldInfo
 from typing_extensions import Doc, Self, _AnnotatedAlias, assert_never, final
 
-from cadwyn._utils import Sentinel, UnionType, _fully_unwrap_decorator
+from cadwyn._utils import Sentinel, UnionType, fully_unwrap_decorator
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure.common import VersionDate
 from cadwyn.structure.data import ResponseInfo
@@ -211,7 +211,7 @@ class _PerFieldValidatorWrapper(_ValidatorWrapper):
 
 def _wrap_validator(func: Callable, is_pydantic_v1_style_validator: Any, decorator_info: _decorators.DecoratorInfo):
     # This is only for pydantic v1 style validators
-    func = _fully_unwrap_decorator(func, is_pydantic_v1_style_validator)
+    func = fully_unwrap_decorator(func, is_pydantic_v1_style_validator)
     if inspect.ismethod(func):
         func = func.__func__
     kwargs = dataclasses.asdict(decorator_info)
@@ -248,30 +248,12 @@ def _get_names_defined_in_node(node: ast.stmt):
     return defined_names
 
 
-def _get_all_class_attributes(cls: type) -> set[str]:
-    try:
-        source = textwrap.dedent(inspect.getsource(cls))
-        cls_ast = ast.parse(source).body[0]
-    except (OSError, SyntaxError, ValueError):
-        return set()
-
-    defined_names = set()
-    for node in cls_ast.body:
-        defined_names.update(_get_names_defined_in_node(node))
-    return defined_names
-
-
 def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeModelWrapper[_T_PYDANTIC_MODEL]":
     # TODO: Add a test where we delete a parent field for which we have a child validator. To handle this correctly, we have to first initialize the parents, and only then the children. Or maybe even process validator changes AFTER the migrations have been done.
-    defined_names = _get_all_class_attributes(model)
     decorators = _get_model_decorators(model)
     validators = {}
     for decorator_wrapper in decorators:
-        if defined_names:
-            # This is a fix for cases when this validator overrides a field name from parent class
-            if decorator_wrapper.cls_var_name not in defined_names:
-                continue
-        elif decorator_wrapper.cls_var_name not in model.__dict__:
+        if decorator_wrapper.cls_var_name not in model.__dict__:
             continue
 
         wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
@@ -286,10 +268,7 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeMod
         attr_name: attr_val
         for attr_name, attr_val in model.__dict__.items()
         if attr_name not in main_attributes
-        and (
-            (defined_names and attr_name in defined_names)
-            or not (_is_dunder(attr_name) or attr_name in {"_abc_impl", "model_fields", "model_computed_fields"})
-        )
+        and not (_is_dunder(attr_name) or attr_name in {"_abc_impl", "model_fields", "model_computed_fields"})
     }
     other_attributes |= {
         "model_config": model.model_config,
@@ -551,11 +530,11 @@ class _AnnotationTransformer:
         _add_request_and_response_params(route)
 
     @classmethod
-    def _modify_callable_annotations(
+    def _modify_callable_annotations(  # pragma: no branch # because of lambdas
         cls,
         call: _Call,
-        modify_annotations: Callable[[dict[str, Any]], dict[str, Any]] = lambda a: a,  # pragma: no branch
-        modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,  # pragma: no branch
+        modify_annotations: Callable[[dict[str, Any]], dict[str, Any]] = lambda a: a,
+        modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,
         *,
         annotation_modifying_wrapper_factory: Callable[[_Call], _Call],
     ) -> _Call:
