@@ -1,6 +1,6 @@
 # Schema migrations
 
-All of the following instructions affect only code generation.
+All of the following instructions affect only openapi schemas and their initial validation. All of your incoming requests will still be converted into your HEAD schemas.
 
 ## Add a field to the older version
 

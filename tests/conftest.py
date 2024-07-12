@@ -1,5 +1,3 @@
-import importlib
-import textwrap
 import uuid
 from collections.abc import Sequence
 from contextvars import ContextVar
@@ -7,8 +5,7 @@ from copy import deepcopy
 from datetime import date
 from enum import Enum
 from pathlib import Path
-from types import ModuleType
-from typing import Any, TypeVar
+from typing import Any
 
 import pytest
 from fastapi import APIRouter, FastAPI
@@ -27,7 +24,6 @@ from cadwyn.structure.versions import HeadVersion
 
 CURRENT_DIR = Path(__file__).parent
 Undefined = object()
-_T_MODEL = TypeVar("_T_MODEL", bound=type[BaseModel | Enum])
 
 
 @pytest.fixture()
@@ -190,8 +186,8 @@ def serialize_object(obj: Any):
         for v in obj:
             if callable(v):
                 while hasattr(v, "func"):
-                    v = v.func
-                v = v.__name__
+                    v = v.func  # noqa: PLW2901
+                v = v.__name__  # noqa: PLW2901
             modified_list.append(serialize_object(v))
         return modified_list
     else:

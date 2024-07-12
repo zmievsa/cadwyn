@@ -2,14 +2,13 @@ import ast
 import inspect
 import textwrap
 from enum import Enum
-from types import ModuleType
+from typing import TYPE_CHECKING
 
 import typer
 from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel
 
 from cadwyn._asts import get_fancy_repr, pop_docstring_from_cls_body
-from cadwyn.applications import Cadwyn
 from cadwyn.exceptions import CadwynRenderError
 from cadwyn.schema_generation import (
     PydanticFieldWrapper,
@@ -21,9 +20,12 @@ from cadwyn.structure.versions import VersionBundle, get_cls_pythonpath
 
 from ._importer import import_attribute_from_string, import_module_from_string
 
+if TYPE_CHECKING:
+    from cadwyn.applications import Cadwyn
+
 
 def render_module_by_path(module_path: str, app_path: str, version: str):
-    module: ModuleType = import_module_from_string(module_path)
+    module = import_module_from_string(module_path)
     app: Cadwyn = import_attribute_from_string(app_path)
     attributes_to_alter = [
         name
@@ -33,8 +35,8 @@ def render_module_by_path(module_path: str, app_path: str, version: str):
 
     try:
         module_ast = ast.parse(inspect.getsource(module))
-    except (OSError, SyntaxError, ValueError):  # pragma: no cover
-        raise CadwynRenderError(f"Failed to find the source for module {module.__name__}")
+    except (OSError, SyntaxError, ValueError) as e:  # pragma: no cover
+        raise CadwynRenderError(f"Failed to find the source for module {module.__name__}") from e
 
     return ast.unparse(
         ast.Module(
@@ -63,7 +65,7 @@ def render_model(model: type[BaseModel | Enum], versions: VersionBundle, version
         typer.echo(f"Failed to find the source for model {get_cls_pythonpath(model)}")
         return f"class {model.__name__}: 'failed to find the original class source'"
     if not isinstance(original_cls_node, ast.ClassDef):
-        raise ValueError(f"{get_cls_pythonpath(model)} is not a class")
+        raise TypeError(f"{get_cls_pythonpath(model)} is not a class")
 
     return ast.unparse(_render_model_from_ast(original_cls_node, model, versions, version))
 

@@ -1,6 +1,5 @@
 import re
 from datetime import date
-from types import ModuleType
 from typing import Annotated, cast
 
 import pytest

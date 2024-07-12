@@ -42,8 +42,6 @@ So if you do consider it a breaking change in terms of responses, you should do 
                 response.body["role"] = "regular"
     ```
 
-3. [Regenerate](../../concepts/code_generation.md) the versioned schemas
-
 We convert moderators to regulars in older versions because it is a safer choice for our users.
 
 ### Why enum expansion is a breaking change for responses
@@ -118,7 +116,6 @@ Let's say that previously users could specify their date of birth as a datetime 
     # versions/__init__.py
     from cadwyn.structure import Version, VersionBundle, HeadVersion
     from datetime import date
-    from data import head
     from .v2001_01_01 import MakePhoneNonNullableInLatest, AddPhoneToUser
 
 
@@ -126,11 +123,8 @@ Let's say that previously users could specify their date of birth as a datetime 
         HeadVersion(ChangeDateOfBirthToDateInUserInLatest),
         Version(date(2001, 1, 1), ChangeDateOfBirthToDateInUser),
         Version(date(2000, 1, 1)),
-        head_schemas_package=head,
     )
     ```
-
-4. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 This whole process was a bit complex so let us break it down a little:
 

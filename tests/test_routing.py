@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
-from starlette.routing import Match, NoMatchFound, Route
+from starlette.routing import Match, NoMatchFound
 from starlette.testclient import TestClient
 
 from cadwyn import Cadwyn

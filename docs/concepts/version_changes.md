@@ -33,7 +33,6 @@ After you have described them, you add your version change class(es) into your v
 
 from cadwyn.structure import VersionBundle, Version
 from datetime import date
-from data import latest
 
 from .v2023_02_10 import RemoveTaxIDEndpoints
 
@@ -42,7 +41,6 @@ versions = VersionBundle(
     HeadVersion(),
     Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
     Version(date(2022, 11, 16)),
-    head_schemas_package=latest,
 )
 ```
 
@@ -59,7 +57,6 @@ Now let's discuss what each of these parts does and why:
 
 from cadwyn.structure import VersionBundle, Version
 from datetime import date
-from data import latest
 
 from .v2023_02_10 import RemoveTaxIDEndpoints
 
@@ -68,7 +65,6 @@ versions = VersionBundle(
     HeadVersion(),
     Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
     Version(date(2022, 11, 16)),
-    head_schemas_package=latest,
 )
 ```
 
@@ -107,7 +103,6 @@ versions = VersionBundle(
     Version(date(2023, 4, 2), DeleteEndpoint, ChangeFields, RenameFields),
     Version(date(2023, 2, 10), RenameEndpoints, RefactorFields),
     Version(date(2022, 11, 16)),
-    head_schemas_package=latest,
 )
 ```
 
@@ -133,9 +128,18 @@ Changes:
 
 ### VersionChange.instructions_to_migrate_to_previous_version
 
-In Cadwyn, you use the latest version. This attribute is a way for you to describe how your schemas and endpoints looked in previous versions so that Cadwyn can guess code generation and route generation to recreate the old schemas and endpoints for your clients. So you only need to maintain your latest schemas and your migrations while Cadwyn takes care of the rest. In fact, you spend barely any effort on **maintaining** your migrations because they are effectively immutable -- they describe the breaking changes that happened in the past so there is no need to ever change them.
+In Cadwyn, you use the latest version. This attribute is a way for you to describe how your schemas and endpoints looked in previous versions so that Cadwyn can guess schema and route generation to recreate the old schemas and endpoints for your clients. So you only need to maintain your head (latest) schemas and your migrations while Cadwyn takes care of the rest. In fact, you spend barely any effort on **maintaining** your migrations because they are effectively immutable -- they describe the breaking changes that happened in the past so there is no need to ever change them.
 
 This approach of *maintaining the present and describing the past* might appear weird. You just need to form the correct mindset which is counter-intuitive at first but after just one or two attempts at versioning you will see how much sense this approach makes.
+
+
+Imagine you needed to know what your code looked like two weeks ago. You would use `git checkout` or `git reset` with an older commit because `git` stores the latest version of your code (which is also called HEAD) and the diffs between it and each previous version as a chain of changes. This is exactly how Cadwyn works! We store the latest version and use the diffs to regenerate the older versions.
+
+<details>
+  <summary>Note to curious readers</summary>
+
+  Git doesn't actually work this way internally. It's just a really simplistic metaphor to explain a complex concept.
+</details>
 
 ### Data migrations
 

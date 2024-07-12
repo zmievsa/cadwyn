@@ -5,7 +5,6 @@ from typer.testing import CliRunner
 
 from cadwyn import __version__
 from cadwyn.__main__ import app
-from cadwyn._render import render_model_by_path
 
 
 def code(c: str) -> str:

@@ -2,26 +2,26 @@
 
 As Cadwyn allows you to keep the same business logic, database schemas, etc -- you should have a single set of **common** tests that test your current latest version. These tests are going to work like the regular tests that you would have if you did not have any API versioning.
 
-Here's the recommended file structure for tests:
+Here's one of the possible file structures for tests:
 
 ```tree
-├── tests
-│   ├── __init__.py
-│   ├── conftest.py
-│   ├── head
-│   │   ├── __init__.py
-│   │   ├── conftest.py
-│   │   ├── test_users.py
-│   │   ├── test_admins.py
-│   │   └── test_invoices.py
-│   ├── v2022_11_16
-│   │   ├── __init__.py
-│   │   ├── conftest.py
-│   │   └── test_invoices.py
-│   └── v2023_03_11
-│       ├── __init__.py
-│       ├── conftest.py
-│       └── test_users.py
+└── tests
+    ├── __init__.py
+    ├── conftest.py
+    ├── head
+    │   ├── __init__.py
+    │   ├── conftest.py
+    │   ├── test_users.py
+    │   ├── test_admins.py
+    │   └── test_invoices.py
+    ├── v2022_11_16
+    │   ├── __init__.py
+    │   ├── conftest.py
+    │   └── test_invoices.py
+    └── v2023_03_11
+        ├── __init__.py
+        ├── conftest.py
+        └── test_users.py
 
 ```
 

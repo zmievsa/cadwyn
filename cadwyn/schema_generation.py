@@ -1,9 +1,7 @@
-import ast
 import copy
 import dataclasses
 import functools
 import inspect
-import textwrap
 import types
 import typing
 from collections.abc import Callable, Sequence
@@ -29,21 +27,9 @@ import fastapi.utils
 import pydantic
 import pydantic._internal._decorators
 from fastapi import Response
-from fastapi._compat import create_body_model
 from fastapi.routing import APIRoute
 from issubclass import issubclass
-from pydantic import (
-    BaseModel,
-    Field,
-    RootModel,
-    computed_field,
-    field_serializer,
-    field_validator,
-    model_serializer,
-    model_validator,
-    root_validator,
-    validator,
-)
+from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
 from pydantic._internal._decorators import (
     FieldSerializerDecoratorInfo,
@@ -54,7 +40,7 @@ from pydantic._internal._decorators import (
     ValidatorDecoratorInfo,
 )
 from pydantic.fields import ComputedFieldInfo, FieldInfo
-from typing_extensions import Doc, Self, _AnnotatedAlias, assert_never, final
+from typing_extensions import Doc, Self, _AnnotatedAlias, assert_never
 
 from cadwyn._utils import Sentinel, UnionType, fully_unwrap_decorator
 from cadwyn.exceptions import InvalidGenerationInstructionError
@@ -85,13 +71,13 @@ _T_ENUM = TypeVar("_T_ENUM", bound=Enum)
 
 _T_PYDANTIC_MODEL = TypeVar("_T_PYDANTIC_MODEL", bound=BaseModel)
 PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
-    ValidatorDecoratorInfo: validator,
-    FieldValidatorDecoratorInfo: field_validator,
-    FieldSerializerDecoratorInfo: field_serializer,
-    RootValidatorDecoratorInfo: root_validator,
-    ModelValidatorDecoratorInfo: model_validator,
-    ModelSerializerDecoratorInfo: model_serializer,
-    ComputedFieldInfo: computed_field,
+    ValidatorDecoratorInfo: pydantic.validator,
+    FieldValidatorDecoratorInfo: pydantic.field_validator,
+    FieldSerializerDecoratorInfo: pydantic.field_serializer,
+    RootValidatorDecoratorInfo: pydantic.root_validator,
+    ModelValidatorDecoratorInfo: pydantic.model_validator,
+    ModelSerializerDecoratorInfo: pydantic.model_serializer,
+    ComputedFieldInfo: pydantic.computed_field,
 }
 
 
@@ -134,7 +120,7 @@ class PydanticFieldWrapper:
         )
 
 
-def _extract_passed_field_attributes(field_info):
+def _extract_passed_field_attributes(field_info: FieldInfo):
     attributes = {
         attr_name: field_info._attributes_set[attr_name]
         for attr_name in _all_field_arg_names
@@ -229,27 +215,11 @@ def _wrap_validator(func: Callable, is_pydantic_v1_style_validator: Any, decorat
         return _ValidatorWrapper(func=func, decorator=actual_decorator, kwargs=kwargs)
 
 
-def _is_dunder(attr_name):
+def _is_dunder(attr_name: str):
     return attr_name.startswith("__") and attr_name.endswith("__")
 
 
-def _get_names_defined_in_node(node: ast.stmt):
-    defined_names = set()
-
-    if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
-        defined_names.add(node.name)
-    elif isinstance(node, ast.Assign):
-        for target in node.targets:
-            if isinstance(target, ast.Name):
-                defined_names.add(target.id)
-    elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-        defined_names.add(node.target.id)
-
-    return defined_names
-
-
 def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeModelWrapper[_T_PYDANTIC_MODEL]":
-    # TODO: Add a test where we delete a parent field for which we have a child validator. To handle this correctly, we have to first initialize the parents, and only then the children. Or maybe even process validator changes AFTER the migrations have been done.
     decorators = _get_model_decorators(model)
     validators = {}
     for decorator_wrapper in decorators:
@@ -260,7 +230,7 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeMod
         validators[decorator_wrapper.cls_var_name] = wrapped_validator
     fields = {
         field_name: PydanticFieldWrapper(model.model_fields[field_name], model.__annotations__[field_name])
-        for field_name in model.__annotations__.keys()
+        for field_name in model.__annotations__
     }
 
     main_attributes = fields | validators
@@ -304,8 +274,8 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     _parents: list[Self] | None = dataclasses.field(init=False, default=None)
 
     def __post_init__(self):
-        # This doesn't necessarily run, it's just a precaution
-        while hasattr(self.cls, "__cadwyn_original_model__"):
+        # This isn't actually supposed to run, it's just a precaution
+        while hasattr(self.cls, "__cadwyn_original_model__"):  # pragma: no cover
             self.cls = self.cls.__cadwyn_original_model__  # pyright: ignore[reportAttributeAccessIssue]
 
         for k, annotation in self.annotations.items():
@@ -317,7 +287,7 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                     copy.deepcopy(sub_annotations[0]), tuple(copy.deepcopy(sub_ann) for sub_ann in sub_annotations[1:])
                 )
 
-    def __deepcopy__(self, memo):
+    def __deepcopy__(self, memo: Any):
         return _PydanticRuntimeModelWrapper(
             self.cls,
             name=self.name,
@@ -490,11 +460,6 @@ class _AnnotationTransformer:
         elif annotation is Any or isinstance(annotation, typing.NewType):
             return annotation
         elif isinstance(annotation, type):
-            if annotation.__module__ == "pydantic.main" and issubclass(annotation, BaseModel):
-                return create_body_model(
-                    fields=self.change_version_of_annotation(annotation.model_fields).values(),
-                    model_name=annotation.__name__,
-                )
             return self._change_version_of_type(annotation)
         elif callable(annotation):
             if type(annotation).__module__.startswith(
@@ -900,14 +865,12 @@ def _delete_field_attributes(
     for attr_name in alter_schema_instruction.attributes:
         if attr_name in field.passed_field_attributes:
             field.delete_attribute(name=attr_name)
-            continue
         elif get_origin(annotation) == Annotated and any(  # pragma: no branch
             hasattr(sub_ann, attr_name) for sub_ann in get_args(annotation)
         ):
             for sub_ann in get_args(annotation):
                 if hasattr(sub_ann, attr_name):
                     object.__setattr__(sub_ann, attr_name, None)
-            continue
         else:
             raise InvalidGenerationInstructionError(
                 f'You tried to delete the attribute "{attr_name}" of field "{alter_schema_instruction.name}" '
@@ -963,11 +926,10 @@ class _EnumWrapper(Generic[_T_ENUM]):
         for cls in reversed(mro_without_the_class_itself):
             mro_dict.update(cls.__dict__)
 
-        methods = {
+        return {
             k: v
             for k, v in enum_cls.__dict__.items()
             if k not in enum_cls._member_names_
             and k not in _DummyEnum.__dict__
             and (k not in mro_dict or mro_dict[k] is not v)
         }
-        return methods

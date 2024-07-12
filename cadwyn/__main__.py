@@ -1,9 +1,9 @@
 from datetime import date
+from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich.syntax import Syntax
-from typing_extensions import Annotated, Any
 
 from cadwyn._render import render_model_by_path, render_module_by_path
 

@@ -5,6 +5,7 @@ repo_name: Cadwyn
 repo_url: https://github.com/zmievsa/cadwyn
 
 plugins:
+  - mike
   - search
   - mkdocs-simple-hooks:
       hooks:
@@ -12,35 +13,37 @@ plugins:
 
 markdown_extensions:
   toc:
-      permalink: true
+    permalink: true
   markdown.extensions.codehilite:
     guess_lang: false
   admonition: null
   codehilite: null
-  extra: null
+  extra:
+  version:
+    provider: mike
   pymdownx.superfences:
     custom_fences:
-    - name: mermaid
-      class: mermaid
-      format: !!python/name:pymdownx.superfences.fence_code_format ''
+      - name: mermaid
+        class: mermaid
+        format: !!python/name:pymdownx.superfences.fence_code_format ""
   pymdownx.tabbed:
     alternate_style: true
   attr_list: null
   md_in_html: null
 theme:
-  name: 'material'
+  name: "material"
   features:
-  - search.suggest
-  - search.highlight
-  - content.tabs.link
-  - navigation.indexes
-  - navigation.tracking
-  - navigation.tabs
-  - navigation.path
-  - content.tooltips
-  - content.code.annotate
-  - content.code.copy
-  - content.code.select
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - navigation.indexes
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.path
+    - content.tooltips
+    - content.code.annotate
+    - content.code.copy
+    - content.code.select
   palette:
     - media: "(prefers-color-scheme)"
       toggle:
@@ -66,50 +69,50 @@ theme:
 
 nav:
   - "Home":
-    - "index.md"
-    - "Contributing": "home/CONTRIBUTING.md"
-    - "Changelog": "home/CHANGELOG.md"
+      - "index.md"
+      - "Contributing": "home/CONTRIBUTING.md"
+      - "Changelog": "home/CHANGELOG.md"
 
   - "Quickstart":
-    - "quickstart/index.md"
-    - "Setup": "quickstart/setup.md"
-    - "Making the breaking change": "quickstart/making_the_breaking_change.md"
-    - "Going back in time before the breaking change": "quickstart/going_back_in_time_before_the_breaking_change.md"
+      - "quickstart/index.md"
+      - "Setup": "quickstart/setup.md"
+      - "Making the breaking change": "quickstart/making_the_breaking_change.md"
+      - "Going back in time before the breaking change": "quickstart/going_back_in_time_before_the_breaking_change.md"
 
   - "How to...":
-    - "how_to/index.md"
-    - "Change OpenAPI Schemas":
-      - "Add a field": "how_to/change_openapi_schemas/add_field.md"
-      - "Remove a field": "how_to/change_openapi_schemas/remove_field.md"
-      - "Rename a field": "how_to/change_openapi_schemas/rename_a_field_in_schema.md"
-      - "Change field type": "how_to/change_openapi_schemas/change_field_type.md"
-      - "Change field constraints or validators": "how_to/change_openapi_schemas/changing_constraints.md"
-    - "Change business logic": "how_to/change_business_logic/index.md"
-    - "Change endpoints": "how_to/change_endpoints/index.md"
+      - "how_to/index.md"
+      - "Change OpenAPI Schemas":
+          - "Add a field": "how_to/change_openapi_schemas/add_field.md"
+          - "Remove a field": "how_to/change_openapi_schemas/remove_field.md"
+          - "Rename a field": "how_to/change_openapi_schemas/rename_a_field_in_schema.md"
+          - "Change field type": "how_to/change_openapi_schemas/change_field_type.md"
+          - "Change field constraints or validators": "how_to/change_openapi_schemas/changing_constraints.md"
+      - "Change business logic": "how_to/change_business_logic/index.md"
+      - "Change endpoints": "how_to/change_endpoints/index.md"
 
   - "Concepts":
-    - "concepts/index.md"
-    - "Methodology": "concepts/methodology.md"
-    - "Service structure": "concepts/service_structure.md"
-    - "Beware of data versioning": "concepts/beware_of_data_versioning.md"
-    - "Main App": "concepts/main_app.md"
-    - "CLI": "concepts/cli.md"
-    - "Code generation": "concepts/code_generation.md"
-    - "Version Changes": "concepts/version_changes.md"
-    - "Endpoint migrations": "concepts/endpoint_migrations.md"
-    - "Enum migrations": "concepts/enum_migrations.md"
-    - "Schema migrations": "concepts/schema_migrations.md"
-    - "Module migrations": "concepts/module_migrations.md"
-    - "API Version header and context variables": "concepts/api_version_header_and_context_variables.md"
-    - "Testing": concepts/testing.md
+      - "concepts/index.md"
+      - "Methodology": "concepts/methodology.md"
+      - "Service structure": "concepts/service_structure.md"
+      - "Beware of data versioning": "concepts/beware_of_data_versioning.md"
+      - "Main App": "concepts/main_app.md"
+      - "CLI": "concepts/cli.md"
+      - "Code generation": "concepts/code_generation.md"
+      - "Version Changes": "concepts/version_changes.md"
+      - "Endpoint migrations": "concepts/endpoint_migrations.md"
+      - "Enum migrations": "concepts/enum_migrations.md"
+      - "Schema migrations": "concepts/schema_migrations.md"
+      - "Module migrations": "concepts/module_migrations.md"
+      - "API Version header and context variables": "concepts/api_version_header_and_context_variables.md"
+      - "Testing": concepts/testing.md
 
   - "Theory":
-    - "How we got here": "theory/how_we_got_here.md"
-    - "Literature": "theory/literature.md"
-    - "Design decisions": "theory/design_decisions.md"
-    - "How to build a versioning framework": "theory/how_to_build_versioning_framework.md"
+      - "How we got here": "theory/how_we_got_here.md"
+      - "Literature": "theory/literature.md"
+      - "Design decisions": "theory/design_decisions.md"
+      - "How to build a versioning framework": "theory/how_to_build_versioning_framework.md"
 
 watch:
-- docs
-- CHANGELOG.md
-- mkdocs.yml
+  - docs
+  - CHANGELOG.md
+  - mkdocs.yml

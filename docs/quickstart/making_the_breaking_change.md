@@ -58,4 +58,12 @@ But every user of ours will now have their API integration broken. To prevent th
 
 Stripe has come up [with a solution](https://stripe.com/blog/api-versioning): let's have one HEAD app version whose responses get migrated to older versions and let's describe changes between these versions using migrations. This approach allows them to keep versions for **years** without dropping them. Obviously, each breaking change is still bad and each version still makes our system more complex and expensive, but their approach gives us a chance to minimize this complexity. Additionally, it allows us backport features and bugfixes to older versions. However, you will also be backporting bugs, which is a sad consequence of eliminating duplication.
 
-Cadwyn builds upon approach so let's continue our tutorial and now try to combine the two versions we created using versioning.
+Imagine you needed to know what your code looked like two weeks ago. You would use `git checkout` or `git reset` with an older commit because `git` stores the latest version of your code (which is also called HEAD) and the differences between it and each previous version as a chain of changes. This is exactly how Stripe's approach works! They store the latest version and use the diffs to regenerate the older versions.
+
+Cadwyn builds upon approach so let's continue our tutorial and try to combine the two versions we created using versioning.
+
+<details>
+  <summary>Note to curious readers</summary>
+
+  Git doesn't actually work this way internally. It's just a really simplistic metaphor to explain a complex concept.
+</details>

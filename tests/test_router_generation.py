@@ -19,8 +19,8 @@ from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
 
 from cadwyn import VersionBundle, VersionedAPIRouter
-from cadwyn.exceptions import CadwynError, CadwynStructureError, RouterGenerationError, RouterPathParamsModifiedError
-from cadwyn.route_generation import _generate_versioned_routers
+from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
+from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.schema_generation import _generate_versioned_models
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.enums import enum
@@ -188,7 +188,7 @@ def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
     )
-    routers = _generate_versioned_routers(router, versions=versions)
+    routers = generate_versioned_routers(router, versions=versions)
 
     assert len(routers[date(2003, 1, 1)].routes) == 0
     assert len(routers[date(2002, 1, 1)].routes) == 1
@@ -597,7 +597,7 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
     )
-    routers = _generate_versioned_routers(router, versions=versions)
+    routers = generate_versioned_routers(router, versions=versions)
 
     assert len(routers[date(2002, 1, 1)].routes) == 0
     assert len(routers[date(2001, 1, 1)].routes) == 1
@@ -685,8 +685,12 @@ def test__router_generation__updating_response_model(
     routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
 
     assert len(routes_2000) == len(routes_2001) == 2
-    assert routes_2000[1].response_model == dict[str, list[schemas["2000-01-01"][SchemaWithOnePydanticField]]]  # pyright: ignore[reportGeneralTypeIssues]
-    assert routes_2001[1].response_model == dict[str, list[schemas["2001-01-01"][SchemaWithOnePydanticField]]]  # pyright: ignore[reportGeneralTypeIssues]
+
+    schema_2000 = schemas["2000-01-01"][SchemaWithOnePydanticField]
+    assert routes_2000[1].response_model == dict[str, list[schema_2000]]
+
+    schema_2001 = schemas["2001-01-01"][SchemaWithOnePydanticField]
+    assert routes_2001[1].response_model == dict[str, list[schema_2001]]
 
     assert get_nested_field_type(routes_2000[1].response_model) == list[str]
     assert get_nested_field_type(routes_2001[1].response_model) == int
@@ -721,9 +725,12 @@ def test__router_generation__updating_request_models(
     assert len(routes_2000) == len(routes_2001) == 2
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
+    schema_2000 = schemas["2000-01-01"][SchemaWithOnePydanticField]
+    assert getattr(body_param_2000, TYPE_ATTR) == dict[str, list[schema_2000]]
+
     body_param_2001 = routes_2001[1].dependant.body_params[0]
-    assert getattr(body_param_2000, TYPE_ATTR) == dict[str, list[schemas["2000-01-01"][SchemaWithOnePydanticField]]]  # pyright: ignore[reportGeneralTypeIssues]
-    assert getattr(body_param_2001, TYPE_ATTR) == dict[str, list[schemas["2001-01-01"][SchemaWithOnePydanticField]]]  # pyright: ignore[reportGeneralTypeIssues]
+    schema_2001 = schemas["2001-01-01"][SchemaWithOnePydanticField]
+    assert getattr(body_param_2001, TYPE_ATTR) == dict[str, list[schema_2001]]
 
     assert get_nested_field_type(getattr(routes_2000[1].dependant.body_params[0], TYPE_ATTR)) == list[str]
     assert get_nested_field_type(getattr(routes_2001[1].dependant.body_params[0], TYPE_ATTR)) == int
@@ -1005,7 +1012,7 @@ def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: C
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
     )
-    routers = _generate_versioned_routers(router, versions=versions)
+    routers = generate_versioned_routers(router, versions=versions)
 
     assert client(routers[date(2002, 1, 1)]).get("/test").json() == {"detail": "Not Found"}
     assert client(routers[date(2001, 1, 1)]).get("/test").json() == 83
@@ -1032,7 +1039,7 @@ def test__cascading_router_didnt_exist(
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
     )
-    routers = _generate_versioned_routers(router, versions=versions)
+    routers = generate_versioned_routers(router, versions=versions)
 
     assert client(routers[date(2002, 1, 1)]).get("/test").json() == 83
 
@@ -1074,7 +1081,7 @@ def test__generate_versioned_routers__two_routers(
     root_router.include_router(router)
     root_router.include_router(router2)
 
-    routers = _generate_versioned_routers(root_router, versions=versions)
+    routers = generate_versioned_routers(root_router, versions=versions)
     assert all(type(r) is APIRouter for r in routers.values())
     assert len(routers[date(2001, 1, 1)].routes) == 2
     assert len(routers[date(2000, 1, 1)].routes) == 1

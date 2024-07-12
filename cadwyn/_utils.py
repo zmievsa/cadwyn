@@ -39,5 +39,4 @@ def fully_unwrap_decorator(func: Callable, is_pydantic_v1_style_validator: Any):
     func = unwrap_wrapped_function(func)
     if is_pydantic_v1_style_validator and func.__closure__:
         func = func.__closure__[0].cell_contents
-    func = unwrap_wrapped_function(func)
-    return func
+    return unwrap_wrapped_function(func)

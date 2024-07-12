@@ -1185,44 +1185,44 @@ def test__request_and_response_migrations__with_multiple_schemas_in_converters(
     create_versioned_clients: CreateVersionedClients,
     router: VersionedAPIRouter,
 ) -> None:
-    class Request_1(BaseModel):
+    class Request1(BaseModel):
         i: list[str]
 
-    class Response_1(BaseModel):
+    class Response1(BaseModel):
         i: list[str]
 
-    class Request_2(BaseModel):
+    class Request2(BaseModel):
         i: list[str]
 
-    class Response_2(BaseModel):
+    class Response2(BaseModel):
         i: list[str]
 
-    class Request_3(BaseModel):
+    class Request3(BaseModel):
         i: list[str]
 
-    class Response_3(BaseModel):
+    class Response3(BaseModel):
         i: list[str]
 
-    @router.post("/test_1", response_model=Response_1)
-    async def endpoint_1(body: Request_1):
+    @router.post("/test_1", response_model=Response1)
+    async def endpoint_1(body: Request1):
         body.i.append("test_1")
         return body
 
-    @router.post("/test_2", response_model=Response_2)
-    async def endpoint_2(body: Request_2):
+    @router.post("/test_2", response_model=Response2)
+    async def endpoint_2(body: Request2):
         body.i.append("test_2")
         return body
 
-    @router.post("/test_3", response_model=Response_3)
-    async def endpoint_3(body: Request_3):
+    @router.post("/test_3", response_model=Response3)
+    async def endpoint_3(body: Request3):
         body.i.append("test_3")
         return body
 
-    @convert_request_to_next_version_for(Request_1, Request_2, Request_3)
+    @convert_request_to_next_version_for(Request1, Request2, Request3)
     def request_converter(request: RequestInfo):
         request.body["i"].append("request_migration")
 
-    @convert_response_to_previous_version_for(Response_1, Response_2, Response_3)
+    @convert_response_to_previous_version_for(Response1, Response2, Response3)
     def response_converter(response: ResponseInfo):
         response.body["i"].append("response_migration")
 

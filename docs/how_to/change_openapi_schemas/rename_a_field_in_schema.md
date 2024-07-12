@@ -33,5 +33,3 @@ Let's say that we had a "summary" field before but now we want to rename it to "
         def rename_bio_to_summary(response: ResponseInfo):
             response.body["bio"] = response.body.pop("summary")
     ```
-
-3. [Regenerate](../../concepts/code_generation.md) the versioned schemas

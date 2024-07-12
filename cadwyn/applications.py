@@ -23,10 +23,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
-from typing_extensions import Self, deprecated
+from typing_extensions import Self
 
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
-from cadwyn.route_generation import _generate_versioned_routers
+from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.routing import _RootHeaderAPIRouter
 from cadwyn.structure import VersionBundle
 
@@ -219,7 +219,7 @@ class Cadwyn(FastAPI):
         root_router = APIRouter(dependency_overrides_provider=self._dependency_overrides_provider)
         for router in routers:
             root_router.include_router(router)
-        router_versions = _generate_versioned_routers(root_router, versions=self.versions)
+        router_versions = generate_versioned_routers(root_router, versions=self.versions)
         for version, router in router_versions.items():
             self.add_header_versioned_routers(router, header_value=version.isoformat())
 

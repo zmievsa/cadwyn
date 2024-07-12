@@ -1,12 +1,8 @@
-import functools
 import re
-import types
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from pathlib import Path
-from types import ModuleType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -38,9 +34,7 @@ from cadwyn.exceptions import (
 )
 from cadwyn.schema_generation import (
     _add_request_and_response_params,
-    _AnnotationTransformer,
     _generate_versioned_models,
-    _SchemaGenerator,
 )
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionDate
@@ -68,7 +62,7 @@ class _EndpointInfo:
     endpoint_methods: frozenset[str]
 
 
-def _generate_versioned_routers(router: _R, versions: VersionBundle) -> dict[VersionDate, _R]:
+def generate_versioned_routers(router: _R, versions: VersionBundle) -> dict[VersionDate, _R]:
     return _EndpointTransformer(router, versions).transform()
 
 

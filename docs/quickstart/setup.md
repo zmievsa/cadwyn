@@ -87,7 +87,8 @@ async def get_user(user_id: uuid.UUID):
 app = Cadwyn(versions=version_bundle)
 app.generate_and_include_versioned_routers(router)
 
-uvicorn.run(app)
+if __name__ == "__main__":
+    uvicorn.run(app)
 ```
 
 That's it! Our app is ready to run.

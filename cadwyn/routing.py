@@ -14,10 +14,10 @@ from starlette.types import Receive, Scope, Send
 
 from cadwyn._utils import same_definition_as_in
 
-from .route_generation import _generate_versioned_routers
+from .route_generation import generate_versioned_routers
 
 # TODO: Remove this in a major version. This is only here for backwards compatibility
-__all__ = ["_generate_versioned_routers"]
+__all__ = ["generate_versioned_routers"]
 
 _logger = getLogger(__name__)
 

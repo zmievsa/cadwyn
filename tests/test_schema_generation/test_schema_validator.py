@@ -41,7 +41,7 @@ def test__schema_validator_existed(create_runtime_schemas: CreateRuntimeSchemas)
         foo: str
 
         @model_validator(mode="before")
-        def hewwo(cls, values):
+        def hewwo(cls, data):  # -> Any
             raise NotImplementedError
 
         @field_validator("foo")
@@ -200,3 +200,46 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
             raise NotImplementedError
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithOneStrField], ExpectedSchema)
+
+
+def test__schema_field_didnt_exist__with_validator_for_that_field_in_child(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Parent(BaseModel):
+        foo: str
+
+    class Child(Parent):
+        @field_validator("foo", check_fields=False)
+        def validate_foo(cls, value):
+            raise NotImplementedError
+
+    schemas = create_runtime_schemas(version_change(schema(Parent).field("foo").didnt_exist))
+
+    class ExpectedSchema(schemas["2000-01-01"][Parent]):
+        pass
+
+    assert_models_are_equal(schemas["2000-01-01"][Child], ExpectedSchema)
+    assert schemas["2000-01-01"][Child](foo="hewwo")
+
+
+def test__validator_didnt_exist__with_validator_defined_in_parent__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class A(BaseModel):
+        foo: str
+
+        @field_validator("foo")
+        def validate_foo(cls, value):
+            raise NotImplementedError
+
+    class B(A):
+        pass
+
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            'You tried to delete a validator "validate_foo" from "B" in '
+            '"MyVersionChange" but it doesn\'t have such a validator.'
+        ),
+    ):
+        create_runtime_schemas(version_change(schema(B).validator(A.validate_foo).didnt_exist))
