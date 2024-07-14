@@ -1,12 +1,12 @@
 # Schema migrations
 
-All of the following instructions affect only code generation.
+All of the following instructions affect only openapi schemas and their initial validation. All of your incoming requests will still be converted into your HEAD schemas.
 
 ## Add a field to the older version
 
 ```python
 from pydantic import Field
-from cadwyn.structure import VersionChange, schema
+from cadwyn import VersionChange, schema
 
 
 class MyChange(VersionChange):
@@ -18,18 +18,10 @@ class MyChange(VersionChange):
     )
 ```
 
-You can also specify any string in place of type:
-
-```python
-schema(MySchema).field("foo").existed_as(type="AnythingHere")
-```
-
-It is often the case that you want to add a type that has not been imported in your schemas yet. You can use [module import adding](./module_migrations.md) to solve this issue.
-
 ## Remove a field from the older version
 
 ```python
-from cadwyn.structure import VersionChange, schema
+from cadwyn import VersionChange, schema
 
 
 class MyChange(VersionChange):
@@ -44,7 +36,7 @@ class MyChange(VersionChange):
 If you would like to set a description or any other attribute of a field, you would do:
 
 ```python
-from cadwyn.structure import VersionChange, schema
+from cadwyn import VersionChange, schema
 
 
 class MyChange(VersionChange):
@@ -57,7 +49,7 @@ class MyChange(VersionChange):
 and if you would like to unset any attribute of a field as if it was never passed, you would do:
 
 ```python
-from cadwyn.structure import VersionChange, schema
+from cadwyn import VersionChange, schema
 
 
 class MyChange(VersionChange):
@@ -86,11 +78,11 @@ The part that causes the aforementioned problem is our usage of `exclude_unset=T
 ## Add a validator to the older version
 
 ```python
-from pydantic import Field, validator
-from cadwyn.structure import VersionChange, schema
+from pydantic import Field, field_validator
+from cadwyn import VersionChange, schema
 
 
-@validator("foo")
+@field_validator("foo")
 def validate_foo(cls, value):
     if not ":" in value:
         raise TypeError
@@ -108,7 +100,7 @@ class MyChange(VersionChange):
 
 ```python
 from pydantic import Field, validator
-from cadwyn.structure import VersionChange, schema
+from cadwyn import VersionChange, schema
 
 
 class MyChange(VersionChange):
@@ -123,7 +115,7 @@ class MyChange(VersionChange):
 If you wish to rename your schema to make sure that its name is different in openapi.json:
 
 ```python
-from cadwyn.structure import VersionChange, schema
+from cadwyn import VersionChange, schema
 
 
 class MyChange(VersionChange):

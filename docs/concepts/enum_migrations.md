@@ -1,6 +1,6 @@
 # Enum migrations
 
-All of the following instructions affect only code generation.
+All of the following instructions affect only openapi schemas and their initial validation. All of your incoming requests will still be converted into your HEAD schemas.
 
 ## Adding enum members
 
@@ -9,7 +9,7 @@ Note that adding enum members **can** be a breaking change unlike adding optiona
 So I suggest adding enum members in new versions as well.
 
 ```python
-from cadwyn.structure import VersionChange, enum
+from cadwyn import VersionChange, enum
 from enum import auto
 
 
@@ -23,7 +23,7 @@ class MyChange(VersionChange):
 ## Removing enum members
 
 ```python
-from cadwyn.structure import VersionChange, enum
+from cadwyn import VersionChange, enum
 
 
 class MyChange(VersionChange):

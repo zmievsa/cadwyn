@@ -2,20 +2,18 @@ import email.message
 import functools
 import inspect
 import json
-import warnings
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
+from datetime import date
 from enum import Enum
-from pathlib import Path
-from types import ModuleType
-from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar, cast, overload
+from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
 
 from fastapi import HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
-from fastapi._compat import _normalize_errors
+from fastapi._compat import ModelField, _normalize_errors
 from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import solve_dependencies
@@ -23,18 +21,16 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
+from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
-from typing_extensions import assert_never, deprecated
+from typing_extensions import assert_never
 
-from cadwyn._compat import PYDANTIC_V2, ModelField, PydanticUndefined, model_dump
-from cadwyn._package_utils import (
-    IdentifierPythonPath,
-    get_cls_pythonpath,
-    get_package_path_from_module,
-    get_version_dir_path,
+from cadwyn._utils import classproperty
+from cadwyn.exceptions import (
+    CadwynError,
+    CadwynHeadRequestValidationError,
+    CadwynStructureError,
 )
-from cadwyn._utils import classproperty, get_another_version_of_cls
-from cadwyn.exceptions import CadwynError, CadwynHeadRequestValidationError, CadwynStructureError
 
 from .._utils import Sentinel
 from .common import Endpoint, VersionDate, VersionedModel
@@ -49,7 +45,6 @@ from .data import (
 )
 from .endpoints import AlterEndpointSubInstruction
 from .enums import AlterEnumSubInstruction
-from .modules import AlterModuleInstruction
 from .schemas import AlterSchemaSubInstruction, SchemaHadInstruction
 
 _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
@@ -61,10 +56,10 @@ PossibleInstructions: TypeAlias = (
     | AlterEndpointSubInstruction
     | AlterEnumSubInstruction
     | SchemaHadInstruction
-    | AlterModuleInstruction
     | staticmethod
 )
 APIVersionVarType: TypeAlias = ContextVar[VersionDate | None] | ContextVar[VersionDate]
+IdentifierPythonPath = str
 
 
 class VersionChange:
@@ -72,7 +67,6 @@ class VersionChange:
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
     alter_schema_instructions: ClassVar[list[AlterSchemaSubInstruction | SchemaHadInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
-    alter_module_instructions: ClassVar[list[AlterModuleInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[list[AlterEndpointSubInstruction]] = Sentinel
     alter_request_by_schema_instructions: ClassVar[dict[type[BaseModel], list[_AlterRequestBySchemaInstruction]]] = (
         Sentinel
@@ -111,7 +105,6 @@ class VersionChange:
     def _extract_list_instructions_into_correct_containers(cls):
         cls.alter_schema_instructions = []
         cls.alter_enum_instructions = []
-        cls.alter_module_instructions = []
         cls.alter_endpoint_instructions = []
         cls.alter_request_by_schema_instructions = defaultdict(list)
         cls.alter_request_by_path_instructions = defaultdict(list)
@@ -122,8 +115,6 @@ class VersionChange:
                 cls.alter_schema_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, AlterEnumSubInstruction):
                 cls.alter_enum_instructions.append(alter_instruction)
-            elif isinstance(alter_instruction, AlterModuleInstruction):
-                cls.alter_module_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, AlterEndpointSubInstruction):
                 cls.alter_endpoint_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, staticmethod):  # pragma: no cover
@@ -207,9 +198,11 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
 
 
 class Version:
-    def __init__(self, value: VersionDate, *version_changes: type[VersionChange]) -> None:
+    def __init__(self, value: VersionDate | str, *version_changes: type[VersionChange]) -> None:
         super().__init__()
 
+        if isinstance(value, str):
+            value = date.fromisoformat(value)
         self.value = value
         self.version_changes = version_changes
 
@@ -236,36 +229,17 @@ class HeadVersion:
                 )
 
 
+def get_cls_pythonpath(cls: type) -> IdentifierPythonPath:
+    return f"{cls.__module__}.{cls.__name__}"
+
+
 class VersionBundle:
-    @overload
     def __init__(
         self,
         latest_version_or_head_version: Version | HeadVersion,
         /,
         *other_versions: Version,
         api_version_var: APIVersionVarType | None = None,
-        head_schemas_package: ModuleType | None = None,
-    ) -> None: ...
-
-    @overload
-    @deprecated("Pass head_version_package instead of latest_schemas_package.")
-    def __init__(
-        self,
-        latest_version_or_head_version: Version | HeadVersion,
-        /,
-        *other_versions: Version,
-        api_version_var: APIVersionVarType | None = None,
-        latest_schemas_package: ModuleType | None = None,
-    ) -> None: ...
-
-    def __init__(
-        self,
-        latest_version_or_head_version: Version | HeadVersion,
-        /,
-        *other_versions: Version,
-        api_version_var: APIVersionVarType | None = None,
-        head_schemas_package: ModuleType | None = None,
-        latest_schemas_package: ModuleType | None = None,
     ) -> None:
         super().__init__()
 
@@ -276,7 +250,6 @@ class VersionBundle:
             self.head_version = HeadVersion()
             self.versions = (latest_version_or_head_version, *other_versions)
 
-        self.head_schemas_package = head_schemas_package or latest_schemas_package
         self.version_dates = tuple(version.value for version in self.versions)
         if api_version_var is None:
             api_version_var = ContextVar("cadwyn_api_version")
@@ -310,38 +283,8 @@ class VersionBundle:
                     )
                 version_change._bound_version_bundle = self
 
-    @property  # pragma: no cover
-    @deprecated("Use head_version_package instead.")
-    def latest_schemas_package(self):
-        return self.head_schemas_package
-
     def __iter__(self) -> Iterator[Version]:
         yield from self.versions
-
-    def _validate_head_schemas_package_structure(self):
-        # This entire function won't be necessary once we start raising an exception
-        # upon receiving `latest`.
-
-        head_schemas_package = cast(ModuleType, self.head_schemas_package)
-        if not hasattr(head_schemas_package, "__path__"):
-            raise CadwynStructureError(
-                f'The head schemas package must be a package. "{head_schemas_package.__name__}" is not a package.',
-            )
-        elif head_schemas_package.__name__.endswith(".head") or head_schemas_package.__name__ == "head":
-            return "head"
-        elif head_schemas_package.__name__.endswith(".latest"):
-            warnings.warn(
-                'The name of the head schemas module must be "head". '
-                f'Received "{head_schemas_package.__name__}" instead.',
-                DeprecationWarning,
-                stacklevel=4,
-            )
-            return "latest"
-        else:
-            raise CadwynStructureError(
-                'The name of the head schemas module must be "head". '
-                f'Received "{head_schemas_package.__name__}" instead.',
-            )
 
     @functools.cached_property
     def _all_versions(self):
@@ -373,56 +316,6 @@ class VersionBundle:
             for version_change in version.version_changes
             for instruction in version_change.alter_enum_instructions
         }
-
-    @functools.cached_property
-    def versioned_modules(self) -> dict[IdentifierPythonPath, ModuleType]:
-        return {
-            # We do this because when users import their modules, they might import
-            # the __init__.py file directly instead of the package itself
-            # which results in this extra `.__init__` suffix in the name
-            instruction.module.__name__.removesuffix(".__init__"): instruction.module
-            for version in self._all_versions
-            for version_change in version.version_changes
-            for instruction in version_change.alter_module_instructions
-        }
-
-    @functools.cached_property
-    def versioned_directories_with_head(self) -> tuple[Path, ...]:
-        if self.head_schemas_package is None:
-            raise CadwynError(
-                f"You cannot call 'VersionBundle.{self.migrate_response_body.__name__}' because it has no access to "
-                "'head_schemas_package'. It likely means that it was not attached "
-                "to any Cadwyn application which attaches 'head_schemas_package' during initialization."
-            )
-        return tuple(
-            [get_package_path_from_module(self.head_schemas_package)]
-            + [get_version_dir_path(self.head_schemas_package, version.value) for version in self]
-        )
-
-    @functools.cached_property
-    def versioned_directories_without_head(self) -> tuple[Path, ...]:
-        return self.versioned_directories_with_head[1:]
-
-    def migrate_response_body(self, latest_response_model: type[BaseModel], *, latest_body: Any, version: VersionDate):
-        """Convert the data to a specific version by applying all version changes from latest until that version
-        in reverse order and wrapping the result in the correct version of latest_response_model.
-        """
-        response = ResponseInfo(FastapiResponse(status_code=200), body=latest_body)
-        migrated_response = self._migrate_response(
-            response,
-            current_version=version,
-            head_response_model=latest_response_model,
-            path="\0\0\0",
-            method="GET",
-        )
-
-        version = self._get_closest_lesser_version(version)
-        version_dir = self.versioned_directories_without_head[self.version_dates.index(version)]
-
-        versioned_response_model: type[BaseModel] = get_another_version_of_cls(
-            latest_response_model, version_dir, self.versioned_directories_with_head
-        )
-        return versioned_response_model.parse_obj(migrated_response.body)  # pyright: ignore[reportDeprecated]
 
     def _get_closest_lesser_version(self, version: VersionDate):
         for defined_version in self.version_dates:
@@ -577,7 +470,7 @@ class VersionBundle:
             if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
 
-            return decorator  # pyright: ignore[reportReturnType]
+            return decorator
 
         return wrapper
 
@@ -671,7 +564,10 @@ class VersionBundle:
             # that do not have it. We don't support it too.
             if response_info.body is not None and hasattr(response_info._response, "body"):
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
-                if isinstance(response_info.body, str):
+                if (
+                    isinstance(response_info.body, str)
+                    and response_info._response.headers.get("content-type") != "application/json"
+                ):
                     response_info._response.body = response_info.body.encode(response_info._response.charset)
                 else:
                     response_info._response.body = json.dumps(
@@ -734,9 +630,7 @@ class VersionBundle:
             elif not isinstance(raw_body, BaseModel):
                 body = raw_body
             else:
-                body = model_dump(raw_body, by_alias=True, exclude_unset=True)
-                if not PYDANTIC_V2 and raw_body.__custom_root_type__:  # pyright: ignore[reportAttributeAccessIssue]
-                    body = body["__root__"]
+                body = raw_body.model_dump(by_alias=True, exclude_unset=True)
         else:
             # This is for requests without body or with complex body such as form or file
             body = await _get_body(request, route.body_field, exit_stack)

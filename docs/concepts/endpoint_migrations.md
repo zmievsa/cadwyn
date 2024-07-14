@@ -16,7 +16,7 @@ async def my_old_endpoint():
 and then define it as existing in one of the older versions:
 
 ```python
-from cadwyn.structure import VersionChange, endpoint
+from cadwyn import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
@@ -31,7 +31,7 @@ class MyChange(VersionChange):
 If you have an endpoint in your new version that must not exist in older versions, you define it as usual and then mark it as "non-existing" in old versions:
 
 ```python
-from cadwyn.structure import VersionChange, endpoint
+from cadwyn import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
@@ -46,7 +46,7 @@ class MyChange(VersionChange):
 If you want to change any attribute of your endpoint in a new version, you can return the attribute's value in all older versions like so:
 
 ```python
-from cadwyn.structure import VersionChange, endpoint
+from cadwyn import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
@@ -93,7 +93,7 @@ def get_users_by_name(user_name: Annotated[str, Param()]):
 As you see, these two functions have the same methods and paths. And when you have many versions, you can have even more functions like these two. So how do we ask cadwyn to restore only one of them and delete the other one?
 
 ```python
-from cadwyn.structure import VersionChange, endpoint
+from cadwyn import VersionChange, endpoint
 
 
 class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):

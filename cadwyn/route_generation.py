@@ -1,28 +1,14 @@
-import functools
-import inspect
 import re
-import types
-import typing
-import warnings
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
-from types import GenericAlias, MappingProxyType, ModuleType
 from typing import (
     TYPE_CHECKING,
-    Annotated,
     Any,
     Generic,
     TypeVar,
-    _BaseGenericAlias,  # pyright: ignore[reportAttributeAccessIssue]
     cast,
-    final,
-    get_args,
-    get_origin,
-    overload,
 )
 
 import fastapi.params
@@ -30,18 +16,13 @@ import fastapi.routing
 import fastapi.security.base
 import fastapi.utils
 from fastapi import APIRouter
-from fastapi._compat import ModelField as FastAPIModelField
-from fastapi._compat import create_body_model
-from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel
 from starlette.routing import BaseRoute
-from typing_extensions import Self, assert_never, deprecated
+from typing_extensions import assert_never
 
-from cadwyn._compat import get_annotation_from_model_field, model_fields, rebuild_fastapi_body_param
-from cadwyn._package_utils import get_version_dir_path
-from cadwyn._utils import Sentinel, UnionType, get_another_version_of_cls
+from cadwyn._utils import Sentinel
 from cadwyn.exceptions import (
     CadwynError,
     RouteAlreadyExistsError,
@@ -51,6 +32,10 @@ from cadwyn.exceptions import (
     RouterGenerationError,
     RouterPathParamsModifiedError,
 )
+from cadwyn.schema_generation import (
+    _add_request_and_response_params,
+    _generate_versioned_models,
+)
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionDate
 from cadwyn.structure.endpoints import (
@@ -58,7 +43,9 @@ from cadwyn.structure.endpoints import (
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionChange
+from cadwyn.structure.versions import (
+    VersionChange,
+)
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
@@ -75,45 +62,8 @@ class _EndpointInfo:
     endpoint_methods: frozenset[str]
 
 
-@deprecated("It will soon be deleted. Use HeadVersion version changes instead.")
-class InternalRepresentationOf:
-    def __class_getitem__(cls, original_schema: type, /) -> type[Self]:
-        return cast(Any, type("InternalRepresentationOf", (cls, original_schema), {}))
-
-
-@overload
-def generate_versioned_routers(
-    router: _R,
-    versions: VersionBundle,
-) -> dict[VersionDate, _R]: ...
-
-
-@overload
-@deprecated("Do not use the latest_schemas_package argument. Put head_schemas_package into your VersionBundle instead")
-def generate_versioned_routers(
-    router: _R,
-    versions: VersionBundle,
-    latest_schemas_package: ModuleType | None,
-) -> dict[VersionDate, _R]: ...
-
-
-def generate_versioned_routers(
-    router: _R,
-    versions: VersionBundle,
-    latest_schemas_package: ModuleType | None = None,
-) -> dict[VersionDate, _R]:
-    if versions.head_schemas_package is not None:
-        head_schemas_package = versions.head_schemas_package
-    elif latest_schemas_package is not None:  # pragma: no cover
-        head_schemas_package = latest_schemas_package
-    else:  # pragma: no cover
-        raise TypeError(
-            "TypeError: generate_versioned_routers() must be called with a VersionBundle "
-            "that contains a non-null head_schemas_package."
-        )
-    versions.head_schemas_package = head_schemas_package
-    versions._validate_head_schemas_package_structure()
-    return _EndpointTransformer(router, versions, head_schemas_package).transform()
+def generate_versioned_routers(router: _R, versions: VersionBundle) -> dict[VersionDate, _R]:
+    return _EndpointTransformer(router, versions).transform()
 
 
 class VersionedAPIRouter(fastapi.routing.APIRouter):
@@ -131,30 +81,22 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
 
 
 class _EndpointTransformer(Generic[_R]):
-    def __init__(
-        self,
-        parent_router: _R,
-        versions: VersionBundle,
-        head_schemas_package: ModuleType,
-    ) -> None:
+    def __init__(self, parent_router: _R, versions: VersionBundle) -> None:
         super().__init__()
         self.parent_router = parent_router
         self.versions = versions
-        self.annotation_transformer = _AnnotationTransformer(head_schemas_package, versions)
+        self.schema_generators = _generate_versioned_models(versions)
 
         self.routes_that_never_existed = [
             route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
         ]
 
     def transform(self) -> dict[VersionDate, _R]:
-        schema_to_internal_request_body_representation = _extract_internal_request_schemas_from_router(
-            self.parent_router
-        )
         router = deepcopy(self.parent_router)
         routers: dict[VersionDate, _R] = {}
 
         for version in self.versions:
-            self.annotation_transformer.migrate_router_to_version(router, version)
+            self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(router)
 
             self._validate_all_data_converters_are_applied(router, version)
 
@@ -178,12 +120,6 @@ class _EndpointTransformer(Generic[_R]):
             _add_request_and_response_params(head_route)
             copy_of_dependant = deepcopy(head_route.dependant)
 
-            if _route_has_a_simple_body_schema(head_route):
-                self._replace_internal_representation_with_the_versioned_schema(
-                    copy_of_dependant,
-                    schema_to_internal_request_body_representation,
-                )
-
             for older_router in list(routers.values()):
                 older_route = older_router.routes[route_index]
 
@@ -192,10 +128,10 @@ class _EndpointTransformer(Generic[_R]):
                 older_route = cast(APIRoute, older_route)
                 # Wait.. Why do we need this code again?
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
-                    template_older_body_model = self.annotation_transformer._change_version_of_annotations(
-                        older_route.body_field.type_,
-                        self.annotation_transformer.head_version_dir,
-                    )
+                    if hasattr(older_route.body_field.type_, "__cadwyn_original_model__"):
+                        template_older_body_model = older_route.body_field.type_.__cadwyn_original_model__
+                    else:
+                        template_older_body_model = older_route.body_field.type_
                 else:
                     template_older_body_model = None
                 _add_data_migrations_to_route(
@@ -274,43 +210,18 @@ class _EndpointTransformer(Generic[_R]):
         for route in router.routes:
             if isinstance(route, APIRoute):
                 if route.response_model is not None and lenient_issubclass(route.response_model, BaseModel):
-                    # FIXME: This is going to fail on Pydantic 1
                     response_models.add(route.response_model)
                     # Not sure if it can ever be None when it's a simple schema. Eh, I would rather be safe than sorry
                 if _route_has_a_simple_body_schema(route) and route.body_field is not None:
-                    annotation = get_annotation_from_model_field(route.body_field)
-                    if lenient_issubclass(annotation, BaseModel):
-                        # FIXME: This is going to fail on Pydantic 1
+                    annotation = route.body_field.field_info.annotation
+                    if annotation is not None and lenient_issubclass(annotation, BaseModel):
                         request_bodies.add(annotation)
                 path_to_route_methods_mapping[route.path] |= route.methods
 
-        head_response_models = {
-            self.annotation_transformer._change_version_of_annotations(
-                model,
-                self.versions.versioned_directories_with_head[0],
-            )
-            for model in response_models
-        }
-        head_request_bodies = {
-            self.annotation_transformer._change_version_of_annotations(
-                body,
-                self.versions.versioned_directories_with_head[0],
-            )
-            for body in request_bodies
-        }
+        head_response_models = {model.__cadwyn_original_model__ for model in response_models}
+        head_request_bodies = {getattr(body, "__cadwyn_original_model__", body) for body in request_bodies}
 
         return path_to_route_methods_mapping, head_response_models, head_request_bodies
-
-    def _replace_internal_representation_with_the_versioned_schema(
-        self,
-        copy_of_dependant: "Dependant",
-        schema_to_internal_request_body_representation: dict[type[BaseModel], type[BaseModel]],
-    ):
-        body_param: FastAPIModelField = copy_of_dependant.body_params[0]
-        body_schema = body_param.type_
-        new_type = schema_to_internal_request_body_representation.get(body_schema, body_schema)
-        new_body_param = rebuild_fastapi_body_param(body_param, new_type)
-        copy_of_dependant.body_params = [new_body_param]
 
     # TODO (https://github.com/zmievsa/cadwyn/issues/28): Simplify
     def _apply_endpoint_changes_to_router(  # noqa: C901
@@ -437,40 +348,6 @@ class _EndpointTransformer(Generic[_R]):
                     )
 
 
-def _extract_internal_request_schemas_from_router(
-    router: fastapi.routing.APIRouter,
-) -> dict[type[BaseModel], type[BaseModel]]:
-    """Please note that this functon replaces internal bodies with original bodies in the router"""
-    schema_to_internal_request_body_representation = {}
-
-    def _extract_internal_request_schemas_from_annotations(annotations: dict[str, Any]):
-        for key, annotation in annotations.items():
-            if isinstance(annotation, type(Annotated[int, int])):
-                args = get_args(annotation)
-                if isinstance(args[1], type) and issubclass(  # pragma: no branch
-                    args[1],
-                    InternalRepresentationOf,  # pyright: ignore[reportDeprecated]
-                ):
-                    internal_schema = args[0]
-                    original_schema = args[1].mro()[2]
-                    schema_to_internal_request_body_representation[original_schema] = internal_schema
-                    if len(args[2:]) != 0:
-                        annotations[key] = Annotated[(original_schema, *args[2:])]
-                    else:
-                        annotations[key] = original_schema
-        return annotations
-
-    for route in router.routes:
-        if isinstance(route, APIRoute):  # pragma: no branch
-            route.endpoint = _modify_callable_annotations(
-                route.endpoint,
-                modify_annotations=_extract_internal_request_schemas_from_annotations,
-                annotation_modifying_wrapper_factory=_copy_endpoint,
-            )
-            _remake_endpoint_dependencies(route)
-    return schema_to_internal_request_body_representation
-
-
 def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
     route_map = {}
 
@@ -479,201 +356,6 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
         if route_info in route_map:
             raise RouteAlreadyExistsError(route, route_map[route_info])
         route_map[route_info] = route
-
-
-@final
-class _AnnotationTransformer:
-    __slots__ = (
-        "versions",
-        "head_schemas_package",
-        "head_version_dir",
-        "latest_version_dir",
-        "change_versions_of_a_non_container_annotation",
-    )
-
-    def __init__(self, head_schemas_package: ModuleType, versions: VersionBundle) -> None:
-        self.versions = versions
-        self.versions.head_schemas_package = head_schemas_package
-        self.head_schemas_package = head_schemas_package
-        self.head_version_dir = min(versions.versioned_directories_with_head)  # "head" < "v0000_00_00"
-        self.latest_version_dir = max(versions.versioned_directories_with_head)  # "v2005_11_11" > "v2000_11_11"
-
-        # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
-        # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
-        # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
-        self.change_versions_of_a_non_container_annotation = functools.cache(
-            self._change_versions_of_a_non_container_annotation,
-        )
-
-    def migrate_router_to_version(self, router: fastapi.routing.APIRouter, version: Version):
-        version_dir = get_version_dir_path(self.head_schemas_package, version.value)
-        if not version_dir.is_dir():
-            raise RouterGenerationError(
-                f"Versioned schema directory '{version_dir}' does not exist.",
-            )
-        for route in router.routes:
-            if not isinstance(route, fastapi.routing.APIRoute):
-                continue
-            self.migrate_route_to_version(route, version_dir)
-
-    def migrate_route_to_version(
-        self,
-        route: fastapi.routing.APIRoute,
-        version_dir: Path,
-        *,
-        ignore_response_model: bool = False,
-    ):
-        if route.response_model is not None and not ignore_response_model:
-            route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
-            route.response_field = fastapi.utils.create_response_field(
-                name="Response_" + route.unique_id,
-                type_=route.response_model,
-                mode="serialization",
-            )
-            route.secure_cloned_response_field = fastapi.utils.create_cloned_field(route.response_field)
-        route.dependencies = self._change_version_of_annotations(route.dependencies, version_dir)
-        route.endpoint = self._change_version_of_annotations(route.endpoint, version_dir)
-        for callback in route.callbacks or []:
-            if not isinstance(callback, APIRoute):
-                continue
-            self.migrate_route_to_version(callback, version_dir, ignore_response_model=ignore_response_model)
-        _remake_endpoint_dependencies(route)
-
-    def _change_versions_of_a_non_container_annotation(self, annotation: Any, version_dir: Path) -> Any:
-        if isinstance(annotation, _BaseGenericAlias | GenericAlias):
-            return get_origin(annotation)[
-                tuple(self._change_version_of_annotations(arg, version_dir) for arg in get_args(annotation))
-            ]
-        elif isinstance(annotation, Depends):
-            return Depends(
-                self._change_version_of_annotations(annotation.dependency, version_dir),
-                use_cache=annotation.use_cache,
-            )
-        elif isinstance(annotation, UnionType):
-            getitem = typing.Union.__getitem__  # pyright: ignore[reportAttributeAccessIssue]
-            return getitem(
-                tuple(self._change_version_of_annotations(a, version_dir) for a in get_args(annotation)),
-            )
-        elif annotation is typing.Any or isinstance(annotation, typing.NewType):
-            return annotation
-        elif isinstance(annotation, type):
-            if annotation.__module__ == "pydantic.main" and issubclass(annotation, BaseModel):
-                return create_body_model(
-                    fields=self._change_version_of_annotations(model_fields(annotation), version_dir).values(),
-                    model_name=annotation.__name__,
-                )
-            return self._change_version_of_type(annotation, version_dir)
-        elif callable(annotation):
-            if type(annotation).__module__.startswith(
-                ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
-            ) or isinstance(annotation, fastapi.params.Security | fastapi.security.base.SecurityBase):
-                return annotation
-
-            def modifier(annotation: Any):
-                return self._change_version_of_annotations(annotation, version_dir)
-
-            return _modify_callable_annotations(
-                annotation,
-                modifier,
-                modifier,
-                annotation_modifying_wrapper_factory=_copy_function_through_class_based_wrapper,
-            )
-        else:
-            return annotation
-
-    def _change_version_of_annotations(self, annotation: Any, version_dir: Path) -> Any:
-        """Recursively go through all annotations and if they were taken from any versioned package, change them to the
-        annotations corresponding to the version_dir passed.
-
-        So if we had a annotation "UserResponse" from "head" version, and we passed version_dir of "v1_0_1", it would
-        replace "UserResponse" with the the same class but from the "v1_0_1" version.
-
-        """
-        if isinstance(annotation, dict):
-            return {
-                self._change_version_of_annotations(key, version_dir): self._change_version_of_annotations(
-                    value,
-                    version_dir,
-                )
-                for key, value in annotation.items()
-            }
-
-        elif isinstance(annotation, list | tuple):
-            return type(annotation)(self._change_version_of_annotations(v, version_dir) for v in annotation)
-        else:
-            return self.change_versions_of_a_non_container_annotation(annotation, version_dir)
-
-    def _change_version_of_type(self, annotation: type, version_dir: Path):
-        if issubclass(annotation, BaseModel | Enum):
-            if version_dir == self.latest_version_dir:
-                source_file = inspect.getsourcefile(annotation)
-                if source_file is None:  # pragma: no cover # I am not even sure how to cover this
-                    warnings.warn(
-                        f'Failed to find where the type annotation "{annotation}" is located.'
-                        "Please, double check that it's located in the right directory",
-                        stacklevel=7,
-                    )
-                else:
-                    self._validate_source_file_is_located_in_template_dir(annotation, source_file)
-            return get_another_version_of_cls(annotation, version_dir, self.versions.versioned_directories_with_head)
-        else:
-            return annotation
-
-    def _validate_source_file_is_located_in_template_dir(self, annotation: type, source_file: str):
-        template_dir = str(self.head_version_dir)
-        dir_with_versions = str(self.head_version_dir.parent)
-        # So if it is somewhere close to version dirs (either within them or next to them),
-        # but not located in "head",
-        # but also not located in any other version dir
-        if (
-            source_file.startswith(dir_with_versions)
-            and not source_file.startswith(template_dir)
-            and any(source_file.startswith(str(d)) for d in self.versions.versioned_directories_with_head)
-        ):
-            raise RouterGenerationError(
-                f'"{annotation}" is not defined in "{self.head_version_dir}" even though it must be. '
-                f'It is defined in "{Path(source_file).parent}". '
-                "It probably means that you used a specific version of the class in fastapi dependencies "
-                'or pydantic schemas instead of "head".',
-            )
-
-
-def _modify_callable_annotations(
-    call: _Call,
-    modify_annotations: Callable[[dict[str, Any]], dict[str, Any]] = lambda a: a,
-    modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,
-    *,
-    annotation_modifying_wrapper_factory: Callable[[_Call], _Call],
-) -> _Call:
-    annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
-    old_params = inspect.signature(call).parameters
-    callable_annotations = annotation_modifying_wrapper.__annotations__
-    annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
-    annotation_modifying_wrapper.__defaults__ = modify_defaults(
-        tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
-    )
-    annotation_modifying_wrapper.__signature__ = _generate_signature(
-        annotation_modifying_wrapper,
-        old_params,
-    )
-
-    return annotation_modifying_wrapper
-
-
-def _remake_endpoint_dependencies(route: fastapi.routing.APIRoute):
-    # Unlike get_dependant, APIRoute is the public API of FastAPI and it's (almost) guaranteed to be stable.
-
-    route_copy = fastapi.routing.APIRoute(route.path, route.endpoint, dependencies=route.dependencies)
-    route.dependant = route_copy.dependant
-    route.body_field = route_copy.body_field
-    _add_request_and_response_params(route)
-
-
-def _add_request_and_response_params(route: APIRoute):
-    if not route.dependant.request_param_name:
-        route.dependant.request_param_name = _CADWYN_REQUEST_PARAM_NAME
-    if not route.dependant.response_param_name:
-        route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
 
 
 def _add_data_migrations_to_route(
@@ -734,42 +416,6 @@ def _apply_endpoint_had_instruction(
             setattr(original_route, attr_name, attr)
 
 
-def _generate_signature(
-    new_callable: Callable,
-    old_params: MappingProxyType[str, inspect.Parameter],
-):
-    parameters = []
-    default_counter = 0
-    for param in old_params.values():
-        if param.default is not inspect.Signature.empty:
-            assert new_callable.__defaults__ is not None, (  # noqa: S101
-                "Defaults cannot be None here. If it is, you have found a bug in Cadwyn. "
-                "Please, report it in our issue tracker."
-            )
-            default = new_callable.__defaults__[default_counter]
-            default_counter += 1
-        else:
-            default = inspect.Signature.empty
-        parameters.append(
-            inspect.Parameter(
-                param.name,
-                param.kind,
-                default=default,
-                annotation=new_callable.__annotations__.get(
-                    param.name,
-                    inspect.Signature.empty,
-                ),
-            ),
-        )
-    return inspect.Signature(
-        parameters=parameters,
-        return_annotation=new_callable.__annotations__.get(
-            "return",
-            inspect.Signature.empty,
-        ),
-    )
-
-
 def _get_routes(
     routes: Sequence[BaseRoute],
     endpoint_path: str,
@@ -800,80 +446,6 @@ def _get_route_from_func(
         if isinstance(route, fastapi.routing.APIRoute) and (route.endpoint == endpoint):
             return route
     return None
-
-
-def _copy_endpoint(function: Any) -> Any:
-    function = _unwrap_callable(function)
-    function_copy: Any = types.FunctionType(
-        function.__code__,
-        function.__globals__,
-        name=function.__name__,
-        argdefs=function.__defaults__,
-        closure=function.__closure__,
-    )
-    function_copy = functools.update_wrapper(function_copy, function)
-    # Otherwise it will have the same signature as __wrapped__ due to how inspect module works
-    del function_copy.__wrapped__
-
-    function_copy._original_callable = function
-    function.__kwdefaults__ = function.__kwdefaults__.copy() if function.__kwdefaults__ is not None else {}
-
-    return function_copy
-
-
-class _CallableWrapper:
-    """__eq__ and __hash__ are needed to make sure that dependency overrides work correctly.
-    They are based on putting dependencies (functions) as keys for the dictionary so if we want to be able to
-    override the wrapper, we need to make sure that it is equivalent to the original in __hash__ and __eq__
-    """
-
-    def __init__(self, original_callable: Callable) -> None:
-        super().__init__()
-        self._original_callable = original_callable
-        functools.update_wrapper(self, original_callable)
-
-    @property
-    def __globals__(self):
-        """FastAPI uses __globals__ to resolve forward references in type hints
-        It's supposed to be an attribute on the function but we use it as property to prevent python
-        from trying to pickle globals when we deepcopy this wrapper
-        """
-        #
-        return self._original_callable.__globals__
-
-    def __call__(self, *args: Any, **kwargs: Any):
-        return self._original_callable(*args, **kwargs)
-
-    def __hash__(self):
-        return hash(self._original_callable)
-
-    def __eq__(self, value: object) -> bool:
-        return self._original_callable == value  # pyright: ignore[reportUnnecessaryComparison]
-
-
-class _AsyncCallableWrapper(_CallableWrapper):
-    async def __call__(self, *args: Any, **kwargs: Any):
-        return await self._original_callable(*args, **kwargs)
-
-
-def _copy_function_through_class_based_wrapper(call: Any):
-    """Separate from copy_endpoint because endpoints MUST be functions in FastAPI, they cannot be cls instances"""
-    call = _unwrap_callable(call)
-
-    if inspect.iscoroutinefunction(call):
-        return _AsyncCallableWrapper(call)
-    else:
-        return _CallableWrapper(call)
-
-
-def _unwrap_callable(call: Any) -> Any:
-    while hasattr(call, "_original_callable"):
-        call = call._original_callable
-    if not isinstance(call, types.FunctionType | types.MethodType):
-        # This means that the callable is actually an instance of a regular class
-        call = call.__call__
-
-    return call
 
 
 def _route_has_a_simple_body_schema(route: APIRoute) -> bool:

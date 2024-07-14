@@ -1,13 +1,13 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [main, 3.x.x]
     paths:
       - "**.py"
       - "**.toml"
       - "**.lock"
   pull_request:
-    branches: [main]
+    branches: [main, 3.x.x]
     types: [opened, synchronize]
     paths:
       - "**.py"
@@ -39,7 +39,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - run: make ci_supertest
+      - run: make test
 
   Lint:
     runs-on: ubuntu-latest

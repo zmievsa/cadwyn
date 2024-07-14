@@ -4,7 +4,6 @@ from collections.abc import Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from types import ModuleType
 from typing import Any, cast
 
 from fastapi import APIRouter, FastAPI, HTTPException, routing
@@ -24,7 +23,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
-from typing_extensions import Self, deprecated
+from typing_extensions import Self
 
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
 from cadwyn.route_generation import generate_versioned_routers
@@ -95,9 +94,6 @@ class Cadwyn(FastAPI):
     ) -> None:
         self.versions = versions
         # TODO: Remove argument entirely in any major version.
-        latest_schemas_package = extra.pop("latest_schemas_package", None) or self.versions.head_schemas_package
-        self.versions.head_schemas_package = latest_schemas_package
-        self._latest_schemas_package = cast(ModuleType, latest_schemas_package)
         self._dependency_overrides_provider = FakeDependencyOverridesProvider({})
 
         super().__init__(
@@ -175,9 +171,10 @@ class Cadwyn(FastAPI):
 
     @property
     def dependency_overrides(self) -> dict[Callable[..., Any], Callable[..., Any]]:
+        # TODO: Remove this approach as it is no longer necessary
         # This is only necessary because we cannot send self to versioned router generator
-        # because it takes a deepcopy of the router and self.versions.head_schemas_package is a module
-        # which cannot be copied.
+        # because it takes a deepcopy of the router and self.versions.head_schemas_package was a module
+        # which couldn't be copied.
         return self._dependency_overrides_provider.dependency_overrides
 
     @dependency_overrides.setter
@@ -186,16 +183,6 @@ class Cadwyn(FastAPI):
         value: dict[Callable[..., Any], Callable[..., Any]],
     ) -> None:
         self._dependency_overrides_provider.dependency_overrides = value
-
-    @property  # pragma: no cover
-    @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
-    def latest_schemas_package(self):
-        return self._latest_schemas_package
-
-    @latest_schemas_package.setter  # pragma: no cover
-    @deprecated("It is going to be deleted in the future. Use VersionBundle.head_schemas_package instead")
-    def latest_schemas_package(self, value: ModuleType | None):
-        self._latest_schemas_package = value
 
     def _add_openapi_endpoints(self, unversioned_router: APIRouter):
         if self.openapi_url is not None:
@@ -233,10 +220,7 @@ class Cadwyn(FastAPI):
         root_router = APIRouter(dependency_overrides_provider=self._dependency_overrides_provider)
         for router in routers:
             root_router.include_router(router)
-        router_versions = generate_versioned_routers(
-            root_router,
-            versions=self.versions,
-        )
+        router_versions = generate_versioned_routers(root_router, versions=self.versions)
         for version, router in router_versions.items():
             self.add_header_versioned_routers(router, header_value=version.isoformat())
 
@@ -358,16 +342,3 @@ class Cadwyn(FastAPI):
         self.router.routes.extend(added_routes)
 
         return added_routes
-
-    @deprecated("Use builtin FastAPI methods such as include_router instead")
-    def add_unversioned_routers(self, *routers: APIRouter):
-        for router in routers:
-            self.include_router(router)
-
-    @deprecated("Use builtin FastAPI methods such as add_api_route instead")
-    def add_unversioned_routes(self, *routes: Route):
-        router = APIRouter(routes=list(routes))
-        self.include_router(router)
-
-    @deprecated("It no longer does anything")
-    def enrich_swagger(self): ...

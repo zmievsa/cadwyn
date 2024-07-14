@@ -1,16 +1,13 @@
-import ast
-import inspect
-import textwrap
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, cast
 
+from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel, Field
+from pydantic._internal._decorators import PydanticDescriptorProxy, unwrap_wrapped_function
 from pydantic.fields import FieldInfo
 
-from cadwyn._asts import _ValidatorWrapper, get_validator_info_or_none
-from cadwyn._compat import PYDANTIC_V2
-from cadwyn._utils import Sentinel
+from cadwyn._utils import Sentinel, fully_unwrap_decorator
 from cadwyn.exceptions import CadwynStructureError
 
 if TYPE_CHECKING:
@@ -105,7 +102,6 @@ class FieldDidntExistInstruction:
 class FieldExistedAsInstruction:
     schema: type[BaseModel]
     name: str
-    type: type
     field: FieldInfo
 
 
@@ -148,23 +144,19 @@ class AlterFieldInstructionFactory:
         discriminator: str = Sentinel,
         repr: bool = Sentinel,
     ) -> FieldHadInstruction:
-        if PYDANTIC_V2:
-            if regex is not Sentinel:
-                raise CadwynStructureError("`regex` was removed in Pydantic 2. Use `pattern` instead")
-            if include is not Sentinel:
-                raise CadwynStructureError("`include` was removed in Pydantic 2. Use `exclude` instead")
-            if min_items is not Sentinel:
-                raise CadwynStructureError("`min_items` was removed in Pydantic 2. Use `min_length` instead")
-            if max_items is not Sentinel:
-                raise CadwynStructureError("`max_items` was removed in Pydantic 2. Use `max_length` instead")
-            if unique_items is not Sentinel:
-                raise CadwynStructureError(
-                    "`unique_items` was removed in Pydantic 2. Use `Set` type annotation instead"
-                    "(this feature is discussed in https://github.com/pydantic/pydantic-core/issues/296)",
-                )
-        else:
-            if pattern is not Sentinel:
-                raise CadwynStructureError("`pattern` is only available in Pydantic 2. use `regex` instead")
+        if regex is not Sentinel:
+            raise CadwynStructureError("`regex` was removed in Pydantic 2. Use `pattern` instead")
+        if include is not Sentinel:
+            raise CadwynStructureError("`include` was removed in Pydantic 2. Use `exclude` instead")
+        if min_items is not Sentinel:
+            raise CadwynStructureError("`min_items` was removed in Pydantic 2. Use `min_length` instead")
+        if max_items is not Sentinel:
+            raise CadwynStructureError("`max_items` was removed in Pydantic 2. Use `max_length` instead")
+        if unique_items is not Sentinel:
+            raise CadwynStructureError(
+                "`unique_items` was removed in Pydantic 2. Use `Set` type annotation instead"
+                "(this feature is discussed in https://github.com/pydantic/pydantic-core/issues/296)",
+            )
         return FieldHadInstruction(
             schema=self.schema,
             name=self.name,
@@ -219,30 +211,28 @@ class AlterFieldInstructionFactory:
         type: Any,
         info: FieldInfo | None = None,
     ) -> FieldExistedAsInstruction:
-        return FieldExistedAsInstruction(
-            self.schema,
-            name=self.name,
-            type=type,
-            field=info or Field(),
-        )
+        if info is None:
+            info = cast(FieldInfo, Field())
+        info.annotation = type
+        return FieldExistedAsInstruction(self.schema, name=self.name, field=info)
+
+
+def _get_model_decorators(model: type[BaseModel]):
+    return [
+        *model.__pydantic_decorators__.validators.values(),
+        *model.__pydantic_decorators__.field_validators.values(),
+        *model.__pydantic_decorators__.root_validators.values(),
+        *model.__pydantic_decorators__.field_serializers.values(),
+        *model.__pydantic_decorators__.model_serializers.values(),
+        *model.__pydantic_decorators__.model_validators.values(),
+        *model.__pydantic_decorators__.computed_fields.values(),
+    ]
 
 
 @dataclass(slots=True)
 class ValidatorExistedInstruction:
     schema: type[BaseModel]
-    validator: Callable[..., Any]
-    validator_info: "_ValidatorWrapper" = field(init=False)
-
-    def __post_init__(self):
-        source = textwrap.dedent(inspect.getsource(self.validator))
-        validator_ast = ast.parse(source).body[0]
-        if not isinstance(validator_ast, ast.FunctionDef):
-            raise CadwynStructureError("The passed validator must be a function")
-
-        validator_info = get_validator_info_or_none(validator_ast)
-        if validator_info is None:
-            raise CadwynStructureError("The passed function must be a pydantic validator")
-        self.validator_info = validator_info
+    validator: Callable[..., Any] | PydanticDescriptorProxy
 
 
 @dataclass(slots=True)
@@ -254,7 +244,7 @@ class ValidatorDidntExistInstruction:
 @dataclass(slots=True)
 class AlterValidatorInstructionFactory:
     schema: type[BaseModel]
-    func: Callable[..., Any]
+    func: Callable[..., Any] | PydanticDescriptorProxy
 
     @property
     def existed(self) -> ValidatorExistedInstruction:
@@ -288,9 +278,20 @@ class AlterSchemaInstructionFactory:
     def field(self, name: str, /) -> AlterFieldInstructionFactory:
         return AlterFieldInstructionFactory(self.schema, name)
 
-    def validator(self, func: "Callable[..., Any] | classmethod[Any, Any, Any]", /) -> AlterValidatorInstructionFactory:
-        if isinstance(func, classmethod):
-            func = func.__wrapped__
+    def validator(
+        self, func: "Callable[..., Any] | classmethod[Any, Any, Any] | PydanticDescriptorProxy", /
+    ) -> AlterValidatorInstructionFactory:
+        func = cast(Callable | PydanticDescriptorProxy, unwrap_wrapped_function(func))
+
+        if not isinstance(func, PydanticDescriptorProxy):
+            if hasattr(func, "__self__"):
+                owner = func.__self__
+                if lenient_issubclass(owner, BaseModel) and any(  # pragma: no branch
+                    fully_unwrap_decorator(decorator.func, decorator.shim) == func
+                    for decorator in _get_model_decorators(owner)
+                ):
+                    return AlterValidatorInstructionFactory(self.schema, func)
+            raise CadwynStructureError("The passed function must be a pydantic validator")
         return AlterValidatorInstructionFactory(self.schema, func)
 
     def had(self, *, name: str) -> SchemaHadInstruction:

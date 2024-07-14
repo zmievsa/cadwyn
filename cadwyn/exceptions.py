@@ -5,6 +5,10 @@ from typing import Any
 from fastapi.routing import APIRoute
 
 
+class CadwynRenderError(Exception):
+    pass
+
+
 class CadwynError(Exception):
     pass
 
@@ -26,15 +30,15 @@ class LintingError(CadwynError):
     pass
 
 
-class CodeGenerationError(CadwynError):
+class SchemaGenerationError(CadwynError):
     pass
 
 
-class ModuleIsNotAvailableAsTextError(CodeGenerationError):
+class ModuleIsNotAvailableAsTextError(SchemaGenerationError):
     pass
 
 
-class InvalidGenerationInstructionError(CodeGenerationError):
+class InvalidGenerationInstructionError(SchemaGenerationError):
     pass
 
 
@@ -69,4 +73,8 @@ class CadwynStructureError(CadwynError):
 
 
 class ModuleIsNotVersionedError(ValueError):
+    pass
+
+
+class ImportFromStringError(CadwynError):
     pass

@@ -4,12 +4,12 @@
 
 Let's say that our API has a mandatory `UserResource.date_of_birth` field. Let's also say that our API has previously exposed user's zodiac sign. Our analysts have decided that it does not make sense to store or send this information as it does not affect the functionality and can be inferred from date of birth.
 
-1. Remove `zodiac_sign` field from `data.head.users.UserResource`
+1. Remove `zodiac_sign` field from `users.UserResource`
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
-    from cadwyn.structure import VersionChange, schema
-    from data.head.users import UserResource
+    from cadwyn import VersionChange, schema
+    from users import UserResource
     from pydantic import Field
 
 
@@ -31,20 +31,16 @@ Let's say that our API has a mandatory `UserResource.date_of_birth` field. Let's
     ```python
     # versions/__init__.py
 
-    from cadwyn.structure import Version, VersionBundle, HeadVersion
+    from cadwyn import Version, VersionBundle, HeadVersion
     from datetime import date
-    from data import head
     from .v2001_01_01 import RemoveZodiacSignFromUser
 
     version_bundle = VersionBundle(
         HeadVersion(),
-        Version(date(2001, 1, 1), RemoveZodiacSignFromUser),
-        Version(date(2000, 1, 1)),
-        head_schemas_package=head,
+        Version("2001-01-01", RemoveZodiacSignFromUser),
+        Version("2000-01-01"),
     )
     ```
-
-4. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 Thanks to the version change above, your old schemas will now include `zodiac_sign` field but your new schemas will stay the same. Don't remove the zodiac business logic from your router because the old version will still need it. So you always return the zodiac sign but the schemas of the latest version will ignore it.
 
@@ -60,8 +56,8 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
 1. Add the following migration to `versions.v2001_01_01` to remove `middle_name` from the latest version:
 
     ```python
-    from cadwyn.structure import VersionChange, schema
-    from data.head.users import BaseUser
+    from cadwyn import VersionChange, schema
+    from users import BaseUser
 
 
     class RemoveMiddleNameFromLatestVersion(VersionChange):
@@ -77,8 +73,8 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
 2. Add the following migration to `versions.v2001_01_01` to leave support for `middle_name` in the older versions:
 
     ```python
-    from cadwyn.structure import VersionChange, schema
-    from data.head.users import BaseUser
+    from cadwyn import VersionChange, schema
+    from users import BaseUser
 
 
     class RemoveMiddleNameFromUser(VersionChange):
@@ -97,20 +93,16 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
     ```python
     # versions/__init__.py
 
-    from cadwyn.structure import Version, VersionBundle, HeadVersion
+    from cadwyn import Version, VersionBundle, HeadVersion
     from datetime import date
-    from data import head
     from .v2001_01_01 import RemoveZodiacSignFromUser
 
     version_bundle = VersionBundle(
         HeadVersion(RemoveMiddleNameFromLatestVersion),
-        Version(date(2001, 1, 1), RemoveMiddleNameFromUser),
-        Version(date(2000, 1, 1)),
-        head_schemas_package=head,
+        Version("2001-01-01", RemoveMiddleNameFromUser),
+        Version("2000-01-01"),
     )
     ```
-
-4. [Regenerate](../../concepts/code_generation.md) the versioned schemas
 
 We added a new version with a breaking change but neither the HEAD schema that we use in business logic, neither has the business logic itself have changed one bit.
 

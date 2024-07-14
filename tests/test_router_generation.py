@@ -3,8 +3,7 @@ import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from datetime import date
-from pathlib import Path
-from types import ModuleType
+from enum import Enum, auto
 from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
 from uuid import UUID
 
@@ -20,9 +19,9 @@ from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
 
 from cadwyn import VersionBundle, VersionedAPIRouter
-from cadwyn._compat import PYDANTIC_V2, model_fields
-from cadwyn.exceptions import CadwynError, CadwynStructureError, RouterGenerationError, RouterPathParamsModifiedError
+from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
 from cadwyn.route_generation import generate_versioned_routers
+from cadwyn.schema_generation import _generate_versioned_models
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.enums import enum
 from cadwyn.structure.versions import VersionChange
@@ -30,11 +29,8 @@ from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
 from tests.conftest import (
-    CreateSimpleVersionedPackages,
     CreateVersionedApp,
     CreateVersionedClients,
-    HeadModuleFor,
-    RunSchemaCodegen,
     client,
     version_change,
 )
@@ -42,10 +38,23 @@ from tests.conftest import (
 Default = object()
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
 
-if PYDANTIC_V2:
-    TYPE_ATTR, ANNOTATION_ATTR = "type_", "annotation"
-else:
-    TYPE_ATTR, ANNOTATION_ATTR = "annotation", "type_"
+TYPE_ATTR, ANNOTATION_ATTR = "type_", "annotation"
+
+
+class StrEnum(str, Enum):
+    a = auto()
+
+
+class EmptySchema(BaseModel):
+    pass
+
+
+class SchemaWithOneIntField(BaseModel):
+    foo: int
+
+
+class SchemaWithOnePydanticField(BaseModel):
+    foo: SchemaWithOneIntField
 
 
 def get_wrapped_endpoint(endpoint: Endpoint) -> Endpoint:
@@ -74,28 +83,6 @@ def test_endpoint(router: VersionedAPIRouter, test_path: str, random_uuid: UUID)
     return test
 
 
-@pytest.fixture(autouse=True)
-def head(head_module_for: HeadModuleFor) -> Any:
-    return head_module_for(
-        """
-from pydantic import BaseModel, Field
-from enum import Enum, auto
-
-class StrEnum(str, Enum):
-    a = auto()
-
-class EmptySchema(BaseModel):
-    pass
-
-class SchemaWithOneIntField(BaseModel):
-    foo: int
-
-class SchemaWithOnePydanticField(BaseModel):
-    foo: SchemaWithOneIntField
-                             """,
-    )
-
-
 @fixture_class(name="create_versioned_api_routes")
 class CreateVersionedAPIRoutes:
     create_versioned_app: CreateVersionedApp
@@ -109,26 +96,6 @@ class CreateVersionedAPIRoutes:
         return (
             cast(list[APIRoute], app.router.versioned_routers.get(date(2000, 1, 1), APIRouter()).routes),
             cast(list[APIRoute], app.router.versioned_routers.get(date(2001, 1, 1), APIRouter()).routes),
-        )
-
-
-def test__router_generation__forgot_to_generate_schemas__error(
-    create_versioned_api_routes: CreateVersionedAPIRoutes,
-    api_version_var: ContextVar[date | None],
-    router: VersionedAPIRouter,
-    head: ModuleType,
-):
-    with pytest.raises(
-        RouterGenerationError,
-        match="Versioned schema directory '.+' does not exist.",
-    ):
-        generate_versioned_routers(
-            router,
-            versions=VersionBundle(
-                Version(date(2000, 1, 1)),
-                api_version_var=api_version_var,
-                head_schemas_package=head,
-            ),
         )
 
 
@@ -196,7 +163,6 @@ def test__endpoint_existed__endpoint_removed_in_latest_but_never_restored__shoul
 def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
     router: VersionedAPIRouter,
     api_version_var: ContextVar[date | None],
-    run_schema_codegen: RunSchemaCodegen,
 ):
     @router.only_exists_in_older_versions
     @router.get("/test")
@@ -222,7 +188,6 @@ def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
     )
-    run_schema_codegen(versions)
     routers = generate_versioned_routers(router, versions=versions)
 
     assert len(routers[date(2003, 1, 1)].routes) == 0
@@ -610,7 +575,6 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
     api_version_var: ContextVar[date | None],
     two_deleted_routes: tuple[Endpoint, Endpoint],
     route_index_to_restore_first: int,
-    run_schema_codegen: RunSchemaCodegen,
 ):
     route_to_restore_first = two_deleted_routes[route_index_to_restore_first]
     route_to_restore_second = two_deleted_routes[route_index_to_restore_first - 1]
@@ -633,7 +597,6 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
     )
-    run_schema_codegen(versions)
     routers = generate_versioned_routers(router, versions=versions)
 
     assert len(routers[date(2002, 1, 1)].routes) == 0
@@ -653,10 +616,10 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
 def get_nested_field_type(annotation: Any) -> type[BaseModel] | None:
     get_args(annotation)[1]
     first_generic_arg_of_second_generic_arg = get_args(get_args(annotation)[1])[0]
-    its_fields = model_fields(first_generic_arg_of_second_generic_arg)
+    its_fields = first_generic_arg_of_second_generic_arg.model_fields
     annotation_of_its_foo_field = its_fields["foo"].annotation
     assert annotation_of_its_foo_field is not None
-    return model_fields(annotation_of_its_foo_field)["foo"].annotation
+    return annotation_of_its_foo_field.model_fields["foo"].annotation
 
 
 def test__router_generation__re_creating_a_non_endpoint__error(
@@ -706,69 +669,35 @@ def test__router_generation__non_api_route_added(
 
 def test__router_generation__updating_response_model(
     router: VersionedAPIRouter,
-    create_versioned_api_routes: CreateVersionedAPIRoutes,
-    temp_data_package_path: str,
-    head: ModuleType,
+    create_versioned_app: CreateVersionedApp,
 ):
     @router.get(
         "/test",
-        response_model=dict[str, list[head.SchemaWithOnePydanticField]],
+        response_model=dict[str, list[SchemaWithOnePydanticField]],
     )
     async def test():
         raise NotImplementedError
 
-    routes_2000, routes_2001 = create_versioned_api_routes(
-        version_change(schema(head.SchemaWithOneIntField).field("foo").had(type=list[str])),
-    )
+    app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
+    schemas = _generate_versioned_models(app.versions)
+
+    routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
+    routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
 
     assert len(routes_2000) == len(routes_2001) == 2
-    assert (
-        routes_2000[1].response_model
-        == dict[str, list[importlib.import_module(temp_data_package_path + ".v2000_01_01").SchemaWithOnePydanticField]]
-    )
-    assert (
-        routes_2001[1].response_model
-        == dict[str, list[importlib.import_module(temp_data_package_path + ".v2001_01_01").SchemaWithOnePydanticField]]
-    )
+
+    schema_2000 = schemas["2000-01-01"][SchemaWithOnePydanticField]
+    assert routes_2000[1].response_model == dict[str, list[schema_2000]]
+
+    schema_2001 = schemas["2001-01-01"][SchemaWithOnePydanticField]
+    assert routes_2001[1].response_model == dict[str, list[schema_2001]]
 
     assert get_nested_field_type(routes_2000[1].response_model) == list[str]
     assert get_nested_field_type(routes_2001[1].response_model) == int
 
 
-def test__router_generation__using_non_latest_version_of_schema__should_raise_error(
-    router: VersionedAPIRouter,
-    create_simple_versioned_packages: CreateSimpleVersionedPackages,
-    temp_data_package_path: str,
-    head: ModuleType,
-    api_version_var: ContextVar[Any],
-):
-    schemas_2000, _ = create_simple_versioned_packages()
-
-    @router.post("/testik")
-    async def testik(body: schemas_2000.SchemaWithOnePydanticField):
-        raise NotImplementedError
-
-    with pytest.raises(
-        RouterGenerationError,
-        match=f"\"<class \\'{temp_data_package_path}.v2000_01_01\\.SchemaWithOnePydanticField\\'>\" "
-        f'is not defined in ".+head" even though it must be\\. It is defined in ".+v2000_01_01"\\. '
-        "It probably means that you used a specific version of the class in "
-        'fastapi dependencies or pydantic schemas instead of "head"\\.',
-    ):
-        generate_versioned_routers(
-            router,
-            versions=VersionBundle(
-                Version(date(2001, 1, 1)),
-                Version(date(2000, 1, 1)),
-                api_version_var=api_version_var,
-                head_schemas_package=head,
-            ),
-        )
-
-
 def test__router_generation__using_unversioned_schema_from_versioned_base_dir__should_not_raise_error(
     router: VersionedAPIRouter,
-    temp_data_package_path: str,
     create_versioned_app: CreateVersionedApp,
 ):
     module = importlib.import_module("tests._data.unversioned_schema_dir")
@@ -780,90 +709,66 @@ def test__router_generation__using_unversioned_schema_from_versioned_base_dir__s
     create_versioned_app()
 
 
-def test__router_generation__passing_a_module_instead_of_package_for_head__should_raise_error(
-    api_version_var: ContextVar[date | None],
-    run_schema_codegen: RunSchemaCodegen,
-    router: VersionedAPIRouter,
-    temp_data_package_path: str,
-    head_dir: Path,
-):
-    head_dir.joinpath("hewwo.py").touch()
-    module = importlib.import_module(temp_data_package_path + ".head.hewwo")
-    versions = VersionBundle(
-        Version(date(2001, 1, 1)),
-        Version(date(2000, 1, 1)),
-        api_version_var=api_version_var,
-        head_schemas_package=module,
-    )
-    run_schema_codegen(versions)  # This function assigns head_schemas_package to versions. Probably need to fix this...
-    versions.head_schemas_package = module
-    with pytest.raises(
-        CadwynStructureError,
-        match=re.escape(
-            f'The head schemas package must be a package. "{temp_data_package_path}.head.hewwo" is not a package.',
-        ),
-    ):
-        generate_versioned_routers(router, versions=versions)
-
-
-def test__router_generation__passing_a_package_with_wrong_name_instead_of_head__should_raise_error(
-    temp_data_package_path: str,
-    api_version_var: ContextVar[date | None],
-    run_schema_codegen: RunSchemaCodegen,
-    router: VersionedAPIRouter,
-):
-    module = importlib.import_module(temp_data_package_path)
-    versions = VersionBundle(
-        Version(date(2001, 1, 1)),
-        Version(date(2000, 1, 1)),
-        api_version_var=api_version_var,
-        head_schemas_package=module,
-    )
-    run_schema_codegen(versions)
-
-    versions.head_schemas_package = module
-    with pytest.raises(
-        CadwynStructureError,
-        match=re.escape(
-            f'The name of the head schemas module must be "head". Received "{temp_data_package_path}" instead.',
-        ),
-    ):
-        generate_versioned_routers(router, versions=versions)
-
-
 def test__router_generation__updating_request_models(
     router: VersionedAPIRouter,
-    create_versioned_api_routes: CreateVersionedAPIRoutes,
-    head: ModuleType,
-    temp_data_package_path: str,
+    create_versioned_app: CreateVersionedApp,
 ):
     @router.get("/test")
-    async def test(body: dict[str, list[head.SchemaWithOnePydanticField]]):
+    async def test(body: dict[str, list[SchemaWithOnePydanticField]]):
         raise NotImplementedError
 
-    routes_2000, routes_2001 = create_versioned_api_routes(
-        version_change(schema(head.SchemaWithOneIntField).field("foo").had(type=list[str])),
-    )
-    schemas_2000, schemas_2001 = (
-        importlib.import_module(temp_data_package_path + ".v2000_01_01"),
-        importlib.import_module(temp_data_package_path + ".v2001_01_01"),
-    )
+    app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
+    schemas = _generate_versioned_models(app.versions)
+
+    routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
+    routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
     assert len(routes_2000) == len(routes_2001) == 2
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
+    schema_2000 = schemas["2000-01-01"][SchemaWithOnePydanticField]
+    assert getattr(body_param_2000, TYPE_ATTR) == dict[str, list[schema_2000]]
+
     body_param_2001 = routes_2001[1].dependant.body_params[0]
-    assert getattr(body_param_2000, TYPE_ATTR) == dict[str, list[schemas_2000.SchemaWithOnePydanticField]]
-    assert getattr(body_param_2001, TYPE_ATTR) == dict[str, list[schemas_2001.SchemaWithOnePydanticField]]
+    schema_2001 = schemas["2001-01-01"][SchemaWithOnePydanticField]
+    assert getattr(body_param_2001, TYPE_ATTR) == dict[str, list[schema_2001]]
 
     assert get_nested_field_type(getattr(routes_2000[1].dependant.body_params[0], TYPE_ATTR)) == list[str]
     assert get_nested_field_type(getattr(routes_2001[1].dependant.body_params[0], TYPE_ATTR)) == int
 
 
+def test__router_generation__updating_request_models_with_inheritance(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    class ParentSchema(BaseModel):
+        foo: str
+        bar: int
+
+    class ChildSchema(ParentSchema):
+        pass
+
+    @router.get("/test")
+    async def test(body: ChildSchema):
+        raise NotImplementedError
+
+    app = create_versioned_app(version_change(schema(ParentSchema).field("foo").didnt_exist))
+
+    routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
+    routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
+    assert len(routes_2000) == len(routes_2001) == 2
+
+    body_param_2000 = routes_2000[1].dependant.body_params[0]
+    body_param_2001 = routes_2001[1].dependant.body_params[0]
+    assert set(getattr(body_param_2000, TYPE_ATTR).model_fields) == {"bar"}
+    assert set(getattr(body_param_2001, TYPE_ATTR).model_fields) == {"foo", "bar"}
+
+
 def test__router_generation__using_unversioned_models(
     router: VersionedAPIRouter,
-    create_versioned_api_routes: CreateVersionedAPIRoutes,
-    head: ModuleType,
+    create_versioned_app: CreateVersionedApp,
 ):
+    """This test is essentially legacy from codegen times"""
+
     @router.get("/test")
     async def test1(body: UnversionedSchema1):
         raise NotImplementedError
@@ -876,25 +781,26 @@ def test__router_generation__using_unversioned_models(
     async def test3(body: UnversionedSchema3):
         raise NotImplementedError
 
-    routes_2000, routes_2001 = create_versioned_api_routes(
-        version_change(schema(head.SchemaWithOneIntField).field("foo").had(type=list[str])),
-    )
+    app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
+    schemas = _generate_versioned_models(app.versions)
+
+    routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
+    routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
 
     assert len(routes_2000) == len(routes_2001) == 4
-    assert routes_2000[1].dependant.body_params[0].type_ is UnversionedSchema1
-    assert routes_2001[1].dependant.body_params[0].type_ is UnversionedSchema1
+    assert routes_2000[1].dependant.body_params[0].type_ is schemas["2000-01-01"][UnversionedSchema1]
+    assert routes_2001[1].dependant.body_params[0].type_ is schemas["2001-01-01"][UnversionedSchema1]
 
-    assert routes_2000[2].dependant.body_params[0].type_ is UnversionedSchema2
-    assert routes_2001[2].dependant.body_params[0].type_ is UnversionedSchema2
+    assert routes_2000[2].dependant.body_params[0].type_ is schemas["2000-01-01"][UnversionedSchema2]
+    assert routes_2001[2].dependant.body_params[0].type_ is schemas["2001-01-01"][UnversionedSchema2]
 
-    assert routes_2000[3].dependant.body_params[0].type_ is UnversionedSchema3
-    assert routes_2001[3].dependant.body_params[0].type_ is UnversionedSchema3
+    assert routes_2000[3].dependant.body_params[0].type_ is schemas["2000-01-01"][UnversionedSchema3]
+    assert routes_2001[3].dependant.body_params[0].type_ is schemas["2001-01-01"][UnversionedSchema3]
 
 
 def test__router_generation__using_weird_typehints(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
-    head: ModuleType,
 ):
     newtype = NewType("newtype", str)
 
@@ -903,7 +809,7 @@ def test__router_generation__using_weird_typehints(
         raise NotImplementedError
 
     routes_2000, routes_2001 = create_versioned_api_routes(
-        version_change(schema(head.SchemaWithOneIntField).field("foo").had(type=list[str])),
+        version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
     assert len(routes_2000) == len(routes_2001) == 2
 
@@ -914,10 +820,9 @@ def test__router_generation__using_weird_typehints(
     assert getattr(routes_2001[1].dependant.body_params[1], TYPE_ATTR) == str | int
 
 
-def test__router_generation__using_oydantic_typehints(
+def test__router_generation__using_pydantic_typehints(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
-    head: ModuleType,
 ):
     """This is a very important test for verifying that pydantic's internal type hints work"""
 
@@ -926,74 +831,64 @@ def test__router_generation__using_oydantic_typehints(
         raise NotImplementedError
 
     routes_2000, routes_2001 = create_versioned_api_routes(
-        version_change(schema(head.SchemaWithOneIntField).field("foo").had(type=list[str])),
+        version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])),
     )
     assert len(routes_2000) == len(routes_2001) == 2
     # We are intentionally not checking anything here. Our goal is to validate that there is no exception
 
 
 def test__router_generation__updating_request_depends(
-    router: VersionedAPIRouter,
-    create_versioned_app: CreateVersionedApp,
-    head: ModuleType,
+    router: VersionedAPIRouter, create_versioned_app: CreateVersionedApp
 ):
-    def sub_dependency1(my_schema: head.EmptySchema) -> head.EmptySchema:
+    def sub_dependency1(my_schema: EmptySchema) -> EmptySchema:
         return my_schema
 
-    def dependency1(dep: head.EmptySchema = Depends(sub_dependency1)):
+    def dependency1(dep: EmptySchema = Depends(sub_dependency1)):
         return dep
 
-    def sub_dependency2(my_schema: head.EmptySchema) -> head.EmptySchema:
+    def sub_dependency2(my_schema: EmptySchema) -> EmptySchema:
         return my_schema
 
     # TASK: What if "a" gets deleted? https://github.com/zmievsa/cadwyn/issues/25
     def dependency2(
-        dep: Annotated[head.EmptySchema, Depends(sub_dependency2)] = None,
+        dep: Annotated[EmptySchema, Depends(sub_dependency2)] = None,  # pyright: ignore[reportArgumentType]
     ):
         return dep
 
     @router.post("/test1")
-    async def test_with_dep1(dep: head.EmptySchema = Depends(dependency1)):
+    async def test_with_dep1(dep: EmptySchema = Depends(dependency1)):
         return dep
 
     @router.post("/test2")
-    async def test_with_dep2(dep: head.EmptySchema = Depends(dependency2)):
+    async def test_with_dep2(dep: EmptySchema = Depends(dependency2)):
         return dep
 
-    app = create_versioned_app(version_change(schema(head.EmptySchema).field("foo").existed_as(type=str)))
+    app = create_versioned_app(version_change(schema(EmptySchema).field("foo").existed_as(type=str)))
 
     client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
     client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
     resp_from_test1 = client_2000.post("/test1", json={}).json()
     resp_from_test2 = client_2000.post("/test2", json={}).json()
-    if PYDANTIC_V2:
-        assert resp_from_test1 == {
-            "detail": [
-                {
-                    "type": "missing",
-                    "loc": ["body", "foo"],
-                    "msg": "Field required",
-                    "input": {},
-                },
-            ],
-        }
-        assert resp_from_test2 == {
-            "detail": [
-                {
-                    "type": "missing",
-                    "loc": ["body", "foo"],
-                    "msg": "Field required",
-                    "input": {},
-                },
-            ],
-        }
-    else:
-        assert resp_from_test1 == {
-            "detail": [{"loc": ["body", "foo"], "msg": "field required", "type": "value_error.missing"}],
-        }
-        assert resp_from_test2 == {
-            "detail": [{"loc": ["body", "foo"], "msg": "field required", "type": "value_error.missing"}],
-        }
+    assert resp_from_test1 == {
+        "detail": [
+            {
+                "type": "missing",
+                "loc": ["body", "foo"],
+                "msg": "Field required",
+                "input": {},
+            },
+        ],
+    }
+    assert resp_from_test2 == {
+        "detail": [
+            {
+                "type": "missing",
+                "loc": ["body", "foo"],
+                "msg": "Field required",
+                "input": {},
+            },
+        ],
+    }
 
     assert client_2000.post("/test1", json={"foo": "bar"}).json() == {}
     assert client_2000.post("/test2", json={"foo": "bar"}).json() == {}
@@ -1006,26 +901,13 @@ def test__router_generation__updating_request_depends(
 
 
 def test__router_generation__using_unversioned_schema_in_body(
-    router: VersionedAPIRouter,
-    create_versioned_app: CreateVersionedApp,
-    head: Any,
-    temp_data_dir: Path,
-    temp_data_package_path: str,
-    created_modules: list[Any],
+    router: VersionedAPIRouter, create_versioned_app: CreateVersionedApp
 ):
-    temp_data_dir.joinpath("other_module.py").write_text(
-        """
-from pydantic import BaseModel
-
-class MySchema(BaseModel):
-    bar: str
-    """,
-    )
-    importlib.invalidate_caches()
-    other_module = importlib.import_module(temp_data_package_path + ".other_module")
+    class MySchema(BaseModel):
+        bar: str
 
     @router.post("/test")
-    async def test_with_dep1(dep: other_module.MySchema):
+    async def test_with_dep1(dep: MySchema):
         return dep
 
     app = create_versioned_app(version_change())
@@ -1039,11 +921,10 @@ class MySchema(BaseModel):
 def test__router_generation_updating_unused_dependencies__with_migration(
     router: VersionedAPIRouter,
     create_versioned_app: CreateVersionedApp,
-    head: ModuleType,
 ):
     saved_enum_names = []
 
-    async def dependency(my_enum: head.StrEnum):
+    async def dependency(my_enum: StrEnum):
         saved_enum_names.append(my_enum.name)
 
     @router.get("/test", dependencies=[Depends(dependency)])
@@ -1055,8 +936,8 @@ def test__router_generation_updating_unused_dependencies__with_migration(
 
     app = create_versioned_app(
         version_change(
-            enum(head.StrEnum).didnt_have("a"),
-            enum(head.StrEnum).had(b="1"),
+            enum(StrEnum).didnt_have("a"),
+            enum(StrEnum).had(b="1"),
             migration=convert_request_to_next_version_for("/test", ["GET"])(migration),
         ),
     )
@@ -1081,7 +962,6 @@ def test__router_generation_updating_unused_dependencies__with_migration(
 def test__router_generation__updating_callbacks(
     router: VersionedAPIRouter,
     create_versioned_app: CreateVersionedApp,
-    head: ModuleType,
 ):
     callback_router = APIRouter()
 
@@ -1090,15 +970,15 @@ def test__router_generation__updating_callbacks(
         raise NotImplementedError
 
     @callback_router.get("{request.body}")
-    def callback(body: head.SchemaWithOneIntField):
+    def callback(body: SchemaWithOneIntField):
         raise NotImplementedError
 
     @router.post("/test", callbacks=callback_router.routes)
-    async def test_with_callbacks(body: head.SchemaWithOneIntField):
+    async def test_with_callbacks(body: SchemaWithOneIntField):
         raise NotImplementedError
 
     app = create_versioned_app(
-        version_change(schema(head.SchemaWithOneIntField).field("bar").existed_as(type=str)),
+        version_change(schema(SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
 
     route = app.router.versioned_routers[date(2000, 1, 1)].routes[1]
@@ -1106,21 +986,17 @@ def test__router_generation__updating_callbacks(
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
-    assert generated_callback.dependant.body_params[0].type_.__module__.endswith(".v2000_01_01")
+    assert generated_callback.dependant.body_params[0].type_.model_fields["bar"].annotation is str
+
     route = app.router.versioned_routers[date(2001, 1, 1)].routes[1]
     assert isinstance(route, APIRoute)
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
-    assert generated_callback.dependant.body_params[0].type_.__module__.endswith(".v2001_01_01")
+    assert "bar" not in generated_callback.dependant.body_params[0].type_.model_fields
 
 
-def test__cascading_router_exists(
-    router: VersionedAPIRouter,
-    api_version_var: ContextVar[date | None],
-    head: ModuleType,
-    run_schema_codegen: RunSchemaCodegen,
-):
+def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: ContextVar[date | None]):
     @router.only_exists_in_older_versions
     @router.get("/test")
     async def test_with_dep1():
@@ -1135,25 +1011,17 @@ def test__cascading_router_exists(
         Version(date(2001, 1, 1)),
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
-        head_schemas_package=head,
     )
-    run_schema_codegen(versions)
     routers = generate_versioned_routers(router, versions=versions)
 
-    assert client(routers[date(2002, 1, 1)]).get("/test").json() == {
-        "detail": "Not Found",
-    }
-
+    assert client(routers[date(2002, 1, 1)]).get("/test").json() == {"detail": "Not Found"}
     assert client(routers[date(2001, 1, 1)]).get("/test").json() == 83
-
     assert client(routers[date(2000, 1, 1)]).get("/test").json() == 83
 
 
 def test__cascading_router_didnt_exist(
     router: VersionedAPIRouter,
     api_version_var: ContextVar[date | None],
-    head: ModuleType,
-    run_schema_codegen: RunSchemaCodegen,
 ):
     @router.get("/test")
     async def test_with_dep1():
@@ -1170,9 +1038,7 @@ def test__cascading_router_didnt_exist(
         Version(date(2001, 1, 1)),
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
-        head_schemas_package=head,
     )
-    run_schema_codegen(versions)
     routers = generate_versioned_routers(router, versions=versions)
 
     assert client(routers[date(2002, 1, 1)]).get("/test").json() == 83
@@ -1191,8 +1057,6 @@ def test__generate_versioned_routers__two_routers(
     test_endpoint: Endpoint,
     test_path: str,
     api_version_var: ContextVar[date | None],
-    head: ModuleType,
-    run_schema_codegen: RunSchemaCodegen,
 ):
     router2 = VersionedAPIRouter(prefix="/api2")
 
@@ -1211,9 +1075,7 @@ def test__generate_versioned_routers__two_routers(
         Version(date(2001, 1, 1), V2001),
         Version(date(2000, 1, 1)),
         api_version_var=api_version_var,
-        head_schemas_package=head,
     )
-    run_schema_codegen(versions)
 
     root_router = APIRouter()
     root_router.include_router(router)
@@ -1274,13 +1136,12 @@ def test__basic_router_generation__using_http_security_dependency__should_genera
 def test__basic_router_generation__using_custom_class_based_dependency__should_migrate_as_usual(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
-    head: ModuleType,
 ):
     payloads_dependency_was_called_with = []
 
     class MyCustomDependency:
-        def __call__(self, my_body: head.SchemaWithOneIntField):
-            payloads_dependency_was_called_with.append(my_body.dict())
+        def __call__(self, my_body: SchemaWithOneIntField):
+            payloads_dependency_was_called_with.append(my_body.model_dump())
             return my_body
 
     @router.post("/test")
@@ -1288,7 +1149,7 @@ def test__basic_router_generation__using_custom_class_based_dependency__should_m
         return dependency
 
     client_2000, client_2001 = create_versioned_clients(
-        version_change(schema(head.SchemaWithOneIntField).field("bar").existed_as(type=str)),
+        version_change(schema(SchemaWithOneIntField).field("bar").existed_as(type=str)),
     ).values()
 
     response = client_2000.post("/test", json={"foo": 3, "bar": "meaw"})
@@ -1313,13 +1174,12 @@ def test__basic_router_generation__using_custom_class_based_dependency__should_m
 def test__basic_router_generation__subclass_of_security_class_based_dependency_with_overriden_call__will_not_migrate(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
-    head: ModuleType,
 ):
     payloads_dependency_was_called_with = []
 
     class MyCustomDependency(HTTPBearer):
-        def __call__(self, my_body: head.SchemaWithOneIntField):
-            payloads_dependency_was_called_with.append(my_body.dict())
+        def __call__(self, my_body: SchemaWithOneIntField):  # pyright: ignore[reportIncompatibleMethodOverride]
+            payloads_dependency_was_called_with.append(my_body.model_dump())
             return my_body
 
     @router.post("/test")
@@ -1327,7 +1187,7 @@ def test__basic_router_generation__subclass_of_security_class_based_dependency_w
         return dependency
 
     client_2000, client_2001 = create_versioned_clients(
-        version_change(schema(head.SchemaWithOneIntField).field("bar").existed_as(type=str)),
+        version_change(schema(SchemaWithOneIntField).field("bar").existed_as(type=str)),
     ).values()
 
     response = client_2000.post("/test", json={"foo": 3, "bar": "meaw"})

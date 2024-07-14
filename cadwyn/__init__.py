@@ -1,22 +1,39 @@
 import importlib.metadata
 
 from .applications import Cadwyn
-from .codegen import generate_code_for_versioned_packages
-from .route_generation import (
-    InternalRepresentationOf,  # pyright: ignore[reportDeprecated]
-    VersionedAPIRouter,
-    generate_versioned_routers,
+from .route_generation import VersionedAPIRouter, generate_versioned_routers
+from .schema_generation import migrate_response_body
+from .structure import (
+    HeadVersion,
+    RequestInfo,
+    ResponseInfo,
+    Version,
+    VersionBundle,
+    VersionChange,
+    VersionChangeWithSideEffects,
+    convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
+    endpoint,
+    enum,
+    schema,
 )
-from .structure import HeadVersion, Version, VersionBundle
 
 __version__ = importlib.metadata.version("cadwyn")
 __all__ = [
     "Cadwyn",
     "VersionedAPIRouter",
-    "generate_code_for_versioned_packages",
     "VersionBundle",
     "HeadVersion",
     "Version",
+    "migrate_response_body",
     "generate_versioned_routers",
-    "InternalRepresentationOf",
+    "VersionChange",
+    "VersionChangeWithSideEffects",
+    "endpoint",
+    "schema",
+    "enum",
+    "convert_response_to_previous_version_for",
+    "convert_request_to_next_version_for",
+    "RequestInfo",
+    "ResponseInfo",
 ]

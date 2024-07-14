@@ -23,14 +23,14 @@ async def lifespan(app: FastAPI):
 versioned_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), lifespan=lifespan)
 versioned_app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
 versioned_app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
-versioned_app.add_unversioned_routers(webhooks_router)  # pyright: ignore[reportDeprecated]
+versioned_app.include_router(webhooks_router)
 
 versioned_app_with_custom_api_version_var = Cadwyn(
     versions=VersionBundle(Version(date(2022, 11, 16))), lifespan=lifespan, api_version_var=ContextVar("My api version")
 )
 versioned_app_with_custom_api_version_var.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
 versioned_app_with_custom_api_version_var.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
-versioned_app_with_custom_api_version_var.add_unversioned_routers(webhooks_router)  # pyright: ignore[reportDeprecated]
+versioned_app_with_custom_api_version_var.include_router(webhooks_router)
 
 # TODO: We should not have any clients that are run like this. Instead, all of them must run using "with"
 client = TestClient(versioned_app, raise_server_exceptions=False, headers=BASIC_HEADERS)
