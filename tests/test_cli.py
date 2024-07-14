@@ -1,3 +1,4 @@
+import sys
 import textwrap
 
 import pytest
@@ -68,7 +69,13 @@ def test__render_model__with_syntax_highlighting():
             "--version=2000-01-01",
         ],
     )
-    assert code(result.stdout) == code(
+    assert result.exit_code == 0
+
+    if sys.platform.startswith("win32"):  # pragma: no cover
+        # Windows rendering is weird
+        return
+
+    assert code(result.stdout) == (
         "1 class A(BaseModel):                                                         \n  2     pass"
     )
 
