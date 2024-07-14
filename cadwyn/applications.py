@@ -171,9 +171,10 @@ class Cadwyn(FastAPI):
 
     @property
     def dependency_overrides(self) -> dict[Callable[..., Any], Callable[..., Any]]:
+        # TODO: Remove this approach as it is no longer necessary
         # This is only necessary because we cannot send self to versioned router generator
-        # because it takes a deepcopy of the router and self.versions.head_schemas_package is a module
-        # which cannot be copied.
+        # because it takes a deepcopy of the router and self.versions.head_schemas_package was a module
+        # which couldn't be copied.
         return self._dependency_overrides_provider.dependency_overrides
 
     @dependency_overrides.setter

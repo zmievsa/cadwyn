@@ -5,16 +5,32 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [4.0.0]
+
+Versions 3.x.x are still supported in terms of bug and security fixes but all the new features will go into versions 4.x.x.
+
+### Added
+
+* Runtime schema/enum generation
+* Support for versions as ISO date strings instead of dates in `cadwyn.migrate_response_body` and `cadwyn.Version`
 
 ### Removed
 
+* Pydantic 1 support
+* Code generation from everywhere. It is now completely replaced by runtime generation (so schemas/enums are generated in the same manner as endpoints). This allows Cadwyn to version things outside of your project and allows you to pick any project structure unlike codegen that required a single "head" directory with all the versioned modules.
+* CLI commands for codegen
+* `cadwyn.main` because it is replaced by `cadwyn.__init__`
+* `cadwyn.structure.module` as it was only necessary in codegen
+* `cadwyn.VersionBundle.latest_schemas_package` and `cadwyn.VersionBundle.head_schemas_package`, `cadwyn.VersionBundle.versioned_modules`, `cadwyn.VersionBundle.versioned_directories_with_head`, `cadwyn.VersionBundle.versioned_directories_without_head`, because they were only necessary in code generation
+* `cadwyn.Cadwyn.add_unversioned_routers` as you can now simply use FastAPI's `include_router`
+* `cadwyn.Cadwyn.add_unversioned_routes` as you can now simply use any of FastAPI's methods for adding routes directly to the app
+* `cadwyn.Cadwyn.enrich_swagger` as its functionality has been automated
+* `cadwyn.InternalRepresentationOf` as it was deprecated previously and is now replaced with HeadVersion migrations
+
+### Changed
+
 * `VersionBundle.migrate_response_body` is no longer a method of `VersionBundle` and is now importable directly from `cadwyn` as a function
-* `cadwyn.generate_versioned_routers` because router generation must now only happen through `Cadwyn.generate_and_include_versioned_routers`
-* Cadwyn.add_unversioned_routers
-* Cadwyn.add_unversioned_routes
-* Cadwyn.enrich_swagger
-* Codegen and its typer commands
-* module() for codegen
+* `cadwyn.structure` is no longer recommended to be used directly because everything from it is now available in `cadwyn` directly
 
 
 ## [3.15.8]
