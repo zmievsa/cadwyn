@@ -214,8 +214,9 @@ def test__schema_field_didnt_exist__with_validator_for_that_field_in_child(
             raise NotImplementedError
 
     schemas = create_runtime_schemas(version_change(schema(Parent).field("foo").didnt_exist))
+    parent = schemas["2000-01-01"][Parent]
 
-    class ExpectedSchema(schemas["2000-01-01"][Parent]):
+    class ExpectedSchema(parent):
         pass
 
     assert_models_are_equal(schemas["2000-01-01"][Child], ExpectedSchema)

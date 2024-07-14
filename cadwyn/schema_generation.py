@@ -72,10 +72,10 @@ _T_ENUM = TypeVar("_T_ENUM", bound=Enum)
 
 _T_PYDANTIC_MODEL = TypeVar("_T_PYDANTIC_MODEL", bound=BaseModel)
 PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
-    ValidatorDecoratorInfo: pydantic.validator,
+    ValidatorDecoratorInfo: pydantic.validator,  # pyright: ignore[reportDeprecated]
     FieldValidatorDecoratorInfo: pydantic.field_validator,
     FieldSerializerDecoratorInfo: pydantic.field_serializer,
-    RootValidatorDecoratorInfo: pydantic.root_validator,
+    RootValidatorDecoratorInfo: pydantic.root_validator,  # pyright: ignore[reportDeprecated]
     ModelValidatorDecoratorInfo: pydantic.model_validator,
     ModelSerializerDecoratorInfo: pydantic.model_serializer,
     ComputedFieldInfo: pydantic.computed_field,
