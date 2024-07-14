@@ -21,7 +21,7 @@ def test__render_model__with_weird_types():
     # hopefully someday we will switch to it.
     if sys.version_info >= (3, 11):  # pragma: no cover # We cover this in CI
         rendered_lambda = "lambda: 83"
-    else:
+    else:  # pragma: no cover # We cover this in CI
         rendered_lambda = "lambda : 83"
 
     # TODO: As you see, we do not rename bases correctly in render. We gotta fix it some day...
