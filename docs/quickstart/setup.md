@@ -1,98 +1,46 @@
 
 # Setup
 
+Cadwyn is built around FastAPI and supports all of its functionality out of the box. One difference is that Cadwyn requires you to define API versions and extends your routing and swagger to support header-based API versioning.
+
 ## Installation
 
 ```bash
 pip install cadwyn
 ```
 
-## Project structure
+## The basics
 
-The recommended directory structure for cadwyn is as follows:
-
-```tree
-└── versions
-    ├── __init__.py     # Your version bundle goes here
-    └── v2001_01_01.py  # Your version changes go here for each new version
-```
-
-Here is an initial API setup where the User has a single address. We will be implementing two routes - one for creating a user and another for retrieving user details. We'll be using "int" for ID for simplicity. Please note that we will use a dict in place of a database for simplicity of our examples but do not ever do it in real life.
-
-The first API you come up with usually doesn't require more than one address -- why bother?
-
-So we create our file with schemas:
+First, let's set up the most basic versioned app possible:
 
 ```python
-# data/head/users.py
-from pydantic import BaseModel
-import uuid
+# main.py
 
-
-class BaseUser(BaseModel):
-    address: str
-
-
-class UserCreateRequest(BaseUser):
-    pass
-
-
-class UserResource(BaseUser):
-    id: uuid.UUID
-```
-
-Then we create our version bundle which will keep track of our API versions:
-
-```python
-# versions/__init__.py
-from cadwyn.structure import Version, VersionBundle, HeadVersion
 from datetime import date
+from cadwyn import Cadwyn, VersionBundle, HeadVersion, Version
 
 
-version_bundle = VersionBundle(
-    HeadVersion(),
-    Version(date(2001, 1, 1)),
-)
+app = Cadwyn(versions=VersionBundle(HeadVersion(), Version("2000-01-01")))
+
+
+@app.get("/")
+async def root():
+    return {"message": "Hello World"}
 ```
 
-## Generating versioned routes
+and run it using:
 
-```python
-# routes.py
-from data.head.users import UserCreateRequest, UserResource
-from versions import version_bundle
-from cadwyn import VersionedAPIRouter, Cadwyn
-import uuid
-import uvicorn
-
-database_parody = {}
-router = VersionedAPIRouter()
-
-
-@router.post("/users", response_model=UserResource)
-async def create_user(payload: UserCreateRequest):
-    id_ = uuid.uuid4()
-    database_parody[id_] = {
-        "id": id_,
-        "address": payload.address,
-    }
-    return database_parody[id_]
-
-
-@router.get("/users/{user_id}", response_model=UserResource)
-async def get_user(user_id: uuid.UUID):
-    return database_parody[user_id]
-
-
-app = Cadwyn(versions=version_bundle)
-app.generate_and_include_versioned_routers(router)
-
-if __name__ == "__main__":
-    uvicorn.run(app)
+```bash
+fastapi dev main.py
 ```
 
-That's it! Our app is ready to run.
+That's it. That's the main difference between setting up FastAPI and Cadwyn: you have to specify your versions. Everything you specify at app level (such as using `include_router` or `app.get(...)`) will end up unversioned and essentially function like a regular FastAPI route.
 
-Cadwyn has just generated a separate directory with the versioned schemas for us: one for each API version defined in our `VersionBundle`. If we run the app, we will see the following dashboard:
 
-![Dashboard with one version](../img/dashboard_with_one_version.png)
+## Docs
+
+If you visit `/docs`, instead of the regular swagger, you will see a version dashboard:
+
+![Version dashboard](../img/unversioned_dashboard.png)
+
+Clicking a card will take you to the card's regular swagger page.

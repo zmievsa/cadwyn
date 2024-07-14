@@ -5,6 +5,7 @@ import inspect
 import types
 import typing
 from collections.abc import Callable, Sequence
+from datetime import date
 from enum import Enum
 from functools import cache
 from typing import (
@@ -154,11 +155,13 @@ def migrate_response_body(
     latest_response_model: type[pydantic.BaseModel],
     *,
     latest_body: Any,
-    version: VersionDate,
+    version: VersionDate | str,
 ):
     """Convert the data to a specific version by applying all version changes from latest until that version
     in reverse order and wrapping the result in the correct version of latest_response_model.
     """
+    if isinstance(version, str):
+        version = date.fromisoformat(version)
     response = ResponseInfo(Response(status_code=200), body=latest_body)
     migrated_response = versions._migrate_response(
         response,

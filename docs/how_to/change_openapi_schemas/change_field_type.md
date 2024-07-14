@@ -12,17 +12,17 @@ This is not a breaking change in terms of requests but it [**can be**](#why-enum
 
 So if you do consider it a breaking change in terms of responses, you should do the following:
 
-1. Add `moderator` value into `data.head.users.BaseUserRoleEnum`
+1. Add `moderator` value into `users.BaseUserRoleEnum`
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
-    from cadwyn.structure import (
+    from cadwyn import (
         VersionChange,
         enum,
         convert_response_to_previous_version_for,
         ResponseInfo,
     )
-    from data.head.users import UserRoleEnum, UserResource
+    from users import UserRoleEnum, UserResource
     import datetime
 
 
@@ -60,7 +60,7 @@ Additional resources:
 * <https://github.com/graphql/graphql-js/issues/968>
 * <https://medium.com/@jakob.fiegerl/java-jackson-enum-de-serialization-with-rest-backward-compatibility-9c3ec85ac13d>
 
-In these sections, we'll be working with our user's response model: `data.head.users.UserResource`. Note that the main theme here is "Will I be able to serialize this change to any of my versions?" as any change to responses can make them incompatible with the data in your database.
+In these sections, we'll be working with our user's response model: `users.UserResource`. Note that the main theme here is "Will I be able to serialize this change to any of my versions?" as any change to responses can make them incompatible with the data in your database.
 
 ## Narrow the type
 
@@ -70,9 +70,9 @@ Let's say that previously users could specify their date of birth as a datetime 
 1. Add the following migration to `versions.v2001_01_01` which will turn `date_of_birth` into a date in 2001_01_01. Note how we use the validator for making sure that `date_of_birth` is converted to date in the latest version. It is only necessary in Pydantic 2 because it has no implicit casting from datetime to date. Note also how we use strings for types: this is not always necessary; it just allows you to control specifically how Cadwyn is going to render your types. Most of the time you won't need to use strings for types.
 
     ```python
-    from cadwyn.structure import VersionChange, schema
+    from cadwyn import VersionChange, schema
     from pydantic import validator
-    from data.head.users import BaseUser
+    from users import BaseUser
     import datetime
 
 
@@ -89,7 +89,7 @@ Let's say that previously users could specify their date of birth as a datetime 
             "to support versions and data before 2001-01-01. "
         )
         instructions_to_migrate_to_previous_version = (
-            schema(BaseUser).field("date_of_birth").had(type="datetime.date"),
+            schema(BaseUser).field("date_of_birth").had(type=datetime.date),
             # This step is only necessary in Pydantic 2 because datetime won't be converted
             # to date automatically.
             schema(BaseUser).validator(convert_date_of_birth_to_date).existed,
@@ -105,7 +105,7 @@ Let's say that previously users could specify their date of birth as a datetime 
             "a datetime because storing the exact time is unnecessary."
         )
         instructions_to_migrate_to_previous_version = (
-            schema(BaseUser).field("date_of_birth").had(type="datetime.datetime"),
+            schema(BaseUser).field("date_of_birth").had(type=datetime.datetime),
             schema(BaseUser).validator(convert_date_of_birth_to_date).didnt_exist,
         )
     ```
@@ -113,16 +113,15 @@ Let's say that previously users could specify their date of birth as a datetime 
 3. Add both migrations into our VersionBundle:
 
     ```python
-    # versions/__init__.py
-    from cadwyn.structure import Version, VersionBundle, HeadVersion
+    from cadwyn import Version, VersionBundle, HeadVersion
     from datetime import date
     from .v2001_01_01 import MakePhoneNonNullableInLatest, AddPhoneToUser
 
 
     version_bundle = VersionBundle(
         HeadVersion(ChangeDateOfBirthToDateInUserInLatest),
-        Version(date(2001, 1, 1), ChangeDateOfBirthToDateInUser),
-        Version(date(2000, 1, 1)),
+        Version("2001-01-01", ChangeDateOfBirthToDateInUser),
+        Version("2000-01-01"),
     )
     ```
 

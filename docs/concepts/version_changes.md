@@ -16,7 +16,7 @@ Each such group is called a **version change**:
 ```python
 # versions/v2023_02_10.py
 
-from cadwyn.structure import VersionChange, endpoint
+from cadwyn import VersionChange, endpoint
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -31,7 +31,7 @@ After you have described them, you add your version change class(es) into your v
 ```python
 # versions/__init__.py
 
-from cadwyn.structure import VersionBundle, Version
+from cadwyn import VersionBundle, Version
 from datetime import date
 
 from .v2023_02_10 import RemoveTaxIDEndpoints
@@ -39,8 +39,9 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 
 versions = VersionBundle(
     HeadVersion(),
-    Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
-    Version(date(2022, 11, 16)),
+    Version("2023-02-10"),
+    RemoveTaxIDEndpoints,
+    Version("2022-11-16"),
 )
 ```
 
@@ -55,7 +56,7 @@ Now let's discuss what each of these parts does and why:
 ```python
 # versions/__init__.py
 
-from cadwyn.structure import VersionBundle, Version
+from cadwyn import VersionBundle, Version
 from datetime import date
 
 from .v2023_02_10 import RemoveTaxIDEndpoints
@@ -63,8 +64,9 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 
 versions = VersionBundle(
     HeadVersion(),
-    Version(date(2023, 2, 10), RemoveTaxIDEndpoints),
-    Version(date(2022, 11, 16)),
+    Version("2023-02-10"),
+    RemoveTaxIDEndpoints,
+    Version("2022-11-16"),
 )
 ```
 
@@ -99,10 +101,10 @@ The name of the version change, `RemoveTaxIDEndpoints`, describes what breaking 
 
 ```python
 versions = VersionBundle(
-    Version(date(2023, 5, 9), ChangeCreateLogic, AddRequiredFields),
-    Version(date(2023, 4, 2), DeleteEndpoint, ChangeFields, RenameFields),
-    Version(date(2023, 2, 10), RenameEndpoints, RefactorFields),
-    Version(date(2022, 11, 16)),
+    Version("2023-05-09", ChangeCreateLogic, AddRequiredFields),
+    Version("2023-04-02", DeleteEndpoint, ChangeFields, RenameFields),
+    Version("2023-02-10", RenameEndpoints, RefactorFields),
+    Version("2022-11-16"),
 )
 ```
 
@@ -138,7 +140,7 @@ Imagine you needed to know what your code looked like two weeks ago. You would u
 <details>
   <summary>Note to curious readers</summary>
 
-  Git doesn't actually work this way internally. It's just a really simplistic metaphor to explain a complex concept.
+  Git doesn't actually work this way internally. My description is closer to how SVN works. It's just a really simplistic metaphor to explain a concept.
 </details>
 
 ### Data migrations
@@ -146,12 +148,12 @@ Imagine you needed to know what your code looked like two weeks ago. You would u
 Let's say that we renamed the field `creation_date` into `created_at`. We have altered our schemas -- that's great! But when our clients send us requests using the old versions of our API -- we will still get the data where we have `creation_date` instead of `created_at`. How do we solve this? Well, in Cadwyn your business logic never receives requests of the old versions. Instead, it receives only the requests of the latest version. So when you define a version change that renames a field, you need to also define how to convert the request body from the old version to the newer version. For example:
 
 ```python
-from cadwyn.structure import (
+from cadwyn import (
     VersionChange,
     schema,
     convert_request_to_next_version_for,
 )
-from data.head.invoices import InvoiceCreateRequest
+from invoices import InvoiceCreateRequest
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -174,13 +176,13 @@ Now we have not only described how schemas changed but we have also described ho
 But wait.. What happens with the `Invoice` responses? Your business logic will now return `created_at` so your clients from old versions will be affected! Cadwyn has a tool for that too: we migrate our responses as well. Requests were migrated forward in versions but responses are migrated backward in versions! So your business logic returns a response of the latest version and Cadwyn will use your response migrations to migrate it back the version of your client's request:
 
 ```python
-from cadwyn.structure import (
+from cadwyn import (
     VersionChange,
     schema,
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
 )
-from data.head.invoices import (
+from invoices import (
     BaseInvoice,
     InvoiceCreateRequest,
     InvoiceResource,
@@ -215,13 +217,13 @@ Now our request comes, Cadwyn migrates it to the latest version using our reques
 Oftentimes you will need to migrate not based on the request body or response model but based on the path of the endpoint. This happens when, for example, endpoint does not have a request body or its response model is used in other places that we do not want to migrate. Let's pick the example [above](#data-migrations) and use paths instead of schemas:
 
 ```python
-from cadwyn.structure import (
+from cadwyn import (
     VersionChange,
     schema,
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
 )
-from data.head.invoices import BaseInvoice
+from invoices import BaseInvoice
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -248,11 +250,11 @@ Oftentimes you need to raise `fastapi.HTTPException` in your code to signal some
 By default, Cadwyn's response migrations do not handle errors but you can use the `migrate_http_errors` keyword argument to enable it:
 
 ```python
-from cadwyn.structure import (
+from cadwyn import (
     VersionChange,
     convert_response_to_previous_version_for,
 )
-from data.head.invoices import BaseInvoice
+from invoices import BaseInvoice
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -293,13 +295,13 @@ We have only reviewed simplistic cases so far. But what happens when you cannot 
 Let's imagine that previously the `User` schema had a list of addresses but now we want to make a breaking change and turn them into a single address. The naive migration will just take the first address from the list for requests and turn that one address into a list for responses like so:
 
 ```python
-from cadwyn.structure import (
+from cadwyn import (
     VersionChange,
     schema,
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
 )
-from data.head.users import BaseUser, UserCreateRequest, UserResource
+from users import BaseUser, UserCreateRequest, UserResource
 
 # THIS IS AN EXAMPLE OF A BAD MIGRATION
 class RemoveTaxIDEndpoints(VersionChange):
@@ -338,8 +340,8 @@ return {"address": user.addresses[0] if user.addresses else None, **user}
 So now your migration will look like the following:
 
 ```python
-from cadwyn.structure import VersionChange, schema
-from data.head.users import User
+from cadwyn import VersionChange, schema
+from users import User
 
 
 class RemoveTaxIDEndpoints(VersionChange):
@@ -357,7 +359,7 @@ Yes, we do not need any of the migrations anymore because responses are handled 
 Oftentimes you will have a need to migrate your data outside of routing, manually. For example, when you need to send a versioned response to your client via webhook or inside a worker/cronjob. In these instances, you can use `cadwyn.VersionBundle.migrate_response_body`:
 
 ```python
-from data.head.users import UserResource
+from users import UserResource
 from versions import version_bundle
 
 body_from_2000_01_01 = version_bundle.migrate_response_body(
@@ -371,12 +373,12 @@ The returned `body_from_2000_01_01` is your data passed through all converters (
 
 Migrations for the bodies of `fastapi.responses.StreamingResponse` and `fastapi.responses.FileResponse` are not directly supported yet ([1](https://github.com/zmievsa/cadwyn/issues/125), [2](https://github.com/zmievsa/cadwyn/issues/126)). However, you can use `ResponseInfo._response` attribute to get access to the original `StreamingResponse` or `FileResponse` and modify it in any way you wish within your migrations.
 
-## Pydantic 2 RootModel migration warning
+## Pydantic RootModel migration warning
 
-Pydantic 2 has an interesting implementation detail: `pydantic.RootModel` instances are memoized. So the following code is going to output `True`:
+Pydantic has an interesting implementation detail: `pydantic.RootModel` instances are memoized. So the following code is going to output `True`:
 
 ```python
-from data.head.users import User
+from users import User
 from pydantic import RootModel
 
 BulkCreateUsersRequestBody = RootModel[list[User]]
@@ -388,7 +390,7 @@ print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # True
 So if you make a migration that should only affect one of these schemas -- it will automatically affect both. A recommended alternative is to either use subclassing:
 
 ```python
-from data.head.users import User
+from users import User
 from pydantic import RootModel
 
 UserList = RootModel[list[User]]
@@ -426,7 +428,7 @@ To simplify this, cadwyn has a special `VersionChangeWithSideEffects` class. It 
 As an example, let's use the tutorial section's case with the user and their address. Let's say that we use an external service to check whether user's address is listed in it and return 400 response if it is not. Let's also say that we only added this check in the newest version.
 
 ```python
-from cadwyn.structure import VersionChangeWithSideEffects
+from cadwyn import VersionChangeWithSideEffects
 
 
 class UserAddressIsCheckedInExternalService(VersionChangeWithSideEffects):

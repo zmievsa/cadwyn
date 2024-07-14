@@ -2,11 +2,11 @@
 
 Let's say that we had a "summary" field before but now we want to rename it to "bio".
 
-1. Rename `summary` field to `bio` in `data.head.users.BaseUser`
+1. Rename `summary` field to `bio` in `users.BaseUser`
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
-    from cadwyn.structure import (
+    from cadwyn import (
         VersionChange,
         schema,
         convert_response_to_previous_version_for,
@@ -14,7 +14,7 @@ Let's say that we had a "summary" field before but now we want to rename it to "
         ResponseInfo,
         RequestInfo,
     )
-    from data.head.users import BaseUser, UserCreateRequest, UserResource
+    from users import BaseUser, UserCreateRequest, UserResource
 
 
     class RenameSummaryIntoBioInUser(VersionChange):

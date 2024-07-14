@@ -4,7 +4,7 @@
 
 Let's say that we decided to expose the creation date of user's account with a `created_at` field in our API. This is **not** a breaking change so a new version is completely unnecessary. However, if you believe that you absolutely have to make a new version, then you can simply follow the recommended approach below but add a version change with [field didnt exist instruction](../../concepts/schema_migrations.md#remove-a-field-from-the-older-version).
 
-You just need to add `created_at` field into `data.head.users.UserResource`.
+You just need to add `created_at` field into `users.UserResource`.
 
 Now you have everything you need at your disposal: field `created_at` is available in all versions and your users do not even need to do any extra actions. Just make sure that the data for it is available in all versions too. If it's not: make the field optional.
 
@@ -14,7 +14,7 @@ Now you have everything you need at your disposal: field `created_at` is availab
 
 Let's say we want our users to be able to specify a middle name but it is nullable. It is not a breaking change so no new version is necessary whether it is requests or responses.
 
-You just need to add a nullable `middle_name` field into `data.head.users.BaseUser`
+You just need to add a nullable `middle_name` field into `users.BaseUser`
 
 ### Field is required
 
@@ -22,16 +22,16 @@ You just need to add a nullable `middle_name` field into `data.head.users.BaseUs
 
 Let's say that our users had a field `country` that defaulted to `USA` but our product is now used well beyond United States so we want to make this field required in the HEAD version.
 
-1. Remove `default="US"` from `data.head.users.UserCreateRequest`
+1. Remove `default="US"` from `users.UserCreateRequest`
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
-    from cadwyn.structure import (
+    from cadwyn import (
         VersionChange,
         schema,
         convert_request_to_next_version_for,
     )
-    from data.head.users import UserCreateRequest, UserResource
+    from users import UserCreateRequest, UserResource
 
 
     class MakeUserCountryRequired(VersionChange):
@@ -48,16 +48,14 @@ Let's say that our users had a field `country` that defaulted to `USA` but our p
 3. Add this migration into the version bundle:
 
     ```python
-    # versions/__init__.py
-
-    from cadwyn.structure import Version, VersionBundle, HeadVersion
+    from cadwyn import Version, VersionBundle, HeadVersion
     from datetime import date
     from .v2001_01_01 import MakeUserCountryRequired
 
     version_bundle = VersionBundle(
         HeadVersion(),
-        Version(date(2001, 1, 1), MakeUserCountryRequired),
-        Version(date(2000, 1, 1)),
+        Version("2001-01-01", MakeUserCountryRequired),
+        Version("2000-01-01"),
     )
     ```
 
@@ -70,13 +68,13 @@ Let's say that we want to add a required field `phone` to our users. However, ol
 
 So we will make `phone` nullable in HEAD, then make it required in `latest`, and then make it nullable again in older versions, thus making it possible to convert all of our requests to HEAD.
 
-1. Add `phone` field of type `str | None` to `data.head.users.BaseUser`
-2. Add `phone` field of type `str | None` with a `default=None` to `data.head.users.UserResource` because all users created with older versions of our API won't have phone numbers.
+1. Add `phone` field of type `str | None` to `users.BaseUser`
+2. Add `phone` field of type `str | None` with a `default=None` to `users.UserResource` because all users created with older versions of our API won't have phone numbers.
 3. Add the following migration to `versions.v2001_01_01` which will make sure that `phone` is not nullable in 2001_01_01:
 
     ```python
-    from cadwyn.structure import VersionChange, schema
-    from data.head.users import UserCreateRequest
+    from cadwyn import VersionChange, schema
+    from users import UserCreateRequest
 
 
     class MakePhoneNonNullableInLatest(VersionChange):
@@ -108,16 +106,15 @@ So we will make `phone` nullable in HEAD, then make it required in `latest`, and
 5. Add both migrations into our VersionBundle:
 
     ```python
-    # versions/__init__.py
-    from cadwyn.structure import Version, VersionBundle, HeadVersion
+    from cadwyn import Version, VersionBundle, HeadVersion
     from datetime import date
     from .v2001_01_01 import MakePhoneNonNullableInLatest, AddPhoneToUser
 
 
     version_bundle = VersionBundle(
         HeadVersion(MakePhoneNonNullableInLatest),
-        Version(date(2001, 1, 1), AddPhoneToUser),
-        Version(date(2000, 1, 1)),
+        Version("2001-01-01", AddPhoneToUser),
+        Version("2000-01-01"),
     )
     ```
 

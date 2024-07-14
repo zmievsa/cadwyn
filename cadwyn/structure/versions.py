@@ -6,6 +6,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
+from datetime import date
 from enum import Enum
 from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
 
@@ -197,9 +198,11 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
 
 
 class Version:
-    def __init__(self, value: VersionDate, *version_changes: type[VersionChange]) -> None:
+    def __init__(self, value: VersionDate | str, *version_changes: type[VersionChange]) -> None:
         super().__init__()
 
+        if isinstance(value, str):
+            value = date.fromisoformat(value)
         self.value = value
         self.version_changes = version_changes
 
