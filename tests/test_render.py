@@ -1,4 +1,5 @@
 import re
+import sys
 from datetime import date
 from enum import Enum
 
@@ -16,17 +17,24 @@ def test__render_model__with_weird_types():
         "tests._resources.render.complex.versions:app",
         "2000-01-01",
     )
+    # TODO: sobolevn has created a tool for doing such nocovers in a better manner.
+    # hopefully someday we will switch to it.
+    if sys.version_info >= (3, 11):  # pragma: no cover # We cover this in CI
+        rendered_lambda = "lambda: 83"
+    else:
+        rendered_lambda = "lambda : 83"
+
     # TODO: As you see, we do not rename bases correctly in render. We gotta fix it some day...
     assert code(result) == code(
-        '''
+        f'''
 class ModelWithWeirdFields(A):
     """My docstring"""
-    foo: dict = Field(default={'a': 'b'})
+    foo: dict = Field(default={{'a': 'b'}})
     bar: list[int] = Field(default_factory=my_default_factory)
     baz: typing.Literal[MyEnum.foo] = Field()
     saz: Annotated[str, StringConstraints(to_upper=True)] = Field()
     laz: Annotated[int, None, Interval(gt=12, ge=None, lt=None, le=None), None] = Field()
-    taz: typing.Union[int, str, None] = Field(default_factory=lambda : 83)
+    taz: typing.Union[int, str, None] = Field(default_factory={rendered_lambda})
     naz: list[int] = Field(default=[1, 2, 3])
     gaz: Annotated[bytes, Strict(strict=True), Len(min_length=0, max_length=None)] = Field(min_length=3, title='Hewwo')
 '''

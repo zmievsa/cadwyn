@@ -6,6 +6,8 @@ Cadwyn automatically generates versioned schemas and everything related to them 
 
 When you have many versions and many schemas, it is quite hard to know what validators, fields, and other attributes are defined on each schema in any concrete version. To combat this problem, we have a way to **render** the generated pydantic models and enums to code using the command-line interface.
 
+**NOTICE** that `cadwyn render` does not promise to render correct schemas. It is going to be a very close approximation which should be enough for the cases where humans check the schemas by hand. However, it is not yet ready to be used for full blown code generation. For example, it doesn't handle schema renamings in class `__bases__` yet.
+
 ### Rendering a module
 
 Here's how you would render the entire module with your schemas:

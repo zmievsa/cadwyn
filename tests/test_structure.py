@@ -338,6 +338,10 @@ class TestVersionBundle:
             )
 
 
+def test__version__has_string_as_a_date__should_be_converted_to_date():
+    assert Version("2022-11-16").value == date(2022, 11, 16)
+
+
 class SomeSchema(BaseModel):
     pass
 

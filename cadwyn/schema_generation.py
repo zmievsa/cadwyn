@@ -290,8 +290,8 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                     copy.deepcopy(sub_annotations[0]), tuple(copy.deepcopy(sub_ann) for sub_ann in sub_annotations[1:])
                 )
 
-    def __deepcopy__(self, memo: Any):
-        return _PydanticRuntimeModelWrapper(
+    def __deepcopy__(self, memo: dict[int, Any]):
+        result = _PydanticRuntimeModelWrapper(
             self.cls,
             name=self.name,
             doc=self.doc,
@@ -300,6 +300,8 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             other_attributes=copy.deepcopy(self.other_attributes),
             annotations=copy.deepcopy(self.annotations),
         )
+        memo[id(self)] = result
+        return result
 
     def _get_parents(self, schemas: "dict[type, Self]"):
         if self._parents is not None:
@@ -909,6 +911,12 @@ class _EnumWrapper(Generic[_T_ENUM]):
     def __init__(self, cls: type[_T_ENUM]):
         self.cls = _unwrap_model(cls)
         self.members = {member.name: member.value for member in cls}
+
+    def __deepcopy__(self, memo: Any):
+        result = _EnumWrapper(self.cls)
+        result.members = self.members.copy()
+        memo[id(self)] = result
+        return result
 
     def generate_model_copy(self, generator: "_SchemaGenerator") -> type[_T_ENUM]:
         enum_dict = Enum.__prepare__(self.cls.__name__, self.cls.__bases__)

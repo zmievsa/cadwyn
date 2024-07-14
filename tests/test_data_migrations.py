@@ -1177,7 +1177,7 @@ def test__manual_response_migrations():
 
     with pytest.raises(CadwynError):
         new_response = migrate_response_body(
-            version_bundle, EmptySchema, latest_body={"id": "hewwo"}, version=date(1999, 1, 1)
+            version_bundle, EmptySchema, latest_body={"id": "hewwo"}, version="1999-01-01"
         )
 
 
