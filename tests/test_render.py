@@ -64,7 +64,7 @@ class RandomEnum(Enum):
 
 def test__render_model__with_non_class__should_raise_error():
     with pytest.raises(
-        ValueError, match=re.escape("tests._resources.render.complex.classes.my_default_factory is not a class")
+        TypeError, match=re.escape("tests._resources.render.complex.classes.my_default_factory is not a class")
     ):
         render_model_by_path(
             "tests._resources.render.complex.classes:my_default_factory",
