@@ -58,7 +58,7 @@ class A(BaseModel):
     )
 
 
-def test__render_model__with_syntax_highlighting():
+def test__render_model__with_syntax_highlighting():  # pragma: no cover
     result = CliRunner().invoke(
         app,
         [
@@ -71,7 +71,7 @@ def test__render_model__with_syntax_highlighting():
     )
     assert result.exit_code == 0
 
-    if sys.platform.startswith("win32"):  # pragma: no cover
+    if sys.platform.startswith("win32"):
         # Windows rendering is weird
         return
 
