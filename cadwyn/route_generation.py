@@ -156,7 +156,7 @@ class _EndpointTransformer(Generic[_R]):
             router
         )
 
-        for version_change in version.version_changes:
+        for version_change in version.changes:
             for by_path_converters in [
                 *version_change.alter_response_by_path_instructions.values(),
                 *version_change.alter_request_by_path_instructions.values(),
@@ -230,7 +230,7 @@ class _EndpointTransformer(Generic[_R]):
         version: Version,
     ):
         routes = router.routes
-        for version_change in version.version_changes:
+        for version_change in version.changes:
             for instruction in version_change.alter_endpoint_instructions:
                 original_routes = _get_routes(
                     routes,

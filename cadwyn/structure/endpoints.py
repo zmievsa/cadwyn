@@ -11,6 +11,7 @@ from starlette.routing import BaseRoute
 from cadwyn.exceptions import LintingError
 
 from .._utils import Sentinel
+from .common import HiddenAttributeMixin
 
 HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
 
@@ -55,7 +56,7 @@ class EndpointAttributesPayload:
 
 
 @dataclass(slots=True)
-class EndpointHadInstruction:
+class EndpointHadInstruction(HiddenAttributeMixin):
     endpoint_path: str
     endpoint_methods: set[str]
     endpoint_func_name: str | None
@@ -63,14 +64,14 @@ class EndpointHadInstruction:
 
 
 @dataclass(slots=True)
-class EndpointExistedInstruction:
+class EndpointExistedInstruction(HiddenAttributeMixin):
     endpoint_path: str
     endpoint_methods: set[str]
     endpoint_func_name: str | None
 
 
 @dataclass(slots=True)
-class EndpointDidntExistInstruction:
+class EndpointDidntExistInstruction(HiddenAttributeMixin):
     endpoint_path: str
     endpoint_methods: set[str]
     endpoint_func_name: str | None

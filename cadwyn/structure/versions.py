@@ -23,7 +23,7 @@ from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from cadwyn._utils import classproperty
 from cadwyn.exceptions import (
@@ -64,6 +64,7 @@ IdentifierPythonPath = str
 
 class VersionChange:
     description: ClassVar[str] = Sentinel
+    is_hidden_from_changelog: bool = False
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
     alter_schema_instructions: ClassVar[list[AlterSchemaSubInstruction | SchemaHadInstruction]] = Sentinel
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
@@ -198,24 +199,29 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
 
 
 class Version:
-    def __init__(self, value: VersionDate | str, *version_changes: type[VersionChange]) -> None:
+    def __init__(self, value: VersionDate | str, *changes: type[VersionChange]) -> None:
         super().__init__()
 
         if isinstance(value, str):
             value = date.fromisoformat(value)
         self.value = value
-        self.version_changes = version_changes
+        self.changes = changes
+
+    @property
+    @deprecated("'version_changes' attribute is deprecated and will be removed in Cadwyn 5.x.x. Use 'changes' instead.")
+    def version_changes(self):  # pragma: no cover
+        return self.changes
 
     def __repr__(self) -> str:
         return f"Version('{self.value}')"
 
 
 class HeadVersion:
-    def __init__(self, *version_changes: type[VersionChange]) -> None:
+    def __init__(self, *changes: type[VersionChange]) -> None:
         super().__init__()
-        self.version_changes = version_changes
+        self.changes = changes
 
-        for version_change in version_changes:
+        for version_change in changes:
             if any(
                 [
                     version_change.alter_request_by_path_instructions,
@@ -227,6 +233,11 @@ class HeadVersion:
                 raise NotImplementedError(
                     f"HeadVersion does not support request or response migrations but {version_change} contained one."
                 )
+
+    @property
+    @deprecated("'version_changes' attribute is deprecated and will be removed in Cadwyn 5.x.x. Use 'changes' instead.")
+    def version_changes(self):  # pragma: no cover
+        return self.changes
 
 
 def get_cls_pythonpath(cls: type) -> IdentifierPythonPath:
@@ -260,7 +271,7 @@ class VersionBundle:
             )
         if not self.versions:
             raise CadwynStructureError("You must define at least one non-head version in a VersionBundle.")
-        if self.versions[-1].version_changes:
+        if self.versions[-1].changes:
             raise CadwynStructureError(
                 f'The first version "{self.versions[-1].value}" cannot have any version changes. '
                 "Version changes are defined to migrate to/from a previous version so you "
@@ -275,7 +286,7 @@ class VersionBundle:
                     f"You tried to define two versions with the same value in the same "
                     f"{VersionBundle.__name__}: '{version.value}'.",
                 )
-            for version_change in version.version_changes:
+            for version_change in version.changes:
                 if version_change._bound_version_bundle is not None:
                     raise CadwynStructureError(
                         f"You tried to bind version change '{version_change.__name__}' to two different versions. "
@@ -295,14 +306,14 @@ class VersionBundle:
         altered_schemas = {
             get_cls_pythonpath(instruction.schema): instruction.schema
             for version in self._all_versions
-            for version_change in version.version_changes
+            for version_change in version.changes
             for instruction in list(version_change.alter_schema_instructions)
         }
 
         migrated_schemas = {
             get_cls_pythonpath(schema): schema
             for version in self._all_versions
-            for version_change in version.version_changes
+            for version_change in version.changes
             for schema in list(version_change.alter_request_by_schema_instructions.keys())
         }
 
@@ -313,7 +324,7 @@ class VersionBundle:
         return {
             get_cls_pythonpath(instruction.enum): instruction.enum
             for version in self._all_versions
-            for version_change in version.version_changes
+            for version_change in version.changes
             for instruction in version_change.alter_enum_instructions
         }
 
@@ -327,9 +338,7 @@ class VersionBundle:
     def _version_changes_to_version_mapping(
         self,
     ) -> dict[type[VersionChange] | type[VersionChangeWithSideEffects], VersionDate]:
-        return {
-            version_change: version.value for version in self.versions for version_change in version.version_changes
-        }
+        return {version_change: version.value for version in self.versions for version_change in version.changes}
 
     async def _migrate_request(
         self,
@@ -347,7 +356,7 @@ class VersionBundle:
         for v in reversed(self.versions):
             if v.value <= current_version:
                 continue
-            for version_change in v.version_changes:
+            for version_change in v.changes:
                 if body_type is not None and body_type in version_change.alter_request_by_schema_instructions:
                     for instruction in version_change.alter_request_by_schema_instructions[body_type]:
                         instruction(request_info)
@@ -394,7 +403,7 @@ class VersionBundle:
         for v in self.versions:
             if v.value <= current_version:
                 break
-            for version_change in v.version_changes:
+            for version_change in v.changes:
                 migrations_to_apply: list[_BaseAlterResponseInstruction] = []
 
                 if head_response_model and head_response_model in version_change.alter_response_by_schema_instructions:

@@ -10,6 +10,8 @@ from pydantic.fields import FieldInfo
 from cadwyn._utils import Sentinel, fully_unwrap_decorator
 from cadwyn.exceptions import CadwynStructureError
 
+from .common import HiddenAttributeMixin
+
 if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
 
@@ -77,7 +79,7 @@ class FieldChanges:
 
 
 @dataclass(slots=True)
-class FieldHadInstruction:
+class FieldHadInstruction(HiddenAttributeMixin):
     schema: type[BaseModel]
     name: str
     type: type
@@ -86,20 +88,20 @@ class FieldHadInstruction:
 
 
 @dataclass(slots=True)
-class FieldDidntHaveInstruction:
+class FieldDidntHaveInstruction(HiddenAttributeMixin):
     schema: type[BaseModel]
     name: str
     attributes: tuple[str, ...]
 
 
 @dataclass(slots=True)
-class FieldDidntExistInstruction:
+class FieldDidntExistInstruction(HiddenAttributeMixin):
     schema: type[BaseModel]
     name: str
 
 
 @dataclass(slots=True)
-class FieldExistedAsInstruction:
+class FieldExistedAsInstruction(HiddenAttributeMixin):
     schema: type[BaseModel]
     name: str
     field: FieldInfo
@@ -266,7 +268,7 @@ AlterSchemaSubInstruction = (
 
 
 @dataclass(slots=True)
-class SchemaHadInstruction:
+class SchemaHadInstruction(HiddenAttributeMixin):
     schema: type[BaseModel]
     name: str
 
