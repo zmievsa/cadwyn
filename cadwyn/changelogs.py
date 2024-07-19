@@ -1,17 +1,12 @@
 import datetime
 import sys
-import uuid
 from types import NoneType
 from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
-import fastapi
 from pydantic import BaseModel, Field, RootModel
 
 from cadwyn import (
-    HeadVersion,
-    Version,
     VersionBundle,
-    VersionChange,
     VersionChangeWithSideEffects,
 )
 from cadwyn.schema_generation import _generate_versioned_models, _SchemaGenerator
@@ -21,18 +16,13 @@ from .structure.endpoints import (
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
     EndpointHadInstruction,
-    endpoint,
 )
 from .structure.enums import EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
 from .structure.schemas import (
     FieldDidntExistInstruction,
-    FieldDidntHaveInstruction,
     FieldExistedAsInstruction,
-    FieldHadInstruction,
-    SchemaHadInstruction,
     ValidatorDidntExistInstruction,
     ValidatorExistedInstruction,
-    schema,
 )
 
 if sys.version_info >= (3, 11):  # pragma: no cover

@@ -1,6 +1,6 @@
 import datetime
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import ParamSpec, TypeAlias, TypeVar
 
 from pydantic import BaseModel
