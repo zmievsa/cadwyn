@@ -263,19 +263,19 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
 @final
 @dataclasses.dataclass(slots=True)
 class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
-    cls: type[_T_PYDANTIC_MODEL]
+    cls: type[_T_PYDANTIC_MODEL] = dataclasses.field(repr=False)
     name: str
-    doc: str | None
+    doc: str | None = dataclasses.field(repr=False)
     fields: Annotated[
         dict["_FieldName", PydanticFieldWrapper],
         Doc(
             "Fields that belong to this model, not to its parents. I.e. The ones that were either defined or overriden "
         ),
-    ]
-    validators: dict[str, _PerFieldValidatorWrapper | _ValidatorWrapper]
-    other_attributes: dict[str, Any]
-    annotations: dict[str, Any]
-    _parents: list[Self] | None = dataclasses.field(init=False, default=None)
+    ] = dataclasses.field(repr=False)
+    validators: dict[str, _PerFieldValidatorWrapper | _ValidatorWrapper] = dataclasses.field(repr=False)
+    other_attributes: dict[str, Any] = dataclasses.field(repr=False)
+    annotations: dict[str, Any] = dataclasses.field(repr=False)
+    _parents: list[Self] | None = dataclasses.field(init=False, default=None, repr=False)
 
     def __post_init__(self):
         # This isn't actually supposed to run, it's just a precaution
@@ -303,6 +303,9 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         )
         memo[id(self)] = result
         return result
+
+    def __hash__(self) -> int:
+        return hash(id(self))
 
     def _get_parents(self, schemas: "dict[type, Self]"):
         if self._parents is not None:
@@ -600,7 +603,7 @@ class _SchemaGenerator:
             for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
         }
 
-    def __getitem__(self, model: type, /) -> Any:
+    def __getitem__(self, model: type[_T_ANY_MODEL], /) -> _T_ANY_MODEL:
         if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model in (BaseModel, RootModel):
             return model
         model = _unwrap_model(model)
@@ -912,10 +915,11 @@ class _DummyEnum(Enum):
 
 @final
 class _EnumWrapper(Generic[_T_ENUM]):
-    __slots__ = "cls", "members"
+    __slots__ = "cls", "members", "name"
 
     def __init__(self, cls: type[_T_ENUM]):
         self.cls = _unwrap_model(cls)
+        self.name = cls.__name__
         self.members = {member.name: member.value for member in cls}
 
     def __deepcopy__(self, memo: Any):
@@ -925,13 +929,13 @@ class _EnumWrapper(Generic[_T_ENUM]):
         return result
 
     def generate_model_copy(self, generator: "_SchemaGenerator") -> type[_T_ENUM]:
-        enum_dict = Enum.__prepare__(self.cls.__name__, self.cls.__bases__)
+        enum_dict = Enum.__prepare__(self.name, self.cls.__bases__)
 
         raw_member_map = {k: v.value if isinstance(v, Enum) else v for k, v in self.members.items()}
         initialization_namespace = self._get_initialization_namespace_for_enum(self.cls) | raw_member_map
         for attr_name, attr in initialization_namespace.items():
             enum_dict[attr_name] = attr
-        model_copy = cast(type[_T_ENUM], type(self.cls.__name__, self.cls.__bases__, enum_dict))
+        model_copy = cast(type[_T_ENUM], type(self.name, self.cls.__bases__, enum_dict))
         model_copy.__cadwyn_original_model__ = self.cls  # pyright: ignore[reportAttributeAccessIssue]
         return model_copy
 

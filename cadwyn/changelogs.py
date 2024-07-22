@@ -3,12 +3,26 @@ import sys
 from types import NoneType
 from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
+from fastapi._compat import (
+    GenerateJsonSchema,
+    JsonSchemaValue,
+    ModelField,
+    get_compat_model_name_map,
+    get_definitions,
+    get_schema_from_model_field,
+)
+from fastapi.openapi.constants import REF_TEMPLATE
+from fastapi.openapi.utils import get_fields_from_routes
 from pydantic import BaseModel, Field, RootModel
+from typing_extensions import assert_never
 
 from cadwyn import (
     VersionBundle,
     VersionChangeWithSideEffects,
 )
+from cadwyn._asts import GenericAliasUnion
+from cadwyn._utils import Sentinel
+from cadwyn.applications import Cadwyn
 from cadwyn.schema_generation import _generate_versioned_models, _SchemaGenerator
 from cadwyn.structure.versions import PossibleInstructions
 
@@ -20,7 +34,10 @@ from .structure.endpoints import (
 from .structure.enums import EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
 from .structure.schemas import (
     FieldDidntExistInstruction,
+    FieldDidntHaveInstruction,
     FieldExistedAsInstruction,
+    FieldHadInstruction,
+    SchemaHadInstruction,
     ValidatorDidntExistInstruction,
     ValidatorExistedInstruction,
 )
@@ -37,6 +54,7 @@ import pydantic
 def _convert_version_change_instruction_to_changelog_entry(
     instruction: PossibleInstructions,
     generator_from_newer_version: _SchemaGenerator,
+    schemas_from_last_version: list[ModelField],
 ):
     match instruction:
         case EndpointDidntExistInstruction():
@@ -50,99 +68,186 @@ def _convert_version_change_instruction_to_changelog_entry(
                 methods=cast(Any, instruction.endpoint_methods),
             )
         case EndpointHadInstruction():
-            instruction.attributes
-            return CadwynEndpointHadChangelogEntry
+            ...
+        case FieldHadInstruction():
+
+            class CadwynModifiedFieldAttribute(BaseModel):
+                name: str
+                old_value: Any
+                new_value: Any
+
+            model = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
+
+            modified_fields: list[CadwynModifiedFieldAttribute] = []
+            if instruction.new_name is not Sentinel:
+                modified_fields.append(
+                    CadwynModifiedFieldAttribute(
+                        name="name", old_value=instruction.new_name, new_value=instruction.name
+                    )
+                )
+            if instruction.type is not Sentinel:
+                modified_fields.append(
+                    CadwynModifiedFieldAttribute(
+                        name="type", old_value=instruction.type, new_value=model.fields[instruction.name].annotation
+                    )
+                )
+            for attr_name in instruction.field_changes.__dataclass_fields__:
+                attr_value = getattr(instruction.field_changes, attr_name)
+                if attr_value is not Sentinel:
+                    modified_fields.append(
+                        CadwynModifiedFieldAttribute(
+                            name=attr_name,
+                            old_value=attr_value,
+                            new_value=model.fields[instruction.name].passed_field_attributes[attr_name],
+                        )
+                    )
+        case FieldDidntHaveInstruction():
+            ...
         case EnumDidntHaveMembersInstruction():
-            raise Exception
+            enum = generator_from_newer_version._get_wrapper_for_model(instruction.enum)
+
+            return CadwynEnumMembersWereAddedChangelogEntry(
+                enum=enum.name,
+                members=[CadwynEnumMember(name=name, value=value) for name, value in enum.members.items()],
+            )
         case EnumHadMembersInstruction():
+            enum = generator_from_newer_version._get_wrapper_for_model(instruction.enum)
+
             return CadwynEnumMembersWereRemovedChangelogEntry(
-                enum=generator_from_newer_version[instruction.enum].__name__,
-                members=list(instruction.members),
+                enum=enum.name,
+                members=[CadwynEnumMember(name=name, value=value) for name, value in instruction.members.items()],
+            )
+        case SchemaHadInstruction():
+            model = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
+
+            return CadwynSchemaWasChangedChangelogEntry(
+                models=[instruction.name], model_info=CadwynModelInfo(name=model.name)
             )
         case FieldExistedAsInstruction():
-            return CadwynSchemaFieldWasRemovedChangelogEntry(
-                schema=generator_from_newer_version._get_wrapper_for_model(instruction.schema).name,
-                field=instruction.name,
+            affected_model_names = _get_affected_model_names(
+                instruction, generator_from_newer_version, schemas_from_last_version
             )
+            return CadwynSchemaFieldWasRemovedChangelogEntry(models=affected_model_names, field=instruction.name)
         case FieldDidntExistInstruction():
             model = generator_from_newer_version[instruction.schema]
-            annotation = model.model_fields[instruction.name].annotation
-
-            type_ = _convert_annotation_to_openapi_type(annotation)
+            affected_model_names = _get_affected_model_names(
+                instruction, generator_from_newer_version, schemas_from_last_version
+            )
 
             return CadwynSchemaFieldWasAddedChangelogEntry(
-                schema=model.__name__,
+                models=affected_model_names,
                 field=instruction.name,
-                field_info=CadwynFieldInfo(type=type_, nullable=isinstance(annotation, NoneType)),
+                field_info=_get_openapi_representation_of_a_field(
+                    ModelField(model.model_fields[instruction.name], instruction.name)
+                ),
             )
-    raise Exception
+        case staticmethod() | ValidatorDidntExistInstruction() | ValidatorExistedInstruction():
+            return []
+    assert_never(instruction)
 
 
-def _convert_annotation_to_openapi_type(annotation: Any):
-    if isinstance(annotation, list):
-        if len(annotation) > 1:
-            return None
-        annotation = annotation[0]
-    origin = get_origin(annotation)
-    if origin is Annotated:
-        return _convert_annotation_to_openapi_type(get_args(annotation)[0])
-    if origin:
-        return _convert_annotation_to_openapi_type(origin), get_args(annotation)
+def _get_affected_model_names(
+    instruction: FieldExistedAsInstruction | FieldDidntExistInstruction,
+    generator_from_newer_version: _SchemaGenerator,
+    schemas_from_last_version: list[ModelField],
+):
+    changed_model = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
+    annotations = [model.field_info.annotation for model in schemas_from_last_version]
+    basemodel_annotations: list[type[BaseModel]] = []
+    for annotation in annotations:
+        basemodel_annotations.extend(_get_all_pydantic_models_from_generic(annotation))
+    models = set(
+        generator_from_newer_version._get_wrapper_for_model(annotation) for annotation in basemodel_annotations
+    )
 
-    match annotation:
-        case pydantic.BaseModel:
-            type_ = annotation.__name__
-        case builtins.dict:
-            type_ = "object"
-        case builtins.list:
-            type_ = "array"
-        case builtins.str:
-            type_ = "string"
-        case builtins.bool:
-            type_ = "boolean"
-        case builtins.float:
-            type_ = "number"
-        case builtins.int:
-            type_ = "integer"
-        case _:
-            raise Exception
-    return type_
+    affected_models = [
+        model
+        for model in models
+        if changed_model == model
+        or (
+            instruction.name not in model.fields
+            and changed_model in (parents := model._get_parents(generator_from_newer_version.model_bundle.schemas))
+            and all([instruction.name not in parent.fields for parent in parents[: parents.index(changed_model)]])
+        )  # TODO: Test every part of this
+    ]
+    model_names = [model.name for model in affected_models]
+    return model_names
+
+
+def _get_all_pydantic_models_from_generic(annotation: Any) -> list[type[BaseModel]]:
+    if not isinstance(annotation, GenericAliasUnion):
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            return [annotation]
+        else:
+            return []
+    sub_annotations = get_args(annotation)
+    models = []
+
+    for sub_annotation in sub_annotations:
+        models.extend(_get_all_pydantic_models_from_generic(sub_annotation))
+
+    return models
+
+
+def _get_openapi_representation_of_a_field(field: ModelField):
+    model_name_map = get_compat_model_name_map([field])
+    schema_generator = GenerateJsonSchema(ref_template=REF_TEMPLATE)
+    field_mapping, _ = get_definitions(
+        fields=[field],
+        schema_generator=schema_generator,
+        model_name_map=model_name_map,
+        separate_input_output_schemas=False,
+    )
+    return list(field_mapping.values())[0]
 
 
 class ChangelogEntryType(StrEnum):
     endpoint_added = "endpoint.added"
     endpoint_removed = "endpoint.removed"
+    enum_members_added = "enum.members.added"
     enum_members_removed = "enum.members.removed"
     schema_field_removed = "schema.field.removed"
     schema_field_added = "schema.field.added"
 
 
-SchemaAliasField = Annotated[str, Field(validation_alias="schema", serialization_alias="schema")]
+class CadwynModelInfo(BaseModel):
+    name: str | None
 
 
-class CadwynFieldInfo(BaseModel):
-    type: str
-    nullable: bool
+class CadwynSchemaWasChangedChangelogEntry(BaseModel):
+    models: list[str]
+    model_info: CadwynModelInfo
 
 
 class CadwynSchemaFieldWasAddedChangelogEntry(BaseModel):
     type: Literal[ChangelogEntryType.schema_field_added] = ChangelogEntryType.schema_field_added
-    schema_: str = Field(alias="schema")
+    models: list[str]
     # TODO: We could actually add field_info as well but I'm not sure which attributes to include yet
     field: str
-    field_info: CadwynFieldInfo
+    field_info: dict[str, Any]
 
 
 class CadwynSchemaFieldWasRemovedChangelogEntry(BaseModel):
     type: Literal[ChangelogEntryType.schema_field_removed] = ChangelogEntryType.schema_field_removed
-    schema_: str = Field(alias="schema")
+    models: list[str]
     field: str
+
+
+class CadwynEnumMember(BaseModel):
+    name: str
+    value: Any
+
+
+class CadwynEnumMembersWereAddedChangelogEntry(BaseModel):
+    type: Literal[ChangelogEntryType.schema_field_added] = ChangelogEntryType.schema_field_added
+    enum: str
+    members: list[CadwynEnumMember]
 
 
 class CadwynEnumMembersWereRemovedChangelogEntry(BaseModel):
     type: Literal[ChangelogEntryType.enum_members_removed] = ChangelogEntryType.enum_members_removed
     enum: str
-    members: list[str]
+    members: list[CadwynEnumMember]
 
 
 class HTTPMethod(StrEnum):
@@ -196,10 +301,12 @@ CadwynVersionChangeInstruction = RootModel[
 ]
 
 
-def generate_changelog(versions: VersionBundle):
+def generate_changelog(app: Cadwyn):
     changelog = CadwynChangelogResource()
-    schema_generators = _generate_versioned_models(versions)
-    for version in versions:
+    schema_generators = _generate_versioned_models(app.versions)
+    for version, last_version in zip(app.versions, app.versions.versions[1:], strict=False):
+        # TODO: in case of BaseUser, only list the resulting schemas in changelog instead of their parent
+        schemas_from_last_version = get_fields_from_routes(app.router.versioned_routers[last_version.value].routes)
         version_changelog = CadwynVersion(value=version.value)
         generator = schema_generators[version.value.isoformat()]
         for version_change in version.changes:
@@ -219,11 +326,11 @@ def generate_changelog(versions: VersionBundle):
                     or instruction.is_hidden_from_changelog
                 ):
                     continue
-                version_change_changelog.instructions.append(
-                    CadwynVersionChangeInstruction(
-                        _convert_version_change_instruction_to_changelog_entry(instruction, generator)
-                    )
+                changelog_entry = _convert_version_change_instruction_to_changelog_entry(
+                    instruction, generator, schemas_from_last_version
                 )
+                if changelog_entry:
+                    version_change_changelog.instructions.append(CadwynVersionChangeInstruction(changelog_entry))
             version_changelog.changes.append(version_change_changelog)
         changelog.versions.append(version_changelog)
     return changelog
