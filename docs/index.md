@@ -35,7 +35,7 @@ Whether you are a newbie in API versioning, a pro looking for a sophisticated to
 
 ## Get started
 
-It is recommended to read the [quickstart tutorial](https://docs.cadwyn.dev/quickstart/) first to get your feet wet with Cadwyn's approach
+It is recommended to read the [quickstart tutorial](https://docs.cadwyn.dev/quickstart/setup/) first to get your feet wet with Cadwyn's approach
 
 ## Sponsors
 
