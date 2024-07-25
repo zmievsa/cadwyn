@@ -21,7 +21,7 @@ from starlette.responses import FileResponse
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
 from cadwyn.route_generation import generate_versioned_routers
-from cadwyn.schema_generation import _generate_versioned_models
+from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.enums import enum
 from cadwyn.structure.versions import VersionChange
@@ -679,7 +679,7 @@ def test__router_generation__updating_response_model(
         raise NotImplementedError
 
     app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
-    schemas = _generate_versioned_models(app.versions)
+    schemas = generate_versioned_models(app.versions)
 
     routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
     routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
@@ -718,7 +718,7 @@ def test__router_generation__updating_request_models(
         raise NotImplementedError
 
     app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
-    schemas = _generate_versioned_models(app.versions)
+    schemas = generate_versioned_models(app.versions)
 
     routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
     routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
@@ -782,7 +782,7 @@ def test__router_generation__using_unversioned_models(
         raise NotImplementedError
 
     app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
-    schemas = _generate_versioned_models(app.versions)
+    schemas = generate_versioned_models(app.versions)
 
     routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
     routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)

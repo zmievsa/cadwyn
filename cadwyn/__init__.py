@@ -2,7 +2,7 @@ import importlib.metadata
 
 from .applications import Cadwyn
 from .route_generation import VersionedAPIRouter, generate_versioned_routers
-from .schema_generation import migrate_response_body
+from .schema_generation import generate_versioned_models, migrate_response_body
 from .structure import (
     HeadVersion,
     RequestInfo,
@@ -36,4 +36,5 @@ __all__ = [
     "convert_request_to_next_version_for",
     "RequestInfo",
     "ResponseInfo",
+    "generate_versioned_models",
 ]

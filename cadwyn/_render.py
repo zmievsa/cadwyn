@@ -13,8 +13,8 @@ from cadwyn.exceptions import CadwynRenderError
 from cadwyn.schema_generation import (
     PydanticFieldWrapper,
     _EnumWrapper,
-    _generate_versioned_models,
     _PydanticRuntimeModelWrapper,
+    generate_versioned_models,
 )
 from cadwyn.structure.versions import VersionBundle, get_cls_pythonpath
 
@@ -73,7 +73,7 @@ def render_model(model: type[BaseModel | Enum], versions: VersionBundle, version
 def _render_model_from_ast(
     model_ast: ast.ClassDef, model: type[BaseModel | Enum], versions: VersionBundle, version: str
 ):
-    versioned_models = _generate_versioned_models(versions)
+    versioned_models = generate_versioned_models(versions)
     generator = versioned_models[version]
     wrapper = generator._get_wrapper_for_model(model)
 
