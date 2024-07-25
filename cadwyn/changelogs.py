@@ -24,7 +24,7 @@ from cadwyn import (
 from cadwyn._asts import GenericAliasUnion
 from cadwyn._utils import Sentinel
 from cadwyn.applications import Cadwyn
-from cadwyn.schema_generation import _generate_versioned_models, _SchemaGenerator
+from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
 from cadwyn.structure.versions import PossibleInstructions
 
 from .structure.endpoints import (
@@ -51,8 +51,8 @@ else:  # pragma: no cover
 
 def _convert_version_change_instruction_to_changelog_entry(
     instruction: PossibleInstructions,
-    generator_from_newer_version: _SchemaGenerator,
-    generator_from_older_version: _SchemaGenerator,
+    generator_from_newer_version: SchemaGenerator,
+    generator_from_older_version: SchemaGenerator,
     schemas_from_last_version: list[ModelField],
 ):
     match instruction:
@@ -156,7 +156,7 @@ def _convert_version_change_instruction_to_changelog_entry(
 
 def _get_affected_model_names(
     instruction: FieldExistedAsInstruction | FieldDidntExistInstruction,
-    generator_from_newer_version: _SchemaGenerator,
+    generator_from_newer_version: SchemaGenerator,
     schemas_from_last_version: list[ModelField],
 ):
     changed_model = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
@@ -327,7 +327,7 @@ CadwynVersionChangeInstruction = RootModel[
 
 def generate_changelog(app: Cadwyn):
     changelog = CadwynChangelogResource()
-    schema_generators = _generate_versioned_models(app.versions)
+    schema_generators = generate_versioned_models(app.versions)
     for version, last_version in zip(app.versions, app.versions.versions[1:], strict=False):
         # TODO: in case of BaseUser, only list the resulting schemas in changelog instead of their parent
         schemas_from_last_version = get_fields_from_routes(app.router.versioned_routers[last_version.value].routes)
