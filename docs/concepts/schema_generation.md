@@ -27,3 +27,17 @@ cadwyn render model data.schemas:UserCreateRequest --app=main:app --version=2024
 ```
 
 This command will print to stdout what the `UserCreateRequest` schema would look like in version 2024-05-26 if it was written by hand instead of generated at runtime by Cadwyn. This command takes the `UserCreateRequest` schema from `data/schemas.py` module and knows what the schema would look like based on the version changes from `Cadwyn` app instance named `app` and located in `main.py`.
+
+## Generating schemas without FastAPI
+
+Cadwyn is capable of generating versioned schemas from its version changes even without FastAPI:
+
+```python
+import cadwyn
+from my_versions import version_bundle, MyVersionedSchema
+from datetime import date
+
+schema_generators = generate_versioned_models(version_bundle)
+MyVersionedSchemaFrom2025 = schema_generators[date(2025, 11, 16)][MyVersionedSchema]
+
+```
