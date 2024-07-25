@@ -35,9 +35,8 @@ Cadwyn is capable of generating versioned schemas from its version changes even 
 ```python
 import cadwyn
 from my_versions import version_bundle, MyVersionedSchema
-from datetime import date
 
 schema_generators = generate_versioned_models(version_bundle)
-MyVersionedSchemaFrom2025 = schema_generators[date(2025, 11, 16)][MyVersionedSchema]
+MyVersionedSchemaFrom2025 = schema_generators["2025-11-16"][MyVersionedSchema]
 
 ```
