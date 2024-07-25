@@ -1,5 +1,6 @@
 import datetime
 import sys
+from enum import auto
 from types import NoneType
 from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
@@ -46,14 +47,12 @@ if sys.version_info >= (3, 11):  # pragma: no cover
     from enum import StrEnum
 else:  # pragma: no cover
     from backports.strenum import StrEnum
-import builtins
-
-import pydantic
 
 
 def _convert_version_change_instruction_to_changelog_entry(
     instruction: PossibleInstructions,
     generator_from_newer_version: _SchemaGenerator,
+    generator_from_older_version: _SchemaGenerator,
     schemas_from_last_version: list[ModelField],
 ):
     match instruction:
@@ -111,11 +110,20 @@ def _convert_version_change_instruction_to_changelog_entry(
                 members=[CadwynEnumMember(name=name, value=value) for name, value in enum.members.items()],
             )
         case EnumHadMembersInstruction():
-            enum = generator_from_newer_version._get_wrapper_for_model(instruction.enum)
+            new_enum = generator_from_newer_version[instruction.enum]
+            old_enum = generator_from_older_version[instruction.enum]
 
-            return CadwynEnumMembersWereRemovedChangelogEntry(
-                enum=enum.name,
-                members=[CadwynEnumMember(name=name, value=value) for name, value in instruction.members.items()],
+            return CadwynEnumMembersWereChangedChangelogEntry(
+                enum=new_enum.__name__,
+                member_changes=[
+                    CadwynEnumMemberChange(
+                        name=name,
+                        old_value=old_enum.__members__.get(name),
+                        new_value=new_enum.__members__.get(name),
+                        status=CadwynEnumStatus.changed if name in new_enum.__members__ else CadwynEnumStatus.removed,
+                    )
+                    for name in instruction.members
+                ],
             )
         case SchemaHadInstruction():
             model = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
@@ -170,6 +178,9 @@ def _get_affected_model_names(
             and all([instruction.name not in parent.fields for parent in parents[: parents.index(changed_model)]])
         )  # TODO: Test every part of this
     ]
+    if this_was_tested := False:
+        "Please, don't forget to test the comment above"
+        hello = world
     model_names = [model.name for model in affected_models]
     return model_names
 
@@ -238,16 +249,28 @@ class CadwynEnumMember(BaseModel):
     value: Any
 
 
+class CadwynEnumStatus(StrEnum):
+    changed = auto()
+    removed = auto()
+
+
+class CadwynEnumMemberChange(BaseModel):
+    name: str
+    status: CadwynEnumStatus
+    old_value: Any
+    new_value: Any
+
+
 class CadwynEnumMembersWereAddedChangelogEntry(BaseModel):
-    type: Literal[ChangelogEntryType.schema_field_added] = ChangelogEntryType.schema_field_added
+    type: Literal[ChangelogEntryType.enum_members_added] = ChangelogEntryType.enum_members_added
     enum: str
     members: list[CadwynEnumMember]
 
 
-class CadwynEnumMembersWereRemovedChangelogEntry(BaseModel):
+class CadwynEnumMembersWereChangedChangelogEntry(BaseModel):
     type: Literal[ChangelogEntryType.enum_members_removed] = ChangelogEntryType.enum_members_removed
     enum: str
-    members: list[CadwynEnumMember]
+    member_changes: list[CadwynEnumMemberChange]
 
 
 class HTTPMethod(StrEnum):
@@ -293,7 +316,8 @@ class CadwynVersionChange(BaseModel):
 
 
 CadwynVersionChangeInstruction = RootModel[
-    CadwynEnumMembersWereRemovedChangelogEntry
+    CadwynEnumMembersWereAddedChangelogEntry
+    | CadwynEnumMembersWereChangedChangelogEntry
     | CadwynEndpointWasAddedChangelogEntry
     | CadwynEndpointWasRemovedChangelogEntry
     | CadwynSchemaFieldWasRemovedChangelogEntry
@@ -308,7 +332,8 @@ def generate_changelog(app: Cadwyn):
         # TODO: in case of BaseUser, only list the resulting schemas in changelog instead of their parent
         schemas_from_last_version = get_fields_from_routes(app.router.versioned_routers[last_version.value].routes)
         version_changelog = CadwynVersion(value=version.value)
-        generator = schema_generators[version.value.isoformat()]
+        generator_from_newer_version = schema_generators[version.value.isoformat()]
+        generator_from_older_version = schema_generators[last_version.value.isoformat()]
         for version_change in version.changes:
             if version_change.is_hidden_from_changelog:
                 continue
@@ -327,7 +352,10 @@ def generate_changelog(app: Cadwyn):
                 ):
                     continue
                 changelog_entry = _convert_version_change_instruction_to_changelog_entry(
-                    instruction, generator, schemas_from_last_version
+                    instruction,
+                    generator_from_newer_version,
+                    generator_from_older_version,
+                    schemas_from_last_version,
                 )
                 if changelog_entry:
                     version_change_changelog.instructions.append(CadwynVersionChangeInstruction(changelog_entry))

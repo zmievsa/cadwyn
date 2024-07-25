@@ -161,6 +161,7 @@ class Cadwyn(FastAPI):
 
         unversioned_router = APIRouter(**self._kwargs_to_router)
         self._add_openapi_endpoints(unversioned_router)
+        self._add_default_versioned_routers()
         self.include_router(unversioned_router)
         self.add_middleware(
             HeaderVersioningMiddleware,
@@ -168,6 +169,10 @@ class Cadwyn(FastAPI):
             api_version_var=self.versions.api_version_var,
             default_response_class=default_response_class,
         )
+
+    def _add_default_versioned_routers(self) -> None:
+        for version in self.versions:
+            self.router.versioned_routers[version.value] = APIRouter(**self._kwargs_to_router)
 
     @property
     def dependency_overrides(self) -> dict[Callable[..., Any], Callable[..., Any]]:
