@@ -105,6 +105,8 @@ class PydanticFieldWrapper:
     init_model_field: dataclasses.InitVar[FieldInfo]
 
     annotation: Any
+    name_from_newer_version: str
+
     passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
 
     def __post_init__(self, init_model_field: FieldInfo):
@@ -233,7 +235,7 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
         wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
         validators[decorator_wrapper.cls_var_name] = wrapped_validator
     fields = {
-        field_name: PydanticFieldWrapper(model.model_fields[field_name], model.__annotations__[field_name])
+        field_name: PydanticFieldWrapper(model.model_fields[field_name], model.__annotations__[field_name], field_name)
         for field_name in model.__annotations__
     }
 
@@ -349,7 +351,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
         model_copy = type(self.cls)(
             self.name,
-            tuple(generator[base] for base in self.cls.__bases__),
+            tuple(generator[cast(type[BaseModel], base)] for base in self.cls.__bases__),
             self.other_attributes
             | per_field_validators
             | root_validators
@@ -603,7 +605,7 @@ class SchemaGenerator:
             for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
         }
 
-    def __getitem__(self, model: type[_T_ANY_MODEL], /) -> _T_ANY_MODEL:
+    def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
         if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model in (BaseModel, RootModel):
             return model
         model = _unwrap_model(model)
@@ -782,7 +784,9 @@ def _add_field_to_model(
             f'in "{version_change_name}" but there is already a field with that name.',
         )
 
-    field = PydanticFieldWrapper(alter_schema_instruction.field, alter_schema_instruction.field.annotation)
+    field = PydanticFieldWrapper(
+        alter_schema_instruction.field, alter_schema_instruction.field.annotation, alter_schema_instruction.name
+    )
     model.fields[alter_schema_instruction.name] = field
     model.annotations[alter_schema_instruction.name] = alter_schema_instruction.field.annotation
 

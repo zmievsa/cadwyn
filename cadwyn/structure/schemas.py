@@ -23,24 +23,20 @@ PossibleFieldAttributes = Literal[
     "title",
     "description",
     "exclude",
-    "include",
     "const",
     "gt",
     "ge",
     "lt",
     "le",
+    "deprecated",
     "strict",
     "multiple_of",
     "allow_inf_nan",
     "max_digits",
     "decimal_places",
-    "min_items",
-    "max_items",
-    "unique_items",
     "min_length",
     "max_length",
     "allow_mutation",
-    "regex",
     "pattern",
     "discriminator",
     "repr",
@@ -55,8 +51,9 @@ class FieldChanges:
     title: str
     description: str
     exclude: "AbstractSetIntStr | MappingIntStrAny | Any"
-    include: "AbstractSetIntStr | MappingIntStrAny | Any"
     const: bool
+    deprecated: bool
+    fail_fast: bool
     gt: float
     ge: float
     lt: float
@@ -66,13 +63,9 @@ class FieldChanges:
     allow_inf_nan: bool
     max_digits: int
     decimal_places: int
-    min_items: int
-    max_items: int
-    unique_items: bool
     min_length: int
     max_length: int
     allow_mutation: bool
-    regex: str
     pattern: str
     discriminator: str
     repr: bool
@@ -124,41 +117,25 @@ class AlterFieldInstructionFactory:
         title: str = Sentinel,
         description: str = Sentinel,
         exclude: "AbstractSetIntStr | MappingIntStrAny | Any" = Sentinel,
-        include: "AbstractSetIntStr | MappingIntStrAny | Any" = Sentinel,
         const: bool = Sentinel,
         gt: float = Sentinel,
         ge: float = Sentinel,
         lt: float = Sentinel,
         le: float = Sentinel,
         strict: bool = Sentinel,
+        deprecated: bool = Sentinel,
         multiple_of: float = Sentinel,
         allow_inf_nan: bool = Sentinel,
         max_digits: int = Sentinel,
         decimal_places: int = Sentinel,
-        min_items: int = Sentinel,
-        max_items: int = Sentinel,
-        unique_items: bool = Sentinel,
         min_length: int = Sentinel,
         max_length: int = Sentinel,
         allow_mutation: bool = Sentinel,
-        regex: str = Sentinel,
         pattern: str = Sentinel,
         discriminator: str = Sentinel,
         repr: bool = Sentinel,
+        fail_fast: bool = Sentinel,
     ) -> FieldHadInstruction:
-        if regex is not Sentinel:
-            raise CadwynStructureError("`regex` was removed in Pydantic 2. Use `pattern` instead")
-        if include is not Sentinel:
-            raise CadwynStructureError("`include` was removed in Pydantic 2. Use `exclude` instead")
-        if min_items is not Sentinel:
-            raise CadwynStructureError("`min_items` was removed in Pydantic 2. Use `min_length` instead")
-        if max_items is not Sentinel:
-            raise CadwynStructureError("`max_items` was removed in Pydantic 2. Use `max_length` instead")
-        if unique_items is not Sentinel:
-            raise CadwynStructureError(
-                "`unique_items` was removed in Pydantic 2. Use `Set` type annotation instead"
-                "(this feature is discussed in https://github.com/pydantic/pydantic-core/issues/296)",
-            )
         return FieldHadInstruction(
             schema=self.schema,
             name=self.name,
@@ -171,27 +148,24 @@ class AlterFieldInstructionFactory:
                 title=title,
                 description=description,
                 exclude=exclude,
-                include=include,
                 const=const,
                 gt=gt,
                 ge=ge,
                 lt=lt,
                 le=le,
+                deprecated=deprecated,
                 strict=strict,
                 multiple_of=multiple_of,
                 allow_inf_nan=allow_inf_nan,
                 max_digits=max_digits,
                 decimal_places=decimal_places,
-                min_items=min_items,
-                max_items=max_items,
-                unique_items=unique_items,
                 min_length=min_length,
                 max_length=max_length,
                 allow_mutation=allow_mutation,
-                regex=regex,
                 pattern=pattern,
                 discriminator=discriminator,
                 repr=repr,
+                fail_fast=fail_fast,
             ),
         )
 
