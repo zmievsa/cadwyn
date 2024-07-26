@@ -34,7 +34,7 @@ from cadwyn.exceptions import (
 )
 from cadwyn.schema_generation import (
     _add_request_and_response_params,
-    _generate_versioned_models,
+    generate_versioned_models,
 )
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionDate
@@ -85,7 +85,7 @@ class _EndpointTransformer(Generic[_R]):
         super().__init__()
         self.parent_router = parent_router
         self.versions = versions
-        self.schema_generators = _generate_versioned_models(versions)
+        self.schema_generators = generate_versioned_models(versions)
 
         self.routes_that_never_existed = [
             route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags

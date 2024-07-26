@@ -15,7 +15,7 @@ from pytest_fixture_classes import fixture_class
 
 from cadwyn import Cadwyn, VersionBundle, VersionedAPIRouter
 from cadwyn._utils import same_definition_as_in
-from cadwyn.schema_generation import _generate_versioned_models, _SchemaGenerator
+from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
@@ -81,8 +81,8 @@ def router() -> VersionedAPIRouter:
 
 @fixture_class(name="create_runtime_schemas")
 class CreateRuntimeSchemas:
-    def __call__(self, *version_changes: type[VersionChange]) -> dict[str, _SchemaGenerator]:
-        return _generate_versioned_models(VersionBundle(*versions(version_changes)))
+    def __call__(self, *version_changes: type[VersionChange]) -> dict[str, SchemaGenerator]:
+        return generate_versioned_models(VersionBundle(*versions(version_changes)))
 
 
 @fixture_class(name="create_versioned_app")

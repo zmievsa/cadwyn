@@ -116,7 +116,7 @@ class PydanticFieldWrapper:
     def delete_attribute(self, *, name: str) -> None:
         self.passed_field_attributes.pop(name)
 
-    def generate_field_copy(self, generator: "_SchemaGenerator") -> pydantic.fields.FieldInfo:
+    def generate_field_copy(self, generator: "SchemaGenerator") -> pydantic.fields.FieldInfo:
         return pydantic.Field(
             **generator.annotation_transformer.change_version_of_annotation(self.passed_field_attributes)
         )
@@ -174,7 +174,7 @@ def migrate_response_body(
 
     version = versions._get_closest_lesser_version(version)
 
-    versioned_response_model: type[pydantic.BaseModel] = _generate_versioned_models(versions)[str(version)][
+    versioned_response_model: type[pydantic.BaseModel] = generate_versioned_models(versions)[str(version)][
         latest_response_model
     ]
     return versioned_response_model.model_validate(migrated_response.body)
@@ -335,7 +335,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return annotations | self.annotations
 
-    def generate_model_copy(self, generator: "_SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
+    def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {
             name: validator.decorator(*validator.fields, **validator.kwargs)(validator.func)
             for name, validator in self.validators.items()
@@ -402,7 +402,7 @@ class _AsyncCallableWrapper(_CallableWrapper):
 
 @final
 class _AnnotationTransformer:
-    def __init__(self, generator: "_SchemaGenerator") -> None:
+    def __init__(self, generator: "SchemaGenerator") -> None:
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
         # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
         # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
@@ -591,7 +591,7 @@ def _add_request_and_response_params(route: APIRoute):
 
 
 @final
-class _SchemaGenerator:
+class SchemaGenerator:
     __slots__ = "annotation_transformer", "model_bundle", "concrete_models"
 
     def __init__(self, model_bundle: _ModelBundle) -> None:
@@ -645,7 +645,7 @@ class _SchemaGenerator:
 
 
 @cache
-def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, _SchemaGenerator]":
+def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGenerator]":
     models = _create_model_bundle(versions)
 
     version_to_context_map = {}
@@ -654,7 +654,7 @@ def _generate_versioned_models(versions: "VersionBundle") -> "dict[str, _SchemaG
 
     for version in versions.versions:
         context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
-        version_to_context_map[str(version.value)] = _SchemaGenerator(copy.deepcopy(models))
+        version_to_context_map[str(version.value)] = SchemaGenerator(copy.deepcopy(models))
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
 
@@ -928,7 +928,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
         memo[id(self)] = result
         return result
 
-    def generate_model_copy(self, generator: "_SchemaGenerator") -> type[_T_ENUM]:
+    def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_ENUM]:
         enum_dict = Enum.__prepare__(self.name, self.cls.__bases__)
 
         raw_member_map = {k: v.value if isinstance(v, Enum) else v for k, v in self.members.items()}
