@@ -5,6 +5,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [4.1.0]
+
+### Added
+
+* Exposed `cadwyn.generate_versioned_models` that allow you to generate pydantic models and enums even without a FastAPI app
+
+
 ## [4.0.0]
 
 Versions 3.x.x are still supported in terms of bug and security fixes but all the new features will go into versions 4.x.x.
