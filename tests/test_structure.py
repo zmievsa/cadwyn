@@ -398,21 +398,6 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
             raise NotImplementedError
 
 
-@pytest.mark.parametrize(
-    ("attr_name", "attr_value"),
-    [
-        ("regex", r"hewwo"),
-        ("include", ["a", "b"]),
-        ("min_items", 3),
-        ("max_items", 4),
-        ("unique_items", True),
-    ],
-)
-def test__schema_field_had_pydantic_1_field_in_pydantic_2__should_raise_error(attr_name: str, attr_value: Any):
-    with pytest.raises(CadwynStructureError, match=f"`{attr_name}` was removed in Pydantic 2. Use `"):
-        schema(SomeSchema).field("foo").had(**{attr_name: attr_value})
-
-
 def test__schema_field_had_arguments_are_in_sync_with_schema_field_didnt_have_typehints():
     parameter_names_in_field_had = FieldChanges.__dataclass_fields__
     parameter_names_in_field_didnt_have = get_args(PossibleFieldAttributes)

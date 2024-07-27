@@ -29,6 +29,7 @@ PossibleFieldAttributes = Literal[
     "lt",
     "le",
     "deprecated",
+    "fail_fast",
     "strict",
     "multiple_of",
     "allow_inf_nan",

@@ -39,7 +39,7 @@ versions = [
     "2027-11-15",
     "2022-04-14",
 ]
-mixed_hosts_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
+mixed_hosts_app = Cadwyn(versions=VersionBundle(Version(date(1998, 11, 15))))
 for version in versions:
     mixed_hosts_app.add_header_versioned_routers(
         router,

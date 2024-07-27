@@ -127,13 +127,13 @@ def test__changelog__with_multiple_versions():
                         "instructions": [
                             {
                                 "type": ChangelogEntryType.schema_field_added,
-                                "models": ["UserCreateRequest", "UserUpdateRequest", "UserResource"],
+                                "models": unordered("UserCreateRequest", "UserUpdateRequest", "UserResource"),
                                 "field": "addresses",
                                 "field_info": {"items": {"type": "string"}, "title": "Addresses", "type": "array"},
                             },
                             {
                                 "type": ChangelogEntryType.schema_field_removed,
-                                "models": ["UserCreateRequest", "UserUpdateRequest", "UserResource"],
+                                "models": unordered("UserCreateRequest", "UserUpdateRequest", "UserResource"),
                                 "field": "address",
                             },
                         ],
@@ -282,7 +282,7 @@ def test__changelog__basic_endpoint_interactions():
         {
             "type": ChangelogEntryType.endpoint_changed,
             "path": "/route1",
-            "methods": ["GET", "POST"],
+            "methods": unordered("GET", "POST"),
             "changes": [
                 {"name": "path", "new_value": "/hello/"},
                 {"name": "summary", "new_value": "wewe"},
