@@ -2,6 +2,7 @@ import datetime
 import uuid
 from enum import Enum, IntEnum, auto
 
+from dirty_equals import IsList
 from pydantic import BaseModel, Field
 
 from cadwyn import (
@@ -17,6 +18,10 @@ from cadwyn.changelogs import ChangelogEntryType, StrEnum, generate_changelog
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure.enums import enum
 from tests.conftest import version_change
+
+
+def unordered(*items):
+    return IsList(*items, check_order=False)
 
 
 # TODO: Add tests with schema and field renamings
@@ -100,14 +105,14 @@ def test__changelog__with_multiple_versions():
                             },
                             {
                                 "type": ChangelogEntryType.schema_field_removed,
-                                "models": ["UserCreateRequest", "UserUpdateRequest", "UserResource"],
+                                "models": unordered("UserCreateRequest", "UserResource", "UserUpdateRequest"),
                                 "field": "addresses",
                             },
                             {
                                 "type": ChangelogEntryType.schema_field_added,
                                 "models": ["UserCreateRequest"],
                                 "field": "default_address",
-                                "field_info": {"type": "string"},
+                                "field_info": {"title": "Default Address", "type": "string"},
                             },
                         ],
                     }
@@ -122,13 +127,13 @@ def test__changelog__with_multiple_versions():
                         "instructions": [
                             {
                                 "type": ChangelogEntryType.schema_field_added,
-                                "models": ["UserCreateRequest", "UserResource", "UserUpdateRequest"],
+                                "models": ["UserCreateRequest", "UserUpdateRequest", "UserResource"],
                                 "field": "addresses",
-                                "field_info": {"type": "array", "items": {"type": "string"}},
+                                "field_info": {"items": {"type": "string"}, "title": "Addresses", "type": "array"},
                             },
                             {
                                 "type": ChangelogEntryType.schema_field_removed,
-                                "models": ["UserCreateRequest", "UserResource", "UserUpdateRequest"],
+                                "models": ["UserCreateRequest", "UserUpdateRequest", "UserResource"],
                                 "field": "address",
                             },
                         ],
@@ -192,12 +197,18 @@ def test__changelog__enum_interactions():
     ]
 
 
-def test__changelog__endpoint_interactions():
+def test__changelog__basic_schema_interactions():
+    class SchemaWithSomeField(BaseModel):
+        some_field: str = Field(pattern="sasdasd")
+
+    # TODO: Test a case where child overrides the field
+    class SchemaChild(SchemaWithSomeField):
+        pass
+
     version_change_1 = version_change(
-        enum(MyIntEnum).didnt_have("a", "b"),
-        enum(MyIntEnum).had(c=11, d=auto()),
-        enum(MyStrEnum).didnt_have("a", "b"),
-        enum(MyStrEnum).had(c="11", d=auto()),
+        schema(SchemaWithSomeField).field("some_field").didnt_have("pattern"),
+        schema(SchemaWithSomeField).field("some_field").had(min_length=30, deprecated=True),
+        schema(SchemaWithSomeField).field("some_field").had(max_length=50),
     )
 
     version_bundle = VersionBundle(
@@ -205,33 +216,110 @@ def test__changelog__endpoint_interactions():
         Version(datetime.date(2000, 1, 1)),
     )
     app = Cadwyn(versions=version_bundle)
-    app.generate_and_include_versioned_routers()
+
+    router = VersionedAPIRouter()
+
+    @router.post("/route1")
+    async def route1(user: SchemaWithSomeField | str): ...
+
+    app.generate_and_include_versioned_routers(router)
 
     assert generate_changelog(app).model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [
         {
-            "type": ChangelogEntryType.enum_members_added,
-            "enum": "MyIntEnum",
-            "members": [{"name": "a", "value": 83}, {"name": "b", "value": 84}],
+            "type": ChangelogEntryType.schema_field_attributes_changed,
+            "models": ["SchemaWithSomeField"],
+            "field": "some_field",
+            "attribute_changes": [{"name": "pattern", "status": "added", "old_value": None, "new_value": "sasdasd"}],
         },
         {
-            "type": ChangelogEntryType.enum_members_removed,
-            "enum": "MyIntEnum",
-            "member_changes": [
-                {"name": "c", "status": "removed", "old_value": 11, "new_value": None},
-                {"name": "d", "status": "removed", "old_value": 12, "new_value": None},
+            "type": ChangelogEntryType.schema_field_attributes_changed,
+            "models": ["SchemaWithSomeField"],
+            "field": "some_field",
+            "attribute_changes": [
+                {"name": "deprecated", "status": "removed", "old_value": True, "new_value": None},
+                {"name": "minLength", "status": "removed", "old_value": 30, "new_value": None},
             ],
         },
         {
-            "type": ChangelogEntryType.enum_members_added,
-            "enum": "MyStrEnum",
-            "members": [{"name": "a", "value": "hewwo"}, {"name": "b", "value": "b"}],
+            "type": ChangelogEntryType.schema_field_attributes_changed,
+            "models": ["SchemaWithSomeField"],
+            "field": "some_field",
+            "attribute_changes": [{"name": "maxLength", "status": "removed", "old_value": 50, "new_value": None}],
         },
+    ]
+
+
+def test__changelog__basic_endpoint_interactions():
+    router = VersionedAPIRouter()
+
+    class MyResponseModel(BaseModel):
+        a: str
+
+    @router.post("/route1", response_model=MyResponseModel)
+    async def route1(): ...
+
+    @router.get("/route1", response_model=MyResponseModel)
+    async def route1_get(): ...
+
+    version_change_1 = version_change(
+        endpoint("/route1", ["POST", "GET"]).had(
+            path="/hello/",
+            response_model=None,
+            status_code=201,
+            tags=["1", "2"],
+            summary="wewe",
+        ),
+    )
+
+    version_bundle = VersionBundle(
+        Version(datetime.date(2001, 1, 1), version_change_1),
+        Version(datetime.date(2000, 1, 1)),
+    )
+    app = Cadwyn(versions=version_bundle)
+    app.generate_and_include_versioned_routers(router)
+
+    assert generate_changelog(app).model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [
         {
-            "type": ChangelogEntryType.enum_members_removed,
-            "enum": "MyStrEnum",
-            "member_changes": [
-                {"name": "c", "status": "removed", "old_value": "11", "new_value": None},
-                {"name": "d", "status": "removed", "old_value": "d", "new_value": None},
+            "type": ChangelogEntryType.endpoint_changed,
+            "path": "/route1",
+            "methods": ["GET", "POST"],
+            "changes": [
+                {"name": "path", "new_value": "/hello/"},
+                {"name": "summary", "new_value": "wewe"},
+                {"name": "tags", "new_value": ["1", "2"]},
+                {
+                    "name": "responses",
+                    "new_value": {
+                        "post": {
+                            "200": {
+                                "description": "Successful Response",
+                                "content": {
+                                    "application/json": {"schema": {"$ref": "#/components/schemas/MyResponseModel"}}
+                                },
+                            },
+                            "422": {
+                                "description": "Validation Error",
+                                "content": {
+                                    "application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}}
+                                },
+                            },
+                        },
+                        "get": {
+                            "200": {
+                                "description": "Successful Response",
+                                "content": {
+                                    "application/json": {"schema": {"$ref": "#/components/schemas/MyResponseModel"}}
+                                },
+                            },
+                            "422": {
+                                "description": "Validation Error",
+                                "content": {
+                                    "application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}}
+                                },
+                            },
+                        },
+                    },
+                },
             ],
-        },
+        }
     ]
