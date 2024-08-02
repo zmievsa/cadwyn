@@ -11,6 +11,7 @@ from starlette.routing import BaseRoute
 from cadwyn.exceptions import LintingError
 
 from .._utils import Sentinel
+from .common import _HiddenAttributeMixin
 
 HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
 
@@ -44,7 +45,7 @@ class EndpointAttributesPayload:
     response_description: str
     responses: dict[int | str, dict[str, Any]]
     deprecated: bool
-    methods: list[str]
+    methods: set[str]
     operation_id: str
     include_in_schema: bool
     response_class: type[Response]
@@ -55,7 +56,7 @@ class EndpointAttributesPayload:
 
 
 @dataclass(slots=True)
-class EndpointHadInstruction:
+class EndpointHadInstruction(_HiddenAttributeMixin):
     endpoint_path: str
     endpoint_methods: set[str]
     endpoint_func_name: str | None
@@ -63,14 +64,14 @@ class EndpointHadInstruction:
 
 
 @dataclass(slots=True)
-class EndpointExistedInstruction:
+class EndpointExistedInstruction(_HiddenAttributeMixin):
     endpoint_path: str
     endpoint_methods: set[str]
     endpoint_func_name: str | None
 
 
 @dataclass(slots=True)
-class EndpointDidntExistInstruction:
+class EndpointDidntExistInstruction(_HiddenAttributeMixin):
     endpoint_path: str
     endpoint_methods: set[str]
     endpoint_func_name: str | None
@@ -135,7 +136,7 @@ class EndpointInstructionFactory:
                 response_description=response_description,
                 responses=responses,
                 deprecated=deprecated,
-                methods=methods,
+                methods=set(methods) if methods is not Sentinel else Sentinel,
                 operation_id=operation_id,
                 include_in_schema=include_in_schema,
                 response_class=response_class,

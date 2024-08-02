@@ -13,7 +13,7 @@ from cadwyn.exceptions import CadwynRenderError
 from cadwyn.schema_generation import (
     PydanticFieldWrapper,
     _EnumWrapper,
-    _PydanticRuntimeModelWrapper,
+    _PydanticModelWrapper,
     generate_versioned_models,
 )
 from cadwyn.structure.versions import VersionBundle, get_cls_pythonpath
@@ -107,7 +107,7 @@ def _render_enum_model(wrapper: _EnumWrapper, original_cls_node: ast.ClassDef):
     return original_cls_node
 
 
-def _render_pydantic_model(wrapper: _PydanticRuntimeModelWrapper, original_cls_node: ast.ClassDef):
+def _render_pydantic_model(wrapper: _PydanticModelWrapper, original_cls_node: ast.ClassDef):
     # This is for possible schema renaming
     original_cls_node.name = wrapper.name
 

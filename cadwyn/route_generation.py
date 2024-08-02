@@ -43,9 +43,6 @@ from cadwyn.structure.endpoints import (
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from cadwyn.structure.versions import (
-    VersionChange,
-)
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
@@ -156,7 +153,7 @@ class _EndpointTransformer(Generic[_R]):
             router
         )
 
-        for version_change in version.version_changes:
+        for version_change in version.changes:
             for by_path_converters in [
                 *version_change.alter_response_by_path_instructions.values(),
                 *version_change.alter_request_by_path_instructions.values(),
@@ -230,7 +227,7 @@ class _EndpointTransformer(Generic[_R]):
         version: Version,
     ):
         routes = router.routes
-        for version_change in version.version_changes:
+        for version_change in version.changes:
             for instruction in version_change.alter_endpoint_instructions:
                 original_routes = _get_routes(
                     routes,
@@ -330,7 +327,7 @@ class _EndpointTransformer(Generic[_R]):
                 elif isinstance(instruction, EndpointHadInstruction):
                     for original_route in original_routes:
                         methods_to_which_we_applied_changes |= original_route.methods
-                        _apply_endpoint_had_instruction(version_change, instruction, original_route)
+                        _apply_endpoint_had_instruction(version_change.__name__, instruction, original_route)
                     err = (
                         'Endpoint "{endpoint_methods} {endpoint_path}" you tried to change in'
                         ' "{version_change_name}" doesn\'t exist'
@@ -385,7 +382,7 @@ def _add_data_migrations_to_route(
 
 
 def _apply_endpoint_had_instruction(
-    version_change: type[VersionChange],
+    version_change_name: str,
     instruction: EndpointHadInstruction,
     original_route: APIRoute,
 ):
@@ -396,7 +393,7 @@ def _apply_endpoint_had_instruction(
                 raise RouterGenerationError(
                     f'Expected attribute "{attr_name}" of endpoint'
                     f' "{list(original_route.methods)} {original_route.path}"'
-                    f' to be different in "{version_change.__name__}", but it was the same.'
+                    f' to be different in "{version_change_name}", but it was the same.'
                     " It means that your version change has no effect on the attribute"
                     " and can be removed.",
                 )
@@ -406,7 +403,7 @@ def _apply_endpoint_had_instruction(
                 if new_path_params != original_path_params:
                     raise RouterPathParamsModifiedError(
                         f'When altering the path of "{list(original_route.methods)} {original_route.path}" '
-                        f'in "{version_change.__name__}", you have tried to change its path params '
+                        f'in "{version_change_name}", you have tried to change its path params '
                         f'from "{list(original_path_params)}" to "{list(new_path_params)}". It is not allowed to '
                         "change the path params of a route because the endpoint was created to handle the old path "
                         "params. In fact, there is no need to change them because the change of path params is "

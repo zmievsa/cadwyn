@@ -38,5 +38,4 @@ from my_versions import version_bundle, MyVersionedSchema
 
 schema_generators = generate_versioned_models(version_bundle)
 MyVersionedSchemaFrom2025 = schema_generators["2025-11-16"][MyVersionedSchema]
-
 ```

@@ -31,6 +31,7 @@ def test__header_routing__invalid_version_format__error():
 def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_openapi_routes():
     assert [cast(APIRoute, r).path for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16)))).routes] == [
         "/docs/oauth2-redirect",
+        "/changelog",
         "/openapi.json",
         "/docs",
         "/redoc",
@@ -39,14 +40,18 @@ def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_ope
         cast(APIRoute, r).path
         for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), docs_url=None, redoc_url=None).routes
     ] == [
+        "/changelog",
         "/openapi.json",
     ]
-    assert Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), openapi_url=None).routes == []
+    assert (
+        Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), openapi_url=None, changelog_url=None).routes == []
+    )
 
 
 def test__header_routing_fastapi_init__passing_null_to_oauth2__should_not_add_oauth2_redirect_route():
     app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), swagger_ui_oauth2_redirect_url=None)
     assert [cast(APIRoute, r).path for r in app.routes] == [
+        "/changelog",
         "/openapi.json",
         "/docs",
         "/redoc",
@@ -67,7 +72,7 @@ def test__header_routing_fastapi_init__changing_openapi_url__docs_still_return_2
 
 
 def test__header_routing_fastapi__calling_openapi_incorrectly__docs_should_return_404():
-    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
+    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16))))
     app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
     app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
     with TestClient(app) as client:
@@ -180,7 +185,7 @@ def test__get_openapi__nonexisting_version__error():
 
 
 def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_urls():
-    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
+    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16))))
     app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
     app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
 

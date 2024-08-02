@@ -3,15 +3,17 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from .common import _HiddenAttributeMixin
+
 
 @dataclass(slots=True)
-class EnumHadMembersInstruction:
+class EnumHadMembersInstruction(_HiddenAttributeMixin):
     enum: type[Enum]
     members: Mapping[str, Any]
 
 
 @dataclass(slots=True)
-class EnumDidntHaveMembersInstruction:
+class EnumDidntHaveMembersInstruction(_HiddenAttributeMixin):
     enum: type[Enum]
     members: tuple[str, ...]
 

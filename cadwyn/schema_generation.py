@@ -20,6 +20,7 @@ from typing import (
     final,
     get_args,
     get_origin,
+    overload,
 )
 
 import fastapi.params
@@ -104,6 +105,8 @@ class PydanticFieldWrapper:
     init_model_field: dataclasses.InitVar[FieldInfo]
 
     annotation: Any
+    name_from_newer_version: str
+
     passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
 
     def __post_init__(self, init_model_field: FieldInfo):
@@ -136,7 +139,7 @@ def _extract_passed_field_attributes(field_info: FieldInfo):
 @dataclasses.dataclass(slots=True)
 class _ModelBundle:
     enums: dict[type[Enum], "_EnumWrapper"]
-    schemas: dict[type[BaseModel], "_PydanticRuntimeModelWrapper"]
+    schemas: dict[type[BaseModel], "_PydanticModelWrapper"]
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
@@ -222,7 +225,7 @@ def _is_dunder(attr_name: str):
     return attr_name.startswith("__") and attr_name.endswith("__")
 
 
-def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeModelWrapper[_T_PYDANTIC_MODEL]":
+def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
     decorators = _get_model_decorators(model)
     validators = {}
     for decorator_wrapper in decorators:
@@ -232,7 +235,7 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeMod
         wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
         validators[decorator_wrapper.cls_var_name] = wrapped_validator
     fields = {
-        field_name: PydanticFieldWrapper(model.model_fields[field_name], model.__annotations__[field_name])
+        field_name: PydanticFieldWrapper(model.model_fields[field_name], model.__annotations__[field_name], field_name)
         for field_name in model.__annotations__
     }
 
@@ -248,7 +251,7 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeMod
         "__module__": model.__module__,
         "__qualname__": model.__qualname__,
     }
-    return _PydanticRuntimeModelWrapper(
+    return _PydanticModelWrapper(
         model,
         name=model.__name__,
         doc=model.__doc__,
@@ -261,20 +264,20 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticRuntimeMod
 
 @final
 @dataclasses.dataclass(slots=True)
-class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
-    cls: type[_T_PYDANTIC_MODEL]
+class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
+    cls: type[_T_PYDANTIC_MODEL] = dataclasses.field(repr=False)
     name: str
-    doc: str | None
+    doc: str | None = dataclasses.field(repr=False)
     fields: Annotated[
         dict["_FieldName", PydanticFieldWrapper],
         Doc(
             "Fields that belong to this model, not to its parents. I.e. The ones that were either defined or overriden "
         ),
-    ]
-    validators: dict[str, _PerFieldValidatorWrapper | _ValidatorWrapper]
-    other_attributes: dict[str, Any]
-    annotations: dict[str, Any]
-    _parents: list[Self] | None = dataclasses.field(init=False, default=None)
+    ] = dataclasses.field(repr=False)
+    validators: dict[str, _PerFieldValidatorWrapper | _ValidatorWrapper] = dataclasses.field(repr=False)
+    other_attributes: dict[str, Any] = dataclasses.field(repr=False)
+    annotations: dict[str, Any] = dataclasses.field(repr=False)
+    _parents: list[Self] | None = dataclasses.field(init=False, default=None, repr=False)
 
     def __post_init__(self):
         # This isn't actually supposed to run, it's just a precaution
@@ -291,7 +294,7 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 )
 
     def __deepcopy__(self, memo: dict[int, Any]):
-        result = _PydanticRuntimeModelWrapper(
+        result = _PydanticModelWrapper(
             self.cls,
             name=self.name,
             doc=self.doc,
@@ -302,6 +305,9 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         )
         memo[id(self)] = result
         return result
+
+    def __hash__(self) -> int:
+        return hash(id(self))
 
     def _get_parents(self, schemas: "dict[type, Self]"):
         if self._parents is not None:
@@ -345,7 +351,7 @@ class _PydanticRuntimeModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
         model_copy = type(self.cls)(
             self.name,
-            tuple(generator[base] for base in self.cls.__bases__),
+            tuple(generator[cast(type[BaseModel], base)] for base in self.cls.__bases__),
             self.other_attributes
             | per_field_validators
             | root_validators
@@ -599,9 +605,9 @@ class SchemaGenerator:
             for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
         }
 
-    def __getitem__(self, model: type, /) -> Any:
+    def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
         if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model in (BaseModel, RootModel):
-            return model
+            return model  # pyright: ignore[reportReturnType]
         model = _unwrap_model(model)
 
         if model in self.concrete_models:
@@ -614,9 +620,14 @@ class SchemaGenerator:
         self.concrete_models[model] = model_copy
         return model_copy
 
+    @overload
+    def _get_wrapper_for_model(self, model: type[BaseModel]) -> "_PydanticModelWrapper[BaseModel]": ...
+    @overload
+    def _get_wrapper_for_model(self, model: type[Enum]) -> "_EnumWrapper[Enum]": ...
+
     def _get_wrapper_for_model(
         self, model: type[BaseModel | Enum]
-    ) -> "_PydanticRuntimeModelWrapper[BaseModel] | _EnumWrapper[Enum]":
+    ) -> "_PydanticModelWrapper[BaseModel] | _EnumWrapper[Enum]":
         model = _unwrap_model(model)
 
         if model in self.model_bundle.schemas:
@@ -660,7 +671,7 @@ def _create_model_bundle(versions: "VersionBundle"):
 
 
 def _migrate_classes(context: _RuntimeSchemaGenContext) -> None:
-    for version_change in context.current_version.version_changes:
+    for version_change in context.current_version.changes:
         _apply_alter_schema_instructions(
             context.models.schemas,
             version_change.alter_schema_instructions,
@@ -674,7 +685,7 @@ def _migrate_classes(context: _RuntimeSchemaGenContext) -> None:
 
 
 def _apply_alter_schema_instructions(
-    modified_schemas: dict[type, _PydanticRuntimeModelWrapper],
+    modified_schemas: dict[type, _PydanticModelWrapper],
     alter_schema_instructions: Sequence[AlterSchemaSubInstruction | SchemaHadInstruction],
     version_change_name: str,
 ) -> None:
@@ -747,7 +758,7 @@ def _apply_alter_enum_instructions(
 
 
 def _change_model(
-    model: _PydanticRuntimeModelWrapper,
+    model: _PydanticModelWrapper,
     alter_schema_instruction: SchemaHadInstruction,
     version_change_name: str,
 ):
@@ -761,8 +772,8 @@ def _change_model(
 
 
 def _add_field_to_model(
-    model: _PydanticRuntimeModelWrapper,
-    schemas: "dict[type, _PydanticRuntimeModelWrapper]",
+    model: _PydanticModelWrapper,
+    schemas: "dict[type, _PydanticModelWrapper]",
     alter_schema_instruction: FieldExistedAsInstruction,
     version_change_name: str,
 ):
@@ -773,14 +784,16 @@ def _add_field_to_model(
             f'in "{version_change_name}" but there is already a field with that name.',
         )
 
-    field = PydanticFieldWrapper(alter_schema_instruction.field, alter_schema_instruction.field.annotation)
+    field = PydanticFieldWrapper(
+        alter_schema_instruction.field, alter_schema_instruction.field.annotation, alter_schema_instruction.name
+    )
     model.fields[alter_schema_instruction.name] = field
     model.annotations[alter_schema_instruction.name] = alter_schema_instruction.field.annotation
 
 
 def _change_field_in_model(
-    model: _PydanticRuntimeModelWrapper,
-    schemas: "dict[type, _PydanticRuntimeModelWrapper]",
+    model: _PydanticModelWrapper,
+    schemas: "dict[type, _PydanticModelWrapper]",
     alter_schema_instruction: FieldHadInstruction | FieldDidntHaveInstruction,
     version_change_name: str,
 ):
@@ -817,7 +830,7 @@ def _change_field_in_model(
 
 
 def _change_field(
-    model: _PydanticRuntimeModelWrapper,
+    model: _PydanticModelWrapper,
     alter_schema_instruction: FieldHadInstruction,
     version_change_name: str,
     defined_annotations: dict[str, Any],
@@ -861,7 +874,7 @@ def _change_field(
 
 
 def _delete_field_attributes(
-    model: _PydanticRuntimeModelWrapper,
+    model: _PydanticModelWrapper,
     alter_schema_instruction: FieldDidntHaveInstruction,
     version_change_name: str,
     field: PydanticFieldWrapper,
@@ -884,7 +897,7 @@ def _delete_field_attributes(
             )
 
 
-def _delete_field_from_model(model: _PydanticRuntimeModelWrapper, field_name: str, version_change_name: str):
+def _delete_field_from_model(model: _PydanticModelWrapper, field_name: str, version_change_name: str):
     if field_name not in model.fields:
         raise InvalidGenerationInstructionError(
             f'You tried to delete a field "{field_name}" from "{model.name}" '
@@ -906,10 +919,11 @@ class _DummyEnum(Enum):
 
 @final
 class _EnumWrapper(Generic[_T_ENUM]):
-    __slots__ = "cls", "members"
+    __slots__ = "cls", "members", "name"
 
     def __init__(self, cls: type[_T_ENUM]):
         self.cls = _unwrap_model(cls)
+        self.name = cls.__name__
         self.members = {member.name: member.value for member in cls}
 
     def __deepcopy__(self, memo: Any):
@@ -919,13 +933,13 @@ class _EnumWrapper(Generic[_T_ENUM]):
         return result
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_ENUM]:
-        enum_dict = Enum.__prepare__(self.cls.__name__, self.cls.__bases__)
+        enum_dict = Enum.__prepare__(self.name, self.cls.__bases__)
 
         raw_member_map = {k: v.value if isinstance(v, Enum) else v for k, v in self.members.items()}
         initialization_namespace = self._get_initialization_namespace_for_enum(self.cls) | raw_member_map
         for attr_name, attr in initialization_namespace.items():
             enum_dict[attr_name] = attr
-        model_copy = cast(type[_T_ENUM], type(self.cls.__name__, self.cls.__bases__, enum_dict))
+        model_copy = cast(type[_T_ENUM], type(self.name, self.cls.__bases__, enum_dict))
         model_copy.__cadwyn_original_model__ = self.cls  # pyright: ignore[reportAttributeAccessIssue]
         return model_copy
 

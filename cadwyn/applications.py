@@ -25,6 +25,7 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
 from typing_extensions import Self
 
+from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.routing import _RootHeaderAPIRouter
@@ -47,6 +48,8 @@ class Cadwyn(FastAPI):
         *,
         versions: VersionBundle,
         api_version_header_name: str = "x-api-version",
+        changelog_url: str | None = "/changelog",
+        include_changelog_url_in_schema: bool = True,
         debug: bool = False,
         title: str = "FastAPI",
         summary: str | None = None,
@@ -154,13 +157,17 @@ class Cadwyn(FastAPI):
             api_version_var=self.versions.api_version_var,
         )
 
+        self.changelog_url = changelog_url
+        self.include_changelog_url_in_schema = include_changelog_url_in_schema
+
         self.docs_url = docs_url
         self.redoc_url = redoc_url
         self.openapi_url = openapi_url
         self.redoc_url = redoc_url
 
         unversioned_router = APIRouter(**self._kwargs_to_router)
-        self._add_openapi_endpoints(unversioned_router)
+        self._add_utility_endpoints(unversioned_router)
+        self._add_default_versioned_routers()
         self.include_router(unversioned_router)
         self.add_middleware(
             HeaderVersioningMiddleware,
@@ -168,6 +175,10 @@ class Cadwyn(FastAPI):
             api_version_var=self.versions.api_version_var,
             default_response_class=default_response_class,
         )
+
+    def _add_default_versioned_routers(self) -> None:
+        for version in self.versions:
+            self.router.versioned_routers[version.value] = APIRouter(**self._kwargs_to_router)
 
     @property
     def dependency_overrides(self) -> dict[Callable[..., Any], Callable[..., Any]]:
@@ -184,7 +195,19 @@ class Cadwyn(FastAPI):
     ) -> None:
         self._dependency_overrides_provider.dependency_overrides = value
 
-    def _add_openapi_endpoints(self, unversioned_router: APIRouter):
+    def generate_changelog(self) -> CadwynChangelogResource:
+        return _generate_changelog(self.versions, self.router)
+
+    def _add_utility_endpoints(self, unversioned_router: APIRouter):
+        if self.changelog_url is not None:
+            unversioned_router.add_api_route(
+                path=self.changelog_url,
+                endpoint=self.generate_changelog,
+                response_model=CadwynChangelogResource,
+                methods=["GET"],
+                include_in_schema=self.include_changelog_url_in_schema,
+            )
+
         if self.openapi_url is not None:
             unversioned_router.add_route(
                 path=self.openapi_url,

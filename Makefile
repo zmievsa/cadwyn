@@ -8,7 +8,7 @@ lint:
 	pre-commit run --all-files
 
 format:
-	poetry run ruff . --fix && poetry run ruff format .;
+	poetry run ruff check . --fix && poetry run ruff format .;
 
 test:
 	rm -f .coverage coverage.xml; \

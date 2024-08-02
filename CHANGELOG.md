@@ -5,12 +5,26 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [4.2.0]
+
+### Added
+
+* Automatic changelog generation from version changes using `Cadwyn.generate_changelog` method and `GET /changelog` endpoint.
+* Automatic creation of versioned_routers based on the `VersionBundle` passed to `Cadwyn` which means that all versions mentioned in the version bundle will already be available for routing even without the use of `generate_and_include_versioned_routers`
+
+## Changed
+
+* Renamed `Version.version_changes` to `Version.changes`
+
+### Removed
+
+* `regex`, `include`, `min_items`, `max_items`, and `unique_items` arguments were removed from `schema(...).field(...).had`. Notice that it's not a breaking change for most cases because passing these arguments caused exceptions
+
 ## [4.1.0]
 
 ### Added
 
 * Exposed `cadwyn.generate_versioned_models` that allow you to generate pydantic models and enums even without a FastAPI app
-
 
 ## [4.0.0]
 
@@ -38,7 +52,6 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 * `VersionBundle.migrate_response_body` is no longer a method of `VersionBundle` and is now importable directly from `cadwyn` as a function
 * `cadwyn.structure` is no longer recommended to be used directly because everything from it is now available in `cadwyn` directly
-
 
 ## [3.15.8]
 
@@ -71,7 +84,6 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 * Fix dependency overrides not working for versioned routes
 
-
 ## [3.15.4]
 
 ### Changed
@@ -81,7 +93,6 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 ### Fixed
 
 * fastapi-pagination now does not require an explicit call to `Cadwyn.enrich_swagger`
-
 
 ## [3.15.3]
 
@@ -93,7 +104,6 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 * Compatibility with fastapi-pagination
 * High cardinality of metrics for routers with path variables in starlette-exporter
-
 
 ## [3.15.2]
 
