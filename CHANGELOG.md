@@ -12,6 +12,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 * Automatic changelog generation from version changes using `Cadwyn.generate_changelog` method and `GET /changelog` endpoint.
 * Automatic creation of versioned_routers based on the `VersionBundle` passed to `Cadwyn` which means that all versions mentioned in the version bundle will already be available for routing even without the use of `generate_and_include_versioned_routers`
 
+## Changed
+
+* Renamed `Version.version_changes` to `Version.changes`
+
 ### Removed
 
 * `regex`, `include`, `min_items`, `max_items`, and `unique_items` arguments were removed from `schema(...).field(...).had`. Notice that it's not a breaking change for most cases because passing these arguments caused exceptions

@@ -13,5 +13,5 @@ Endpoint: TypeAlias = Callable[_P, _R]
 
 
 @dataclass(slots=True, kw_only=True)
-class HiddenAttributeMixin:
+class _HiddenAttributeMixin:
     is_hidden_from_changelog: bool = False

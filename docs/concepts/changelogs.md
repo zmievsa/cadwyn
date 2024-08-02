@@ -2,10 +2,6 @@
 
 Cadwyn can automatically generate API changelogs for your versions. By default they are available through the unversioned endpoint `GET /changelog`. You can also get it from `Cadwyn.generate_changelog` method.
 
-## Markdown changelog
-
-
-
 ## Hiding version changes and instructions
 
 Sometimes you might want to do private internal version changes or instructions within the version changes that should not be visible to the public. You can do this by using the `cadwyn.hidden` function. For example:
