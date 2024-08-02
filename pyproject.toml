@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cadwyn"
-version = "4.1.0"
+version = "4.2.0"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
 license = "MIT"
@@ -53,12 +53,12 @@ classifiers = [
 python = "^3.10"
 typing-extensions = "*"
 fastapi = ">=0.110.0"
-starlette = ">=0.30.0"                           # Because of this: https://github.com/encode/starlette/pull/2191
+starlette = ">=0.30.0"                                       # Because of this: https://github.com/encode/starlette/pull/2191
 pydantic = ">=2.0.0"
 typer = { version = ">=0.7.0", optional = true }
 jinja2 = ">=3.1.2"
 issubclass = "^0.1.2"
-backports-strenum = {version = "^1.3.1", python = "<3.11"}
+backports-strenum = { version = "^1.3.1", python = "<3.11" }
 
 [tool.poetry.extras]
 cli = ["typer"]
