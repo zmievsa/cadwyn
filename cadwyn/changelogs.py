@@ -307,7 +307,7 @@ CadwynVersionChangeInstruction = RootModel[
 ]
 
 
-def _convert_version_change_instruction_to_changelog_entry(
+def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
     instruction: PossibleInstructions,
     version_change: type[VersionChange],
     generator_from_newer_version: SchemaGenerator,

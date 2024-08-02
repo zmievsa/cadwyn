@@ -13,11 +13,13 @@ Sometimes you might want to do private internal version changes or instructions 
 ```python
 from cadwyn import hidden, VersionChange, endpoint
 
+
 class VersionChangeWithOneHiddenInstruction(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         hidden(endpoint("/users/{user_id}", ["GET"]).had(path="/users/{uid}")),
     )
+
 
 @hidden
 class CompletelyHiddenVersionChange(VersionChange):

@@ -22,7 +22,6 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 * Exposed `cadwyn.generate_versioned_models` that allow you to generate pydantic models and enums even without a FastAPI app
 
-
 ## [4.0.0]
 
 Versions 3.x.x are still supported in terms of bug and security fixes but all the new features will go into versions 4.x.x.
@@ -49,7 +48,6 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 * `VersionBundle.migrate_response_body` is no longer a method of `VersionBundle` and is now importable directly from `cadwyn` as a function
 * `cadwyn.structure` is no longer recommended to be used directly because everything from it is now available in `cadwyn` directly
-
 
 ## [3.15.8]
 
@@ -82,7 +80,6 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 * Fix dependency overrides not working for versioned routes
 
-
 ## [3.15.4]
 
 ### Changed
@@ -92,7 +89,6 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 ### Fixed
 
 * fastapi-pagination now does not require an explicit call to `Cadwyn.enrich_swagger`
-
 
 ## [3.15.3]
 
@@ -104,7 +100,6 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 * Compatibility with fastapi-pagination
 * High cardinality of metrics for routers with path variables in starlette-exporter
-
 
 ## [3.15.2]
 
