@@ -128,7 +128,6 @@ def test__schema_field_didnt_exist(create_runtime_schemas: CreateRuntimeSchemas)
     class ExpectedSchema(BaseModel):
         pass
 
-    schemas["2000-01-01"][SchemaWithOneStrField]()
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithOneStrField], ExpectedSchema)
 
 
@@ -170,7 +169,7 @@ def test__schema_field_didnt_exist__with_inheritance_and_child_not_versioned__ch
 
     assert_models_are_equal(schemas["2000-01-01"][ParentSchema], ExpectedParentSchema)
     assert set(schemas["2000-01-01"][ChildSchema].model_fields) == {"baz"}
-    assert schemas["2000-01-01"][ChildSchema](baz=83)
+    assert schemas["2000-01-01"][ChildSchema](baz=83)  # pyright: ignore[reportCallIssue]
 
 
 #######
@@ -542,7 +541,7 @@ def test__schema_field_had__default_factory(create_runtime_schemas: CreateRuntim
         version_change(schema(SchemaWithOneStrField).field("foo").had(default_factory=lambda: "mew"))
     )
 
-    assert schemas["2000-01-01"][SchemaWithOneStrField]().foo == "mew"
+    assert schemas["2000-01-01"][SchemaWithOneStrField]().foo == "mew"  # pyright: ignore[reportCallIssue]
 
 
 def test__schema_field_had__type(create_runtime_schemas: CreateRuntimeSchemas):

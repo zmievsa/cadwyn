@@ -16,7 +16,7 @@ from cadwyn import (
     schema,
 )
 from cadwyn.applications import Cadwyn
-from cadwyn.changelogs import ChangelogEntryType, StrEnum, _generate_changelog, hidden
+from cadwyn.changelogs import ChangelogEntryType, StrEnum, hidden
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure.enums import enum
 from tests.conftest import CreateVersionedApp, version_change
