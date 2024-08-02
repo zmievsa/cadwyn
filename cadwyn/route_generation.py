@@ -43,9 +43,6 @@ from cadwyn.structure.endpoints import (
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from cadwyn.structure.versions import (
-    VersionChange,
-)
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant

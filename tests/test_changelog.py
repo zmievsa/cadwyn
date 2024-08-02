@@ -1,9 +1,11 @@
 import datetime
 import uuid
-from enum import Enum, IntEnum, auto
+from enum import IntEnum, auto
+from typing import Any
 
 from dirty_equals import IsList
-from pydantic import BaseModel, Field
+from fastapi.testclient import TestClient
+from pydantic import BaseModel, Field, field_validator
 
 from cadwyn import (
     HeadVersion,
@@ -14,17 +16,16 @@ from cadwyn import (
     schema,
 )
 from cadwyn.applications import Cadwyn
-from cadwyn.changelogs import ChangelogEntryType, StrEnum, generate_changelog
+from cadwyn.changelogs import ChangelogEntryType, StrEnum, _generate_changelog, hidden
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure.enums import enum
-from tests.conftest import version_change
+from tests.conftest import CreateVersionedApp, version_change
 
 
-def unordered(*items):
+def unordered(*items: Any):
     return IsList(*items, check_order=False)
 
 
-# TODO: Add tests with schema and field renamings
 def test__changelog__with_multiple_versions():
     class BaseUser(BaseModel):
         pass
@@ -77,19 +78,27 @@ def test__changelog__with_multiple_versions():
     router = VersionedAPIRouter(tags=["Users"])
 
     @router.post("/users", response_model=UserResource)
-    async def create_user(user: UserCreateRequest): ...
+    async def create_user(user: UserCreateRequest):
+        raise NotImplementedError
+
     @router.patch("/users", response_model=UserResource)
-    async def patch_user(user: list[UserUpdateRequest | None]): ...
+    async def patch_user(user: list[UserUpdateRequest | None]):
+        raise NotImplementedError
+
     @router.get("/users/{user_id}", response_model=UserResource)
-    async def get_user(user_id: uuid.UUID): ...
+    async def get_user(user_id: uuid.UUID):
+        raise NotImplementedError
 
     @router.get("/users/{user_id}/addresses", response_model=UserAddressResourceList)
-    async def get_user_addresses(user_id: uuid.UUID): ...
+    async def get_user_addresses(user_id: uuid.UUID):
+        raise NotImplementedError
 
     app = Cadwyn(versions=version_bundle)
     app.generate_and_include_versioned_routers(router)
 
-    assert generate_changelog(app).model_dump(mode="json") == {
+    response = TestClient(app).get("/changelog")
+    assert response.status_code == 200
+    assert response.json() == {
         "versions": [
             {
                 "value": "2002-01-01",
@@ -144,7 +153,7 @@ def test__changelog__with_multiple_versions():
     }
 
 
-def test__changelog__enum_interactions():
+def test__changelog__enum_interactions(create_versioned_app: CreateVersionedApp):
     class MyIntEnum(IntEnum):
         a = 83
         b = auto()
@@ -153,21 +162,16 @@ def test__changelog__enum_interactions():
         a = "hewwo"
         b = auto()
 
-    version_change_1 = version_change(
-        enum(MyIntEnum).didnt_have("a", "b"),
-        enum(MyIntEnum).had(c=11, d=auto()),
-        enum(MyStrEnum).didnt_have("a", "b"),
-        enum(MyStrEnum).had(c="11", d=auto()),
+    app = create_versioned_app(
+        version_change(
+            enum(MyIntEnum).didnt_have("a", "b"),
+            enum(MyIntEnum).had(c=11, d=auto()),
+            enum(MyStrEnum).didnt_have("a", "b"),
+            enum(MyStrEnum).had(c="11", d=auto()),
+        ),
     )
 
-    version_bundle = VersionBundle(
-        Version(datetime.date(2001, 1, 1), version_change_1),
-        Version(datetime.date(2000, 1, 1)),
-    )
-    app = Cadwyn(versions=version_bundle)
-    app.generate_and_include_versioned_routers()
-
-    assert generate_changelog(app).model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [
+    assert app.generate_changelog().model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [
         {
             "type": ChangelogEntryType.enum_members_added,
             "enum": "MyIntEnum",
@@ -197,44 +201,50 @@ def test__changelog__enum_interactions():
     ]
 
 
-def test__changelog__basic_schema_interactions():
+def test__changelog__basic_schema_interactions(create_versioned_app: CreateVersionedApp):
     class SchemaWithSomeField(BaseModel):
         some_field: str = Field(pattern="sasdasd")
 
     # TODO: Test a case where child overrides the field
     class SchemaChild(SchemaWithSomeField):
-        pass
-
-    version_change_1 = version_change(
-        schema(SchemaWithSomeField).field("some_field").didnt_have("pattern"),
-        schema(SchemaWithSomeField).field("some_field").had(min_length=30, deprecated=True),
-        schema(SchemaWithSomeField).field("some_field").had(max_length=50),
-    )
-
-    version_bundle = VersionBundle(
-        Version(datetime.date(2001, 1, 1), version_change_1),
-        Version(datetime.date(2000, 1, 1)),
-    )
-    app = Cadwyn(versions=version_bundle)
+        @field_validator("some_field")
+        def my_validator(cls, value):
+            raise NotImplementedError
 
     router = VersionedAPIRouter()
 
     @router.post("/route1")
-    async def route1(user: SchemaWithSomeField | str): ...
+    async def route1(user: SchemaWithSomeField | str):
+        raise NotImplementedError
 
-    app.generate_and_include_versioned_routers(router)
+    app = create_versioned_app(
+        version_change(
+            schema(SchemaWithSomeField).had(name="UWU"),
+            schema(SchemaWithSomeField).field("some_field").didnt_have("pattern"),
+            schema(SchemaWithSomeField).field("some_field").had(min_length=30, deprecated=True),
+            schema(SchemaWithSomeField).field("some_field").had(max_length=50, name="HELLO"),
+            schema(SchemaChild).validator(SchemaChild.my_validator).didnt_exist,
+            hidden(schema(SchemaWithSomeField).field("hewwwo").existed_as(type=str, info=Field(min_length=45))),
+        ),
+        router=router,
+    )
 
-    assert generate_changelog(app).model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [
+    assert app.generate_changelog().model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [
+        {
+            "type": ChangelogEntryType.schema_changed,
+            "model": "UWU",
+            "modified_attributes": {"name": "SchemaWithSomeField"},
+        },
         {
             "type": ChangelogEntryType.schema_field_attributes_changed,
             "models": ["SchemaWithSomeField"],
-            "field": "some_field",
+            "field": "HELLO",
             "attribute_changes": [{"name": "pattern", "status": "added", "old_value": None, "new_value": "sasdasd"}],
         },
         {
             "type": ChangelogEntryType.schema_field_attributes_changed,
             "models": ["SchemaWithSomeField"],
-            "field": "some_field",
+            "field": "HELLO",
             "attribute_changes": [
                 {"name": "deprecated", "status": "removed", "old_value": True, "new_value": None},
                 {"name": "minLength", "status": "removed", "old_value": 30, "new_value": None},
@@ -243,42 +253,60 @@ def test__changelog__basic_schema_interactions():
         {
             "type": ChangelogEntryType.schema_field_attributes_changed,
             "models": ["SchemaWithSomeField"],
-            "field": "some_field",
-            "attribute_changes": [{"name": "maxLength", "status": "removed", "old_value": 50, "new_value": None}],
+            "field": "HELLO",
+            "attribute_changes": [
+                {"name": "name", "status": "changed", "old_value": "HELLO", "new_value": "some_field"},
+                {"name": "maxLength", "status": "removed", "old_value": 50, "new_value": None},
+                {"name": "title", "status": "changed", "old_value": "Hello", "new_value": "Some Field"},
+            ],
         },
     ]
 
 
-def test__changelog__basic_endpoint_interactions():
+def test__changelog__basic_endpoint_interactions(create_versioned_app: CreateVersionedApp):
     router = VersionedAPIRouter()
 
     class MyResponseModel(BaseModel):
         a: str
 
     @router.post("/route1", response_model=MyResponseModel)
-    async def route1(): ...
+    async def route1():
+        raise NotImplementedError
 
     @router.get("/route1", response_model=MyResponseModel)
-    async def route1_get(): ...
+    async def route1_get():
+        raise NotImplementedError
 
-    version_change_1 = version_change(
-        endpoint("/route1", ["POST", "GET"]).had(
-            path="/hello/",
-            response_model=None,
-            status_code=201,
-            tags=["1", "2"],
-            summary="wewe",
+    @router.only_exists_in_older_versions
+    @router.post("/route2_deleted", response_model=MyResponseModel)
+    async def route2_deleted():
+        raise NotImplementedError
+
+    @router.post("/route3", response_model=MyResponseModel)
+    async def route3():
+        raise NotImplementedError
+
+    @router.post("/route4", response_model=MyResponseModel)
+    async def route4():
+        raise NotImplementedError
+
+    app = create_versioned_app(
+        version_change(
+            endpoint("/route1", ["POST", "GET"]).had(
+                path="/hello/",
+                response_model=None,
+                status_code=201,
+                tags=["1", "2"],
+                summary="wewe",
+            ),
+            endpoint("/route2_deleted", ["POST"]).existed,
+            endpoint("/route3", ["POST"]).had(include_in_schema=False),
+            endpoint("/route4", ["POST"]).had(name="HELLO"),
         ),
+        router=router,
     )
 
-    version_bundle = VersionBundle(
-        Version(datetime.date(2001, 1, 1), version_change_1),
-        Version(datetime.date(2000, 1, 1)),
-    )
-    app = Cadwyn(versions=version_bundle)
-    app.generate_and_include_versioned_routers(router)
-
-    assert generate_changelog(app).model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [
+    assert app.generate_changelog().model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [
         {
             "type": ChangelogEntryType.endpoint_changed,
             "path": "/route1",
@@ -320,6 +348,98 @@ def test__changelog__basic_endpoint_interactions():
                         },
                     },
                 },
+            ],
+        },
+        {"type": ChangelogEntryType.endpoint_removed, "path": "/route2_deleted", "methods": ["POST"]},
+        {
+            "type": ChangelogEntryType.endpoint_removed,
+            "path": "/route3",
+            "methods": ["POST"],
+        },
+        {
+            "type": ChangelogEntryType.endpoint_changed,
+            "path": "/route4",
+            "methods": ["POST"],
+            "changes": [
+                {
+                    "name": "summary",
+                    "new_value": "HELLO",
+                }
+            ],
+        },
+    ]
+
+
+def test__changelog__with_hidden_instructions(create_versioned_app: CreateVersionedApp):
+    class SchemaWithSomeField(BaseModel):
+        some_field: str = Field(pattern="sasdasd")
+
+        @field_validator("some_field")
+        def my_validator(cls, value):
+            raise NotImplementedError
+
+    router = VersionedAPIRouter()
+
+    @router.post("/route1")
+    async def route1(user: SchemaWithSomeField):
+        raise NotImplementedError
+
+    app = create_versioned_app(
+        version_change(
+            hidden(schema(SchemaWithSomeField).had(name="UWU")),
+            hidden(schema(SchemaWithSomeField).validator(SchemaWithSomeField.my_validator).didnt_exist),
+        ),
+        hidden(version_change(schema(SchemaWithSomeField).had(name="AWAW"))),
+        router=router,
+    )
+
+    assert app.generate_changelog().model_dump(mode="json")["versions"] == [
+        {"value": "2002-01-01", "changes": []},
+        {"value": "2001-01-01", "changes": [{"description": "", "side_effects": False, "instructions": []}]},
+    ]
+
+
+def test__changelog__with_child_overriding_changed_field_in_parent__unused_model_name_should_not_display_in_changelog(
+    create_versioned_app: CreateVersionedApp,
+):
+    class SchemaWithSomeField(BaseModel):
+        some_field: str = Field(pattern="sasdasd")
+
+    class SchemaChild(SchemaWithSomeField):
+        some_field: int = Field(default=83)  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    router = VersionedAPIRouter()
+
+    @router.post("/route1")
+    async def route1(user: SchemaChild):
+        raise NotImplementedError
+
+    app = create_versioned_app(
+        version_change(
+            schema(SchemaWithSomeField).field("some_field").had(name="UWU"),
+        ),
+        router=router,
+    )
+
+    assert app.generate_changelog().model_dump(mode="json")["versions"] == [
+        {
+            "value": "2001-01-01",
+            "changes": [
+                {
+                    "description": "",
+                    "side_effects": False,
+                    "instructions": [
+                        {
+                            "type": ChangelogEntryType.schema_field_attributes_changed,
+                            "models": [],
+                            "field": "UWU",
+                            "attribute_changes": [
+                                {"name": "name", "status": "changed", "old_value": "UWU", "new_value": "some_field"},
+                                {"name": "title", "status": "changed", "old_value": "Uwu", "new_value": "Some Field"},
+                            ],
+                        }
+                    ],
+                }
             ],
         }
     ]

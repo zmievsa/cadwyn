@@ -82,7 +82,7 @@ def router() -> VersionedAPIRouter:
 @fixture_class(name="create_runtime_schemas")
 class CreateRuntimeSchemas:
     def __call__(self, *version_changes: type[VersionChange]) -> dict[str, SchemaGenerator]:
-        return generate_versioned_models(VersionBundle(*versions(version_changes)))
+        return generate_versioned_models(VersionBundle(*versions(*version_changes)))
 
 
 @fixture_class(name="create_versioned_app")
@@ -100,7 +100,7 @@ class CreateVersionedApp:
         app = Cadwyn(
             versions=VersionBundle(
                 HeadVersion(*head_version_changes),
-                *versions(version_changes),
+                *versions(*version_changes),
                 api_version_var=self.api_version_var,
             )
         )
@@ -108,7 +108,7 @@ class CreateVersionedApp:
         return app
 
 
-def versions(version_changes):
+def versions(*version_changes: type[VersionChange]) -> list[Version]:
     versions = [Version(date(2000, 1, 1))]
     for i, change in enumerate(version_changes):
         versions.append(Version(date(2001 + i, 1, 1), change))

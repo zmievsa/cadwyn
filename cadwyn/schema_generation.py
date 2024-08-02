@@ -607,7 +607,7 @@ class SchemaGenerator:
 
     def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
         if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model in (BaseModel, RootModel):
-            return model
+            return model  # pyright: ignore[reportReturnType]
         model = _unwrap_model(model)
 
         if model in self.concrete_models:
