@@ -479,7 +479,7 @@ class VersionBundle:
             if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
 
-            return decorator
+            return decorator  # pyright: ignore[reportReturnType]
 
         return wrapper
 
