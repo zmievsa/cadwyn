@@ -269,6 +269,13 @@ class Cadwyn(FastAPI):
         else:
             raise not_found_error
 
+        # Add root path to servers when mounted as sub-app or proxy is used
+        urls = (server_data.get("url") for server_data in self.servers)
+        server_urls = {url for url in urls if url}
+        root_path = self._extract_root_path(req)
+        if root_path and root_path not in server_urls and self.root_path_in_servers:
+            self.servers.insert(0, {"url": root_path})
+
         return JSONResponse(
             get_openapi(
                 title=self.title,
