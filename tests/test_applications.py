@@ -184,6 +184,16 @@ def test__get_openapi__nonexisting_version__error():
     assert resp.json() == {"detail": "OpenApi file of with version `2023-01-01` not found"}
 
 
+def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
+    root_app = FastAPI()
+    root_app.mount("/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16)))))
+    client = TestClient(root_app)
+
+    resp = client.get("/my_api/openapi.json?version=2022-11-16")
+    servers = resp.json()["servers"]
+    assert "/my_api" in [server["url"] for server in servers]
+
+
 def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_urls():
     app = Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16))))
     app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
