@@ -28,7 +28,7 @@ _BaseGenericAlias = cast(type, type(List[int])).mro()[1]  # noqa: UP006
 GenericAliasUnion = GenericAlias | _BaseGenericAlias
 
 
-def get_fancy_repr(value: Any):
+def get_fancy_repr(value: Any) -> Any:
     if isinstance(value, annotated_types.GroupedMetadata) and hasattr(type(value), "__dataclass_fields__"):
         return transform_grouped_metadata(value)
     if isinstance(value, list | tuple | set | frozenset):
@@ -85,7 +85,7 @@ def transform_generic_alias(value: GenericAliasUnion) -> Any:
     return f"{get_fancy_repr(get_origin(value))}[{', '.join(get_fancy_repr(a) for a in get_args(value))}]"
 
 
-def transform_none(_: NoneType) -> Any:
+def transform_none(_: type[None]) -> Any:
     return "None"
 
 

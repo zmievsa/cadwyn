@@ -3,7 +3,7 @@ from datetime import date
 from typing import Annotated, cast
 
 import pytest
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
@@ -202,6 +202,15 @@ def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_
     assert "http://testserver/redoc?version=2021-01-01" in resp.text
     assert "http://testserver/redoc?version=2022-02-02" in resp.text
     assert "http://testserver/redoc?version=unversioned" not in resp.text
+
+
+def test__get_docs__with_mounted_app__should_return_all_versioned_doc_urls():
+    root_app = FastAPI()
+    root_app.mount("/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16)))))
+    client = TestClient(root_app)
+
+    resp = client.get("/my_api/docs")
+    assert "http://testserver/my_api/docs?version=2022-11-16" in resp.content.decode()
 
 
 def test__get_docs__with_unversioned_routes__should_return_all_versioned_doc_urls():
