@@ -5,11 +5,18 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [4.2.2]
+
+### Fixed
+
+* FastAPI Servers list did not include root path when mounted as a sub-app unless specified directly within the user defined server list (Contributed by @OD-tpeko)
+* OpenAPI spec did not include the `summary` field (Contributed by @OD-tpeko)
+
 ## [4.2.1]
 
 ### Fixed
 
-* Previously the docs were showing wrong versioned doc paths when cadwyn was mounted as a sub-app
+* Previously the docs were showing wrong versioned doc paths when cadwyn was mounted as a sub-app (Contributed by @OD-tpeko)
 
 ## [4.2.0]
 
