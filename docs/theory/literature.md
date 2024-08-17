@@ -6,44 +6,45 @@ During Cadwyn's development, I went through countless resources on API Versionin
 
 ### Articles
 
-* <https://stripe.com/blog/api-versioning>
-* <https://www.intercom.com/blog/api-versioning/>
-* <https://getconvoy.io/blog/rolling-versions>
-* <https://keygen.sh/blog/breaking-things-without-breaking-things/>
-* <https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market>
+* [API Versioning at Stripe](https://stripe.com/blog/api-versioning)
+* [API Versioning at Intercom](https://www.intercom.com/blog/api-versioning/)
+* [Rolling Versions at Convoy](https://getconvoy.io/blog/rolling-versions)
+* [Breaking Things Without Breaking Things at Keygen](https://keygen.sh/blog/breaking-things-without-breaking-things/)
+* [API Versioning at LinkedIn Marketing](https://engineering.linkedin.com/blog/2022/-under-the-hood--how-we-built-api-versioning-for-linkedin-market)
 
 ### Projects
 
 #### Python
 
-* <https://github.com/binnev/djangorestframework_versioning>
+* [Django REST Framework Versioning](https://github.com/binnev/djangorestframework_versioning)
 
 #### Golang
 
-* <https://github.com/sjkaliski/pinned>
-* <https://github.com/subomi/requestmigrations>
+* [Pinned](https://github.com/sjkaliski/pinned)
+* [Request Migrations for Go](https://github.com/subomi/requestmigrations) (by the author of Convoy)
 
 #### Ruby
 
-* <https://github.com/phillbaker/gates>
-* <https://github.com/keygen-sh/request_migrations>
+* [Gates](https://github.com/phillbaker/gates)
+* [Request Migrations for Ruby](https://github.com/keygen-sh/request_migrations)
 
 #### PHP
 
-* <https://github.com/lukepolo/laravel-api-migrations>
-* <https://github.com/tomschlick/request-migrations>
+* [Laravel API Migrations](https://github.com/lukepolo/laravel-api-migrations)
+* [Request Migrations for PHP](https://github.com/tomschlick/request-migrations)
 
 ## Overview articles on API Versioning
 
-* <https://smartlogic.io/blog/2012-12-12-developing-an-api/>
-* <https://thenewstack.io/tricks-api-versioning/>
-* <https://studygyaan.com/django/versioning-api-in-django-rest-framework>
+* [Developing an API](https://smartlogic.io/blog/2012-12-12-developing-an-api/)
+* [The tricks of API Versioning](https://thenewstack.io/tricks-api-versioning/)
+* [Versioning API in Django REST Framework](https://studygyaan.com/django/versioning-api-in-django-rest-framework)
 
 ## Other articles on API Versioning
 
-* <https://www.postman.com/api-platform/api-versioning/>.
-* <https://www.xmatters.com/blog/blog-four-rest-api-versioning-strategies>
-* <https://www.opslevel.com/resources/the-ultimate-guide-to-microservices-versioning-best-practices>
-* <https://github.com/dotnet/aspnet-api-versioning>
-* <https://habr.com/ru/companies/superjob/articles/577650/>
-* <https://mikehelmick.medium.com/django-rest-framework-better-api-versioning-with-semantic-versioning-d93908613dea>
+* [Postman API Platform: API Versioning](https://www.postman.com/api-platform/api-versioning/)
+* [Four REST API Versioning Strategies](https://www.xmatters.com/blog/blog-four-rest-api-versioning-strategies)
+* [The Ultimate Guide to Microservices Versioning Best Practices](https://www.opslevel.com/resources/the-ultimate-guide-to-microservices-versioning-best-practices)
+* [ASP.NET API Versioning on GitHub](https://github.com/dotnet/aspnet-api-versioning)
+* [API Versioning at SuperJob](https://habr.com/ru/companies/superjob/articles/577650/)
+* [Better API Versioning with Semantic Versioning in Django REST Framework](https://mikehelmick.medium.com/django-rest-framework-better-api-versioning-with-semantic-versioning-d93908613dea)
+* [How Badoo Versions its API for internal clients](https://youtu.be/M2KCu0Oq3JE)
