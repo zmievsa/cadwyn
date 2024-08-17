@@ -282,6 +282,7 @@ class Cadwyn(FastAPI):
                 version=formatted_version,
                 openapi_version=self.openapi_version,
                 description=self.description,
+                summary=self.summary,
                 terms_of_service=self.terms_of_service,
                 contact=self.contact,
                 license_info=self.license_info,
