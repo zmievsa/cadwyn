@@ -26,14 +26,14 @@ CURRENT_DIR = Path(__file__).parent
 Undefined = object()
 
 
-@pytest.fixture()
+@pytest.fixture
 def api_version_var():
     api_version_var = ContextVar("api_version_var")
     api_version_var.set(None)
     return api_version_var
 
 
-@pytest.fixture()
+@pytest.fixture
 def random_uuid():
     return uuid.uuid4()
 
@@ -74,7 +74,7 @@ def client(
     return TestClientWithHardcodedAPIVersion(app, api_version=api_version, api_version_var=api_version_var)
 
 
-@pytest.fixture()
+@pytest.fixture
 def router() -> VersionedAPIRouter:
     return VersionedAPIRouter()
 

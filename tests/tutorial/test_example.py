@@ -5,17 +5,17 @@ from fastapi.testclient import TestClient
 from .main import app
 
 
-@pytest.fixture()
+@pytest.fixture
 def testclient_2000() -> TestClient:
     return TestClient(app, headers={"X-API-VERSION": "2000-01-01"})
 
 
-@pytest.fixture()
+@pytest.fixture
 def testclient_2001() -> TestClient:
     return TestClient(app, headers={"X-API-VERSION": "2001-01-01"})
 
 
-@pytest.fixture()
+@pytest.fixture
 def testclient_2002() -> TestClient:
     return TestClient(app, headers={"X-API-VERSION": "2002-01-01"})
 

@@ -341,12 +341,12 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         per_field_validators = {
             name: validator.decorator(*validator.fields, **validator.kwargs)(validator.func)
             for name, validator in self.validators.items()
-            if not validator.is_deleted and type(validator) == _PerFieldValidatorWrapper
+            if not validator.is_deleted and type(validator) == _PerFieldValidatorWrapper  # noqa: E721
         }
         root_validators = {
             name: validator.decorator(**validator.kwargs)(validator.func)
             for name, validator in self.validators.items()
-            if not validator.is_deleted and type(validator) == _ValidatorWrapper
+            if not validator.is_deleted and type(validator) == _ValidatorWrapper  # noqa: E721
         }
         fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
         model_copy = type(self.cls)(

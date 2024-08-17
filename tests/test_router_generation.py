@@ -69,12 +69,12 @@ def endpoints_equal(endpoint1: Endpoint, endpoint2: Endpoint) -> bool:
     return endpoint1 == endpoint2
 
 
-@pytest.fixture()
+@pytest.fixture
 def test_path() -> str:
     return "/test/{hewwo}"
 
 
-@pytest.fixture()
+@pytest.fixture
 def test_endpoint(router: VersionedAPIRouter, test_path: str, random_uuid: UUID) -> Endpoint:
     @router.get(test_path)
     async def test(hewwo: int):
@@ -538,7 +538,7 @@ def test__router_generation__restoring_deleted_route_for_same_path_without_func_
         )
 
 
-@pytest.fixture()
+@pytest.fixture
 def two_deleted_routes(router: VersionedAPIRouter):
     @router.only_exists_in_older_versions
     @router.get("/test")
@@ -693,7 +693,7 @@ def test__router_generation__updating_response_model(
     assert routes_2001[1].response_model == dict[str, list[schema_2001]]
 
     assert get_nested_field_type(routes_2000[1].response_model) == list[str]
-    assert get_nested_field_type(routes_2001[1].response_model) == int
+    assert get_nested_field_type(routes_2001[1].response_model) == int  # noqa: E721
 
 
 def test__router_generation__using_unversioned_schema_from_versioned_base_dir__should_not_raise_error(
@@ -733,7 +733,7 @@ def test__router_generation__updating_request_models(
     assert getattr(body_param_2001, TYPE_ATTR) == dict[str, list[schema_2001]]
 
     assert get_nested_field_type(getattr(routes_2000[1].dependant.body_params[0], TYPE_ATTR)) == list[str]
-    assert get_nested_field_type(getattr(routes_2001[1].dependant.body_params[0], TYPE_ATTR)) == int
+    assert get_nested_field_type(getattr(routes_2001[1].dependant.body_params[0], TYPE_ATTR)) is int
 
 
 def test__router_generation__updating_request_models_with_inheritance(

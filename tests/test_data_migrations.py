@@ -39,7 +39,7 @@ from tests.conftest import (
 )
 
 
-@pytest.fixture()
+@pytest.fixture
 def test_path():
     return "/test"
 
@@ -146,7 +146,7 @@ def version_change_1(
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def version_change_2():
     @convert_request_to_next_version_for(AnyRequestSchema)
     def change_addresses_to_default_address(request: RequestInfo):

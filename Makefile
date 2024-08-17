@@ -7,9 +7,6 @@ install:
 lint:
 	pre-commit run --all-files
 
-format:
-	poetry run ruff check . --fix && poetry run ruff format .;
-
 test:
 	rm -f .coverage coverage.xml; \
 	poetry run pytest tests \

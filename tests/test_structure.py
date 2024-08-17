@@ -41,7 +41,7 @@ class DummySubClass2002(VersionChangeWithSideEffects):
     instructions_to_migrate_to_previous_version = []
 
 
-@pytest.fixture()
+@pytest.fixture
 def dummy_sub_class_without_version():
     class DummySubClassWithoutVersion(VersionChangeWithSideEffects):
         description = "dummy description4"
@@ -50,7 +50,7 @@ def dummy_sub_class_without_version():
     return DummySubClassWithoutVersion
 
 
-@pytest.fixture()
+@pytest.fixture
 def versions(api_version_var: ContextVar[date | None]):
     try:
         yield VersionBundle(
