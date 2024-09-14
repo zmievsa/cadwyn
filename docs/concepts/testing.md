@@ -27,8 +27,9 @@ Here's one of the possible file structures for tests:
 
 Each time you create a new version, I advise you to follow the following process:
 
-1. Duplicate the **subset** of the HEAD tests and fixtures that is going to be affected by the new version and add it into its own directory, same as the version name. Run all the tests to validate that they pass.
-2. Make the breaking changes you wished to make and write the migrations
-3. Change HEAD tests to accomodate the new behavior (note how this should be done in step (1) if you prefer to follow TDD)
+1. Before creating a new version, apply the changes you want to your logic and schemas in the latest version (i.e., make the desired breaking changes), and then run the tests in the head folder. The tests that fail indicate the broken contracts
+1. Create a new folder in your tests named after the previous version (e.g., v2024_05_04), and copy only the failing tests into it. Ensure these tests invoke the old version of the API
+1. Write a VersionChange that fixes the tests in this outdated version through converters. In the new version, these same tests should still fail
+1. Modify the tests in the head folder so that they correspond to the new API contract and pass successfully
 
 This approach will make it easy to keep the old versions covered by tests and will keep the duplication in tests minimal.
