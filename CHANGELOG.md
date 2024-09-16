@@ -5,6 +5,14 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [4.2.3]
+
+### Fixed
+
+* Added support for `embed_body_fields` in `solve_dependencies` and `create_model_field` in FastAPI. FastAPI has made a breaking change for these interfaces which is why we had to fix it
+* Fixed invalid imports in quickstart docs
+* Fixed default dependencies not including the CLI for FastAPI, thus causing the quickstart docs to be invalid
+
 ## [4.2.2]
 
 ### Fixed

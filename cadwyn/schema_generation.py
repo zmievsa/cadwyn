@@ -441,7 +441,7 @@ class _AnnotationTransformer:
     def migrate_route_to_version(self, route: fastapi.routing.APIRoute, *, ignore_response_model: bool = False):
         if route.response_model is not None and not ignore_response_model:
             route.response_model = self.change_version_of_annotation(route.response_model)
-            route.response_field = fastapi.utils.create_response_field(
+            route.response_field = fastapi.utils.create_model_field(
                 name="Response_" + route.unique_id,
                 type_=route.response_model,
                 mode="serialization",

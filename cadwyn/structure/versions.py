@@ -350,7 +350,9 @@ class VersionBundle:
         request_info: RequestInfo,
         current_version: VersionDate,
         head_route: APIRoute,
+        *,
         exit_stack: AsyncExitStack,
+        embed_body_fields: bool = False,
     ) -> dict[str, Any]:
         method = request.method
         for v in reversed(self.versions):
@@ -367,19 +369,20 @@ class VersionBundle:
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
-        dependencies, errors, _, _, _ = await solve_dependencies(
+        result = await solve_dependencies(
             request=request,
             response=response,
             dependant=head_dependant,
             body=request_info.body,
             dependency_overrides_provider=head_route.dependency_overrides_provider,
             async_exit_stack=exit_stack,
+            embed_body_fields=embed_body_fields,
         )
-        if errors:
+        if result.errors:
             raise CadwynHeadRequestValidationError(
-                _normalize_errors(errors), body=request_info.body, version=current_version
+                _normalize_errors(result.errors), body=request_info.body, version=current_version
             )
-        return dependencies
+        return result.values
 
     def _migrate_response(
         self,
@@ -452,7 +455,8 @@ class VersionBundle:
                         response_param,
                         route,
                         head_route,
-                        exit_stack,
+                        exit_stack=exit_stack,
+                        embed_body_fields=route._embed_body_fields,
                     )
 
                     response = await self._convert_endpoint_response_to_version(
@@ -524,10 +528,14 @@ class VersionBundle:
             if isinstance(response_or_response_body, StreamingResponse | FileResponse):
                 body = None
             elif response_or_response_body.body:
-                if isinstance(response_or_response_body, JSONResponse) or raised_exception is not None:
+                if (isinstance(response_or_response_body, JSONResponse) or raised_exception is not None) and isinstance(
+                    response_or_response_body.body, str | bytes
+                ):
                     body = json.loads(response_or_response_body.body)
-                else:
+                elif isinstance(response_or_response_body.body, bytes):
                     body = response_or_response_body.body.decode(response_or_response_body.charset)
+                else:  # pragma: no cover # I don't see a good use case here yet
+                    body = response_or_response_body.body
             else:
                 body = None
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
@@ -614,7 +622,9 @@ class VersionBundle:
         response: FastapiResponse,
         route: APIRoute,
         head_route: APIRoute,
+        *,
         exit_stack: AsyncExitStack,
+        embed_body_fields: bool,
     ) -> dict[str, Any]:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
@@ -655,6 +665,7 @@ class VersionBundle:
             api_version,
             head_route,
             exit_stack=exit_stack,
+            embed_body_fields=embed_body_fields,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:

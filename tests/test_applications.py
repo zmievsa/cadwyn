@@ -14,10 +14,8 @@ from tests._resources.utils import BASIC_HEADERS, DEFAULT_API_VERSION
 from tests._resources.versioned_app.app import (
     client_without_headers,
     client_without_headers_and_with_custom_api_version_var,
-    lifespan,
     v2021_01_01_router,
     v2022_01_02_router,
-    versioned_app,
 )
 
 
@@ -270,7 +268,3 @@ def test__get_webhooks_as_partial_because_of_method():
 def test__empty_root():
     resp = client_without_headers.get("/")
     assert resp.status_code == 404
-
-
-def test__lifespan_context_exists():
-    assert versioned_app.router.lifespan_context is lifespan

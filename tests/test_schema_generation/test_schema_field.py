@@ -146,9 +146,7 @@ def test__schema_field_didnt_exist__with_inheritance(create_runtime_schemas: Cre
         version_change(schema(ChildSchema).field("bar").existed_as(type=int)),
     )
 
-    class ExpectedChildSchema(
-        schemas["2000-01-01"][ParentSchema],  # pyright: ignore[reportUntypedBaseClass, reportGeneralTypeIssues]
-    ):
+    class ExpectedChildSchema(schemas["2000-01-01"][ParentSchema]):
         bar: int
 
     class ExpectedParentSchema(BaseModel):
@@ -640,11 +638,9 @@ def test__schema_that_overrides_fields_from_mro(create_runtime_schemas: CreateRu
         )
     )
 
-    class ExpectedSchema(
-        schemas["2000-01-01"][ParentSchema],  # pyright: ignore[reportUntypedBaseClass, reportGeneralTypeIssues]
-    ):
-        foo: bytes = Field(description="What?")
-        bar: str = Field(description="What?", alias="baz")
+    class ExpectedSchema(schemas["2000-01-01"][ParentSchema]):
+        foo: bytes = Field(description="What?")  # pyright: ignore
+        bar: str = Field(description="What?", alias="baz")  # pyright: ignore
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaThatOverridesField], ExpectedSchema)
 

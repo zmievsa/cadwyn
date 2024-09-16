@@ -6,7 +6,7 @@ Cadwyn is built around FastAPI and supports all of its functionality out of the 
 ## Installation
 
 ```bash
-pip install cadwyn
+pip install 'cadwyn[cli]'
 ```
 
 ## The basics
@@ -14,8 +14,6 @@ pip install cadwyn
 First, let's set up the most basic versioned app possible:
 
 ```python
-# main.py
-
 from datetime import date
 from cadwyn import Cadwyn, VersionBundle, HeadVersion, Version
 
@@ -35,7 +33,6 @@ fastapi dev main.py
 ```
 
 That's it. That's the main difference between setting up FastAPI and Cadwyn: you have to specify your versions. Everything you specify at app level (such as using `include_router` or `app.get(...)`) will end up unversioned and essentially function like a regular FastAPI route.
-
 
 ## Docs
 

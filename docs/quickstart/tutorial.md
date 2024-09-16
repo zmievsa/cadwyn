@@ -18,12 +18,16 @@ Here is an initial API setup where the User has a single address. We will be imp
 
 The first API you come up with usually doesn't require more than one address -- why bother?
 
-
 ```python
 import uuid
 from pydantic import BaseModel
-from cadwyn import Cadwyn, VersionBundle, VersionedAPIRouter
-from cadwyn.versions import HeadVersion, Version
+from cadwyn import (
+    Cadwyn,
+    HeadVersion,
+    Version,
+    VersionBundle,
+    VersionedAPIRouter,
+)
 
 
 class BaseUser(BaseModel):
