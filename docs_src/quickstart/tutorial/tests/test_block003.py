@@ -1,5 +1,4 @@
 import pytest
-from dirty_equals import IsUUID
 from fastapi.testclient import TestClient
 
 
