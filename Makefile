@@ -10,7 +10,7 @@ lint:
 test:
 	rm -f .coverage coverage.xml; \
 	poetry run pytest tests \
-		--cov=. \
+		--cov=cadwyn --cov=docs_src  \
 		--cov-report=term-missing:skip-covered \
 		--cov-branch \
 		--cov-append \

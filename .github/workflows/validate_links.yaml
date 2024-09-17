@@ -3,26 +3,33 @@ name: Check Markdown links
 on:
   push:
     branches:
-    - main
-    - 3.x.x
+      - main
+      - 3.x.x
     paths:
-    - "**.md"
+      - "**.md"
   pull_request:
-      branches: [main, 3.x.x]
-      types: [opened, synchronize]
-      paths:
+    branches: [main, 3.x.x]
+    types: [opened, synchronize]
+    paths:
       - "**.md"
   schedule:
-  # Run everyday at 9:00 AM
-  - cron: "0 9 * * *"
+    # Run everyday at 9:00 AM
+    - cron: "0 9 * * *"
 
 jobs:
+  build-docs-to-validate-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-poetry
+      - run: poetry install --only=docs
+      - run: poetry run mkdocs build
   markdown-link-check:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: gaurav-nelson/github-action-markdown-link-check@v1
-      with:
-        use-quiet-mode: 'yes'
-        use-verbose-mode: 'yes'
-        folder-path: '.'
+      - uses: actions/checkout@v4
+      - uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: "yes"
+          use-verbose-mode: "yes"
+          folder-path: "."

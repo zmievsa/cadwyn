@@ -334,6 +334,17 @@ tomli = {version = "*", optional = true, markers = "python_full_version <= \"3.1
 toml = ["tomli"]
 
 [[package]]
+name = "cyclic"
+version = "1.0.0"
+description = "Handle cyclic relations"
+optional = false
+python-versions = "*"
+files = [
+    {file = "cyclic-1.0.0-py3-none-any.whl", hash = "sha256:32d8181d7698f426bce6f14f4c3921ef95b6a84af9f96192b59beb05bc00c3ed"},
+    {file = "cyclic-1.0.0.tar.gz", hash = "sha256:ecddd56cb831ee3e6b79f61ecb0ad71caee606c507136867782911aa01c3e5eb"},
+]
+
+[[package]]
 name = "dirty-equals"
 version = "0.8.0"
 description = "Doing dirty (but extremely useful) things with equals."
@@ -804,6 +815,22 @@ files = [
     {file = "mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"},
     {file = "mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba"},
 ]
+
+[[package]]
+name = "mdx-include"
+version = "1.4.2"
+description = "Python Markdown extension to include local or remote files"
+optional = false
+python-versions = "*"
+files = [
+    {file = "mdx_include-1.4.2-py3-none-any.whl", hash = "sha256:cfbeadd59985f27a9b70cb7ab0a3d209892fe1bb1aa342df055e0b135b3c9f34"},
+    {file = "mdx_include-1.4.2.tar.gz", hash = "sha256:992f9fbc492b5cf43f7d8cb4b90b52a4e4c5fdd7fd04570290a83eea5c84f297"},
+]
+
+[package.dependencies]
+cyclic = "*"
+Markdown = ">=2.6"
+rcslice = ">=1.1.0"
 
 [[package]]
 name = "mergedeep"
@@ -1413,6 +1440,17 @@ files = [
 
 [package.dependencies]
 pyyaml = "*"
+
+[[package]]
+name = "rcslice"
+version = "1.1.0"
+description = "Slice a list of sliceables (1 indexed, start and end index both are inclusive)"
+optional = false
+python-versions = "*"
+files = [
+    {file = "rcslice-1.1.0-py3-none-any.whl", hash = "sha256:1b12fc0c0ca452e8a9fd2b56ac008162f19e250906a4290a7e7a98be3200c2a6"},
+    {file = "rcslice-1.1.0.tar.gz", hash = "sha256:a2ce70a60690eb63e52b722e046b334c3aaec5e900b28578f529878782ee5c6e"},
+]
 
 [[package]]
 name = "regex"
@@ -2051,4 +2089,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "b313be2b59ecd62a2e10d38d4e3424bb20e863cf55552ee59a28702ba79095d1"
+content-hash = "d25205d8a54e7d3fc106e65b61ef9a04a0b862727c78f3aa0cfe0c45b0a30e39"
