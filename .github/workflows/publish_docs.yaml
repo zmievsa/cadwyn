@@ -24,5 +24,6 @@ jobs:
           path: .cache
           restore-keys: |
             mkdocs-material-
-      - run: pip install mkdocs-material mkdocs-simple-hooks mike
-      - run: mkdocs gh-deploy --force
+      - uses: ./.github/actions/setup-python-poetry
+      - run: poetry install --only docs
+      - run: poetry run mkdocs gh-deploy --force

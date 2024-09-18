@@ -38,7 +38,7 @@ jobs:
       - uses: ./.github/actions/setup-python-poetry
         with:
           python-version: ${{ matrix.python-version }}
-
+      - run: poetry install --only main,docs_tests,tests
       - run: make test
 
   Lint:
@@ -52,6 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-python-poetry
+      - run: poetry install --only main,docs_tests,tests
 
       - uses: jakebailey/pyright-action@v1
         with:
