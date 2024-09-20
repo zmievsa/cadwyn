@@ -42,7 +42,7 @@ jobs:
       - run: poetry run coverage run --source=. -m pytest .
       - name: Upload coverage results
         uses: actions/upload-artifact@v3
-        if: matrix.os != 'windows-latest' # Windows works weirdly with coverage
+        if: matrix.os != 'ubuntu-latest' # Cross-platform coverage combination doesn't work
         with:
           name: coverage-results
           path: coverage/
