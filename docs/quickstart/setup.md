@@ -6,7 +6,7 @@ Cadwyn is built around FastAPI and supports all of its functionality out of the 
 ## Installation
 
 ```bash
-pip install 'cadwyn[cli]'
+pip install cadwyn
 ```
 
 ## The basics
@@ -14,16 +14,7 @@ pip install 'cadwyn[cli]'
 First, let's set up the most basic versioned app possible:
 
 ```python
-from datetime import date
-from cadwyn import Cadwyn, VersionBundle, HeadVersion, Version
-
-
-app = Cadwyn(versions=VersionBundle(HeadVersion(), Version("2000-01-01")))
-
-
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
+{!> ../docs_src/quickstart/setup/block002.py !}
 ```
 
 and run it using:
@@ -40,4 +31,4 @@ If you visit `/docs`, instead of the regular swagger, you will see a version das
 
 ![Version dashboard](../img/unversioned_dashboard.png)
 
-Clicking a card will take you to the card's regular swagger page.
+Clicking a card will take you to the card's regular swagger page. If you wish to see the `openapi.json` for a specific version, just use `/openapi.json?version=2000-01-01` (or whatever version you want to get).

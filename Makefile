@@ -8,11 +8,7 @@ lint:
 	pre-commit run --all-files
 
 test:
-	rm -f .coverage coverage.xml; \
-	poetry run pytest tests \
-		--cov=. \
-		--cov-report=term-missing:skip-covered \
-		--cov-branch \
-		--cov-append \
-		--cov-report=xml \
-		--cov-fail-under=100;
+	rm -r coverage; \
+	poetry run coverage run --source=. -m pytest .; \
+	coverage combine; \
+	coverage report --fail-under=100;

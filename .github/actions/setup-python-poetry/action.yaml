@@ -1,17 +1,17 @@
-name: 'Setup Python and Poetry'
-description: 'Checkout code and setup Python with Poetry'
+name: "Setup Python and Poetry"
+description: "Checkout code and setup Python with Poetry"
 inputs:
   python-version:
-    description: 'The Python version to set up'
+    description: "The Python version to set up"
     required: true
-    default: '3.10'
+    default: "3.10"
   poetry-version:
-    description: 'The Poetry version to set up'
+    description: "The Poetry version to set up"
     required: true
-    default: '1.7.1'
+    default: "1.7.1"
 
 runs:
-  using: 'composite'
+  using: "composite"
   steps:
     - uses: abatilo/actions-poetry@v2
       with:
@@ -19,8 +19,7 @@ runs:
     - uses: actions/setup-python@v4
       with:
         python-version: ${{ inputs.python-version }}
-        cache: 'poetry'
+        cache: "poetry"
     - run: |
-          poetry install --all-extras
-          echo "$(poetry env info --path)/bin" >> $GITHUB_PATH
+        echo "$(poetry env info --path)/bin" >> $GITHUB_PATH
       shell: bash

@@ -7,15 +7,15 @@ But if you are certain that you need to make a breaking behavioral change, Cadwy
 
 ## Calling endpoint causes unexpected data modifications
 
-You'd use an `if statement` with a [side effect](../../concepts/version_changes.md#version_changes_with_side_effects).
+You'd use an `if statement` with a [side effect](../../concepts/version_changes.md#version-changes-with-side-effects).
 
 ## Calling endpoint doesn't cause expected data modifications
 
-You'd use an `if statement` with a [side effect](../../concepts/version_changes.md#version_changes_with_side_effects).
+You'd use an `if statement` with a [side effect](../../concepts/version_changes.md#version-changes-with-side-effects).
 
 ## Calling endpoint doesn't cause expected additional actions (e.g. Webhooks)
 
-You'd use an `if statement` with a [side effect](../../concepts/version_changes.md#version_changes_with_side_effects).
+You'd use an `if statement` with a [side effect](../../concepts/version_changes.md#version-changes-with-side-effects).
 
 ## Errors
 
@@ -25,4 +25,4 @@ You can [migrate anything about the error](../../concepts/version_changes.md#mig
 
 ### Introduce a new error or remove an old error
 
-You'd use an `if statement` with a [side effect](../../concepts/version_changes.md#version_changes_with_side_effects).
+You'd use an `if statement` with a [side effect](../../concepts/version_changes.md#version-changes-with-side-effects).

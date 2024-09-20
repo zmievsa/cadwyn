@@ -134,7 +134,6 @@ In Cadwyn, you use the latest version. This attribute is a way for you to descri
 
 This approach of *maintaining the present and describing the past* might appear weird. You just need to form the correct mindset which is counter-intuitive at first but after just one or two attempts at versioning you will see how much sense this approach makes.
 
-
 Imagine you needed to know what your code looked like two weeks ago. You would use `git checkout` or `git reset` with an older commit because `git` stores the latest version of your code (which is also called HEAD) and the diffs between it and each previous version as a chain of changes. This is exactly how Cadwyn works! We store the latest version and use the diffs to regenerate the older versions.
 
 <details>
