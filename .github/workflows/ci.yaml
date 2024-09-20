@@ -39,13 +39,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: poetry install --only main,tests
-      - run: poetry run coverage run --source=. -m pytest .
+      - run: coverage run --source=. -m pytest .
       - name: Upload coverage results
         uses: actions/upload-artifact@v3
         with:
           name: coverage-results
           path: coverage/
-
   Coverage:
     needs: Tests
     runs-on: ubuntu-latest
@@ -57,13 +56,13 @@ jobs:
           path: coverage/
       - uses: ./.github/actions/setup-python-poetry
       - run: poetry install --only main,tests
-      - run: poetry run coverage combine
-      - run: poetry run coverage xml
+      - run: coverage combine
+      - run: coverage xml
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_ORG_TOKEN }}
-      - run: poetry run coverage report --fail-under=100
+      - run: coverage report --fail-under=100
 
   Lint:
     runs-on: ubuntu-latest

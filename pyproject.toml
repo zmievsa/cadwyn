@@ -66,15 +66,13 @@ python-multipart = ">=0.0.6"
 better-devtools = "^0.13.3"
 pytest-sugar = "^1.0.0"
 
-[tool.poetry.group.docs_tests.dependencies]
-pytest = ">=7.2.1"
-pytest-cov = ">=4.0.0"
-dirty-equals = ">=0.6.0"
-
 [tool.poetry.group.tests.dependencies]
 svcs = "^24.1.0"
 httpx = "*"
 pytest-fixture-classes = ">=1.0.3"
+pytest = ">=7.2.1"
+pytest-cov = ">=4.0.0"
+dirty-equals = ">=0.6.0"
 
 [tool.poetry.group.docs.dependencies]
 mkdocs = ">=1.5.2"
