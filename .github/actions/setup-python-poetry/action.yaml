@@ -21,6 +21,5 @@ runs:
         python-version: ${{ inputs.python-version }}
         cache: "poetry"
     - run: |
-        poetry env use ${{ inputs.python-version }}
         echo "$(poetry env info --path)/bin" >> $GITHUB_PATH
       shell: bash
