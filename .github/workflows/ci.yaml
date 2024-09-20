@@ -59,9 +59,9 @@ jobs:
       - run: coverage combine
       - run: coverage xml
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          files: coverage.xml
+        uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_ORG_TOKEN }}
       - run: coverage report --fail-under=100
 
   Lint:
