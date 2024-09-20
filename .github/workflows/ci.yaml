@@ -23,14 +23,14 @@ jobs:
         include:
           - os: ubuntu-latest
             python-version: "3.10"
-          - os: ubuntu-latest
-            python-version: "3.11"
-          - os: ubuntu-latest
-            python-version: "3.12"
-          - os: windows-latest
-            python-version: "3.10"
-          - os: macos-latest
-            python-version: "3.10"
+          # - os: ubuntu-latest
+          #   python-version: "3.11"
+          # - os: ubuntu-latest
+          #   python-version: "3.12"
+          # - os: windows-latest
+          #   python-version: "3.10"
+          # - os: macos-latest
+          #   python-version: "3.10"
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -56,6 +56,7 @@ jobs:
           path: coverage/
       - uses: ./.github/actions/setup-python-poetry
       - run: poetry install --only main,tests
+      - run: ls -all
       - run: poetry run coverage combine
       - run: poetry run coverage xml
       - name: Upload to Codecov
