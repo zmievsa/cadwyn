@@ -3,8 +3,8 @@ from dirty_equals import IsUUID
 from fastapi.testclient import TestClient
 
 
-@pytest.fixture(name="client")
-def get_client():
+@pytest.fixture
+def client():
     from docs_src.quickstart.tutorial.block002 import app
 
     return TestClient(app)

@@ -1,1 +1,0 @@
-fastapi dev main.py

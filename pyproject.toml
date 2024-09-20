@@ -86,6 +86,11 @@ mike = "^2.1.2"
 [tool.poetry.scripts]
 cadwyn = "cadwyn.__main__:app"
 
+[tool.coverage.run]
+data_file = "coverage/coverage"
+parallel = true
+branch = true
+
 [tool.coverage.report]
 skip_covered = true
 skip_empty = true

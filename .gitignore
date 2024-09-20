@@ -135,3 +135,5 @@ dmypy.json
 
 docs/home/CHANGELOG.md
 local.py
+
+coverage
