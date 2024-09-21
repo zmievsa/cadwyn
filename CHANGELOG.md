@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [4.2.4]
+
+### Fixed
+
+* Background tasks not functioning in versioned endpoints
+
 ## [4.2.3]
 
 ### Fixed

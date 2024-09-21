@@ -376,6 +376,7 @@ def _add_data_migrations_to_route(
         head_route,
         dependant_for_request_migrations,
         request_param_name=route.dependant.request_param_name,
+        background_tasks_param_name=route.dependant.background_tasks_param_name,
         response_param_name=route.dependant.response_param_name,
     )(route.endpoint)
     route.dependant.call = route.endpoint
