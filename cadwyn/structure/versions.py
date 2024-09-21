@@ -10,7 +10,7 @@ from datetime import date
 from enum import Enum
 from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
 
-from fastapi import HTTPException, params
+from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
 from fastapi._compat import ModelField, _normalize_errors
@@ -352,7 +352,8 @@ class VersionBundle:
         head_route: APIRoute,
         *,
         exit_stack: AsyncExitStack,
-        embed_body_fields: bool = False,
+        embed_body_fields: bool,
+        background_tasks: BackgroundTasks | None,
     ) -> dict[str, Any]:
         method = request.method
         for v in reversed(self.versions):
@@ -377,6 +378,7 @@ class VersionBundle:
             dependency_overrides_provider=head_route.dependency_overrides_provider,
             async_exit_stack=exit_stack,
             embed_body_fields=embed_body_fields,
+            background_tasks=background_tasks,
         )
         if result.errors:
             raise CadwynHeadRequestValidationError(
@@ -434,6 +436,7 @@ class VersionBundle:
         dependant_for_request_migrations: Dependant,
         *,
         request_param_name: str,
+        background_tasks_param_name: str | None,
         response_param_name: str,
     ) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]:
         def wrapper(endpoint: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
@@ -441,6 +444,10 @@ class VersionBundle:
             async def decorator(*args: Any, **kwargs: Any) -> _R:
                 request_param: FastapiRequest = kwargs[request_param_name]
                 response_param: FastapiResponse = kwargs[response_param_name]
+                background_tasks: BackgroundTasks | None = kwargs.get(
+                    background_tasks_param_name,  # pyright: ignore[reportArgumentType, reportCallIssue]
+                    None,
+                )
                 method = request_param.method
                 response = Sentinel
                 async with AsyncExitStack() as exit_stack:
@@ -457,6 +464,7 @@ class VersionBundle:
                         head_route,
                         exit_stack=exit_stack,
                         embed_body_fields=route._embed_body_fields,
+                        background_tasks=background_tasks,
                     )
 
                     response = await self._convert_endpoint_response_to_version(
@@ -625,6 +633,7 @@ class VersionBundle:
         *,
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
+        background_tasks: BackgroundTasks | None,
     ) -> dict[str, Any]:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
@@ -666,6 +675,7 @@ class VersionBundle:
             head_route,
             exit_stack=exit_stack,
             embed_body_fields=embed_body_fields,
+            background_tasks=background_tasks,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:

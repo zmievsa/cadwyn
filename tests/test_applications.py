@@ -3,13 +3,13 @@ from datetime import date
 from typing import Annotated, cast
 
 import pytest
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from cadwyn import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
-from cadwyn.structure.versions import Version, VersionBundle
+from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
 from tests._resources.utils import BASIC_HEADERS, DEFAULT_API_VERSION
 from tests._resources.versioned_app.app import (
     client_without_headers,
@@ -268,3 +268,26 @@ def test__get_webhooks_as_partial_because_of_method():
 def test__empty_root():
     resp = client_without_headers.get("/")
     assert resp.status_code == 404
+
+
+def test__background_tasks():
+    background_task_data = None
+
+    def my_background_task(email: str, message: str):
+        nonlocal background_task_data
+        background_task_data = (email, message)
+
+    router = VersionedAPIRouter()
+
+    @router.post("/send-notification/{email}")
+    async def send_notification(email: str, background_tasks: BackgroundTasks):
+        background_tasks.add_task(my_background_task, email, message="some notification")
+        return {"message": "Notification sent in the background"}
+
+    app = Cadwyn(versions=VersionBundle(HeadVersion(), Version(DEFAULT_API_VERSION)))
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app) as client:
+        resp = client.post("/send-notification/test@example.com", headers=BASIC_HEADERS)
+        assert resp.status_code == 200, resp.json()
+        assert background_task_data == ("test@example.com", "some notification")
