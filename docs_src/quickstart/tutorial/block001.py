@@ -4,43 +4,36 @@ from pydantic import BaseModel
 
 from cadwyn import (
     Cadwyn,
-    HeadVersion,
     Version,
     VersionBundle,
     VersionedAPIRouter,
 )
 
 
-class BaseUser(BaseModel):
+class UserCreateRequest(BaseModel):
     address: str
 
 
-class UserCreateRequest(BaseUser):
-    pass
-
-
-class UserResource(BaseUser):
+class UserResource(BaseModel):
     id: uuid.UUID
+    address: str
 
 
 database_parody = {}
 router = VersionedAPIRouter()
 
 
-@router.post("/users", response_model=UserResource)
-async def create_user(payload: UserCreateRequest):
+@router.post("/users")
+async def create_user(payload: UserCreateRequest) -> UserResource:
     id_ = uuid.uuid4()
-    database_parody[id_] = {
-        "id": id_,
-        "address": payload.address,
-    }
+    database_parody[id_] = UserResource(id=id_, address=payload.address)
     return database_parody[id_]
 
 
-@router.get("/users/{user_id}", response_model=UserResource)
-async def get_user(user_id: uuid.UUID):
+@router.get("/users/{user_id}")
+async def get_user(user_id: uuid.UUID) -> UserResource:
     return database_parody[user_id]
 
 
-app = Cadwyn(versions=VersionBundle(HeadVersion(), Version("2000-01-01")))
+app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
 app.generate_and_include_versioned_routers(router)

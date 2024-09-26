@@ -1,10 +1,10 @@
 import uuid
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 
 from cadwyn import (
     Cadwyn,
-    HeadVersion,
     RequestInfo,
     ResponseInfo,
     Version,
@@ -17,42 +17,36 @@ from cadwyn import (
 )
 
 
-class BaseUser(BaseModel):
-    addresses: list[str] = Field(min_length=1)
+class UserCreateRequest(BaseModel):
+    addresses: list[str]
 
 
-class UserCreateRequest(BaseUser):
-    pass
-
-
-class UserResource(BaseUser):
+class UserResource(BaseModel):
     id: uuid.UUID
+    addresses: Annotated[list[str], Field(min_length=1)]
 
 
 database_parody = {}
 router = VersionedAPIRouter()
 
 
-@router.post("/users", response_model=UserResource)
-async def create_user(payload: UserCreateRequest):
+@router.post("/users")
+async def create_user(payload: UserCreateRequest) -> UserResource:
     id_ = uuid.uuid4()
-    database_parody[id_] = {
-        "id": id_,
-        "addresses": payload.addresses,
-    }
+    database_parody[id_] = UserResource(id=id_, addresses=payload.addresses)
     return database_parody[id_]
 
 
-@router.get("/users/{user_id}", response_model=UserResource)
-async def get_user(user_id: uuid.UUID):
+@router.get("/users/{user_id}")
+async def get_user(user_id: uuid.UUID) -> UserResource:
     return database_parody[user_id]
 
 
 class ChangeAddressToList(VersionChange):
     description = "Give user the ability to have multiple addresses at the same time"
     instructions_to_migrate_to_previous_version = (
-        schema(BaseUser).field("addresses").didnt_exist,
-        schema(BaseUser).field("address").existed_as(type=str, info=Field()),
+        schema(UserCreateRequest).field("addresses").had(name="address", type=str),
+        schema(UserResource).field("addresses").had(name="address", type=str),
     )
 
     @convert_request_to_next_version_for(UserCreateRequest)
@@ -66,7 +60,6 @@ class ChangeAddressToList(VersionChange):
 
 app = Cadwyn(
     versions=VersionBundle(
-        HeadVersion(),
         Version("2001-01-01", ChangeAddressToList),
         Version("2000-01-01"),
     )

@@ -32,7 +32,7 @@ The app is ready to be used. Every time you would like to call its endpoints, yo
 
 During our development, we have realized that the initial API design was wrong and that addresses should have always been a list because the user wants to have multiple addresses to choose from so now we have to change the type of the "address" field to the list of strings.
 
-```python hl_lines="13 33"
+```python hl_lines="2 4 15 20 30 39"
 {!> ../docs_src/quickstart/tutorial/block002.py !}
 ```
 
@@ -56,7 +56,7 @@ To fix the old integrations of our clients, we need to add back the `2000-01-01`
 
 For every endpoint whose `response_model` is `UserResource`, this migration will convert the list of addresses back to a single address when migrating to the previous version. Our goal is to have an app of [HEAD version](../concepts/version_changes.md#headversion) and to describe what older versions looked like in comparison to it. That way the old versions are frozen in migrations and you can **almost** safely forget about them.
 
-```python hl_lines="9-14 49-73"
+```python hl_lines="8-9 12 14-16 45-66"
 {!> ../docs_src/quickstart/tutorial/block003.py !}
 ```
 
