@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import date
 from typing import Annotated, cast
@@ -6,6 +7,7 @@ import pytest
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from cadwyn import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
@@ -27,7 +29,10 @@ def test__header_routing__invalid_version_format__error():
 
 
 def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_openapi_routes():
-    assert [cast(APIRoute, r).path for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16)))).routes] == [
+    assert [
+        cast(APIRoute, r).path
+        for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16)))).routes
+    ] == [
         "/docs/oauth2-redirect",
         "/changelog",
         "/openapi.json",
@@ -36,18 +41,27 @@ def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_ope
     ]
     assert [
         cast(APIRoute, r).path
-        for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), docs_url=None, redoc_url=None).routes
+        for r in Cadwyn(
+            versions=VersionBundle(Version(date(2022, 11, 16))), docs_url=None, redoc_url=None
+        ).routes
     ] == [
         "/changelog",
         "/openapi.json",
     ]
     assert (
-        Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), openapi_url=None, changelog_url=None).routes == []
+        Cadwyn(
+            versions=VersionBundle(Version(date(2022, 11, 16))),
+            openapi_url=None,
+            changelog_url=None,
+        ).routes
+        == []
     )
 
 
 def test__header_routing_fastapi_init__passing_null_to_oauth2__should_not_add_oauth2_redirect_route():
-    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), swagger_ui_oauth2_redirect_url=None)
+    app = Cadwyn(
+        versions=VersionBundle(Version(date(2022, 11, 16))), swagger_ui_oauth2_redirect_url=None
+    )
     assert [cast(APIRoute, r).path for r in app.routes] == [
         "/changelog",
         "/openapi.json",
@@ -126,7 +140,9 @@ def test__cadwyn__with_dependency_overrides__overrides_should_be_applied():
     with TestClient(app) as client:
         assert client.post("/hello").json() == "new"
         assert client.post("/darkness", headers={"x-api-version": "2022-11-16"}).json() == "new"
-        assert client.post("/my_old_friend", headers={"x-api-version": "2022-11-16"}).json() == "new"
+        assert (
+            client.post("/my_old_friend", headers={"x-api-version": "2022-11-16"}).json() == "new"
+        )
 
 
 def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empty__version_should_not_have_any_routes():
@@ -138,7 +154,9 @@ def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empt
     assert route.path == "/openapi.json"
 
 
-@pytest.mark.parametrize("client", [client_without_headers, client_without_headers_and_with_custom_api_version_var])
+@pytest.mark.parametrize(
+    "client", [client_without_headers, client_without_headers_and_with_custom_api_version_var]
+)
 def test__header_based_versioning(client: TestClient):
     resp = client.get("/v1", headers=BASIC_HEADERS)
     assert resp.status_code == 200
@@ -157,7 +175,9 @@ def test__header_based_versioning(client: TestClient):
 
 
 def test__header_based_versioning__invalid_version_header_format__should_raise_422():
-    resp = client_without_headers.get("/v1", headers=BASIC_HEADERS | {"X-API-VERSION": "2022-02_02"})
+    resp = client_without_headers.get(
+        "/v1", headers=BASIC_HEADERS | {"X-API-VERSION": "2022-02_02"}
+    )
     assert resp.status_code == 422
     assert resp.json()[0]["loc"] == ["header", "x-api-version"]
 
@@ -184,7 +204,9 @@ def test__get_openapi__nonexisting_version__error():
 
 def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
     root_app = FastAPI()
-    root_app.mount("/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16)))))
+    root_app.mount(
+        "/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16))))
+    )
     client = TestClient(root_app)
 
     resp = client.get("/my_api/openapi.json?version=2022-11-16")
@@ -214,7 +236,9 @@ def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_
 
 def test__get_docs__with_mounted_app__should_return_all_versioned_doc_urls():
     root_app = FastAPI()
-    root_app.mount("/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16)))))
+    root_app.mount(
+        "/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16))))
+    )
     client = TestClient(root_app)
 
     resp = client.get("/my_api/docs")
@@ -291,3 +315,42 @@ def test__background_tasks():
         resp = client.post("/send-notification/test@example.com", headers=BASIC_HEADERS)
         assert resp.status_code == 200, resp.json()
         assert background_task_data == ("test@example.com", "some notification")
+
+
+def test__webhooks():
+    webhooks = APIRouter()
+
+    class Subscription(BaseModel):
+        username: str
+        monthly_fee: float
+        start_date: str
+
+    @webhooks.post("new-subscription")
+    def new_subscription(body: Subscription):
+        """
+        When a new user subscribes to your service we'll send you a POST request with this
+        data to the URL that you register for the event `new-subscription` in the dashboard.
+        """
+        pass
+
+    app = Cadwyn(
+        versions=VersionBundle(HeadVersion(), Version(DEFAULT_API_VERSION)),
+        webhooks=webhooks,
+    )
+
+    with TestClient(app) as client:
+        resp = client.get(f"/openapi.json?version={DEFAULT_API_VERSION}")
+        openapi_dict = json.loads(resp.text)
+
+        # Validate that the "webhooks" section exists
+        assert "webhooks" in openapi_dict, "'webhooks' section is missing"
+
+        # Validate that the "new-subscription" webhook exists
+        assert (
+            "new-subscription" in openapi_dict["webhooks"]
+        ), "'new-subscription' webhook is missing"
+
+        # Validate that there is a POST method for "new-subscription"
+        assert (
+            "post" in openapi_dict["webhooks"]["new-subscription"]
+        ), "POST method for 'new-subscription' is missing"
