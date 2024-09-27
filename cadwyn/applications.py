@@ -27,7 +27,7 @@ from typing_extensions import Self
 
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
-from cadwyn.route_generation import generate_versioned_routers
+from cadwyn.route_generation import generate_versioned_routers, VersionedAPIRouter
 from cadwyn.routing import _RootHeaderAPIRouter
 from cadwyn.structure import VersionBundle
 
@@ -85,7 +85,7 @@ class Cadwyn(FastAPI):
         root_path_in_servers: bool = True,
         responses: dict[int | str, dict[str, Any]] | None = None,
         callbacks: list[BaseRoute] | None = None,
-        webhooks: APIRouter | None = None,
+        webhooks: VersionedAPIRouter | None = None,
         deprecated: bool | None = None,
         include_in_schema: bool = True,
         swagger_ui_parameters: dict[str, Any] | None = None,
@@ -98,6 +98,7 @@ class Cadwyn(FastAPI):
         self.versions = versions
         # TODO: Remove argument entirely in any major version.
         self._dependency_overrides_provider = FakeDependencyOverridesProvider({})
+        self.webhooks = webhooks or VersionedAPIRouter()
 
         super().__init__(
             debug=debug,
@@ -289,6 +290,7 @@ class Cadwyn(FastAPI):
                 routes=routes,
                 tags=self.openapi_tags,
                 servers=self.servers,
+                webhooks=self.webhooks.routes,
             )
         )
 
