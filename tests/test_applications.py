@@ -4,7 +4,7 @@ from datetime import date
 from typing import Annotated, cast
 
 import pytest
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI
+from fastapi import BackgroundTasks, Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -318,7 +318,7 @@ def test__background_tasks():
 
 
 def test__webhooks():
-    webhooks = APIRouter()
+    webhooks = VersionedAPIRouter()
 
     class Subscription(BaseModel):
         username: str
@@ -354,3 +354,8 @@ def test__webhooks():
         assert (
             "post" in openapi_dict["webhooks"]["new-subscription"]
         ), "POST method for 'new-subscription' is missing"
+
+        # Validate that the "Subscription" component exists
+        assert (
+            "Subscription" in openapi_dict["components"]["schemas"]
+        ), "'Subscription' component is missing"
