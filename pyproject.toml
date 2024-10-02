@@ -1,12 +1,13 @@
-[tool.poetry]
+[project]
 name = "cadwyn"
 version = "4.2.4"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
-authors = ["Stanislav Zmiev <zmievsa@gmail.com>"]
+authors = [{ name = "Stanislav Zmiev", email = "zmievsa@gmail.com" }]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/zmievsa/cadwyn"
 documentation = "https://docs.cadwyn.dev"
+requires-python = ">=3.10"
 keywords = [
     "python",
     "api",
@@ -47,46 +48,46 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
     "Topic :: Internet :: WWW/HTTP",
 ]
+dependencies = [
+    "fastapi >=0.112.3",
+    "starlette >=0.30.0",
+    "pydantic >=2.0.0",
+    "typer >=0.7.0",
+    "jinja2 >=3.1.2",
+    "issubclass >=0.1.2",
+    "backports-strenum >=1.3.1,<2; python_version < '3.11'",
+    "typing-extensions>=4.8.0",
+]
 
+[project.optional-dependencies]
+standard = ["fastapi[standard]>=0.112.3"]
 
-[tool.poetry.dependencies]
-fastapi = ">=0.112.3"
-python = "^3.10"
-typing-extensions = "*"
-starlette = ">=0.30.0"
-pydantic = ">=2.0.0"
-typer = ">=0.7.0"
-jinja2 = ">=3.1.2"
-issubclass = "^0.1.2"
-backports-strenum = { version = "^1.3.1", python = "<3.11" }
-
-[tool.poetry.group.dev.dependencies]
-pdbpp = "^0.10.3"
-python-multipart = ">=0.0.6"
-better-devtools = "^0.13.3"
-pytest-sugar = "^1.0.0"
-
-[tool.poetry.group.tutorial.dependencies]
-fastapi-cli = ">=0.0.5"
-uvicorn = ">=0.31.0"
-
-[tool.poetry.group.tests.dependencies]
-svcs = "^24.1.0"
-httpx = "*"
-pytest-fixture-classes = ">=1.0.3"
-pytest = ">=7.2.1"
-pytest-cov = ">=4.0.0"
-dirty-equals = ">=0.6.0"
-
-[tool.poetry.group.docs.dependencies]
-mkdocs = ">=1.5.2"
-mkdocs-material = ">=9.3.1"
-mkdocs-simple-hooks = ">=0.1.5"
-mdx-include = "^1.4.2"
-mike = "^2.1.2"
-
-[tool.poetry.scripts]
+[project.scripts]
 cadwyn = "cadwyn.__main__:app"
+
+[tool.uv]
+dev-dependencies = [
+    "pdbpp ~=0.10.3",
+    "python-multipart >=0.0.6",
+    "better-devtools ~=0.13.3",
+    "pytest-sugar ~=1.0.0",
+
+    # tests
+    "svcs ~=24.1.0",
+    "httpx >=0.26.0",
+    "pytest-fixture-classes >=1.0.3",
+    "pytest >=7.2.1",
+    "pytest-cov >=4.0.0",
+    "dirty-equals >=0.6.0",
+    "uvicorn ~=0.23.0",
+
+    # docs
+    "mkdocs >=1.5.2",
+    "mkdocs-material >=9.3.1",
+    "mkdocs-simple-hooks >=0.1.5",
+    "mdx-include ~=1.4.2",
+    "mike >=2.1.2, <3",
+]
 
 [tool.coverage.run]
 data_file = "coverage/coverage"
@@ -140,7 +141,6 @@ reportFunctionMemberAccess = false
 reportCircularImports = true
 reportInvalidTypeForm = false
 
-
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
