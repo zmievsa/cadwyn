@@ -21,10 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-python-poetry
-      - run: poetry install --only=docs
+      - uses: ./.github/actions/setup-python-uv
+      - run: uv sync --dev
       # TODO: Validate that the command exits with code 0 and has no ERROR in logs (both)
-      - run: poetry run mkdocs build
+      - run: uv run mkdocs build
   markdown-link-check:
     runs-on: ubuntu-latest
     steps:
