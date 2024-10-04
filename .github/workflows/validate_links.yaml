@@ -21,9 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-python-uv
-      - run: uv sync --dev
-      # TODO: Validate that the command exits with code 0 and has no ERROR in logs (both)
+      - uses:
+          ./.github/actions/setup-python-uv
+          # TODO: Validate that the command exits with code 0 and has no ERROR in logs (both)
       - run: uv run mkdocs build
   markdown-link-check:
     runs-on: ubuntu-latest

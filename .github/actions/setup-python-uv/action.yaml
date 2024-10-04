@@ -1,5 +1,5 @@
-name: "Setup Python and Poetry"
-description: "Checkout code and setup Python with Poetry"
+name: "Setup Python and UV"
+description: "Checkout code and setup Python with UV"
 inputs:
   python-version:
     description: "The Python version to set up"
@@ -18,6 +18,8 @@ runs:
         version: ${{ inputs.uv-version }}
         enable-cache: true
         cache-dependency-glob: "uv.lock"
+    - run: uv sync --inexact --frozen --python-preference=only-system --all-extras
+      shell: bash
     - uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}

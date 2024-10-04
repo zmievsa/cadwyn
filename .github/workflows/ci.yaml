@@ -38,7 +38,6 @@ jobs:
       - uses: ./.github/actions/setup-python-uv
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --dev
       - run: uv run coverage run --source=. -m pytest .
       - name: Upload coverage results
         uses: actions/upload-artifact@v3
@@ -56,7 +55,6 @@ jobs:
           name: coverage-results
           path: coverage/
       - uses: ./.github/actions/setup-python-uv
-      - run: uv sync --dev
       - run: ls -all
       - run: uv run coverage combine
       - run: uv run coverage xml
@@ -78,7 +76,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-python-uv
-      - run: uv sync --dev
 
       - uses: jakebailey/pyright-action@v1
         with:

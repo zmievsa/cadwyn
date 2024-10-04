@@ -25,5 +25,4 @@ jobs:
           restore-keys: |
             mkdocs-material-
       - uses: ./.github/actions/setup-python-uv
-      - run: uv sync --dev
       - run: uv run mkdocs gh-deploy --force

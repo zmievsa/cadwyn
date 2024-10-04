@@ -10,14 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
-    environment:
-        name: pypi
-        url: https://pypi.org/p/cadwyn
-    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
+    if: startsWith(github.ref, 'refs/tags/') # only publish to PyPI on tag pushes
 
     steps:
-    - uses: actions/checkout@v4
-    - uses: ./.github/actions/setup-python-uv
-    - run: uv build
-    - name: Publish distribution 📦 to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-uv
+      - run: uv build
+      - run: uv publish
