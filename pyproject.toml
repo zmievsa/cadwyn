@@ -1,6 +1,6 @@
 [project]
 name = "cadwyn"
-version = "4.2.4"
+version = "4.3.0"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = [{ name = "Stanislav Zmiev", email = "zmievsa@gmail.com" }]
 license = "MIT"
@@ -57,12 +57,13 @@ dependencies = [
     "typing-extensions>=4.8.0",
 ]
 
+[project.optional-dependencies]
+standard = ["fastapi[standard]>=0.112.3"]
+
 [project.urls]
 "Source code" = "https://github.com/zmievsa/cadwyn"
 Documentation = "https://docs.cadwyn.dev"
 
-[project.optional-dependencies]
-standard = ["fastapi[standard]>=0.112.3"]
 
 [project.scripts]
 cadwyn = "cadwyn.__main__:app"
