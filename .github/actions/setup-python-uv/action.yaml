@@ -1,5 +1,5 @@
-name: "Setup Python and Poetry"
-description: "Checkout code and setup Python with Poetry"
+name: "Setup Python and UV"
+description: "Checkout code and setup Python with UV"
 inputs:
   python-version:
     description: "The Python version to set up"
@@ -21,3 +21,7 @@ runs:
     - uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
+    - run: |
+        uv sync --inexact --frozen --all-extras --dev
+        echo "$(pwd)/.venv/bin" >> $GITHUB_PATH
+      shell: bash
