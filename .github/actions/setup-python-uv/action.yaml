@@ -21,5 +21,7 @@ runs:
     - uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
-    - run: uv sync --inexact --frozen --python-preference=only-system --all-extras
+    - run: |
+        uv sync --inexact --frozen --all-extras --dev
+        echo '${pwd}/.venv/bin' >> $GITHUB_PATH
       shell: bash
