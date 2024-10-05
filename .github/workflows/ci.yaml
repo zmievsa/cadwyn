@@ -46,7 +46,7 @@ jobs:
           name: main-tests-coverage-results
           path: coverage/
   Tutorial-tests:
-    runs-on: ubunut-latest
+    runs-on: ubuntu-latest
     name: Tutorial tests
     steps:
       - uses: actions/checkout@v4
