@@ -21,10 +21,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses:
-          ./.github/actions/setup-python-uv
-          # TODO: Validate that the command exits with code 0 and has no ERROR in logs (both)
-      - run: uv run mkdocs build
+      - uses: ./.github/actions/setup-python-uv
+      - run: |
+          OUTPUT=$(uv run mkdocs build 2>&1)
+          echo "$OUTPUT"
+
+          if echo "$OUTPUT" | grep -q "ERROR"; then
+              exit 1
+          fi
+
   markdown-link-check:
     runs-on: ubuntu-latest
     steps:
