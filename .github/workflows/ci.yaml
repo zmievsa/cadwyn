@@ -38,32 +38,57 @@ jobs:
       - uses: ./.github/actions/setup-python-uv
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv run coverage run --source=. -m pytest .
+      - run: uv run coverage run --source=. --parallel-mode -m pytest tests
       - name: Upload coverage results
         uses: actions/upload-artifact@v3
         if: matrix.os == 'ubuntu-latest' # Cross-platform coverage combination doesn't work
         with:
-          name: coverage-results
+          name: main-tests-coverage-results
+          path: coverage/
+  Tutorial-tests:
+    runs-on: ubunut-latest
+    name: Tutorial tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install cadwyn with instructions from docs
+        run: sh docs_src/quickstart/setup/block001.sh
+      - run: pip install pytest coverage
+      - run: coverage run --source=. --parallel-mode -m pytest docs_src
+      - name: Upload coverage results
+        uses: actions/upload-artifact@v3
+        with:
+          name: docs-tests-coverage-results
           path: coverage/
   Coverage:
-    needs: Tests
+    needs: [Tests, Tutorial-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v3
+      - name: Download main tests coverage info
+        uses: actions/download-artifact@v3
         with:
-          name: coverage-results
+          name: main-tests-coverage-results
           path: coverage/
-      - uses: ./.github/actions/setup-python-uv
-      - run: ls -all
-      - run: uv run coverage combine
-      - run: uv run coverage xml
+      - name: Download docs tests coverage info
+        uses: actions/download-artifact@v3
+        with:
+          name: docs-tests-coverage-results
+          path: coverage/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install coverage
+      - run: coverage combine
+      - run: coverage xml
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         env:
           fail_ci_if_error: true
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      - run: uv run coverage report --fail-under=100
+      - run: coverage report --fail-under=100
 
   Lint:
     runs-on: ubuntu-latest
