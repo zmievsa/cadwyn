@@ -2,21 +2,15 @@
 
 ## Setting up the environment
 
-* The lowest currently supported version is Python 3.10. You can use
-[pyenv](https://github.com/pyenv/pyenv) to manage multiple Python
+* The lowest currently supported version is Python 3.10. You should use
+[uv](https://docs.astral.sh/uv/) to manage multiple Python
 versions on your system.
 * We maintain a Makefile with several commands to help with common tasks.
 
-1. Install [Poetry](https://python-poetry.org/)
-2. Run `poetry install --all-extras` to create a [virtual environment](https://docs.python.org/3/tutorial/venv.html) and install the required development dependencies
-3. Install [pre-commit](https://pre-commit.com/)
+1. Install [uv](https://docs.astral.sh/uv/)
+2. Run `uv sync` to create a virtual environment and install the required development dependencies
+3. Install [pre-commit](https://pre-commit.com/) using uv: `uv tool install pre-commit`
 4. Run `pre-commit install --install-hooks` to install pre-commit hooks
-
-Many modern IDEs like PyCharm or VS Code will enable the Poetry-managed virtualenv that is created in step 2 for you automatically. If your IDE/editor does not offer this functionality, then you will need to manually activate the virtualenv yourself. Otherwise you may encounter errors or unexpected behaviour when trying to run the commands referenced within this document.
-
-To activate the virtualenv, please consult Poetry's documentation on [working with virtual environments](https://python-poetry.org/docs/basic-usage#using-your-virtual-environment).
-
-The rest of this document will assume this environment is active wherever commands are referenced.
 
 ## Code contributions
 
@@ -53,7 +47,7 @@ tests for `cadwyn/codegen.py` reside in `tests/codegen`.
 We use [pyright](https://github.com/microsoft/pyright/) to enforce type safety.
 You can run it with:
 
-`pyright .`
+`uv run pyright .`
 
 ## Project documentation
 

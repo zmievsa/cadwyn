@@ -35,11 +35,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-python-poetry
+      - uses: ./.github/actions/setup-python-uv
         with:
           python-version: ${{ matrix.python-version }}
-      - run: poetry install --only main,tests
-      - run: poetry run coverage run --source=. -m pytest .
+      - run: uv run coverage run --source=. -m pytest .
       - name: Upload coverage results
         uses: actions/upload-artifact@v3
         if: matrix.os == 'ubuntu-latest' # Cross-platform coverage combination doesn't work
@@ -55,17 +54,16 @@ jobs:
         with:
           name: coverage-results
           path: coverage/
-      - uses: ./.github/actions/setup-python-poetry
-      - run: poetry install --only main,tests
+      - uses: ./.github/actions/setup-python-uv
       - run: ls -all
-      - run: poetry run coverage combine
-      - run: poetry run coverage xml
+      - run: uv run coverage combine
+      - run: uv run coverage xml
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         env:
           fail_ci_if_error: true
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      - run: poetry run coverage report --fail-under=100
+      - run: uv run coverage report --fail-under=100
 
   Lint:
     runs-on: ubuntu-latest
@@ -77,8 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-python-poetry
-      - run: poetry install --only main,tests,docs
+      - uses: ./.github/actions/setup-python-uv
 
       - uses: jakebailey/pyright-action@v1
         with:

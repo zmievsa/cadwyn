@@ -1,0 +1,27 @@
+name: "Setup Python and UV"
+description: "Checkout code and setup Python with UV"
+inputs:
+  python-version:
+    description: "The Python version to set up"
+    required: true
+    default: "3.10"
+  uv-version:
+    description: "The uv version to set up"
+    required: true
+    default: "0.4.18"
+
+runs:
+  using: "composite"
+  steps:
+    - uses: astral-sh/setup-uv@v3
+      with:
+        version: ${{ inputs.uv-version }}
+        enable-cache: true
+        cache-dependency-glob: "uv.lock"
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - run: |
+        uv sync --inexact --frozen --all-extras --dev
+        echo "$(pwd)/.venv/bin" >> $GITHUB_PATH
+      shell: bash

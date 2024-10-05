@@ -5,6 +5,19 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [4.3.1]
+
+### Fixed
+
+* Removed typer from main dependencies
+
+## [4.3.0]
+
+### Changed
+
+* Migrated from poetry to uv (Contributed by @bastienpo)
+* Removed CLI and Uvicorn dependencies from Cadwyn installations by default. Added a `standard` extras group to mirror FastAPI (Contributed by @bastienpo)
+
 ## [4.2.4]
 
 ### Fixed
