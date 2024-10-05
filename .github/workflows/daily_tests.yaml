@@ -25,7 +25,7 @@ jobs:
       - name: Send Telegram Notification on Failure
         uses: appleboy/telegram-action@master
         with:
-          to: zmievsa
+          to: 438153389
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
             New version of something broke Cadwyn!
