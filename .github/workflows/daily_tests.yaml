@@ -1,0 +1,32 @@
+name: Twice Daily Package Update Testing
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+    - cron: "0 12 * * *"
+  workflow_dispatch: # Allows manual triggering of the workflow
+
+jobs:
+  update-dependencies-and-test:
+    name: Update dependencies and run tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-uv
+      - run: pytest . && exit 1
+
+  notify-on-failure:
+    name: Notify on failure
+    runs-on: ubuntu-latest
+    needs: update-dependencies-and-test
+    if: failure()
+    steps:
+      - name: Send Telegram Notification on Failure
+        uses: appleboy/telegram-action@master
+        with:
+          to: zmievsa
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: |
+            New version of something broke Cadwyn!
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
