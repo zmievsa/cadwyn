@@ -22,6 +22,6 @@ runs:
         enable-cache: true
         cache-dependency-glob: "uv.lock"
     - run: |
-        uv sync --inexact --frozen --all-extras --dev
+        uv sync --frozen --all-extras --dev
         echo "$(pwd)/.venv/bin" >> $GITHUB_PATH
       shell: bash

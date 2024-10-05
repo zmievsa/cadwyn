@@ -14,7 +14,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-python-uv
-      - run: pytest . && exit 1
+      - run: uv sync --refresh --all-extras --dev --upgrade
+      - run: pytest .
 
   notify-on-failure:
     name: Notify on failure
