@@ -6,7 +6,7 @@ Cadwyn is built around FastAPI and supports all of its functionality out of the 
 ## Installation
 
 ```bash
-{!> ../docs_src/quickstart/setup/block00ы1.sh !}
+{!> ../docs_src/quickstart/setup/block001.sh !}
 ```
 
 ## The basics
