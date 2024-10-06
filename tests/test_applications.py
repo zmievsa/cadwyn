@@ -6,10 +6,13 @@ import pytest
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from cadwyn import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
-from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
+from cadwyn.structure.endpoints import endpoint
+from cadwyn.structure.schemas import schema
+from cadwyn.structure.versions import HeadVersion, Version, VersionBundle, VersionChange
 from tests._resources.utils import BASIC_HEADERS, DEFAULT_API_VERSION
 from tests._resources.versioned_app.app import (
     client_without_headers,
@@ -162,8 +165,8 @@ def test__header_based_versioning__invalid_version_header_format__should_raise_4
     assert resp.json()[0]["loc"] == ["header", "x-api-version"]
 
 
-def test__get_webhooks_router():
-    resp = client_without_headers.post("/v1/webhooks")
+def test__get_unversioned_router():
+    resp = client_without_headers.post("/v1/unversioned")
     assert resp.status_code == 200
     assert resp.json() == {"saved": True}
 
@@ -254,14 +257,14 @@ def test__get_docs__specific_version():
     assert resp.status_code == 200
 
 
-def test__get_webhooks_with_redirect():
-    resp = client_without_headers.post("/v1/webhooks/")
+def test__get_unversioned_with_redirect():
+    resp = client_without_headers.post("/v1/unversioned/")
     assert resp.status_code == 200
     assert resp.json() == {"saved": True}
 
 
-def test__get_webhooks_as_partial_because_of_method():
-    resp = client_without_headers.patch("/v1/webhooks")
+def test__get_unversioned_as_partial_because_of_method():
+    resp = client_without_headers.patch("/v1/unversioned")
     assert resp.status_code == 405
 
 
@@ -291,3 +294,60 @@ def test__background_tasks():
         resp = client.post("/send-notification/test@example.com", headers=BASIC_HEADERS)
         assert resp.status_code == 200, resp.json()
         assert background_task_data == ("test@example.com", "some notification")
+
+
+def test__webhooks():
+    webhooks = VersionedAPIRouter()
+
+    class Subscription(BaseModel):
+        username: str
+        monthly_fee: float
+        start_date: str
+
+    @webhooks.post("new-subscription")
+    def new_subscription(body: Subscription):  # pragma: no cover
+        """
+        When a new user subscribes to your service we'll send you a POST request with this
+        data to the URL that you register for the event `new-subscription` in the dashboard.
+        """
+
+    class MyVersionChange(VersionChange):
+        description = "Mess with webhooks"
+        instructions_to_migrate_to_previous_version = [
+            endpoint("new-subscription", ["POST"]).didnt_exist,
+            schema(Subscription).field("monthly_fee").didnt_exist,
+        ]
+
+    app = Cadwyn(
+        versions=VersionBundle(HeadVersion(), Version("2023-04-12", MyVersionChange), Version("2022-11-16")),
+        webhooks=webhooks,
+    )
+
+    @app.webhooks.post("post-subscription")  # pragma: no cover
+    def post_subscription(body: Subscription):  # pragma: no cover
+        """This should also be there"""
+
+    with TestClient(app) as client:
+        resp = client.get("/openapi.json?version=2023-04-12")
+        openapi_dict = resp.json()
+
+        assert "webhooks" in openapi_dict, "'webhooks' section is missing"
+        assert "new-subscription" in openapi_dict["webhooks"], "'new-subscription' webhook is missing"
+        assert "post-subscription" in openapi_dict["webhooks"], "'post-subscription' webhook is missing"
+        assert "post" in openapi_dict["webhooks"]["post-subscription"], "POST method for 'post-subscription' is missing"
+        assert "Subscription" in openapi_dict["components"]["schemas"], "'Subscription' component is missing"
+        assert (
+            "monthly_fee" in openapi_dict["components"]["schemas"]["Subscription"]["properties"]
+        ), "monthly_fee field is missing"
+
+        resp = client.get("/openapi.json?version=2022-11-16")
+        openapi_dict = resp.json()
+
+        assert "webhooks" in openapi_dict, "'webhooks' section is missing"
+        assert "new-subscription" not in openapi_dict["webhooks"], "'new-subscription' webhook is missing"
+        assert "post-subscription" in openapi_dict["webhooks"], "'post-subscription' webhook is present"
+        assert "post" in openapi_dict["webhooks"]["post-subscription"], "POST method for 'post-subscription' is missing"
+        assert "Subscription" in openapi_dict["components"]["schemas"], "'Subscription' component is missing"
+        assert (
+            "monthly_fee" not in openapi_dict["components"]["schemas"]["Subscription"]["properties"]
+        ), "monthly_fee field is present yet it must be deleted"

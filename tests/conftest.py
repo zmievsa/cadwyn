@@ -105,6 +105,7 @@ class CreateVersionedApp:
             )
         )
         app.generate_and_include_versioned_routers(router)
+        app._cadwyn_initialize()
         return app
 
 

@@ -7,7 +7,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
-    TypeVar,
     cast,
 )
 
@@ -20,7 +19,7 @@ from fastapi.routing import APIRoute
 from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel
 from starlette.routing import BaseRoute
-from typing_extensions import assert_never
+from typing_extensions import TypeVar, assert_never
 
 from cadwyn._utils import Sentinel
 from cadwyn.exceptions import (
@@ -48,7 +47,8 @@ if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])
-_R = TypeVar("_R", bound=fastapi.routing.APIRouter)
+_R = TypeVar("_R", bound=APIRouter)
+_WR = TypeVar("_WR", bound=APIRouter, default=APIRouter)
 # This is a hack we do because we can't guarantee how the user will use the router.
 _DELETED_ROUTE_TAG = "_CADWYN_DELETED_ROUTE"
 
@@ -59,8 +59,21 @@ class _EndpointInfo:
     endpoint_methods: frozenset[str]
 
 
-def generate_versioned_routers(router: _R, versions: VersionBundle) -> dict[VersionDate, _R]:
-    return _EndpointTransformer(router, versions).transform()
+@dataclass(slots=True, frozen=True)
+class GeneratedRouters(Generic[_R, _WR]):
+    endpoints: dict[VersionDate, _R]
+    webhooks: dict[VersionDate, _WR]
+
+
+def generate_versioned_routers(
+    router: _R,
+    versions: VersionBundle,
+    *,
+    webhooks: _WR | None = None,
+) -> GeneratedRouters[_R, _WR]:
+    if webhooks is None:
+        webhooks = cast(_WR, APIRouter())
+    return _EndpointTransformer(router, versions, webhooks).transform()
 
 
 class VersionedAPIRouter(fastapi.routing.APIRouter):
@@ -77,30 +90,36 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         return endpoint
 
 
-class _EndpointTransformer(Generic[_R]):
-    def __init__(self, parent_router: _R, versions: VersionBundle) -> None:
+class _EndpointTransformer(Generic[_R, _WR]):
+    def __init__(self, parent_router: _R, versions: VersionBundle, webhooks: _WR) -> None:
         super().__init__()
         self.parent_router = parent_router
         self.versions = versions
+        self.parent_webhooks_router = webhooks
         self.schema_generators = generate_versioned_models(versions)
 
         self.routes_that_never_existed = [
             route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
         ]
 
-    def transform(self) -> dict[VersionDate, _R]:
+    def transform(self) -> GeneratedRouters[_R, _WR]:
         router = deepcopy(self.parent_router)
+        webhook_router = deepcopy(self.parent_webhooks_router)
         routers: dict[VersionDate, _R] = {}
+        webhook_routers: dict[VersionDate, _WR] = {}
 
         for version in self.versions:
             self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(router)
+            self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(webhook_router)
 
             self._validate_all_data_converters_are_applied(router, version)
 
             routers[version.value] = router
+            webhook_routers[version.value] = webhook_router
             # Applying changes for the next version
             router = deepcopy(router)
-            self._apply_endpoint_changes_to_router(router, version)
+            webhook_router = deepcopy(webhook_router)
+            self._apply_endpoint_changes_to_router(router.routes + webhook_router.routes, version)
 
         if self.routes_that_never_existed:
             raise RouterGenerationError(
@@ -146,7 +165,13 @@ class _EndpointTransformer(Generic[_R]):
                 for route in router.routes
                 if not (isinstance(route, fastapi.routing.APIRoute) and _DELETED_ROUTE_TAG in route.tags)
             ]
-        return routers
+        for _, webhook_router in webhook_routers.items():
+            webhook_router.routes = [
+                route
+                for route in webhook_router.routes
+                if not (isinstance(route, fastapi.routing.APIRoute) and _DELETED_ROUTE_TAG in route.tags)
+            ]
+        return GeneratedRouters(routers, webhook_routers)
 
     def _validate_all_data_converters_are_applied(self, router: APIRouter, version: Version):
         path_to_route_methods_mapping, head_response_models, head_request_bodies = self._extract_all_routes_identifiers(
@@ -223,10 +248,9 @@ class _EndpointTransformer(Generic[_R]):
     # TODO (https://github.com/zmievsa/cadwyn/issues/28): Simplify
     def _apply_endpoint_changes_to_router(  # noqa: C901
         self,
-        router: fastapi.routing.APIRouter,
+        routes: list[BaseRoute] | list[APIRoute],
         version: Version,
     ):
-        routes = router.routes
         for version_change in version.changes:
             for instruction in version_change.alter_endpoint_instructions:
                 original_routes = _get_routes(

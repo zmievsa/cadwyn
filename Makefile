@@ -2,7 +2,7 @@ SHELL := /bin/bash
 py_warn = PYTHONDEVMODE=1
 
 install:
-	uv sync --all-extras
+	uv sync --all-extras --dev
 
 lint:
 	pre-commit run --all-files

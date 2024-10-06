@@ -5,6 +5,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [4.4.0]
+
+### Added
+
+* Support for [webhooks](https://fastapi.tiangolo.com/advanced/openapi-webhooks/) in swagger
+* Automatic generation of versioned routes and webhooks upon the first request to Cadwyn. Notice that if you were using some of cadwyn's internal interfaces, this might break your code. If it did, make an issue and let's discuss your use case
+
 ## [4.3.1]
 
 ### Fixed
