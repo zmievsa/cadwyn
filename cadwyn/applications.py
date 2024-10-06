@@ -1,15 +1,11 @@
-import collections
-import contextlib
 import dataclasses
 import datetime
-import typing
-from collections.abc import AsyncGenerator, Callable, Coroutine, Sequence
+from collections.abc import Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
 from typing import Any, cast
 
-import typing_extensions
 from fastapi import APIRouter, FastAPI, HTTPException, routing
 from fastapi.datastructures import Default
 from fastapi.openapi.docs import (
@@ -32,7 +28,7 @@ from typing_extensions import Self
 from cadwyn._utils import same_definition_as_in
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
-from cadwyn.route_generation import VersionedAPIRouter, generate_versioned_routers
+from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.routing import _RootHeaderAPIRouter
 from cadwyn.structure import VersionBundle
 
@@ -183,11 +179,12 @@ class Cadwyn(FastAPI):
             default_response_class=default_response_class,
         )
 
-    async def __call__(self, scope, receive, send) -> None:
+    @same_definition_as_in(FastAPI.__call__)
+    async def __call__(self, *args: Any, **kwargs: Any) -> None:
         if not self._cadwyn_initialized:
             self._cadwyn_initialize()
         self.__call__ = super().__call__
-        return await self.__call__(scope, receive, send)
+        return await self.__call__(*args, **kwargs)
 
     def _cadwyn_initialize(self) -> None:
         generated_routers = generate_versioned_routers(
