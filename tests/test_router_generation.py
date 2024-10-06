@@ -190,10 +190,10 @@ def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
     )
     routers = generate_versioned_routers(router, versions=versions)
 
-    assert len(routers[date(2003, 1, 1)].routes) == 0
-    assert len(routers[date(2002, 1, 1)].routes) == 1
-    assert len(routers[date(2001, 1, 1)].routes) == 0
-    assert len(routers[date(2000, 1, 1)].routes) == 1
+    assert len(routers.endpoints[date(2003, 1, 1)].routes) == 0
+    assert len(routers.endpoints[date(2002, 1, 1)].routes) == 1
+    assert len(routers.endpoints[date(2001, 1, 1)].routes) == 0
+    assert len(routers.endpoints[date(2000, 1, 1)].routes) == 1
 
 
 @pytest.mark.parametrize(
@@ -599,14 +599,14 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
     )
     routers = generate_versioned_routers(router, versions=versions)
 
-    assert len(routers[date(2002, 1, 1)].routes) == 0
-    assert len(routers[date(2001, 1, 1)].routes) == 1
-    assert len(routers[date(2000, 1, 1)].routes) == 2
+    assert len(routers.endpoints[date(2002, 1, 1)].routes) == 0
+    assert len(routers.endpoints[date(2001, 1, 1)].routes) == 1
+    assert len(routers.endpoints[date(2000, 1, 1)].routes) == 2
 
-    assert endpoints_equal(routers[date(2001, 1, 1)].routes[0].endpoint, route_to_restore_first)  # pyright: ignore
+    assert endpoints_equal(routers.endpoints[date(2001, 1, 1)].routes[0].endpoint, route_to_restore_first)  # pyright: ignore
     assert {
-        get_wrapped_endpoint(routers[date(2000, 1, 1)].routes[0].endpoint),  # pyright: ignore
-        get_wrapped_endpoint(routers[date(2000, 1, 1)].routes[1].endpoint),  # pyright: ignore
+        get_wrapped_endpoint(routers.endpoints[date(2000, 1, 1)].routes[0].endpoint),  # pyright: ignore
+        get_wrapped_endpoint(routers.endpoints[date(2000, 1, 1)].routes[1].endpoint),  # pyright: ignore
     } == {
         route_to_restore_first,
         route_to_restore_second,
@@ -1014,9 +1014,9 @@ def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: C
     )
     routers = generate_versioned_routers(router, versions=versions)
 
-    assert client(routers[date(2002, 1, 1)]).get("/test").json() == {"detail": "Not Found"}
-    assert client(routers[date(2001, 1, 1)]).get("/test").json() == 83
-    assert client(routers[date(2000, 1, 1)]).get("/test").json() == 83
+    assert client(routers.endpoints[date(2002, 1, 1)]).get("/test").json() == {"detail": "Not Found"}
+    assert client(routers.endpoints[date(2001, 1, 1)]).get("/test").json() == 83
+    assert client(routers.endpoints[date(2000, 1, 1)]).get("/test").json() == 83
 
 
 def test__cascading_router_didnt_exist(
@@ -1041,13 +1041,13 @@ def test__cascading_router_didnt_exist(
     )
     routers = generate_versioned_routers(router, versions=versions)
 
-    assert client(routers[date(2002, 1, 1)]).get("/test").json() == 83
+    assert client(routers.endpoints[date(2002, 1, 1)]).get("/test").json() == 83
 
-    assert client(routers[date(2001, 1, 1)]).get("/test").json() == {
+    assert client(routers.endpoints[date(2001, 1, 1)]).get("/test").json() == {
         "detail": "Not Found",
     }
 
-    assert client(routers[date(2000, 1, 1)]).get("/test").json() == {
+    assert client(routers.endpoints[date(2000, 1, 1)]).get("/test").json() == {
         "detail": "Not Found",
     }
 
@@ -1081,7 +1081,7 @@ def test__generate_versioned_routers__two_routers(
     root_router.include_router(router)
     root_router.include_router(router2)
 
-    routers = generate_versioned_routers(root_router, versions=versions)
+    routers = generate_versioned_routers(root_router, versions=versions).endpoints
     assert all(type(r) is APIRouter for r in routers.values())
     assert len(routers[date(2001, 1, 1)].routes) == 2
     assert len(routers[date(2000, 1, 1)].routes) == 1

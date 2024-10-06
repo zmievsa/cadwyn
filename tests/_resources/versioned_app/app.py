@@ -33,7 +33,6 @@ versioned_app_with_custom_api_version_var.add_header_versioned_routers(v2022_01_
 versioned_app_with_custom_api_version_var.include_router(webhooks_router)
 
 # TODO: We should not have any clients that are run like this. Instead, all of them must run using "with"
-client = TestClient(versioned_app, raise_server_exceptions=False, headers=BASIC_HEADERS)
 client_without_headers = TestClient(versioned_app)
 client_without_headers_and_with_custom_api_version_var = TestClient(versioned_app_with_custom_api_version_var)
 

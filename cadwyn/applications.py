@@ -1,11 +1,15 @@
+import collections
+import contextlib
 import dataclasses
 import datetime
-from collections.abc import Callable, Coroutine, Sequence
+import typing
+from collections.abc import AsyncGenerator, Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
 from typing import Any, cast
 
+import typing_extensions
 from fastapi import APIRouter, FastAPI, HTTPException, routing
 from fastapi.datastructures import Default
 from fastapi.openapi.docs import (
@@ -25,9 +29,10 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
 from typing_extensions import Self
 
+from cadwyn._utils import same_definition_as_in
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
 from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
-from cadwyn.route_generation import generate_versioned_routers
+from cadwyn.route_generation import VersionedAPIRouter, generate_versioned_routers
 from cadwyn.routing import _RootHeaderAPIRouter
 from cadwyn.structure import VersionBundle
 
@@ -96,8 +101,8 @@ class Cadwyn(FastAPI):
         **extra: Any,
     ) -> None:
         self.versions = versions
-        # TODO: Remove argument entirely in any major version.
         self._dependency_overrides_provider = FakeDependencyOverridesProvider({})
+        self._cadwyn_initialized = False
 
         super().__init__(
             debug=debug,
@@ -156,6 +161,8 @@ class Cadwyn(FastAPI):
             api_version_header_name=api_version_header_name,
             api_version_var=self.versions.api_version_var,
         )
+        self._versioned_webhook_routers: dict[date, APIRouter] = {}
+        self._latest_version_router = APIRouter(dependency_overrides_provider=self._dependency_overrides_provider)
 
         self.changelog_url = changelog_url
         self.include_changelog_url_in_schema = include_changelog_url_in_schema
@@ -175,6 +182,25 @@ class Cadwyn(FastAPI):
             api_version_var=self.versions.api_version_var,
             default_response_class=default_response_class,
         )
+
+    async def __call__(self, scope, receive, send) -> None:
+        if not self._cadwyn_initialized:
+            self._cadwyn_initialize()
+        self.__call__ = super().__call__
+        return await self.__call__(scope, receive, send)
+
+    def _cadwyn_initialize(self) -> None:
+        generated_routers = generate_versioned_routers(
+            self._latest_version_router,
+            webhooks=self.webhooks,
+            versions=self.versions,
+        )
+        for version, router in generated_routers.endpoints.items():
+            self.add_header_versioned_routers(router, header_value=version.isoformat())
+
+        for version, router in generated_routers.webhooks.items():
+            self._versioned_webhook_routers[version] = router
+        self._cadwyn_initialized = True
 
     def _add_default_versioned_routers(self) -> None:
         for version in self.versions:
@@ -240,12 +266,8 @@ class Cadwyn(FastAPI):
                 )
 
     def generate_and_include_versioned_routers(self, *routers: APIRouter) -> None:
-        root_router = APIRouter(dependency_overrides_provider=self._dependency_overrides_provider)
         for router in routers:
-            root_router.include_router(router)
-        router_versions = generate_versioned_routers(root_router, versions=self.versions)
-        for version, router in router_versions.items():
-            self.add_header_versioned_routers(router, header_value=version.isoformat())
+            self._latest_version_router.include_router(router)
 
     async def openapi_jsons(self, req: Request) -> JSONResponse:
         raw_version = req.query_params.get("version") or req.headers.get(self.router.api_version_header_name)
@@ -276,6 +298,10 @@ class Cadwyn(FastAPI):
         if root_path and root_path not in server_urls and self.root_path_in_servers:
             self.servers.insert(0, {"url": root_path})
 
+        webhook_routes = None
+        if version in self._versioned_webhook_routers:
+            webhook_routes = self._versioned_webhook_routers[version].routes
+
         return JSONResponse(
             get_openapi(
                 title=self.title,
@@ -287,6 +313,7 @@ class Cadwyn(FastAPI):
                 contact=self.contact,
                 license_info=self.license_info,
                 routes=routes,
+                webhooks=webhook_routes,
                 tags=self.openapi_tags,
                 servers=self.servers,
             )
