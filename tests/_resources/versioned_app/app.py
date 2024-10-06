@@ -10,7 +10,7 @@ from cadwyn import Cadwyn
 from cadwyn.structure.versions import Version, VersionBundle
 from tests._resources.versioned_app.v2021_01_01 import router as v2021_01_01_router
 from tests._resources.versioned_app.v2022_01_02 import router as v2022_01_02_router
-from tests._resources.versioned_app.webhooks import router as webhooks_router
+from tests._resources.versioned_app.webhooks import router as unversioned_router
 
 
 # TODO: Add better tests for covering lifespan
@@ -22,14 +22,14 @@ async def lifespan(app: FastAPI):
 versioned_app = Cadwyn(versions=VersionBundle(Version(date(2021, 1, 1))), lifespan=lifespan)
 versioned_app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
 versioned_app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
-versioned_app.include_router(webhooks_router)
+versioned_app.include_router(unversioned_router)
 
 versioned_app_with_custom_api_version_var = Cadwyn(
     versions=VersionBundle(Version(date(2021, 1, 1))), lifespan=lifespan, api_version_var=ContextVar("My api version")
 )
 versioned_app_with_custom_api_version_var.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
 versioned_app_with_custom_api_version_var.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
-versioned_app_with_custom_api_version_var.include_router(webhooks_router)
+versioned_app_with_custom_api_version_var.include_router(unversioned_router)
 
 # TODO: We should not have any clients that are run like this. Instead, all of them must run using "with"
 client_without_headers = TestClient(versioned_app)

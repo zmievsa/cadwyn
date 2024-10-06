@@ -180,11 +180,11 @@ class Cadwyn(FastAPI):
         )
 
     @same_definition_as_in(FastAPI.__call__)
-    async def __call__(self, *args: Any, **kwargs: Any) -> None:
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if not self._cadwyn_initialized:
             self._cadwyn_initialize()
         self.__call__ = super().__call__
-        return await self.__call__(*args, **kwargs)
+        await self.__call__(scope, receive, send)
 
     def _cadwyn_initialize(self) -> None:
         generated_routers = generate_versioned_routers(
