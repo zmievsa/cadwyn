@@ -525,7 +525,7 @@ class _AnnotationTransformer:
     ):
         if route.response_model is not None and not ignore_response_model:
             route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
-            route.response_field = fastapi.utils.create_response_field(
+            route.response_field = fastapi.utils.create_model_field(
                 name="Response_" + route.unique_id,
                 type_=route.response_model,
                 mode="serialization",
