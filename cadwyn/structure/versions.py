@@ -449,6 +449,8 @@ class VersionBundle:
         current_version: VersionDate,
         head_route: APIRoute,
         exit_stack: AsyncExitStack,
+        *,
+        embed_body_fields: bool,
     ) -> dict[str, Any]:
         method = request.method
         for v in reversed(self.versions):
@@ -465,19 +467,20 @@ class VersionBundle:
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
-        dependencies, errors, _, _, _ = await solve_dependencies(
+        result = await solve_dependencies(
             request=request,
             response=response,
             dependant=head_dependant,
             body=request_info.body,
             dependency_overrides_provider=head_route.dependency_overrides_provider,
             async_exit_stack=exit_stack,
+            embed_body_fields=embed_body_fields,
         )
-        if errors:
+        if result.errors:
             raise CadwynHeadRequestValidationError(
-                _normalize_errors(errors), body=request_info.body, version=current_version
+                _normalize_errors(result.errors), body=request_info.body, version=current_version
             )
-        return dependencies
+        return result.values
 
     def _migrate_response(
         self,
@@ -755,6 +758,7 @@ class VersionBundle:
             api_version,
             head_route,
             exit_stack=exit_stack,
+            embed_body_fields=route._embed_body_fields,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:

@@ -80,9 +80,9 @@ def _modify_schema_cls(
     cls_node.name = model_info.name
 
     field_definitions = [
-        ast.AnnAssign(
+        ast.AnnAssign(  # pyright: ignore[reportCallIssue]
             target=ast.Name(name, ctx=ast.Store()),
-            annotation=copy.deepcopy(field.annotation_ast),
+            annotation=copy.deepcopy(field.annotation_ast),  # pyright: ignore[reportArgumentType]
             # We do this because next plugins **might** use a transformer which will edit the ast within the field
             # and break rendering
             value=copy.deepcopy(field.value_ast),

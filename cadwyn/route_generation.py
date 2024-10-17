@@ -445,7 +445,7 @@ def _extract_internal_request_schemas_from_router(
 
     def _extract_internal_request_schemas_from_annotations(annotations: dict[str, Any]):
         for key, annotation in annotations.items():
-            if isinstance(annotation, type(Annotated[int, int])):
+            if isinstance(annotation, type(Annotated[int, int])):  # pyright: ignore[reportArgumentType]
                 args = get_args(annotation)
                 if isinstance(args[1], type) and issubclass(  # pragma: no branch
                     args[1],
@@ -525,7 +525,7 @@ class _AnnotationTransformer:
     ):
         if route.response_model is not None and not ignore_response_model:
             route.response_model = self._change_version_of_annotations(route.response_model, version_dir)
-            route.response_field = fastapi.utils.create_response_field(
+            route.response_field = fastapi.utils.create_model_field(
                 name="Response_" + route.unique_id,
                 type_=route.response_model,
                 mode="serialization",

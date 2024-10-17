@@ -174,7 +174,7 @@ def test__schema_field_existed_as__with_new_weird_data_types(
         schema(latest.EmptySchema)
         .field("baz")
         .existed_as(
-            type=Literal[latest.MyEnum.foo],  # pyright: ignore
+            type=Literal[latest.MyEnum.foo],
         ),
     )
 
