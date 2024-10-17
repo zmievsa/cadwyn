@@ -445,7 +445,7 @@ def _extract_internal_request_schemas_from_router(
 
     def _extract_internal_request_schemas_from_annotations(annotations: dict[str, Any]):
         for key, annotation in annotations.items():
-            if isinstance(annotation, type(Annotated[int, int])):
+            if isinstance(annotation, type(Annotated[int, int])):  # pyright: ignore[reportArgumentType]
                 args = get_args(annotation)
                 if isinstance(args[1], type) and issubclass(  # pragma: no branch
                     args[1],

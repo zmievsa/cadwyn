@@ -101,7 +101,7 @@ def transform_generic_alias(value: GenericAliasUnion) -> Any:
     return f"{get_fancy_repr(get_origin(value))}[{', '.join(get_fancy_repr(a) for a in get_args(value))}]"
 
 
-def transform_none(_: NoneType) -> Any:
+def transform_none(_: Any) -> Any:
     return "None"
 
 
@@ -231,7 +231,7 @@ def delete_keyword_from_call(attr_name: str, call: ast.Call):
 def get_ast_keyword_from_argument_name_and_value(name: str, value: Any):
     if not isinstance(value, ast.AST):
         value = ast.parse(get_fancy_repr(value), mode="eval").body
-    return ast.keyword(arg=name, value=value)
+    return ast.keyword(arg=name, value=value)  # pyright: ignore[reportArgumentType, reportCallIssue]
 
 
 def pop_docstring_from_cls_body(cls_body: list[ast.stmt]) -> list[ast.stmt]:
