@@ -3,9 +3,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from issubclass import issubclass as lenient_issubclass
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic._internal._decorators import PydanticDescriptorProxy, unwrap_wrapped_function
 from pydantic.fields import FieldInfo
+from typing_extensions import Unpack
 
 from cadwyn._utils import Sentinel, fully_unwrap_decorator
 from cadwyn.exceptions import CadwynStructureError
@@ -246,6 +247,14 @@ AlterSchemaSubInstruction = (
 class SchemaHadInstruction(_HiddenAttributeMixin):
     schema: type[BaseModel]
     name: str
+    config: ConfigDict
+
+    def __post_init__(self):
+        invalid_keys = self.config.keys() - ConfigDict.__optional_keys__
+        if invalid_keys:
+            raise CadwynStructureError(
+                f"The following keys provided to schema(...).had(...) instruction are invalid: {list(invalid_keys)}"
+            )
 
 
 @dataclass(slots=True)
@@ -271,8 +280,8 @@ class AlterSchemaInstructionFactory:
             raise CadwynStructureError("The passed function must be a pydantic validator")
         return AlterValidatorInstructionFactory(self.schema, func)
 
-    def had(self, *, name: str) -> SchemaHadInstruction:
-        return SchemaHadInstruction(self.schema, name)
+    def had(self, *, name: str, **config: Unpack[ConfigDict]) -> SchemaHadInstruction:
+        return SchemaHadInstruction(self.schema, name, config)
 
 
 def schema(model: type[BaseModel], /) -> AlterSchemaInstructionFactory:
