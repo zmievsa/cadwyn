@@ -1,6 +1,6 @@
 [project]
 name = "cadwyn"
-version = "4.4.0"
+version = "4.4.1"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = [{ name = "Stanislav Zmiev", email = "zmievsa@gmail.com" }]
 license = "MIT"
@@ -20,6 +20,7 @@ keywords = [
     "python310",
     "python311",
     "python312",
+    "python313",
 ]
 classifiers = [
     "Intended Audience :: Information Technology",
