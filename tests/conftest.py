@@ -142,7 +142,7 @@ def version_change(
     **body_items: Any,
 ):
     return type(VersionChange)(
-        "MyVersionChange",
+        "MyVersionChange",  # pyright: ignore[reportCallIssue]
         (VersionChange,),
         {
             "description": "",
