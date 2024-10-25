@@ -19,10 +19,15 @@ def test__render_model__with_weird_types():
     )
     # TODO: sobolevn has created a tool for doing such nocovers in a better manner.
     # hopefully someday we will switch to it.
-    if sys.version_info >= (3, 11):  # pragma: no cover # We cover this in CI
+    if sys.version_info >= (3, 11):
         rendered_lambda = "lambda: 83"
-    else:  # pragma: no cover # We cover this in CI
+    else:
         rendered_lambda = "lambda : 83"
+
+    if sys.version_info >= (3, 13):
+        rend_ann = "typing.Annotated"
+    else:
+        rend_ann = "Annotated"
 
     # TODO: As you see, we do not rename bases correctly in render. We gotta fix it some day...
     assert code(result) == code(
@@ -32,11 +37,11 @@ class ModelWithWeirdFields(A):
     foo: dict = Field(default={{'a': 'b'}})
     bar: list[int] = Field(default_factory=my_default_factory)
     baz: typing.Literal[MyEnum.foo] = Field()
-    saz: Annotated[str, StringConstraints(to_upper=True)] = Field()
-    laz: Annotated[int, None, Interval(gt=12, ge=None, lt=None, le=None), None] = Field()
+    saz: {rend_ann}[str, StringConstraints(to_upper=True)] = Field()
+    laz: {rend_ann}[int, None, Interval(gt=12, ge=None, lt=None, le=None), None] = Field()
     taz: typing.Union[int, str, None] = Field(default_factory={rendered_lambda})
     naz: list[int] = Field(default=[1, 2, 3])
-    gaz: Annotated[bytes, Strict(strict=True), Len(min_length=0, max_length=None)] = Field(min_length=3, title='Hewwo')
+    gaz: {rend_ann}[bytes, Strict(strict=True), Len(min_length=0, max_length=None)] = Field(min_length=3, title='Hewwo')
 '''
     )
 

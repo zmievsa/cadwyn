@@ -156,6 +156,8 @@ class VersionChange:
                 "instructions_to_migrate_to_previous_version",
                 "__module__",
                 "__doc__",
+                "__firstlineno__",
+                "__static_attributes__",
             }:
                 raise CadwynStructureError(
                     f"Found: '{attr_name}' attribute of type '{type(attr_value)}' in '{cls.__name__}'."
