@@ -1,7 +1,7 @@
 import re
 from collections import defaultdict
 from collections.abc import Callable, Sequence
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 _Call = TypeVar("_Call", bound=Callable[..., Any])
 _R = TypeVar("_R", bound=APIRouter)
 _WR = TypeVar("_WR", bound=APIRouter, default=APIRouter)
+_RouteT = TypeVar("_RouteT", bound=BaseRoute)
 # This is a hack we do because we can't guarantee how the user will use the router.
 _DELETED_ROUTE_TAG = "_CADWYN_DELETED_ROUTE"
 
@@ -90,6 +91,25 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         return endpoint
 
 
+def copy_router(router: _R) -> _R:
+    router = copy(router)
+    router.routes = [copy_route(r) for r in router.routes]
+    return router
+
+
+def copy_route(route: _RouteT) -> _RouteT:
+    if not isinstance(route, APIRoute):
+        return copy(route)
+
+    # This is slightly wasteful in terms of resources but it makes it easy for us
+    # to make sure that new versions of FastAPI are going to be supported even if
+    # APIRoute gets new attributes.
+    new_route = deepcopy(route)
+    new_route.dependant = copy(route.dependant)
+    new_route.dependencies = copy(route.dependencies)
+    return new_route
+
+
 class _EndpointTransformer(Generic[_R, _WR]):
     def __init__(self, parent_router: _R, versions: VersionBundle, webhooks: _WR) -> None:
         super().__init__()
@@ -103,8 +123,8 @@ class _EndpointTransformer(Generic[_R, _WR]):
         ]
 
     def transform(self) -> GeneratedRouters[_R, _WR]:
-        router = deepcopy(self.parent_router)
-        webhook_router = deepcopy(self.parent_webhooks_router)
+        router = copy_router(self.parent_router)
+        webhook_router = copy_router(self.parent_webhooks_router)
         routers: dict[VersionDate, _R] = {}
         webhook_routers: dict[VersionDate, _WR] = {}
 
@@ -117,8 +137,8 @@ class _EndpointTransformer(Generic[_R, _WR]):
             routers[version.value] = router
             webhook_routers[version.value] = webhook_router
             # Applying changes for the next version
-            router = deepcopy(router)
-            webhook_router = deepcopy(webhook_router)
+            router = copy_router(router)
+            webhook_router = copy_router(webhook_router)
             self._apply_endpoint_changes_to_router(router.routes + webhook_router.routes, version)
 
         if self.routes_that_never_existed:
@@ -134,7 +154,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
             if not isinstance(head_route, APIRoute):
                 continue
             _add_request_and_response_params(head_route)
-            copy_of_dependant = deepcopy(head_route.dependant)
+            copy_of_dependant = copy(head_route.dependant)
 
             for older_router in list(routers.values()):
                 older_route = older_router.routes[route_index]

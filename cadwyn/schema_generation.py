@@ -367,6 +367,10 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         return model_copy
 
 
+def is_regular_function(call: Callable):
+    return isinstance(call, types.FunctionType | types.MethodType)
+
+
 class _CallableWrapper:
     """__eq__ and __hash__ are needed to make sure that dependency overrides work correctly.
     They are based on putting dependencies (functions) as keys for the dictionary so if we want to be able to
@@ -376,6 +380,8 @@ class _CallableWrapper:
     def __init__(self, original_callable: Callable) -> None:
         super().__init__()
         self._original_callable = original_callable
+        if not is_regular_function(original_callable):
+            original_callable = original_callable.__call__
         functools.update_wrapper(self, original_callable)
 
     @property
@@ -458,6 +464,12 @@ class _AnnotationTransformer:
     def _change_version_of_a_non_container_annotation(self, annotation: Any) -> Any:
         if isinstance(annotation, _BaseGenericAlias | types.GenericAlias):
             return get_origin(annotation)[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
+        elif isinstance(annotation, fastapi.params.Security):
+            return fastapi.params.Security(
+                self.change_version_of_annotation(annotation.dependency),
+                scopes=annotation.scopes,
+                use_cache=annotation.use_cache,
+            )
         elif isinstance(annotation, fastapi.params.Depends):
             return fastapi.params.Depends(
                 self.change_version_of_annotation(annotation.dependency),
@@ -475,7 +487,7 @@ class _AnnotationTransformer:
         elif callable(annotation):
             if type(annotation).__module__.startswith(
                 ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
-            ) or isinstance(annotation, fastapi.params.Security | fastapi.security.base.SecurityBase):
+            ) or isinstance(annotation, fastapi.security.base.SecurityBase):
                 return annotation
 
             def modifier(annotation: Any):
@@ -568,8 +580,12 @@ class _AnnotationTransformer:
     def _copy_function_through_class_based_wrapper(cls, call: Any):
         """Separate from copy_endpoint because endpoints MUST be functions in FastAPI, they cannot be cls instances"""
         call = cls._unwrap_callable(call)
-
-        if inspect.iscoroutinefunction(call):
+        if not is_regular_function(call):
+            # This means that the callable is actually an instance of a regular class
+            actual_call = call.__call__
+        else:
+            actual_call = call
+        if inspect.iscoroutinefunction(actual_call):
             return _AsyncCallableWrapper(call)
         else:
             return _CallableWrapper(call)
@@ -578,9 +594,6 @@ class _AnnotationTransformer:
     def _unwrap_callable(call: Any) -> Any:
         while hasattr(call, "_original_callable"):
             call = call._original_callable
-        if not isinstance(call, types.FunctionType | types.MethodType):
-            # This means that the callable is actually an instance of a regular class
-            call = call.__call__
 
         return call
 
