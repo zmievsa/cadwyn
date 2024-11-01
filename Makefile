@@ -11,4 +11,4 @@ test:
 	rm -r coverage; \
 	uv run coverage run --source=. -m pytest .; \
 	uv run coverage combine; \
-	uv run coverage report --fail-under=100;
+	uv run coverage report --fail-under=100 --show-missing;

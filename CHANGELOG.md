@@ -5,6 +5,18 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [4.4.2]
+
+### Fixed
+
+* Non-function (object instances) dependencies not supporting dependency overrides in testing
+
+## [4.4.1]
+
+### Added
+
+* Python 3.13 to CI
+
 ## [4.4.0]
 
 ### Added
