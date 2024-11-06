@@ -631,7 +631,7 @@ class SchemaGenerator:
         wrapper = self._get_wrapper_for_model(model)
         model_copy = wrapper.generate_model_copy(self)
         self.concrete_models[model] = model_copy
-        return model_copy
+        return cast(type[_T_ANY_MODEL], model_copy)
 
     @overload
     def _get_wrapper_for_model(self, model: type[BaseModel]) -> "_PydanticModelWrapper[BaseModel]": ...
