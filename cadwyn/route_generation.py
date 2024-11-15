@@ -179,13 +179,13 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     copy_of_dependant,
                     self.versions,
                 )
-        for _, router in routers.items():
+        for router in routers.values():
             router.routes = [
                 route
                 for route in router.routes
                 if not (isinstance(route, fastapi.routing.APIRoute) and _DELETED_ROUTE_TAG in route.tags)
             ]
-        for _, webhook_router in webhook_routers.items():
+        for webhook_router in webhook_routers.values():
             webhook_router.routes = [
                 route
                 for route in webhook_router.routes
@@ -466,18 +466,18 @@ def _get_routes(
     *,
     is_deleted: bool = False,
 ) -> list[fastapi.routing.APIRoute]:
-    found_routes = []
     endpoint_path = endpoint_path.rstrip("/")
-    for route in routes:
+    return [
+        route
+        for route in routes
         if (
             isinstance(route, fastapi.routing.APIRoute)
             and route.path.rstrip("/") == endpoint_path
             and set(route.methods).issubset(endpoint_methods)
             and (endpoint_func_name is None or route.endpoint.__name__ == endpoint_func_name)
             and (_DELETED_ROUTE_TAG in route.tags) == is_deleted
-        ):
-            found_routes.append(route)
-    return found_routes
+        )
+    ]
 
 
 def _get_route_from_func(

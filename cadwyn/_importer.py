@@ -7,7 +7,7 @@ from cadwyn.exceptions import ImportFromStringError
 def import_attribute_from_string(import_str: str) -> Any:
     module_str, _, attrs_str = import_str.partition(":")
     if not module_str or not attrs_str:
-        message = 'Import string "{import_str}" must be in format "<module>:<attribute>".'
+        message = f'Import string "{import_str}" must be in format "<module>:<attribute>".'
         raise ImportFromStringError(message.format(import_str=import_str))
 
     module = import_module_from_string(module_str)

@@ -30,7 +30,6 @@ import pydantic
 import pydantic._internal._decorators
 from fastapi import Response
 from fastapi.routing import APIRoute
-from issubclass import issubclass
 from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
 from pydantic._internal._decorators import (
@@ -44,7 +43,7 @@ from pydantic._internal._decorators import (
 from pydantic.fields import ComputedFieldInfo, FieldInfo
 from typing_extensions import Doc, Self, _AnnotatedAlias, assert_never
 
-from cadwyn._utils import Sentinel, UnionType, fully_unwrap_decorator
+from cadwyn._utils import Sentinel, UnionType, fully_unwrap_decorator, lenient_issubclass
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure.common import VersionDate
 from cadwyn.structure.data import ResponseInfo
@@ -160,8 +159,10 @@ def migrate_response_body(
     latest_body: Any,
     version: VersionDate | str,
 ):
-    """Convert the data to a specific version by applying all version changes from latest until that version
-    in reverse order and wrapping the result in the correct version of latest_response_model.
+    """Convert the data to a specific version
+
+    Apply all version changes from latest until the passed version in reverse order
+    and wrap the result in the correct version of latest_response_model
     """
     if isinstance(version, str):
         version = date.fromisoformat(version)
@@ -316,7 +317,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         for base in self.cls.mro()[1:]:
             if base in schemas:
                 parents.append(schemas[base])
-            elif issubclass(base, BaseModel):
+            elif lenient_issubclass(base, BaseModel):
                 parents.append(_wrap_pydantic_model(base))
         self._parents = parents
         return parents
@@ -372,10 +373,9 @@ def is_regular_function(call: Callable):
 
 
 class _CallableWrapper:
-    """__eq__ and __hash__ are needed to make sure that dependency overrides work correctly.
-    They are based on putting dependencies (functions) as keys for the dictionary so if we want to be able to
-    override the wrapper, we need to make sure that it is equivalent to the original in __hash__ and __eq__
-    """
+    # __eq__ and __hash__ are needed to make sure that dependency overrides work correctly.
+    # They are based on putting dependencies (functions) as keys for the dictionary so if we want to be able to
+    # override the wrapper, we need to make sure that it is equivalent to the original in __hash__ and __eq__
 
     def __init__(self, original_callable: Callable) -> None:
         super().__init__()
@@ -386,11 +386,9 @@ class _CallableWrapper:
 
     @property
     def __globals__(self):
-        """FastAPI uses __globals__ to resolve forward references in type hints
-        It's supposed to be an attribute on the function but we use it as property to prevent python
-        from trying to pickle globals when we deepcopy this wrapper
-        """
-        #
+        # FastAPI uses __globals__ to resolve forward references in type hints
+        # It's supposed to be an attribute on the function but we use it as property to prevent python
+        # from trying to pickle globals when we deepcopy this wrapper
         return self._original_callable.__globals__
 
     def __call__(self, *args: Any, **kwargs: Any):
@@ -420,8 +418,7 @@ class _AnnotationTransformer:
         )
 
     def change_version_of_annotation(self, annotation: Any) -> Any:
-        """Recursively go through all annotations and change them to the
-        annotations corresponding to the version passed.
+        """Recursively go through all annotations and change them to annotations corresponding to the version passed.
 
         So if we had a annotation "UserResponse" from "head" version, and we passed version of "2022-11-16", it would
         replace "UserResponse" with the the same class but from the "2022-11-16" version.
@@ -503,7 +500,7 @@ class _AnnotationTransformer:
             return annotation
 
     def _change_version_of_type(self, annotation: type):
-        if issubclass(annotation, BaseModel | Enum):
+        if lenient_issubclass(annotation, BaseModel | Enum):
             return self.generator[annotation]
         else:
             return annotation
@@ -607,7 +604,7 @@ def _add_request_and_response_params(route: APIRoute):
 
 @final
 class SchemaGenerator:
-    __slots__ = "annotation_transformer", "model_bundle", "concrete_models"
+    __slots__ = "annotation_transformer", "concrete_models", "model_bundle"
 
     def __init__(self, model_bundle: _ModelBundle) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
@@ -619,7 +616,11 @@ class SchemaGenerator:
         }
 
     def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
-        if not isinstance(model, type) or not issubclass(model, BaseModel | Enum) or model in (BaseModel, RootModel):
+        if (
+            not isinstance(model, type)
+            or not lenient_issubclass(model, BaseModel | Enum)
+            or model in (BaseModel, RootModel)
+        ):
             return model
         model = _unwrap_model(model)
 
@@ -648,10 +649,10 @@ class SchemaGenerator:
         elif model in self.model_bundle.enums:
             return self.model_bundle.enums[model]
 
-        if issubclass(model, BaseModel):
+        if lenient_issubclass(model, BaseModel):
             wrapper = _wrap_pydantic_model(model)
             self.model_bundle.schemas[model] = wrapper
-        elif issubclass(model, Enum):
+        elif lenient_issubclass(model, Enum):
             wrapper = _EnumWrapper(model)
             self.model_bundle.enums[model] = wrapper
         else:

@@ -15,9 +15,9 @@ def test__populate_routes():
     versioned_routes = [
         route for router in mixed_hosts_app.router.versioned_routers.values() for route in router.routes
     ]
-    assert sorted(mixed_hosts_app.router.routes, key=lambda r: id(r)) == sorted(
+    assert sorted(mixed_hosts_app.router.routes, key=id) == sorted(
         mixed_hosts_app.router.unversioned_routes + versioned_routes,
-        key=lambda r: id(r),
+        key=id,
     )
 
 

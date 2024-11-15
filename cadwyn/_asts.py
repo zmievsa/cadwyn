@@ -56,12 +56,13 @@ def get_fancy_repr(value: Any) -> Any:
 
 
 def transform_grouped_metadata(value: "annotated_types.GroupedMetadata"):
-    modified_fields = []
     empty_obj = type(value)
 
-    for key in empty_obj.__dataclass_fields__:  # pyright: ignore[reportAttributeAccessIssue]
-        if getattr(value, key) != getattr(empty_obj, key):
-            modified_fields.append((key, getattr(value, key)))
+    modified_fields = [
+        (key, getattr(value, key))
+        for key in value.__dataclass_fields__  # pyright: ignore[reportAttributeAccessIssue]
+        if getattr(value, key) != getattr(empty_obj, key)
+    ]
 
     return PlainRepr(
         value.__class__.__name__
@@ -120,11 +121,12 @@ def transform_other(value: Any) -> Any:
 
 
 def _get_lambda_source_from_default_factory(source: str) -> str:
-    found_lambdas: list[ast.Lambda] = []
+    found_lambdas: list[ast.Lambda] = [
+        node.value
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.keyword) and node.arg == "default_factory" and isinstance(node.value, ast.Lambda)
+    ]
 
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.keyword) and node.arg == "default_factory" and isinstance(node.value, ast.Lambda):
-            found_lambdas.append(node.value)
     if len(found_lambdas) == 1:
         return ast.unparse(found_lambdas[0])
     # These two errors are really hard to cover. Not sure if even possible, honestly :)

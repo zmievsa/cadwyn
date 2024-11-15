@@ -396,17 +396,6 @@ class VersionBundle:
         path: str,
         method: str,
     ) -> ResponseInfo:
-        """Convert the data to a specific version by applying all version changes in reverse order.
-
-        Args:
-            endpoint: the function which usually returns this data. Data migrations marked with this endpoint will
-            be applied to the passed data
-            payload: data to be migrated. Will be mutated during the call
-            version: the version to which the data should be converted
-
-        Returns:
-            Modified data
-        """
         for v in self.versions:
             if v.value <= current_version:
                 break
@@ -421,7 +410,7 @@ class VersionBundle:
                 if path in version_change.alter_response_by_path_instructions:
                     for instruction in version_change.alter_response_by_path_instructions[path]:
                         if method in instruction.methods:  # pragma: no branch # Safe branch to skip
-                            migrations_to_apply.append(instruction)
+                            migrations_to_apply.append(instruction)  # noqa: PERF401
 
                 for migration in migrations_to_apply:
                     if response_info.status_code < 300 or migration.migrate_http_errors:

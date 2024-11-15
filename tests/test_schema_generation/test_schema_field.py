@@ -209,8 +209,7 @@ def assert_field_had_changes_apply(
 def test__schema_field_had__modifying_int_field(
     attr: str, attr_value: Any, create_runtime_schemas: CreateRuntimeSchemas
 ):
-    """This test is here to guarantee that we can handle all parameter types we provide"""
-
+    """Guarantee that we can handle all parameter types we provide"""
     assert_field_had_changes_apply(
         SchemaWithOneIntField,
         attr,

@@ -7,9 +7,7 @@ PROJECT_ROOT = DOCS_DIR.parent
 
 
 def on_pre_build(config: Config) -> None:
-    """
-    Before the build starts.
-    """
+    """Before the build starts"""
     add_changelog()
 
 

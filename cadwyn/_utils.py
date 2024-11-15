@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Any, Generic, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
 
 from pydantic._internal._decorators import unwrap_wrapped_function
 
@@ -40,3 +40,17 @@ def fully_unwrap_decorator(func: Callable, is_pydantic_v1_style_validator: Any):
     if is_pydantic_v1_style_validator and func.__closure__:
         func = func.__closure__[0].cell_contents
     return unwrap_wrapped_function(func)
+
+
+T = TypeVar("T", bound=type[object])
+
+if TYPE_CHECKING:
+    lenient_issubclass = issubclass
+
+else:
+
+    def lenient_issubclass(cls: type, other: T | tuple[T, ...]) -> bool:
+        try:
+            return issubclass(cls, other)
+        except TypeError:  # pragma: no cover
+            return False

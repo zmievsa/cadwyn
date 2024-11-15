@@ -1,6 +1,6 @@
 from datetime import date
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from starlette.responses import JSONResponse, Response
 
 from cadwyn import Cadwyn
@@ -15,9 +15,9 @@ def homepage():
 
 
 @router.get("/users/{username}/{page}")
-def users_api(request: Request):
+def users_api(username: str, page: int):
     return JSONResponse(
-        {"users": [{"username": request.path_params["username"], "page": int(request.path_params["page"])}]},
+        {"users": [{"username": username, "page": page}]},
     )
 
 
@@ -27,8 +27,8 @@ def users():
 
 
 @router.get("/doggies/{dogname}")
-def doggies_api(request: Request):
-    return JSONResponse({"doggies": [{"dogname": request.path_params["dogname"]}]})
+def doggies_api(dogname: str):
+    return JSONResponse({"doggies": [{"dogname": dogname}]})
 
 
 versions = [

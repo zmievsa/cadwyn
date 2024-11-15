@@ -163,7 +163,7 @@ def version_change_2():
 
 
 @pytest.fixture(params=["without_request", "with request"])
-def _post_endpoint_with_extra_depends(  # noqa: PT005
+def _post_endpoint_with_extra_depends(
     request: pytest.FixtureRequest,
     router: VersionedAPIRouter,
     test_path: Literal["/test"],
@@ -196,8 +196,6 @@ def _post_endpoint_with_extra_depends(  # noqa: PT005
                 "cookies": cookies,
                 "query_params": dict(query_params),
             }
-
-    return _post_endpoint
 
 
 class TestRequestMigrations:

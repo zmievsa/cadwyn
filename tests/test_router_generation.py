@@ -476,7 +476,7 @@ def test__router_generation__restoring_deleted_routes_for_same_path_with_func_na
         endpoint("/test", ["GET"], func_name=route_to_delete_second.__name__).didnt_exist,
     ]
     if delete_first:
-        instructions = reversed(instructions)
+        instructions.reverse()
 
     routes_2000, routes_2001 = create_versioned_api_routes(version_change(*instructions))
 
@@ -767,7 +767,7 @@ def test__router_generation__using_unversioned_models(
     router: VersionedAPIRouter,
     create_versioned_app: CreateVersionedApp,
 ):
-    """This test is essentially legacy from codegen times"""
+    """Essentially legacy from codegen times"""
 
     @router.get("/test")
     async def test1(body: UnversionedSchema1):
@@ -820,12 +820,10 @@ def test__router_generation__using_weird_typehints(
     assert getattr(routes_2001[1].dependant.body_params[1], TYPE_ATTR) == str | int
 
 
-def test__router_generation__using_pydantic_typehints(
+def test__router_generation__using_pydantic_typehints__internal_pydantic_typehints_should_work(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
 ):
-    """This is a very important test for verifying that pydantic's internal type hints work"""
-
     @router.get("/test")
     async def test(file: UploadFile):
         raise NotImplementedError

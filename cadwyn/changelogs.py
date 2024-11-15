@@ -160,7 +160,7 @@ def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: s
 
     model_name_map = get_compat_model_name_map([CadwynDummyModelForRepresentation.model_fields["my_field"]])
     schema_generator = GenerateJsonSchema(ref_template=REF_TEMPLATE)
-    field_mapping, definitions = get_definitions(
+    _, definitions = get_definitions(
         fields=[ModelField(CadwynDummyModelForRepresentation.model_fields["my_field"], "my_field")],
         schema_generator=schema_generator,
         model_name_map=model_name_map,

@@ -306,10 +306,7 @@ def test__webhooks():
 
     @webhooks.post("new-subscription")
     def new_subscription(body: Subscription):  # pragma: no cover
-        """
-        When a new user subscribes to your service we'll send you a POST request with this
-        data to the URL that you register for the event `new-subscription` in the dashboard.
-        """
+        """We'll send you a POST request with this data upon new user subscription"""
 
     class MyVersionChange(VersionChange):
         description = "Mess with webhooks"
@@ -325,7 +322,7 @@ def test__webhooks():
 
     @app.webhooks.post("post-subscription")  # pragma: no cover
     def post_subscription(body: Subscription):  # pragma: no cover
-        """This should also be there"""
+        """I should also appear there"""
 
     with TestClient(app) as client:
         resp = client.get("/openapi.json?version=2023-04-12")

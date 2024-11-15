@@ -15,7 +15,7 @@ _P = ParamSpec("_P")
 
 # TODO (https://github.com/zmievsa/cadwyn/issues/49): Add form handling
 class RequestInfo:
-    __slots__ = ("body", "headers", "_cookies", "_query_params", "_request")
+    __slots__ = ("_cookies", "_query_params", "_request", "body", "headers")
 
     def __init__(self, request: Request, body: Any):
         super().__init__()
@@ -36,7 +36,7 @@ class RequestInfo:
 
 # TODO (https://github.com/zmievsa/cadwyn/issues/111): handle _response.media_type and _response.background
 class ResponseInfo:
-    __slots__ = ("body", "_response")
+    __slots__ = ("_response", "body")
 
     def __init__(self, response: Response, body: Any):
         super().__init__()
@@ -86,9 +86,9 @@ class _AlterDataInstruction:
         return self.transformer(__request_or_response)
 
 
-###########
-## Requests
-###########
+##########
+# Requests
+##########
 
 
 @dataclass
@@ -146,9 +146,9 @@ def convert_request_to_next_version_for(
     return decorator  # pyright: ignore[reportReturnType]
 
 
-############
-## Responses
-############
+###########
+# Responses
+###########
 
 
 @dataclass

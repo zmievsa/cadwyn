@@ -23,9 +23,9 @@ _logger = getLogger(__name__)
 
 
 class _RootHeaderAPIRouter(APIRouter):
-    """
-    this class should be a root router of the FastAPI app when using header based
-    versioning. It will be used to route the requests to the correct versioned route
+    """Root router of the FastAPI app when using header based versioning.
+
+    It will be used to route the requests to the correct versioned route
     based on the headers. It also supports waterflowing the requests to the latest
     version of the API if the request header doesn't match any of the versions.
 
@@ -88,9 +88,6 @@ class _RootHeaderAPIRouter(APIRouter):
         return self.versioned_routers[version_chosen].routes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """
-        The main entry point to the Router class.
-        """
         if "router" not in scope:  # pragma: no cover
             scope["router"] = self
 
@@ -131,10 +128,8 @@ class _RootHeaderAPIRouter(APIRouter):
         self.unversioned_routes.append(self.routes[-1])
 
     async def process_request(self, scope: Scope, receive: Receive, send: Send, routes: Sequence[BaseRoute]) -> None:
-        """
-        its a copy-paste from starlette.routing.Router
-        but in this version self.routes were replaced with routes from the function arguments
-        """
+        # It's a copy-paste from starlette.routing.Router
+        # but in this version self.routes were replaced with routes from the function arguments
 
         partial = None
         partial_scope = {}
