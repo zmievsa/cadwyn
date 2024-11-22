@@ -186,7 +186,7 @@ class AlterFieldInstructionFactory:
         self,
         *,
         type: Any,
-        info: FieldInfo | None = None,
+        info: FieldInfo | Any | None = None,
     ) -> FieldExistedAsInstruction:
         if info is None:
             info = cast(FieldInfo, Field())

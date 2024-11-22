@@ -203,7 +203,7 @@ class TestRequestMigrations:
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
-        _post_endpoint_with_extra_depends: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
+        _post_endpoint_with_extra_depends: None,
     ):
         @convert_request_to_next_version_for(AnyRequestSchema)
         def migrator(request: RequestInfo):

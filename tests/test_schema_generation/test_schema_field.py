@@ -110,8 +110,8 @@ def test__schema_field_existed_as__with_new_weird_data_types(create_runtime_sche
     )
 
     class ExpectedSchema(BaseModel):
-        foo: dict[str, int] = Field(default={"a": "b"})
-        bar: list[int] = Field(default_factory=lambda: 83)  # pragma: no branch
+        foo: dict[str, int] = Field(default={"a": "b"})  # pyright: ignore[reportAssignmentType]
+        bar: list[int] = Field(default_factory=lambda: 83)  # pragma: no branch # pyright: ignore[reportAssignmentType]
         baz: Literal[MyEnum.foo]
 
     assert_models_are_equal(schemas["2000-01-01"][EmptySchema], ExpectedSchema)
