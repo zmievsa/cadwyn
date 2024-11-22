@@ -186,8 +186,6 @@ def serialize_object(obj: Any):
         modified_list = []
         for v in obj:
             if callable(v):
-                while hasattr(v, "func"):
-                    v = v.func  # noqa: PLW2901
                 v = v.__name__  # noqa: PLW2901
             modified_list.append(serialize_object(v))
         return modified_list
