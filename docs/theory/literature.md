@@ -36,6 +36,7 @@ During Cadwyn's development, I went through countless resources on API Versionin
 ## Overview articles on API Versioning
 
 * [Developing an API](https://smartlogic.io/blog/2012-12-12-developing-an-api/)
+* [API versioning has no right way](https://apisyouwonthate.com/blog/api-versioning-has-no-right-way/)
 * [The tricks of API Versioning](https://thenewstack.io/tricks-api-versioning/)
 * [Versioning API in Django REST Framework](https://studygyaan.com/django/versioning-api-in-django-rest-framework)
 
