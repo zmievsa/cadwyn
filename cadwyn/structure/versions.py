@@ -436,8 +436,7 @@ class VersionBundle:
                 request_param: FastapiRequest = kwargs[request_param_name]
                 response_param: FastapiResponse = kwargs[response_param_name]
                 background_tasks: BackgroundTasks | None = kwargs.get(
-                    background_tasks_param_name,  # pyright: ignore[reportArgumentType, reportCallIssue]
-                    None,
+                    background_tasks_param_name,  # pyright: ignore[reportArgumentType]
                 )
                 method = request_param.method
                 response = Sentinel

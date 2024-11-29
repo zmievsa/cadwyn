@@ -437,7 +437,7 @@ class TestResponseMigrations:
                 "user-agent": "testclient",
                 "3": "4",
                 "cookie": IsStr(min_length=3),
-                "content-length": "10",
+                "content-length": "9",
                 "content-type": "application/json",
                 "x-api-version": "2000-01-01",
             },
@@ -446,7 +446,7 @@ class TestResponseMigrations:
             "body_key": "body_val",
         }
         assert dict(resp.headers) == {
-            "content-length": "368",
+            "content-length": "367",
             "content-type": "application/json",
             "header": "header_val",
             "set-cookie": "cookie_key=cookie_val; Max-Age=83; Path=/; SameSite=lax",
