@@ -2,7 +2,7 @@
 
 ## To response schema
 
-Let's say that we decided to expose the creation date of user's account with a `created_at` field in our API. This is **not** a breaking change so a new version is completely unnecessary. However, if you believe that you absolutely have to make a new version, then you can simply follow the recommended approach below but add a version change with [field didnt exist instruction](../../concepts/schema_migrations.md#remove-a-field-from-the-older-version).
+Let's say that we decided to expose the creation date of user's account with a `created_at` field in our API. This is **not** a breaking change so a new version is completely unnecessary. However, if you believe that you absolutely have to make a new version, then you can simply follow the recommended approach below but add a version change with [field didn't exist instruction](../../concepts/schema_migrations.md#remove-a-field-from-the-older-version).
 
 You just need to add `created_at` field into `users.UserResource`.
 

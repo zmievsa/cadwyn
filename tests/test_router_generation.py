@@ -1169,7 +1169,7 @@ def test__basic_router_generation__using_custom_class_based_dependency__should_m
     ]
 
 
-def test__basic_router_generation__subclass_of_security_class_based_dependency_with_overriden_call__will_not_migrate(
+def test__basic_router_generation__subclass_of_security_class_based_dependency_with_overridden_call__will_not_migrate(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
 ):

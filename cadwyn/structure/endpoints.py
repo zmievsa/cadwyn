@@ -23,7 +23,7 @@ class EndpointAttributesPayload:
     #   1. "endpoint" must not change -- otherwise this versioning is doomed
     #   2. "dependency_overrides_provider" is taken from router's attributes
     #   3. "response_model" must not change for the same reason as endpoint
-    # The following for the same reason as enpoint:
+    # The following for the same reason as endpoint:
     # * response_model_include: SetIntStr | DictIntStrAny
     # * response_model_exclude: SetIntStr | DictIntStrAny
     # * response_model_by_alias: bool

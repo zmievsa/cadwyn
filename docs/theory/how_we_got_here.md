@@ -8,7 +8,7 @@ There are three ([\[1\]](https://smartlogic.io/blog/2012-12-12-developing-an-api
 
 ### 1. Versioning proxy, which points requests to versioned apps
 
-This approach versions all three layers: separate data, separate business logic, separate representation. Essentially you create a completely different app for each version. Your versions are indepent and cannot in any way affect each other. You can make any sorts of changes in future versions without worrying about breaking the old ones.
+This approach versions all three layers: separate data, separate business logic, separate representation. Essentially you create a completely different app for each version. Your versions are independent and cannot in any way affect each other. You can make any sorts of changes in future versions without worrying about breaking the old ones.
 
 This approach is the most expensive to support but if breaking old functionality is unacceptable and if you need to support a small number of versions (1-3), then this option is viable.
 
@@ -30,7 +30,7 @@ This is also the approach we have originally started with. It is likely the wors
 
 This approach versions only the API itself. The business logic and data below the API is the same for all versions (with rare exceptions) so API maintainers have the pleasure of maintaining only one API version while users have the added benefit that non-breaking featurees and bugfixes will automatically be ported to their version. This is the only method that allows you to support a large number of versions because it has the least amount of duplication of all methods. This is usually accomplished by adding a separate layer that builds responses out of the data that your service returns. It can be a separate service, a framework, or just a set of functions.
 
-Note that in this method, the usage of **data versioning** now becomes an inconvenience to **both** API users and maintainers. See, when you have a single business logic for all versions, you might need additional conditionals and checks for versions where data structure or data itself has changed. That is **in addition** to pre-existing incoveniences for the users. However, sometimes it might still happen so our goal is to minimize the frequency and impact of data versioning.
+Note that in this method, the usage of **data versioning** now becomes an inconvenience to **both** API users and maintainers. See, when you have a single business logic for all versions, you might need additional conditionals and checks for versions where data structure or data itself has changed. That is **in addition** to pre-existing inconveniences for the users. However, sometimes it might still happen so our goal is to minimize the frequency and impact of data versioning.
 
 *Popular in API-First tech giants that have to support backwards compatibility for a long time for a large number of clients*
 
