@@ -272,7 +272,8 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     fields: Annotated[
         dict["_FieldName", PydanticFieldWrapper],
         Doc(
-            "Fields that belong to this model, not to its parents. I.e. The ones that were either defined or overriden "
+            "Fields that belong to this model, not to its parents. "
+            "I.e. The ones that were either defined or overridden "
         ),
     ] = dataclasses.field(repr=False)
     validators: dict[str, _PerFieldValidatorWrapper | _ValidatorWrapper] = dataclasses.field(repr=False)

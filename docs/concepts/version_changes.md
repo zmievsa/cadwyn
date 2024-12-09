@@ -110,7 +110,7 @@ versions = VersionBundle(
 
 ### VersionChange.description
 
-The description field of your version change must be even more detailed. In fact, it is intended to be the **name** and the **summary** of the version change for your clients. It must clearly state to you clients **what happened** and **why**. So you need to make it grammatically correct, detailed, concrete, and written for humans. Note that you do not have to use a strict machine-readable format -- it is a portion of documentation, not a set of intructions. Let's take [Stripe's description](https://stripe.com/blog/api-versioning) to one of their version changes as an example:
+The description field of your version change must be even more detailed. In fact, it is intended to be the **name** and the **summary** of the version change for your clients. It must clearly state to you clients **what happened** and **why**. So you need to make it grammatically correct, detailed, concrete, and written for humans. Note that you do not have to use a strict machine-readable format -- it is a portion of documentation, not a set of instructions. Let's take [Stripe's description](https://stripe.com/blog/api-versioning) to one of their version changes as an example:
 
 ```md
 Event objects (and webhooks) will now render `request` subobject that contains a request ID and idempotency key instead of just a string request ID.
@@ -126,7 +126,7 @@ Changes:
 
 * Its first line, `Migration from first version (2022-11-16) to 2023-09-01 version.`, duplicates the already-known information -- your developers will know which version `VersionChange` migrates to and from by its location in [VersionBundle](#versionbundle) and most likely by its file name. Your clients will also know that because you can automatically infer this information from  So it is simply standing in the way of actually useful parts of the documentation
 * Its second line, `Changes:`, does not make any sense as well because description of a `VersionChange` cannot describe anything but changes. So again, it's stating the obvious and making it harder for our readers to understand the crux of the change
-* Its third line, `Changed schema for 'POST /v1/tax_ids' endpoint`, gives both too much and too little information. First of all, it talks about changing schema but it never mentions what exactly changed. Remember: we are doing this to make it easy for our clients to migrate from one version to another. Insteaad, it is much better to mention the openapi model name that you changed, the fields you changed, and why you changed them
+* Its third line, `Changed schema for 'POST /v1/tax_ids' endpoint`, gives both too much and too little information. First of all, it talks about changing schema but it never mentions what exactly changed. Remember: we are doing this to make it easy for our clients to migrate from one version to another. Instead, it is much better to mention the openapi model name that you changed, the fields you changed, and why you changed them
 
 ### VersionChange.instructions_to_migrate_to_previous_version
 
@@ -429,7 +429,7 @@ from cadwyn import VersionChangeWithSideEffects
 
 class UserAddressIsCheckedInExternalService(VersionChangeWithSideEffects):
     description = (
-        "User's address is now checked for existense in an external service. "
+        "User's address is now checked for existence in an external service. "
         "If it doesn't exist there, a 400 code is returned."
     )
 ```
