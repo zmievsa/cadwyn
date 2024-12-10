@@ -1,3 +1,4 @@
+import contextlib
 from datetime import date
 
 import pytest
@@ -115,18 +116,17 @@ def test__lifespan_async():
     async def hello_world(request: Request):
         return PlainTextResponse("hello, world")
 
-    async def run_startup():
+    @contextlib.asynccontextmanager
+    async def lifespan(app):
         nonlocal startup_complete
         startup_complete = True
-
-    async def run_shutdown():
+        yield
         nonlocal shutdown_complete
         shutdown_complete = True
 
     app = Cadwyn(
         versions=VersionBundle(Version(date(2022, 11, 16))),
-        on_startup=[run_startup],
-        on_shutdown=[run_shutdown],
+        lifespan=lifespan,
     )
     app.add_route("/v1/", hello_world)
 
