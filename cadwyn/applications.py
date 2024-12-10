@@ -358,8 +358,9 @@ class Cadwyn(FastAPI):
         if self._there_are_public_unversioned_routes():
             table |= {"unversioned": f"{base_url}{docs_url}?version=unversioned"}
         return self._templates.TemplateResponse(
+            req,
             "docs.html",
-            {"request": req, "table": table},
+            {"table": table},
         )
 
     def add_header_versioned_routers(

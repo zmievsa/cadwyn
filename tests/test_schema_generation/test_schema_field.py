@@ -74,7 +74,7 @@ def test__field_existed_as__extras_are_added(create_runtime_schemas: CreateRunti
             .field("foo")
             .existed_as(
                 type=int,
-                info=Field(deflolbtt="hewwo"),  # pyright: ignore[reportCallIssue]
+                info=Field(json_schema_extra={"deflolbtt": "hewwo"}),
             ),
         )
     )
