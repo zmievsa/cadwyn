@@ -302,6 +302,7 @@ from cadwyn import (
 )
 from users import BaseUser, UserCreateRequest, UserResource
 
+
 # THIS IS AN EXAMPLE OF A BAD MIGRATION
 class RemoveTaxIDEndpoints(VersionChange):
     description = "Users now have `address` field instead of `addresses`"

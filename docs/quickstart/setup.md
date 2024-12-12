@@ -13,9 +13,11 @@ Cadwyn is built around FastAPI and supports all of its functionality out of the 
 
 First, let's set up the most basic versioned app possible:
 
+<!-- blacken-docs:off -->
 ```python
 {!> ../docs_src/quickstart/setup/block002.py !}
 ```
+<!-- blacken-docs:on -->
 
 and run it using:
 

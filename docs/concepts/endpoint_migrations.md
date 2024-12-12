@@ -9,8 +9,7 @@ If you had an endpoint in old version but do not have it in a new one, you must 
 ```python
 @router.only_exists_in_older_versions
 @router.get("/users/{user_id}")
-async def my_old_endpoint():
-    ...
+async def my_old_endpoint(): ...
 ```
 
 and then define it as existing in one of the older versions:
