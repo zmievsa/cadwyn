@@ -145,6 +145,21 @@ reportFunctionMemberAccess = false
 reportCircularImports = true
 reportInvalidTypeForm = false
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    # Replace the word "all" with "error" after resolving `ResourceWarning`s from anyio.
+    "all",
+
+    # Older starlette syntax is currently supported.
+    "ignore:The `name` is not the first parameter anymore:DeprecationWarning:starlette.templating",
+    "ignore:The on_startup and on_shutdown parameters are deprecated:DeprecationWarning:starlette.routing",
+
+    # Older pydantic syntax is currently supported.
+    "ignore:Using extra keyword arguments on `Field` is deprecated:DeprecationWarning:pydantic.fields",
+    "ignore:Pydantic V1 style `@root_validator` validators are deprecated:pydantic.PydanticDeprecatedSince20",
+    "ignore:Pydantic V1 style `@validator` validators are deprecated:pydantic.PydanticDeprecatedSince20",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
