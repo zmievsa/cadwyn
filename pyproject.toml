@@ -147,8 +147,8 @@ reportInvalidTypeForm = false
 
 [tool.pytest.ini_options]
 filterwarnings = [
-    # Replace the word "all" with "error" after resolving `ResourceWarning`s from anyio.
-    "all",
+    # When debugging `ResourceWarning`s, change this to "all" and set PYTHONTRACEMALLOC.
+    "error",
 
     # Older starlette syntax is currently supported.
     "ignore:The `name` is not the first parameter anymore:DeprecationWarning:starlette.templating",
@@ -158,6 +158,9 @@ filterwarnings = [
     "ignore:Using extra keyword arguments on `Field` is deprecated:DeprecationWarning:pydantic.fields",
     "ignore:Pydantic V1 style `@root_validator` validators are deprecated:pydantic.PydanticDeprecatedSince20",
     "ignore:Pydantic V1 style `@validator` validators are deprecated:pydantic.PydanticDeprecatedSince20",
+
+    # starlette fails to close an anyio `MemoryObjectReceiveStream` that it opens.
+    "ignore:Unclosed .MemoryObjectReceiveStream:ResourceWarning:anyio.streams.memory",
 ]
 
 [build-system]
