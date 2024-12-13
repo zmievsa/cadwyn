@@ -1,5 +1,6 @@
 import http.cookies
 import re
+import typing
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from datetime import date
@@ -1235,3 +1236,38 @@ def test__request_and_response_migrations__with_multiple_schemas_in_converters(
         resp_2001 = client_2001.post(f"/{endpoint}", json={"i": ["original_request"]})
         assert resp_2001.status_code == 200
         assert resp_2001.json() == {"i": ["original_request", endpoint]}
+
+
+def test__request_and_response_migrations__with_top_level_list_of_model(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+) -> None:
+    class Thing(BaseModel):
+        thing: bool
+
+    # `get_thing()`, singular, is not critical to this test.
+    # It exists to avoid `RouteResponseBySchemaConverterDoesNotApplyToAnythingError`.
+    @router.get("/thing", response_model=Thing)
+    async def get_thing():  # pragma: no cover
+        return Thing(thing=True)
+
+    @router.get("/things", response_model=list[Thing])
+    async def get_things() -> list[Thing]:
+        return [Thing(thing=True)]
+
+    @convert_response_to_previous_version_for(Thing)
+    def response_converter(response: ResponseInfo):
+        response.body["thing"] = "yes" if response.body["thing"] else "no"
+
+    instruction = schema(Thing).field("thing").had(type=typing.Literal["yes", "no"])
+
+    clients = create_versioned_clients(version_change(instruction, resp=response_converter))
+    client_2000, client_2001 = clients.values()
+
+    resp_2001 = client_2001.get("/things")
+    assert resp_2001.status_code == 200
+    assert resp_2001.json() == [{"thing": True}]
+
+    resp_2000 = client_2000.get("/things")
+    assert resp_2000.status_code == 200
+    assert resp_2000.json() == [{"thing": "yes"}]
