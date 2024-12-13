@@ -2,6 +2,7 @@ import email.message
 import functools
 import inspect
 import json
+import types
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack
@@ -392,10 +393,27 @@ class VersionBundle:
         self,
         response_info: ResponseInfo,
         current_version: VersionDate,
-        head_response_model: type[BaseModel],
+        head_response_model: type[BaseModel] | type[list[BaseModel]],
         path: str,
         method: str,
     ) -> ResponseInfo:
+        # Handle `list[BaseModel]`.
+        if isinstance(head_response_model, types.GenericAlias) and isinstance(response_info.body, list):
+            nested_response_model = head_response_model.__args__[0]
+            return ResponseInfo(
+                response=response_info._response,
+                body=[
+                    self._migrate_response(
+                        response_info=ResponseInfo(response_info._response, nested_response_body),
+                        current_version=current_version,
+                        head_response_model=nested_response_model,
+                        path=path,
+                        method=method,
+                    ).body
+                    for nested_response_body in response_info.body
+                ],
+            )
+
         for v in self.versions:
             if v.value <= current_version:
                 break
