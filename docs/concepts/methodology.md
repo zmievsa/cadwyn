@@ -3,7 +3,7 @@
 Cadwyn implements a methodology that is based on the following set of principles:
 
 * Each version is made up of "version changes" or "compatibility gates" which describe **independent atomic** differences between it and previous version
-* We make a new version if an only if we have breaking changes
+* We make a new version if and only if we have breaking changes
 * Versions must have little to no effect on the business logic
 * Versions **must always** be compatible in terms of data
 * Creating new versions is avoided at all costs
