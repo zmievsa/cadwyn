@@ -23,12 +23,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-python-uv
       - run: |
-          OUTPUT=$(uv run mkdocs build 2>&1)
-          echo "$OUTPUT"
-
-          if echo "$OUTPUT" | grep -q "ERROR"; then
-              exit 1
-          fi
+          tox run -e docs
 
   markdown-link-check:
     runs-on: ubuntu-latest
