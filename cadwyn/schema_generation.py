@@ -214,6 +214,10 @@ def _wrap_validator(func: Callable, is_pydantic_v1_style_validator: Any, decorat
         # There's an inconsistency in their interfaces so we gotta resort to this
         mode = kwargs.pop("mode", "after")
         kwargs["pre"] = mode != "after"
+        if (
+            isinstance(decorator_info, RootValidatorDecoratorInfo) and decorator_info.mode == "after"
+        ):  # pragma: no cover # TODO
+            kwargs["skip_on_failure"] = True
     if decorator_fields is not None:
         return _PerFieldValidatorWrapper(
             func=func, fields=list(decorator_fields), decorator=actual_decorator, kwargs=kwargs

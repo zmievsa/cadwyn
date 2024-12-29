@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [4.4.5]
+
+### Fixed
+
+* Fix invalid migration of pydantic v1 style root validators when pydantic erases information about their "skip_on_failure" attribute
+
 ## [4.4.4]
 
 ### Fixed
