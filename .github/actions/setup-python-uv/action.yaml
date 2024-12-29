@@ -8,7 +8,7 @@ inputs:
   uv-version:
     description: "The uv version to set up"
     required: true
-    default: "0.4.18"
+    default: "0.5.8"
 
 runs:
   using: "composite"
@@ -16,12 +16,12 @@ runs:
     - uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
-    - uses: astral-sh/setup-uv@v3
+    - uses: astral-sh/setup-uv@v5
       with:
         version: ${{ inputs.uv-version }}
         enable-cache: true
         cache-dependency-glob: "uv.lock"
     - run: |
         uv sync --frozen --all-extras --dev
-        echo "$(pwd)/.venv/bin" >> $GITHUB_PATH
+        uv pip install --system tox tox-uv
       shell: bash

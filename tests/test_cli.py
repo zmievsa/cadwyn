@@ -1,4 +1,3 @@
-import sys
 import textwrap
 
 import pytest
@@ -9,7 +8,7 @@ from cadwyn.__main__ import app
 
 
 def code(c: str) -> str:
-    return textwrap.dedent(c.strip())
+    return "\n".join(line.rstrip() for line in textwrap.dedent(c.strip()).splitlines())
 
 
 def test__render_module():
@@ -70,14 +69,7 @@ def test__render_model__with_syntax_highlighting():  # pragma: no cover
         ],
     )
     assert result.exit_code == 0
-
-    if sys.platform.startswith("win32"):
-        # Windows rendering is weird
-        return
-
-    assert code(result.stdout) == (
-        "1 class A(BaseModel):                                                         \n  2     pass"
-    )
+    assert code(result.stdout) == "1 class A(BaseModel):\n  2     pass"
 
 
 @pytest.mark.parametrize("arg", ["-V", "--version"])
