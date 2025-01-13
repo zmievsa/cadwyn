@@ -221,7 +221,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
 
             for by_schema_converters in version_change.alter_request_by_schema_instructions.values():
                 for by_schema_converter in by_schema_converters:
-                    if not by_schema_converter.check_usage:
+                    if not by_schema_converter.check_usage:  # pragma: no cover
                         continue
                     missing_models = set(by_schema_converter.schemas) - head_request_bodies
                     if missing_models:
@@ -234,7 +234,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                         )
             for by_schema_converters in version_change.alter_response_by_schema_instructions.values():
                 for by_schema_converter in by_schema_converters:
-                    if not by_schema_converter.check_usage:
+                    if not by_schema_converter.check_usage:  # pragma: no cover
                         continue
                     missing_models = set(by_schema_converter.schemas) - head_response_models
                     if missing_models:

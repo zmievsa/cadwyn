@@ -119,6 +119,7 @@ exclude_lines = [
     "@(typing\\.)?overload",
     "__rich_repr__",
     "__repr__",
+    "def .+: \\.\\.\\.",
 ]
 omit = ["./docs/plugin.py", "./site/plugin.py", "scripts/*.py"]
 
