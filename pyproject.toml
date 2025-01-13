@@ -64,7 +64,6 @@ standard = ["fastapi[standard]>=0.112.3", "typer>=0.7.0"]
 
 [tool.uv]
 dev-dependencies = [
-    "pdbpp ~=0.10.3",
     "python-multipart >=0.0.6",
     "better-devtools ~=0.13.3",
     "pytest-sugar ~=1.0.0",
@@ -82,6 +81,7 @@ dev-dependencies = [
     "mkdocs-simple-hooks >=0.1.5",
     "mdx-include ~=1.4.2",
     "mike >=2.1.2, <3",
+    "pdbpp>=0.10.3",
 ]
 
 [project.urls]

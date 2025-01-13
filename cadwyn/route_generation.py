@@ -221,6 +221,8 @@ class _EndpointTransformer(Generic[_R, _WR]):
 
             for by_schema_converters in version_change.alter_request_by_schema_instructions.values():
                 for by_schema_converter in by_schema_converters:
+                    if not by_schema_converter.check_usage:
+                        continue
                     missing_models = set(by_schema_converter.schemas) - head_request_bodies
                     if missing_models:
                         raise RouteRequestBySchemaConverterDoesNotApplyToAnythingError(
@@ -232,6 +234,8 @@ class _EndpointTransformer(Generic[_R, _WR]):
                         )
             for by_schema_converters in version_change.alter_response_by_schema_instructions.values():
                 for by_schema_converter in by_schema_converters:
+                    if not by_schema_converter.check_usage:
+                        continue
                     missing_models = set(by_schema_converter.schemas) - head_response_models
                     if missing_models:
                         raise RouteResponseBySchemaConverterDoesNotApplyToAnythingError(
@@ -240,6 +244,9 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             f"failed to find routes with the following response models: "
                             f"{[m.__name__ for m in missing_models]}. "
                             f"This means that you are trying to apply this converter to non-existing endpoint(s). "
+                            "If this is intentional and this converter really does not apply to any endpoints, then "
+                            "pass check_usage=False argument to "
+                            f"{version_change.__name__}.{by_schema_converter.transformer.__name__}"
                         )
 
     def _extract_all_routes_identifiers(
