@@ -97,6 +97,7 @@ nav:
           - "Rename a field": "how_to/change_openapi_schemas/rename_a_field_in_schema.md"
           - "Change field type": "how_to/change_openapi_schemas/change_field_type.md"
           - "Change field constraints or validators": "how_to/change_openapi_schemas/changing_constraints.md"
+          - "Change a schema that is not used in any endpoint": "how_to/change_openapi_schemas/change_schema_without_endpoint.md"
       - "Change business logic": "how_to/change_business_logic/index.md"
       - "Change endpoints": "how_to/change_endpoints/index.md"
 

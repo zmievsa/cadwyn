@@ -10,7 +10,7 @@ on:
     branches: [main, 3.x.x]
     types: [opened, synchronize]
     paths:
-      - ".github/workflows/ci.yaml"  # self
+      - ".github/workflows/ci.yaml" # self
       - "**.py"
       - "**.toml"
       - "**.lock"
@@ -93,7 +93,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pre-commit/action@v3.0.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - uses: pre-commit/action@v3.0.1
 
   Typecheck:
     runs-on: ubuntu-latest

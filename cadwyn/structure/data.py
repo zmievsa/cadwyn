@@ -86,6 +86,12 @@ class _AlterDataInstruction:
         return self.transformer(__request_or_response)
 
 
+@dataclass
+class _BaseAlterBySchemaInstruction:
+    schemas: tuple[Any, ...]
+    check_usage: bool = True
+
+
 ##########
 # Requests
 ##########
@@ -97,8 +103,7 @@ class _BaseAlterRequestInstruction(_AlterDataInstruction):
 
 
 @dataclass
-class _AlterRequestBySchemaInstruction(_BaseAlterRequestInstruction):
-    schemas: tuple[Any, ...]
+class _AlterRequestBySchemaInstruction(_BaseAlterBySchemaInstruction, _BaseAlterRequestInstruction): ...
 
 
 @dataclass
@@ -110,7 +115,10 @@ class _AlterRequestByPathInstruction(_BaseAlterRequestInstruction):
 
 @overload
 def convert_request_to_next_version_for(
-    first_schema: type, /, *additional_schemas: type
+    first_schema: type,
+    /,
+    *additional_schemas: type,
+    check_usage: bool = True,
 ) -> "type[staticmethod[_P, None]]": ...
 
 
@@ -123,6 +131,7 @@ def convert_request_to_next_version_for(
     methods_or_second_schema: list[str] | None | type = None,
     /,
     *additional_schemas: type,
+    check_usage: bool = True,
 ) -> "type[staticmethod[_P, None]]":
     _validate_decorator_args(schema_or_path, methods_or_second_schema, additional_schemas)
 
@@ -141,6 +150,7 @@ def convert_request_to_next_version_for(
             return _AlterRequestBySchemaInstruction(
                 schemas=schemas,
                 transformer=transformer,
+                check_usage=check_usage,
             )
 
     return decorator  # pyright: ignore[reportReturnType]
@@ -158,8 +168,7 @@ class _BaseAlterResponseInstruction(_AlterDataInstruction):
 
 
 @dataclass
-class _AlterResponseBySchemaInstruction(_BaseAlterResponseInstruction):
-    schemas: tuple[Any, ...]
+class _AlterResponseBySchemaInstruction(_BaseAlterBySchemaInstruction, _BaseAlterResponseInstruction): ...
 
 
 @dataclass
@@ -175,6 +184,7 @@ def convert_response_to_previous_version_for(
     /,
     *schemas: type,
     migrate_http_errors: bool = False,
+    check_usage: bool = True,
 ) -> "type[staticmethod[_P, None]]": ...
 
 
@@ -194,6 +204,7 @@ def convert_response_to_previous_version_for(
     /,
     *additional_schemas: type,
     migrate_http_errors: bool = False,
+    check_usage: bool = True,
 ) -> "type[staticmethod[_P, None]]":
     _validate_decorator_args(schema_or_path, methods_or_second_schema, additional_schemas)
 
@@ -215,6 +226,7 @@ def convert_response_to_previous_version_for(
                 schemas=schemas,
                 transformer=transformer,
                 migrate_http_errors=migrate_http_errors,
+                check_usage=check_usage,
             )
 
     return decorator  # pyright: ignore[reportReturnType]
