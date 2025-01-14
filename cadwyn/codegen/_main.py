@@ -166,7 +166,7 @@ def _generate_directory_for_version(
         version_dir,
     ):
         file_source = read_python_module(template_module)
-        parsed_file = ast.parse(file_source)
+        parsed_file = ast_comments.parse(file_source)
         context = _build_context(global_context, template_dir, version_dir, template_module, parallel_file, parsed_file)
 
         parsed_file = _apply_module_level_plugins(plugins, parsed_file, context)
@@ -176,9 +176,9 @@ def _generate_directory_for_version(
 
 def _apply_module_level_plugins(
     plugins: Collection[CodegenPlugin],
-    parsed_file: ast.Module,
+    parsed_file: ast_comments.Module,
     context: CodegenContext,
-) -> ast.Module:
+) -> ast_comments.Module:
     node_type = type(parsed_file)
     for plugin in plugins:
         if issubclass(node_type, plugin.node_type):
@@ -188,9 +188,9 @@ def _apply_module_level_plugins(
 
 def _apply_per_node_plugins(
     plugins: Collection[CodegenPlugin],
-    parsed_file: ast.Module,
+    parsed_file: ast_comments.Module,
     context: CodegenContext,
-) -> ast.Module:
+) -> ast_comments.Module:
     new_body = []
 
     for node in parsed_file.body:
@@ -200,7 +200,7 @@ def _apply_per_node_plugins(
                 node = plugin(node, context)  # noqa: PLW2901
         new_body.append(node)
 
-    return ast.Module(body=new_body, type_ignores=[])
+    return ast_comments.Module(body=new_body, type_ignores=[])
 
 
 def _build_context(
@@ -209,7 +209,7 @@ def _build_context(
     version_dir: Path,
     template_module: ModuleType,
     parallel_file: Path,
-    parsed_file: ast.Module,
+    parsed_file: ast_comments.Module,
 ):
     if template_module.__name__.endswith(".__init__"):
         module_python_path = template_module.__name__.removesuffix(".__init__")
