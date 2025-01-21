@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --refresh --all-extras --dev --upgrade
-      - run: pytest .
+      - run: tox run -e py
       - uses: jakebailey/pyright-action@v1
         with:
           pylance-version: latest-release

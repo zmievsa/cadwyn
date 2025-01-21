@@ -75,6 +75,8 @@ dev-dependencies = [
     "pytest-cov >=4.0.0",
     "dirty-equals >=0.6.0",
     "uvicorn ~=0.23.0",
+    # type checking
+    "pyright>=1.1.390",
     # docs
     "mkdocs >=1.5.2",
     "mkdocs-material >=9.3.1",
@@ -99,6 +101,7 @@ parallel = true
 branch = true
 
 [tool.coverage.report]
+fail_under = 100
 skip_covered = true
 skip_empty = true
 # Taken from https://coverage.readthedocs.io/en/7.1.0/excluding.html#advanced-exclusion
