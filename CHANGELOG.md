@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [4.5.0]
+
+### Added
+
+* `check_usage` argument to request/response by schema converters. Cadwyn always checks whether a schema mentioned in a converter applies to one or more endpoints to guarantee that the converter will apply to at least one endpoint. Sometimes, however, you do not need this validation. For example, when you use these converters for converting webhook bodies. Setting `check_usage=False` makes it possible to skip the validation
+
 ## [4.4.5]
 
 ### Fixed

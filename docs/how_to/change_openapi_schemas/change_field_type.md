@@ -58,7 +58,6 @@ Additional resources:
 * <https://github.com/OAI/OpenAPI-Specification/issues/1552>
 * <https://users.rust-lang.org/t/solved-is-adding-an-enum-variant-a-breaking-change/26721/5>
 * <https://github.com/graphql/graphql-js/issues/968>
-* <https://medium.com/@jakob.fiegerl/java-jackson-enum-de-serialization-with-rest-backward-compatibility-9c3ec85ac13d>
 
 In these sections, we'll be working with our user's response model: `users.UserResource`. Note that the main theme here is "Will I be able to serialize this change to any of my versions?" as any change to responses can make them incompatible with the data in your database.
 

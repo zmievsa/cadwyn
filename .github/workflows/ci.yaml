@@ -10,7 +10,7 @@ on:
     branches: [main, 3.x.x]
     types: [opened, synchronize]
     paths:
-      - ".github/workflows/ci.yaml"  # self
+      - ".github/workflows/ci.yaml" # self
       - "**.py"
       - "**.toml"
       - "**.lock"

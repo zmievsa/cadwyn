@@ -158,7 +158,7 @@ def migrate_response_body(
     *,
     latest_body: Any,
     version: VersionDate | str,
-):
+) -> Any:
     """Convert the data to a specific version
 
     Apply all version changes from latest until the passed version in reverse order

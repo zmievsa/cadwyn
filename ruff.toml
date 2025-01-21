@@ -127,6 +127,9 @@ ignore = [
     "PGH003", # Use specific rule codes when ignoring type issues
     "B008",   # Do not perform function call in argument defaults
 ]
+"docs_src/**/*" = [
+    "RUF012", # Mutable class attributes should be annotated with `typing.ClassVar`
+]
 "cadwyn/_utils.py" = [
     "ERA001", # Found commented-out code (it's not actually commented out. It's just comments)
 ]
