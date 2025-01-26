@@ -11,8 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-python-uv
-      - run: |
-          tox run -e docs
+      - run: tox run -e docs
 
   markdown-link-check:
     runs-on: ubuntu-latest

@@ -102,6 +102,7 @@ jobs:
           python -m pip install uv
           uv pip install --system pre-commit pre-commit-uv
           pre-commit run --all-files
+      - run: tox run -e docs
       - name: Validate links
         uses: umbrelladocs/action-linkspector@v1
         with:
@@ -118,5 +119,4 @@ jobs:
           # When this version is updated,
           # update the pyright `base_python` version in `tox.ini`, too.
           python-version: "3.10"
-      - run: |
-          tox run -e pyright
+      - run: tox run -e pyright
