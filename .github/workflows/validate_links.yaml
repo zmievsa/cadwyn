@@ -4,6 +4,7 @@ on:
   schedule:
     # Run everyday at 9:00 AM
     - cron: "0 9 * * *"
+  workflow_dispatch: # Allows manual triggering of the workflow
 
 jobs:
   build-docs-to-validate-links:
