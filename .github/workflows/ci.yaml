@@ -102,6 +102,12 @@ jobs:
           python -m pip install uv
           uv pip install --system pre-commit pre-commit-uv
           pre-commit run --all-files
+      - name: Validate links
+        uses: umbrelladocs/action-linkspector@v1
+        with:
+          reporter: github-pr-review
+          filter_mode: diff_context
+          fail_level: any
 
   Typecheck:
     runs-on: ubuntu-latest

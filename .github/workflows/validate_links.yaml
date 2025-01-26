@@ -1,17 +1,6 @@
 name: Check Markdown links
 
 on:
-  push:
-    branches:
-      - main
-      - 3.x.x
-    paths:
-      - "**.md"
-  pull_request:
-    branches: [main, 3.x.x]
-    types: [opened, synchronize]
-    paths:
-      - "**.md"
   schedule:
     # Run everyday at 9:00 AM
     - cron: "0 9 * * *"
@@ -29,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: gaurav-nelson/github-action-markdown-link-check@v1
+      - uses: umbrelladocs/action-linkspector@v1
         with:
-          use-quiet-mode: "yes"
-          use-verbose-mode: "yes"
-          folder-path: "."
+          reporter: github-check
+          filter_mode: nofilter
+          fail_level: any
