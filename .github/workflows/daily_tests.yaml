@@ -21,10 +21,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --refresh --all-extras --dev --upgrade
-      - run: tox run -e py
-      - uses: jakebailey/pyright-action@v1
-        with:
-          pylance-version: latest-release
+      - run: uv run pytest . # We intentionally don't use tox here to run tests "as is"
+      - run: uv run pyright --version && uv run pyright .
 
   notify-on-failure:
     name: Notify on failure
