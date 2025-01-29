@@ -102,6 +102,16 @@ jobs:
           python -m pip install uv
           uv pip install --system pre-commit pre-commit-uv
           pre-commit run --all-files
+
+  Validate-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-uv
+        with:
+          # When this version is updated,
+          # update the pyright `base_python` version in `tox.ini`, too.
+          python-version: "3.10"
       - run: tox run -e docs
       - name: Validate links
         uses: umbrelladocs/action-linkspector@v1
