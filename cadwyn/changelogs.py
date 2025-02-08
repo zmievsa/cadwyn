@@ -406,8 +406,12 @@ def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
                 version_change_name=version_change.__name__,
             )
 
-            older_model = newer_model_wrapper_with_migrated_field.generate_model_copy(generator_from_newer_version)
-            newer_model = newer_model_wrapper.generate_model_copy(generator_from_newer_version)
+            older_model = newer_model_wrapper_with_migrated_field.generate_model_copy(
+                generator_from_newer_version, generator_from_newer_version.model_cache
+            )
+            newer_model = newer_model_wrapper.generate_model_copy(
+                generator_from_newer_version, generator_from_newer_version.model_cache
+            )
 
             newer_field_openapi = _get_openapi_representation_of_a_field(newer_model, instruction.name)
             older_field_openapi = _get_openapi_representation_of_a_field(

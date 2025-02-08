@@ -12,6 +12,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    ClassVar,
     Generic,
     TypeAlias,
     TypeVar,
@@ -141,11 +142,29 @@ class _ModelBundle:
     schemas: dict[type[BaseModel], "_PydanticModelWrapper"]
 
 
+class _ModelCache:
+    def __init__(self, model_connections: dict[type[BaseModel], list[type[BaseModel]]] | None = None):
+        super().__init__()
+
+        # model -> list of models that depend on it
+        if model_connections is None:
+            self.model_connections = {}
+        else:
+            self.model_connections = model_connections
+        # For calculating dependencies and preventing infinite recursion if they are circular
+        self.visited_models = set()
+        self.modified_models = set()
+
+    def create_and_inherit_connections(self):
+        return _ModelCache(self.model_connections)
+
+
 @dataclasses.dataclass(slots=True, kw_only=True)
 class _RuntimeSchemaGenContext:
     version_bundle: "VersionBundle"
     current_version: "Version | HeadVersion"
     models: _ModelBundle
+    model_cache: _ModelCache = dataclasses.field()
     latest_version: "Version" = dataclasses.field(init=False)
 
     def __post_init__(self):
@@ -284,8 +303,12 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     other_attributes: dict[str, Any] = dataclasses.field(repr=False)
     annotations: dict[str, Any] = dataclasses.field(repr=False)
     _parents: list[Self] | None = dataclasses.field(init=False, default=None, repr=False)
+    _WRAPPER_INSTANCE_COUNTER: ClassVar[int] = 0
+    _WRAPPER_COPY_COUNTER: ClassVar[int] = 0
+    _MODEL_COPY_COUNTER: ClassVar[int] = 0
 
     def __post_init__(self):
+        type(self)._WRAPPER_INSTANCE_COUNTER += 1
         # This isn't actually supposed to run, it's just a precaution
         while hasattr(self.cls, "__cadwyn_original_model__"):  # pragma: no cover
             self.cls = self.cls.__cadwyn_original_model__  # pyright: ignore[reportAttributeAccessIssue]
@@ -300,6 +323,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 )
 
     def __deepcopy__(self, memo: dict[int, Any]):
+        type(self)._WRAPPER_COPY_COUNTER += 1
         result = _PydanticModelWrapper(
             self.cls,
             name=self.name,
@@ -343,7 +367,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return annotations | self.annotations
 
-    def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
+    def generate_model_copy(self, generator: "SchemaGenerator", model_cache: _ModelCache) -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {
             name: validator.decorator(*validator.fields, **validator.kwargs)(validator.func)
             for name, validator in self.validators.items()
@@ -370,6 +394,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         )
 
         model_copy.__cadwyn_original_model__ = self.cls
+        type(self)._MODEL_COPY_COUNTER += 1
         return model_copy
 
 
@@ -609,14 +634,15 @@ def _add_request_and_response_params(route: APIRoute):
 
 @final
 class SchemaGenerator:
-    __slots__ = "annotation_transformer", "concrete_models", "model_bundle"
+    __slots__ = "annotation_transformer", "concrete_models", "model_bundle", "model_cache"
 
-    def __init__(self, model_bundle: _ModelBundle) -> None:
+    def __init__(self, model_bundle: _ModelBundle, model_cache: _ModelCache) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
         self.concrete_models = {}
+        self.model_cache = model_cache
         self.concrete_models = {
-            k: wrapper.generate_model_copy(self)
+            k: wrapper.generate_model_copy(self, model_cache)
             for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
         }
 
@@ -635,7 +661,7 @@ class SchemaGenerator:
             wrapper = self._get_wrapper_for_model(model)
 
         wrapper = self._get_wrapper_for_model(model)
-        model_copy = wrapper.generate_model_copy(self)
+        model_copy = wrapper.generate_model_copy(self, self.model_cache)
         self.concrete_models[model] = model_copy
         return cast(type[_T_ANY_MODEL], model_copy)
 
@@ -668,14 +694,55 @@ class SchemaGenerator:
 @cache
 def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGenerator]":
     models = _create_model_bundle(versions)
+    # Statistics before caching:
+    # / {'version': 'head', 'wrapper_instances': 14, 'wrapper_copies': 0, 'model_copies': 0}
+    # / {'version': datetime.date(2024, 5, 25), 'wrapper_instances': 64, 'wrapper_copies': 14, 'model_copies': 42}
+    # / {'version': datetime.date(2024, 1, 31), 'wrapper_instances': 103, 'wrapper_copies': 28, 'model_copies': 85}
+    # / {'version': datetime.date(2023, 9, 1), 'wrapper_instances': 137, 'wrapper_copies': 42, 'model_copies': 127}
+    # / {'version': datetime.date(2023, 4, 12), 'wrapper_instances': 171, 'wrapper_copies': 56, 'model_copies': 169}
+    # / {'version': datetime.date(2023, 3, 1), 'wrapper_instances': 210, 'wrapper_copies': 70, 'model_copies': 213}
+    # / {'version': datetime.date(2022, 11, 16), 'wrapper_instances': 246, 'wrapper_copies': 84, 'model_copies': 257}
+
+    # / print(
+    # /     {
+    # /         "version": "head",
+    # /         "wrapper_instances": _PydanticModelWrapper._WRAPPER_INSTANCE_COUNTER,
+    # /         "wrapper_copies": _PydanticModelWrapper._WRAPPER_COPY_COUNTER,
+    # /         "model_copies": _PydanticModelWrapper._MODEL_COPY_COUNTER,
+    # /     }
+    # / )
 
     version_to_context_map = {}
-    context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
+    context = _RuntimeSchemaGenContext(
+        current_version=versions.head_version,
+        models=models,
+        version_bundle=versions,
+        model_cache=_ModelCache(),
+    )
     _migrate_classes(context)
 
     for version in versions.versions:
-        context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
-        version_to_context_map[str(version.value)] = SchemaGenerator(copy.deepcopy(models))
+        context = _RuntimeSchemaGenContext(
+            current_version=version,
+            models=models,
+            version_bundle=versions,
+            model_cache=context.model_cache.create_and_inherit_connections(),
+        )
+        version_to_context_map[str(version.value)] = SchemaGenerator(
+            _ModelBundle(
+                enums=copy.copy(models.enums),
+                schemas=copy.deepcopy(models.schemas),
+            ),
+            context.model_cache,
+        )
+        # / print(
+        # /     {
+        # /         "version": version.value,
+        # /         "wrapper_instances": _PydanticModelWrapper._WRAPPER_INSTANCE_COUNTER,
+        # /         "wrapper_copies": _PydanticModelWrapper._WRAPPER_COPY_COUNTER,
+        # /         "model_copies": _PydanticModelWrapper._MODEL_COPY_COUNTER,
+        # /     }
+        # / )
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
 
@@ -695,11 +762,13 @@ def _migrate_classes(context: _RuntimeSchemaGenContext) -> None:
             context.models.schemas,
             version_change.alter_schema_instructions,
             version_change.__name__,
+            context.model_cache,
         )
         _apply_alter_enum_instructions(
             context.models.enums,
             version_change.alter_enum_instructions,
             version_change.__name__,
+            context.model_cache,
         )
 
 
@@ -707,9 +776,11 @@ def _apply_alter_schema_instructions(
     modified_schemas: dict[type, _PydanticModelWrapper],
     alter_schema_instructions: Sequence[AlterSchemaSubInstruction | SchemaHadInstruction],
     version_change_name: str,
+    model_cache: _ModelCache,
 ) -> None:
     for alter_schema_instruction in alter_schema_instructions:
         schema_info = modified_schemas[alter_schema_instruction.schema]
+        model_cache.modified_models.add(alter_schema_instruction.schema)
         if isinstance(alter_schema_instruction, FieldExistedAsInstruction):
             _add_field_to_model(schema_info, modified_schemas, alter_schema_instruction, version_change_name)
         elif isinstance(alter_schema_instruction, FieldHadInstruction | FieldDidntHaveInstruction):
@@ -753,9 +824,11 @@ def _apply_alter_enum_instructions(
     enums: "dict[type, _EnumWrapper]",
     alter_enum_instructions: Sequence[AlterEnumSubInstruction],
     version_change_name: str,
+    model_cache: _ModelCache,
 ):
     for alter_enum_instruction in alter_enum_instructions:
         enum = enums[alter_enum_instruction.enum]
+        model_cache.modified_models.add(alter_enum_instruction.enum)
         if isinstance(alter_enum_instruction, EnumDidntHaveMembersInstruction):
             for member in alter_enum_instruction.members:
                 if member not in enum.members:
@@ -764,6 +837,7 @@ def _apply_alter_enum_instructions(
                         f'in "{version_change_name}" but it doesn\'t have such a member.',
                     )
                 enum.members.pop(member)
+
         elif isinstance(alter_enum_instruction, EnumHadMembersInstruction):
             for member, member_value in alter_enum_instruction.members.items():
                 if member in enum.members and enum.members[member] == member_value:
@@ -938,9 +1012,10 @@ class _DummyEnum(Enum):
 
 @final
 class _EnumWrapper(Generic[_T_ENUM]):
-    __slots__ = "cls", "members", "name"
+    __slots__ = "_next_version_cls", "cls", "members", "name"
 
     def __init__(self, cls: type[_T_ENUM]):
+        self._next_version_cls = cls
         self.cls = _unwrap_model(cls)
         self.name = cls.__name__
         self.members = {member.name: member.value for member in cls}
@@ -951,7 +1026,9 @@ class _EnumWrapper(Generic[_T_ENUM]):
         memo[id(self)] = result
         return result
 
-    def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_ENUM]:
+    def generate_model_copy(self, generator: "SchemaGenerator", model_cache: _ModelCache) -> type[_T_ENUM]:
+        if self.cls not in model_cache.modified_models:
+            return self._next_version_cls
         enum_dict = Enum.__prepare__(self.name, self.cls.__bases__)
 
         raw_member_map = {k: v.value if isinstance(v, Enum) else v for k, v in self.members.items()}
