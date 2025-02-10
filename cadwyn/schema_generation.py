@@ -136,27 +136,62 @@ def _extract_passed_field_attributes(field_info: FieldInfo):
     return attributes
 
 
-@dataclasses.dataclass(slots=True)
 class _ModelBundle:
-    enums: dict[type[Enum], "_EnumWrapper"]
-    schemas: dict[type[BaseModel], "_PydanticModelWrapper"]
-
-
-class _ModelCache:
-    def __init__(self, model_connections: dict[type[BaseModel], list[type[BaseModel]]] | None = None):
+    # TODO: I feel like we need to build the list of dependencies within the ModelWrapper
+    def __init__(
+        self,
+        enums: dict[type[Enum], "_EnumWrapper"],
+        schemas: dict[type[BaseModel], "_PydanticModelWrapper"],
+    ):
         super().__init__()
+        self.schemas = schemas
+        self.enums = enums
 
-        # model -> list of models that depend on it
-        if model_connections is None:
-            self.model_connections = {}
-        else:
-            self.model_connections = model_connections
         # For calculating dependencies and preventing infinite recursion if they are circular
         self.visited_models = set()
         self.modified_models = set()
 
-    def create_and_inherit_connections(self):
-        return _ModelCache(self.model_connections)
+    @overload
+    def get_for_write(self, model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]": ...
+    @overload
+    def get_for_write(self, model: type[_T_ENUM]) -> "_EnumWrapper[_T_ENUM]": ...
+
+    def get_for_write(self, model: type[_T_PYDANTIC_MODEL] | type[_T_ENUM]) -> "_PydanticModelWrapper | _EnumWrapper":
+        """If model was not yet modified, then we copy the model and return the copy.
+        If it was modified, return the previously created copy
+        """
+        if model in self.schemas:
+            stored_model = self.schemas[model]
+        elif model in self.enums:
+            stored_model = self.enums[model]
+        else:
+            raise Exception("WHAT")
+        if model in self.modified_models:
+            return stored_model
+        else:
+            raise Exception("We should merge self.schemas and self.enums. Ah...")
+
+    @overload
+    def get_for_read(self, model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]": ...
+    @overload
+    def get_for_read(self, model: type[_T_ENUM]) -> "_EnumWrapper[_T_ENUM]": ...
+
+    def get_for_read(self, model: type[_T_PYDANTIC_MODEL] | type[_T_ENUM]) -> "_PydanticModelWrapper | _EnumWrapper":
+        """If model is marked as modified, then we return the previously created copy. If it is not marked as modified,
+        then we check whether if was visited. If it was visited, then we return the original model. If it was not,
+        then we try to find whether it or any of its dependencies (direct or transitive) were modified.
+        - If they were -- return a new copy, if they were not -- return the original model.
+        - Every model we fully verified must be marked as "visited" to save future computations.
+        - Notice that this logic relies on us calling get_for_read if and only if we are already done
+          modifying the models. So cadwyn expects us to start reading models only after it applied all version changes.
+        """
+
+
+def _create_model_bundle(versions: "VersionBundle"):
+    return _ModelBundle(
+        enums={enum: _EnumWrapper(enum) for enum in versions.versioned_enums.values()},
+        schemas={schema: _wrap_pydantic_model(schema) for schema in versions.versioned_schemas.values()},
+    )
 
 
 @dataclasses.dataclass(slots=True, kw_only=True)
@@ -164,7 +199,7 @@ class _RuntimeSchemaGenContext:
     version_bundle: "VersionBundle"
     current_version: "Version | HeadVersion"
     models: _ModelBundle
-    model_cache: _ModelCache = dataclasses.field()
+    model_cache: _ModelBundle = dataclasses.field()
     latest_version: "Version" = dataclasses.field(init=False)
 
     def __post_init__(self):
@@ -367,7 +402,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return annotations | self.annotations
 
-    def generate_model_copy(self, generator: "SchemaGenerator", model_cache: _ModelCache) -> type[_T_PYDANTIC_MODEL]:
+    def generate_model_copy(self, generator: "SchemaGenerator", model_cache: _ModelBundle) -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {
             name: validator.decorator(*validator.fields, **validator.kwargs)(validator.func)
             for name, validator in self.validators.items()
@@ -636,7 +671,7 @@ def _add_request_and_response_params(route: APIRoute):
 class SchemaGenerator:
     __slots__ = "annotation_transformer", "concrete_models", "model_bundle", "model_cache"
 
-    def __init__(self, model_bundle: _ModelBundle, model_cache: _ModelCache) -> None:
+    def __init__(self, model_bundle: _ModelBundle, model_cache: _ModelBundle) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
         self.concrete_models = {}
@@ -717,7 +752,7 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
         current_version=versions.head_version,
         models=models,
         version_bundle=versions,
-        model_cache=_ModelCache(),
+        model_cache=_ModelBundle(),
     )
     _migrate_classes(context)
 
@@ -749,13 +784,6 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
     return version_to_context_map
 
 
-def _create_model_bundle(versions: "VersionBundle"):
-    return _ModelBundle(
-        enums={enum: _EnumWrapper(enum) for enum in versions.versioned_enums.values()},
-        schemas={schema: _wrap_pydantic_model(schema) for schema in versions.versioned_schemas.values()},
-    )
-
-
 def _migrate_classes(context: _RuntimeSchemaGenContext) -> None:
     for version_change in context.current_version.changes:
         _apply_alter_schema_instructions(
@@ -776,7 +804,7 @@ def _apply_alter_schema_instructions(
     modified_schemas: dict[type, _PydanticModelWrapper],
     alter_schema_instructions: Sequence[AlterSchemaSubInstruction | SchemaHadInstruction],
     version_change_name: str,
-    model_cache: _ModelCache,
+    model_cache: _ModelBundle,
 ) -> None:
     for alter_schema_instruction in alter_schema_instructions:
         schema_info = modified_schemas[alter_schema_instruction.schema]
@@ -824,7 +852,7 @@ def _apply_alter_enum_instructions(
     enums: "dict[type, _EnumWrapper]",
     alter_enum_instructions: Sequence[AlterEnumSubInstruction],
     version_change_name: str,
-    model_cache: _ModelCache,
+    model_cache: _ModelBundle,
 ):
     for alter_enum_instruction in alter_enum_instructions:
         enum = enums[alter_enum_instruction.enum]
@@ -1026,7 +1054,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
         memo[id(self)] = result
         return result
 
-    def generate_model_copy(self, generator: "SchemaGenerator", model_cache: _ModelCache) -> type[_T_ENUM]:
+    def generate_model_copy(self, generator: "SchemaGenerator", model_cache: _ModelBundle) -> type[_T_ENUM]:
         if self.cls not in model_cache.modified_models:
             return self._next_version_cls
         enum_dict = Enum.__prepare__(self.name, self.cls.__bases__)

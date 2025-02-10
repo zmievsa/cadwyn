@@ -37,6 +37,7 @@ class EnumWithOneMemberAndMethods(Enum):
 def test__enum_had__original_enum_is_empty(create_runtime_schemas: CreateRuntimeSchemas):
     models = create_runtime_schemas(version_change(enum(EmptyEnum).had(b=auto())))
     assert serialize_enum(models["2000-01-01"][EmptyEnum]) == {"b": 1}
+    assert serialize_enum(models["2001-01-01"][EmptyEnum]) == {}
 
 
 def test__enum_had__original_enum_has_methods__all_methods_are_preserved(

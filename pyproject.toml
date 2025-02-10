@@ -83,7 +83,6 @@ dev-dependencies = [
     "mkdocs-simple-hooks >=0.1.5",
     "mdx-include ~=1.4.2",
     "mike >=2.1.2, <3",
-    "pdbpp>=0.10.3",
 ]
 
 [project.urls]
