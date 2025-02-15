@@ -19,8 +19,9 @@ if TYPE_CHECKING:
 
 PossibleFieldAttributes = Literal[
     "default",
-    "default_factory",
+    "alias",
     "alias_priority",
+    "default_factory",
     "validation_alias",
     "serialization_alias",
     "title",
@@ -60,6 +61,7 @@ PossibleFieldAttributes = Literal[
 @dataclass(slots=True)
 class FieldChanges:
     default: Any
+    alias: str | None
     default_factory: Any
     alias_priority: int | None
     validation_alias: str | AliasPath | AliasChoices | None
@@ -137,6 +139,7 @@ class AlterFieldInstructionFactory:
         name: str = Sentinel,
         type: Any = Sentinel,
         default: Any = Sentinel,
+        alias: str | None = Sentinel,
         default_factory: Callable = Sentinel,
         alias_priority: int = Sentinel,
         validation_alias: str = Sentinel,
@@ -181,6 +184,7 @@ class AlterFieldInstructionFactory:
                 default=default,
                 default_factory=default_factory,
                 alias_priority=alias_priority,
+                alias=alias,
                 validation_alias=validation_alias,
                 serialization_alias=serialization_alias,
                 title=title,

@@ -30,12 +30,12 @@ router = VersionedAPIRouter()
 
 
 @router.post("/test")
-async def test_with_inner_schema_forwardref(dep: MySchema) -> MySchema:
+async def route_with_inner_schema_forwardref(dep: MySchema) -> MySchema:
     return dep
 
 
 @router.post("/test2")
-async def test_with_outer_schema_forwardref(dep: OuterSchema) -> OuterSchema:
+async def route_with_outer_schema_forwardref(dep: OuterSchema) -> OuterSchema:
     return dep
 
 
@@ -56,7 +56,7 @@ def test__router_generation__using_forwardref_outer_global_schema_in_body():
     unversioned_client = TestClient(app)
     client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
     client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
-    assert client_2000.post("/test", json={"bar": {"foo": 1}}).json() == {"bar": {"foo": 1}}
-    assert client_2001.post("/test", json={"bar": {"foo": 1}}).json() == {"bar": {"foo": "1"}}
+    assert client_2000.post("/test2", json={"bar": {"foo": 1}}).json() == {"bar": {"foo": 1}}
+    assert client_2001.post("/test2", json={"bar": {"foo": 1}}).json() == {"bar": {"foo": "1"}}
     assert unversioned_client.get("/openapi.json?version=2000-01-01").status_code == 200
     assert unversioned_client.get("/openapi.json?version=2001-01-01").status_code == 200
