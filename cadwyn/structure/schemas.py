@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from issubclass import issubclass as lenient_issubclass
 from pydantic import AliasChoices, AliasPath, BaseModel, Field
 from pydantic._internal._decorators import PydanticDescriptorProxy, unwrap_wrapped_function
-from pydantic.config import JsonDict
 from pydantic.fields import FieldInfo
 
 from cadwyn._utils import Sentinel, fully_unwrap_decorator
