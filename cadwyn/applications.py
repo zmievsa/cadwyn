@@ -279,7 +279,7 @@ class Cadwyn(FastAPI):
         except (ValueError, TypeError):
             version = raw_version
 
-        if version in self.router.versioned_routers:
+        if isinstance(version, date) and version in self.router.versioned_routers:
             routes = self.router.versioned_routers[version].routes
             formatted_version = version.isoformat()
         elif version == "unversioned" and self._there_are_public_unversioned_routes():
@@ -296,7 +296,7 @@ class Cadwyn(FastAPI):
             self.servers.insert(0, {"url": root_path})
 
         webhook_routes = None
-        if version in self._versioned_webhook_routers:
+        if isinstance(version, date) and version in self._versioned_webhook_routers:
             webhook_routes = self._versioned_webhook_routers[version].routes
 
         return JSONResponse(

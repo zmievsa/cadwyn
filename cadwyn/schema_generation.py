@@ -40,6 +40,7 @@ from pydantic._internal._decorators import (
     RootValidatorDecoratorInfo,
     ValidatorDecoratorInfo,
 )
+from pydantic._internal._typing_extra import try_eval_type as pydantic_try_eval_type
 from pydantic.fields import ComputedFieldInfo, FieldInfo
 from typing_extensions import Doc, Self, _AnnotatedAlias, assert_never
 
@@ -231,6 +232,12 @@ def _is_dunder(attr_name: str):
 
 
 def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
+    # In case we have a forwardref within one of the fields
+    # For example, when "from __future__ import annotations" is used in the file with the schema
+    if model is not BaseModel:
+        model.model_rebuild(raise_errors=False)
+    model = cast(type[_T_PYDANTIC_MODEL], model)
+
     decorators = _get_model_decorators(model)
     validators = {}
     for decorator_wrapper in decorators:
@@ -239,8 +246,20 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
 
         wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
         validators[decorator_wrapper.cls_var_name] = wrapped_validator
+
+    annotations = {
+        name: value
+        if not isinstance(value, str)
+        else model.model_fields[name].annotation or model.__annotations__[name]
+        for name, value in model.__annotations__.items()
+    }
+
     fields = {
-        field_name: PydanticFieldWrapper(model.model_fields[field_name], model.__annotations__[field_name], field_name)
+        field_name: PydanticFieldWrapper(
+            model.model_fields[field_name],
+            annotations[field_name],
+            field_name,
+        )
         for field_name in model.__annotations__
     }
 
@@ -263,7 +282,7 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
         fields=fields,
         other_attributes=other_attributes,
         validators=validators,
-        annotations=model.__annotations__.copy(),
+        annotations=annotations,
     )
 
 
@@ -355,6 +374,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             if not validator.is_deleted and type(validator) == _ValidatorWrapper  # noqa: E721
         }
         fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
+
         model_copy = type(self.cls)(
             self.name,
             tuple(generator[cast(type[BaseModel], base)] for base in self.cls.__bases__),
@@ -418,6 +438,7 @@ class _AnnotationTransformer:
         # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
         # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
         self.generator = generator
+        # TODO: Rewrite this to memoize
         self.change_versions_of_a_non_container_annotation = functools.cache(
             self._change_version_of_a_non_container_annotation
         )
@@ -531,6 +552,9 @@ class _AnnotationTransformer:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
         old_params = inspect.signature(call).parameters
         callable_annotations = annotation_modifying_wrapper.__annotations__
+        callable_annotations = {
+            k: v if type(v) is not str else _try_eval_type(v, call.__globals__) for k, v in callable_annotations.items()
+        }
         annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
         annotation_modifying_wrapper.__defaults__ = modify_defaults(
             tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
@@ -631,8 +655,6 @@ class SchemaGenerator:
 
         if model in self.concrete_models:
             return self.concrete_models[model]
-        else:
-            wrapper = self._get_wrapper_for_model(model)
 
         wrapper = self._get_wrapper_for_model(model)
         model_copy = wrapper.generate_model_copy(self)
@@ -655,6 +677,8 @@ class SchemaGenerator:
             return self.model_bundle.enums[model]
 
         if lenient_issubclass(model, BaseModel):
+            # TODO: My god, what if one of its fields is in our concrete schemas and we don't use it? :O
+            # TODO: Add an argument with our concrete schemas for _wrap_pydantic_model
             wrapper = _wrap_pydantic_model(model)
             self.model_bundle.schemas[model] = wrapper
         elif lenient_issubclass(model, Enum):
@@ -977,3 +1001,11 @@ class _EnumWrapper(Generic[_T_ENUM]):
             and k not in _DummyEnum.__dict__
             and (k not in mro_dict or mro_dict[k] is not v)
         }
+
+
+def _try_eval_type(value: Any, globals: dict[str, Any]) -> Any:
+    new_value, success = pydantic_try_eval_type(value, globals)
+    if success:
+        return new_value
+    else:  # pragma: no cover # Can't imagine when this would happen
+        return value
