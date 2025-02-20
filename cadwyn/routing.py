@@ -13,6 +13,7 @@ from starlette.routing import BaseRoute, Match
 from starlette.types import Receive, Scope, Send
 
 from cadwyn._utils import same_definition_as_in
+from cadwyn.structure.common import VersionType
 
 from .route_generation import generate_versioned_routers
 
@@ -26,26 +27,32 @@ class _RootHeaderAPIRouter(APIRouter):
     """Root router of the FastAPI app when using header based versioning.
 
     It will be used to route the requests to the correct versioned route
-    based on the headers. It also supports waterflowing the requests to the latest
-    version of the API if the request header doesn't match any of the versions.
+    based on the headers.
 
     If the app has two versions: 2022-01-02 and 2022-01-05, and the request header
     is 2022-01-03, then the request will be routed to 2022-01-02 version as it the closest
     version, but lower than the request header.
 
     Exact match is always preferred over partial match and a request will never be
-    matched to the higher versioned route
+    matched to the higher versioned route.
+
+    We implement routing like this because it is extremely convenient with microservice
+    architecture. For example, imagine that you have two Cadwyn services: Payables and Receivables,
+    each defining its own API versions. Payables service might contain 10 versions while receivables
+    service might contain only 2 versions because it didn't need as many breaking changes.
+    If a client requests a version that does not exist in receivables -- we will just waterfall
+    to some earlier version, making receivables behavior consistent even if API keeps getting new versions.
     """
 
     def __init__(
         self,
         *args: Any,
         api_version_header_name: str,
-        api_version_var: ContextVar[date] | ContextVar[date | None],
+        api_version_var: ContextVar[VersionType] | ContextVar[VersionType | None],
         **kwargs: Any,
     ):
         super().__init__(*args, **kwargs)
-        self.versioned_routers: dict[date, APIRouter] = {}
+        self.versioned_routers: dict[VersionType, APIRouter] = {}
         self.api_version_header_name = api_version_header_name.lower()
         self.api_version_var = api_version_var
         self.unversioned_routes: list[BaseRoute] = []
@@ -58,13 +65,13 @@ class _RootHeaderAPIRouter(APIRouter):
     def min_routes_version(self):
         return min(self.sorted_versions)
 
-    def find_closest_date_but_not_new(self, request_version: date) -> date:
+    def find_closest_date_but_not_new(self, request_version: VersionType) -> VersionType:
         index = bisect.bisect_left(self.sorted_versions, request_version)
         # as bisect_left returns the index where to insert item x in list a, assuming a is sorted
         # we need to get the previous item and that will be a match
         return self.sorted_versions[index - 1]
 
-    def pick_version(self, request_header_value: date) -> list[BaseRoute]:
+    def pick_version(self, request_header_value: VersionType) -> list[BaseRoute]:
         request_version = request_header_value.isoformat()
 
         if self.min_routes_version > request_header_value:

@@ -36,7 +36,7 @@ from cadwyn.schema_generation import (
     generate_versioned_models,
 )
 from cadwyn.structure import Version, VersionBundle
-from cadwyn.structure.common import Endpoint, VersionDate
+from cadwyn.structure.common import Endpoint, VersionType
 from cadwyn.structure.endpoints import (
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
@@ -62,8 +62,8 @@ class _EndpointInfo:
 
 @dataclass(slots=True, frozen=True)
 class GeneratedRouters(Generic[_R, _WR]):
-    endpoints: dict[VersionDate, _R]
-    webhooks: dict[VersionDate, _WR]
+    endpoints: dict[VersionType, _R]
+    webhooks: dict[VersionType, _WR]
 
 
 def generate_versioned_routers(
@@ -125,8 +125,8 @@ class _EndpointTransformer(Generic[_R, _WR]):
     def transform(self) -> GeneratedRouters[_R, _WR]:
         router = copy_router(self.parent_router)
         webhook_router = copy_router(self.parent_webhooks_router)
-        routers: dict[VersionDate, _R] = {}
-        webhook_routers: dict[VersionDate, _WR] = {}
+        routers: dict[VersionType, _R] = {}
+        webhook_routers: dict[VersionType, _WR] = {}
 
         for version in self.versions:
             self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(router)

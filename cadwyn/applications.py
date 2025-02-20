@@ -27,10 +27,11 @@ from typing_extensions import Self
 
 from cadwyn._utils import same_definition_as_in
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
-from cadwyn.middleware import HeaderVersioningMiddleware, _get_api_version_dependency
+from cadwyn.middleware import VersionPickingMiddleware, _get_api_version_dependency
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.routing import _RootHeaderAPIRouter
 from cadwyn.structure import VersionBundle
+from cadwyn.structure.common import VersionType
 
 CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
@@ -157,7 +158,7 @@ class Cadwyn(FastAPI):
             api_version_header_name=api_version_header_name,
             api_version_var=self.versions.api_version_var,
         )
-        self._versioned_webhook_routers: dict[date, APIRouter] = {}
+        self._versioned_webhook_routers: dict[VersionType, APIRouter] = {}
         self._latest_version_router = APIRouter(dependency_overrides_provider=self._dependency_overrides_provider)
 
         self.changelog_url = changelog_url
@@ -173,7 +174,7 @@ class Cadwyn(FastAPI):
         self._add_default_versioned_routers()
         self.include_router(unversioned_router)
         self.add_middleware(
-            HeaderVersioningMiddleware,
+            VersionPickingMiddleware,
             api_version_header_name=self.router.api_version_header_name,
             api_version_var=self.versions.api_version_var,
             default_response_class=default_response_class,
@@ -193,7 +194,7 @@ class Cadwyn(FastAPI):
             versions=self.versions,
         )
         for version, router in generated_routers.endpoints.items():
-            self.add_header_versioned_routers(router, header_value=version.isoformat())
+            self.add_header_versioned_routers(router, header_value=version)
 
         for version, router in generated_routers.webhooks.items():
             self._versioned_webhook_routers[version] = router

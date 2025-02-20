@@ -17,8 +17,6 @@ def test__render_model__with_weird_types():
         "tests._resources.render.complex.versions:app",
         "2000-01-01",
     )
-    # TODO: sobolevn has created a tool for doing such nocovers in a better manner.
-    # hopefully someday we will switch to it.
     if sys.version_info >= (3, 11):
         rendered_lambda = "lambda: 83"
     else:

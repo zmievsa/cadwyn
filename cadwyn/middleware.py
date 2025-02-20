@@ -1,27 +1,101 @@
 import inspect
+import re
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Awaitable, Callable, Literal, assert_never, cast
 
-from fastapi import Header, Request, Response
+import fastapi
+from fastapi import Request, Response
 from fastapi._compat import _normalize_errors
 from fastapi.dependencies.utils import get_dependant, solve_dependencies
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
+from cadwyn.structure.common import VersionType
+from cadwyn.structure.versions import VersionBundle
 
-def _get_api_version_dependency(api_version_header_name: str, version_example: str):
+VersionGetterC = Callable[[Request], str | None]
+VersionValidatorC = Callable[[str], VersionType]
+VersionDependencyFactoryC = Callable[[], Callable[..., Any]]
+
+APIVersionLocation = Literal["header", "url"]
+APIVersionStyle = Literal["date", "sortable_string"]
+
+
+class HeaderVersionGetter:
+    __slots__ = ("api_version_parameter_name",)
+
+    def __init__(self, *, api_version_parameter_name: str, **kwargs: Any) -> None:
+        super().__init__()
+        self.api_version_parameter_name = api_version_parameter_name
+
+    def __call__(self, request: Request) -> str | None:
+        return request.headers.get(self.api_version_parameter_name)
+
+
+class URLVersionGetter:
+    __slots__ = ("possible_version_values", "url_version_regex")
+    URL_VERSION_REGEX = re.compile(r"/([\w.])/")
+
+    def __init__(self, *, possible_version_values: set[str], **kwargs: Any) -> None:
+        super().__init__()
+        self.possible_version_values = possible_version_values
+
+    def __call__(self, request: Request) -> str | None:
+        if m := self.URL_VERSION_REGEX.match(request.url.path):
+            version = m.group(1)
+            if version in self.possible_version_values:
+                return version
+
+
+class App:
+    def __init__(
+        self,
+        versions: VersionBundle,
+        api_version_location: APIVersionLocation = "header",
+        api_version_style: APIVersionStyle = "date",
+        api_version_parameter_name: str = "X-API-VERSION",
+        api_version_default_value: str | None | Callable[[Request], Awaitable[str]] = None,
+    ):
+        super().__init__()
+
+        if api_version_location == "header":
+            getter = HeaderVersionGetter(api_version_parameter_name=api_version_parameter_name)
+            fastapi_depends_class = fastapi.Header
+        elif api_version_location == "url":
+            getter = URLVersionGetter(possible_version_values=versions._version_values)
+            fastapi_depends_class = fastapi.Path
+        else:
+            assert_never(api_version_location)
+        if api_version_style == "date":
+            default_version_example = "2022-11-16"
+            validation_data_type = date
+        elif api_version_style == "sortable_string":
+            default_version_example = "v1"
+            validation_data_type = str
+        else:
+            assert_never(default_version_example)
+
+
+def _get_api_version_dependency(
+    *,
+    api_version_parameter_name: str,
+    version_example: str,
+    fastapi_depends_class: Callable[..., Any],
+    validation_data_type: type,
+):
     def api_version_dependency(**kwargs: Any):
+        # TODO: What do I return?
         return next(iter(kwargs.values()))
 
     api_version_dependency.__signature__ = inspect.Signature(
         parameters=[
             inspect.Parameter(
-                api_version_header_name.replace("-", "_"),
+                api_version_parameter_name.replace("-", "_"),
                 inspect.Parameter.KEYWORD_ONLY,
-                annotation=Annotated[date, Header(examples=[version_example])],
+                annotation=Annotated[date, fastapi.Header(examples=[version_example])],
                 default=version_example,
             ),
         ],
@@ -29,13 +103,13 @@ def _get_api_version_dependency(api_version_header_name: str, version_example: s
     return api_version_dependency
 
 
-class HeaderVersioningMiddleware(BaseHTTPMiddleware):
+class VersionPickingMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app: ASGIApp,
         *,
         api_version_header_name: str,
-        api_version_var: ContextVar[date] | ContextVar[date | None],
+        api_version_var: ContextVar[VersionType] | ContextVar[VersionType | None],
         default_response_class: type[Response] = JSONResponse,
         dispatch: DispatchFunction | None = None,
     ) -> None:
@@ -69,7 +143,7 @@ class HeaderVersioningMiddleware(BaseHTTPMiddleware):
                 if solved_result.errors:
                     return self.default_response_class(status_code=422, content=_normalize_errors(solved_result.errors))
                 api_version = cast(date, solved_result.values[self.api_version_header_name.replace("-", "_")])
-                self.api_version_var.set(api_version)
+                self.api_version_var.set(api_version.isoformat())
 
         response = await call_next(request)
 
