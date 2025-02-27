@@ -844,10 +844,7 @@ def test__schema_migration_syntax__with_methods_after_a_schema__should_raise_err
         TypeError,
         match=re.escape("If schema was provided as a first argument, all other arguments must also be schemas"),
     ):
-        convert_request_to_next_version_for(  # pyright: ignore[reportCallIssue]
-            AnyRequestSchema,
-            ["POST"],  # pyright: ignore[reportArgumentType]
-        )
+        convert_request_to_next_version_for(AnyRequestSchema, ["POST"])  # pyright: ignore
 
 
 def test__schema_migration_syntax__with_additional_schemas_after_methods__should_raise_error():
