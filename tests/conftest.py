@@ -140,9 +140,9 @@ def version_change(
     | AlterEndpointSubInstruction
     | AlterEnumSubInstruction,
     **body_items: Any,
-):
+) -> type[VersionChange]:
     return type(VersionChange)(
-        "MyVersionChange",  # pyright: ignore[reportCallIssue]
+        "MyVersionChange",  # pyright: ignore
         (VersionChange,),
         {
             "description": "",

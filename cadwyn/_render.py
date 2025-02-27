@@ -146,7 +146,7 @@ def _generate_field_ast(field: PydanticFieldWrapper) -> ast.Call:
         func=ast.Name("Field"),
         args=[],
         keywords=[
-            ast.keyword(arg=attr, value=ast.parse(get_fancy_repr(attr_value), mode="eval").body)
+            ast.keyword(arg=attr, value=ast.parse(get_fancy_repr(attr_value), mode="eval").body)  # pyright: ignore
             for attr, attr_value in field.passed_field_attributes.items()
         ],
     )

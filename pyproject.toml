@@ -1,6 +1,6 @@
 [project]
 name = "cadwyn"
-version = "4.6.0a1"
+version = "4.6.0"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = [{ name = "Stanislav Zmiev", email = "zmievsa@gmail.com" }]
 license = "MIT"
