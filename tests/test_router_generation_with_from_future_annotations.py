@@ -44,8 +44,8 @@ app.generate_and_include_versioned_routers(router)
 
 def test__router_generation__using_forwardref_inner_global_schema_in_body():
     unversioned_client = TestClient(app)
-    client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
-    client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
     assert client_2000.post("/test", json={"foo": 1}).json() == {"foo": 1}
     assert client_2001.post("/test", json={"foo": 1}).json() == {"foo": "1"}
     assert unversioned_client.get("/openapi.json?version=2000-01-01").status_code == 200
@@ -54,8 +54,8 @@ def test__router_generation__using_forwardref_inner_global_schema_in_body():
 
 def test__router_generation__using_forwardref_outer_global_schema_in_body():
     unversioned_client = TestClient(app)
-    client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
-    client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
     assert client_2000.post("/test2", json={"bar": {"foo": 1}}).json() == {"bar": {"foo": 1}}
     assert client_2001.post("/test2", json={"bar": {"foo": 1}}).json() == {"bar": {"foo": "1"}}
     assert unversioned_client.get("/openapi.json?version=2000-01-01").status_code == 200

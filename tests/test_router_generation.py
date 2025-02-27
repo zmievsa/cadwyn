@@ -94,8 +94,8 @@ class CreateVersionedAPIRoutes:
     ) -> tuple[list[APIRoute], list[APIRoute]]:
         app = self.create_versioned_app(*version_changes, router=router)
         return (
-            cast(list[APIRoute], app.router.versioned_routers.get(date(2000, 1, 1), APIRouter()).routes),
-            cast(list[APIRoute], app.router.versioned_routers.get(date(2001, 1, 1), APIRouter()).routes),
+            cast(list[APIRoute], app.router.versioned_routers.get("2000-01-01", APIRouter()).routes),
+            cast(list[APIRoute], app.router.versioned_routers.get("2001-01-01", APIRouter()).routes),
         )
 
 
@@ -162,7 +162,7 @@ def test__endpoint_existed__endpoint_removed_in_latest_but_never_restored__shoul
 
 def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
     router: VersionedAPIRouter,
-    api_version_var: ContextVar[date | None],
+    api_version_var: ContextVar[str | None],
 ):
     @router.only_exists_in_older_versions
     @router.get("/test")
@@ -182,18 +182,18 @@ def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
         instructions_to_migrate_to_previous_version = [endpoint("/test", ["GET"]).existed]
 
     versions = VersionBundle(
-        Version(date(2003, 1, 1), MyVersionChange3),
-        Version(date(2002, 1, 1), MyVersionChange2),
-        Version(date(2001, 1, 1), MyVersionChange1),
-        Version(date(2000, 1, 1)),
+        Version("2003-01-01", MyVersionChange3),
+        Version("2002-01-01", MyVersionChange2),
+        Version("2001-01-01", MyVersionChange1),
+        Version("2000-01-01"),
         api_version_var=api_version_var,
     )
     routers = generate_versioned_routers(router, versions=versions)
 
-    assert len(routers.endpoints[date(2003, 1, 1)].routes) == 0
-    assert len(routers.endpoints[date(2002, 1, 1)].routes) == 1
-    assert len(routers.endpoints[date(2001, 1, 1)].routes) == 0
-    assert len(routers.endpoints[date(2000, 1, 1)].routes) == 1
+    assert len(routers.endpoints["2003-01-01"].routes) == 0
+    assert len(routers.endpoints["2002-01-01"].routes) == 1
+    assert len(routers.endpoints["2001-01-01"].routes) == 0
+    assert len(routers.endpoints["2000-01-01"].routes) == 1
 
 
 @pytest.mark.parametrize(
@@ -499,8 +499,8 @@ def test__router_generation__changing_status_code_of_endpoint(
         ),
     )
     client = TestClient(app)
-    assert client.post("/test", headers={app.router.api_version_header_name: "2000-01-01"}).status_code == 200
-    assert client.post("/test", headers={app.router.api_version_header_name: "2001-01-01"}).status_code == 201
+    assert client.post("/test", headers={app.router.api_version_parameter_name: "2000-01-01"}).status_code == 200
+    assert client.post("/test", headers={app.router.api_version_parameter_name: "2001-01-01"}).status_code == 201
 
 
 @pytest.mark.parametrize("route_index_to_delete_first", [0, 1])
@@ -572,7 +572,7 @@ def test__router_generation__restoring_two_deleted_routes_for_same_path__should_
 @pytest.mark.parametrize("route_index_to_restore_first", [0, 1])
 def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpoint(
     router: VersionedAPIRouter,
-    api_version_var: ContextVar[date | None],
+    api_version_var: ContextVar[str | None],
     two_deleted_routes: tuple[Endpoint, Endpoint],
     route_index_to_restore_first: int,
 ):
@@ -592,21 +592,21 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
         ]
 
     versions = VersionBundle(
-        Version(date(2002, 1, 1), MyVersionChange2),
-        Version(date(2001, 1, 1), MyVersionChange1),
-        Version(date(2000, 1, 1)),
+        Version("2002-01-01", MyVersionChange2),
+        Version("2001-01-01", MyVersionChange1),
+        Version("2000-01-01"),
         api_version_var=api_version_var,
     )
     routers = generate_versioned_routers(router, versions=versions)
 
-    assert len(routers.endpoints[date(2002, 1, 1)].routes) == 0
-    assert len(routers.endpoints[date(2001, 1, 1)].routes) == 1
-    assert len(routers.endpoints[date(2000, 1, 1)].routes) == 2
+    assert len(routers.endpoints["2002-01-01"].routes) == 0
+    assert len(routers.endpoints["2001-01-01"].routes) == 1
+    assert len(routers.endpoints["2000-01-01"].routes) == 2
 
-    assert endpoints_equal(routers.endpoints[date(2001, 1, 1)].routes[0].endpoint, route_to_restore_first)  # pyright: ignore
+    assert endpoints_equal(routers.endpoints["2001-01-01"].routes[0].endpoint, route_to_restore_first)  # pyright: ignore
     assert {
-        get_wrapped_endpoint(routers.endpoints[date(2000, 1, 1)].routes[0].endpoint),  # pyright: ignore
-        get_wrapped_endpoint(routers.endpoints[date(2000, 1, 1)].routes[1].endpoint),  # pyright: ignore
+        get_wrapped_endpoint(routers.endpoints["2000-01-01"].routes[0].endpoint),  # pyright: ignore
+        get_wrapped_endpoint(routers.endpoints["2000-01-01"].routes[1].endpoint),  # pyright: ignore
     } == {
         route_to_restore_first,
         route_to_restore_second,
@@ -660,9 +660,9 @@ def test__router_generation__non_api_route_added(
         raise NotImplementedError
 
     app = create_versioned_app(version_change(endpoint(test_path, ["GET"]).didnt_exist))
-    assert len(app.router.versioned_routers[date(2000, 1, 1)].routes) == 2
-    assert len(app.router.versioned_routers[date(2001, 1, 1)].routes) == 3
-    route = app.router.versioned_routers[date(2001, 1, 1)].routes[1]
+    assert len(app.router.versioned_routers["2000-01-01"].routes) == 2
+    assert len(app.router.versioned_routers["2001-01-01"].routes) == 3
+    route = app.router.versioned_routers["2001-01-01"].routes[1]
     assert isinstance(route, APIRoute)
     assert endpoints_equal(route.endpoint, test_endpoint)
 
@@ -681,8 +681,8 @@ def test__router_generation__updating_response_model(
     app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
     schemas = generate_versioned_models(app.versions)
 
-    routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
-    routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
+    routes_2000 = cast(list[APIRoute], app.router.versioned_routers["2000-01-01"].routes)
+    routes_2001 = cast(list[APIRoute], app.router.versioned_routers["2001-01-01"].routes)
 
     assert len(routes_2000) == len(routes_2001) == 2
 
@@ -720,8 +720,8 @@ def test__router_generation__updating_request_models(
     app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
     schemas = generate_versioned_models(app.versions)
 
-    routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
-    routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
+    routes_2000 = cast(list[APIRoute], app.router.versioned_routers["2000-01-01"].routes)
+    routes_2001 = cast(list[APIRoute], app.router.versioned_routers["2001-01-01"].routes)
     assert len(routes_2000) == len(routes_2001) == 2
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
@@ -753,8 +753,8 @@ def test__router_generation__updating_request_models_with_inheritance(
 
     app = create_versioned_app(version_change(schema(ParentSchema).field("foo").didnt_exist))
 
-    routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
-    routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
+    routes_2000 = cast(list[APIRoute], app.router.versioned_routers["2000-01-01"].routes)
+    routes_2001 = cast(list[APIRoute], app.router.versioned_routers["2001-01-01"].routes)
     assert len(routes_2000) == len(routes_2001) == 2
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
@@ -784,8 +784,8 @@ def test__router_generation__using_unversioned_models(
     app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
     schemas = generate_versioned_models(app.versions)
 
-    routes_2000 = cast(list[APIRoute], app.router.versioned_routers[date(2000, 1, 1)].routes)
-    routes_2001 = cast(list[APIRoute], app.router.versioned_routers[date(2001, 1, 1)].routes)
+    routes_2000 = cast(list[APIRoute], app.router.versioned_routers["2000-01-01"].routes)
+    routes_2001 = cast(list[APIRoute], app.router.versioned_routers["2001-01-01"].routes)
 
     assert len(routes_2000) == len(routes_2001) == 4
     assert routes_2000[1].dependant.body_params[0].type_ is schemas["2000-01-01"][UnversionedSchema1]
@@ -863,8 +863,8 @@ def test__router_generation__updating_request_depends(
 
     app = create_versioned_app(version_change(schema(EmptySchema).field("foo").existed_as(type=str)))
 
-    client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
-    client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
     resp_from_test1 = client_2000.post("/test1", json={}).json()
     resp_from_test2 = client_2000.post("/test2", json={}).json()
     assert resp_from_test1 == {
@@ -910,8 +910,8 @@ def test__router_generation__using_unversioned_schema_in_body(
 
     app = create_versioned_app(version_change())
 
-    client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
-    client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
     assert client_2000.post("/test", json={"bar": "hello"}).json() == {"bar": "hello"}
     assert client_2001.post("/test", json={"bar": "hello"}).json() == {"bar": "hello"}
 
@@ -940,8 +940,8 @@ def test__router_generation_updating_unused_dependencies__with_migration(
         ),
     )
 
-    client_2000 = TestClient(app, headers={app.router.api_version_header_name: "2000-01-01"})
-    client_2001 = TestClient(app, headers={app.router.api_version_header_name: "2001-01-01"})
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
 
     resp = client_2000.get("/test", params={"my_enum": "1"})
     assert resp.status_code == 200
@@ -979,14 +979,14 @@ def test__router_generation__updating_callbacks(
         version_change(schema(SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
 
-    route = app.router.versioned_routers[date(2000, 1, 1)].routes[1]
+    route = app.router.versioned_routers["2000-01-01"].routes[1]
     assert isinstance(route, APIRoute)
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
     assert generated_callback.dependant.body_params[0].type_.model_fields["bar"].annotation is str
 
-    route = app.router.versioned_routers[date(2001, 1, 1)].routes[1]
+    route = app.router.versioned_routers["2001-01-01"].routes[1]
     assert isinstance(route, APIRoute)
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
@@ -994,7 +994,7 @@ def test__router_generation__updating_callbacks(
     assert "bar" not in generated_callback.dependant.body_params[0].type_.model_fields
 
 
-def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: ContextVar[date | None]):
+def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: ContextVar[str | None]):
     @router.only_exists_in_older_versions
     @router.get("/test")
     async def test_with_dep1():
@@ -1005,21 +1005,21 @@ def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: C
         instructions_to_migrate_to_previous_version = [endpoint("/test", ["GET"]).existed]
 
     versions = VersionBundle(
-        Version(date(2002, 1, 1), V2002),
-        Version(date(2001, 1, 1)),
-        Version(date(2000, 1, 1)),
+        Version("2002-01-01", V2002),
+        Version("2001-01-01"),
+        Version("2000-01-01"),
         api_version_var=api_version_var,
     )
     routers = generate_versioned_routers(router, versions=versions)
 
-    assert client(routers.endpoints[date(2002, 1, 1)]).get("/test").json() == {"detail": "Not Found"}
-    assert client(routers.endpoints[date(2001, 1, 1)]).get("/test").json() == 83
-    assert client(routers.endpoints[date(2000, 1, 1)]).get("/test").json() == 83
+    assert client(routers.endpoints["2002-01-01"]).get("/test").json() == {"detail": "Not Found"}
+    assert client(routers.endpoints["2001-01-01"]).get("/test").json() == 83
+    assert client(routers.endpoints["2000-01-01"]).get("/test").json() == 83
 
 
 def test__cascading_router_didnt_exist(
     router: VersionedAPIRouter,
-    api_version_var: ContextVar[date | None],
+    api_version_var: ContextVar[str | None],
 ):
     @router.get("/test")
     async def test_with_dep1():
@@ -1032,20 +1032,20 @@ def test__cascading_router_didnt_exist(
         ]
 
     versions = VersionBundle(
-        Version(date(2002, 1, 1), V2002),
-        Version(date(2001, 1, 1)),
-        Version(date(2000, 1, 1)),
+        Version("2002-01-01", V2002),
+        Version("2001-01-01"),
+        Version("2000-01-01"),
         api_version_var=api_version_var,
     )
     routers = generate_versioned_routers(router, versions=versions)
 
-    assert client(routers.endpoints[date(2002, 1, 1)]).get("/test").json() == 83
+    assert client(routers.endpoints["2002-01-01"]).get("/test").json() == 83
 
-    assert client(routers.endpoints[date(2001, 1, 1)]).get("/test").json() == {
+    assert client(routers.endpoints["2001-01-01"]).get("/test").json() == {
         "detail": "Not Found",
     }
 
-    assert client(routers.endpoints[date(2000, 1, 1)]).get("/test").json() == {
+    assert client(routers.endpoints["2000-01-01"]).get("/test").json() == {
         "detail": "Not Found",
     }
 
@@ -1054,7 +1054,7 @@ def test__generate_versioned_routers__two_routers(
     router: VersionedAPIRouter,
     test_endpoint: Endpoint,
     test_path: str,
-    api_version_var: ContextVar[date | None],
+    api_version_var: ContextVar[str | None],
 ):
     router2 = VersionedAPIRouter(prefix="/api2")
 
@@ -1070,8 +1070,8 @@ def test__generate_versioned_routers__two_routers(
         ]
 
     versions = VersionBundle(
-        Version(date(2001, 1, 1), V2001),
-        Version(date(2000, 1, 1)),
+        Version("2001-01-01", V2001),
+        Version("2000-01-01"),
         api_version_var=api_version_var,
     )
 
@@ -1081,17 +1081,17 @@ def test__generate_versioned_routers__two_routers(
 
     routers = generate_versioned_routers(root_router, versions=versions).endpoints
     assert all(type(r) is APIRouter for r in routers.values())
-    assert len(routers[date(2001, 1, 1)].routes) == 2
-    assert len(routers[date(2000, 1, 1)].routes) == 1
+    assert len(routers["2001-01-01"].routes) == 2
+    assert len(routers["2000-01-01"].routes) == 1
     assert {
-        get_wrapped_endpoint(routers[date(2001, 1, 1)].routes[0].endpoint),  # pyright: ignore
-        get_wrapped_endpoint(routers[date(2001, 1, 1)].routes[1].endpoint),  # pyright: ignore
+        get_wrapped_endpoint(routers["2001-01-01"].routes[0].endpoint),  # pyright: ignore
+        get_wrapped_endpoint(routers["2001-01-01"].routes[1].endpoint),  # pyright: ignore
     } == {
         test_endpoint,
         test_endpoint2,
     }
-    assert endpoints_equal(routers[date(2000, 1, 1)].routes[0].endpoint, test_endpoint2)  # pyright: ignore
-    assert endpoints_equal(routers[date(2000, 1, 1)].routes[0].endpoint, test_endpoint2)  # pyright: ignore
+    assert endpoints_equal(routers["2000-01-01"].routes[0].endpoint, test_endpoint2)  # pyright: ignore
+    assert endpoints_equal(routers["2000-01-01"].routes[0].endpoint, test_endpoint2)  # pyright: ignore
 
 
 class MyHTTPBearer(HTTPBearer):
@@ -1124,7 +1124,7 @@ def test__basic_router_generation__using_http_security_dependency__should_genera
 
     client_2000, *_ = create_versioned_clients().values()
 
-    dependant = cast(APIRoute, client_2000.app.router.versioned_routers[date(2000, 1, 1)].routes[-1]).dependant
+    dependant = cast(APIRoute, client_2000.app.router.versioned_routers["2000-01-01"].routes[-1]).dependant
     assert dependant.dependencies[1].dependencies[0].security_requirements[0].security_scheme is auth_header_scheme
     response = client_2000.get("/test")
     assert response.status_code == expected_status_code

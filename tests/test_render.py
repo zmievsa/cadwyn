@@ -59,7 +59,7 @@ class MyEnum(Enum):
 
 
 def test__render_model__with_unversioned_enum():
-    versions = VersionBundle(Version(date(2000, 1, 1)))
+    versions = VersionBundle(Version("2000-01-01"))
 
     class RandomEnum(Enum):
         foo = 1

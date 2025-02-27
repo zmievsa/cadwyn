@@ -25,7 +25,7 @@ class MyVersionChange(VersionChange):
 
 app = Cadwyn(
     versions=VersionBundle(
-        Version(date(2001, 1, 1), MyVersionChange),
-        Version(date(2000, 1, 1)),
+        Version("2001-01-01", MyVersionChange),
+        Version("2000-01-01"),
     )
 )

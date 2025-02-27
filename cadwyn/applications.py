@@ -1,10 +1,11 @@
 import dataclasses
 import datetime
+import warnings
 from collections.abc import Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, Awaitable, cast
 
 from fastapi import APIRouter, FastAPI, HTTPException, routing
 from fastapi.datastructures import Default
@@ -23,13 +24,19 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
-from typing_extensions import Self
+from typing_extensions import Self, deprecated
 
 from cadwyn._utils import same_definition_as_in
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
-from cadwyn.middleware import VersionPickingMiddleware, _generate_api_version_dependency
+from cadwyn.exceptions import CadwynStructureError
+from cadwyn.middleware import (
+    APIVersionLocation,
+    APIVersionStyle,
+    VersionPickingMiddleware,
+    _generate_api_version_dependency,
+)
 from cadwyn.route_generation import generate_versioned_routers
-from cadwyn.routing import _RootHeaderAPIRouter
+from cadwyn.routing import _RootCadwynAPIRouter, _RootCadwynDateAPIRouter
 from cadwyn.structure import VersionBundle
 from cadwyn.structure.common import VersionType
 
@@ -49,7 +56,18 @@ class Cadwyn(FastAPI):
         self,
         *,
         versions: VersionBundle,
-        api_version_header_name: str = "x-api-version",
+        api_version_header_name: Annotated[
+            str | None,
+            deprecated(
+                "api_version_header_name is deprecated and will be removed in the future. "
+                "Use api_version_parameter_name instead."
+            ),
+        ] = None,
+        api_version_location: APIVersionLocation = "custom_header",
+        api_version_style: APIVersionStyle = "date",
+        api_version_parameter_name: str = "x-api-version",
+        api_version_default_value: str | None | Callable[[Request], Awaitable[str]] = None,
+        cadwyn_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
         changelog_url: str | None = "/changelog",
         include_changelog_url_in_schema: bool = True,
         debug: bool = False,
@@ -101,6 +119,9 @@ class Cadwyn(FastAPI):
         self._dependency_overrides_provider = FakeDependencyOverridesProvider({})
         self._cadwyn_initialized = False
 
+        if api_version_header_name is not None:
+            api_version_parameter_name = api_version_header_name
+
         super().__init__(
             debug=debug,
             title=title,
@@ -138,6 +159,18 @@ class Cadwyn(FastAPI):
             separate_input_output_schemas=separate_input_output_schemas,
             **extra,
         )
+
+        self._versioned_webhook_routers: dict[VersionType, APIRouter] = {}
+        self._latest_version_router = APIRouter(dependency_overrides_provider=self._dependency_overrides_provider)
+
+        self.changelog_url = changelog_url
+        self.include_changelog_url_in_schema = include_changelog_url_in_schema
+
+        self.docs_url = docs_url
+        self.redoc_url = redoc_url
+        self.openapi_url = openapi_url
+        self.redoc_url = redoc_url
+
         self._kwargs_to_router: dict[str, Any] = {
             "routes": routes,
             "redirect_slashes": redirect_slashes,
@@ -153,32 +186,40 @@ class Cadwyn(FastAPI):
             "responses": responses,
             "generate_unique_id_function": generate_unique_id_function,
         }
-        self.router: _RootHeaderAPIRouter = _RootHeaderAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
-            **self._kwargs_to_router,
-            api_version_header_name=api_version_header_name,
-            api_version_var=self.versions.api_version_var,
-        )
-        self._versioned_webhook_routers: dict[VersionType, APIRouter] = {}
-        self._latest_version_router = APIRouter(dependency_overrides_provider=self._dependency_overrides_provider)
-
-        self.changelog_url = changelog_url
-        self.include_changelog_url_in_schema = include_changelog_url_in_schema
-
-        self.docs_url = docs_url
-        self.redoc_url = redoc_url
-        self.openapi_url = openapi_url
-        self.redoc_url = redoc_url
-
+        self.api_version_style = api_version_style
+        self.api_version_parameter_name = api_version_parameter_name
+        if api_version_style == "date":
+            self.router = _RootCadwynDateAPIRouter(
+                **self._kwargs_to_router,
+                api_version_parameter_name=api_version_parameter_name,
+                api_version_var=self.versions.api_version_var,
+            )
+        else:
+            self.router: _RootCadwynAPIRouter = _RootCadwynAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
+                **self._kwargs_to_router,
+                api_version_parameter_name=api_version_parameter_name,
+                api_version_var=self.versions.api_version_var,
+            )
         unversioned_router = APIRouter(**self._kwargs_to_router)
         self._add_utility_endpoints(unversioned_router)
         self._add_default_versioned_routers()
         self.include_router(unversioned_router)
         self.add_middleware(
-            VersionPickingMiddleware,
-            api_version_header_name=self.router.api_version_header_name,
+            cadwyn_middleware_class,
+            api_version_location=api_version_location,
+            api_version_style=api_version_style,
+            api_version_parameter_name=api_version_parameter_name,
+            api_version_default_value=api_version_default_value,
+            api_version_possible_values=self.versions._version_values,
             api_version_var=self.versions.api_version_var,
             default_response_class=default_response_class,
         )
+        if self.api_version_style == "date" and (
+            sorted(self.versions.versions, key=lambda v: v.value, reverse=True) != list(self.versions.versions)
+        ):
+            raise CadwynStructureError(
+                "Versions are not sorted correctly. Please sort them in descending order.",
+            )
 
     @same_definition_as_in(FastAPI.__call__)
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
@@ -268,26 +309,19 @@ class Cadwyn(FastAPI):
             self._latest_version_router.include_router(router)
 
     async def openapi_jsons(self, req: Request) -> JSONResponse:
-        raw_version = req.query_params.get("version") or req.headers.get(self.router.api_version_header_name)
-        not_found_error = HTTPException(
-            status_code=404,
-            detail=f"OpenApi file of with version `{raw_version}` not found",
-        )
-        try:
-            version = datetime.date.fromisoformat(raw_version)  # pyright: ignore[reportArgumentType]
-        # TypeError when raw_version is None
-        # ValueError when raw_version is of the non-iso format
-        except (ValueError, TypeError):
-            version = raw_version
+        version = req.query_params.get("version") or req.headers.get(self.router.api_version_parameter_name)
 
-        if isinstance(version, date) and version in self.router.versioned_routers:
+        if version in self.router.versioned_routers:
             routes = self.router.versioned_routers[version].routes
-            formatted_version = version.isoformat()
+            formatted_version = version
         elif version == "unversioned" and self._there_are_public_unversioned_routes():
             routes = self.router.unversioned_routes
             formatted_version = "unversioned"
         else:
-            raise not_found_error
+            raise HTTPException(
+                status_code=404,
+                detail=f"OpenApi file of with version `{version}` not found",
+            )
 
         # Add root path to servers when mounted as sub-app or proxy is used
         urls = (server_data.get("url") for server_data in self.servers)
@@ -297,7 +331,7 @@ class Cadwyn(FastAPI):
             self.servers.insert(0, {"url": root_path})
 
         webhook_routes = None
-        if isinstance(version, date) and version in self._versioned_webhook_routers:
+        if version in self._versioned_webhook_routers:
             webhook_routes = self._versioned_webhook_routers[version].routes
 
         return JSONResponse(
@@ -355,7 +389,7 @@ class Cadwyn(FastAPI):
         base_host = str(req.base_url).rstrip("/")
         root_path = self._extract_root_path(req)
         base_url = base_host + root_path
-        table = {version: f"{base_url}{docs_url}?version={version}" for version in self.router.sorted_versions}
+        table = {version: f"{base_url}{docs_url}?version={version}" for version in self.router.versions}
         if self._there_are_public_unversioned_routes():
             table |= {"unversioned": f"{base_url}{docs_url}?version=unversioned"}
         return self._templates.TemplateResponse(
@@ -363,6 +397,7 @@ class Cadwyn(FastAPI):
             {"request": req, "table": table},
         )
 
+    @deprecated("Use generate_and_include_versioned_routers and VersionBundle versions instead")
     def add_header_versioned_routers(
         self,
         first_router: APIRouter,
@@ -370,16 +405,22 @@ class Cadwyn(FastAPI):
         header_value: str,
     ) -> list[BaseRoute]:
         """Add all routes from routers to be routed using header_value and return the added routes"""
-        try:
-            header_value_as_dt = date.fromisoformat(header_value)
-        except ValueError as e:
-            raise ValueError("header_value should be in ISO 8601 format") from e
+        if self.api_version_style == "date":
+            try:
+                date.fromisoformat(header_value)
+            except ValueError as e:
+                raise ValueError("header_value should be in ISO 8601 format") from e
 
+        return self._add_versioned_router(first_router, *other_routers, version=header_value)
+
+    def _add_versioned_router(
+        self, first_router: APIRouter, *other_routers: APIRouter, version: str
+    ) -> list[BaseRoute]:
         added_routes: list[BaseRoute] = []
-        if header_value_as_dt not in self.router.versioned_routers:  # pragma: no branch
-            self.router.versioned_routers[header_value_as_dt] = APIRouter(**self._kwargs_to_router)
+        if version not in self.router.versioned_routers:  # pragma: no branch
+            self.router.versioned_routers[version] = APIRouter(**self._kwargs_to_router)
 
-        versioned_router = self.router.versioned_routers[header_value_as_dt]
+        versioned_router = self.router.versioned_routers[version]
         if self.openapi_url is not None:  # pragma: no branch
             versioned_router.add_route(
                 path=self.openapi_url,
@@ -390,11 +431,9 @@ class Cadwyn(FastAPI):
 
         added_route_count = 0
         for router in (first_router, *other_routers):
-            self.router.versioned_routers[header_value_as_dt].include_router(
+            self.router.versioned_routers[version].include_router(
                 router,
-                dependencies=[
-                    Depends(_generate_api_version_dependency(self.router.api_version_header_name, header_value))
-                ],
+                dependencies=[Depends(_generate_api_version_dependency(self.api_version_parameter_name, version))],
             )
             added_route_count += len(router.routes)
 

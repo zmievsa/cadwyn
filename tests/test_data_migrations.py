@@ -214,15 +214,15 @@ class TestRequestMigrations:
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
-        assert clients[date(2000, 1, 1)].post(test_path, json={}).json() == {
+        assert clients["2000-01-01"].post(test_path, json={}).json() == {
             "body": {"hello": "hello"},
             "headers": IsPartialDict({"header_key": "header val 2"}),
             "cookies": {"cookie_key": "cookie val 2"},
             "query_params": {"query_param_key": "query_param val 2"},
         }
 
-        clients[date(2000, 1, 1)].cookies["5"] = "6"
-        assert clients[date(2000, 1, 1)].post(
+        clients["2000-01-01"].cookies["5"] = "6"
+        assert clients["2000-01-01"].post(
             test_path,
             json={"1": "2"},
             headers={"3": "4"},
@@ -256,7 +256,7 @@ class TestRequestMigrations:
             request.query_params["request2"] = "request2"
 
         clients = create_versioned_clients(version_change(migrator=migrator))
-        assert clients[date(2000, 1, 1)].get(test_path).json() == {
+        assert clients["2000-01-01"].get(test_path).json() == {
             "body": "",
             "headers": IsPartialDict({"request2": "request2"}),
             "cookies": {"request2": "request2"},
@@ -279,9 +279,9 @@ class TestRequestMigrations:
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
-        assert clients[date(2001, 1, 1)].get(test_path, headers={"my-header": "wow"}).json() == 83
+        assert clients["2001-01-01"].get(test_path, headers={"my-header": "wow"}).json() == 83
         with pytest.raises(CadwynHeadRequestValidationError):
-            clients[date(2000, 1, 1)].get(test_path, headers={"my-header": "wow"}).json()
+            clients["2000-01-01"].get(test_path, headers={"my-header": "wow"}).json()
 
     def test__head_schema_migration__with_no_versioned_migrations__body_gets_parsed_to_head_schema(
         self,
@@ -299,14 +299,14 @@ class TestRequestMigrations:
         )
 
         # [-1] route is /openapi.json
-        last_route = clients[date(2000, 1, 1)].app.router.versioned_routers[date(2000, 1, 1)].routes[-1]
+        last_route = clients["2000-01-01"].app.router.versioned_routers["2000-01-01"].routes[-1]
         assert isinstance(last_route, APIRoute)
 
-        assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+        assert clients["2000-01-01"].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
             "foo": 1,
             "bar": None,
         }
-        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+        assert clients["2001-01-01"].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
             "foo": 1,
             "bar": None,
         }
@@ -330,11 +330,11 @@ class TestRequestMigrations:
             head_version_changes=[version_change(schema(SchemaWithHeadMigrations).field("bar").didnt_exist)],
         )
 
-        assert clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+        assert clients["2000-01-01"].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
             "foo": 1,
             "bar": "world",
         }
-        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+        assert clients["2001-01-01"].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
             "foo": 1,
             "bar": None,
         }
@@ -357,12 +357,12 @@ class TestRequestMigrations:
             version_change(migrator=migrator),
             head_version_changes=[version_change(schema(SchemaWithHeadMigrations).field("bar").didnt_exist)],
         )
-        assert clients[date(2001, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
+        assert clients["2001-01-01"].post(test_path, json={"foo": 1, "bar": "hewwo"}).json() == {
             "foo": 1,
             "bar": None,
         }
         with pytest.raises(CadwynHeadRequestValidationError):
-            clients[date(2000, 1, 1)].post(test_path, json={"foo": 1, "bar": "hewwo"}).json()
+            clients["2000-01-01"].post(test_path, json={"foo": 1, "bar": "hewwo"}).json()
 
     def test__serialization_of_request_body__when_body_is_non_pydantic(
         self,
@@ -376,8 +376,8 @@ class TestRequestMigrations:
 
         payload = {"foo": "bar"}
         clients = create_versioned_clients(version_change())
-        assert clients[date(2000, 1, 1)].post(url=test_path, json=payload).json() == payload
-        assert clients[date(2001, 1, 1)].post(url=test_path, json=payload).json() == payload
+        assert clients["2000-01-01"].post(url=test_path, json=payload).json() == payload
+        assert clients["2001-01-01"].post(url=test_path, json=payload).json() == payload
 
 
 class TestResponseMigrations:
@@ -397,7 +397,7 @@ class TestResponseMigrations:
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
-        resp = clients[date(2000, 1, 1)].post(test_path, json={})
+        resp = clients["2000-01-01"].post(test_path, json={})
 
         assert resp.json() == {
             "body": {},
@@ -425,8 +425,8 @@ class TestResponseMigrations:
         assert dict(resp.cookies) == {"cookie_key": "cookie_val"}
         assert resp.status_code == 300
 
-        clients[date(2000, 1, 1)].cookies["5"] = "6"
-        resp = clients[date(2000, 1, 1)].post(test_path, json={"1": "2"}, headers={"3": "4"})
+        clients["2000-01-01"].cookies["5"] = "6"
+        resp = clients["2000-01-01"].post(test_path, json={"1": "2"}, headers={"3": "4"})
         assert resp.json() == {
             "body": {"1": "2"},
             "headers": {
@@ -468,7 +468,7 @@ class TestResponseMigrations:
             response.set_cookie("cookie_key", "cookie_val", max_age=83)
 
         clients = create_versioned_clients(version_change(migrator=migrator))
-        resp = clients[date(2000, 1, 1)].get(test_path)
+        resp = clients["2000-01-01"].get(test_path)
         assert dict(resp.headers) == {
             "content-length": "194",
             "content-type": "application/json",
@@ -498,7 +498,7 @@ class TestResponseMigrations:
             response.headers["header-key"] = "header-val2"
 
         clients = create_versioned_clients(version_change(migrator=migrator))
-        resp = clients[date(2000, 1, 1)].post(test_path, json={})
+        resp = clients["2000-01-01"].post(test_path, json={})
         assert resp.json() == {"hewwo": "darkness", "migration": "body"}
         assert dict(resp.headers) == (
             {
@@ -511,7 +511,7 @@ class TestResponseMigrations:
         assert resp.status_code == 201
         assert dict(resp.cookies) == {}
 
-        resp = clients[date(2001, 1, 1)].post(test_path, json={})
+        resp = clients["2001-01-01"].post(test_path, json={})
         assert resp.json() == {"hewwo": "darkness"}
         assert dict(resp.headers) == (
             {
@@ -538,7 +538,7 @@ class TestResponseMigrations:
             response.status_code = 201
 
         clients = create_versioned_clients(version_change(migrator=migrator))
-        resp = clients[date(2000, 1, 1)].post(test_path, json={})
+        resp = clients["2000-01-01"].post(test_path, json={})
         assert resp.content == b""
         assert dict(resp.headers) == (
             {
@@ -549,7 +549,7 @@ class TestResponseMigrations:
         assert resp.status_code == 201
         assert dict(resp.cookies) == {}
 
-        resp = clients[date(2001, 1, 1)].post(test_path, json={})
+        resp = clients["2001-01-01"].post(test_path, json={})
         assert resp.content == b""
         assert dict(resp.headers) == (
             {
@@ -574,13 +574,13 @@ class TestResponseMigrations:
             response.status_code = 201
 
         clients = create_versioned_clients(version_change(migrator=migrator))
-        resp = clients[date(2000, 1, 1)].post(test_path, json={})
+        resp = clients["2000-01-01"].post(test_path, json={})
         assert resp.content == b"streaming response"
         assert dict(resp.headers) == {"x-api-version": "2000-01-01"}
         assert resp.status_code == 201
         assert dict(resp.cookies) == {}
 
-        resp = clients[date(2001, 1, 1)].post(test_path, json={})
+        resp = clients["2001-01-01"].post(test_path, json={})
         assert resp.content == b"streaming response"
         assert dict(resp.headers) == {"x-api-version": "2001-01-01"}
         assert resp.status_code == 200
@@ -596,7 +596,7 @@ class TestResponseMigrations:
             return Response(status_code=200)
 
         clients = create_versioned_clients(version_change())
-        resp = clients[date(2000, 1, 1)].post(test_path, json={})
+        resp = clients["2000-01-01"].post(test_path, json={})
         assert resp.content == b""
         assert dict(resp.headers) == (
             {
@@ -607,7 +607,7 @@ class TestResponseMigrations:
         assert resp.status_code == 200
         assert dict(resp.cookies) == {}
 
-        resp = clients[date(2001, 1, 1)].post(test_path, json={})
+        resp = clients["2001-01-01"].post(test_path, json={})
         assert resp.content == b""
         assert dict(resp.headers) == (
             {
@@ -649,7 +649,7 @@ class TestHowAndWhenMigrationsApply:
         _post_endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
     ):
         clients = create_versioned_clients()
-        assert clients[date(2000, 1, 1)].post(test_path, json={"A": "B"}).json() == {
+        assert clients["2000-01-01"].post(test_path, json={"A": "B"}).json() == {
             "body": {"A": "B"},
             "headers": IsPartialDict(),
             "cookies": {},
@@ -668,13 +668,13 @@ class TestHowAndWhenMigrationsApply:
             return {}
 
         clients = create_versioned_clients(version_change(), version_change())
-        resp_2000 = clients[date(2000, 1, 1)].post(test_path, json={})
+        resp_2000 = clients["2000-01-01"].post(test_path, json={})
         assert resp_2000.status_code, resp_2000.json()
 
-        resp_2001 = clients[date(2001, 1, 1)].post(test_path, json={})
+        resp_2001 = clients["2001-01-01"].post(test_path, json={})
         assert resp_2001.status_code, resp_2001.json()
 
-        resp_2002 = clients[date(2002, 1, 1)].post(test_path, json={})
+        resp_2002 = clients["2002-01-01"].post(test_path, json={})
         assert resp_2002.status_code, resp_2002.json()
 
     def test__migrate_one_version_down__migrations_are_applied_to_2000_version_but_not_to_2000(
@@ -685,11 +685,11 @@ class TestHowAndWhenMigrationsApply:
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1)
-        assert clients[date(2000, 1, 1)].post(test_path, json=[]).json()["body"] == [
+        assert clients["2000-01-01"].post(test_path, json=[]).json()["body"] == [
             "request change 1",
             "response change 1",
         ]
-        assert clients[date(2001, 1, 1)].post(test_path, json=[]).json()["body"] == []
+        assert clients["2001-01-01"].post(test_path, json=[]).json()["body"] == []
 
     def test__migrate_two_versions_down__2002_applies_to_2001_and_2000_while_2001_only_applies_to_2000(
         self,
@@ -700,17 +700,17 @@ class TestHowAndWhenMigrationsApply:
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
-        assert clients[date(2000, 1, 1)].post(test_path, json=[]).json()["body"] == [
+        assert clients["2000-01-01"].post(test_path, json=[]).json()["body"] == [
             "request change 1",
             "request change 2",
             "response change 2",
             "response change 1",
         ]
-        assert clients[date(2001, 1, 1)].post(test_path, json=[]).json()["body"] == [
+        assert clients["2001-01-01"].post(test_path, json=[]).json()["body"] == [
             "request change 2",
             "response change 2",
         ]
-        assert clients[date(2002, 1, 1)].post(test_path, json=[]).json()["body"] == []
+        assert clients["2002-01-01"].post(test_path, json=[]).json()["body"] == []
 
     def test__try_migrating_when_version_is_none__no_migrations_get_applied(
         self,
@@ -718,13 +718,13 @@ class TestHowAndWhenMigrationsApply:
         version_change_1: type[VersionChange],
         version_change_2: type[VersionChange],
         test_path: str,
-        api_version_var: ContextVar[date | None],
+        api_version_var: ContextVar[str | None],
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
-        app = clients[date(2000, 1, 1)].app
+        app = clients["2000-01-01"].app
         none_client = client(
-            APIRouter(routes=app.router.versioned_routers[date(2000, 1, 1)].routes),
+            APIRouter(routes=app.router.versioned_routers["2000-01-01"].routes),
             api_version=None,
             api_version_var=api_version_var,
         )
@@ -733,7 +733,7 @@ class TestHowAndWhenMigrationsApply:
             none_client.post(
                 test_path,
                 json=[],
-                headers={app.router.api_version_header_name: "2000-11-11"},
+                headers={app.router.api_version_parameter_name: "2000-11-11"},
             ).json()["body"]
             == []
         )
@@ -745,20 +745,20 @@ class TestHowAndWhenMigrationsApply:
         version_change_1: type[VersionChange],
         version_change_2: type[VersionChange],
         test_path: str,
-        api_version_var: ContextVar[date | None],
+        api_version_var: ContextVar[str | None],
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
-        app = clients[date(2000, 1, 1)].app
+        app = clients["2000-01-01"].app
         earlier_client = client(
-            APIRouter(routes=app.router.versioned_routers[date(2000, 1, 1)].routes),
+            APIRouter(routes=app.router.versioned_routers["2000-01-01"].routes),
             api_version=date(1998, 2, 10),
             api_version_var=api_version_var,
         )
         assert earlier_client.post(
             test_path,
             json=[],
-            headers={app.router.api_version_header_name: "2000-01-01"},
+            headers={app.router.api_version_parameter_name: "2000-01-01"},
         ).json()["body"] == [
             "request change 1",
             "request change 2",
@@ -772,14 +772,14 @@ class TestHowAndWhenMigrationsApply:
         version_change_1: type[VersionChange],
         version_change_2: type[VersionChange],
         test_path: str,
-        api_version_var: ContextVar[date | None],
+        api_version_var: ContextVar[str | None],
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
-        app = clients[date(2000, 1, 1)].app
+        app = clients["2000-01-01"].app
         assert (
-            clients[date(2000, 1, 1)]
-            .post(test_path, json=[], headers={app.router.api_version_header_name: "2050-01-01"})
+            clients["2000-01-01"]
+            .post(test_path, json=[], headers={app.router.api_version_parameter_name: "2050-01-01"})
             .json()["body"]
             == []
         )
@@ -800,8 +800,8 @@ class TestHowAndWhenMigrationsApply:
             response.delete_cookie("cookie_key")
 
         clients = create_versioned_clients(version_change(migration=migration))
-        resp_2000 = clients[date(2000, 1, 1)].post(test_path, json={})
-        resp_2001 = clients[date(2001, 1, 1)].post(test_path, json={})
+        resp_2000 = clients["2000-01-01"].post(test_path, json={})
+        resp_2001 = clients["2001-01-01"].post(test_path, json={})
 
         assert dict(resp_2000.cookies) == {"cookie_key": "cookie_val"}
 
@@ -871,8 +871,8 @@ def test__uploadfile_can_work(
         return file_dict
 
     clients = create_versioned_clients(version_change())
-    resp_2000 = clients[date(2000, 1, 1)].post(test_path, files={"file": b"Hewwo"})
-    resp_2001 = clients[date(2001, 1, 1)].post(test_path, files={"file": b"Hewwo"})
+    resp_2000 = clients["2000-01-01"].post(test_path, files={"file": b"Hewwo"})
+    resp_2001 = clients["2001-01-01"].post(test_path, files={"file": b"Hewwo"})
 
     assert resp_2000.json() == {
         "filename": "upload",
@@ -909,8 +909,8 @@ def test__request_and_response_migrations__for_paths_with_variables__can_match(
         response.body.append("World")
 
     clients = create_versioned_clients(version_change(req=request_converter, resp=response_converter))
-    assert clients[date(2000, 1, 1)].post("/test/83").json() == [83, "Hewwo", "World"]
-    assert clients[date(2001, 1, 1)].post("/test/83").json() == [83, "wow"]
+    assert clients["2000-01-01"].post("/test/83").json() == [83, "Hewwo", "World"]
+    assert clients["2001-01-01"].post("/test/83").json() == [83, "wow"]
 
 
 def test__request_and_response_migrations__for_endpoint_with_http_exception__can_migrate_to_200(
@@ -928,12 +928,12 @@ def test__request_and_response_migrations__for_endpoint_with_http_exception__can
         response.headers["hewwo"] = "dawkness"
 
     clients = create_versioned_clients(version_change(resp=response_converter))
-    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    resp_2000 = clients["2000-01-01"].post("/test")
     assert resp_2000.status_code == 200
     assert resp_2000.json() == {"hello": "darkness"}
     assert resp_2000.headers["hewwo"] == "dawkness"
 
-    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    resp_2001 = clients["2001-01-01"].post("/test")
     assert resp_2001.status_code == 404
     assert resp_2001.json() == {"detail": "Not Found"}
     assert "hewwo" not in resp_2001.headers
@@ -952,10 +952,10 @@ def test__request_and_response_migrations__for_endpoint_with_http_exception_and_
         raise NotImplementedError("This should not be called")
 
     clients = create_versioned_clients(version_change(resp=response_converter))
-    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    resp_2000 = clients["2000-01-01"].post("/test")
     assert resp_2000.status_code == 400
 
-    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    resp_2001 = clients["2001-01-01"].post("/test")
     assert resp_2001.status_code == 400
 
 
@@ -973,11 +973,11 @@ def test__request_and_response_migrations__for_endpoint_with_http_exception__can
         response.body = None
 
     clients = create_versioned_clients(version_change(resp=response_converter))
-    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    resp_2000 = clients["2000-01-01"].post("/test")
     assert resp_2000.status_code == 401
     assert resp_2000.json() == {"detail": "Unauthorized"}
 
-    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    resp_2001 = clients["2001-01-01"].post("/test")
     assert resp_2001.status_code == 404
     assert resp_2001.json() == {"detail": "Not Found"}
 
@@ -996,11 +996,11 @@ def test__request_and_response_migrations__for_endpoint_with_no_default_status_c
 
     clients = create_versioned_clients(version_change(resp=response_converter))
 
-    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    resp_2000 = clients["2000-01-01"].post("/test")
     assert resp_2000.status_code == 200
     assert resp_2000.json() == 83
 
-    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    resp_2001 = clients["2001-01-01"].post("/test")
     assert resp_2001.status_code == 200
     assert resp_2001.json() == 83
 
@@ -1019,11 +1019,11 @@ def test__request_and_response_migrations__for_endpoint_with_custom_status_code_
 
     clients = create_versioned_clients(version_change(resp=response_converter))
 
-    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    resp_2000 = clients["2000-01-01"].post("/test")
     assert resp_2000.status_code == 201
     assert resp_2000.json() == 83
 
-    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    resp_2001 = clients["2001-01-01"].post("/test")
     assert resp_2001.status_code == 201
     assert resp_2001.json() == 83
 
@@ -1043,11 +1043,11 @@ def test__request_and_response_migrations__for_endpoint_with_modified_status_cod
 
     clients = create_versioned_clients(version_change(resp=response_converter))
 
-    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    resp_2000 = clients["2000-01-01"].post("/test")
     assert resp_2000.status_code == 201
     assert resp_2000.json() == 83
 
-    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    resp_2001 = clients["2001-01-01"].post("/test")
     assert resp_2001.status_code == 201
     assert resp_2001.json() == 83
 
@@ -1066,11 +1066,11 @@ def test__response_migrations__with_manual_string_json_response_and_migration(
 
     clients = create_versioned_clients(version_change(resp=response_converter))
 
-    resp_2000 = clients[date(2000, 1, 1)].post("/test")
+    resp_2000 = clients["2000-01-01"].post("/test")
     assert resp_2000.status_code == 200
     assert resp_2000.json() == "My content"
 
-    resp_2001 = clients[date(2001, 1, 1)].post("/test")
+    resp_2001 = clients["2001-01-01"].post("/test")
     assert resp_2001.status_code == 200
     assert resp_2001.json() == "My content"
 
@@ -1154,19 +1154,17 @@ def test__manual_response_migrations():
 
     version_bundle = VersionBundle(
         Version(
-            date(2001, 1, 1),
+            "2001-01-01",
             version_change(
                 schema(EmptySchema).field("name").existed_as(type=str, info=Field(default="Apples")),
                 schema(EmptySchema).field("amount").existed_as(type=int),
                 convert=response_converter,
             ),
         ),
-        Version(date(2000, 1, 1)),
+        Version("2000-01-01"),
     )
 
-    new_response = migrate_response_body(
-        version_bundle, EmptySchema, latest_body={"id": "hewwo"}, version=date(2000, 1, 1)
-    )
+    new_response = migrate_response_body(version_bundle, EmptySchema, latest_body={"id": "hewwo"}, version="2000-01-01")
     assert new_response.model_dump() == {
         "name": "Apples",
         "amount": 83,

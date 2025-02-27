@@ -124,7 +124,7 @@ def test__lifespan_async():
         shutdown_complete = True
 
     app = Cadwyn(
-        versions=VersionBundle(Version(date(2022, 11, 16))),
+        versions=VersionBundle(Version("2022-11-16")),
         on_startup=[run_startup],
         on_shutdown=[run_shutdown],
     )

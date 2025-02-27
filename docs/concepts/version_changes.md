@@ -362,7 +362,7 @@ from users import UserResource
 from versions import version_bundle
 
 body_from_2000_01_01 = version_bundle.migrate_response_body(
-    UserResource, latest_body={"name": "John"}, version=date(2000, 1, 1)
+    UserResource, latest_body={"name": "John"}, version="2000-01-01"
 )
 ```
 

@@ -3,8 +3,6 @@ from typing import Any
 
 from fastapi.routing import APIRoute
 
-from cadwyn.structure.common import VersionType
-
 
 class CadwynRenderError(Exception):
     pass
@@ -15,7 +13,7 @@ class CadwynError(Exception):
 
 
 class CadwynHeadRequestValidationError(CadwynError):
-    def __init__(self, errors: list[Any], body: Any, version: VersionType) -> None:
+    def __init__(self, errors: list[Any], body: Any, version: str) -> None:
         self.errors = errors
         self.body = body
         self.version = version

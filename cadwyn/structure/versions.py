@@ -204,8 +204,8 @@ class Version:
     def __init__(self, value: str | date, *changes: type[VersionChange]) -> None:
         super().__init__()
 
-        if isinstance(value.value, date):
-            value.value = value.value.isoformat()
+        if isinstance(value, date):
+            value = value.isoformat()
         self.value = value
         self.changes = changes
 
@@ -252,7 +252,7 @@ class VersionBundle:
         latest_version_or_head_version: Version | HeadVersion,
         /,
         *other_versions: Version,
-        api_version_var: APIVersionVarType | None = None,
+        api_version_var: ContextVar[VersionType | None] | None = None,
     ) -> None:
         super().__init__()
 
@@ -289,10 +289,7 @@ class VersionBundle:
                 version_change._bound_version_bundle = self
         if not self.versions:
             raise CadwynStructureError("You must define at least one non-head version in a VersionBundle.")
-        if sorted(self.versions, key=lambda v: v.value, reverse=True) != list(self.versions):
-            raise CadwynStructureError(
-                "Versions are not sorted correctly. Please sort them in descending order.",
-            )
+
         if self.versions[-1].changes:
             raise CadwynStructureError(
                 f'The first version "{self.versions[-1].value}" cannot have any version changes. '

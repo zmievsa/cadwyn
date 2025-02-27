@@ -1,5 +1,4 @@
 import copy
-import datetime
 import sys
 from enum import auto
 from logging import getLogger
@@ -22,7 +21,7 @@ from pydantic import BaseModel, Field, RootModel
 from cadwyn._asts import GenericAliasUnion
 from cadwyn._utils import Sentinel
 from cadwyn.route_generation import _get_routes
-from cadwyn.routing import _RootHeaderAPIRouter
+from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.schema_generation import SchemaGenerator, _change_field_in_model, generate_versioned_models
 from cadwyn.structure.versions import PossibleInstructions, VersionBundle, VersionChange, VersionChangeWithSideEffects
 
@@ -62,15 +61,15 @@ def hidden(instruction_or_version_change: T) -> T:
     return instruction_or_version_change
 
 
-def _generate_changelog(versions: VersionBundle, router: _RootHeaderAPIRouter) -> "CadwynChangelogResource":
+def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -> "CadwynChangelogResource":
     changelog = CadwynChangelogResource()
     schema_generators = generate_versioned_models(versions)
     for version, older_version in zip(versions, versions.versions[1:], strict=False):
         routes_from_newer_version = router.versioned_routers[version.value].routes
         schemas_from_older_version = get_fields_from_routes(router.versioned_routers[older_version.value].routes)
         version_changelog = CadwynVersion(value=version.value)
-        generator_from_newer_version = schema_generators[version.value.isoformat()]
-        generator_from_older_version = schema_generators[older_version.value.isoformat()]
+        generator_from_newer_version = schema_generators[version.value]
+        generator_from_older_version = schema_generators[older_version.value]
         for version_change in version.changes:
             if version_change.is_hidden_from_changelog:
                 continue
@@ -284,7 +283,7 @@ class CadwynChangelogResource(BaseModel):
 
 
 class CadwynVersion(BaseModel):
-    value: datetime.date
+    value: str
     changes: "list[CadwynVersionChange]" = Field(default_factory=list)
 
 

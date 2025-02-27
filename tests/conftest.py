@@ -66,7 +66,7 @@ class TestClientWithHardcodedAPIVersion(CadwynTestClient):
 def client(
     router: APIRouter,
     api_version: Any = Undefined,
-    api_version_var: ContextVar[date | None] | None = None,
+    api_version_var: ContextVar[str | None] | None = None,
 ):
     app = FastAPI()
     app.include_router(router)
@@ -87,7 +87,7 @@ class CreateRuntimeSchemas:
 
 @fixture_class(name="create_versioned_app")
 class CreateVersionedApp:
-    api_version_var: ContextVar[date | None]
+    api_version_var: ContextVar[str | None]
     router: VersionedAPIRouter
 
     def __call__(
@@ -110,7 +110,7 @@ class CreateVersionedApp:
 
 
 def versions(*version_changes: type[VersionChange]) -> list[Version]:
-    versions = [Version(date(2000, 1, 1))]
+    versions = [Version("2000-01-01")]
     for i, change in enumerate(version_changes):
         versions.append(Version(date(2001 + i, 1, 1), change))
     return list(reversed(versions))
@@ -119,17 +119,17 @@ def versions(*version_changes: type[VersionChange]) -> list[Version]:
 @fixture_class(name="create_versioned_clients")
 class CreateVersionedClients:
     create_versioned_app: CreateVersionedApp
-    api_version_var: ContextVar[date | None]
+    api_version_var: ContextVar[str | None]
 
     def __call__(
         self,
         *version_changes: type[VersionChange],
         head_version_changes: Sequence[type[VersionChange]] = (),
         router: VersionedAPIRouter | None = None,
-    ) -> dict[date, CadwynTestClient]:
+    ) -> dict[str, CadwynTestClient]:
         app = self.create_versioned_app(*version_changes, head_version_changes=head_version_changes, router=router)
         return {
-            version: CadwynTestClient(app, headers={app.router.api_version_header_name: version.isoformat()})
+            version: CadwynTestClient(app, headers={app.router.api_version_parameter_name: version})
             for version in reversed(app.router.versioned_routers)
         }
 
