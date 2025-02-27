@@ -27,7 +27,7 @@ from typing_extensions import Self
 
 from cadwyn._utils import same_definition_as_in
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
-from cadwyn.middleware import VersionPickingMiddleware, _get_api_version_dependency
+from cadwyn.middleware import VersionPickingMiddleware, _generate_api_version_dependency
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.routing import _RootHeaderAPIRouter
 from cadwyn.structure import VersionBundle
@@ -392,7 +392,9 @@ class Cadwyn(FastAPI):
         for router in (first_router, *other_routers):
             self.router.versioned_routers[header_value_as_dt].include_router(
                 router,
-                dependencies=[Depends(_get_api_version_dependency(self.router.api_version_header_name, header_value))],
+                dependencies=[
+                    Depends(_generate_api_version_dependency(self.router.api_version_header_name, header_value))
+                ],
             )
             added_route_count += len(router.routes)
 

@@ -1,3 +1,6 @@
+# NOTE: It's OK that any_string might not be correctly sortable such as v10 vs v9.
+# we can simply remove waterfalling from any_string api version style.
+
 import inspect
 import re
 from contextlib import AsyncExitStack
@@ -21,7 +24,7 @@ VersionValidatorC = Callable[[str], VersionType]
 VersionDependencyFactoryC = Callable[[], Callable[..., Any]]
 
 APIVersionLocation = Literal["header", "url"]
-APIVersionStyle = Literal["date", "sortable_string"]
+APIVersionStyle = Literal["date", "any_string"]
 
 
 class HeaderVersionGetter:
@@ -37,14 +40,14 @@ class HeaderVersionGetter:
 
 class URLVersionGetter:
     __slots__ = ("possible_version_values", "url_version_regex")
-    URL_VERSION_REGEX = re.compile(r"/([\w.])/")
 
     def __init__(self, *, possible_version_values: set[str], **kwargs: Any) -> None:
         super().__init__()
         self.possible_version_values = possible_version_values
+        self.url_version_regex = re.compile(f"/({'|'.join(re.escape(v) for v in possible_version_values)})/")
 
     def __call__(self, request: Request) -> str | None:
-        if m := self.URL_VERSION_REGEX.match(request.url.path):
+        if m := self.url_version_regex.search(request.url.path):
             version = m.group(1)
             if version in self.possible_version_values:
                 return version
@@ -72,14 +75,21 @@ class App:
         if api_version_style == "date":
             default_version_example = "2022-11-16"
             validation_data_type = date
-        elif api_version_style == "sortable_string":
-            default_version_example = "v1"
+        elif api_version_style == "any_string":
+            default_version_example = next(iter(versions._version_values))
             validation_data_type = str
         else:
             assert_never(default_version_example)
 
+        self.api_version_dependency = _generate_api_version_dependency(
+            api_version_parameter_name=api_version_parameter_name,
+            version_example=default_version_example,
+            fastapi_depends_class=fastapi_depends_class,
+            validation_data_type=validation_data_type,
+        )
 
-def _get_api_version_dependency(
+
+def _generate_api_version_dependency(
     *,
     api_version_parameter_name: str,
     version_example: str,
@@ -95,7 +105,7 @@ def _get_api_version_dependency(
             inspect.Parameter(
                 api_version_parameter_name.replace("-", "_"),
                 inspect.Parameter.KEYWORD_ONLY,
-                annotation=Annotated[date, fastapi.Header(examples=[version_example])],
+                annotation=Annotated[validation_data_type, fastapi_depends_class(examples=[version_example])],
                 default=version_example,
             ),
         ],
@@ -121,7 +131,7 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         # consistent with validation and route level.
         self.version_header_validation_dependant = get_dependant(
             path="",
-            call=_get_api_version_dependency(api_version_header_name, "2000-08-23"),
+            call=_generate_api_version_dependency(api_version_header_name, "2000-08-23"),
         )
 
     async def dispatch(
