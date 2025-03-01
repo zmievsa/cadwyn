@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, assert_never, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import fastapi
 from fastapi import APIRouter, FastAPI, HTTPException, routing
@@ -23,7 +23,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
-from typing_extensions import Self, deprecated
+from typing_extensions import Self, assert_never, deprecated
 
 from cadwyn._utils import same_definition_as_in
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
