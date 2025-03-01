@@ -752,7 +752,7 @@ class TestHowAndWhenMigrationsApply:
         app = clients["2000-01-01"].app
         earlier_client = client(
             APIRouter(routes=app.router.versioned_routers["2000-01-01"].routes),
-            api_version=date(1998, 2, 10),
+            api_version="1998-02-10",
             api_version_var=api_version_var,
         )
         assert earlier_client.post(

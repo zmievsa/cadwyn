@@ -2,7 +2,6 @@ import uuid
 from collections.abc import Sequence
 from contextvars import ContextVar
 from copy import deepcopy
-from datetime import date
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -50,7 +49,7 @@ class TestClientWithHardcodedAPIVersion(CadwynTestClient):
         self,
         *args,
         api_version_var: ContextVar | None = None,
-        api_version: date | object = Undefined,
+        api_version: str | None | object = Undefined,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -112,7 +111,7 @@ class CreateVersionedApp:
 def versions(*version_changes: type[VersionChange]) -> list[Version]:
     versions = [Version("2000-01-01")]
     for i, change in enumerate(version_changes):
-        versions.append(Version(date(2001 + i, 1, 1), change))
+        versions.append(Version(f"{2001 + i}-01-01", change))
     return list(reversed(versions))
 
 

@@ -1,3 +1,4 @@
+import bisect
 import email.message
 import functools
 import inspect
@@ -262,19 +263,21 @@ class VersionBundle:
         else:
             self.head_version = HeadVersion()
             self.versions = (latest_version_or_head_version, *other_versions)
+        self.reversed_versions = tuple(reversed(self.versions))
 
         if api_version_var is None:
             api_version_var = ContextVar("cadwyn_api_version")
-        self.version_dates = tuple(version.value for version in self.versions)
+        self.version_values = tuple(version.value for version in self.versions)
+        self.reversed_version_values = tuple(reversed(self.version_values))
         self.api_version_var = api_version_var
         self._all_versions = (self.head_version, *self.versions)
         self._version_changes_to_version_mapping = {
             version_change: version.value for version in self.versions for version_change in version.changes
         }
-        self._version_values = set()
+        self._version_values_set: set[str] = set()
         for version in self.versions:
-            if version.value not in self._version_values:
-                self._version_values.add(version.value)
+            if version.value not in self._version_values_set:
+                self._version_values_set.add(version.value)
             else:
                 raise CadwynStructureError(
                     f"You tried to define two versions with the same value in the same "
@@ -299,6 +302,11 @@ class VersionBundle:
 
     def __iter__(self) -> Iterator[Version]:
         yield from self.versions
+
+    @property
+    @deprecated("Use 'version_values' instead.")
+    def version_dates(self):
+        return self.version_values
 
     @functools.cached_property
     def versioned_schemas(self) -> dict[IdentifierPythonPath, type[VersionedModel]]:
@@ -328,7 +336,7 @@ class VersionBundle:
         }
 
     def _get_closest_lesser_version(self, version: VersionType):
-        for defined_version in self.version_dates:
+        for defined_version in self.version_values:
             if defined_version <= version:
                 return defined_version
         raise CadwynError("You tried to migrate to version that is earlier than the first version which is prohibited.")
@@ -349,9 +357,8 @@ class VersionBundle:
         background_tasks: BackgroundTasks | None,
     ) -> dict[str, Any]:
         method = request.method
-        for v in reversed(self.versions):
-            if v.value <= current_version:
-                continue
+        start = self.reversed_version_values.index(current_version)
+        for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
                 if body_type is not None and body_type in version_change.alter_request_by_schema_instructions:
                     for instruction in version_change.alter_request_by_schema_instructions[body_type]:
@@ -387,9 +394,8 @@ class VersionBundle:
         path: str,
         method: str,
     ) -> ResponseInfo:
-        for v in self.versions:
-            if v.value <= current_version:
-                break
+        end = self.version_values.index(current_version)
+        for v in self.versions[:end]:
             for version_change in v.changes:
                 migrations_to_apply: list[_BaseAlterResponseInstruction] = []
 

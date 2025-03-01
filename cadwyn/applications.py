@@ -7,6 +7,7 @@ from logging import getLogger
 from pathlib import Path
 from typing import Annotated, Any, Awaitable, cast
 
+import fastapi
 from fastapi import APIRouter, FastAPI, HTTPException, routing
 from fastapi.datastructures import Default
 from fastapi.openapi.docs import (
@@ -32,6 +33,8 @@ from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
     APIVersionLocation,
     APIVersionStyle,
+    HeaderVersionGetter,
+    URLVersionGetter,
     VersionPickingMiddleware,
     _generate_api_version_dependency,
 )
@@ -67,7 +70,7 @@ class Cadwyn(FastAPI):
         api_version_style: APIVersionStyle = "date",
         api_version_parameter_name: str = "x-api-version",
         api_version_default_value: str | None | Callable[[Request], Awaitable[str]] = None,
-        cadwyn_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
+        versioning_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
         changelog_url: str | None = "/changelog",
         include_changelog_url_in_schema: bool = True,
         debug: bool = False,
@@ -188,6 +191,23 @@ class Cadwyn(FastAPI):
         }
         self.api_version_style = api_version_style
         self.api_version_parameter_name = api_version_parameter_name
+        self.api_version_pythonic_parameter_name = api_version_parameter_name.replace("-", "_")
+        if api_version_location == "custom_header":
+            self._api_version_getter = HeaderVersionGetter(api_version_parameter_name=api_version_parameter_name)
+            self._api_version_fastapi_depends_class = fastapi.Header
+        elif api_version_location == "url":
+            self._api_version_getter = URLVersionGetter(possible_version_values=self.versions._version_values_set)
+            self._api_version_fastapi_depends_class = fastapi.Path
+        else:
+            assert_never(api_version_location)
+        # TODO: Add a test validating the error message when there are no versions
+        default_version_example = next(iter(self.versions._version_values_set))
+        if api_version_style == "date":
+            self.api_version_validation_data_type = date
+        elif api_version_style == "any_string":
+            self.api_version_validation_data_type = str
+        else:
+            assert_never(default_version_example)
         if api_version_style == "date":
             self.router = _RootCadwynDateAPIRouter(
                 **self._kwargs_to_router,
@@ -205,14 +225,13 @@ class Cadwyn(FastAPI):
         self._add_default_versioned_routers()
         self.include_router(unversioned_router)
         self.add_middleware(
-            cadwyn_middleware_class,
-            api_version_location=api_version_location,
-            api_version_style=api_version_style,
+            versioning_middleware_class,
             api_version_parameter_name=api_version_parameter_name,
+            api_version_getter=self._api_version_getter,
             api_version_default_value=api_version_default_value,
-            api_version_possible_values=self.versions._version_values,
             api_version_var=self.versions.api_version_var,
-            default_response_class=default_response_class,
+            api_version_style=api_version_style,
+            api_version_possible_values=list(self.versions._version_values_set),
         )
         if self.api_version_style == "date" and (
             sorted(self.versions.versions, key=lambda v: v.value, reverse=True) != list(self.versions.versions)
@@ -235,7 +254,7 @@ class Cadwyn(FastAPI):
             versions=self.versions,
         )
         for version, router in generated_routers.endpoints.items():
-            self.add_header_versioned_routers(router, header_value=version)
+            self._add_versioned_routers(router, version=version)
 
         for version, router in generated_routers.webhooks.items():
             self._versioned_webhook_routers[version] = router
@@ -405,15 +424,14 @@ class Cadwyn(FastAPI):
         header_value: str,
     ) -> list[BaseRoute]:
         """Add all routes from routers to be routed using header_value and return the added routes"""
-        if self.api_version_style == "date":
-            try:
-                date.fromisoformat(header_value)
-            except ValueError as e:
-                raise ValueError("header_value should be in ISO 8601 format") from e
+        try:
+            date.fromisoformat(header_value)
+        except ValueError as e:
+            raise ValueError("header_value should be in ISO 8601 format") from e
 
-        return self._add_versioned_router(first_router, *other_routers, version=header_value)
+        return self._add_versioned_routers(first_router, *other_routers, version=header_value)
 
-    def _add_versioned_router(
+    def _add_versioned_routers(
         self, first_router: APIRouter, *other_routers: APIRouter, version: str
     ) -> list[BaseRoute]:
         added_routes: list[BaseRoute] = []
@@ -433,7 +451,16 @@ class Cadwyn(FastAPI):
         for router in (first_router, *other_routers):
             self.router.versioned_routers[version].include_router(
                 router,
-                dependencies=[Depends(_generate_api_version_dependency(self.api_version_parameter_name, version))],
+                dependencies=[
+                    Depends(
+                        _generate_api_version_dependency(
+                            api_version_pythonic_parameter_name=self.api_version_pythonic_parameter_name,
+                            default_value=version,
+                            fastapi_depends_class=self._api_version_fastapi_depends_class,
+                            validation_data_type=self.api_version_validation_data_type,
+                        )
+                    )
+                ],
             )
             added_route_count += len(router.routes)
 

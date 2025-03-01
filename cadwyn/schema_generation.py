@@ -167,6 +167,7 @@ def migrate_response_body(
     """
     if isinstance(version, date):
         version = version.isoformat()
+        version = versions._get_closest_lesser_version(version)
     response = ResponseInfo(Response(status_code=200), body=latest_body)
     migrated_response = versions._migrate_response(
         response,
@@ -175,8 +176,6 @@ def migrate_response_body(
         path="\0\0\0",
         method="GET",
     )
-
-    version = versions._get_closest_lesser_version(version)
 
     versioned_response_model: type[pydantic.BaseModel] = generate_versioned_models(versions)[str(version)][
         latest_response_model

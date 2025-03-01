@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import date
 
+import pytest
 import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -19,16 +20,22 @@ async def lifespan(app: FastAPI):
     yield  # pragma: no cover
 
 
-versioned_app = Cadwyn(versions=VersionBundle(Version(date(2021, 1, 1))), lifespan=lifespan)
-versioned_app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
-versioned_app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
+versioned_app = Cadwyn(versions=VersionBundle(Version("2021-01-01")), lifespan=lifespan)
+with pytest.warns(DeprecationWarning):
+    versioned_app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
+    versioned_app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
 versioned_app.include_router(unversioned_router)
 
 versioned_app_with_custom_api_version_var = Cadwyn(
-    versions=VersionBundle(Version(date(2021, 1, 1))), lifespan=lifespan, api_version_var=ContextVar("My api version")
+    versions=VersionBundle(Version("2021-01-01")), lifespan=lifespan, api_version_var=ContextVar("My api version")
 )
-versioned_app_with_custom_api_version_var.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
-versioned_app_with_custom_api_version_var.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
+with pytest.warns(DeprecationWarning):
+    versioned_app_with_custom_api_version_var.add_header_versioned_routers(
+        v2021_01_01_router, header_value="2021-01-01"
+    )
+    versioned_app_with_custom_api_version_var.add_header_versioned_routers(
+        v2022_01_02_router, header_value="2022-02-02"
+    )
 versioned_app_with_custom_api_version_var.include_router(unversioned_router)
 
 # TODO: We should not have any clients that are run like this. Instead, all of them must run using "with"

@@ -6,6 +6,7 @@ from typing import Any, get_args
 import pytest
 from pydantic import BaseModel
 
+from cadwyn.applications import Cadwyn
 from cadwyn.exceptions import CadwynError, CadwynStructureError, LintingError
 from cadwyn.structure import (
     Version,
@@ -57,7 +58,7 @@ def versions(api_version_var: ContextVar[str | None]):
             Version("2002-01-01", DummySubClass2002),
             Version("2001-01-01", DummySubClass2001),
             Version("2000-01-01", DummySubClass2000_001, DummySubClass2000_002),
-            Version(date(1999, 1, 1)),
+            Version("1999-01-01"),
             api_version_var=api_version_var,
         )
     finally:
@@ -248,10 +249,12 @@ class TestVersionBundle:
                 "Versions are not sorted correctly. Please sort them in descending order.",
             ),
         ):
-            VersionBundle(
-                Version("2000-01-01"),
-                Version("2001-01-01"),
-                api_version_var=api_version_var,
+            Cadwyn(
+                versions=VersionBundle(
+                    Version("2000-01-01"),
+                    Version("2001-01-01"),
+                    api_version_var=api_version_var,
+                )
             )
 
     def test__init__one_version_change_attached_to_two_version_bundles__should_raise_error(
@@ -336,10 +339,6 @@ class TestVersionBundle:
                 Version("2000-01-01", dummy_sub_class_without_version),
                 api_version_var=api_version_var,
             )
-
-
-def test__version__has_string_as_a_date__should_be_converted_to_date():
-    assert Version("2022-11-16").value == "2022-11-16"
 
 
 class SomeSchema(BaseModel):
