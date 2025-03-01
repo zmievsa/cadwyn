@@ -1,5 +1,4 @@
 import re
-from datetime import date
 from typing import Annotated, cast
 
 import pytest
@@ -166,7 +165,17 @@ def test__header_based_versioning(client: TestClient):
 def test__header_based_versioning__invalid_version_header_format__should_raise_422():
     resp = client_without_headers.get("/v1", headers=BASIC_HEADERS | {"X-API-VERSION": "2022-02_02"})
     assert resp.status_code == 422
-    assert resp.json()[0]["loc"] == ["header", "x-api-version"]
+    assert resp.json() == {
+        "detail": [
+            {
+                "type": "date_from_datetime_parsing",
+                "loc": ["header", "x-api-version"],
+                "msg": "Input should be a valid date or datetime, invalid date separator, expected `-`",
+                "input": "2022-02_02",
+                "ctx": {"error": "invalid date separator, expected `-`"},
+            }
+        ]
+    }
 
 
 def test__get_unversioned_router():

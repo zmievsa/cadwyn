@@ -1,5 +1,4 @@
 import uuid
-from datetime import date
 
 import uvicorn
 from pydantic import BaseModel, Field

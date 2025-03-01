@@ -1,4 +1,3 @@
-import bisect
 import email.message
 import functools
 import inspect
@@ -305,7 +304,7 @@ class VersionBundle:
 
     @property
     @deprecated("Use 'version_values' instead.")
-    def version_dates(self):
+    def version_dates(self):  # pragma: no cover
         return self.version_values
 
     @functools.cached_property
@@ -357,6 +356,7 @@ class VersionBundle:
         background_tasks: BackgroundTasks | None,
     ) -> dict[str, Any]:
         method = request.method
+
         start = self.reversed_version_values.index(current_version)
         for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:

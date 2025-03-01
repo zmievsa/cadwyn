@@ -12,6 +12,7 @@ from starlette.routing import BaseRoute, Match
 from starlette.types import Receive, Scope, Send
 
 from cadwyn._utils import same_definition_as_in
+from cadwyn.middleware import APIVersionStyle
 from cadwyn.structure.common import VersionType
 
 _logger = getLogger(__name__)
@@ -23,6 +24,7 @@ class _RootCadwynAPIRouter(APIRouter):
         *args: Any,
         api_version_parameter_name: str,
         api_version_var: ContextVar[str | None],
+        api_version_style: APIVersionStyle,
         **kwargs: Any,
     ):
         super().__init__(*args, **kwargs)
@@ -30,9 +32,35 @@ class _RootCadwynAPIRouter(APIRouter):
         self.api_version_parameter_name = api_version_parameter_name.lower()
         self.api_version_var = api_version_var
         self.unversioned_routes: list[BaseRoute] = []
+        self.api_version_style = api_version_style
 
-    async def pick_version(self, version: VersionType) -> list[BaseRoute]:
-        """Pick the versioned routes for the given version in case we failed to pick a concrete version"""
+    async def _get_routes_from_closest_suitable_version(self, version: VersionType) -> list[BaseRoute]:
+        """Pick the versioned routes for the given version in case we failed to pick a concrete version
+
+        If the app has two versions: 2022-01-02 and 2022-01-05, and the request header
+        is 2022-01-03, then the request will be routed to 2022-01-02 version as it the closest
+        version, but lower than the request header.
+
+        Exact match is always preferred over partial match and a request will never be
+        matched to the higher versioned route.
+
+        We implement routing like this because it is extremely convenient with microservice
+        architecture. For example, imagine that you have two Cadwyn services: Payables and Receivables,
+        each defining its own API versions. Payables service might contain 10 versions while receivables
+        service might contain only 2 versions because it didn't need as many breaking changes.
+        If a client requests a version that does not exist in receivables -- we will just waterfall
+        to some earlier version, making receivables behavior consistent even if API keeps getting new versions.
+        """
+        if self.api_version_style == "date":
+            index = bisect.bisect_left(self.versions, version)
+            # That's when we try to get a version earlier than the earliest possible version
+            if index == 0:
+                return []
+            picked_version = self.versions[index - 1]
+            self.api_version_var.set(picked_version)
+            # as bisect_left returns the index where to insert item x in list a, assuming a is sorted
+            # we need to get the previous item and that will be a match
+            return self.versioned_routers[picked_version].routes
         return []
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -52,14 +80,12 @@ class _RootCadwynAPIRouter(APIRouter):
         elif version in self.versioned_routers:
             routes = self.versioned_routers[version].routes
         else:
-            routes = await self.pick_version(version)
+            routes = await self._get_routes_from_closest_suitable_version(version)
         await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
 
     @cached_property
     def versions(self):
-        # intentionally not sorting them because arbitrary string versioning style
-        # does not guarantee that strings will be correctly sortable. For example, v10 < v9
-        return list(self.versioned_routers.keys())
+        return sorted(self.versioned_routers.keys())
 
     @same_definition_as_in(APIRouter.add_api_route)
     def add_api_route(self, *args: Any, **kwargs: Any):
@@ -122,56 +148,3 @@ class _RootCadwynAPIRouter(APIRouter):
                     return None
 
         return await self.default(scope, receive, send)
-
-
-class _RootCadwynDateAPIRouter(_RootCadwynAPIRouter):
-    """Root router of the FastAPI app when using date based versioning.
-
-    It will be used to route the requests to the correct versioned route
-    based on the headers.
-
-    If the app has two versions: 2022-01-02 and 2022-01-05, and the request header
-    is 2022-01-03, then the request will be routed to 2022-01-02 version as it the closest
-    version, but lower than the request header.
-
-    Exact match is always preferred over partial match and a request will never be
-    matched to the higher versioned route.
-
-    We implement routing like this because it is extremely convenient with microservice
-    architecture. For example, imagine that you have two Cadwyn services: Payables and Receivables,
-    each defining its own API versions. Payables service might contain 10 versions while receivables
-    service might contain only 2 versions because it didn't need as many breaking changes.
-    If a client requests a version that does not exist in receivables -- we will just waterfall
-    to some earlier version, making receivables behavior consistent even if API keeps getting new versions.
-    """
-
-    @cached_property
-    def min_routes_version(self):
-        return min(self.versions)
-
-    def find_closest_date_but_not_new(self, request_version: VersionType) -> VersionType:
-        index = bisect.bisect_left(self.versions, request_version)
-        # as bisect_left returns the index where to insert item x in list a, assuming a is sorted
-        # we need to get the previous item and that will be a match
-        return self.versions[index - 1]
-
-    async def pick_version(self, version: VersionType) -> list[BaseRoute]:
-        if self.min_routes_version > version:
-            # then the request version is older that the oldest route we have
-            _logger.info(
-                "Request version is older than the oldest version. No route can match this version",
-                extra={
-                    "oldest_version": self.min_routes_version,
-                    "request_version": version,
-                },
-            )
-            return []
-        version_chosen = self.find_closest_date_but_not_new(version)
-        _logger.info(
-            "Partial match. The endpoint with a lower version was selected for the API call",
-            extra={
-                "version_chosen": version_chosen,
-                "request_version": version,
-            },
-        )
-        return self.versioned_routers[version_chosen].routes

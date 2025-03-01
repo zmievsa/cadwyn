@@ -1,6 +1,5 @@
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from datetime import date
 
 import pytest
 import uvicorn

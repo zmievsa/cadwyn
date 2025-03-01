@@ -1,5 +1,3 @@
-from datetime import date
-
 from cadwyn import Version, VersionBundle
 from cadwyn.applications import Cadwyn
 from cadwyn.structure import VersionChange

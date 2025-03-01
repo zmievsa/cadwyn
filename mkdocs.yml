@@ -105,7 +105,7 @@ nav:
       - "concepts/index.md"
       - "Methodology": "concepts/methodology.md"
       - "Beware of data versioning": "concepts/beware_of_data_versioning.md"
-      - "Header routing peculiarities": "concepts/header_routing_peculiarities"
+      - "Header routing peculiarities": "concepts/header_routing_peculiarities.md"
       - "Main App": "concepts/main_app.md"
       - "CLI": "concepts/cli.md"
       - "Schema generation": "concepts/schema_generation.md"

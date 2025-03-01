@@ -45,7 +45,7 @@ from pydantic.fields import ComputedFieldInfo, FieldInfo
 from typing_extensions import Doc, Self, _AnnotatedAlias, assert_never
 
 from cadwyn._utils import Sentinel, UnionType, fully_unwrap_decorator, lenient_issubclass
-from cadwyn.exceptions import InvalidGenerationInstructionError
+from cadwyn.exceptions import CadwynError, InvalidGenerationInstructionError
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.data import ResponseInfo
 from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
@@ -168,6 +168,8 @@ def migrate_response_body(
     if isinstance(version, date):
         version = version.isoformat()
         version = versions._get_closest_lesser_version(version)
+    if version not in versions._version_values_set:
+        raise CadwynError(f"Version {version} not found in version bundle")
     response = ResponseInfo(Response(status_code=200), body=latest_body)
     migrated_response = versions._migrate_response(
         response,

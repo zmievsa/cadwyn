@@ -1,5 +1,3 @@
-from datetime import date
-
 from pydantic import Field, conbytes
 
 from cadwyn import Version, VersionBundle

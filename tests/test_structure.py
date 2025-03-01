@@ -1,6 +1,5 @@
 import re
 from contextvars import ContextVar
-from datetime import date
 from typing import Any, get_args
 
 import pytest

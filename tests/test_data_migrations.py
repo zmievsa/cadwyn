@@ -2,7 +2,6 @@ import http.cookies
 import re
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
-from datetime import date
 from io import StringIO
 from typing import Any, Literal
 
@@ -750,12 +749,9 @@ class TestHowAndWhenMigrationsApply:
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
         app = clients["2000-01-01"].app
-        earlier_client = client(
-            APIRouter(routes=app.router.versioned_routers["2000-01-01"].routes),
-            api_version="1998-02-10",
-            api_version_var=api_version_var,
-        )
-        assert earlier_client.post(
+        api_version_var.set("1998-02-10")
+
+        assert clients["2000-01-01"].post(
             test_path,
             json=[],
             headers={app.router.api_version_parameter_name: "2000-01-01"},

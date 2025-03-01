@@ -1,6 +1,5 @@
 import re
 import sys
-from datetime import date
 from enum import Enum
 
 import pytest

@@ -1,11 +1,9 @@
 import dataclasses
-import datetime
-import warnings
-from collections.abc import Callable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from typing import Annotated, Any, Awaitable, cast
+from typing import TYPE_CHECKING, Annotated, Any, assert_never, cast
 
 import fastapi
 from fastapi import APIRouter, FastAPI, HTTPException, routing
@@ -33,15 +31,17 @@ from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
     APIVersionLocation,
     APIVersionStyle,
-    HeaderVersionGetter,
-    URLVersionGetter,
+    HeaderVersionManager,
+    URLVersionManager,
     VersionPickingMiddleware,
     _generate_api_version_dependency,
 )
 from cadwyn.route_generation import generate_versioned_routers
-from cadwyn.routing import _RootCadwynAPIRouter, _RootCadwynDateAPIRouter
+from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.structure import VersionBundle
-from cadwyn.structure.common import VersionType
+
+if TYPE_CHECKING:
+    from cadwyn.structure.common import VersionType
 
 CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
@@ -193,10 +193,10 @@ class Cadwyn(FastAPI):
         self.api_version_parameter_name = api_version_parameter_name
         self.api_version_pythonic_parameter_name = api_version_parameter_name.replace("-", "_")
         if api_version_location == "custom_header":
-            self._api_version_getter = HeaderVersionGetter(api_version_parameter_name=api_version_parameter_name)
+            self._api_version_manager = HeaderVersionManager(api_version_parameter_name=api_version_parameter_name)
             self._api_version_fastapi_depends_class = fastapi.Header
         elif api_version_location == "url":
-            self._api_version_getter = URLVersionGetter(possible_version_values=self.versions._version_values_set)
+            self._api_version_manager = URLVersionManager(possible_version_values=self.versions._version_values_set)
             self._api_version_fastapi_depends_class = fastapi.Path
         else:
             assert_never(api_version_location)
@@ -208,18 +208,12 @@ class Cadwyn(FastAPI):
             self.api_version_validation_data_type = str
         else:
             assert_never(default_version_example)
-        if api_version_style == "date":
-            self.router = _RootCadwynDateAPIRouter(
-                **self._kwargs_to_router,
-                api_version_parameter_name=api_version_parameter_name,
-                api_version_var=self.versions.api_version_var,
-            )
-        else:
-            self.router: _RootCadwynAPIRouter = _RootCadwynAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
-                **self._kwargs_to_router,
-                api_version_parameter_name=api_version_parameter_name,
-                api_version_var=self.versions.api_version_var,
-            )
+        self.router: _RootCadwynAPIRouter = _RootCadwynAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
+            **self._kwargs_to_router,
+            api_version_parameter_name=api_version_parameter_name,
+            api_version_var=self.versions.api_version_var,
+            api_version_style=api_version_style,
+        )
         unversioned_router = APIRouter(**self._kwargs_to_router)
         self._add_utility_endpoints(unversioned_router)
         self._add_default_versioned_routers()
@@ -227,11 +221,9 @@ class Cadwyn(FastAPI):
         self.add_middleware(
             versioning_middleware_class,
             api_version_parameter_name=api_version_parameter_name,
-            api_version_getter=self._api_version_getter,
+            api_version_manager=self._api_version_manager,
             api_version_default_value=api_version_default_value,
             api_version_var=self.versions.api_version_var,
-            api_version_style=api_version_style,
-            api_version_possible_values=list(self.versions._version_values_set),
         )
         if self.api_version_style == "date" and (
             sorted(self.versions.versions, key=lambda v: v.value, reverse=True) != list(self.versions.versions)
