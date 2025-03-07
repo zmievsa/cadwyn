@@ -5,7 +5,9 @@ from docs_src.how_to.change_openapi_schemas.change_schema_without_endpoint.block
     ChangeUserIDToString,
 )
 
-versions = VersionBundle(Version("2023-04-12", ChangeUserIDToString), Version("2022-11-16"))
+versions = VersionBundle(
+    Version("2023-04-12", ChangeUserIDToString), Version("2022-11-16")
+)
 app = Cadwyn(versions=versions)
 
 

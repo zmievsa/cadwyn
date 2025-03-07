@@ -1,12 +1,12 @@
 
 # Setup
 
-Cadwyn is built around FastAPI and supports all of its functionality out of the box. One difference is that Cadwyn requires you to define API versions and extends your routing and swagger to support header-based API versioning.
+Cadwyn is built around FastAPI and supports all of its functionality out of the box. One difference is that Cadwyn requires you to define API versions and extends your routing and swagger to support API versioning.
 
 ## Installation
 
 ```bash
-{!> ../docs_src/quickstart/setup/block001.sh !}
+{! ./docs_src/quickstart/setup/block001.sh !}
 ```
 
 ## The basics
@@ -14,7 +14,7 @@ Cadwyn is built around FastAPI and supports all of its functionality out of the 
 First, let's set up the most basic versioned app possible:
 
 ```python
-{!> ../docs_src/quickstart/setup/block002.py !}
+{! ./docs_src/quickstart/setup/block002.py !}
 ```
 
 and run it using:

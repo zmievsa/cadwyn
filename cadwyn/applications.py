@@ -1,4 +1,5 @@
 import dataclasses
+import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
@@ -29,8 +30,8 @@ from cadwyn._utils import same_definition_as_in
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
+    APIVersionFormat,
     APIVersionLocation,
-    APIVersionStyle,
     HeaderVersionManager,
     URLVersionManager,
     VersionPickingMiddleware,
@@ -67,7 +68,7 @@ class Cadwyn(FastAPI):
             ),
         ] = None,
         api_version_location: APIVersionLocation = "custom_header",
-        api_version_style: APIVersionStyle = "date",
+        api_version_format: APIVersionFormat = "date",
         api_version_parameter_name: str = "x-api-version",
         api_version_default_value: str | None | Callable[[Request], Awaitable[str]] = None,
         versioning_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
@@ -123,6 +124,12 @@ class Cadwyn(FastAPI):
         self._cadwyn_initialized = False
 
         if api_version_header_name is not None:
+            warnings.warn(
+                "api_version_header_name is deprecated and will be removed in the future. "
+                "Use api_version_parameter_name instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             api_version_parameter_name = api_version_header_name
 
         super().__init__(
@@ -189,22 +196,22 @@ class Cadwyn(FastAPI):
             "responses": responses,
             "generate_unique_id_function": generate_unique_id_function,
         }
-        self.api_version_style = api_version_style
+        self.api_version_format = api_version_format
         self.api_version_parameter_name = api_version_parameter_name
         self.api_version_pythonic_parameter_name = api_version_parameter_name.replace("-", "_")
         if api_version_location == "custom_header":
             self._api_version_manager = HeaderVersionManager(api_version_parameter_name=api_version_parameter_name)
             self._api_version_fastapi_depends_class = fastapi.Header
-        elif api_version_location == "url":
+        elif api_version_location == "path":
             self._api_version_manager = URLVersionManager(possible_version_values=self.versions._version_values_set)
             self._api_version_fastapi_depends_class = fastapi.Path
         else:
             assert_never(api_version_location)
         # TODO: Add a test validating the error message when there are no versions
         default_version_example = next(iter(self.versions._version_values_set))
-        if api_version_style == "date":
+        if api_version_format == "date":
             self.api_version_validation_data_type = date
-        elif api_version_style == "any_string":
+        elif api_version_format == "string":
             self.api_version_validation_data_type = str
         else:
             assert_never(default_version_example)
@@ -212,7 +219,7 @@ class Cadwyn(FastAPI):
             **self._kwargs_to_router,
             api_version_parameter_name=api_version_parameter_name,
             api_version_var=self.versions.api_version_var,
-            api_version_style=api_version_style,
+            api_version_format=api_version_format,
         )
         unversioned_router = APIRouter(**self._kwargs_to_router)
         self._add_utility_endpoints(unversioned_router)
@@ -225,7 +232,7 @@ class Cadwyn(FastAPI):
             api_version_default_value=api_version_default_value,
             api_version_var=self.versions.api_version_var,
         )
-        if self.api_version_style == "date" and (
+        if self.api_version_format == "date" and (
             sorted(self.versions.versions, key=lambda v: v.value, reverse=True) != list(self.versions.versions)
         ):
             raise CadwynStructureError(

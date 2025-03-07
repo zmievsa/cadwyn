@@ -116,6 +116,7 @@ dev = [
     { name = "better-devtools" },
     { name = "dirty-equals" },
     { name = "httpx" },
+    { name = "markdown-include-variants" },
     { name = "mdx-include" },
     { name = "mike" },
     { name = "mkdocs" },
@@ -150,6 +151,7 @@ dev = [
     { name = "better-devtools", specifier = "~=0.13.3" },
     { name = "dirty-equals", specifier = ">=0.6.0" },
     { name = "httpx", specifier = ">=0.26.0" },
+    { name = "markdown-include-variants", specifier = ">=0.0.4" },
     { name = "mdx-include", specifier = "~=1.4.2" },
     { name = "mike", specifier = ">=2.1.2,<3" },
     { name = "mkdocs", specifier = ">=1.5.2" },
@@ -588,6 +590,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/54/28/3af612670f82f4c056911fbbbb42760255801b3068c48de792d354ff4472/markdown-3.7.tar.gz", hash = "sha256:2ae2471477cfd02dbbf038d5d9bc226d40def84b4fe2986e49b59b6b472bbed2", size = 357086 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3f/08/83871f3c50fc983b88547c196d11cf8c3340e37c32d2e9d6152abe2c61f7/Markdown-3.7-py3-none-any.whl", hash = "sha256:7eb6df5690b81a1d7942992c97fad2938e956e79df20cbc6186e9c3a77b1c803", size = 106349 },
+]
+
+[[package]]
+name = "markdown-include-variants"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markdown" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fb/70/c96e5af68a88ee7c2b98432fdbdf17286ac952b6359ee340406be8526385/markdown_include_variants-0.0.4.tar.gz", hash = "sha256:8207c8a451eb79f10973d10ef5745b619bc51e245e4c4e5f0556a7a05243bea7", size = 42294 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/8c/8cd76ce6a525007b2a5d2c7ee10d989f276a149e1778515afd2d30b6e9c6/markdown_include_variants-0.0.4-py3-none-any.whl", hash = "sha256:f940b3978ca63d05118a261ff653d54d1d325120de41da9b901ccf4a85f1da1c", size = 7640 },
 ]
 
 [[package]]

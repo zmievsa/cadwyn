@@ -16,14 +16,13 @@ from cadwyn.structure.common import VersionType
 
 class VersionManager(Protocol):
     def get(self, request: Request) -> str | None: ...
-    def set(self, request: Request, version: str) -> None: ...
 
 
 VersionValidatorC = Callable[[str], VersionType]
 VersionDependencyFactoryC = Callable[[], Callable[..., Any]]
 
-APIVersionLocation = Literal["custom_header", "url"]
-APIVersionStyle = Literal["date", "any_string"]
+APIVersionLocation = Literal["custom_header", "path"]
+APIVersionFormat = Literal["date", "string"]
 
 
 class HeaderVersionManager:
@@ -36,9 +35,6 @@ class HeaderVersionManager:
     def get(self, request: Request) -> str | None:
         return request.headers.get(self.api_version_parameter_name)
 
-    def set(self, request: Request, version: str) -> None:
-        request.headers._list.append((self.api_version_parameter_name.encode(), version.encode()))
-
 
 class URLVersionManager:
     __slots__ = ("possible_version_values", "url_version_regex")
@@ -50,12 +46,8 @@ class URLVersionManager:
 
     def get(self, request: Request) -> str | None:
         if m := self.url_version_regex.search(request.url.path):
-            version = m.group(1)
-            if version in self.possible_version_values:
-                return version
+            return m.group(1)
         return None
-
-    def set(self, request: Request, version: str) -> None: ...  # pragma: no cover
 
 
 def _generate_api_version_dependency(
@@ -111,15 +103,12 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         api_version = self._api_version_manager.get(request)
 
         if api_version is None:
-            if callable(self.api_version_default_value):
+            if callable(self.api_version_default_value):  # pragma: no cover # TODO
                 api_version = await self.api_version_default_value(request)
             else:
                 api_version = self.api_version_default_value
-            if api_version is not None:
-                self._api_version_manager.set(request, api_version)
 
         self.api_version_var.set(api_version)
-
         response = await call_next(request)
 
         if api_version is not None:

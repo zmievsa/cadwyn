@@ -12,7 +12,7 @@ from starlette.routing import BaseRoute, Match
 from starlette.types import Receive, Scope, Send
 
 from cadwyn._utils import same_definition_as_in
-from cadwyn.middleware import APIVersionStyle
+from cadwyn.middleware import APIVersionFormat
 from cadwyn.structure.common import VersionType
 
 _logger = getLogger(__name__)
@@ -24,7 +24,7 @@ class _RootCadwynAPIRouter(APIRouter):
         *args: Any,
         api_version_parameter_name: str,
         api_version_var: ContextVar[str | None],
-        api_version_style: APIVersionStyle,
+        api_version_format: APIVersionFormat,
         **kwargs: Any,
     ):
         super().__init__(*args, **kwargs)
@@ -32,7 +32,7 @@ class _RootCadwynAPIRouter(APIRouter):
         self.api_version_parameter_name = api_version_parameter_name.lower()
         self.api_version_var = api_version_var
         self.unversioned_routes: list[BaseRoute] = []
-        self.api_version_style = api_version_style
+        self.api_version_format = api_version_format
 
     async def _get_routes_from_closest_suitable_version(self, version: VersionType) -> list[BaseRoute]:
         """Pick the versioned routes for the given version in case we failed to pick a concrete version
@@ -51,7 +51,7 @@ class _RootCadwynAPIRouter(APIRouter):
         If a client requests a version that does not exist in receivables -- we will just waterfall
         to some earlier version, making receivables behavior consistent even if API keeps getting new versions.
         """
-        if self.api_version_style == "date":
+        if self.api_version_format == "date":
             index = bisect.bisect_left(self.versions, version)
             # That's when we try to get a version earlier than the earliest possible version
             if index == 0:
@@ -61,7 +61,7 @@ class _RootCadwynAPIRouter(APIRouter):
             # as bisect_left returns the index where to insert item x in list a, assuming a is sorted
             # we need to get the previous item and that will be a match
             return self.versioned_routers[picked_version].routes
-        return []
+        return []  # pragma: no cover # This should not be possible
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if "router" not in scope:  # pragma: no cover

@@ -41,7 +41,7 @@ versions = [
 mixed_hosts_app = Cadwyn(versions=VersionBundle(Version("1998-11-15")))
 for version in versions:
     with pytest.warns(DeprecationWarning):
-        mixed_hosts_app.add_header_versioned_routers(
+        mixed_hosts_app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
             router,
             header_value=version,
         )

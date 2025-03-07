@@ -1,11 +1,5 @@
 import uuid
 
-import pytest
-import uvicorn
-from dirty_equals import IsUUID
-from fastapi.testclient import TestClient
-from pydantic import BaseModel, Field
-
 from cadwyn import VersionedAPIRouter
 from cadwyn.applications import Cadwyn
 from cadwyn.structure import (
@@ -20,6 +14,7 @@ from cadwyn.structure import (
     schema,
 )
 from cadwyn.structure.versions import HeadVersion
+from pydantic import BaseModel, Field
 
 
 class BaseUser(BaseModel):
@@ -64,9 +59,13 @@ class ChangeAddressToList(VersionChange):
 class ChangeAddressesToSubresource(VersionChange):
     description = "Change vat ids to subresource"
     instructions_to_migrate_to_previous_version = (
-        schema(BaseUser).field("addresses").existed_as(type=list[str], info=Field()),
+        schema(BaseUser)
+        .field("addresses")
+        .existed_as(type=list[str], info=Field()),
         schema(UserCreateRequest).field("default_address").didnt_exist,
-        endpoint("/{my_api_version}/users/{user_id}/addresses", ["GET"]).didnt_exist,
+        endpoint(
+            "/{x_api_version}/users/{user_id}/addresses", ["GET"]
+        ).didnt_exist,
     )
 
     @convert_request_to_next_version_for(UserCreateRequest)
@@ -77,15 +76,19 @@ class ChangeAddressesToSubresource(VersionChange):
 
     @convert_response_to_previous_version_for(UserResource)
     def change_addresses_to_list(response: ResponseInfo) -> None:
-        response.body["addresses"] = [id["value"] for id in response.body["_prefetched_addresses"]]
+        response.body["addresses"] = [
+            id["value"] for id in response.body["_prefetched_addresses"]
+        ]
 
 
 class RemoveAddressesToCreateFromLatest(VersionChange):
     description = (
-        "In order to support old versions, we gotta have `addresses_to_create` located in "
-        "head schemas but we do not need this field in latest schemas."
+        "In order to support old versions, we gotta have `addresses_to_create` "
+        "located in head schemas but we do not need this field in latest schemas."
     )
-    instructions_to_migrate_to_previous_version = (schema(UserCreateRequest).field("addresses_to_create").didnt_exist,)
+    instructions_to_migrate_to_previous_version = (
+        schema(UserCreateRequest).field("addresses_to_create").didnt_exist,
+    )
 
 
 version_bundle = VersionBundle(
@@ -100,15 +103,17 @@ router = VersionedAPIRouter(tags=["Users"])
 database_parody = {}
 
 
-@router.post("/{my_api_version}/users", response_model=UserResource)
+@router.post("/{x_api_version}/users", response_model=UserResource)
 async def create_user(user: UserCreateRequest):
     id_ = uuid.uuid4()
     database_parody[id_] = {"id": id_}
-    addresses = create_user_addresses(id_, [user.default_address, *user.addresses_to_create])
+    addresses = create_user_addresses(
+        id_, [user.default_address, *user.addresses_to_create]
+    )
     return database_parody[id_] | {"_prefetched_addresses": addresses}
 
 
-@router.get("/{my_api_version}/users/{user_id}", response_model=UserResource)
+@router.get("/{x_api_version}/users/{user_id}", response_model=UserResource)
 async def get_user(user_id: uuid.UUID):
     return {
         "id": user_id,
@@ -117,70 +122,23 @@ async def get_user(user_id: uuid.UUID):
 
 
 def create_user_addresses(user_id: uuid.UUID, addresses: list[str]):
-    database_parody[f"addr_{user_id}"] = [{"id": uuid.uuid4(), "value": address} for address in addresses]
+    database_parody[f"addr_{user_id}"] = [
+        {"id": uuid.uuid4(), "value": address} for address in addresses
+    ]
     return database_parody[f"addr_{user_id}"]
 
 
-@router.get("/{my_api_version}/users/{user_id}/addresses", response_model=UserAddressResourceList)
+@router.get(
+    "/{x_api_version}/users/{user_id}/addresses",
+    response_model=UserAddressResourceList,
+)
 async def get_user_addresses(user_id: uuid.UUID):
     return {"data": database_parody[f"addr_{user_id}"]}
 
 
 app = Cadwyn(
     versions=version_bundle,
-    title="My amazing API",
-    api_version_parameter_name="my_api_version",
-    api_version_style="any_string",
-    api_version_location="url",
+    api_version_format="string",
+    api_version_location="path",
 )
 app.generate_and_include_versioned_routers(router)
-
-
-if __name__ == "__main__":
-    uvicorn.run(app)
-
-
-@pytest.fixture
-def testclient() -> TestClient:
-    return TestClient(app)
-
-
-def test__v8(testclient: TestClient):
-    response = testclient.post("/v8/users", json={"address": "123 Example St"}).json()
-    assert response == {
-        "id": IsUUID(4),
-        "address": "123 Example St",
-    }
-    assert testclient.get(f"/v8/users/{response['id']}").json() == {
-        "id": response["id"],
-        "address": "123 Example St",
-    }
-
-
-def test__v9(testclient: TestClient):
-    response = testclient.post("/v9/users", json={"addresses": ["124", "567"]}).json()
-    assert response == {
-        "id": IsUUID(4),
-        "addresses": ["124", "567"],
-    }
-
-    assert testclient.get(f"/v9/users/{response['id']}").json() == {
-        "id": response["id"],
-        "addresses": ["124", "567"],
-    }
-
-
-def test__v10(testclient: TestClient):
-    response = testclient.post("/v10/users", json={"default_address": "wowee"}).json()
-
-    assert response == {
-        "id": IsUUID(4),
-    }
-
-    assert testclient.get(f"/v10/users/{response['id']}").json() == {"id": response["id"]}
-
-    assert testclient.get(f"/v10/users/{response['id']}/addresses").json() == {
-        "data": [
-            {"id": IsUUID(4), "value": "wowee"},
-        ],
-    }
