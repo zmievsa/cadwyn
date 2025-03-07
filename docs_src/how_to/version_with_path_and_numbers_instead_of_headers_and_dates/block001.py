@@ -64,7 +64,7 @@ class ChangeAddressesToSubresource(VersionChange):
         .existed_as(type=list[str], info=Field()),
         schema(UserCreateRequest).field("default_address").didnt_exist,
         endpoint(
-            "/{x_api_version}/users/{user_id}/addresses", ["GET"]
+            "/{api_version}/users/{user_id}/addresses", ["GET"]
         ).didnt_exist,
     )
 
@@ -103,7 +103,7 @@ router = VersionedAPIRouter(tags=["Users"])
 database_parody = {}
 
 
-@router.post("/{x_api_version}/users", response_model=UserResource)
+@router.post("/{api_version}/users", response_model=UserResource)
 async def create_user(user: UserCreateRequest):
     id_ = uuid.uuid4()
     database_parody[id_] = {"id": id_}
@@ -113,7 +113,7 @@ async def create_user(user: UserCreateRequest):
     return database_parody[id_] | {"_prefetched_addresses": addresses}
 
 
-@router.get("/{x_api_version}/users/{user_id}", response_model=UserResource)
+@router.get("/{api_version}/users/{user_id}", response_model=UserResource)
 async def get_user(user_id: uuid.UUID):
     return {
         "id": user_id,
@@ -129,7 +129,7 @@ def create_user_addresses(user_id: uuid.UUID, addresses: list[str]):
 
 
 @router.get(
-    "/{x_api_version}/users/{user_id}/addresses",
+    "/{api_version}/users/{user_id}/addresses",
     response_model=UserAddressResourceList,
 )
 async def get_user_addresses(user_id: uuid.UUID):
@@ -138,6 +138,7 @@ async def get_user_addresses(user_id: uuid.UUID):
 
 app = Cadwyn(
     versions=version_bundle,
+    api_version_parameter_name="api_version",
     api_version_format="string",
     api_version_location="path",
 )

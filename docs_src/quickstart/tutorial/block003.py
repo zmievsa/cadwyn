@@ -1,8 +1,6 @@
 import uuid
 from typing import Annotated
 
-from pydantic import BaseModel, Field
-
 from cadwyn import (
     Cadwyn,
     RequestInfo,
@@ -15,6 +13,7 @@ from cadwyn import (
     convert_response_to_previous_version_for,
     schema,
 )
+from pydantic import BaseModel, Field
 
 
 class UserCreateRequest(BaseModel):

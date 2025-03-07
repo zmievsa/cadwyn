@@ -90,8 +90,6 @@ theme:
 nav:
   - "Home":
       - "index.md"
-      - "Contributing": "home/CONTRIBUTING.md"
-      - "Changelog": "home/CHANGELOG.md"
 
   - "Quickstart":
       - "Setup": "quickstart/setup.md"
@@ -125,7 +123,8 @@ nav:
       - "Where to put the version and how to format it": "concepts/where_to_put_the_version_and_how_to_format_it.md"
       - "Changelogs": "concepts/changelogs.md"
       - "Testing": concepts/testing.md
-
+  - "Contributing": "home/CONTRIBUTING.md"
+  - "Changelog": "home/CHANGELOG.md"
   - "Theory":
       - "How we got here": "theory/how_we_got_here.md"
       - "Literature": "theory/literature.md"

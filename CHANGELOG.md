@@ -5,6 +5,25 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.0.0]
+
+### Added
+
+* Support for URL path version prefixes instead of version headers. You can control it with the `api_version_location` argument of `cadwyn.Cadwyn`.
+* Support for arbitrary strings as versions. You can control the format of the version with the `api_version_format` argument of `cadwyn.Cadwyn`.
+* Extensibility of version picking logic with a new `VersionPickingMiddleware` class that you can pass to the `versioning_middleware_class` argument of `cadwyn.Cadwyn`.
+* `api_version_default_value` argument to `cadwyn.Cadwyn` to set a default version for unversioned requests. It can be a string or an async callable that returns a string.
+
+### Changed
+
+* `cadwyn.Version`, `cadwyn.VersionBundle`, and `cadwyn.VersionBundle.api_version_var` now store versions as strings instead of dates. Date types can still be passed to `cadwyn.Version` but there is no guarantee that they will be supported in the future. However, ISO dates with a string type are guaranteed to be supported.
+* Cadwyn's `api_version_header_name` argument is now deprecated in favor of `api_version_parameter_name`
+* `cadwyn.Cadwyn.add_header_versioned_routers` method is now deprecated in favor of `cadwyn.Cadwyn.generate_and_include_versioned_routers`. It will be removed in version 6.0.0
+
+## Removed
+
+* `HeaderVersioningMiddleware` in favor of `VersionPickingMiddleware` because we now support more than just headers
+
 ## [4.6.0]
 
 ### Added
