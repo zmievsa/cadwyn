@@ -169,4 +169,3 @@ def _validate_that_strings_are_valid_http_methods(methods: Collection[str]):
 
 
 AlterEndpointSubInstruction = Union[EndpointDidntExistInstruction, EndpointExistedInstruction, EndpointHadInstruction]
-AlterEndpointSubInstructionArgs = get_args(AlterEndpointSubInstruction)

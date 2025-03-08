@@ -33,8 +33,7 @@ router = VersionedAPIRouter()
 
 
 @router.post("/", response_model=ModelWithWeirdFields)
-async def post(body: ModelWithWeirdFields):
-    pass
+async def post(body: ModelWithWeirdFields): ...  # pragma: no cover
 
 
 app.generate_and_include_versioned_routers(router)

@@ -49,7 +49,7 @@ def get_fancy_repr(value: Any) -> Any:
     if isinstance(value, auto):  # pragma: no cover # it works but we no longer use auto
         return transform_auto(value)
     if isinstance(value, UnionType):
-        return transform_union(value)
+        return transform_union(value)  # pragma: no cover
     if isinstance(value, LambdaType) and _LambdaFunctionName == value.__name__:
         return transform_lambda(value)
     if inspect.isfunction(value):
@@ -105,7 +105,7 @@ def transform_auto(_: auto) -> Any:  # pragma: no cover # it works but we no lon
     return PlainRepr("auto()")
 
 
-def transform_union(value: UnionType) -> Any:
+def transform_union(value: UnionType) -> Any:  # pragma: no cover
     return "typing.Union[" + (", ".join(get_fancy_repr(a) for a in get_args(value))) + "]"
 
 

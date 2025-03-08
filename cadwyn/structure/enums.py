@@ -42,4 +42,3 @@ def enum(enum_class: type[Enum], /) -> EnumInstructionFactory:
 
 
 AlterEnumSubInstruction = Union[EnumHadMembersInstruction, EnumDidntHaveMembersInstruction]
-AlterEnumSubInstructionArgs = get_args(AlterEnumSubInstruction)

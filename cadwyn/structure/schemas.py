@@ -299,7 +299,6 @@ AlterSchemaSubInstruction = Union[
     ValidatorExistedInstruction,
     ValidatorDidntExistInstruction,
 ]
-AlterSchemaSubInstructionArgs = get_args(AlterSchemaSubInstruction)
 
 
 @dataclass(**DATACLASS_SLOTS)

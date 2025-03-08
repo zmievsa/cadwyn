@@ -8,7 +8,7 @@ from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum
-from typing import ClassVar, Union
+from typing import TYPE_CHECKING, ClassVar, Union
 
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -43,9 +43,9 @@ from .data import (
     _AlterResponseBySchemaInstruction,
     _BaseAlterResponseInstruction,
 )
-from .endpoints import AlterEndpointSubInstruction, AlterEndpointSubInstructionArgs
-from .enums import AlterEnumSubInstruction, AlterEnumSubInstructionArgs
-from .schemas import AlterSchemaSubInstruction, AlterSchemaSubInstructionArgs, SchemaHadInstruction
+from .endpoints import AlterEndpointSubInstruction
+from .enums import AlterEnumSubInstruction
+from .schemas import AlterSchemaSubInstruction, SchemaHadInstruction
 
 _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
 _CADWYN_RESPONSE_PARAM_NAME = "cadwyn_response_param"
@@ -56,6 +56,16 @@ PossibleInstructions: TypeAlias = Union[
 ]
 APIVersionVarType: TypeAlias = Union[ContextVar[Union[VersionType, None]], ContextVar[VersionType]]
 IdentifierPythonPath = str
+
+
+if TYPE_CHECKING:
+    _AlterSchemaSubInstructionArgs = AlterSchemaSubInstruction
+    _AlterEnumSubInstructionArgs = AlterEnumSubInstruction
+    _AlterEndpointSubInstructionArgs = AlterEndpointSubInstruction
+else:
+    _AlterSchemaSubInstructionArgs = get_args(AlterSchemaSubInstruction)
+    _AlterEnumSubInstructionArgs = get_args(AlterEnumSubInstruction)
+    _AlterEndpointSubInstructionArgs = get_args(AlterEndpointSubInstruction)
 
 
 class VersionChange:
@@ -109,12 +119,12 @@ class VersionChange:
         cls.alter_response_by_path_instructions = defaultdict(list)
         for alter_instruction in cls.instructions_to_migrate_to_previous_version:
             if isinstance(alter_instruction, SchemaHadInstruction) or isinstance(  # noqa: SIM101
-                alter_instruction, AlterSchemaSubInstructionArgs
+                alter_instruction, _AlterSchemaSubInstructionArgs
             ):
                 cls.alter_schema_instructions.append(alter_instruction)
-            elif isinstance(alter_instruction, AlterEnumSubInstructionArgs):
+            elif isinstance(alter_instruction, _AlterEnumSubInstructionArgs):
                 cls.alter_enum_instructions.append(alter_instruction)
-            elif isinstance(alter_instruction, AlterEndpointSubInstructionArgs):
+            elif isinstance(alter_instruction, _AlterEndpointSubInstructionArgs):
                 cls.alter_endpoint_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, staticmethod):  # pragma: no cover
                 raise NotImplementedError(f'"{alter_instruction}" is an unacceptable version change instruction')
