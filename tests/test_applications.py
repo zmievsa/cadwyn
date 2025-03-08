@@ -1,5 +1,4 @@
 import re
-from datetime import date
 from typing import Annotated, cast
 
 import pytest
@@ -23,14 +22,21 @@ from tests._resources.versioned_app.app import (
 
 
 def test__header_routing__invalid_version_format__error():
-    main_app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
-    main_app.add_header_versioned_routers(APIRouter(), header_value=DEFAULT_API_VERSION)
-    with pytest.raises(ValueError, match=re.escape("header_value should be in ISO 8601 format")):
-        main_app.add_header_versioned_routers(APIRouter(), header_value="2022-01_01")
+    main_app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
+    with pytest.warns(DeprecationWarning):
+        main_app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            APIRouter(),
+            header_value=DEFAULT_API_VERSION,
+        )
+        with pytest.raises(ValueError, match=re.escape("header_value should be in ISO 8601 format")):
+            main_app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+                APIRouter(),
+                header_value="2022-01_01",
+            )
 
 
 def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_openapi_routes():
-    assert [cast(APIRoute, r).path for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16)))).routes] == [
+    assert [cast(APIRoute, r).path for r in Cadwyn(versions=VersionBundle(Version("2022-11-16"))).routes] == [
         "/docs/oauth2-redirect",
         "/changelog",
         "/openapi.json",
@@ -39,43 +45,56 @@ def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_ope
     ]
     assert [
         cast(APIRoute, r).path
-        for r in Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), docs_url=None, redoc_url=None).routes
+        for r in Cadwyn(versions=VersionBundle(Version("2022-11-16")), docs_url=None, redoc_url=None).routes
     ] == [
         "/changelog",
         "/openapi.json",
     ]
-    assert (
-        Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), openapi_url=None, changelog_url=None).routes == []
-    )
+    assert Cadwyn(versions=VersionBundle(Version("2022-11-16")), openapi_url=None, changelog_url=None).routes == []
 
 
 def test__header_routing_fastapi_init__passing_null_to_oauth2__should_not_add_oauth2_redirect_route():
-    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), swagger_ui_oauth2_redirect_url=None)
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")), swagger_ui_oauth2_redirect_url=None)
     assert [cast(APIRoute, r).path for r in app.routes] == [
         "/changelog",
         "/openapi.json",
         "/docs",
         "/redoc",
     ]
-    app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
+    with pytest.warns(DeprecationWarning):
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            v2021_01_01_router, header_value="2021-01-01"
+        )
 
     with TestClient(app) as client:
         assert client.get("/docs?version=2021-01-01").status_code == 200
 
 
 def test__header_routing_fastapi_init__changing_openapi_url__docs_still_return_200():
-    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))), openapi_url="/openpapi")
-    app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
-    app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")), openapi_url="/openpapi")
+    with pytest.warns(DeprecationWarning):
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            v2021_01_01_router, header_value="2021-01-01"
+        )
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            v2022_01_02_router, header_value="2022-02-02"
+        )
     with TestClient(app) as client:
         assert client.get("/openpapi?version=2021-01-01").status_code == 200
         assert client.get("/openapi.json?version=2021-01-01").status_code == 404
 
 
 def test__header_routing_fastapi__calling_openapi_incorrectly__docs_should_return_404():
-    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16))))
-    app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
-    app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
+    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    with pytest.warns(DeprecationWarning):
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            v2021_01_01_router,
+            header_value="2021-01-01",
+        )
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            v2022_01_02_router,
+            header_value="2022-02-02",
+        )
     with TestClient(app) as client:
         assert client.get("/openapi.json?version=2021-01-01").status_code == 200
         # - Nonexisting version
@@ -97,7 +116,7 @@ def test__header_routing_fastapi__calling_openapi_incorrectly__docs_should_retur
 
 
 def test__cadwyn__with_dependency_overrides__overrides_should_be_applied():
-    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
 
     async def old_dependency():
         raise NotImplementedError
@@ -115,7 +134,11 @@ def test__cadwyn__with_dependency_overrides__overrides_should_be_applied():
     async def darkness(dependency: Annotated[str, Depends(old_dependency)]):
         return dependency
 
-    app.add_header_versioned_routers(regular_router, header_value="2022-11-16")
+    with pytest.warns(DeprecationWarning):
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            regular_router,
+            header_value="2022-11-16",
+        )
 
     versioned_router = VersionedAPIRouter()
 
@@ -133,11 +156,15 @@ def test__cadwyn__with_dependency_overrides__overrides_should_be_applied():
 
 
 def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empty__version_should_not_have_any_routes():
-    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
-    app.add_header_versioned_routers(APIRouter(), header_value="2022-11-16")
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
+    with pytest.warns(DeprecationWarning):
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            APIRouter(),
+            header_value="2022-11-16",
+        )
     assert len(app.router.versioned_routers) == 1
-    assert len(app.router.versioned_routers[date(2022, 11, 16)].routes) == 1
-    route = cast(APIRoute, app.router.versioned_routers[date(2022, 11, 16)].routes[0])
+    assert len(app.router.versioned_routers["2022-11-16"].routes) == 1
+    route = cast(APIRoute, app.router.versioned_routers["2022-11-16"].routes[0])
     assert route.path == "/openapi.json"
 
 
@@ -162,7 +189,17 @@ def test__header_based_versioning(client: TestClient):
 def test__header_based_versioning__invalid_version_header_format__should_raise_422():
     resp = client_without_headers.get("/v1", headers=BASIC_HEADERS | {"X-API-VERSION": "2022-02_02"})
     assert resp.status_code == 422
-    assert resp.json()[0]["loc"] == ["header", "x-api-version"]
+    assert resp.json() == {
+        "detail": [
+            {
+                "type": "date_from_datetime_parsing",
+                "loc": ["header", "x-api-version"],
+                "msg": "Input should be a valid date or datetime, invalid date separator, expected `-`",
+                "input": "2022-02_02",
+                "ctx": {"error": "invalid date separator, expected `-`"},
+            }
+        ]
+    }
 
 
 def test__get_unversioned_router():
@@ -187,7 +224,7 @@ def test__get_openapi__nonexisting_version__error():
 
 def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
     root_app = FastAPI()
-    root_app.mount("/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16)))))
+    root_app.mount("/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16"))))
     client = TestClient(root_app)
 
     resp = client.get("/my_api/openapi.json?version=2022-11-16")
@@ -196,9 +233,16 @@ def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
 
 
 def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_urls():
-    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16))))
-    app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
-    app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
+    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    with pytest.warns(DeprecationWarning):
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            v2021_01_01_router,
+            header_value="2021-01-01",
+        )
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            v2022_01_02_router,
+            header_value="2022-02-02",
+        )
 
     client = TestClient(app)
 
@@ -217,7 +261,7 @@ def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_
 
 def test__get_docs__with_mounted_app__should_return_all_versioned_doc_urls():
     root_app = FastAPI()
-    root_app.mount("/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version(date(2022, 11, 16)))))
+    root_app.mount("/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16"))))
     client = TestClient(root_app)
 
     resp = client.get("/my_api/docs")
@@ -225,9 +269,16 @@ def test__get_docs__with_mounted_app__should_return_all_versioned_doc_urls():
 
 
 def test__get_docs__with_unversioned_routes__should_return_all_versioned_doc_urls():
-    app = Cadwyn(versions=VersionBundle(Version(date(2022, 11, 16))))
-    app.add_header_versioned_routers(v2021_01_01_router, header_value="2021-01-01")
-    app.add_header_versioned_routers(v2022_01_02_router, header_value="2022-02-02")
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
+    with pytest.warns(DeprecationWarning):
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            v2021_01_01_router,
+            header_value="2021-01-01",
+        )
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            v2022_01_02_router,
+            header_value="2022-02-02",
+        )
 
     @app.post("/my_unversioned_route")
     def my_unversioned_route():
@@ -348,3 +399,9 @@ def test__webhooks():
         assert (
             "monthly_fee" not in openapi_dict["components"]["schemas"]["Subscription"]["properties"]
         ), "monthly_fee field is present yet it must be deleted"
+
+
+def test__api_version_header_name_is_deprecated_and_translates_to_api_version_parameter_name():
+    with pytest.warns(DeprecationWarning):
+        cadwyn = Cadwyn(api_version_header_name="x-api-version", versions=VersionBundle(Version("2022-11-16")))
+    assert cadwyn.api_version_parameter_name == "x-api-version"

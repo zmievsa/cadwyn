@@ -37,3 +37,8 @@ repos:
     hooks:
       - id: markdownlint
         args: ["--disable", "MD013"]
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.6.5
+    hooks:
+      - id: uv-lock

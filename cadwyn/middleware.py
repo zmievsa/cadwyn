@@ -1,54 +1,97 @@
-import inspect
-from contextlib import AsyncExitStack
-from contextvars import ContextVar
-from datetime import date
-from typing import Annotated, Any, cast
+# NOTE: It's OK that any_string might not be correctly sortable such as v10 vs v9.
+# we can simply remove waterfalling from any_string api version style.
 
-from fastapi import Header, Request, Response
-from fastapi._compat import _normalize_errors
-from fastapi.dependencies.utils import get_dependant, solve_dependencies
-from fastapi.responses import JSONResponse
+import inspect
+import re
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from typing import Annotated, Any, Literal, Protocol
+
+from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
+from cadwyn.structure.common import VersionType
 
-def _get_api_version_dependency(api_version_header_name: str, version_example: str):
+
+class VersionManager(Protocol):
+    def get(self, request: Request) -> str | None: ...
+
+
+VersionValidatorC = Callable[[str], VersionType]
+VersionDependencyFactoryC = Callable[[], Callable[..., Any]]
+
+APIVersionLocation = Literal["custom_header", "path"]
+APIVersionFormat = Literal["date", "string"]
+
+
+class HeaderVersionManager:
+    __slots__ = ("api_version_parameter_name",)
+
+    def __init__(self, *, api_version_parameter_name: str) -> None:
+        super().__init__()
+        self.api_version_parameter_name = api_version_parameter_name
+
+    def get(self, request: Request) -> str | None:
+        return request.headers.get(self.api_version_parameter_name)
+
+
+class URLVersionManager:
+    __slots__ = ("possible_version_values", "url_version_regex")
+
+    def __init__(self, *, possible_version_values: set[str]) -> None:
+        super().__init__()
+        self.possible_version_values = possible_version_values
+        self.url_version_regex = re.compile(f"/({'|'.join(re.escape(v) for v in possible_version_values)})/")
+
+    def get(self, request: Request) -> str | None:
+        if m := self.url_version_regex.search(request.url.path):
+            return m.group(1)
+        return None
+
+
+def _generate_api_version_dependency(
+    *,
+    api_version_pythonic_parameter_name: str,
+    default_value: str,
+    fastapi_depends_class: Callable[..., Any],
+    validation_data_type: Any,
+):
     def api_version_dependency(**kwargs: Any):
+        # TODO: What do I return?
         return next(iter(kwargs.values()))
 
     api_version_dependency.__signature__ = inspect.Signature(
         parameters=[
             inspect.Parameter(
-                api_version_header_name.replace("-", "_"),
+                api_version_pythonic_parameter_name,
                 inspect.Parameter.KEYWORD_ONLY,
-                annotation=Annotated[date, Header(examples=[version_example])],
-                default=version_example,
+                annotation=Annotated[
+                    validation_data_type, fastapi_depends_class(openapi_examples={"default": {"value": default_value}})
+                ],
             ),
         ],
     )
     return api_version_dependency
 
 
-class HeaderVersioningMiddleware(BaseHTTPMiddleware):
+class VersionPickingMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app: ASGIApp,
         *,
-        api_version_header_name: str,
-        api_version_var: ContextVar[date] | ContextVar[date | None],
-        default_response_class: type[Response] = JSONResponse,
+        api_version_parameter_name: str,
+        api_version_default_value: str | None | Callable[[Request], Awaitable[str]],
+        api_version_var: ContextVar[VersionType | None],
+        api_version_manager: VersionManager,
         dispatch: DispatchFunction | None = None,
     ) -> None:
         super().__init__(app, dispatch)
-        self.api_version_header_name = api_version_header_name
+
+        self.api_version_parameter_name = api_version_parameter_name
+        self._api_version_manager = api_version_manager
         self.api_version_var = api_version_var
-        self.default_response_class = default_response_class
-        # We use the dependant to apply fastapi's validation to the header, making validation at middleware level
-        # consistent with validation and route level.
-        self.version_header_validation_dependant = get_dependant(
-            path="",
-            call=_get_api_version_dependency(api_version_header_name, "2000-08-23"),
-        )
+        self.api_version_default_value = api_version_default_value
 
     async def dispatch(
         self,
@@ -57,24 +100,20 @@ class HeaderVersioningMiddleware(BaseHTTPMiddleware):
     ):
         # We handle api version at middleware level because if we try to add a Dependency to all routes, it won't work:
         # we use this header for routing so the user will simply get a 404 if the header is invalid.
-        api_version: date | None = None
-        if self.api_version_header_name in request.headers:
-            async with AsyncExitStack() as async_exit_stack:
-                solved_result = await solve_dependencies(
-                    request=request,
-                    dependant=self.version_header_validation_dependant,
-                    async_exit_stack=async_exit_stack,
-                    embed_body_fields=False,
-                )
-                if solved_result.errors:
-                    return self.default_response_class(status_code=422, content=_normalize_errors(solved_result.errors))
-                api_version = cast(date, solved_result.values[self.api_version_header_name.replace("-", "_")])
-                self.api_version_var.set(api_version)
+        api_version = self._api_version_manager.get(request)
 
+        if api_version is None:
+            if callable(self.api_version_default_value):  # pragma: no cover # TODO
+                api_version = await self.api_version_default_value(request)
+            else:
+                api_version = self.api_version_default_value
+
+        self.api_version_var.set(api_version)
         response = await call_next(request)
 
         if api_version is not None:
             # We return it because we will be returning the **matched** version, not the requested one.
-            response.headers[self.api_version_header_name] = api_version.isoformat()
+            # In date-based versioning with waterfalling, it makes sense.
+            response.headers[self.api_version_parameter_name] = api_version
 
         return response

@@ -19,6 +19,7 @@ markdown_extensions:
   admonition: null
   codehilite: null
   extra:
+  pymdownx.highlight:
   pymdownx.superfences:
     custom_fences:
       - name: mermaid
@@ -26,13 +27,20 @@ markdown_extensions:
         format: !!python/name:pymdownx.superfences.fence_code_format ""
   pymdownx.tabbed:
     alternate_style: true
+  # pymdownx blocks
+  pymdownx.blocks.admonition:
+    types:
+      - tip
+  pymdownx.blocks.details:
+  pymdownx.blocks.tab:
+    alternate_style: True
   abbr:
   footnotes:
   tables:
   attr_list: null
   md_in_html: null
   mdx_include:
-    base_path: docs
+  markdown_include_variants:
 theme:
   name: "material"
   features:
@@ -82,8 +90,6 @@ theme:
 nav:
   - "Home":
       - "index.md"
-      - "Contributing": "home/CONTRIBUTING.md"
-      - "Changelog": "home/CHANGELOG.md"
 
   - "Quickstart":
       - "Setup": "quickstart/setup.md"
@@ -91,6 +97,7 @@ nav:
 
   - "How to...":
       - "how_to/index.md"
+      - "Version with paths and numbers instead of headers and dates": "how_to/version_with_paths_and_numbers_instead_of_headers_and_dates.md"
       - "Change OpenAPI Schemas":
           - "Add a field": "how_to/change_openapi_schemas/add_field.md"
           - "Remove a field": "how_to/change_openapi_schemas/remove_field.md"
@@ -112,10 +119,12 @@ nav:
       - "Endpoint migrations": "concepts/endpoint_migrations.md"
       - "Enum migrations": "concepts/enum_migrations.md"
       - "Schema migrations": "concepts/schema_migrations.md"
-      - "API Version header and context variables": "concepts/api_version_header_and_context_variables.md"
+      - "API Version parameter and context variables": "concepts/api_version_parameter_and_context_variables.md"
+      - "Where to put the version and how to format it": "concepts/where_to_put_the_version_and_how_to_format_it.md"
       - "Changelogs": "concepts/changelogs.md"
       - "Testing": concepts/testing.md
-
+  - "Contributing": "home/CONTRIBUTING.md"
+  - "Changelog": "home/CHANGELOG.md"
   - "Theory":
       - "How we got here": "theory/how_we_got_here.md"
       - "Literature": "theory/literature.md"

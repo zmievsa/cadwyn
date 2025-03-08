@@ -1,6 +1,11 @@
 from pydantic import BaseModel
 
-from cadwyn import ResponseInfo, VersionChange, convert_response_to_previous_version_for, schema
+from cadwyn import (
+    ResponseInfo,
+    VersionChange,
+    convert_response_to_previous_version_for,
+    schema,
+)
 
 
 # User from latest version

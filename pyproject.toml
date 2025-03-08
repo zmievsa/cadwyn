@@ -1,6 +1,6 @@
 [project]
 name = "cadwyn"
-version = "4.6.0"
+version = "5.0.0a1"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = [{ name = "Stanislav Zmiev", email = "zmievsa@gmail.com" }]
 license = "MIT"
@@ -84,6 +84,7 @@ dev-dependencies = [
     "mdx-include ~=1.4.2",
     "mike >=2.1.2, <3",
     "pdbpp>=0.10.3",
+    "markdown-include-variants>=0.0.4",
 ]
 
 [project.urls]

@@ -1,4 +1,3 @@
-import datetime
 import uuid
 from enum import IntEnum, auto
 from typing import Any
@@ -70,9 +69,9 @@ def test__changelog__with_multiple_versions():
 
     version_bundle = VersionBundle(
         HeadVersion(RemoveAddressesToCreateFromLatest),
-        Version(datetime.date(2002, 1, 1), ChangeAddressesToSubresource),
-        Version(datetime.date(2001, 1, 1), ChangeAddressToList),
-        Version(datetime.date(2000, 1, 1)),
+        Version("2002-01-01", ChangeAddressesToSubresource),
+        Version("2001-01-01", ChangeAddressToList),
+        Version("2000-01-01"),
     )
 
     router = VersionedAPIRouter(tags=["Users"])

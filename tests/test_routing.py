@@ -1,5 +1,3 @@
-from datetime import date
-
 import pytest
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
@@ -82,7 +80,17 @@ def test__host_routing__non_date_api_version_header__not_valid_format():
 
     response = client.get("/v1/users")
     assert response.status_code == 422
-    assert response.json()[0]["loc"] == ["header", "x-api-version"]
+    assert response.json() == {
+        "detail": [
+            {
+                "type": "date_from_datetime_parsing",
+                "loc": ["header", "x-api-version"],
+                "msg": "Input should be a valid date or datetime, month value is outside expected range of 1-12",
+                "input": "2025-40-01",
+                "ctx": {"error": "month value is outside expected range of 1-12"},
+            }
+        ]
+    }
 
 
 def test__host_routing__partial_match__error():
@@ -124,7 +132,7 @@ def test__lifespan_async():
         shutdown_complete = True
 
     app = Cadwyn(
-        versions=VersionBundle(Version(date(2022, 11, 16))),
+        versions=VersionBundle(Version("2022-11-16")),
         on_startup=[run_startup],
         on_shutdown=[run_shutdown],
     )

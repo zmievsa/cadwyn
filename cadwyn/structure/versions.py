@@ -33,7 +33,7 @@ from cadwyn.exceptions import (
 )
 
 from .._utils import Sentinel
-from .common import Endpoint, VersionDate, VersionedModel
+from .common import Endpoint, VersionedModel, VersionType
 from .data import (
     RequestInfo,
     ResponseInfo,
@@ -58,7 +58,7 @@ PossibleInstructions: TypeAlias = (
     | SchemaHadInstruction
     | staticmethod
 )
-APIVersionVarType: TypeAlias = ContextVar[VersionDate | None] | ContextVar[VersionDate]
+APIVersionVarType: TypeAlias = ContextVar[VersionType | None] | ContextVar[VersionType]
 IdentifierPythonPath = str
 
 
@@ -201,11 +201,11 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
 
 
 class Version:
-    def __init__(self, value: VersionDate | str, *changes: type[VersionChange]) -> None:
+    def __init__(self, value: str | date, *changes: type[VersionChange]) -> None:
         super().__init__()
 
-        if isinstance(value, str):
-            value = date.fromisoformat(value)
+        if isinstance(value, date):
+            value = value.isoformat()
         self.value = value
         self.changes = changes
 
@@ -252,7 +252,7 @@ class VersionBundle:
         latest_version_or_head_version: Version | HeadVersion,
         /,
         *other_versions: Version,
-        api_version_var: APIVersionVarType | None = None,
+        api_version_var: ContextVar[VersionType | None] | None = None,
     ) -> None:
         super().__init__()
 
@@ -262,27 +262,21 @@ class VersionBundle:
         else:
             self.head_version = HeadVersion()
             self.versions = (latest_version_or_head_version, *other_versions)
+        self.reversed_versions = tuple(reversed(self.versions))
 
-        self.version_dates = tuple(version.value for version in self.versions)
         if api_version_var is None:
             api_version_var = ContextVar("cadwyn_api_version")
+        self.version_values = tuple(version.value for version in self.versions)
+        self.reversed_version_values = tuple(reversed(self.version_values))
         self.api_version_var = api_version_var
-        if sorted(self.versions, key=lambda v: v.value, reverse=True) != list(self.versions):
-            raise CadwynStructureError(
-                "Versions are not sorted correctly. Please sort them in descending order.",
-            )
-        if not self.versions:
-            raise CadwynStructureError("You must define at least one non-head version in a VersionBundle.")
-        if self.versions[-1].changes:
-            raise CadwynStructureError(
-                f'The first version "{self.versions[-1].value}" cannot have any version changes. '
-                "Version changes are defined to migrate to/from a previous version so you "
-                "cannot define one for the very first version.",
-            )
-        version_values = set()
+        self._all_versions = (self.head_version, *self.versions)
+        self._version_changes_to_version_mapping = {
+            version_change: version.value for version in self.versions for version_change in version.changes
+        }
+        self._version_values_set: set[str] = set()
         for version in self.versions:
-            if version.value not in version_values:
-                version_values.add(version.value)
+            if version.value not in self._version_values_set:
+                self._version_values_set.add(version.value)
             else:
                 raise CadwynStructureError(
                     f"You tried to define two versions with the same value in the same "
@@ -295,13 +289,23 @@ class VersionBundle:
                         "It is prohibited.",
                     )
                 version_change._bound_version_bundle = self
+        if not self.versions:
+            raise CadwynStructureError("You must define at least one non-head version in a VersionBundle.")
+
+        if self.versions[-1].changes:
+            raise CadwynStructureError(
+                f'The first version "{self.versions[-1].value}" cannot have any version changes. '
+                "Version changes are defined to migrate to/from a previous version so you "
+                "cannot define one for the very first version.",
+            )
 
     def __iter__(self) -> Iterator[Version]:
         yield from self.versions
 
-    @functools.cached_property
-    def _all_versions(self):
-        return (self.head_version, *self.versions)
+    @property
+    @deprecated("Use 'version_values' instead.")
+    def version_dates(self):  # pragma: no cover
+        return self.version_values
 
     @functools.cached_property
     def versioned_schemas(self) -> dict[IdentifierPythonPath, type[VersionedModel]]:
@@ -330,17 +334,11 @@ class VersionBundle:
             for instruction in version_change.alter_enum_instructions
         }
 
-    def _get_closest_lesser_version(self, version: VersionDate):
-        for defined_version in self.version_dates:
+    def _get_closest_lesser_version(self, version: VersionType):
+        for defined_version in self.version_values:
             if defined_version <= version:
                 return defined_version
         raise CadwynError("You tried to migrate to version that is earlier than the first version which is prohibited.")
-
-    @functools.cached_property
-    def _version_changes_to_version_mapping(
-        self,
-    ) -> dict[type[VersionChange] | type[VersionChangeWithSideEffects], VersionDate]:
-        return {version_change: version.value for version in self.versions for version_change in version.changes}
 
     async def _migrate_request(
         self,
@@ -350,7 +348,7 @@ class VersionBundle:
         request: FastapiRequest,
         response: FastapiResponse,
         request_info: RequestInfo,
-        current_version: VersionDate,
+        current_version: VersionType,
         head_route: APIRoute,
         *,
         exit_stack: AsyncExitStack,
@@ -358,9 +356,9 @@ class VersionBundle:
         background_tasks: BackgroundTasks | None,
     ) -> dict[str, Any]:
         method = request.method
-        for v in reversed(self.versions):
-            if v.value <= current_version:
-                continue
+
+        start = self.reversed_version_values.index(current_version)
+        for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
                 if body_type is not None and body_type in version_change.alter_request_by_schema_instructions:
                     for instruction in version_change.alter_request_by_schema_instructions[body_type]:
@@ -391,14 +389,13 @@ class VersionBundle:
     def _migrate_response(
         self,
         response_info: ResponseInfo,
-        current_version: VersionDate,
+        current_version: VersionType,
         head_response_model: type[BaseModel],
         path: str,
         method: str,
     ) -> ResponseInfo:
-        for v in self.versions:
-            if v.value <= current_version:
-                break
+        end = self.version_values.index(current_version)
+        for v in self.versions[:end]:
             for version_change in v.changes:
                 migrations_to_apply: list[_BaseAlterResponseInstruction] = []
 

@@ -45,8 +45,8 @@ from pydantic.fields import ComputedFieldInfo, FieldInfo
 from typing_extensions import Doc, Self, _AnnotatedAlias, assert_never
 
 from cadwyn._utils import Sentinel, UnionType, fully_unwrap_decorator, lenient_issubclass
-from cadwyn.exceptions import InvalidGenerationInstructionError
-from cadwyn.structure.common import VersionDate
+from cadwyn.exceptions import CadwynError, InvalidGenerationInstructionError
+from cadwyn.structure.common import VersionType
 from cadwyn.structure.data import ResponseInfo
 from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
 from cadwyn.structure.schemas import (
@@ -158,15 +158,18 @@ def migrate_response_body(
     latest_response_model: type[pydantic.BaseModel],
     *,
     latest_body: Any,
-    version: VersionDate | str,
+    version: VersionType | date,
 ) -> Any:
     """Convert the data to a specific version
 
     Apply all version changes from latest until the passed version in reverse order
     and wrap the result in the correct version of latest_response_model
     """
-    if isinstance(version, str):
-        version = date.fromisoformat(version)
+    if isinstance(version, date):
+        version = version.isoformat()
+        version = versions._get_closest_lesser_version(version)
+    if version not in versions._version_values_set:
+        raise CadwynError(f"Version {version} not found in version bundle")
     response = ResponseInfo(Response(status_code=200), body=latest_body)
     migrated_response = versions._migrate_response(
         response,
@@ -175,8 +178,6 @@ def migrate_response_body(
         path="\0\0\0",
         method="GET",
     )
-
-    version = versions._get_closest_lesser_version(version)
 
     versioned_response_model: type[pydantic.BaseModel] = generate_versioned_models(versions)[str(version)][
         latest_response_model

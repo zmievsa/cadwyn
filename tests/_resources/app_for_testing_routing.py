@@ -1,5 +1,4 @@
-from datetime import date
-
+import pytest
 from fastapi import APIRouter
 from starlette.responses import JSONResponse, Response
 
@@ -39,9 +38,10 @@ versions = [
     "2027-11-15",
     "2022-04-14",
 ]
-mixed_hosts_app = Cadwyn(versions=VersionBundle(Version(date(1998, 11, 15))))
+mixed_hosts_app = Cadwyn(versions=VersionBundle(Version("1998-11-15")))
 for version in versions:
-    mixed_hosts_app.add_header_versioned_routers(
-        router,
-        header_value=version,
-    )
+    with pytest.warns(DeprecationWarning):
+        mixed_hosts_app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            router,
+            header_value=version,
+        )

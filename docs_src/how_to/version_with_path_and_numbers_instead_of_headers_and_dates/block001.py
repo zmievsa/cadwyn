@@ -1,8 +1,5 @@
 import uuid
 
-import uvicorn
-from pydantic import BaseModel, Field
-
 from cadwyn import VersionedAPIRouter
 from cadwyn.applications import Cadwyn
 from cadwyn.structure import (
@@ -17,6 +14,7 @@ from cadwyn.structure import (
     schema,
 )
 from cadwyn.structure.versions import HeadVersion
+from pydantic import BaseModel, Field
 
 
 class BaseUser(BaseModel):
@@ -61,9 +59,13 @@ class ChangeAddressToList(VersionChange):
 class ChangeAddressesToSubresource(VersionChange):
     description = "Change vat ids to subresource"
     instructions_to_migrate_to_previous_version = (
-        schema(BaseUser).field("addresses").existed_as(type=list[str], info=Field()),
+        schema(BaseUser)
+        .field("addresses")
+        .existed_as(type=list[str], info=Field()),
         schema(UserCreateRequest).field("default_address").didnt_exist,
-        endpoint("/users/{user_id}/addresses", ["GET"]).didnt_exist,
+        endpoint(
+            "/{api_version}/users/{user_id}/addresses", ["GET"]
+        ).didnt_exist,
     )
 
     @convert_request_to_next_version_for(UserCreateRequest)
@@ -74,22 +76,26 @@ class ChangeAddressesToSubresource(VersionChange):
 
     @convert_response_to_previous_version_for(UserResource)
     def change_addresses_to_list(response: ResponseInfo) -> None:
-        response.body["addresses"] = [id["value"] for id in response.body["_prefetched_addresses"]]
+        response.body["addresses"] = [
+            id["value"] for id in response.body["_prefetched_addresses"]
+        ]
 
 
 class RemoveAddressesToCreateFromLatest(VersionChange):
     description = (
-        "In order to support old versions, we gotta have `addresses_to_create` located in "
-        "head schemas but we do not need this field in latest schemas."
+        "In order to support old versions, we gotta have `addresses_to_create` "
+        "located in head schemas but we do not need this field in latest schemas."
     )
-    instructions_to_migrate_to_previous_version = (schema(UserCreateRequest).field("addresses_to_create").didnt_exist,)
+    instructions_to_migrate_to_previous_version = (
+        schema(UserCreateRequest).field("addresses_to_create").didnt_exist,
+    )
 
 
 version_bundle = VersionBundle(
     HeadVersion(RemoveAddressesToCreateFromLatest),
-    Version("2002-01-01", ChangeAddressesToSubresource),
-    Version("2001-01-01", ChangeAddressToList),
-    Version("2000-01-01"),
+    Version("v10", ChangeAddressesToSubresource),
+    Version("v9", ChangeAddressToList),
+    Version("v8"),
 )
 
 
@@ -97,15 +103,17 @@ router = VersionedAPIRouter(tags=["Users"])
 database_parody = {}
 
 
-@router.post("/users", response_model=UserResource)
+@router.post("/{api_version}/users", response_model=UserResource)
 async def create_user(user: UserCreateRequest):
     id_ = uuid.uuid4()
     database_parody[id_] = {"id": id_}
-    addresses = create_user_addresses(id_, [user.default_address, *user.addresses_to_create])
+    addresses = create_user_addresses(
+        id_, [user.default_address, *user.addresses_to_create]
+    )
     return database_parody[id_] | {"_prefetched_addresses": addresses}
 
 
-@router.get("/users/{user_id}", response_model=UserResource)
+@router.get("/{api_version}/users/{user_id}", response_model=UserResource)
 async def get_user(user_id: uuid.UUID):
     return {
         "id": user_id,
@@ -114,18 +122,24 @@ async def get_user(user_id: uuid.UUID):
 
 
 def create_user_addresses(user_id: uuid.UUID, addresses: list[str]):
-    database_parody[f"addr_{user_id}"] = [{"id": uuid.uuid4(), "value": address} for address in addresses]
+    database_parody[f"addr_{user_id}"] = [
+        {"id": uuid.uuid4(), "value": address} for address in addresses
+    ]
     return database_parody[f"addr_{user_id}"]
 
 
-@router.get("/users/{user_id}/addresses", response_model=UserAddressResourceList)
+@router.get(
+    "/{api_version}/users/{user_id}/addresses",
+    response_model=UserAddressResourceList,
+)
 async def get_user_addresses(user_id: uuid.UUID):
     return {"data": database_parody[f"addr_{user_id}"]}
 
 
-app = Cadwyn(versions=version_bundle, title="My amazing API")
+app = Cadwyn(
+    versions=version_bundle,
+    api_version_parameter_name="api_version",
+    api_version_format="string",
+    api_version_location="path",
+)
 app.generate_and_include_versioned_routers(router)
-
-
-if __name__ == "__main__":
-    uvicorn.run(app)

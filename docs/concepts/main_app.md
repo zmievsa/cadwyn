@@ -3,7 +3,7 @@
 Cadwyn's standard usage is done with a single customized FastAPI app: `cadwyn.Cadwyn`. It accepts all the same arguments as `FastAPI` three more keyword-only arguments:
 
 * Required `versions: VersionBundle` describes [all versions](./version_changes.md#versionbundle) within your application
-* Optional `api_version_header_name: str = "x-api-version"` is the header that Cadwyn will use for [routing](#routing) to different API versions of your app
+* Optional `api_version_parameter_name: str = "x_api_version"` is the parameter that Cadwyn will use for [routing](#routing) to different API versions of your app
 
 After you have defined a main app, you can add versioned API routers to it using `Cadwyn.generate_and_include_versioned_routers(*routers)`
 
