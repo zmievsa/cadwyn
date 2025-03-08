@@ -3,8 +3,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Union
 
-from typing_extensions import get_args
-
 from cadwyn._utils import DATACLASS_SLOTS
 
 from .common import _HiddenAttributeMixin

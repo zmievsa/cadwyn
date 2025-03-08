@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 from issubclass import issubclass as lenient_issubclass
 from pydantic import AliasChoices, AliasPath, BaseModel, Field

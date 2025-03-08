@@ -7,7 +7,6 @@ from fastapi import Response
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute
-from typing_extensions import get_args
 
 from cadwyn.exceptions import LintingError
 
