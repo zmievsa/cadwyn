@@ -42,7 +42,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: tox run -e py
-      - run: ls -lA
       - name: Upload coverage results
         uses: actions/upload-artifact@v4
         if: matrix.os == 'ubuntu-latest' # Cross-platform coverage combination doesn't work
