@@ -84,7 +84,7 @@ jobs:
       - run: |
           pip install uv
           uv pip install --system tox tox-uv
-          tox run -e coverage_report-ci
+          tox run -e coverage_report
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         env:
