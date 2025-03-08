@@ -34,7 +34,7 @@ GenericAliasUnionArgs = get_args(GenericAliasUnion)
 def get_fancy_repr(value: Any) -> Any:
     if isinstance(value, annotated_types.GroupedMetadata) and hasattr(type(value), "__dataclass_fields__"):
         return transform_grouped_metadata(value)
-    if isinstance(value, Union[list, tuple, set, frozenset]):
+    if isinstance(value, (list, tuple, set, frozenset)):
         return transform_collection(value)
     if isinstance(value, dict):
         return transform_dict(value)

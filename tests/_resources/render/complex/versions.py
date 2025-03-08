@@ -2,6 +2,7 @@ from pydantic import Field, conbytes
 
 from cadwyn import Version, VersionBundle
 from cadwyn.applications import Cadwyn
+from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure import VersionChange
 from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
@@ -27,3 +28,13 @@ app = Cadwyn(
         Version("2000-01-01"),
     )
 )
+
+router = VersionedAPIRouter()
+
+
+@router.post("/", response_model=ModelWithWeirdFields)
+async def post(body: ModelWithWeirdFields):
+    pass
+
+
+app.generate_and_include_versioned_routers(router)

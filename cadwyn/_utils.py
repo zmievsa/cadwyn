@@ -12,6 +12,7 @@ _T = TypeVar("_T", bound=Callable)
 _P_T = TypeVar("_P_T")
 _P_R = TypeVar("_P_R")
 
+
 if sys.version_info >= (3, 10):
     UnionType = type(int | str) | type(Union[int, str])
     DATACLASS_SLOTS: dict[str, Any] = {"slots": True}
@@ -24,6 +25,14 @@ else:
     DATACLASS_KW_ONLY: dict[str, Any] = {}
     ZIP_STRICT_TRUE: dict[str, Any] = {}
     ZIP_STRICT_FALSE: dict[str, Any] = {}
+
+
+def get_name_of_function_wrapped_in_pydantic_validator(func: Any) -> str:
+    if hasattr(func, "wrapped"):
+        return get_name_of_function_wrapped_in_pydantic_validator(func.wrapped)
+    if hasattr(func, "__func__"):
+        return get_name_of_function_wrapped_in_pydantic_validator(func.__func__)
+    return func.__name__
 
 
 class classproperty(Generic[_P_T, _P_R]):  # noqa: N801

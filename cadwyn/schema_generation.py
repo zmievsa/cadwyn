@@ -15,6 +15,7 @@ import fastapi.security.base
 import fastapi.utils
 import pydantic
 import pydantic._internal._decorators
+import typing_extensions
 from fastapi import Response
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
@@ -51,6 +52,7 @@ from cadwyn._utils import (
     Sentinel,
     UnionType,
     fully_unwrap_decorator,
+    get_name_of_function_wrapped_in_pydantic_validator,
     lenient_issubclass,
 )
 from cadwyn.exceptions import CadwynError, InvalidGenerationInstructionError
@@ -271,6 +273,8 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
         )
         for field_name in model.__annotations__
     }
+    if model.__qualname__ == "ChildSchema":
+        breakpoint()
 
     main_attributes = fields | validators
     other_attributes = {
@@ -383,7 +387,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             if not validator.is_deleted and type(validator) == _ValidatorWrapper  # noqa: E721
         }
         fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
-
         model_copy = type(self.cls)(
             self.name,
             tuple(generator[cast(type[BaseModel], base)] for base in self.cls.__bases__),
@@ -399,6 +402,8 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         )
 
         model_copy.__cadwyn_original_model__ = self.cls
+        if model_copy.__qualname__ == "ChildSchema":
+            breakpoint()
         return model_copy
 
 
@@ -512,7 +517,7 @@ class _AnnotationTransformer:
             return getitem(
                 tuple(self.change_version_of_annotation(a) for a in get_args(annotation)),
             )
-        elif annotation is Any or isinstance(annotation, NewType):
+        elif annotation is typing.Any or annotation is typing_extensions.Any or isinstance(annotation, NewType):
             return annotation
         elif isinstance(annotation, type):
             return self._change_version_of_type(annotation)
@@ -743,6 +748,7 @@ def _apply_alter_schema_instructions(
 ) -> None:
     for alter_schema_instruction in alter_schema_instructions:
         schema_info = modified_schemas[alter_schema_instruction.schema]
+        breakpoint()
         if isinstance(alter_schema_instruction, FieldExistedAsInstruction):
             _add_field_to_model(schema_info, modified_schemas, alter_schema_instruction, version_change_name)
         elif isinstance(alter_schema_instruction, (FieldHadInstruction, FieldDidntHaveInstruction)):
@@ -755,7 +761,7 @@ def _apply_alter_schema_instructions(
         elif isinstance(alter_schema_instruction, FieldDidntExistInstruction):
             _delete_field_from_model(schema_info, alter_schema_instruction.name, version_change_name)
         elif isinstance(alter_schema_instruction, ValidatorExistedInstruction):
-            validator_name = alter_schema_instruction.validator.__name__
+            validator_name = get_name_of_function_wrapped_in_pydantic_validator(alter_schema_instruction.validator)
             raw_validator = cast(
                 pydantic._internal._decorators.PydanticDescriptorProxy, alter_schema_instruction.validator
             )

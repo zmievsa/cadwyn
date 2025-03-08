@@ -7,7 +7,12 @@ from pydantic import AliasChoices, AliasPath, BaseModel, Field
 from pydantic._internal._decorators import PydanticDescriptorProxy, unwrap_wrapped_function
 from pydantic.fields import FieldInfo
 
-from cadwyn._utils import DATACLASS_SLOTS, Sentinel, fully_unwrap_decorator
+from cadwyn._utils import (
+    DATACLASS_SLOTS,
+    Sentinel,
+    fully_unwrap_decorator,
+    get_name_of_function_wrapped_in_pydantic_validator,
+)
 from cadwyn.exceptions import CadwynStructureError
 
 from .common import _HiddenAttributeMixin
@@ -281,7 +286,9 @@ class AlterValidatorInstructionFactory:
 
     @property
     def didnt_exist(self) -> ValidatorDidntExistInstruction:
-        return ValidatorDidntExistInstruction(self.schema, self.func.__name__)
+        return ValidatorDidntExistInstruction(
+            self.schema, get_name_of_function_wrapped_in_pydantic_validator(self.func)
+        )
 
 
 AlterSchemaSubInstruction = Union[
