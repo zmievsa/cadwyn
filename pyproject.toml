@@ -97,7 +97,6 @@ cadwyn = "cadwyn.__main__:app"
 
 
 [tool.coverage.run]
-data_file = "coverage/coverage"
 parallel = true
 branch = true
 
