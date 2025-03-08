@@ -26,6 +26,13 @@ def test__render_model__with_weird_types():
     else:
         rend_ann = "Annotated"
 
+    if sys.version_info >= (3, 10):
+        rend_len = "Len(min_length=0, max_length=None)"
+        rend_interval = "Interval(gt=12, ge=None, lt=None, le=None)"
+    else:
+        rend_len = "Len()"
+        rend_interval = "Interval(gt=12)"
+
     # TODO: As you see, we do not rename bases correctly in render. We gotta fix it some day...
     assert code(result) == code(
         f'''
@@ -35,10 +42,10 @@ class ModelWithWeirdFields(A):
     bar: list[int] = Field(default_factory=my_default_factory)
     baz: typing.Literal[MyEnum.foo] = Field()
     saz: {rend_ann}[str, StringConstraints(to_upper=True)] = Field()
-    laz: {rend_ann}[int, None, Interval(gt=12, ge=None, lt=None, le=None), None] = Field()
+    laz: {rend_ann}[int, None, {rend_interval}, None] = Field()
     taz: typing.Union[int, str, None] = Field(default_factory={rendered_lambda})
     naz: list[int] = Field(default=[1, 2, 3])
-    gaz: {rend_ann}[bytes, Strict(strict=True), Len(min_length=0, max_length=None)] = Field(min_length=3, title='Hewwo')
+    gaz: {rend_ann}[bytes, Strict(strict=True), {rend_len}] = Field(min_length=3, title='Hewwo')
 '''
     )
 

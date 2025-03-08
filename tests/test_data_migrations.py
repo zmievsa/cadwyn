@@ -3,7 +3,7 @@ import re
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from io import StringIO
-from typing import Any, Literal
+from typing import Any, Literal, Union
 
 import fastapi
 import pytest
@@ -59,7 +59,7 @@ class AnyResponseSchema(RootModel[Any]):
 
 class SchemaWithHeadMigrations(BaseModel):
     foo: int
-    bar: str | None = Field(default=None)
+    bar: Union[str, None] = Field(default=None)
 
 
 class SchemaWithInternalRepresentation(BaseModel):
@@ -67,7 +67,7 @@ class SchemaWithInternalRepresentation(BaseModel):
 
 
 class InternalSchema(SchemaWithInternalRepresentation):
-    bar: str | None = Field(default=None)
+    bar: Union[str, None] = Field(default=None)
 
 
 @pytest.fixture(params=["is_async", "is_sync"])
@@ -174,12 +174,12 @@ def _post_endpoint_with_extra_depends(
         @router.post(test_path)
         async def _post_endpoint(
             body: AnyRequestSchema,
-            header_key: str | None = Header(default=None, alias="header_key"),
-            n_header: str | None = Header(default=None, alias="3"),
-            cookie_key: str | None = Cookie(default=None),
-            n_cookie: str | None = Cookie(default=None, alias="5"),
-            query_param_key: str | None = Query(default=None),
-            n_query: str | None = Query(default=None, alias="7"),
+            header_key: Union[str, None] = Header(default=None, alias="header_key"),
+            n_header: Union[str, None] = Header(default=None, alias="3"),
+            cookie_key: Union[str, None] = Cookie(default=None),
+            n_cookie: Union[str, None] = Cookie(default=None, alias="5"),
+            query_param_key: Union[str, None] = Query(default=None),
+            n_query: Union[str, None] = Query(default=None, alias="7"),
         ):
             headers: Any = {"header_key": header_key}
             cookies: Any = {"cookie_key": cookie_key}
@@ -717,7 +717,7 @@ class TestHowAndWhenMigrationsApply:
         version_change_1: type[VersionChange],
         version_change_2: type[VersionChange],
         test_path: str,
-        api_version_var: ContextVar[str | None],
+        api_version_var: ContextVar[Union[str, None]],
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
@@ -744,7 +744,7 @@ class TestHowAndWhenMigrationsApply:
         version_change_1: type[VersionChange],
         version_change_2: type[VersionChange],
         test_path: str,
-        api_version_var: ContextVar[str | None],
+        api_version_var: ContextVar[Union[str, None]],
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)
@@ -768,7 +768,7 @@ class TestHowAndWhenMigrationsApply:
         version_change_1: type[VersionChange],
         version_change_2: type[VersionChange],
         test_path: str,
-        api_version_var: ContextVar[str | None],
+        api_version_var: ContextVar[Union[str, None]],
         _post_endpoint,
     ):
         clients = create_versioned_clients(version_change_1, version_change_2)

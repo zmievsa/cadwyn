@@ -88,12 +88,12 @@ def test__field_existed_as__extras_are_added(create_runtime_schemas: CreateRunti
 def test__schema_field_existed_as__with_default_none(create_runtime_schemas: CreateRuntimeSchemas):
     schemas = create_runtime_schemas(
         version_change(
-            schema(EmptySchema).field("foo").existed_as(type=str | None, info=Field(default=None)),
+            schema(EmptySchema).field("foo").existed_as(type=Union[str, None], info=Field(default=None)),
         )
     )
 
     class ExpectedSchema(BaseModel):
-        foo: str | None = Field(default=None)
+        foo: Union[str, None] = Field(default=None)
 
     assert_models_are_equal(schemas["2000-01-01"][EmptySchema], ExpectedSchema)
 
@@ -356,12 +356,12 @@ def test__schema_field_had_constrained_field__field_is_an_unconstrained_union(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     class Schema(BaseModel):
-        foo: int | None = Field(default=None)
+        foo: Union[int, None] = Field(default=None)
 
     schemas = create_runtime_schemas(version_change(schema(Schema).field("foo").had(ge=0)))
 
     class ExpectedSchema(BaseModel):
-        foo: int | None = Field(default=None, ge=0)
+        foo: Union[int, None] = Field(default=None, ge=0)
 
     assert_models_are_equal(schemas["2000-01-01"][Schema], ExpectedSchema)
 
@@ -602,21 +602,21 @@ def test__schema_field_had__with_weird_data_types__with_all_fields_modified(
 
 def test__union_fields(create_runtime_schemas: CreateRuntimeSchemas):
     class SchemaWithUnionFields(BaseModel):
-        foo: int | str
-        bar: EmptySchema | None
+        foo: Union[int, str]
+        bar: Union[EmptySchema, None]
 
     schemas = create_runtime_schemas(
         version_change(
-            schema(SchemaWithUnionFields).field("baz").existed_as(type=int | EmptySchema),
+            schema(SchemaWithUnionFields).field("baz").existed_as(type=Union[int, EmptySchema]),
             schema(SchemaWithUnionFields).field("daz").existed_as(type=Union[int, EmptySchema]),
         )
     )
 
     class ExpectedSchema(BaseModel):
-        foo: int | str
-        bar: EmptySchema | None
-        baz: int | EmptySchema
-        daz: int | EmptySchema
+        foo: Union[int, str]
+        bar: Union[EmptySchema, None]
+        baz: Union[int, EmptySchema]
+        daz: Union[int, EmptySchema]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithUnionFields], ExpectedSchema)
 

@@ -1,13 +1,18 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 from issubclass import issubclass as lenient_issubclass
 from pydantic import AliasChoices, AliasPath, BaseModel, Field
 from pydantic._internal._decorators import PydanticDescriptorProxy, unwrap_wrapped_function
 from pydantic.fields import FieldInfo
 
-from cadwyn._utils import Sentinel, fully_unwrap_decorator
+from cadwyn._utils import (
+    DATACLASS_SLOTS,
+    Sentinel,
+    fully_unwrap_decorator,
+    get_name_of_function_wrapped_in_pydantic_validator,
+)
 from cadwyn.exceptions import CadwynStructureError
 
 from .common import _HiddenAttributeMixin
@@ -57,34 +62,34 @@ PossibleFieldAttributes = Literal[
 
 
 # TODO: Add json_schema_extra as a breaking change in a major version
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class FieldChanges:
     default: Any
-    alias: str | None
+    alias: Union[str, None]
     default_factory: Any
-    alias_priority: int | None
-    validation_alias: str | AliasPath | AliasChoices | None
-    serialization_alias: str | None
-    title: str | None
-    field_title_generator: Callable[[str, FieldInfo], str] | None
+    alias_priority: Union[int, None]
+    validation_alias: Union[str, AliasPath, AliasChoices, None]
+    serialization_alias: Union[str, None]
+    title: Union[str, None]
+    field_title_generator: Union[Callable[[str, FieldInfo], str], None]
     description: str
-    examples: list[Any] | None
+    examples: Union[list[Any], None]
     exclude: "AbstractSetIntStr | MappingIntStrAny | Any"
     const: bool
     deprecated: bool
-    frozen: bool | None
-    validate_default: bool | None
+    frozen: Union[bool, None]
+    validate_default: Union[bool, None]
     repr: bool
-    init: bool | None
-    init_var: bool | None
-    kw_only: bool | None
+    init: Union[bool, None]
+    init_var: Union[bool, None]
+    kw_only: Union[bool, None]
     fail_fast: bool
     gt: float
     ge: float
     lt: float
     le: float
     strict: bool
-    coerce_numbers_to_str: bool | None
+    coerce_numbers_to_str: Union[bool, None]
     multiple_of: float
     allow_inf_nan: bool
     max_digits: int
@@ -97,7 +102,7 @@ class FieldChanges:
     discriminator: str
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class FieldHadInstruction(_HiddenAttributeMixin):
     schema: type[BaseModel]
     name: str
@@ -106,20 +111,20 @@ class FieldHadInstruction(_HiddenAttributeMixin):
     new_name: str
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class FieldDidntHaveInstruction(_HiddenAttributeMixin):
     schema: type[BaseModel]
     name: str
     attributes: tuple[str, ...]
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class FieldDidntExistInstruction(_HiddenAttributeMixin):
     schema: type[BaseModel]
     name: str
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class FieldExistedAsInstruction(_HiddenAttributeMixin):
     schema: type[BaseModel]
     name: str
@@ -127,7 +132,7 @@ class FieldExistedAsInstruction(_HiddenAttributeMixin):
 
 
 # TODO (https://github.com/zmievsa/cadwyn/issues/112): Add an ability to add extras
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class AlterFieldInstructionFactory:
     schema: type[BaseModel]
     name: str
@@ -138,20 +143,20 @@ class AlterFieldInstructionFactory:
         name: str = Sentinel,
         type: Any = Sentinel,
         default: Any = Sentinel,
-        alias: str | None = Sentinel,
+        alias: Union[str, None] = Sentinel,
         default_factory: Callable = Sentinel,
-        alias_priority: int = Sentinel,
-        validation_alias: str = Sentinel,
-        serialization_alias: str = Sentinel,
-        title: str = Sentinel,
-        field_title_generator: Callable[[str, FieldInfo], str] = Sentinel,
+        alias_priority: Union[int, None] = Sentinel,
+        validation_alias: Union[str, AliasPath, AliasChoices, None] = Sentinel,
+        serialization_alias: Union[str, None] = Sentinel,
+        title: Union[str, None] = Sentinel,
+        field_title_generator: Union[Callable[[str, FieldInfo], str], None] = Sentinel,
         description: str = Sentinel,
-        examples: list[Any] = Sentinel,
+        examples: Union[list[Any], None] = Sentinel,
         exclude: "AbstractSetIntStr | MappingIntStrAny | Any" = Sentinel,
         const: bool = Sentinel,
         deprecated: bool = Sentinel,
-        frozen: bool = Sentinel,
-        validate_default: bool = Sentinel,
+        frozen: Union[bool, None] = Sentinel,
+        validate_default: Union[bool, None] = Sentinel,
         repr: bool = Sentinel,
         init: bool = Sentinel,
         init_var: bool = Sentinel,
@@ -175,6 +180,7 @@ class AlterFieldInstructionFactory:
         discriminator: str = Sentinel,
     ) -> FieldHadInstruction:
         return FieldHadInstruction(
+            is_hidden_from_changelog=False,
             schema=self.schema,
             name=self.name,
             type=type,
@@ -225,22 +231,24 @@ class AlterFieldInstructionFactory:
                 raise CadwynStructureError(
                     f"Unknown attribute {attribute!r}. Are you sure it's a valid field attribute?"
                 )
-        return FieldDidntHaveInstruction(self.schema, self.name, attributes)
+        return FieldDidntHaveInstruction(
+            is_hidden_from_changelog=False, schema=self.schema, name=self.name, attributes=attributes
+        )
 
     @property
     def didnt_exist(self) -> FieldDidntExistInstruction:
-        return FieldDidntExistInstruction(self.schema, name=self.name)
+        return FieldDidntExistInstruction(is_hidden_from_changelog=False, schema=self.schema, name=self.name)
 
     def existed_as(
         self,
         *,
         type: Any,
-        info: FieldInfo | Any | None = None,
+        info: Union[FieldInfo, Any, None] = None,
     ) -> FieldExistedAsInstruction:
         if info is None:
             info = cast(FieldInfo, Field())
         info.annotation = type
-        return FieldExistedAsInstruction(self.schema, name=self.name, field=info)
+        return FieldExistedAsInstruction(is_hidden_from_changelog=False, schema=self.schema, name=self.name, field=info)
 
 
 def _get_model_decorators(model: type[BaseModel]):
@@ -255,22 +263,22 @@ def _get_model_decorators(model: type[BaseModel]):
     ]
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class ValidatorExistedInstruction:
     schema: type[BaseModel]
-    validator: Callable[..., Any] | PydanticDescriptorProxy
+    validator: Union[Callable[..., Any], PydanticDescriptorProxy]
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class ValidatorDidntExistInstruction:
     schema: type[BaseModel]
     name: str
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class AlterValidatorInstructionFactory:
     schema: type[BaseModel]
-    func: Callable[..., Any] | PydanticDescriptorProxy
+    func: Union[Callable[..., Any], PydanticDescriptorProxy]
 
     @property
     def existed(self) -> ValidatorExistedInstruction:
@@ -278,26 +286,28 @@ class AlterValidatorInstructionFactory:
 
     @property
     def didnt_exist(self) -> ValidatorDidntExistInstruction:
-        return ValidatorDidntExistInstruction(self.schema, self.func.__name__)
+        return ValidatorDidntExistInstruction(
+            self.schema, get_name_of_function_wrapped_in_pydantic_validator(self.func)
+        )
 
 
-AlterSchemaSubInstruction = (
-    FieldHadInstruction
-    | FieldDidntHaveInstruction
-    | FieldDidntExistInstruction
-    | FieldExistedAsInstruction
-    | ValidatorExistedInstruction
-    | ValidatorDidntExistInstruction
-)
+AlterSchemaSubInstruction = Union[
+    FieldHadInstruction,
+    FieldDidntHaveInstruction,
+    FieldDidntExistInstruction,
+    FieldExistedAsInstruction,
+    ValidatorExistedInstruction,
+    ValidatorDidntExistInstruction,
+]
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class SchemaHadInstruction(_HiddenAttributeMixin):
     schema: type[BaseModel]
     name: str
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class AlterSchemaInstructionFactory:
     schema: type[BaseModel]
 
@@ -305,9 +315,9 @@ class AlterSchemaInstructionFactory:
         return AlterFieldInstructionFactory(self.schema, name)
 
     def validator(
-        self, func: "Callable[..., Any] | classmethod[Any, Any, Any] | PydanticDescriptorProxy", /
+        self, func: "Union[Callable[..., Any], classmethod[Any, Any, Any], PydanticDescriptorProxy]", /
     ) -> AlterValidatorInstructionFactory:
-        func = cast(Callable | PydanticDescriptorProxy, unwrap_wrapped_function(func))
+        func = cast(Union[Callable[..., Any], PydanticDescriptorProxy], unwrap_wrapped_function(func))
 
         if not isinstance(func, PydanticDescriptorProxy):
             if hasattr(func, "__self__"):
@@ -321,7 +331,7 @@ class AlterSchemaInstructionFactory:
         return AlterValidatorInstructionFactory(self.schema, func)
 
     def had(self, *, name: str) -> SchemaHadInstruction:
-        return SchemaHadInstruction(self.schema, name)
+        return SchemaHadInstruction(is_hidden_from_changelog=False, schema=self.schema, name=name)
 
 
 def schema(model: type[BaseModel], /) -> AlterSchemaInstructionFactory:

@@ -1,6 +1,6 @@
 import uuid
 from enum import IntEnum, auto
-from typing import Any
+from typing import Any, Union
 
 from dirty_equals import IsList
 from fastapi.testclient import TestClient
@@ -41,7 +41,7 @@ def test__changelog__with_multiple_versions():
 
     class UserAddressResource(BaseModel):
         id: uuid.UUID
-        value: list[str | dict[str, UserResource]]
+        value: list[Union[str, dict[str, UserResource]]]
 
     class UserAddressResourceList(BaseModel):
         data: list[UserAddressResource]
@@ -81,7 +81,7 @@ def test__changelog__with_multiple_versions():
         raise NotImplementedError
 
     @router.patch("/users", response_model=UserResource)
-    async def patch_user(user: list[UserUpdateRequest | None]):
+    async def patch_user(user: list[Union[UserUpdateRequest, None]]):
         raise NotImplementedError
 
     @router.get("/users/{user_id}", response_model=UserResource)
@@ -213,7 +213,7 @@ def test__changelog__basic_schema_interactions(create_versioned_app: CreateVersi
     router = VersionedAPIRouter()
 
     @router.post("/route1")
-    async def route1(user: SchemaWithSomeField | str):
+    async def route1(user: Union[SchemaWithSomeField, str]):
         raise NotImplementedError
 
     app = create_versioned_app(

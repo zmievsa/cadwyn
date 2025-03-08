@@ -3,7 +3,7 @@ import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
-from typing import Annotated, Any, NewType, TypeAlias, cast, get_args
+from typing import Annotated, Union, cast
 from uuid import UUID
 
 import pytest
@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
+from typing_extensions import Any, NewType, TypeAlias, get_args
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
@@ -89,7 +90,7 @@ class CreateVersionedAPIRoutes:
     def __call__(
         self,
         *version_changes: type[VersionChange],
-        router: VersionedAPIRouter | None = None,
+        router: Union[VersionedAPIRouter, None] = None,
     ) -> tuple[list[APIRoute], list[APIRoute]]:
         app = self.create_versioned_app(*version_changes, router=router)
         return (
@@ -161,7 +162,7 @@ def test__endpoint_existed__endpoint_removed_in_latest_but_never_restored__shoul
 
 def test__endpoint_existed__deleting_restoring_deleting_restoring_an_endpoint(
     router: VersionedAPIRouter,
-    api_version_var: ContextVar[str | None],
+    api_version_var: ContextVar[Union[str, None]],
 ):
     @router.only_exists_in_older_versions
     @router.get("/test")
@@ -571,7 +572,7 @@ def test__router_generation__restoring_two_deleted_routes_for_same_path__should_
 @pytest.mark.parametrize("route_index_to_restore_first", [0, 1])
 def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpoint(
     router: VersionedAPIRouter,
-    api_version_var: ContextVar[str | None],
+    api_version_var: ContextVar[Union[str, None]],
     two_deleted_routes: tuple[Endpoint, Endpoint],
     route_index_to_restore_first: int,
 ):
@@ -612,7 +613,7 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
     }
 
 
-def get_nested_field_type(annotation: Any) -> type[BaseModel] | None:
+def get_nested_field_type(annotation: Any) -> Union[type[BaseModel], None]:
     get_args(annotation)[1]
     first_generic_arg_of_second_generic_arg = get_args(get_args(annotation)[1])[0]
     its_fields = first_generic_arg_of_second_generic_arg.model_fields
@@ -804,7 +805,7 @@ def test__router_generation__using_weird_typehints(
     newtype = NewType("newtype", str)
 
     @router.get("/test")
-    async def test(param1: newtype = Body(), param2: str | int = Body()):
+    async def test(param1: newtype = Body(), param2: Union[str, int] = Body()):
         raise NotImplementedError
 
     routes_2000, routes_2001 = create_versioned_api_routes(
@@ -815,8 +816,8 @@ def test__router_generation__using_weird_typehints(
     assert getattr(routes_2000[1].dependant.body_params[0], TYPE_ATTR) is newtype
     assert getattr(routes_2001[1].dependant.body_params[0], TYPE_ATTR) is newtype
 
-    assert getattr(routes_2000[1].dependant.body_params[1], TYPE_ATTR) == str | int
-    assert getattr(routes_2001[1].dependant.body_params[1], TYPE_ATTR) == str | int
+    assert getattr(routes_2000[1].dependant.body_params[1], TYPE_ATTR) == Union[str, int]
+    assert getattr(routes_2001[1].dependant.body_params[1], TYPE_ATTR) == Union[str, int]
 
 
 def test__router_generation__using_pydantic_typehints__internal_pydantic_typehints_should_work(
@@ -993,7 +994,7 @@ def test__router_generation__updating_callbacks(
     assert "bar" not in generated_callback.dependant.body_params[0].type_.model_fields
 
 
-def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: ContextVar[str | None]):
+def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: ContextVar[Union[str, None]]):
     @router.only_exists_in_older_versions
     @router.get("/test")
     async def test_with_dep1():
@@ -1018,7 +1019,7 @@ def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: C
 
 def test__cascading_router_didnt_exist(
     router: VersionedAPIRouter,
-    api_version_var: ContextVar[str | None],
+    api_version_var: ContextVar[Union[str, None]],
 ):
     @router.get("/test")
     async def test_with_dep1():
@@ -1053,7 +1054,7 @@ def test__generate_versioned_routers__two_routers(
     router: VersionedAPIRouter,
     test_endpoint: Endpoint,
     test_path: str,
-    api_version_var: ContextVar[str | None],
+    api_version_var: ContextVar[Union[str, None]],
 ):
     router2 = VersionedAPIRouter(prefix="/api2")
 
@@ -1104,14 +1105,14 @@ class MyHTTPBearer(HTTPBearer):
 def test__basic_router_generation__using_http_security_dependency__should_generate_the_required_security_params(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
-    security_cls: type[HTTPBearer] | type[MyHTTPBearer] | type[HTTPBasic],
+    security_cls: Union[type[HTTPBearer], type[MyHTTPBearer], type[HTTPBasic]],
     expected_status_code: int,
 ):
     auth_header_scheme = security_cls(description="Bearer token for authentication")
 
     def auth(
         auth_header: Annotated[
-            HTTPAuthorizationCredentials | None,
+            Union[HTTPAuthorizationCredentials, None],
             Depends(auth_header_scheme),
         ],
     ):

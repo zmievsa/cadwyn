@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, Union, cast
 
 import fastapi
 from fastapi import APIRouter, FastAPI, HTTPException, routing
@@ -26,7 +26,7 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
 from typing_extensions import Self, assert_never, deprecated
 
-from cadwyn._utils import same_definition_as_in
+from cadwyn._utils import DATACLASS_SLOTS, same_definition_as_in
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
@@ -48,7 +48,7 @@ CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(**DATACLASS_SLOTS)
 class FakeDependencyOverridesProvider:
     dependency_overrides: dict[Callable[..., Any], Callable[..., Any]]
 
@@ -61,7 +61,7 @@ class Cadwyn(FastAPI):
         *,
         versions: VersionBundle,
         api_version_header_name: Annotated[
-            str | None,
+            Union[str, None],
             deprecated(
                 "api_version_header_name is deprecated and will be removed in the future. "
                 "Use api_version_parameter_name instead."
@@ -70,49 +70,51 @@ class Cadwyn(FastAPI):
         api_version_location: APIVersionLocation = "custom_header",
         api_version_format: APIVersionFormat = "date",
         api_version_parameter_name: str = "x-api-version",
-        api_version_default_value: str | None | Callable[[Request], Awaitable[str]] = None,
+        api_version_default_value: Union[str, None, Callable[[Request], Awaitable[str]]] = None,
         versioning_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
-        changelog_url: str | None = "/changelog",
+        changelog_url: Union[str, None] = "/changelog",
         include_changelog_url_in_schema: bool = True,
         debug: bool = False,
         title: str = "FastAPI",
-        summary: str | None = None,
+        summary: Union[str, None] = None,
         description: str = "",
         version: str = "0.1.0",
-        openapi_url: str | None = "/openapi.json",
-        openapi_tags: list[dict[str, Any]] | None = None,
-        servers: list[dict[str, str | Any]] | None = None,
-        dependencies: Sequence[Depends] | None = None,
+        openapi_url: Union[str, None] = "/openapi.json",
+        openapi_tags: Union[list[dict[str, Any]], None] = None,
+        servers: Union[list[dict[str, Union[str, Any]]], None] = None,
+        dependencies: Union[Sequence[Depends], None] = None,
         default_response_class: type[Response] = JSONResponse,
         redirect_slashes: bool = True,
-        routes: list[BaseRoute] | None = None,
-        docs_url: str | None = "/docs",
-        redoc_url: str | None = "/redoc",
-        swagger_ui_oauth2_redirect_url: str | None = "/docs/oauth2-redirect",
-        swagger_ui_init_oauth: dict[str, Any] | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        routes: Union[list[BaseRoute], None] = None,
+        docs_url: Union[str, None] = "/docs",
+        redoc_url: Union[str, None] = "/redoc",
+        swagger_ui_oauth2_redirect_url: Union[str, None] = "/docs/oauth2-redirect",
+        swagger_ui_init_oauth: Union[dict[str, Any], None] = None,
+        middleware: Union[Sequence[Middleware], None] = None,
         exception_handlers: (
-            dict[
-                int | type[Exception],
-                Callable[[Request, Any], Coroutine[Any, Any, Response]],
+            Union[
+                dict[
+                    Union[int, type[Exception]],
+                    Callable[[Request, Any], Coroutine[Any, Any, Response]],
+                ],
+                None,
             ]
-            | None
         ) = None,
-        on_startup: Sequence[Callable[[], Any]] | None = None,
-        on_shutdown: Sequence[Callable[[], Any]] | None = None,
-        lifespan: Lifespan[Self] | None = None,
-        terms_of_service: str | None = None,
-        contact: dict[str, str | Any] | None = None,
-        license_info: dict[str, str | Any] | None = None,
+        on_startup: Union[Sequence[Callable[[], Any]], None] = None,
+        on_shutdown: Union[Sequence[Callable[[], Any]], None] = None,
+        lifespan: Union[Lifespan[Self], None] = None,
+        terms_of_service: Union[str, None] = None,
+        contact: Union[dict[str, Union[str, Any]], None] = None,
+        license_info: Union[dict[str, Union[str, Any]], None] = None,
         openapi_prefix: str = "",
         root_path: str = "",
         root_path_in_servers: bool = True,
-        responses: dict[int | str, dict[str, Any]] | None = None,
-        callbacks: list[BaseRoute] | None = None,
-        webhooks: APIRouter | None = None,
-        deprecated: bool | None = None,
+        responses: Union[dict[Union[int, str], dict[str, Any]], None] = None,
+        callbacks: Union[list[BaseRoute], None] = None,
+        webhooks: Union[APIRouter, None] = None,
+        deprecated: Union[bool, None] = None,
         include_in_schema: bool = True,
-        swagger_ui_parameters: dict[str, Any] | None = None,
+        swagger_ui_parameters: Union[dict[str, Any], None] = None,
         generate_unique_id_function: Callable[[routing.APIRoute], str] = Default(  # noqa: B008
             generate_unique_id
         ),
