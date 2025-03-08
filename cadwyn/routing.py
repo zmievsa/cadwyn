@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from contextvars import ContextVar
 from functools import cached_property
 from logging import getLogger
-from typing import Any
+from typing import Any, Union
 
 from fastapi.routing import APIRouter
 from starlette.datastructures import URL
@@ -23,7 +23,7 @@ class _RootCadwynAPIRouter(APIRouter):
         self,
         *args: Any,
         api_version_parameter_name: str,
-        api_version_var: ContextVar[str | None],
+        api_version_var: ContextVar[Union[str, None]],
         api_version_format: APIVersionFormat,
         **kwargs: Any,
     ):

@@ -5,7 +5,7 @@ import inspect
 import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from typing import Annotated, Any, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol, Union
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
@@ -15,7 +15,7 @@ from cadwyn.structure.common import VersionType
 
 
 class VersionManager(Protocol):
-    def get(self, request: Request) -> str | None: ...
+    def get(self, request: Request) -> Union[str, None]: ...
 
 
 VersionValidatorC = Callable[[str], VersionType]
@@ -32,7 +32,7 @@ class HeaderVersionManager:
         super().__init__()
         self.api_version_parameter_name = api_version_parameter_name
 
-    def get(self, request: Request) -> str | None:
+    def get(self, request: Request) -> Union[str, None]:
         return request.headers.get(self.api_version_parameter_name)
 
 
@@ -44,7 +44,7 @@ class URLVersionManager:
         self.possible_version_values = possible_version_values
         self.url_version_regex = re.compile(f"/({'|'.join(re.escape(v) for v in possible_version_values)})/")
 
-    def get(self, request: Request) -> str | None:
+    def get(self, request: Request) -> Union[str, None]:
         if m := self.url_version_regex.search(request.url.path):
             return m.group(1)
         return None
@@ -81,10 +81,10 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         app: ASGIApp,
         *,
         api_version_parameter_name: str,
-        api_version_default_value: str | None | Callable[[Request], Awaitable[str]],
-        api_version_var: ContextVar[VersionType | None],
+        api_version_default_value: Union[str, None, Callable[[Request], Awaitable[str]]],
+        api_version_var: ContextVar[Union[VersionType, None]],
         api_version_manager: VersionManager,
-        dispatch: DispatchFunction | None = None,
+        dispatch: Union[DispatchFunction, None] = None,
     ) -> None:
         super().__init__(app, dispatch)
 

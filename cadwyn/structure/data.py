@@ -2,10 +2,11 @@ import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, ParamSpec, cast, overload
+from typing import ClassVar, Union, cast
 
 from fastapi import Request, Response
 from starlette.datastructures import MutableHeaders
+from typing_extensions import Any, ParamSpec, overload
 
 from cadwyn._utils import same_definition_as_in
 from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
@@ -82,7 +83,7 @@ class _AlterDataInstruction:
     def __set_name__(self, owner: type, name: str):
         self.owner = owner
 
-    def __call__(self, __request_or_response: RequestInfo | ResponseInfo, /) -> None:
+    def __call__(self, __request_or_response: Union[RequestInfo, ResponseInfo], /) -> None:
         return self.transformer(__request_or_response)
 
 
@@ -127,8 +128,8 @@ def convert_request_to_next_version_for(path: str, methods: list[str], /) -> "ty
 
 
 def convert_request_to_next_version_for(
-    schema_or_path: type | str,
-    methods_or_second_schema: list[str] | None | type = None,
+    schema_or_path: Union[type, str],
+    methods_or_second_schema: Union[list[str], None, type] = None,
     /,
     *additional_schemas: type,
     check_usage: bool = True,
@@ -199,8 +200,8 @@ def convert_response_to_previous_version_for(
 
 
 def convert_response_to_previous_version_for(
-    schema_or_path: type | str,
-    methods_or_second_schema: list[str] | type | None = None,
+    schema_or_path: Union[type, str],
+    methods_or_second_schema: Union[list[str], type, None] = None,
     /,
     *additional_schemas: type,
     migrate_http_errors: bool = False,
@@ -233,7 +234,9 @@ def convert_response_to_previous_version_for(
 
 
 def _validate_decorator_args(
-    schema_or_path: type | str, methods_or_second_schema: list[str] | type | None, additional_schemas: tuple[type, ...]
+    schema_or_path: Union[type, str],
+    methods_or_second_schema: Union[list[str], type, None],
+    additional_schemas: tuple[type, ...],
 ) -> None:
     if isinstance(schema_or_path, str):
         if not isinstance(methods_or_second_schema, list):

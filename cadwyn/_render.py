@@ -2,7 +2,7 @@ import ast
 import inspect
 import textwrap
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 import typer
 from issubclass import issubclass as lenient_issubclass
@@ -30,7 +30,7 @@ def render_module_by_path(module_path: str, app_path: str, version: str):
     attributes_to_alter = [
         name
         for name, value in module.__dict__.items()
-        if lenient_issubclass(value, Enum | BaseModel) and value.__module__ == module.__name__
+        if lenient_issubclass(value, (Enum, BaseModel)) and value.__module__ == module.__name__
     ]
 
     try:
@@ -53,12 +53,12 @@ def render_module_by_path(module_path: str, app_path: str, version: str):
 
 def render_model_by_path(model_path: str, app_path: str, version: str) -> str:
     # cadwyn render model schemas:MySchema --app=run:app --version=2000-01-01
-    model: type[BaseModel | Enum] = import_attribute_from_string(model_path)
+    model: type[Union[BaseModel, Enum]] = import_attribute_from_string(model_path)
     app: Cadwyn = import_attribute_from_string(app_path)
     return render_model(model, app.versions, version)
 
 
-def render_model(model: type[BaseModel | Enum], versions: VersionBundle, version: str) -> str:
+def render_model(model: type[Union[BaseModel, Enum]], versions: VersionBundle, version: str) -> str:
     try:
         original_cls_node = ast.parse(textwrap.dedent(inspect.getsource(model))).body[0]
     except (OSError, SyntaxError, ValueError):  # pragma: no cover
@@ -71,7 +71,7 @@ def render_model(model: type[BaseModel | Enum], versions: VersionBundle, version
 
 
 def _render_model_from_ast(
-    model_ast: ast.ClassDef, model: type[BaseModel | Enum], versions: VersionBundle, version: str
+    model_ast: ast.ClassDef, model: type[Union[BaseModel, Enum]], versions: VersionBundle, version: str
 ):
     versioned_models = generate_versioned_models(versions)
     generator = versioned_models[version]
@@ -97,7 +97,7 @@ def _render_enum_model(wrapper: _EnumWrapper, original_cls_node: ast.ClassDef):
     ]
 
     old_body = [
-        n for n in original_cls_node.body if not isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)
+        n for n in original_cls_node.body if not isinstance(n, (ast.AnnAssign, ast.Assign, ast.Pass, ast.Constant))
     ]
     docstring = pop_docstring_from_cls_body(old_body)
 
@@ -130,7 +130,7 @@ def _render_pydantic_model(wrapper: _PydanticModelWrapper, original_cls_node: as
         n
         for n in original_cls_node.body
         if not (
-            isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)
+            isinstance(n, (ast.AnnAssign, ast.Assign, ast.Pass, ast.Constant))
             or (isinstance(n, ast.FunctionDef) and n.name in wrapper.validators)
         )
     ]

@@ -2,7 +2,7 @@ import copy
 import sys
 from enum import auto
 from logging import getLogger
-from typing import Any, Literal, TypeVar, cast, get_args
+from typing import Any, Literal, TypeVar, Union, cast, get_args
 
 from fastapi._compat import (
     GenerateJsonSchema,
@@ -18,8 +18,8 @@ from fastapi.openapi.utils import (
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
 
-from cadwyn._asts import GenericAliasUnion
-from cadwyn._utils import Sentinel
+from cadwyn._asts import GenericAliasUnionArgs
+from cadwyn._utils import ZIP_STRICT_FALSE, Sentinel
 from cadwyn.route_generation import _get_routes
 from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.schema_generation import SchemaGenerator, _change_field_in_model, generate_versioned_models
@@ -48,12 +48,12 @@ else:  # pragma: no cover
 
 _logger = getLogger(__name__)
 
-T = TypeVar("T", bound=PossibleInstructions | type[VersionChange])
+T = TypeVar("T", bound=Union[PossibleInstructions, type[VersionChange]])
 
 
 def hidden(instruction_or_version_change: T) -> T:
     if isinstance(
-        instruction_or_version_change, staticmethod | ValidatorDidntExistInstruction | ValidatorExistedInstruction
+        instruction_or_version_change, (staticmethod, ValidatorDidntExistInstruction, ValidatorExistedInstruction)
     ):
         return instruction_or_version_change
 
@@ -64,7 +64,7 @@ def hidden(instruction_or_version_change: T) -> T:
 def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -> "CadwynChangelogResource":
     changelog = CadwynChangelogResource()
     schema_generators = generate_versioned_models(versions)
-    for version, older_version in zip(versions, versions.versions[1:], strict=False):
+    for version, older_version in zip(versions, versions.versions[1:], **ZIP_STRICT_FALSE):
         routes_from_newer_version = router.versioned_routers[version.value].routes
         schemas_from_older_version = get_fields_from_routes(router.versioned_routers[older_version.value].routes)
         version_changelog = CadwynVersion(value=version.value)
@@ -83,7 +83,7 @@ def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -
                 *version_change.alter_schema_instructions,
             ]:
                 if (
-                    isinstance(instruction, ValidatorDidntExistInstruction | ValidatorExistedInstruction)
+                    isinstance(instruction, (ValidatorDidntExistInstruction, ValidatorExistedInstruction))
                     or instruction.is_hidden_from_changelog
                 ):
                     continue
@@ -113,10 +113,12 @@ def _get_older_field_name(
 
 
 def _get_affected_model_names(
-    instruction: FieldExistedAsInstruction
-    | FieldDidntExistInstruction
-    | FieldHadInstruction
-    | FieldDidntHaveInstruction,
+    instruction: Union[
+        FieldExistedAsInstruction,
+        FieldDidntExistInstruction,
+        FieldHadInstruction,
+        FieldDidntHaveInstruction,
+    ],
     generator_from_newer_version: SchemaGenerator,
     schemas_from_last_version: list[ModelField],
 ):
@@ -139,7 +141,7 @@ def _get_affected_model_names(
 
 
 def _get_all_pydantic_models_from_generic(annotation: Any) -> list[type[BaseModel]]:
-    if not isinstance(annotation, GenericAliasUnion):
+    if not isinstance(annotation, GenericAliasUnionArgs):
         if isinstance(annotation, type) and issubclass(annotation, BaseModel):
             return [annotation]
         else:
@@ -209,7 +211,7 @@ class CadwynFieldAttributesWereChangedChangelogEntry(BaseModel):
 
 
 class CadwynModelModifiedAttributes(BaseModel):
-    name: str | None
+    name: Union[str, None]
 
 
 class CadwynSchemaWasChangedChangelogEntry(BaseModel):
@@ -294,15 +296,17 @@ class CadwynVersionChange(BaseModel):
 
 
 CadwynVersionChangeInstruction = RootModel[
-    CadwynEnumMembersWereAddedChangelogEntry
-    | CadwynEnumMembersWereChangedChangelogEntry
-    | CadwynEndpointWasAddedChangelogEntry
-    | CadwynEndpointWasRemovedChangelogEntry
-    | CadwynSchemaFieldWasRemovedChangelogEntry
-    | CadwynSchemaFieldWasAddedChangelogEntry
-    | CadwynFieldAttributesWereChangedChangelogEntry
-    | CadwynEndpointHadChangelogEntry
-    | CadwynSchemaWasChangedChangelogEntry
+    Union[
+        CadwynEnumMembersWereAddedChangelogEntry,
+        CadwynEnumMembersWereChangedChangelogEntry,
+        CadwynEndpointWasAddedChangelogEntry,
+        CadwynEndpointWasRemovedChangelogEntry,
+        CadwynSchemaFieldWasRemovedChangelogEntry,
+        CadwynSchemaFieldWasAddedChangelogEntry,
+        CadwynFieldAttributesWereChangedChangelogEntry,
+        CadwynEndpointHadChangelogEntry,
+        CadwynSchemaWasChangedChangelogEntry,
+    ]
 ]
 
 
@@ -314,185 +318,182 @@ def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
     schemas_from_older_version: list[ModelField],
     routes_from_newer_version: list[APIRoute],
 ):
-    match instruction:
-        case EndpointDidntExistInstruction():
-            return CadwynEndpointWasAddedChangelogEntry(
-                path=instruction.endpoint_path,
-                methods=cast(Any, instruction.endpoint_methods),
-            )
-        case EndpointExistedInstruction():
+    if isinstance(instruction, EndpointDidntExistInstruction):
+        return CadwynEndpointWasAddedChangelogEntry(
+            path=instruction.endpoint_path,
+            methods=cast(Any, instruction.endpoint_methods),
+        )
+    elif isinstance(instruction, EndpointExistedInstruction):
+        return CadwynEndpointWasRemovedChangelogEntry(
+            path=instruction.endpoint_path,
+            methods=cast(Any, instruction.endpoint_methods),
+        )
+    elif isinstance(instruction, EndpointHadInstruction):
+        if instruction.attributes.include_in_schema is not Sentinel:
             return CadwynEndpointWasRemovedChangelogEntry(
                 path=instruction.endpoint_path,
                 methods=cast(Any, instruction.endpoint_methods),
             )
-        case EndpointHadInstruction():
-            if instruction.attributes.include_in_schema is not Sentinel:
-                return CadwynEndpointWasRemovedChangelogEntry(
-                    path=instruction.endpoint_path,
-                    methods=cast(Any, instruction.endpoint_methods),
-                )
 
-            renaming_map = {"operation_id": "operationId"}
+        renaming_map = {"operation_id": "operationId"}
 
-            attribute_changes = []
+        attribute_changes = []
 
-            for attr in ["path", "methods", "summary", "description", "tags", "deprecated", "operation_id"]:
-                attr_value = getattr(instruction.attributes, attr)
-                if attr_value is not Sentinel:
-                    attribute_changes.append(
-                        CadwynEndpointAttributeChange(name=renaming_map.get(attr, attr), new_value=attr_value)
-                    )
-            if instruction.attributes.name is not Sentinel and instruction.attributes.summary is Sentinel:
+        for attr in ["path", "methods", "summary", "description", "tags", "deprecated", "operation_id"]:
+            attr_value = getattr(instruction.attributes, attr)
+            if attr_value is not Sentinel:
                 attribute_changes.append(
-                    CadwynEndpointAttributeChange(name="summary", new_value=instruction.attributes.name)
+                    CadwynEndpointAttributeChange(name=renaming_map.get(attr, attr), new_value=attr_value)
                 )
-
-            if any(
-                getattr(instruction.attributes, attr) is not Sentinel
-                for attr in ["path", "methods", "summary", "description", "tags", "deprecated"]
-            ):
-                pass
-            if any(
-                attr is not Sentinel
-                for attr in [
-                    instruction.attributes.response_model,
-                    instruction.attributes.response_class,
-                    instruction.attributes.responses,
-                    instruction.attributes.status_code,
-                ]
-            ):
-                newer_routes = _get_routes(
-                    routes_from_newer_version,
-                    instruction.endpoint_path,
-                    instruction.endpoint_methods,
-                    instruction.endpoint_func_name,
-                    is_deleted=False,
-                )
-                newer_openapi = get_openapi(title="", version="", routes=newer_routes)
-                changed_responses = {
-                    method: route_openapi["responses"]
-                    for method, route_openapi in newer_openapi["paths"][instruction.endpoint_path].items()
-                }
-                attribute_changes.append(CadwynEndpointAttributeChange(name="responses", new_value=changed_responses))
-            return CadwynEndpointHadChangelogEntry(
-                path=instruction.endpoint_path,
-                methods=cast(Any, instruction.endpoint_methods),
-                changes=attribute_changes,
+        if instruction.attributes.name is not Sentinel and instruction.attributes.summary is Sentinel:
+            attribute_changes.append(
+                CadwynEndpointAttributeChange(name="summary", new_value=instruction.attributes.name)
             )
 
-        case FieldHadInstruction() | FieldDidntHaveInstruction():
-            old_field_name = _get_older_field_name(instruction.schema, instruction.name, generator_from_older_version)
-
-            if isinstance(instruction, FieldHadInstruction) and instruction.new_name is not Sentinel:
-                old_field_name_from_this_instruction = instruction.new_name
-                attribute_changes = [
-                    CadwynAttributeChange(
-                        name="name",
-                        status=CadwynAttributeChangeStatus.changed,
-                        old_value=old_field_name,
-                        new_value=instruction.name,
-                    )
-                ]
-            else:
-                old_field_name_from_this_instruction = instruction.name
-                attribute_changes = []
-            newer_model_wrapper = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
-            newer_model_wrapper_with_migrated_field = copy.deepcopy(newer_model_wrapper)
-            _change_field_in_model(
-                newer_model_wrapper_with_migrated_field,
-                generator_from_newer_version.model_bundle.schemas,
-                alter_schema_instruction=instruction,
-                version_change_name=version_change.__name__,
+        if any(
+            getattr(instruction.attributes, attr) is not Sentinel
+            for attr in ["path", "methods", "summary", "description", "tags", "deprecated"]
+        ):
+            pass
+        if any(
+            attr is not Sentinel
+            for attr in [
+                instruction.attributes.response_model,
+                instruction.attributes.response_class,
+                instruction.attributes.responses,
+                instruction.attributes.status_code,
+            ]
+        ):
+            newer_routes = _get_routes(
+                routes_from_newer_version,
+                instruction.endpoint_path,
+                instruction.endpoint_methods,
+                instruction.endpoint_func_name,
+                is_deleted=False,
             )
+            newer_openapi = get_openapi(title="", version="", routes=newer_routes)
+            changed_responses = {
+                method: route_openapi["responses"]
+                for method, route_openapi in newer_openapi["paths"][instruction.endpoint_path].items()
+            }
+            attribute_changes.append(CadwynEndpointAttributeChange(name="responses", new_value=changed_responses))
+        return CadwynEndpointHadChangelogEntry(
+            path=instruction.endpoint_path,
+            methods=cast(Any, instruction.endpoint_methods),
+            changes=attribute_changes,
+        )
 
-            older_model = newer_model_wrapper_with_migrated_field.generate_model_copy(generator_from_newer_version)
-            newer_model = newer_model_wrapper.generate_model_copy(generator_from_newer_version)
+    elif isinstance(instruction, (FieldHadInstruction, FieldDidntHaveInstruction)):
+        old_field_name = _get_older_field_name(instruction.schema, instruction.name, generator_from_older_version)
 
-            newer_field_openapi = _get_openapi_representation_of_a_field(newer_model, instruction.name)
-            older_field_openapi = _get_openapi_representation_of_a_field(
-                older_model, old_field_name_from_this_instruction
-            )
-
-            attribute_changes += [
+        if isinstance(instruction, FieldHadInstruction) and instruction.new_name is not Sentinel:
+            old_field_name_from_this_instruction = instruction.new_name
+            attribute_changes = [
                 CadwynAttributeChange(
-                    name=key,
+                    name="name",
+                    status=CadwynAttributeChangeStatus.changed,
+                    old_value=old_field_name,
+                    new_value=instruction.name,
+                )
+            ]
+        else:
+            old_field_name_from_this_instruction = instruction.name
+            attribute_changes = []
+        newer_model_wrapper = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
+        newer_model_wrapper_with_migrated_field = copy.deepcopy(newer_model_wrapper)
+        _change_field_in_model(
+            newer_model_wrapper_with_migrated_field,
+            generator_from_newer_version.model_bundle.schemas,
+            alter_schema_instruction=instruction,
+            version_change_name=version_change.__name__,
+        )
+
+        older_model = newer_model_wrapper_with_migrated_field.generate_model_copy(generator_from_newer_version)
+        newer_model = newer_model_wrapper.generate_model_copy(generator_from_newer_version)
+
+        newer_field_openapi = _get_openapi_representation_of_a_field(newer_model, instruction.name)
+        older_field_openapi = _get_openapi_representation_of_a_field(older_model, old_field_name_from_this_instruction)
+
+        attribute_changes += [
+            CadwynAttributeChange(
+                name=key,
+                status=CadwynAttributeChangeStatus.changed
+                if key in newer_field_openapi
+                else CadwynAttributeChangeStatus.removed,
+                old_value=old_value,
+                new_value=newer_field_openapi.get(key),
+            )
+            for key, old_value in older_field_openapi.items()
+            if old_value != newer_field_openapi.get(key)
+        ]
+        attribute_changes += [
+            CadwynAttributeChange(
+                name=key,
+                status=CadwynAttributeChangeStatus.added,
+                old_value=None,
+                new_value=new_value,
+            )
+            for key, new_value in newer_field_openapi.items()
+            if key not in older_field_openapi
+        ]
+
+        return CadwynFieldAttributesWereChangedChangelogEntry(
+            models=_get_affected_model_names(instruction, generator_from_newer_version, schemas_from_older_version),
+            field=old_field_name,
+            attribute_changes=attribute_changes,
+        )
+    elif isinstance(instruction, EnumDidntHaveMembersInstruction):
+        enum = generator_from_newer_version._get_wrapper_for_model(instruction.enum)
+
+        return CadwynEnumMembersWereAddedChangelogEntry(
+            enum=enum.name,
+            members=[CadwynEnumMember(name=name, value=value) for name, value in enum.members.items()],
+        )
+    elif isinstance(instruction, EnumHadMembersInstruction):
+        new_enum = generator_from_newer_version[instruction.enum]
+        old_enum = generator_from_older_version[instruction.enum]
+
+        return CadwynEnumMembersWereChangedChangelogEntry(
+            enum=new_enum.__name__,
+            member_changes=[
+                CadwynAttributeChange(
+                    name=name,
+                    old_value=old_enum.__members__.get(name),
+                    new_value=new_enum.__members__.get(name),
                     status=CadwynAttributeChangeStatus.changed
-                    if key in newer_field_openapi
+                    if name in new_enum.__members__
                     else CadwynAttributeChangeStatus.removed,
-                    old_value=old_value,
-                    new_value=newer_field_openapi.get(key),
                 )
-                for key, old_value in older_field_openapi.items()
-                if old_value != newer_field_openapi.get(key)
-            ]
-            attribute_changes += [
-                CadwynAttributeChange(
-                    name=key,
-                    status=CadwynAttributeChangeStatus.added,
-                    old_value=None,
-                    new_value=new_value,
-                )
-                for key, new_value in newer_field_openapi.items()
-                if key not in older_field_openapi
-            ]
+                for name in instruction.members
+            ],
+        )
+    elif isinstance(instruction, SchemaHadInstruction):
+        model = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
 
-            return CadwynFieldAttributesWereChangedChangelogEntry(
-                models=_get_affected_model_names(instruction, generator_from_newer_version, schemas_from_older_version),
-                field=old_field_name,
-                attribute_changes=attribute_changes,
-            )
-        case EnumDidntHaveMembersInstruction():
-            enum = generator_from_newer_version._get_wrapper_for_model(instruction.enum)
+        return CadwynSchemaWasChangedChangelogEntry(
+            model=instruction.name, modified_attributes=CadwynModelModifiedAttributes(name=model.name)
+        )
+    elif isinstance(instruction, FieldExistedAsInstruction):
+        affected_model_names = _get_affected_model_names(
+            instruction, generator_from_newer_version, schemas_from_older_version
+        )
+        return CadwynSchemaFieldWasRemovedChangelogEntry(models=affected_model_names, field=instruction.name)
+    elif isinstance(instruction, FieldDidntExistInstruction):
+        model = generator_from_newer_version[instruction.schema]
+        affected_model_names = _get_affected_model_names(
+            instruction, generator_from_newer_version, schemas_from_older_version
+        )
 
-            return CadwynEnumMembersWereAddedChangelogEntry(
-                enum=enum.name,
-                members=[CadwynEnumMember(name=name, value=value) for name, value in enum.members.items()],
-            )
-        case EnumHadMembersInstruction():
-            new_enum = generator_from_newer_version[instruction.enum]
-            old_enum = generator_from_older_version[instruction.enum]
-
-            return CadwynEnumMembersWereChangedChangelogEntry(
-                enum=new_enum.__name__,
-                member_changes=[
-                    CadwynAttributeChange(
-                        name=name,
-                        old_value=old_enum.__members__.get(name),
-                        new_value=new_enum.__members__.get(name),
-                        status=CadwynAttributeChangeStatus.changed
-                        if name in new_enum.__members__
-                        else CadwynAttributeChangeStatus.removed,
-                    )
-                    for name in instruction.members
-                ],
-            )
-        case SchemaHadInstruction():
-            model = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
-
-            return CadwynSchemaWasChangedChangelogEntry(
-                model=instruction.name, modified_attributes=CadwynModelModifiedAttributes(name=model.name)
-            )
-        case FieldExistedAsInstruction():
-            affected_model_names = _get_affected_model_names(
-                instruction, generator_from_newer_version, schemas_from_older_version
-            )
-            return CadwynSchemaFieldWasRemovedChangelogEntry(models=affected_model_names, field=instruction.name)
-        case FieldDidntExistInstruction():
-            model = generator_from_newer_version[instruction.schema]
-            affected_model_names = _get_affected_model_names(
-                instruction, generator_from_newer_version, schemas_from_older_version
-            )
-
-            return CadwynSchemaFieldWasAddedChangelogEntry(
-                models=affected_model_names,
-                field=instruction.name,
-                field_info=_get_openapi_representation_of_a_field(model, instruction.name),
-            )
-        case _:  # pragma: no cover
-            _logger.warning(
-                "Encountered an unknown instruction. "
-                "This should not have happened. "
-                "Please, contact the author and show him this message and your version bundle: %s.",
-                instruction,
-            )
-            return None
+        return CadwynSchemaFieldWasAddedChangelogEntry(
+            models=affected_model_names,
+            field=instruction.name,
+            field_info=_get_openapi_representation_of_a_field(model, instruction.name),
+        )
+    else:  # pragma: no cover
+        _logger.warning(
+            "Encountered an unknown instruction. "
+            "This should not have happened. "
+            "Please, contact the author and show him this message and your version bundle: %s.",
+            instruction,
+        )
+        return None

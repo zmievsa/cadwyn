@@ -8,7 +8,7 @@ from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum
-from typing import Any, ClassVar, ParamSpec, TypeAlias, TypeVar
+from typing import ClassVar, Union
 
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -23,7 +23,7 @@ from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
-from typing_extensions import assert_never, deprecated
+from typing_extensions import Any, ParamSpec, TypeAlias, TypeVar, assert_never, deprecated, get_args
 
 from cadwyn._utils import classproperty
 from cadwyn.exceptions import (
@@ -43,22 +43,18 @@ from .data import (
     _AlterResponseBySchemaInstruction,
     _BaseAlterResponseInstruction,
 )
-from .endpoints import AlterEndpointSubInstruction
-from .enums import AlterEnumSubInstruction
-from .schemas import AlterSchemaSubInstruction, SchemaHadInstruction
+from .endpoints import AlterEndpointSubInstruction, AlterEndpointSubInstructionArgs
+from .enums import AlterEnumSubInstruction, AlterEnumSubInstructionArgs
+from .schemas import AlterSchemaSubInstruction, AlterSchemaSubInstructionArgs, SchemaHadInstruction
 
 _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
 _CADWYN_RESPONSE_PARAM_NAME = "cadwyn_response_param"
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
-PossibleInstructions: TypeAlias = (
-    AlterSchemaSubInstruction
-    | AlterEndpointSubInstruction
-    | AlterEnumSubInstruction
-    | SchemaHadInstruction
-    | staticmethod
-)
-APIVersionVarType: TypeAlias = ContextVar[VersionType | None] | ContextVar[VersionType]
+PossibleInstructions: TypeAlias = Union[
+    AlterSchemaSubInstruction, AlterEndpointSubInstruction, AlterEnumSubInstruction, SchemaHadInstruction, staticmethod
+]
+APIVersionVarType: TypeAlias = Union[ContextVar[Union[VersionType, None]], ContextVar[VersionType]]
 IdentifierPythonPath = str
 
 
@@ -66,7 +62,7 @@ class VersionChange:
     description: ClassVar[str] = Sentinel
     is_hidden_from_changelog: bool = False
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
-    alter_schema_instructions: ClassVar[list[AlterSchemaSubInstruction | SchemaHadInstruction]] = Sentinel
+    alter_schema_instructions: ClassVar[list[Union[AlterSchemaSubInstruction, SchemaHadInstruction]]] = Sentinel
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
     alter_endpoint_instructions: ClassVar[list[AlterEndpointSubInstruction]] = Sentinel
     alter_request_by_schema_instructions: ClassVar[dict[type[BaseModel], list[_AlterRequestBySchemaInstruction]]] = (
@@ -75,7 +71,7 @@ class VersionChange:
     alter_request_by_path_instructions: ClassVar[dict[str, list[_AlterRequestByPathInstruction]]] = Sentinel
     alter_response_by_schema_instructions: ClassVar[dict[type, list[_AlterResponseBySchemaInstruction]]] = Sentinel
     alter_response_by_path_instructions: ClassVar[dict[str, list[_AlterResponseByPathInstruction]]] = Sentinel
-    _bound_version_bundle: "VersionBundle | None"
+    _bound_version_bundle: "Union[VersionBundle, None]"
 
     def __init_subclass__(cls, _abstract: bool = False) -> None:
         super().__init_subclass__()
@@ -112,11 +108,13 @@ class VersionChange:
         cls.alter_response_by_schema_instructions = defaultdict(list)
         cls.alter_response_by_path_instructions = defaultdict(list)
         for alter_instruction in cls.instructions_to_migrate_to_previous_version:
-            if isinstance(alter_instruction, SchemaHadInstruction | AlterSchemaSubInstruction):
+            if isinstance(alter_instruction, SchemaHadInstruction) or isinstance(  # noqa: SIM101
+                alter_instruction, AlterSchemaSubInstructionArgs
+            ):
                 cls.alter_schema_instructions.append(alter_instruction)
-            elif isinstance(alter_instruction, AlterEnumSubInstruction):
+            elif isinstance(alter_instruction, AlterEnumSubInstructionArgs):
                 cls.alter_enum_instructions.append(alter_instruction)
-            elif isinstance(alter_instruction, AlterEndpointSubInstruction):
+            elif isinstance(alter_instruction, AlterEndpointSubInstructionArgs):
                 cls.alter_endpoint_instructions.append(alter_instruction)
             elif isinstance(alter_instruction, staticmethod):  # pragma: no cover
                 raise NotImplementedError(f'"{alter_instruction}" is an unacceptable version change instruction')
@@ -139,17 +137,19 @@ class VersionChange:
                 f"Attribute 'instructions_to_migrate_to_previous_version' must be a sequence in '{cls.__name__}'.",
             )
         for instruction in cls.instructions_to_migrate_to_previous_version:
-            if not isinstance(instruction, PossibleInstructions):
+            if not isinstance(instruction, get_args(PossibleInstructions)):
                 raise CadwynStructureError(
                     f"Instruction '{instruction}' is not allowed. Please, use the correct instruction types",
                 )
         for attr_name, attr_value in cls.__dict__.items():
             if not isinstance(
                 attr_value,
-                _AlterRequestBySchemaInstruction
-                | _AlterRequestByPathInstruction
-                | _AlterResponseBySchemaInstruction
-                | _AlterResponseByPathInstruction,
+                (
+                    _AlterRequestBySchemaInstruction,
+                    _AlterRequestByPathInstruction,
+                    _AlterResponseBySchemaInstruction,
+                    _AlterResponseByPathInstruction,
+                ),
             ) and attr_name not in {
                 "description",
                 "side_effects",
@@ -201,7 +201,7 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
 
 
 class Version:
-    def __init__(self, value: str | date, *changes: type[VersionChange]) -> None:
+    def __init__(self, value: Union[str, date], *changes: type[VersionChange]) -> None:
         super().__init__()
 
         if isinstance(value, date):
@@ -249,10 +249,10 @@ def get_cls_pythonpath(cls: type) -> IdentifierPythonPath:
 class VersionBundle:
     def __init__(
         self,
-        latest_version_or_head_version: Version | HeadVersion,
+        latest_version_or_head_version: Union[Version, HeadVersion],
         /,
         *other_versions: Version,
-        api_version_var: ContextVar[VersionType | None] | None = None,
+        api_version_var: Union[ContextVar[Union[VersionType, None]], None] = None,
     ) -> None:
         super().__init__()
 
@@ -342,7 +342,7 @@ class VersionBundle:
 
     async def _migrate_request(
         self,
-        body_type: type[BaseModel] | None,
+        body_type: Union[type[BaseModel], None],
         head_dependant: Dependant,
         path: str,
         request: FastapiRequest,
@@ -353,7 +353,7 @@ class VersionBundle:
         *,
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
-        background_tasks: BackgroundTasks | None,
+        background_tasks: Union[BackgroundTasks, None],
     ) -> dict[str, Any]:
         method = request.method
 
@@ -417,22 +417,22 @@ class VersionBundle:
     # TODO (https://github.com/zmievsa/cadwyn/issues/113): Refactor this function and all functions it calls.
     def _versioned(
         self,
-        head_body_field: type[BaseModel] | None,
-        module_body_field_name: str | None,
+        head_body_field: Union[type[BaseModel], None],
+        module_body_field_name: Union[str, None],
         route: APIRoute,
         head_route: APIRoute,
         dependant_for_request_migrations: Dependant,
         *,
         request_param_name: str,
-        background_tasks_param_name: str | None,
+        background_tasks_param_name: Union[str, None],
         response_param_name: str,
-    ) -> Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]:
-        def wrapper(endpoint: Endpoint[_P, _R]) -> Endpoint[_P, _R]:
+    ) -> "Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]":
+        def wrapper(endpoint: "Endpoint[_P, _R]") -> "Endpoint[_P, _R]":
             @functools.wraps(endpoint)
             async def decorator(*args: Any, **kwargs: Any) -> _R:
                 request_param: FastapiRequest = kwargs[request_param_name]
                 response_param: FastapiResponse = kwargs[response_param_name]
-                background_tasks: BackgroundTasks | None = kwargs.get(
+                background_tasks: Union[BackgroundTasks, None] = kwargs.get(
                     background_tasks_param_name,  # pyright: ignore[reportArgumentType]
                 )
                 method = request_param.method
@@ -498,9 +498,9 @@ class VersionBundle:
             kwargs.pop(response_param_name)
         try:
             if is_async_callable(func_to_get_response_from):
-                response_or_response_body: FastapiResponse | object = await func_to_get_response_from(**kwargs)
+                response_or_response_body: Union[FastapiResponse, object] = await func_to_get_response_from(**kwargs)
             else:
-                response_or_response_body: FastapiResponse | object = await run_in_threadpool(
+                response_or_response_body: Union[FastapiResponse, object] = await run_in_threadpool(
                     func_to_get_response_from,
                     **kwargs,
                 )
@@ -520,11 +520,11 @@ class VersionBundle:
             # TODO (https://github.com/zmievsa/cadwyn/issues/126): Add support for migrating `FileResponse`
             # Starlette breaks Liskov Substitution principle and
             # doesn't define `body` for `StreamingResponse` and `FileResponse`
-            if isinstance(response_or_response_body, StreamingResponse | FileResponse):
+            if isinstance(response_or_response_body, (StreamingResponse, FileResponse)):
                 body = None
             elif response_or_response_body.body:
                 if (isinstance(response_or_response_body, JSONResponse) or raised_exception is not None) and isinstance(
-                    response_or_response_body.body, str | bytes
+                    response_or_response_body.body, (str, bytes)
                 ):
                     body = json.loads(response_or_response_body.body)
                 elif isinstance(response_or_response_body.body, bytes):
@@ -609,8 +609,8 @@ class VersionBundle:
 
     async def _convert_endpoint_kwargs_to_version(
         self,
-        head_body_field: type[BaseModel] | None,
-        body_field_alias: str | None,
+        head_body_field: Union[type[BaseModel], None],
+        body_field_alias: Union[str, None],
         head_dependant: Dependant,
         request_param_name: str,
         kwargs: dict[str, Any],
@@ -620,7 +620,7 @@ class VersionBundle:
         *,
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
-        background_tasks: BackgroundTasks | None,
+        background_tasks: Union[BackgroundTasks, None],
     ) -> dict[str, Any]:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
@@ -637,7 +637,7 @@ class VersionBundle:
             and body_field_alias is not None
             and body_field_alias in kwargs
         ):
-            raw_body: BaseModel | None = kwargs.get(body_field_alias)
+            raw_body: Union[BaseModel, None] = kwargs.get(body_field_alias)
             if raw_body is None:  # pragma: no cover # This is likely an impossible case but we would like to be safe
                 body = None
             # It means we have a dict or a list instead of a full model.
@@ -673,7 +673,7 @@ class VersionBundle:
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
 async def _get_body(
-    request: FastapiRequest, body_field: ModelField | None, exit_stack: AsyncExitStack
+    request: FastapiRequest, body_field: Union[ModelField, None], exit_stack: AsyncExitStack
 ):  # pragma: no cover # This is from fastapi
     is_body_form = body_field and isinstance(body_field.field_info, params.Form)
     try:

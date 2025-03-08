@@ -1,22 +1,23 @@
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Union
 
 from fastapi import Response
 from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute
+from typing_extensions import get_args
 
 from cadwyn.exceptions import LintingError
 
-from .._utils import Sentinel
+from .._utils import DATACLASS_SLOTS, Sentinel
 from .common import _HiddenAttributeMixin
 
 HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class EndpointAttributesPayload:
     # Fastapi API routes also have "endpoint" and "dependency_overrides_provider" fields.
     # We do not use them because:
@@ -33,7 +34,7 @@ class EndpointAttributesPayload:
     path: str
     response_model: Any
     status_code: int
-    tags: list[str | Enum]
+    tags: list[Union[str, Enum]]
     # Adding/removing dependencies between versions seems like a bad choice.
     # It makes the system overly complex. Instead, we allow people to
     # overwrite all dependencies of a route at once. Hence you always know exactly
@@ -43,7 +44,7 @@ class EndpointAttributesPayload:
     summary: str
     description: str
     response_description: str
-    responses: dict[int | str, dict[str, Any]]
+    responses: dict[Union[int, str], dict[str, Any]]
     deprecated: bool
     methods: set[str]
     operation_id: str
@@ -55,47 +56,49 @@ class EndpointAttributesPayload:
     generate_unique_id_function: Callable[[APIRoute], str]
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class EndpointHadInstruction(_HiddenAttributeMixin):
     endpoint_path: str
     endpoint_methods: set[str]
-    endpoint_func_name: str | None
+    endpoint_func_name: Union[str, None]
     attributes: EndpointAttributesPayload
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class EndpointExistedInstruction(_HiddenAttributeMixin):
     endpoint_path: str
     endpoint_methods: set[str]
-    endpoint_func_name: str | None
+    endpoint_func_name: Union[str, None]
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class EndpointDidntExistInstruction(_HiddenAttributeMixin):
     endpoint_path: str
     endpoint_methods: set[str]
-    endpoint_func_name: str | None
+    endpoint_func_name: Union[str, None]
 
 
-@dataclass(slots=True)
+@dataclass(**DATACLASS_SLOTS)
 class EndpointInstructionFactory:
     endpoint_path: str
     endpoint_methods: set[str]
-    endpoint_func_name: str | None
+    endpoint_func_name: Union[str, None]
 
     @property
     def didnt_exist(self) -> EndpointDidntExistInstruction:
         return EndpointDidntExistInstruction(
-            self.endpoint_path,
-            self.endpoint_methods,
+            is_hidden_from_changelog=False,
+            endpoint_path=self.endpoint_path,
+            endpoint_methods=self.endpoint_methods,
             endpoint_func_name=self.endpoint_func_name,
         )
 
     @property
     def existed(self) -> EndpointExistedInstruction:
         return EndpointExistedInstruction(
-            self.endpoint_path,
-            self.endpoint_methods,
+            is_hidden_from_changelog=False,
+            endpoint_path=self.endpoint_path,
+            endpoint_methods=self.endpoint_methods,
             endpoint_func_name=self.endpoint_func_name,
         )
 
@@ -105,12 +108,12 @@ class EndpointInstructionFactory:
         path: str = Sentinel,
         response_model: Any = Sentinel,
         status_code: int = Sentinel,
-        tags: list[str | Enum] = Sentinel,
+        tags: list[Union[str, Enum]] = Sentinel,
         dependencies: Sequence[Depends] = Sentinel,
         summary: str = Sentinel,
         description: str = Sentinel,
         response_description: str = Sentinel,
-        responses: dict[int | str, dict[str, Any]] = Sentinel,
+        responses: dict[Union[int, str], dict[str, Any]] = Sentinel,
         deprecated: bool = Sentinel,
         methods: list[str] = Sentinel,
         operation_id: str = Sentinel,
@@ -122,6 +125,7 @@ class EndpointInstructionFactory:
         generate_unique_id_function: Callable[[APIRoute], str] = Sentinel,
     ):
         return EndpointHadInstruction(
+            is_hidden_from_changelog=False,
             endpoint_path=self.endpoint_path,
             endpoint_methods=self.endpoint_methods,
             endpoint_func_name=self.endpoint_func_name,
@@ -148,7 +152,7 @@ class EndpointInstructionFactory:
         )
 
 
-def endpoint(path: str, methods: list[str], /, *, func_name: str | None = None) -> EndpointInstructionFactory:
+def endpoint(path: str, methods: list[str], /, *, func_name: Union[str, None] = None) -> EndpointInstructionFactory:
     _validate_that_strings_are_valid_http_methods(methods)
 
     return EndpointInstructionFactory(path, set(methods), func_name)
@@ -164,4 +168,5 @@ def _validate_that_strings_are_valid_http_methods(methods: Collection[str]):
         )
 
 
-AlterEndpointSubInstruction = EndpointDidntExistInstruction | EndpointExistedInstruction | EndpointHadInstruction
+AlterEndpointSubInstruction = Union[EndpointDidntExistInstruction, EndpointExistedInstruction, EndpointHadInstruction]
+AlterEndpointSubInstructionArgs = get_args(AlterEndpointSubInstruction)

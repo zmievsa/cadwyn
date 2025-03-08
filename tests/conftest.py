@@ -4,7 +4,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 import pytest
 from fastapi import APIRouter, FastAPI
@@ -48,8 +48,8 @@ class TestClientWithHardcodedAPIVersion(CadwynTestClient):
     def __init__(
         self,
         *args,
-        api_version_var: ContextVar | None = None,
-        api_version: str | None | object = Undefined,
+        api_version_var: Union[ContextVar, None] = None,
+        api_version: Union[str, None, object] = Undefined,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -65,7 +65,7 @@ class TestClientWithHardcodedAPIVersion(CadwynTestClient):
 def client(
     router: APIRouter,
     api_version: Any = Undefined,
-    api_version_var: ContextVar[str | None] | None = None,
+    api_version_var: Union[ContextVar[Union[str, None]], None] = None,
 ):
     app = FastAPI()
     app.include_router(router)
@@ -86,14 +86,14 @@ class CreateRuntimeSchemas:
 
 @fixture_class(name="create_versioned_app")
 class CreateVersionedApp:
-    api_version_var: ContextVar[str | None]
+    api_version_var: ContextVar[Union[str, None]]
     router: VersionedAPIRouter
 
     def __call__(
         self,
         *version_changes: type[VersionChange],
         head_version_changes: Sequence[type[VersionChange]] = (),
-        router: VersionedAPIRouter | None = None,
+        router: Union[VersionedAPIRouter, None] = None,
     ) -> Cadwyn:
         router = router or self.router
         app = Cadwyn(
@@ -118,13 +118,13 @@ def versions(*version_changes: type[VersionChange]) -> list[Version]:
 @fixture_class(name="create_versioned_clients")
 class CreateVersionedClients:
     create_versioned_app: CreateVersionedApp
-    api_version_var: ContextVar[str | None]
+    api_version_var: ContextVar[Union[str, None]]
 
     def __call__(
         self,
         *version_changes: type[VersionChange],
         head_version_changes: Sequence[type[VersionChange]] = (),
-        router: VersionedAPIRouter | None = None,
+        router: Union[VersionedAPIRouter, None] = None,
     ) -> dict[str, CadwynTestClient]:
         app = self.create_versioned_app(*version_changes, head_version_changes=head_version_changes, router=router)
         return {
@@ -134,10 +134,9 @@ class CreateVersionedClients:
 
 
 def version_change(
-    *instructions: SchemaHadInstruction
-    | AlterSchemaSubInstruction
-    | AlterEndpointSubInstruction
-    | AlterEnumSubInstruction,
+    *instructions: Union[
+        SchemaHadInstruction, AlterSchemaSubInstruction, AlterEndpointSubInstruction, AlterEnumSubInstruction
+    ],
     **body_items: Any,
 ) -> type[VersionChange]:
     return type(VersionChange)(

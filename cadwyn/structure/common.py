@@ -1,8 +1,10 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import ParamSpec, TypeAlias, TypeVar
 
 from pydantic import BaseModel
+from typing_extensions import ParamSpec, TypeAlias, TypeVar
+
+from cadwyn._utils import DATACLASS_KW_ONLY, DATACLASS_SLOTS
 
 VersionedModel = BaseModel
 VersionType: TypeAlias = str
@@ -11,6 +13,6 @@ _R = TypeVar("_R")
 Endpoint: TypeAlias = Callable[_P, _R]
 
 
-@dataclass(slots=True, kw_only=True)
+@dataclass(**DATACLASS_SLOTS, **DATACLASS_KW_ONLY)
 class _HiddenAttributeMixin:
-    is_hidden_from_changelog: bool = False
+    is_hidden_from_changelog: bool

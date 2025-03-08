@@ -7,6 +7,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
+    Union,
     cast,
 )
 
@@ -21,7 +22,7 @@ from pydantic import BaseModel
 from starlette.routing import BaseRoute
 from typing_extensions import TypeVar, assert_never
 
-from cadwyn._utils import Sentinel
+from cadwyn._utils import DATACLASS_SLOTS, Sentinel
 from cadwyn.exceptions import (
     CadwynError,
     RouteAlreadyExistsError,
@@ -54,13 +55,13 @@ _RouteT = TypeVar("_RouteT", bound=BaseRoute)
 _DELETED_ROUTE_TAG = "_CADWYN_DELETED_ROUTE"
 
 
-@dataclass(slots=True, frozen=True, eq=True)
+@dataclass(**DATACLASS_SLOTS, frozen=True, eq=True)
 class _EndpointInfo:
     endpoint_path: str
     endpoint_methods: frozenset[str]
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(**DATACLASS_SLOTS, frozen=True)
 class GeneratedRouters(Generic[_R, _WR]):
     endpoints: dict[VersionType, _R]
     webhooks: dict[VersionType, _WR]
@@ -70,7 +71,7 @@ def generate_versioned_routers(
     router: _R,
     versions: VersionBundle,
     *,
-    webhooks: _WR | None = None,
+    webhooks: Union[_WR, None] = None,
 ) -> GeneratedRouters[_R, _WR]:
     if webhooks is None:
         webhooks = cast(_WR, APIRouter())
@@ -275,7 +276,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
     # TODO (https://github.com/zmievsa/cadwyn/issues/28): Simplify
     def _apply_endpoint_changes_to_router(  # noqa: C901
         self,
-        routes: list[BaseRoute] | list[APIRoute],
+        routes: Union[list[BaseRoute], list[APIRoute]],
         version: Version,
     ):
         for version_change in version.changes:
@@ -409,8 +410,8 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
 def _add_data_migrations_to_route(
     route: APIRoute,
     head_route: Any,
-    template_body_field: type[BaseModel] | None,
-    template_body_field_name: str | None,
+    template_body_field: Union[type[BaseModel], None],
+    template_body_field_name: Union[str, None],
     dependant_for_request_migrations: "Dependant",
     versions: VersionBundle,
 ):
@@ -469,7 +470,7 @@ def _get_routes(
     routes: Sequence[BaseRoute],
     endpoint_path: str,
     endpoint_methods: set[str],
-    endpoint_func_name: str | None = None,
+    endpoint_func_name: Union[str, None] = None,
     *,
     is_deleted: bool = False,
 ) -> list[fastapi.routing.APIRoute]:
@@ -490,7 +491,7 @@ def _get_routes(
 def _get_route_from_func(
     routes: Sequence[BaseRoute],
     endpoint: Endpoint,
-) -> fastapi.routing.APIRoute | None:
+) -> Union[fastapi.routing.APIRoute, None]:
     for route in routes:
         if isinstance(route, fastapi.routing.APIRoute) and (route.endpoint == endpoint):
             return route
