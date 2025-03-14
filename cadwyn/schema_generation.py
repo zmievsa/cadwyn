@@ -264,10 +264,20 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
 
         wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
         validators[decorator_wrapper.cls_var_name] = wrapped_validator
+
+    def _rebuild_annotated(name: str):
+        if field_info := model.model_fields.get(name):
+            if not field_info.metadata:
+                return field_info.annotation
+
+            if sys.version_info >= (3, 13):
+                return Annotated.__getitem__((field_info.annotation, *field_info.metadata))  # pyright: ignore[reportAttributeAccessIssue]
+            else:
+                return Annotated.__class_getitem__((field_info.annotation, *field_info.metadata))  # pyright: ignore[reportAttributeAccessIssue]
+        return model.__annotations__[name]  # pragma: no cover
+
     annotations = {
-        name: value
-        if not isinstance(value, str)
-        else model.model_fields[name].annotation or model.__annotations__[name]
+        name: value if not isinstance(value, str) else _rebuild_annotated(name)
         for name, value in model.__annotations__.items()
     }
 
