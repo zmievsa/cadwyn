@@ -20,6 +20,7 @@ import pydantic
 import pydantic._internal._decorators
 import typing_extensions
 from fastapi import Response
+from fastapi.dependencies.utils import is_async_gen_callable, is_coroutine_callable, is_gen_callable
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
@@ -76,6 +77,7 @@ from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPON
 
 if TYPE_CHECKING:
     from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
+
 
 if sys.version_info >= (3, 10):
     from typing import _BaseGenericAlias  # pyright: ignore[reportAttributeAccessIssue]
@@ -486,6 +488,7 @@ class _CallableWrapper:
         self._original_callable = original_callable
         if not is_regular_function(original_callable):
             original_callable = original_callable.__call__
+
         functools.update_wrapper(self, original_callable)
 
     @property
@@ -508,6 +511,17 @@ class _CallableWrapper:
 class _AsyncCallableWrapper(_CallableWrapper):
     async def __call__(self, *args: Any, **kwargs: Any):
         return await self._original_callable(*args, **kwargs)
+
+
+class _GeneratorCallableWrapper(_CallableWrapper):
+    def __call__(self, *args: Any, **kwargs: Any):
+        yield from self._original_callable(*args, **kwargs)
+
+
+class _AsyncGeneratorCallableWrapper(_CallableWrapper):
+    async def __call__(self, *args: Any, **kwargs: Any):
+        async for value in self._original_callable(*args, **kwargs):
+            yield value
 
 
 @final
@@ -690,8 +704,12 @@ class _AnnotationTransformer:
             actual_call = call.__call__
         else:
             actual_call = call
-        if inspect.iscoroutinefunction(actual_call):
+        if is_async_gen_callable(actual_call):
+            return _AsyncGeneratorCallableWrapper(call)
+        elif is_coroutine_callable(actual_call):
             return _AsyncCallableWrapper(call)
+        elif is_gen_callable(actual_call):
+            return _GeneratorCallableWrapper(call)
         else:
             return _CallableWrapper(call)
 

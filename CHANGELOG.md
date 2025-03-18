@@ -5,6 +5,16 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.1.2]
+
+### Fixed
+
+* Generators not being called when fastapi validates the initial request
+
+### Added
+
+* `cadwyn.current_dependency_solver` function to check whether cadwyn or fastapi is currently solving dependencies. It can be used as a dependency for versioned endpoints like so: `current_dependency_solver: Annotated[Literal["fastapi", "cadwyn"], Depends(current_dependency_solver)]`. If your dependency has side effects, you would likely want to only run it once per request. If you want to run it once we migrated the request to the latest version, you should only run it when `current_dependency_solver` is `"cadwyn"`. If you want your dependency to run at the very beginning of handling the request, you should only run it when `current_dependency_solver` is `"fastapi"`.
+
 ## [5.1.1]
 
 ### Fixed

@@ -13,12 +13,14 @@ from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.security.http import HTTPBasic
 from fastapi.testclient import TestClient
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
 from typing_extensions import Any, NewType, TypeAlias, get_args
 
 from cadwyn import VersionBundle, VersionedAPIRouter
+from cadwyn.dependencies import current_dependency_solver
 from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.schema_generation import generate_versioned_models
@@ -1203,6 +1205,60 @@ def test__basic_router_generation__subclass_of_security_class_based_dependency_w
         {"foo": 3},  # client_2001
         {"foo": 3},  # client_2001
     ]
+
+
+def test__router_generation__with_generator_dependencies(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    dependency_cache = []
+
+    async def my_async_dependency(current_dependency_runner: Annotated[str, Depends(current_dependency_solver)]):
+        dependency_cache.append(f"{current_dependency_runner} async dependency start")
+        yield "async dependency"
+        dependency_cache.append(f"{current_dependency_runner} async dependency end")
+
+    def my_sync_dependency(current_dependency_runner: Annotated[str, Depends(current_dependency_solver)]):
+        dependency_cache.append(f"{current_dependency_runner} sync dependency start")
+        yield "sync dependency"
+        dependency_cache.append(f"{current_dependency_runner} sync dependency end")
+
+    @router.get("/test")
+    async def test(
+        my_async_dep: Annotated[str, Depends(my_async_dependency)],
+        my_sync_dep: Annotated[str, Depends(my_sync_dependency)],
+    ):
+        assert my_async_dep == "async dependency"
+        assert my_sync_dep == "sync dependency"
+
+    client = TestClient(create_versioned_app(version_change()))
+    assert client.get("/test", headers={"x-api-version": "2000-01-01"}).status_code == 200
+    assert dependency_cache == snapshot(
+        [
+            "fastapi async dependency start",
+            "fastapi sync dependency start",
+            "cadwyn async dependency start",
+            "cadwyn sync dependency start",
+            "cadwyn sync dependency end",
+            "cadwyn async dependency end",
+            "fastapi sync dependency end",
+            "fastapi async dependency end",
+        ]
+    )
+    dependency_cache.clear()
+    assert client.get("/test", headers={"x-api-version": "2001-01-01"}).status_code == 200
+    assert dependency_cache == snapshot(
+        [
+            "fastapi async dependency start",
+            "fastapi sync dependency start",
+            "cadwyn async dependency start",
+            "cadwyn sync dependency start",
+            "cadwyn sync dependency end",
+            "cadwyn async dependency end",
+            "fastapi sync dependency end",
+            "fastapi async dependency end",
+        ]
+    )
 
 
 ######################
