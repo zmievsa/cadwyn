@@ -1222,7 +1222,7 @@ def test__router_generation__with_generator_dependencies(
         yield "sync dependency"
         dependency_cache.append("sync dependency end")
 
-    @router.api_route("/test")
+    @router.get("/test")
     async def test(
         my_async_dep: Annotated[str, Depends(my_async_dependency)],
         my_sync_dep: Annotated[str, Depends(my_sync_dependency)],
