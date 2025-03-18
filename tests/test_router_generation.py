@@ -20,6 +20,7 @@ from starlette.responses import FileResponse
 from typing_extensions import Any, NewType, TypeAlias, get_args
 
 from cadwyn import VersionBundle, VersionedAPIRouter
+from cadwyn.dependencies import current_dependency_solver
 from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.schema_generation import generate_versioned_models
@@ -1212,15 +1213,15 @@ def test__router_generation__with_generator_dependencies(
 ):
     dependency_cache = []
 
-    async def my_async_dependency():
-        dependency_cache.append("async dependency start")
+    async def my_async_dependency(current_dependency_runner: Annotated[str, Depends(current_dependency_solver)]):
+        dependency_cache.append(f"{current_dependency_runner} async dependency start")
         yield "async dependency"
-        dependency_cache.append("async dependency end")
+        dependency_cache.append(f"{current_dependency_runner} async dependency end")
 
-    def my_sync_dependency():
-        dependency_cache.append("sync dependency start")
+    def my_sync_dependency(current_dependency_runner: Annotated[str, Depends(current_dependency_solver)]):
+        dependency_cache.append(f"{current_dependency_runner} sync dependency start")
         yield "sync dependency"
-        dependency_cache.append("sync dependency end")
+        dependency_cache.append(f"{current_dependency_runner} sync dependency end")
 
     @router.get("/test")
     async def test(
@@ -1232,17 +1233,30 @@ def test__router_generation__with_generator_dependencies(
 
     client = TestClient(create_versioned_app(version_change()))
     assert client.get("/test", headers={"x-api-version": "2000-01-01"}).status_code == 200
+    assert dependency_cache == snapshot(
+        [
+            "fastapi async dependency start",
+            "fastapi sync dependency start",
+            "cadwyn async dependency start",
+            "cadwyn sync dependency start",
+            "cadwyn sync dependency end",
+            "cadwyn async dependency end",
+            "fastapi sync dependency end",
+            "fastapi async dependency end",
+        ]
+    )
+    dependency_cache.clear()
     assert client.get("/test", headers={"x-api-version": "2001-01-01"}).status_code == 200
     assert dependency_cache == snapshot(
         [
-            "async dependency start",
-            "sync dependency start",
-            "sync dependency end",
-            "async dependency end",
-            "async dependency start",
-            "sync dependency start",
-            "sync dependency end",
-            "async dependency end",
+            "fastapi async dependency start",
+            "fastapi sync dependency start",
+            "cadwyn async dependency start",
+            "cadwyn sync dependency start",
+            "cadwyn sync dependency end",
+            "cadwyn async dependency end",
+            "fastapi sync dependency end",
+            "fastapi async dependency end",
         ]
     )
 
