@@ -13,6 +13,7 @@ from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.security.http import HTTPBasic
 from fastapi.testclient import TestClient
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
@@ -1203,6 +1204,47 @@ def test__basic_router_generation__subclass_of_security_class_based_dependency_w
         {"foo": 3},  # client_2001
         {"foo": 3},  # client_2001
     ]
+
+
+def test__router_generation__with_generator_dependencies(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    dependency_cache = []
+
+    async def my_async_dependency():
+        dependency_cache.append("async dependency start")
+        yield "async dependency"
+        dependency_cache.append("async dependency end")
+
+    def my_sync_dependency():
+        dependency_cache.append("sync dependency start")
+        yield "sync dependency"
+        dependency_cache.append("sync dependency end")
+
+    @router.api_route("/test")
+    async def test(
+        my_async_dep: Annotated[str, Depends(my_async_dependency)],
+        my_sync_dep: Annotated[str, Depends(my_sync_dependency)],
+    ):
+        assert my_async_dep == "async dependency"
+        assert my_sync_dep == "sync dependency"
+
+    client = TestClient(create_versioned_app(version_change()))
+    assert client.get("/test", headers={"x-api-version": "2000-01-01"}).status_code == 200
+    assert client.get("/test", headers={"x-api-version": "2001-01-01"}).status_code == 200
+    assert dependency_cache == snapshot(
+        [
+            "async dependency start",
+            "sync dependency start",
+            "sync dependency end",
+            "async dependency end",
+            "async dependency start",
+            "sync dependency start",
+            "sync dependency end",
+            "async dependency end",
+        ]
+    )
 
 
 ######################
