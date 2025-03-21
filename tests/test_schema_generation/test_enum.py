@@ -11,7 +11,7 @@ from tests.conftest import CreateRuntimeSchemas, serialize_enum, version_change
 
 
 class EmptyEnum(Enum):
-    pass
+    """My docstring"""
 
 
 class EnumWithOneMember(Enum):
@@ -32,6 +32,12 @@ class EnumWithOneMemberAndMethods(Enum):
     @classmethod
     def world(cls) -> int:
         return cls.world_member  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test__enum_had__should_copy_docstring_too(create_runtime_schemas: CreateRuntimeSchemas):
+    models = create_runtime_schemas(version_change(enum(EmptyEnum).had(b=auto())))
+    assert models["2000-01-01"][EmptyEnum].__doc__ == "My docstring"
+    assert models["2001-01-01"][EmptyEnum].__doc__ == "My docstring"
 
 
 def test__enum_had__original_enum_is_empty(create_runtime_schemas: CreateRuntimeSchemas):
