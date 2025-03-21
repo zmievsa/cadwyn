@@ -73,7 +73,8 @@ dev-dependencies = [
     "svcs ~=24.1.0",
     "httpx >=0.26.0",
     "pytest-fixture-classes >=1.0.3",
-    "pytest >=7.2.1",
+    # pytest==8.3.5 has a bug that fails our windows python 3.10 tests
+    "pytest==8.3.4",
     "pytest-cov >=4.0.0",
     "dirty-equals >=0.6.0",
     "uvicorn ~=0.23.0",
