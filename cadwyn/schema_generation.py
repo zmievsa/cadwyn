@@ -1079,6 +1079,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
         initialization_namespace = self._get_initialization_namespace_for_enum(self.cls) | raw_member_map
         for attr_name, attr in initialization_namespace.items():
             enum_dict[attr_name] = attr
+        enum_dict["__doc__"] = self.cls.__doc__
         model_copy = cast(type[_T_ENUM], type(self.name, self.cls.__bases__, enum_dict))
         model_copy.__cadwyn_original_model__ = self.cls  # pyright: ignore[reportAttributeAccessIssue]
         return model_copy

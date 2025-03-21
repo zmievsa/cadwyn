@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.1.3]
+
+### Fixed
+
+* `__doc__` attribute is now copied from the original enum to the generated enum
+
 ## [5.1.2]
 
 ### Fixed
