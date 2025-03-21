@@ -12,6 +12,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 * `__doc__` attribute is now copied from the original enum to the generated enum
 * Python 3.12 type aliases and their typing_extensions backports are now supported (including `pydantic.JsonValue` and other `typing_extensions.TypeAliasType` instances)
 * The bug when solve_dependencies error on the migration of a request to the latest version responds with a non-json serializable error and cadwyn showed a failed to serialize error instead of the actual error
+* Updated minimum fastapi version to 0.112.4 because embed_body_fields was added in 0.112.4
 
 ## [5.1.2]
 
