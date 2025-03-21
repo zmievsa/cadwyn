@@ -40,6 +40,7 @@ from typing_extensions import (
     NewType,
     Self,
     TypeAlias,
+    TypeAliasType,
     TypeVar,
     _AnnotatedAlias,
     assert_never,
@@ -100,6 +101,7 @@ PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
     ModelSerializerDecoratorInfo: pydantic.model_serializer,
     ComputedFieldInfo: pydantic.computed_field,
 }
+_PYDANTIC_ALL_EXPORTED_NAMES = set(pydantic.__all__)
 
 
 VALIDATOR_CONFIG_KEY = "__validators__"
@@ -580,6 +582,17 @@ class _AnnotationTransformer:
     def _change_version_of_a_non_container_annotation(self, annotation: Any) -> Any:
         if isinstance(annotation, (_BaseGenericAlias, types.GenericAlias)):
             return get_origin(annotation)[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
+        elif isinstance(annotation, TypeAliasType):
+            if (
+                annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
+            ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES:
+                return annotation
+            else:
+                return TypeAliasType(  # pyright: ignore[reportGeneralTypeIssues]
+                    name=annotation.__name__,
+                    value=self.change_version_of_annotation(annotation.__value__),
+                    type_params=self.change_version_of_annotation(annotation.__type_params__),
+                )
         elif isinstance(annotation, fastapi.params.Security):
             return fastapi.params.Security(
                 self.change_version_of_annotation(annotation.dependency),

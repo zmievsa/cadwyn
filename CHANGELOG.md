@@ -10,6 +10,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Fixed
 
 * `__doc__` attribute is now copied from the original enum to the generated enum
+* Python 3.12 type aliases and their typing_extensions backports are now supported (including `pydantic.JsonValue` and other `typing_extensions.TypeAliasType` instances)
 
 ## [5.1.2]
 

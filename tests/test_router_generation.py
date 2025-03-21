@@ -14,10 +14,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.security.http import HTTPBasic
 from fastapi.testclient import TestClient
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
-from typing_extensions import Any, NewType, TypeAlias, get_args
+from typing_extensions import Any, NewType, TypeAlias, TypeAliasType, get_args
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn.dependencies import current_dependency_solver
@@ -800,7 +800,7 @@ def test__router_generation__using_unversioned_models(
     assert routes_2001[3].dependant.body_params[0].type_ is schemas["2001-01-01"][UnversionedSchema3]
 
 
-def test__router_generation__using_weird_typehints(
+def test__router_generation__using_newtype_and_union_typehints(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
 ):
@@ -822,7 +822,7 @@ def test__router_generation__using_weird_typehints(
     assert getattr(routes_2001[1].dependant.body_params[1], TYPE_ATTR) == Union[str, int]
 
 
-def test__router_generation__using_pydantic_typehints__internal_pydantic_typehints_should_work(
+def test__router_generation__using_uploadfile_typehint(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
 ):
@@ -835,6 +835,54 @@ def test__router_generation__using_pydantic_typehints__internal_pydantic_typehin
     )
     assert len(routes_2000) == len(routes_2001) == 2
     # We are intentionally not checking anything here. Our goal is to validate that there is no exception
+
+
+def test__router_generation__using_jsonvalue_typehint(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/test")
+    async def test(param1: JsonValue = Body()):
+        return param1
+
+    clients = create_versioned_clients(
+        version_change(endpoint("/test", ["POST"]).had(response_model=dict[str, str])),
+    )
+    assert clients["2000-01-01"].post("/test", json={"foo": "bar"}).json() == {"foo": "bar"}
+    assert clients["2001-01-01"].post("/test", json={"foo": "bar"}).json() == {"foo": "bar"}
+
+
+def test__router_generation__using_typealias_type_typehint(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    class MySchema(BaseModel):
+        foo: str
+
+    typealias = TypeAliasType("typealias", list[MySchema])  # pyright: ignore[reportGeneralTypeIssues]
+
+    @router.post("/test")
+    async def test(param1: typealias = Body()):
+        return param1
+
+    clients = create_versioned_clients(
+        version_change(schema(MySchema).field("foo").had(name="baz")),
+    )
+    assert clients["2000-01-01"].post("/test", json=[{"foo": "bar"}]).json() == snapshot(
+        {
+            "detail": [
+                {
+                    "type": "missing",
+                    "loc": ["body", 0, "baz"],
+                    "msg": "Field required",
+                    "input": {
+                        "foo": "bar",
+                    },
+                }
+            ]
+        }
+    )
+    assert clients["2001-01-01"].post("/test", json=[{"foo": "bar"}]).json() == [{"foo": "bar"}]
 
 
 def test__router_generation__updating_request_depends(
