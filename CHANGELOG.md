@@ -9,7 +9,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-* Fixed a bug where a custom HTTP exception was not being copied correctly so its unique properties are ignored
+* a bug where a custom HTTP exception was not being copied correctly so its unique properties are ignored
 
 ## [5.1.3]
 
