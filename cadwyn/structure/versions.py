@@ -1,5 +1,6 @@
 import email.message
 import functools
+import http
 import inspect
 import json
 from collections import defaultdict
@@ -8,7 +9,7 @@ from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar, Union
+from typing import TYPE_CHECKING, ClassVar, Union, cast
 
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -616,12 +617,13 @@ class VersionBundle:
                     detail = response_info.body["detail"]
                 else:
                     detail = response_info.body
+                if detail is None:
+                    detail = http.HTTPStatus(response_info.status_code).phrase
+                raised_exception.detail = cast(str, detail)
+                raised_exception.headers = dict(response_info.headers)
+                raised_exception.status_code = response_info.status_code
 
-                raise HTTPException(
-                    status_code=response_info.status_code,
-                    detail=detail,
-                    headers=dict(response_info.headers),
-                )
+                raise raised_exception
             return response_info._response
         return response_info.body
 

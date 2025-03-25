@@ -3,7 +3,7 @@ import re
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from io import StringIO
-from typing import Any, Literal, Union
+from typing import Any, Literal, Optional, Union
 
 import fastapi
 import pytest
@@ -11,6 +11,7 @@ from dirty_equals import IsPartialDict, IsStr
 from fastapi import APIRouter, Body, Cookie, File, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, RootModel
 from starlette.responses import StreamingResponse
 
@@ -32,6 +33,7 @@ from cadwyn.structure.data import RequestInfo, ResponseInfo
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import Version, VersionBundle
 from tests.conftest import (
+    CreateVersionedApp,
     CreateVersionedClients,
     client,
     version_change,
@@ -1226,3 +1228,41 @@ def test__request_and_response_migrations__with_multiple_schemas_in_converters(
         resp_2001 = client_2001.post(f"/{endpoint}", json={"i": ["original_request"]})
         assert resp_2001.status_code == 200
         assert resp_2001.json() == {"i": ["original_request", endpoint]}
+
+
+def test__response_migrations__with_custom_http_exception(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+) -> None:
+    class CustomHTTPException(HTTPException):
+        error_code: Optional[str] = None
+
+        def __init__(self, detail: str, error_code: Optional[str] = None):
+            self.error_code = error_code
+            super().__init__(status_code=400, detail=detail)
+
+    def http_exception_handler(request, exc):
+        # Check if the exception has an error_code attribute
+        error_code = exc.error_code if hasattr(exc, "error_code") else "generic_error"
+
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"code": error_code, "message": exc.detail},
+        )
+
+    # Register exception handler for Cadwyn
+
+    @router.post("/test")
+    async def endpoint():
+        raise CustomHTTPException("Cadwyn error occurred", error_code="cadwyn_error")
+
+    app = create_versioned_app(version_change())
+    app.add_exception_handler(HTTPException, http_exception_handler)
+    with TestClient(app) as client:
+        resp = client.post("/test", headers={"X-API-VERSION": "2000-01-01"})
+        assert resp.status_code == 400
+        assert resp.json() == {"code": "cadwyn_error", "message": "Cadwyn error occurred"}
+
+        resp_2001 = client.post("/test", headers={"X-API-VERSION": "2001-01-01"})
+        assert resp_2001.status_code == 400
+        assert resp_2001.json() == {"code": "cadwyn_error", "message": "Cadwyn error occurred"}
