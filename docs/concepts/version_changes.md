@@ -39,8 +39,7 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 
 versions = VersionBundle(
     HeadVersion(),
-    Version("2023-02-10"),
-    RemoveTaxIDEndpoints,
+    Version("2023-02-10", RemoveTaxIDEndpoints),
     Version("2022-11-16"),
 )
 ```
@@ -64,8 +63,7 @@ from .v2023_02_10 import RemoveTaxIDEndpoints
 
 versions = VersionBundle(
     HeadVersion(),
-    Version("2023-02-10"),
-    RemoveTaxIDEndpoints,
+    Version("2023-02-10", RemoveTaxIDEndpoints),
     Version("2022-11-16"),
 )
 ```
