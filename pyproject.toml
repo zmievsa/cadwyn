@@ -154,6 +154,7 @@ reportMissingSuperCall = true
 reportFunctionMemberAccess = false
 reportCircularImports = true
 reportInvalidTypeForm = false
+reportPrivateImportUsage = false
 
 [tool.pytest.ini_options]
 filterwarnings = [
