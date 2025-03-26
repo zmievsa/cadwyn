@@ -1,5 +1,6 @@
 import email.message
 import functools
+import http
 import inspect
 import json
 from collections import defaultdict
@@ -8,7 +9,7 @@ from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar, Union
+from typing import TYPE_CHECKING, ClassVar, Union, cast
 
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -23,7 +24,7 @@ from fastapi.routing import APIRoute, _prepare_response_content
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
-from typing_extensions import Any, ParamSpec, TypeAlias, TypeVar, assert_never, deprecated, get_args
+from typing_extensions import Any, Literal, ParamSpec, TypeAlias, TypeVar, assert_never, deprecated, get_args
 
 from cadwyn._utils import classproperty
 from cadwyn.exceptions import (
@@ -51,6 +52,11 @@ _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
 _CADWYN_RESPONSE_PARAM_NAME = "cadwyn_response_param"
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+_CURRENT_DEPENDENCY_SOLVER_OPTIONS = Literal["cadwyn", "fastapi"]
+_CURRENT_DEPENDENCY_SOLVER_VAR: ContextVar[_CURRENT_DEPENDENCY_SOLVER_OPTIONS] = ContextVar(
+    "cadwyn_dependencies_dry_run"
+)
+
 PossibleInstructions: TypeAlias = Union[
     AlterSchemaSubInstruction, AlterEndpointSubInstruction, AlterEnumSubInstruction, SchemaHadInstruction, staticmethod
 ]
@@ -276,6 +282,7 @@ class VersionBundle:
 
         if api_version_var is None:
             api_version_var = ContextVar("cadwyn_api_version")
+
         self.version_values = tuple(version.value for version in self.versions)
         self.reversed_version_values = tuple(reversed(self.version_values))
         self.api_version_var = api_version_var
@@ -379,6 +386,8 @@ class VersionBundle:
                             instruction(request_info)
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
+        # This gives us the ability to tell the user whether cadwyn is running its dependencies or FastAPI
+        _CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
         result = await solve_dependencies(
             request=request,
@@ -608,12 +617,13 @@ class VersionBundle:
                     detail = response_info.body["detail"]
                 else:
                     detail = response_info.body
+                if detail is None:
+                    detail = http.HTTPStatus(response_info.status_code).phrase
+                raised_exception.detail = cast(str, detail)
+                raised_exception.headers = dict(response_info.headers)
+                raised_exception.status_code = response_info.status_code
 
-                raise HTTPException(
-                    status_code=response_info.status_code,
-                    detail=detail,
-                    headers=dict(response_info.headers),
-                )
+                raise raised_exception
             return response_info._response
         return response_info.body
 

@@ -5,6 +5,37 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.1.4]
+
+### Fixed
+
+* a bug where a custom HTTP exception was not being copied correctly so its unique properties are ignored
+
+## [5.1.3]
+
+### Fixed
+
+* `__doc__` attribute is now copied from the original enum to the generated enum
+* Python 3.12 type aliases and their typing_extensions backports are now supported (including `pydantic.JsonValue` and other `typing_extensions.TypeAliasType` instances)
+* The bug when solve_dependencies error on the migration of a request to the latest version responds with a non-json serializable error and cadwyn showed a failed to serialize error instead of the actual error
+* Updated minimum fastapi version to 0.112.4 because embed_body_fields was added in 0.112.4
+
+## [5.1.2]
+
+### Fixed
+
+* Generators not being called when fastapi validates the initial request
+
+### Added
+
+* `cadwyn.current_dependency_solver` function to check whether cadwyn or fastapi is currently solving dependencies. It can be used as a dependency for versioned endpoints like so: `current_dependency_solver: Annotated[Literal["fastapi", "cadwyn"], Depends(current_dependency_solver)]`. If your dependency has side effects, you would likely want to only run it once per request. If you want to run it once we migrated the request to the latest version, you should only run it when `current_dependency_solver` is `"cadwyn"`. If you want your dependency to run at the very beginning of handling the request, you should only run it when `current_dependency_solver` is `"fastapi"`.
+
+## [5.1.1]
+
+### Fixed
+
+* Support for `WithJsonSchema` in schema generation
+
 ## [5.1.0]
 
 ### Added

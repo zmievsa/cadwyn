@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, WithJsonSchema
 
 from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
@@ -11,6 +13,8 @@ from cadwyn.structure.versions import Version, VersionBundle, VersionChange
 
 class OuterSchema(BaseModel):
     bar: MySchema
+
+    extra_annotated: Annotated[str, WithJsonSchema({"type": "string", "description": "Hello"})] = ""
 
 
 class MySchema(BaseModel):
@@ -56,7 +60,7 @@ def test__router_generation__using_forwardref_outer_global_schema_in_body():
     unversioned_client = TestClient(app)
     client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
     client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
-    assert client_2000.post("/test2", json={"bar": {"foo": 1}}).json() == {"bar": {"foo": 1}}
-    assert client_2001.post("/test2", json={"bar": {"foo": 1}}).json() == {"bar": {"foo": "1"}}
+    assert client_2000.post("/test2", json={"bar": {"foo": 1}}).json() == {"bar": {"foo": 1}, "extra_annotated": ""}
+    assert client_2001.post("/test2", json={"bar": {"foo": 1}}).json() == {"bar": {"foo": "1"}, "extra_annotated": ""}
     assert unversioned_client.get("/openapi.json?version=2000-01-01").status_code == 200
     assert unversioned_client.get("/openapi.json?version=2001-01-01").status_code == 200

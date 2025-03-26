@@ -20,6 +20,7 @@ import pydantic
 import pydantic._internal._decorators
 import typing_extensions
 from fastapi import Response
+from fastapi.dependencies.utils import is_async_gen_callable, is_coroutine_callable, is_gen_callable
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
@@ -39,6 +40,7 @@ from typing_extensions import (
     NewType,
     Self,
     TypeAlias,
+    TypeAliasType,
     TypeVar,
     _AnnotatedAlias,
     assert_never,
@@ -77,6 +79,7 @@ from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPON
 if TYPE_CHECKING:
     from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
 
+
 if sys.version_info >= (3, 10):
     from typing import _BaseGenericAlias  # pyright: ignore[reportAttributeAccessIssue]
 else:
@@ -98,6 +101,7 @@ PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
     ModelSerializerDecoratorInfo: pydantic.model_serializer,
     ComputedFieldInfo: pydantic.computed_field,
 }
+_PYDANTIC_ALL_EXPORTED_NAMES = set(pydantic.__all__)
 
 
 VALIDATOR_CONFIG_KEY = "__validators__"
@@ -264,10 +268,20 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
 
         wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
         validators[decorator_wrapper.cls_var_name] = wrapped_validator
+
+    def _rebuild_annotated(name: str):
+        if field_info := model.model_fields.get(name):
+            if not field_info.metadata:
+                return field_info.annotation
+
+            if sys.version_info >= (3, 13):
+                return Annotated.__getitem__((field_info.annotation, *field_info.metadata))  # pyright: ignore[reportAttributeAccessIssue]
+            else:
+                return Annotated.__class_getitem__((field_info.annotation, *field_info.metadata))  # pyright: ignore[reportAttributeAccessIssue]
+        return model.__annotations__[name]  # pragma: no cover
+
     annotations = {
-        name: value
-        if not isinstance(value, str)
-        else model.model_fields[name].annotation or model.__annotations__[name]
+        name: value if not isinstance(value, str) else _rebuild_annotated(name)
         for name, value in model.__annotations__.items()
     }
 
@@ -476,6 +490,7 @@ class _CallableWrapper:
         self._original_callable = original_callable
         if not is_regular_function(original_callable):
             original_callable = original_callable.__call__
+
         functools.update_wrapper(self, original_callable)
 
     @property
@@ -498,6 +513,17 @@ class _CallableWrapper:
 class _AsyncCallableWrapper(_CallableWrapper):
     async def __call__(self, *args: Any, **kwargs: Any):
         return await self._original_callable(*args, **kwargs)
+
+
+class _GeneratorCallableWrapper(_CallableWrapper):
+    def __call__(self, *args: Any, **kwargs: Any):
+        yield from self._original_callable(*args, **kwargs)
+
+
+class _AsyncGeneratorCallableWrapper(_CallableWrapper):
+    async def __call__(self, *args: Any, **kwargs: Any):
+        async for value in self._original_callable(*args, **kwargs):
+            yield value
 
 
 @final
@@ -556,6 +582,17 @@ class _AnnotationTransformer:
     def _change_version_of_a_non_container_annotation(self, annotation: Any) -> Any:
         if isinstance(annotation, (_BaseGenericAlias, types.GenericAlias)):
             return get_origin(annotation)[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
+        elif isinstance(annotation, TypeAliasType):
+            if (
+                annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
+            ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES:
+                return annotation
+            else:
+                return TypeAliasType(  # pyright: ignore[reportGeneralTypeIssues]
+                    name=annotation.__name__,
+                    value=self.change_version_of_annotation(annotation.__value__),
+                    type_params=self.change_version_of_annotation(annotation.__type_params__),
+                )
         elif isinstance(annotation, fastapi.params.Security):
             return fastapi.params.Security(
                 self.change_version_of_annotation(annotation.dependency),
@@ -680,8 +717,12 @@ class _AnnotationTransformer:
             actual_call = call.__call__
         else:
             actual_call = call
-        if inspect.iscoroutinefunction(actual_call):
+        if is_async_gen_callable(actual_call):
+            return _AsyncGeneratorCallableWrapper(call)
+        elif is_coroutine_callable(actual_call):
             return _AsyncCallableWrapper(call)
+        elif is_gen_callable(actual_call):
+            return _GeneratorCallableWrapper(call)
         else:
             return _CallableWrapper(call)
 
@@ -1051,6 +1092,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
         initialization_namespace = self._get_initialization_namespace_for_enum(self.cls) | raw_member_map
         for attr_name, attr in initialization_namespace.items():
             enum_dict[attr_name] = attr
+        enum_dict["__doc__"] = self.cls.__doc__
         model_copy = cast(type[_T_ENUM], type(self.name, self.cls.__bases__, enum_dict))
         model_copy.__cadwyn_original_model__ = self.cls  # pyright: ignore[reportAttributeAccessIssue]
         return model_copy

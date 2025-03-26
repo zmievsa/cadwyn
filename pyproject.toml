@@ -1,6 +1,6 @@
 [project]
 name = "cadwyn"
-version = "5.1.0"
+version = "5.1.4"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = [{ name = "Stanislav Zmiev", email = "zmievsa@gmail.com" }]
 license = "MIT"
@@ -51,7 +51,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
 ]
 dependencies = [
-    "fastapi >=0.112.3",
+    "fastapi >=0.112.4",
     "starlette >=0.30.0",
     "pydantic >=2.0.0",
     "jinja2 >=3.1.2",
@@ -73,7 +73,8 @@ dev-dependencies = [
     "svcs ~=24.1.0",
     "httpx >=0.26.0",
     "pytest-fixture-classes >=1.0.3",
-    "pytest >=7.2.1",
+    # pytest==8.3.5 has a bug that fails our windows python 3.10 tests
+    "pytest==8.3.4",
     "pytest-cov >=4.0.0",
     "dirty-equals >=0.6.0",
     "uvicorn ~=0.23.0",
@@ -87,6 +88,7 @@ dev-dependencies = [
     "mike >=2.1.2, <3",
     "pdbpp>=0.10.3",
     "markdown-include-variants>=0.0.4",
+    "inline-snapshot>=0.20.7",
 ]
 
 [project.urls]
@@ -97,6 +99,8 @@ Documentation = "https://docs.cadwyn.dev"
 [project.scripts]
 cadwyn = "cadwyn.__main__:app"
 
+[tool.inline-snapshot]
+format-command = "ruff format --stdin-filename {filename}"
 
 [tool.coverage.run]
 parallel = true
@@ -150,6 +154,7 @@ reportMissingSuperCall = true
 reportFunctionMemberAccess = false
 reportCircularImports = true
 reportInvalidTypeForm = false
+reportPrivateImportUsage = false
 
 [tool.pytest.ini_options]
 filterwarnings = [
