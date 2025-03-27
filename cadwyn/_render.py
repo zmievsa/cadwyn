@@ -5,10 +5,10 @@ from enum import Enum
 from typing import TYPE_CHECKING, Union
 
 import typer
-from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel
 
 from cadwyn._asts import get_fancy_repr, pop_docstring_from_cls_body
+from cadwyn._utils import lenient_issubclass
 from cadwyn.exceptions import CadwynRenderError
 from cadwyn.schema_generation import (
     PydanticFieldWrapper,

@@ -17,12 +17,11 @@ import fastapi.security.base
 import fastapi.utils
 from fastapi import APIRouter
 from fastapi.routing import APIRoute
-from issubclass import issubclass as lenient_issubclass
 from pydantic import BaseModel
 from starlette.routing import BaseRoute
 from typing_extensions import TypeVar, assert_never
 
-from cadwyn._utils import DATACLASS_SLOTS, Sentinel
+from cadwyn._utils import DATACLASS_SLOTS, Sentinel, lenient_issubclass
 from cadwyn.exceptions import (
     CadwynError,
     RouteAlreadyExistsError,
