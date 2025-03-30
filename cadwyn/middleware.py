@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from typing import Annotated, Any, Literal, Protocol, Union
 
+import fastapi
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
 from starlette.types import ASGIApp
@@ -70,7 +71,8 @@ def _generate_api_version_dependency(
                 annotation=Annotated[
                     validation_data_type, fastapi_depends_class(openapi_examples={"default": {"value": default_value}})
                 ],
-                default=default_value if fastapi_depends_class.__name__ != "Path" else inspect.Signature.empty,
+                # Path-based parameters do not support a default value in FastAPI :(
+                default=default_value if fastapi_depends_class != fastapi.Path else inspect.Signature.empty,
             ),
         ],
     )

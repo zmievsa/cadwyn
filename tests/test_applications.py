@@ -409,7 +409,10 @@ def test__api_version_header_name_is_deprecated_and_translates_to_api_version_pa
 
 
 def test__api_version_default_value_with_path_location__should_raise_error():
-    with pytest.raises(CadwynStructureError):
+    with pytest.raises(
+        CadwynStructureError,
+        match="You tried to pass an api_version_default_value while putting the API version in Path",
+    ):
         Cadwyn(
             versions=VersionBundle(HeadVersion(), Version("2022-11-16")),
             api_version_default_value="2022-11-16",
