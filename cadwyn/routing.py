@@ -11,6 +11,7 @@ from starlette.responses import RedirectResponse
 from starlette.routing import BaseRoute, Match
 from starlette.types import Receive, Scope, Send
 
+from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn._utils import same_definition_as_in
 from cadwyn.middleware import APIVersionFormat
 from cadwyn.structure.common import VersionType
@@ -70,8 +71,8 @@ class _RootCadwynAPIRouter(APIRouter):
         if scope["type"] == "lifespan":
             await self.lifespan(scope, receive, send)
             return
-
         version = self.api_version_var.get(None)
+        default_version_that_was_picked = DEFAULT_API_VERSION_VAR.get(None)
 
         # if version is None, then it's an unversioned request and we need to use the unversioned routes
         # if there will be a value, we search for the most suitable version
@@ -81,6 +82,14 @@ class _RootCadwynAPIRouter(APIRouter):
             routes = self.versioned_routers[version].routes
         else:
             routes = await self._get_routes_from_closest_suitable_version(version)
+        if default_version_that_was_picked:
+            # We add unversioned routes to versioned routes because otherwise unversioned routes
+            # will be completely unavailable when a default version is passed. So routes such as
+            # /docs will not be accessible at all.
+
+            # We use this order because if versioned routes go first and there is a versioned route that is
+            # the same as an unversioned route -- the unversioned one becomes impossible to match.
+            routes = self.unversioned_routes + routes
         await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
 
     @cached_property

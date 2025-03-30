@@ -1,3 +1,5 @@
+from typing import Callable
+
 import pytest
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
@@ -5,7 +7,8 @@ from starlette.routing import Match, NoMatchFound
 from starlette.testclient import TestClient
 
 from cadwyn import Cadwyn
-from cadwyn.structure.versions import Version, VersionBundle
+from cadwyn.route_generation import VersionedAPIRouter
+from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
 from tests._resources.app_for_testing_routing import mixed_hosts_app
 
 
@@ -153,3 +156,53 @@ def test__host_routing__partial_match__404():
 
     response = client.get("/v1/doggies/tom")
     assert response.status_code == 200
+
+
+async def get_default_version(req: Request):
+    return "2023-04-14"
+
+
+@pytest.mark.parametrize("default_version", ["2023-04-14", get_default_version])
+def test__get_unversioned_endpoints__with_default_version(default_version: "str | Callable"):
+    app = Cadwyn(
+        versions=VersionBundle(HeadVersion(), Version("2023-04-14"), Version("2022-11-16")),
+        api_version_default_value=default_version,
+    )
+
+    router = VersionedAPIRouter()
+
+    @app.get("/my_duplicated_route")
+    def get_my_unversioned_number():
+        return 11
+
+    @router.get("/my_duplicated_route")
+    def get_my_versioned_number():
+        return 83
+
+    @router.get("/my_single_route")
+    def get_my_versioned_number_2():
+        return 52
+
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app) as client:
+        resp = client.get("/docs")
+        assert resp.status_code == 200, resp.json()
+
+        resp = client.get("/docs?version=2023-04-14")
+        assert resp.status_code == 200, resp.json()
+
+        resp = client.get("/docs?version=2022-11-16")
+        assert resp.status_code == 200, resp.json()
+
+        resp = client.get("/my_duplicated_route")
+        assert resp.status_code == 200, resp.json()
+        assert resp.json() == 11
+
+        resp = client.get("/my_duplicated_route", headers={"X-API-VERSION": "2023-04-14"})
+        assert resp.status_code == 200, resp.json()
+        assert resp.json() == 83
+
+        resp = client.get("/my_single_route")
+        assert resp.status_code == 200, resp.json()
+        assert resp.json() == 52

@@ -7,10 +7,12 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from typing import Annotated, Any, Literal, Protocol, Union
 
+import fastapi
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
+from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn.structure.common import VersionType
 
 
@@ -69,6 +71,8 @@ def _generate_api_version_dependency(
                 annotation=Annotated[
                     validation_data_type, fastapi_depends_class(openapi_examples={"default": {"value": default_value}})
                 ],
+                # Path-based parameters do not support a default value in FastAPI :(
+                default=default_value if fastapi_depends_class != fastapi.Path else inspect.Signature.empty,
             ),
         ],
     )
@@ -103,10 +107,11 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         api_version = self._api_version_manager.get(request)
 
         if api_version is None:
-            if callable(self.api_version_default_value):  # pragma: no cover # TODO
+            if callable(self.api_version_default_value):
                 api_version = await self.api_version_default_value(request)
             else:
                 api_version = self.api_version_default_value
+            DEFAULT_API_VERSION_VAR.set(api_version)
 
         self.api_version_var.set(api_version)
         response = await call_next(request)
