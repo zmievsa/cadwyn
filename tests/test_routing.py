@@ -181,16 +181,21 @@ def test__get_unversioned_endpoints__with_default_version():
     with TestClient(app) as client:
         resp = client.get("/docs")
         assert resp.status_code == 200, resp.json()
+
         resp = client.get("/docs?version=2023-04-14")
         assert resp.status_code == 200, resp.json()
+
         resp = client.get("/docs?version=2022-11-16")
         assert resp.status_code == 200, resp.json()
+
         resp = client.get("/my_duplicated_route")
         assert resp.status_code == 200, resp.json()
         assert resp.json() == 11
+
         resp = client.get("/my_duplicated_route", headers={"X-API-VERSION": "2023-04-14"})
         assert resp.status_code == 200, resp.json()
         assert resp.json() == 83
+
         resp = client.get("/my_single_route")
         assert resp.status_code == 200, resp.json()
         assert resp.json() == 52
