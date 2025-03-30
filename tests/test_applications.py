@@ -268,6 +268,20 @@ def test__get_docs__with_mounted_app__should_return_all_versioned_doc_urls():
     assert "http://testserver/my_api/docs?version=2022-11-16" in resp.content.decode()
 
 
+def test__get_docs__with_default_version():
+    app = Cadwyn(
+        versions=VersionBundle(HeadVersion(), Version("2023-04-14"), Version("2022-11-16")),
+        api_version_default_value="2023-04-14",
+    )
+    with TestClient(app) as client:
+        resp = client.get("/docs")
+        assert resp.status_code == 200
+        resp = client.get("/docs?version=2023-04-14")
+        assert resp.status_code == 200
+        resp = client.get("/docs?version=2022-11-16")
+        assert resp.status_code == 200
+
+
 def test__get_docs__with_unversioned_routes__should_return_all_versioned_doc_urls():
     app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     with pytest.warns(DeprecationWarning):

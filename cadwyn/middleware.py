@@ -11,6 +11,7 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
+from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn.structure.common import VersionType
 
 
@@ -107,6 +108,7 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
                 api_version = await self.api_version_default_value(request)
             else:
                 api_version = self.api_version_default_value
+            DEFAULT_API_VERSION_VAR.set(api_version)
 
         self.api_version_var.set(api_version)
         response = await call_next(request)

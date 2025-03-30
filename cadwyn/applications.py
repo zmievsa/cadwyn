@@ -231,8 +231,8 @@ class Cadwyn(FastAPI):
             versioning_middleware_class,
             api_version_parameter_name=api_version_parameter_name,
             api_version_manager=self._api_version_manager,
-            api_version_default_value=api_version_default_value,
             api_version_var=self.versions.api_version_var,
+            api_version_default_value=api_version_default_value,
         )
         if self.api_version_format == "date" and (
             sorted(self.versions.versions, key=lambda v: v.value, reverse=True) != list(self.versions.versions)

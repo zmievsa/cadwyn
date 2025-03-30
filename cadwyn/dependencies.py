@@ -1,5 +1,5 @@
-from cadwyn.structure.versions import _CURRENT_DEPENDENCY_SOLVER_OPTIONS, _CURRENT_DEPENDENCY_SOLVER_VAR
+from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_OPTIONS, CURRENT_DEPENDENCY_SOLVER_VAR
 
 
-async def current_dependency_solver() -> _CURRENT_DEPENDENCY_SOLVER_OPTIONS:
-    return _CURRENT_DEPENDENCY_SOLVER_VAR.get("fastapi")
+async def current_dependency_solver() -> CURRENT_DEPENDENCY_SOLVER_OPTIONS:
+    return CURRENT_DEPENDENCY_SOLVER_VAR.get("fastapi")
