@@ -107,7 +107,7 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         api_version = self._api_version_manager.get(request)
 
         if api_version is None:
-            if callable(self.api_version_default_value):  # pragma: no cover # TODO
+            if callable(self.api_version_default_value):
                 api_version = await self.api_version_default_value(request)
             else:
                 api_version = self.api_version_default_value

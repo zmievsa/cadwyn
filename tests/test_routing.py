@@ -163,7 +163,7 @@ async def get_default_version(req: Request):
 
 
 @pytest.mark.parametrize("default_version", ["2023-04-14", get_default_version])
-def test__get_unversioned_endpoints__with_default_version(default_version: str | Callable):
+def test__get_unversioned_endpoints__with_default_version(default_version: "str | Callable"):
     app = Cadwyn(
         versions=VersionBundle(HeadVersion(), Version("2023-04-14"), Version("2022-11-16")),
         api_version_default_value=default_version,
