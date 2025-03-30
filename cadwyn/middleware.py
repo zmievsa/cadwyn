@@ -70,6 +70,7 @@ def _generate_api_version_dependency(
                 annotation=Annotated[
                     validation_data_type, fastapi_depends_class(openapi_examples={"default": {"value": default_value}})
                 ],
+                default=default_value if fastapi_depends_class.__name__ != "Path" else inspect.Signature.empty,
             ),
         ],
     )

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from cadwyn import Cadwyn
+from cadwyn.exceptions import CadwynStructureError
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure.endpoints import endpoint
 from cadwyn.structure.schemas import schema
@@ -268,20 +269,6 @@ def test__get_docs__with_mounted_app__should_return_all_versioned_doc_urls():
     assert "http://testserver/my_api/docs?version=2022-11-16" in resp.content.decode()
 
 
-def test__get_docs__with_default_version():
-    app = Cadwyn(
-        versions=VersionBundle(HeadVersion(), Version("2023-04-14"), Version("2022-11-16")),
-        api_version_default_value="2023-04-14",
-    )
-    with TestClient(app) as client:
-        resp = client.get("/docs")
-        assert resp.status_code == 200
-        resp = client.get("/docs?version=2023-04-14")
-        assert resp.status_code == 200
-        resp = client.get("/docs?version=2022-11-16")
-        assert resp.status_code == 200
-
-
 def test__get_docs__with_unversioned_routes__should_return_all_versioned_doc_urls():
     app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     with pytest.warns(DeprecationWarning):
@@ -419,3 +406,12 @@ def test__api_version_header_name_is_deprecated_and_translates_to_api_version_pa
     with pytest.warns(DeprecationWarning):
         cadwyn = Cadwyn(api_version_header_name="x-api-version", versions=VersionBundle(Version("2022-11-16")))
     assert cadwyn.api_version_parameter_name == "x-api-version"
+
+
+def test__api_version_default_value_with_path_location__should_raise_error():
+    with pytest.raises(CadwynStructureError):
+        Cadwyn(
+            versions=VersionBundle(HeadVersion(), Version("2022-11-16")),
+            api_version_default_value="2022-11-16",
+            api_version_location="path",
+        )

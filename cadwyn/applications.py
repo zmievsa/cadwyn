@@ -133,6 +133,12 @@ class Cadwyn(FastAPI):
                 stacklevel=2,
             )
             api_version_parameter_name = api_version_header_name
+        if api_version_default_value is not None and api_version_location == "path":
+            raise CadwynStructureError(
+                "You tried to pass an api_version_default_value while putting the API version in Path. "
+                "This is not currently supported by Cadwyn. "
+                "Please, open an issue on our github if you'd like to have it."
+            )
 
         super().__init__(
             debug=debug,

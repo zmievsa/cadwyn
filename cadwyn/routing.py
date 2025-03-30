@@ -83,7 +83,9 @@ class _RootCadwynAPIRouter(APIRouter):
         else:
             routes = await self._get_routes_from_closest_suitable_version(version)
         if default_version_that_was_picked:
-            routes = routes + self.unversioned_routes
+            # We use this order because if versioned routes go first and there is a versioned route that is
+            # the same as an unversioned route -- the unversioned one becomes impossible to match.
+            routes = self.unversioned_routes + routes
         await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
 
     @cached_property
