@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.2.1]
+
+### Fixed
+
+* [#268](https://github.com/zmievsa/cadwyn/issues/268) A bug where we received 404 for all unversioned routes when a default api version was passed to Cadwyn at initialization
+
 ## [5.2.0]
 
 ### Removed
