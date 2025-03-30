@@ -1,3 +1,5 @@
+from typing import Callable
+
 import pytest
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
@@ -156,10 +158,15 @@ def test__host_routing__partial_match__404():
     assert response.status_code == 200
 
 
-def test__get_unversioned_endpoints__with_default_version():
+async def get_default_version(req: Request):
+    return "2023-04-14"
+
+
+@pytest.mark.parametrize("default_version", ["2023-04-14", get_default_version])
+def test__get_unversioned_endpoints__with_default_version(default_version: str | Callable):
     app = Cadwyn(
         versions=VersionBundle(HeadVersion(), Version("2023-04-14"), Version("2022-11-16")),
-        api_version_default_value="2023-04-14",
+        api_version_default_value=default_version,
     )
 
     router = VersionedAPIRouter()

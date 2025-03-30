@@ -83,6 +83,10 @@ class _RootCadwynAPIRouter(APIRouter):
         else:
             routes = await self._get_routes_from_closest_suitable_version(version)
         if default_version_that_was_picked:
+            # We add unversioned routes to versioned routes because otherwise unversioned routes
+            # will be completely unavailable when a default version is passed. So routes such as
+            # /docs will not be accessible at all.
+
             # We use this order because if versioned routes go first and there is a versioned route that is
             # the same as an unversioned route -- the unversioned one becomes impossible to match.
             routes = self.unversioned_routes + routes
