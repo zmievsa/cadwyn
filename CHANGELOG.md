@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.2.2]
+
+### Fixed
+
+* Whenever a route was migrated by path, we used the path and methods of the request. So if the request wanted "/v1/webhook_settings" and we renamed them to "/v1/webhook_subscriptions" -- all migrations for "/v1/webhook_subscriptions" would not get applied to any requests that wanted "/v1/webhook_settings". This effectively means that previously route renamings were incompatible with by path converters. Now we use the head route id instead of the path and methods of the request for matching so we always know which migrations to apply.
+
 ## [5.2.1]
 
 ### Fixed

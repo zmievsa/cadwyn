@@ -37,11 +37,13 @@ from cadwyn.schema_generation import (
 )
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionType
+from cadwyn.structure.data import _AlterRequestByPathInstruction, _AlterResponseByPathInstruction
 from cadwyn.structure.endpoints import (
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
+from cadwyn.structure.versions import VersionChange
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
@@ -52,6 +54,9 @@ _WR = TypeVar("_WR", bound=APIRouter, default=APIRouter)
 _RouteT = TypeVar("_RouteT", bound=BaseRoute)
 # This is a hack we do because we can't guarantee how the user will use the router.
 _DELETED_ROUTE_TAG = "_CADWYN_DELETED_ROUTE"
+_RoutePath = str
+_RouteMethod = str
+_RouteId = int
 
 
 @dataclass(**DATACLASS_SLOTS, frozen=True, eq=True)
@@ -123,6 +128,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
         ]
 
     def transform(self) -> GeneratedRouters[_R, _WR]:
+        # Copy MUST keep the order and number of routes. Otherwise, a ton of code below will break.
         router = copy_router(self.parent_router)
         webhook_router = copy_router(self.parent_webhooks_router)
         routers: dict[VersionType, _R] = {}
@@ -132,7 +138,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
             self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(router)
             self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(webhook_router)
 
-            self._validate_all_data_converters_are_applied(router, version)
+            self._attach_routes_to_data_converters(router, self.parent_router, version)
 
             routers[version.value] = router
             webhook_routers[version.value] = webhook_router
@@ -193,9 +199,11 @@ class _EndpointTransformer(Generic[_R, _WR]):
             ]
         return GeneratedRouters(routers, webhook_routers)
 
-    def _validate_all_data_converters_are_applied(self, router: APIRouter, version: Version):
-        path_to_route_methods_mapping, head_response_models, head_request_bodies = self._extract_all_routes_identifiers(
-            router
+    def _attach_routes_to_data_converters(self, router: APIRouter, head_router: APIRouter, version: Version):
+        # This method is way out of its league in terms of complexity. We gotta refactor it.
+
+        path_to_route_methods_mapping, head_response_models, head_request_bodies = (
+            self._extract_all_routes_identifiers_for_route_to_converter_matching(router)
         )
 
         for version_change in version.changes:
@@ -204,20 +212,9 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 *version_change.alter_request_by_path_instructions.values(),
             ]:
                 for by_path_converter in by_path_converters:
-                    missing_methods = by_path_converter.methods.difference(
-                        path_to_route_methods_mapping[by_path_converter.path]
+                    self._attach_routes_by_path_converter(
+                        head_router, path_to_route_methods_mapping, version_change, by_path_converter
                     )
-
-                    if missing_methods:
-                        raise RouteByPathConverterDoesNotApplyToAnythingError(
-                            f"{by_path_converter.repr_name} "
-                            f'"{version_change.__name__}.{by_path_converter.transformer.__name__}" '
-                            f"failed to find routes with the following methods: {list(missing_methods)}. "
-                            f"This means that you are trying to apply this converter to non-existing endpoint(s). "
-                            "Please, check whether the path and methods are correct. (hint: path must include "
-                            "all path variables and have a name that was used in the version that this "
-                            "VersionChange resides in)"
-                        )
 
             for by_schema_converters in version_change.alter_request_by_schema_instructions.values():
                 for by_schema_converter in by_schema_converters:
@@ -249,14 +246,50 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             f"{version_change.__name__}.{by_schema_converter.transformer.__name__}"
                         )
 
-    def _extract_all_routes_identifiers(
-        self, router: APIRouter
-    ) -> tuple[defaultdict[str, set[str]], set[Any], set[Any]]:
-        response_models: set[Any] = set()
-        request_bodies: set[Any] = set()
-        path_to_route_methods_mapping: dict[str, set[str]] = defaultdict(set)
+    def _attach_routes_by_path_converter(
+        self,
+        head_router: APIRouter,
+        path_to_route_methods_mapping: dict[_RoutePath, dict[_RouteMethod, set[_RouteId]]],
+        version_change: type[VersionChange],
+        by_path_converter: Union[_AlterResponseByPathInstruction, _AlterRequestByPathInstruction],
+    ):
+        missing_methods = set()
+        for method in by_path_converter.methods:
+            if method in path_to_route_methods_mapping[by_path_converter.path]:
+                for route_index in path_to_route_methods_mapping[by_path_converter.path][method]:
+                    route = head_router.routes[route_index]
+                    if isinstance(by_path_converter, _AlterResponseByPathInstruction):
+                        version_change._route_to_response_migration_mapping[id(route)].append(by_path_converter)
+                    else:
+                        version_change._route_to_request_migration_mapping[id(route)].append(by_path_converter)
+            else:
+                missing_methods.add(method)
 
-        for route in router.routes:
+        if missing_methods:
+            raise RouteByPathConverterDoesNotApplyToAnythingError(
+                f"{by_path_converter.repr_name} "
+                f'"{version_change.__name__}.{by_path_converter.transformer.__name__}" '
+                f"failed to find routes with the following methods: {list(missing_methods)}. "
+                f"This means that you are trying to apply this converter to non-existing endpoint(s). "
+                "Please, check whether the path and methods are correct. (hint: path must include "
+                "all path variables and have a name that was used in the version that this "
+                "VersionChange resides in)"
+            )
+
+    def _extract_all_routes_identifiers_for_route_to_converter_matching(
+        self, router: APIRouter
+    ) -> tuple[dict[_RoutePath, dict[_RouteMethod, set[_RouteId]]], set[Any], set[Any]]:
+        # int is the index of the route in the router.routes list.
+        # So we essentially keep track of which routes have which response models and request bodies.
+        # and their indices in the router.routes list. The indices will allow us to match them to the same
+        # routes in the head version. This gives us the ability to later apply changes to these routes
+        # without thinking about any renamings or response model changes.
+
+        response_models = set()
+        request_bodies = set()
+        path_to_route_methods_mapping: dict[str, dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
+
+        for index, route in enumerate(router.routes):
             if isinstance(route, APIRoute):
                 if route.response_model is not None and lenient_issubclass(route.response_model, BaseModel):
                     response_models.add(route.response_model)
@@ -265,7 +298,8 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     annotation = route.body_field.field_info.annotation
                     if annotation is not None and lenient_issubclass(annotation, BaseModel):
                         request_bodies.add(annotation)
-                path_to_route_methods_mapping[route.path] |= route.methods
+                for method in route.methods:
+                    path_to_route_methods_mapping[route.path][method].add(index)
 
         head_response_models = {model.__cadwyn_original_model__ for model in response_models}
         head_request_bodies = {getattr(body, "__cadwyn_original_model__", body) for body in request_bodies}
