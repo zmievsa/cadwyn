@@ -409,8 +409,8 @@ class VersionBundle:
         self,
         response_info: ResponseInfo,
         current_version: VersionType,
-        head_response_model: type[BaseModel] | None,
-        head_route: APIRoute | None,
+        head_response_model: Union[type[BaseModel], None],
+        head_route: Union[APIRoute, None],
     ) -> ResponseInfo:
         head_route_id = id(head_route)
         end = self.version_values.index(current_version)
