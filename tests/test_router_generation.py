@@ -260,7 +260,11 @@ def test__endpoint_had__another_path_with_the_other_migration_at_the_same_time__
     router = VersionedAPIRouter()
 
     @router.post("/A")
-    async def test_endpoint(body: list[str]):
+    async def test_endpoint_post(body: list[str]):
+        return body
+
+    @router.put("/A")
+    async def test_endpoint_put(body: list[str]):
         return body
 
     @convert_response_to_previous_version_for("/A", ["POST"])
@@ -289,6 +293,9 @@ def test__endpoint_had__another_path_with_the_other_migration_at_the_same_time__
     with TestClient(app) as client:
         assert client.post("/B", headers={"X-API-VERSION": "2000-01-01"}, json=[]).json() == ["request", "response"]
         assert client.post("/A", headers={"X-API-VERSION": "2001-01-01"}, json=[]).json() == []
+
+        assert client.put("/A", headers={"X-API-VERSION": "2000-01-01"}, json=[]).json() == []
+        assert client.put("/A", headers={"X-API-VERSION": "2001-01-01"}, json=[]).json() == []
 
 
 def test__endpoint_had_dependencies(
