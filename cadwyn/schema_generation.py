@@ -196,8 +196,7 @@ def migrate_response_body(
         response,
         current_version=version,
         head_response_model=latest_response_model,
-        path="\0\0\0",
-        method="GET",
+        head_route=None,
     )
 
     versioned_response_model: type[pydantic.BaseModel] = generate_versioned_models(versions)[str(version)][

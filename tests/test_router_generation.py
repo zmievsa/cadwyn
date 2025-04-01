@@ -20,11 +20,13 @@ from starlette.responses import FileResponse
 from typing_extensions import Any, NewType, TypeAlias, TypeAliasType, get_args
 
 from cadwyn import VersionBundle, VersionedAPIRouter
+from cadwyn.applications import Cadwyn
 from cadwyn.dependencies import current_dependency_solver
 from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
 from cadwyn.route_generation import generate_versioned_routers
 from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
+from cadwyn.structure.data import RequestInfo, ResponseInfo, convert_response_to_previous_version_for
 from cadwyn.structure.enums import enum
 from cadwyn.structure.versions import VersionChange
 from tests._data.unversioned_schema_dir import UnversionedSchema2
@@ -250,6 +252,43 @@ def test__endpoint_had_another_path_variable(
                 endpoint(test_path, ["GET"]).had(path="/test/{world}"),
             ),
         )
+
+
+def test__endpoint_had__another_path_with_the_other_migration_at_the_same_time__should_require_old_name(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/A")
+    async def test_endpoint(body: list[str]):
+        return body
+
+    @convert_response_to_previous_version_for("/A", ["POST"])
+    def response_migration(response: ResponseInfo):
+        response.body.append("response")
+
+    @convert_request_to_next_version_for("/A", ["POST"])
+    def request_migration(request: RequestInfo):
+        request.body.append("request")
+
+    app = Cadwyn(
+        versions=VersionBundle(
+            Version(
+                "2001-01-01",
+                version_change(
+                    endpoint("/A", ["POST"]).had(path="/B"),
+                    request_migration=request_migration,
+                    response_migration=response_migration,
+                ),
+            ),
+            Version("2000-01-01"),
+        )
+    )
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app) as client:
+        assert client.post("/B", headers={"X-API-VERSION": "2000-01-01"}, json=[]).json() == ["request", "response"]
+        assert client.post("/A", headers={"X-API-VERSION": "2001-01-01"}, json=[]).json() == []
 
 
 def test__endpoint_had_dependencies(

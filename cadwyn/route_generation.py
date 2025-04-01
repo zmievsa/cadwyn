@@ -37,6 +37,7 @@ from cadwyn.schema_generation import (
 )
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionType
+from cadwyn.structure.data import _AlterResponseByPathInstruction
 from cadwyn.structure.endpoints import (
     EndpointDidntExistInstruction,
     EndpointExistedInstruction,
@@ -123,6 +124,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
         ]
 
     def transform(self) -> GeneratedRouters[_R, _WR]:
+        # Copy MUST keep the order and number of routes. Otherwise, a ton of code below will break.
         router = copy_router(self.parent_router)
         webhook_router = copy_router(self.parent_webhooks_router)
         routers: dict[VersionType, _R] = {}
@@ -132,7 +134,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
             self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(router)
             self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(webhook_router)
 
-            self._validate_all_data_converters_are_applied(router, version)
+            self._attach_routes_to_data_converters(router, self.parent_router, version)
 
             routers[version.value] = router
             webhook_routers[version.value] = webhook_router
@@ -193,7 +195,9 @@ class _EndpointTransformer(Generic[_R, _WR]):
             ]
         return GeneratedRouters(routers, webhook_routers)
 
-    def _validate_all_data_converters_are_applied(self, router: APIRouter, version: Version):
+    def _attach_routes_to_data_converters(self, router: APIRouter, head_router: APIRouter, version: Version):
+        # This method is way out of its league in terms of complexity. We gotta refactor it.
+
         path_to_route_methods_mapping, head_response_models, head_request_bodies = self._extract_all_routes_identifiers(
             router
         )
@@ -205,7 +209,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
             ]:
                 for by_path_converter in by_path_converters:
                     missing_methods = by_path_converter.methods.difference(
-                        path_to_route_methods_mapping[by_path_converter.path]
+                        path_to_route_methods_mapping[by_path_converter.path][0]
                     )
 
                     if missing_methods:
@@ -218,12 +222,18 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             "all path variables and have a name that was used in the version that this "
                             "VersionChange resides in)"
                         )
+                    for route_index in path_to_route_methods_mapping[by_path_converter.path][1]:
+                        route = head_router.routes[route_index]
+                        if isinstance(by_path_converter, _AlterResponseByPathInstruction):
+                            version_change._route_to_response_migration_mapping[id(route)].append(by_path_converter)
+                        else:
+                            version_change._route_to_request_migration_mapping[id(route)].append(by_path_converter)
 
             for by_schema_converters in version_change.alter_request_by_schema_instructions.values():
                 for by_schema_converter in by_schema_converters:
                     if not by_schema_converter.check_usage:  # pragma: no cover
                         continue
-                    missing_models = set(by_schema_converter.schemas) - head_request_bodies
+                    missing_models = set(by_schema_converter.schemas) - head_request_bodies.keys()
                     if missing_models:
                         raise RouteRequestBySchemaConverterDoesNotApplyToAnythingError(
                             f"Request by body schema converter "
@@ -236,7 +246,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 for by_schema_converter in by_schema_converters:
                     if not by_schema_converter.check_usage:  # pragma: no cover
                         continue
-                    missing_models = set(by_schema_converter.schemas) - head_response_models
+                    missing_models = set(by_schema_converter.schemas) - head_response_models.keys()
                     if missing_models:
                         raise RouteResponseBySchemaConverterDoesNotApplyToAnythingError(
                             f"Response by response model converter "
@@ -251,24 +261,37 @@ class _EndpointTransformer(Generic[_R, _WR]):
 
     def _extract_all_routes_identifiers(
         self, router: APIRouter
-    ) -> tuple[defaultdict[str, set[str]], set[Any], set[Any]]:
-        response_models: set[Any] = set()
-        request_bodies: set[Any] = set()
-        path_to_route_methods_mapping: dict[str, set[str]] = defaultdict(set)
+    ) -> tuple[defaultdict[str, tuple[set[str], set[int]]], dict[Any, set[int]], dict[Any, set[int]]]:
+        # int is the index of the route in the router.routes list.
+        # So we essentially keep track of which routes have which response models and request bodies.
+        # and their indices in the router.routes list. The indices will allow us to match them to the same
+        # routes in the head version. This gives us the ability to later apply changes to these routes
+        # without thinking about any renamings or response model changes.
 
-        for route in router.routes:
+        response_models: dict[Any, set[int]] = defaultdict(set)
+        request_bodies: dict[Any, set[int]] = defaultdict(set)
+        path_to_route_methods_mapping: dict[str, tuple[set[str], set[int]]] = defaultdict(lambda: (set(), set()))
+
+        for index, route in enumerate(router.routes):
             if isinstance(route, APIRoute):
                 if route.response_model is not None and lenient_issubclass(route.response_model, BaseModel):
-                    response_models.add(route.response_model)
+                    response_models[route.response_model].add(index)
                     # Not sure if it can ever be None when it's a simple schema. Eh, I would rather be safe than sorry
                 if _route_has_a_simple_body_schema(route) and route.body_field is not None:
                     annotation = route.body_field.field_info.annotation
                     if annotation is not None and lenient_issubclass(annotation, BaseModel):
-                        request_bodies.add(annotation)
-                path_to_route_methods_mapping[route.path] |= route.methods
+                        request_bodies[annotation].add(index)
+                methods, indices = path_to_route_methods_mapping[route.path]
+                methods |= route.methods
+                indices.add(index)
 
-        head_response_models = {model.__cadwyn_original_model__ for model in response_models}
-        head_request_bodies = {getattr(body, "__cadwyn_original_model__", body) for body in request_bodies}
+        head_response_models = {
+            model.__cadwyn_original_model__: route_indices for model, route_indices in response_models.items()
+        }
+        head_request_bodies = {
+            getattr(body, "__cadwyn_original_model__", body): route_indices
+            for body, route_indices in request_bodies.items()
+        }
 
         return path_to_route_methods_mapping, head_response_models, head_request_bodies
 

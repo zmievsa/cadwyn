@@ -135,7 +135,7 @@ ignore = [
 ]
 
 [lint.mccabe]
-max-complexity = 14
+max-complexity = 15
 
 [format]
 quote-style = "double"

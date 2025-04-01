@@ -53,6 +53,7 @@ _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
 _CADWYN_RESPONSE_PARAM_NAME = "cadwyn_response_param"
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+_RouteId = int
 
 PossibleInstructions: TypeAlias = Union[
     AlterSchemaSubInstruction, AlterEndpointSubInstruction, AlterEnumSubInstruction, SchemaHadInstruction, staticmethod
@@ -85,6 +86,8 @@ class VersionChange:
     alter_response_by_schema_instructions: ClassVar[dict[type, list[_AlterResponseBySchemaInstruction]]] = Sentinel
     alter_response_by_path_instructions: ClassVar[dict[str, list[_AlterResponseByPathInstruction]]] = Sentinel
     _bound_version_bundle: "Union[VersionBundle, None]"
+    _route_to_request_migration_mapping: ClassVar[dict[_RouteId, list[_AlterRequestByPathInstruction]]] = Sentinel
+    _route_to_response_migration_mapping: ClassVar[dict[_RouteId, list[_AlterResponseByPathInstruction]]] = Sentinel
 
     def __init_subclass__(cls, _abstract: bool = False) -> None:
         super().__init_subclass__()
@@ -96,6 +99,8 @@ class VersionChange:
         cls._extract_body_instructions_into_correct_containers()
         cls._check_no_subclassing()
         cls._bound_version_bundle = None
+        cls._route_to_request_migration_mapping = defaultdict(list)
+        cls._route_to_response_migration_mapping = defaultdict(list)
 
     @classmethod
     def _extract_body_instructions_into_correct_containers(cls):
@@ -358,7 +363,6 @@ class VersionBundle:
         self,
         body_type: Union[type[BaseModel], None],
         head_dependant: Dependant,
-        path: str,
         request: FastapiRequest,
         response: FastapiResponse,
         request_info: RequestInfo,
@@ -369,18 +373,17 @@ class VersionBundle:
         embed_body_fields: bool,
         background_tasks: Union[BackgroundTasks, None],
     ) -> dict[str, Any]:
-        method = request.method
-
         start = self.reversed_version_values.index(current_version)
+        head_route_id = id(head_route)
         for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
                 if body_type is not None and body_type in version_change.alter_request_by_schema_instructions:
                     for instruction in version_change.alter_request_by_schema_instructions[body_type]:
                         instruction(request_info)
-                if path in version_change.alter_request_by_path_instructions:
-                    for instruction in version_change.alter_request_by_path_instructions[path]:
-                        if method in instruction.methods:  # pragma: no branch # safe branch to skip
-                            instruction(request_info)
+                if head_route_id in version_change._route_to_request_migration_mapping:
+                    for instruction in version_change._route_to_request_migration_mapping[head_route_id]:
+                        instruction(request_info)
+
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
         # This gives us the ability to tell the user whether cadwyn is running its dependencies or FastAPI
@@ -406,10 +409,10 @@ class VersionBundle:
         self,
         response_info: ResponseInfo,
         current_version: VersionType,
-        head_response_model: type[BaseModel],
-        path: str,
-        method: str,
+        head_response_model: type[BaseModel] | None,
+        head_route: APIRoute | None,
     ) -> ResponseInfo:
+        head_route_id = id(head_route)
         end = self.version_values.index(current_version)
         for v in self.versions[:end]:
             for version_change in v.changes:
@@ -420,10 +423,8 @@ class VersionBundle:
                         version_change.alter_response_by_schema_instructions[head_response_model]
                     )
 
-                if path in version_change.alter_response_by_path_instructions:
-                    for instruction in version_change.alter_response_by_path_instructions[path]:
-                        if method in instruction.methods:  # pragma: no branch # Safe branch to skip
-                            migrations_to_apply.append(instruction)  # noqa: PERF401
+                if head_route_id in version_change._route_to_response_migration_mapping:
+                    migrations_to_apply.extend(version_change._route_to_response_migration_mapping[head_route_id])
 
                 for migration in migrations_to_apply:
                     if response_info.status_code < 300 or migration.migrate_http_errors:
@@ -576,8 +577,7 @@ class VersionBundle:
             response_info,
             api_version,
             head_route.response_model,
-            route.path,
-            method,
+            head_route,
         )
         if isinstance(response_or_response_body, FastapiResponse):
             # a webserver (uvicorn for instance) calculates the body at the endpoint level.
@@ -671,7 +671,6 @@ class VersionBundle:
         new_kwargs = await self._migrate_request(
             head_body_field,
             head_dependant,
-            route.path,
             request,
             response,
             request_info,
