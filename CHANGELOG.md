@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.3.1]
+
+### Fixed
+
+* Fix invalid content-length header with custom exception handlers (#273)
+
 ## [5.3.0]
 
 ### Added

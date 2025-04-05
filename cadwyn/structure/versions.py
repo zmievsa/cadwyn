@@ -528,6 +528,8 @@ class VersionBundle:
                 status_code=raised_exception.status_code,
                 headers=raised_exception.headers,
             )
+            if (raised_exception.headers or {}).get("content-length") is None:  # pragma: no branch
+                del response_or_response_body.headers["content-length"]
         api_version = self.api_version_var.get()
         if api_version is None:
             return response_or_response_body
@@ -579,6 +581,7 @@ class VersionBundle:
             head_route.response_model,
             head_route,
         )
+
         if isinstance(response_or_response_body, FastapiResponse):
             # a webserver (uvicorn for instance) calculates the body at the endpoint level.
             # if an endpoint returns no "body", its content-length will be set to 0
@@ -605,9 +608,10 @@ class VersionBundle:
                         indent=None,
                         separators=(",", ":"),
                     ).encode("utf-8")
-                # It makes sense to re-calculate content length because the previously calculated one
-                # might slightly differ. If it differs -- uvicorn will break.
-                response_info.headers["content-length"] = str(len(response_info._response.body))
+                if response_info.headers.get("content-length") is not None:
+                    # It makes sense to re-calculate content length because the previously calculated one
+                    # might slightly differ. If it differs -- uvicorn will break.
+                    response_info.headers["content-length"] = str(len(response_info._response.body))
 
             if raised_exception is not None and response_info.status_code >= 400:
                 if isinstance(response_info.body, dict) and "detail" in response_info.body:
