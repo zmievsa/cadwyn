@@ -71,6 +71,8 @@ class Cadwyn(FastAPI):
         api_version_format: APIVersionFormat = "date",
         api_version_parameter_name: str = "x-api-version",
         api_version_default_value: Union[str, None, Callable[[Request], Awaitable[str]]] = None,
+        api_version_title: str | None = None,
+        api_version_description: str | None = None,
         versioning_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
         changelog_url: Union[str, None] = "/changelog",
         include_changelog_url_in_schema: bool = True,
@@ -207,6 +209,8 @@ class Cadwyn(FastAPI):
         self.api_version_format = api_version_format
         self.api_version_parameter_name = api_version_parameter_name
         self.api_version_pythonic_parameter_name = api_version_parameter_name.replace("-", "_")
+        self.api_version_title = api_version_title
+        self.api_version_description = api_version_description
         if api_version_location == "custom_header":
             self._api_version_manager = HeaderVersionManager(api_version_parameter_name=api_version_parameter_name)
             self._api_version_fastapi_depends_class = fastapi.Header
@@ -465,6 +469,8 @@ class Cadwyn(FastAPI):
                             default_value=version,
                             fastapi_depends_class=self._api_version_fastapi_depends_class,
                             validation_data_type=self.api_version_validation_data_type,
+                            title=self.api_version_title,
+                            description=self.api_version_description,
                         )
                     )
                 ],

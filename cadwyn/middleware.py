@@ -58,6 +58,8 @@ def _generate_api_version_dependency(
     default_value: str,
     fastapi_depends_class: Callable[..., Any],
     validation_data_type: Any,
+    title: str | None = None,
+    description: str | None = None,
 ):
     def api_version_dependency(**kwargs: Any):
         # TODO: What do I return?
@@ -69,7 +71,12 @@ def _generate_api_version_dependency(
                 api_version_pythonic_parameter_name,
                 inspect.Parameter.KEYWORD_ONLY,
                 annotation=Annotated[
-                    validation_data_type, fastapi_depends_class(openapi_examples={"default": {"value": default_value}})
+                    validation_data_type,
+                    fastapi_depends_class(
+                        openapi_examples={"default": {"value": default_value}},
+                        title=title,
+                        description=description,
+                    ),
                 ],
                 # Path-based parameters do not support a default value in FastAPI :(
                 default=default_value if fastapi_depends_class != fastapi.Path else inspect.Signature.empty,
