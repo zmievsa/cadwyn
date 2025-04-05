@@ -5,7 +5,7 @@ import inspect
 import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from typing import Annotated, Any, Literal, Protocol, Union
+from typing import Annotated, Any, Literal, Optional, Protocol, Union
 
 import fastapi
 from fastapi import Request
@@ -58,8 +58,8 @@ def _generate_api_version_dependency(
     default_value: str,
     fastapi_depends_class: Callable[..., Any],
     validation_data_type: Any,
-    title: str | None = None,
-    description: str | None = None,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
 ):
     def api_version_dependency(**kwargs: Any):
         # TODO: What do I return?

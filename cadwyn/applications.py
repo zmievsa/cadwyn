@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Union, cast
+from typing import TYPE_CHECKING, Annotated, Any, Optional, Union, cast
 
 import fastapi
 from fastapi import APIRouter, FastAPI, HTTPException, routing
@@ -71,8 +71,8 @@ class Cadwyn(FastAPI):
         api_version_format: APIVersionFormat = "date",
         api_version_parameter_name: str = "x-api-version",
         api_version_default_value: Union[str, None, Callable[[Request], Awaitable[str]]] = None,
-        api_version_title: str | None = None,
-        api_version_description: str | None = None,
+        api_version_title: Optional[str] = None,
+        api_version_description: Optional[str] = None,
         versioning_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
         changelog_url: Union[str, None] = "/changelog",
         include_changelog_url_in_schema: bool = True,
