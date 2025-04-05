@@ -123,9 +123,14 @@ async def get_user_addresses(user_id: uuid.UUID):
     return {"data": database_parody[f"addr_{user_id}"]}
 
 
-app = Cadwyn(versions=version_bundle, title="My amazing API")
+app = Cadwyn(
+    versions=version_bundle,
+    title="My amazing API",
+    api_version_title="My Great API version parameter",
+    api_version_description="Description of my great API version parameter",
+)
 app.generate_and_include_versioned_routers(router)
 
 
 if __name__ == "__main__":
-    uvicorn.run(app)
+    uvicorn.run(app, port=8011)

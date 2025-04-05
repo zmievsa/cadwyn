@@ -119,8 +119,7 @@ nav:
       - "Endpoint migrations": "concepts/endpoint_migrations.md"
       - "Enum migrations": "concepts/enum_migrations.md"
       - "Schema migrations": "concepts/schema_migrations.md"
-      - "API Version parameter and context variables": "concepts/api_version_parameter_and_context_variables.md"
-      - "Where to put the version and how to format it": "concepts/where_to_put_the_version_and_how_to_format_it.md"
+      - "API Version parameter": "concepts/api_version_parameter.md"
       - "Changelogs": "concepts/changelogs.md"
       - "Testing": concepts/testing.md
   - "Contributing": "home/CONTRIBUTING.md"
