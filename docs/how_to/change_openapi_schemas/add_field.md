@@ -14,7 +14,7 @@ Now you have everything you need at your disposal: field `created_at` is availab
 
 Let's say we want our users to be able to specify a middle name but it is nullable. It is not a breaking change so no new version is necessary whether it is requests or responses.
 
-You just need to add a nullable `middle_name` field into `users.BaseUser`
+You just need to add a nullable `middle_name` field into `users.BaseUser` as if you were working with a barebones FastAPI app.
 
 ### Field is required
 
@@ -58,7 +58,6 @@ Let's say that our users had a field `country` that defaulted to `USA` but our p
         Version("2000-01-01"),
     )
     ```
-
 
 That's it! Our old schemas will now contain a default but in HEAD country will be required. You might notice a weirdness: if we set a default in the old version, why would we also write a migration? That's because of a sad implementation detail of pydantic that [prevents us](../../concepts/schema_migrations.md#change-a-field-in-the-older-version) from using defaults from old versions.
 
@@ -117,6 +116,5 @@ So we will make `phone` nullable in HEAD, then make it required in `latest`, and
         Version("2000-01-01"),
     )
     ```
-
 
 See how we didn't remove the `phone` field from old versions? Instead, we allowed a nullable `phone` field to be passed into both old `UserResource` and old `UserCreateRequest`. This gives our users new functionality without needing to update their API version! It is one of the best parts of Cadwyn's approach: our users can get years worth of updates without switching their API version and without their integration getting broken.
