@@ -2,6 +2,8 @@
 
 All of the following instructions affect only openapi schemas and their initial validation. All of your incoming requests will still be converted into your HEAD schemas.
 
+Please note that you only need to have a migration if it is a breaking change for your users. The scenarios below only describe "what you can do" but not "what you should do". For the "should", please refer to the [how-to docs](../how_to/change_openapi_schemas/add_field.md).
+
 ## Add a field to the older version
 
 ```python

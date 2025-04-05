@@ -93,6 +93,8 @@ HEAD is very similar to your latest version with a few key differences:
 
 `VersionChange` classes describe each atomic group of business capabilities that you have altered in a version.
 
+Note, however, that you only need to have a migration if it is a breaking change for your users. If you add a new endpoint or add a new field to your response schema, you do not need to have a migration for it because your users' code will not break. So by not having a migration you automatically add this change to all versions.
+
 ### VersionChange.\_\_name\_\_
 
 The name of the version change, `RemoveTaxIDEndpoints`, describes what breaking change has happened. It must be a verb and it is the best resource for your new developers to quickly understand what happened between the versions. Do not be shy to use really long names -- it is better to have a long name than to create a misunderstanding. Avoid generic names such as `RefactorUserFields`. Better have an ugly name such as `RenameCreationDatetimeAndUpdateDatetimeToCreatedAtAndUpdatedAt` then to have a generic name such as `RefactorFields`. Because after just a few of such version changes, your versioning structure can become completely unreadable:

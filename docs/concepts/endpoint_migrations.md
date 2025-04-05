@@ -1,10 +1,10 @@
 # Endpoint migrations
 
-Note that the endpoint constructor contains a second argument that describes the methods of the endpoints you would like to edit. If you have two routes for a single endpoint and you put both of their methods into the instruction -- both of them are going to be changed as you would expect.
+Note that the `endpoint(...)` constructor contains a second argument that describes the methods of the endpoints you would like to edit. If you have two routes for a single endpoint and you put both of their methods into the instruction -- both of them are going to be changed as you would expect.
 
 ## Defining endpoints that didn't exist in new versions
 
-If you had an endpoint in old version but do not have it in a new one, you must still define it but mark it as deleted.
+If you had an endpoint in an old version **but want to delete it in a new version**, you must still define it as usual with all your other endpoints but mark it as deleted.
 
 ```python
 @router.only_exists_in_older_versions
@@ -28,7 +28,7 @@ class MyChange(VersionChange):
 
 ## Defining endpoints that didn't exist in old versions
 
-If you have an endpoint in your new version that must not exist in older versions, you define it as usual and then mark it as "non-existing" in old versions:
+If you have an endpoint in your new version that must not exist in older versions for some reason, you define it as usual and then mark it as "non-existing" in old versions. Note that this is [not the recommended approach when adding new endpoints](../how_to/change_endpoints/index.md#add-a-new-endpoint).
 
 ```python
 from cadwyn import VersionChange, endpoint
@@ -57,6 +57,8 @@ class MyChange(VersionChange):
         ),
     )
 ```
+
+However, you only need to have a migration if it is a breaking change for your users.
 
 ### Dependency alteration warning
 
