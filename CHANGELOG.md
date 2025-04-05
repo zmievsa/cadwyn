@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.3.0]
+
+### Added
+
+* `api_version_title` and `api_version_description` arguments to `Cadwyn` to allow customizing the API version parameter in the OpenAPI schema
+
 ## [5.2.2]
 
 ### Fixed
