@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.3.2]
+
+### Fixed
+
+* Add support for `pydantic_settings.BaseSettings` in dependencies
+
 ## [5.3.1]
 
 ### Fixed

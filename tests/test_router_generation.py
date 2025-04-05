@@ -14,7 +14,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.security.http import HTTPBasic
 from fastapi.testclient import TestClient
 from inline_snapshot import snapshot
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, Field, JsonValue
+from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse
 from typing_extensions import Any, NewType, TypeAlias, TypeAliasType, get_args
@@ -1353,6 +1354,32 @@ def test__router_generation__with_generator_dependencies(
             "fastapi async dependency end",
         ]
     )
+
+
+def test__router_generation__with_pydantic_settings_dependency(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+) -> None:
+    class Settings(BaseSettings):
+        foo: str = Field(default="bar")
+
+    async def settings() -> Settings:
+        return Settings()
+
+    @router.get("/test")
+    def read_root(settings: Annotated[Settings, Depends(settings)]):
+        assert settings
+        return {"foo": settings.foo}
+
+    app = create_versioned_app(version_change())
+    with TestClient(app) as client:
+        resp = client.get("/test", headers={"x-api-version": "2000-01-01"})
+        assert resp.status_code == 200
+        assert resp.json() == {"foo": "bar"}
+
+        resp = client.get("/test", headers={"x-api-version": "2001-01-01"})
+        assert resp.status_code == 200
+        assert resp.json() == {"foo": "bar"}
 
 
 ######################

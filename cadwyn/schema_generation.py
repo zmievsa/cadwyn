@@ -102,6 +102,14 @@ PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
     ComputedFieldInfo: pydantic.computed_field,
 }
 _PYDANTIC_ALL_EXPORTED_NAMES = set(pydantic.__all__)
+_DEFAULT_PYDANTIC_CLASSES = (BaseModel, RootModel)
+
+try:
+    from pydantic_settings import BaseSettings
+
+    _DEFAULT_PYDANTIC_CLASSES = (*_DEFAULT_PYDANTIC_CLASSES, BaseSettings)
+except ImportError:  # pragma: no cover
+    pass
 
 
 VALIDATOR_CONFIG_KEY = "__validators__"
@@ -757,7 +765,7 @@ class SchemaGenerator:
         if (
             not isinstance(model, type)
             or not lenient_issubclass(model, (BaseModel, Enum))
-            or model in (BaseModel, RootModel)
+            or model in _DEFAULT_PYDANTIC_CLASSES
         ):
             return model
         model = _unwrap_model(model)

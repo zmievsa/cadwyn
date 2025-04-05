@@ -94,7 +94,7 @@ wheels = [
 
 [[package]]
 name = "cadwyn"
-version = "5.3.1"
+version = "5.3.2"
 source = { editable = "." }
 dependencies = [
     { name = "backports-strenum", marker = "python_full_version < '3.11'" },
@@ -124,6 +124,7 @@ dev = [
     { name = "mkdocs-material" },
     { name = "mkdocs-simple-hooks" },
     { name = "pdbpp" },
+    { name = "pydantic-settings" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -160,6 +161,7 @@ dev = [
     { name = "mkdocs-material", specifier = ">=9.3.1" },
     { name = "mkdocs-simple-hooks", specifier = ">=0.1.5" },
     { name = "pdbpp", specifier = ">=0.10.3" },
+    { name = "pydantic-settings", specifier = ">=2.8.1" },
     { name = "pyright", specifier = ">=1.1.390" },
     { name = "pytest", specifier = "==8.3.4" },
     { name = "pytest-cov", specifier = ">=4.0.0" },
@@ -1039,6 +1041,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/3e/fe5b6613d9e4c0038434396b46c5303f5ade871166900b357ada4766c5b7/pydantic_core-2.27.2-pp39-pypy39_pp73-musllinux_1_1_armv7l.whl", hash = "sha256:8083d4e875ebe0b864ffef72a4304827015cff328a1be6e22cc850753bfb122b", size = 2116654 },
     { url = "https://files.pythonhosted.org/packages/db/ad/28869f58938fad8cc84739c4e592989730bfb69b7c90a8fff138dff18e1e/pydantic_core-2.27.2-pp39-pypy39_pp73-musllinux_1_1_x86_64.whl", hash = "sha256:f141ee28a0ad2123b6611b6ceff018039df17f32ada8b534e6aa039545a3efb2", size = 2152292 },
     { url = "https://files.pythonhosted.org/packages/a1/0c/c5c5cd3689c32ed1fe8c5d234b079c12c281c051759770c05b8bed6412b5/pydantic_core-2.27.2-pp39-pypy39_pp73-win_amd64.whl", hash = "sha256:7d0c8399fcc1848491f00e0314bd59fb34a9c008761bcb422a057670c3f65e35", size = 2004961 },
+]
+
+[[package]]
+name = "pydantic-settings"
+version = "2.8.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/82/c79424d7d8c29b994fb01d277da57b0a9b09cc03c3ff875f9bd8a86b2145/pydantic_settings-2.8.1.tar.gz", hash = "sha256:d5c663dfbe9db9d5e1c646b2e161da12f0d734d422ee56f567d0ea2cee4e8585", size = 83550 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/53/a64f03044927dc47aafe029c42a5b7aabc38dfb813475e0e1bf71c4a59d0/pydantic_settings-2.8.1-py3-none-any.whl", hash = "sha256:81942d5ac3d905f7f3ee1a70df5dfb62d5569c12f51a5a647defc1c3d9ee2e9c", size = 30839 },
 ]
 
 [[package]]
