@@ -24,7 +24,7 @@ Production-ready community-driven modern [Stripe-like](https://stripe.com/blog/a
 
 ## Who is this for?
 
-Cadwyn allows you to support a single version of your code while auto-generating the schemas and routes for older versions. You keep API versioning encapsulated in small and independent "version change" modules while your business logic stays simple and knows nothing about versioning.
+Cadwyn allows you to maintain the implementation just for your newest API version and get all the older versions generated automatically. You keep API versioning encapsulated in small and independent "version change" modules while your business logic stays simple and knows nothing about versioning.
 
 Its [approach](https://docs.cadwyn.dev/theory/how_we_got_here/#ii-migration-based-response-building) will be useful if you want to:
 
