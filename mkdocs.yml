@@ -47,8 +47,8 @@ markdown_extensions:
 
 theme:
   name: "material"
-  logo: img/logo.svg
-  favicon: img/favicon.svg
+  logo: img/logos/cadwyn_icon_transparent.svg
+  favicon: img/logos/cadwyn_icon_transparent.svg
 
   features:
     - content.code.annotate
