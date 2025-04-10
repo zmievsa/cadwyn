@@ -11,6 +11,9 @@ plugins:
       hooks:
         on_pre_build: "docs.plugin:on_pre_build"
 
+extra_css:
+  - stylesheets/extra.css
+
 markdown_extensions:
   toc:
     permalink: true
@@ -41,8 +44,12 @@ markdown_extensions:
   md_in_html: null
   mdx_include:
   markdown_include_variants:
+
 theme:
   name: "material"
+  logo: img/logos/cadwyn_icon_transparent.svg
+  favicon: img/logos/cadwyn_icon_transparent.svg
+
   features:
     - content.code.annotate
     - content.code.copy
