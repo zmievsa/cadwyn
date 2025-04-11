@@ -24,12 +24,12 @@ Production-ready community-driven modern [Stripe-like](https://stripe.com/blog/a
 
 ## Who is this for?
 
-Cadwyn allows you to maintain the implementation just for your newest API version and get all the older versions generated automatically. You keep API versioning encapsulated in small and independent "version change" modules while your business logic stays simple and knows nothing about versioning.
+Cadwyn allows you to maintain the implementation just for your newest API version and get all the older versions generated automatically. You keep API backward compatibility encapsulated in small and independent "version change" modules while your business logic stays simple and knows nothing about versioning.
 
-Its [approach](https://docs.cadwyn.dev/theory/how_we_got_here/#ii-migration-based-response-building) will be useful if you want to:
+This [approach](https://docs.cadwyn.dev/theory/how_we_got_here/#ii-migration-based-response-building) may be useful if you want to:
 
 1. Support many API versions for a long time
-2. Effortlessly backport features and bugfixes to older API versions
+2. Have features and bugfixes automatically backported to older API versions
 
 Whether you are a newbie in API versioning, a pro looking for a sophisticated tool, an experimenter looking to build a similar framework, or even someone who just wants to learn about all approaches to API versioning -- Cadwyn has the functionality, theory, and documentation to cover all the mentioned use cases.
 
@@ -39,6 +39,6 @@ The [documentation](https://docs.cadwyn.dev) has everything you need to succeed.
 
 ## Sponsors
 
-These are our gorgeous sponsors. They are using Cadwyn and are sponsoring it through various means. Contact [me](https://github.com/zmievsa) if you would like to become one too!
+These are our gorgeous sponsors. They are using Cadwyn and are sponsoring it through various means. Contact [me](https://github.com/zmievsa) if you would like to become one, too!
 
 [![Monite](https://docs.cadwyn.dev/img/sponsor_logos/monite.png)](https://docs.monite.com/)
