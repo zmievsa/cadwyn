@@ -12,7 +12,7 @@ Production-ready community-driven modern [Stripe-like](https://stripe.com/blog/a
     <img src="https://img.shields.io/codecov/c/github/zmievsa/cadwyn?color=%2334D058&logo=codecov" alt="Coverage">
 </a>
 <a href="https://pypi.org/project/cadwyn/" target="_blank">
-    <img alt="PyPI" src="https://img.shields.io/pypi/v/cadwyn?color=%2334D058&logo=pypi&label=PyPI package" alt="Package version">
+    <img alt="PyPI" src="https://img.shields.io/pypi/v/cadwyn?color=%2334D058&logo=pypi&label=PyPI" alt="Package version">
 </a>
 <a href="https://pypi.org/project/cadwyn/" target="_blank">
     <img src="https://img.shields.io/pypi/pyversions/cadwyn?color=%2334D058&logo=python" alt="Supported Python versions">
