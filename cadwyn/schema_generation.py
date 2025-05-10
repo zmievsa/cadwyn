@@ -18,7 +18,6 @@ import fastapi.security.base
 import fastapi.utils
 import pydantic
 import pydantic._internal._decorators
-import typing_extensions
 from fastapi import Response
 from fastapi.dependencies.utils import is_async_gen_callable, is_coroutine_callable, is_gen_callable
 from fastapi.routing import APIRoute
@@ -37,7 +36,6 @@ from pydantic.fields import ComputedFieldInfo, FieldInfo
 from typing_extensions import (
     Any,
     Doc,
-    NewType,
     Self,
     TypeAlias,
     TypeAliasType,
@@ -587,9 +585,11 @@ class _AnnotationTransformer:
         self._remake_endpoint_dependencies(route)
 
     def _change_version_of_a_non_container_annotation(self, annotation: Any) -> Any:
+        from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
+
         if isinstance(annotation, (_BaseGenericAlias, types.GenericAlias)):
             return get_origin(annotation)[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
-        elif isinstance(annotation, TypeAliasType):
+        elif is_typealiastype(annotation):
             if (
                 annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
             ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES:
@@ -616,7 +616,7 @@ class _AnnotationTransformer:
             return getitem(
                 tuple(self.change_version_of_annotation(a) for a in get_args(annotation)),
             )
-        elif annotation is typing.Any or annotation is typing_extensions.Any or isinstance(annotation, NewType):
+        elif is_any(annotation) or is_newtype(annotation):
             return annotation
         elif isinstance(annotation, type):
             return self._change_version_of_type(annotation)
