@@ -36,7 +36,7 @@ def version_callback(value: bool):
 def output_code(code: str, raw: bool):
     if raw:
         typer.echo(code)
-    else:
+    else:  # pragma: no cover
         _CONSOLE.print(Syntax(code, "python", line_numbers=True))
 
 

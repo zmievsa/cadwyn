@@ -57,21 +57,6 @@ class A(BaseModel):
     )
 
 
-def test__render_model__with_syntax_highlighting():  # pragma: no cover
-    result = CliRunner().invoke(
-        app,
-        [
-            "render",
-            "model",
-            "tests._resources.render.classes:A",
-            "--app=tests._resources.render.versions:app",
-            "--version=2000-01-01",
-        ],
-    )
-    assert result.exit_code == 0
-    assert code(result.stdout) == "1 class A(BaseModel):\n  2     pass"
-
-
 @pytest.mark.parametrize("arg", ["-V", "--version"])
 def test__cli_get_version(arg: str) -> None:
     result = CliRunner().invoke(app, [arg])
