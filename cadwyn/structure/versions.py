@@ -620,7 +620,7 @@ class VersionBundle:
                     detail = response_info.body
                 if detail is None:
                     detail = http.HTTPStatus(response_info.status_code).phrase
-                raised_exception.detail = cast(str, detail)
+                raised_exception.detail = cast("str", detail)
                 raised_exception.headers = dict(response_info.headers)
                 raised_exception.status_code = response_info.status_code
 

@@ -99,8 +99,8 @@ class CreateVersionedAPIRoutes:
     ) -> tuple[list[APIRoute], list[APIRoute]]:
         app = self.create_versioned_app(*version_changes, router=router)
         return (
-            cast(list[APIRoute], app.router.versioned_routers.get("2000-01-01", APIRouter()).routes),
-            cast(list[APIRoute], app.router.versioned_routers.get("2001-01-01", APIRouter()).routes),
+            cast("list[APIRoute]", app.router.versioned_routers.get("2000-01-01", APIRouter()).routes),
+            cast("list[APIRoute]", app.router.versioned_routers.get("2001-01-01", APIRouter()).routes),
         )
 
 
@@ -730,8 +730,8 @@ def test__router_generation__updating_response_model(
     app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
     schemas = generate_versioned_models(app.versions)
 
-    routes_2000 = cast(list[APIRoute], app.router.versioned_routers["2000-01-01"].routes)
-    routes_2001 = cast(list[APIRoute], app.router.versioned_routers["2001-01-01"].routes)
+    routes_2000 = cast("list[APIRoute]", app.router.versioned_routers["2000-01-01"].routes)
+    routes_2001 = cast("list[APIRoute]", app.router.versioned_routers["2001-01-01"].routes)
 
     assert len(routes_2000) == len(routes_2001) == 2
 
@@ -769,8 +769,8 @@ def test__router_generation__updating_request_models(
     app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
     schemas = generate_versioned_models(app.versions)
 
-    routes_2000 = cast(list[APIRoute], app.router.versioned_routers["2000-01-01"].routes)
-    routes_2001 = cast(list[APIRoute], app.router.versioned_routers["2001-01-01"].routes)
+    routes_2000 = cast("list[APIRoute]", app.router.versioned_routers["2000-01-01"].routes)
+    routes_2001 = cast("list[APIRoute]", app.router.versioned_routers["2001-01-01"].routes)
     assert len(routes_2000) == len(routes_2001) == 2
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
@@ -802,8 +802,8 @@ def test__router_generation__updating_request_models_with_inheritance(
 
     app = create_versioned_app(version_change(schema(ParentSchema).field("foo").didnt_exist))
 
-    routes_2000 = cast(list[APIRoute], app.router.versioned_routers["2000-01-01"].routes)
-    routes_2001 = cast(list[APIRoute], app.router.versioned_routers["2001-01-01"].routes)
+    routes_2000 = cast("list[APIRoute]", app.router.versioned_routers["2000-01-01"].routes)
+    routes_2001 = cast("list[APIRoute]", app.router.versioned_routers["2001-01-01"].routes)
     assert len(routes_2000) == len(routes_2001) == 2
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
@@ -833,8 +833,8 @@ def test__router_generation__using_unversioned_models(
     app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
     schemas = generate_versioned_models(app.versions)
 
-    routes_2000 = cast(list[APIRoute], app.router.versioned_routers["2000-01-01"].routes)
-    routes_2001 = cast(list[APIRoute], app.router.versioned_routers["2001-01-01"].routes)
+    routes_2000 = cast("list[APIRoute]", app.router.versioned_routers["2000-01-01"].routes)
+    routes_2001 = cast("list[APIRoute]", app.router.versioned_routers["2001-01-01"].routes)
 
     assert len(routes_2000) == len(routes_2001) == 4
     assert routes_2000[1].dependant.body_params[0].type_ is schemas["2000-01-01"][UnversionedSchema1]
@@ -1221,7 +1221,7 @@ def test__basic_router_generation__using_http_security_dependency__should_genera
 
     client_2000, *_ = create_versioned_clients().values()
 
-    dependant = cast(APIRoute, client_2000.app.router.versioned_routers["2000-01-01"].routes[-1]).dependant
+    dependant = cast("APIRoute", client_2000.app.router.versioned_routers["2000-01-01"].routes[-1]).dependant
     assert dependant.dependencies[1].dependencies[0].security_requirements[0].security_scheme is auth_header_scheme
     response = client_2000.get("/test")
     assert response.status_code == expected_status_code

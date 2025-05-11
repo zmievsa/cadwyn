@@ -263,7 +263,7 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
     # For example, when "from __future__ import annotations" is used in the file with the schema
     if model is not BaseModel:
         model.model_rebuild(raise_errors=False)
-    model = cast(type[_T_PYDANTIC_MODEL], model)
+    model = cast("type[_T_PYDANTIC_MODEL]", model)
 
     decorators = _get_model_decorators(model)
     validators = {}
@@ -343,7 +343,7 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
 def _get_field_and_validator_names_from_model(cls: type) -> tuple[set[_FieldName], set[str]]:
     fields = cls.model_fields
     source = inspect.getsource(cls)
-    cls_ast = cast(ast.ClassDef, ast.parse(textwrap.dedent(source)).body[0])
+    cls_ast = cast("ast.ClassDef", ast.parse(textwrap.dedent(source)).body[0])
     validator_names = (
         _get_validator_info_or_none(node)
         for node in cls_ast.body
@@ -466,7 +466,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
         model_copy = type(self.cls)(
             self.name,
-            tuple(generator[cast(type[BaseModel], base)] for base in self.cls.__bases__),
+            tuple(generator[cast("type[BaseModel]", base)] for base in self.cls.__bases__),
             self.other_attributes
             | per_field_validators
             | root_validators
@@ -776,7 +776,7 @@ class SchemaGenerator:
         wrapper = self._get_wrapper_for_model(model)
         model_copy = wrapper.generate_model_copy(self)
         self.concrete_models[model] = model_copy
-        return cast(type[_T_ANY_MODEL], model_copy)
+        return cast("type[_T_ANY_MODEL]", model_copy)
 
     @overload
     def _get_wrapper_for_model(self, model: type[BaseModel]) -> "_PydanticModelWrapper[BaseModel]": ...
@@ -865,7 +865,7 @@ def _apply_alter_schema_instructions(
         elif isinstance(alter_schema_instruction, ValidatorExistedInstruction):
             validator_name = get_name_of_function_wrapped_in_pydantic_validator(alter_schema_instruction.validator)
             raw_validator = cast(
-                pydantic._internal._decorators.PydanticDescriptorProxy, alter_schema_instruction.validator
+                "pydantic._internal._decorators.PydanticDescriptorProxy", alter_schema_instruction.validator
             )
             schema_info.validators[validator_name] = _wrap_validator(
                 raw_validator.wrapped,
@@ -1100,7 +1100,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
         for attr_name, attr in initialization_namespace.items():
             enum_dict[attr_name] = attr
         enum_dict["__doc__"] = self.cls.__doc__
-        model_copy = cast(type[_T_ENUM], type(self.name, self.cls.__bases__, enum_dict))
+        model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict))
         model_copy.__cadwyn_original_model__ = self.cls  # pyright: ignore[reportAttributeAccessIssue]
         return model_copy
 

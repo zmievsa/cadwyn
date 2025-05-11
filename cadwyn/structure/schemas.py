@@ -246,7 +246,7 @@ class AlterFieldInstructionFactory:
         info: Union[FieldInfo, Any, None] = None,
     ) -> FieldExistedAsInstruction:
         if info is None:
-            info = cast(FieldInfo, Field())
+            info = cast("FieldInfo", Field())
         info.annotation = type
         return FieldExistedAsInstruction(is_hidden_from_changelog=False, schema=self.schema, name=self.name, field=info)
 
@@ -317,7 +317,7 @@ class AlterSchemaInstructionFactory:
     def validator(
         self, func: "Union[Callable[..., Any], classmethod[Any, Any, Any], PydanticDescriptorProxy]", /
     ) -> AlterValidatorInstructionFactory:
-        func = cast(Union[Callable[..., Any], PydanticDescriptorProxy], unwrap_wrapped_function(func))
+        func = cast("Union[Callable[..., Any], PydanticDescriptorProxy]", unwrap_wrapped_function(func))
 
         if not isinstance(func, PydanticDescriptorProxy):
             if hasattr(func, "__self__"):

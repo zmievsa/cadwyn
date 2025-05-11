@@ -78,7 +78,7 @@ def generate_versioned_routers(
     webhooks: Union[_WR, None] = None,
 ) -> GeneratedRouters[_R, _WR]:
     if webhooks is None:
-        webhooks = cast(_WR, APIRouter())
+        webhooks = cast("_WR", APIRouter())
     return _EndpointTransformer(router, versions, webhooks).transform()
 
 
@@ -167,7 +167,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
 
                 # We know they are APIRoutes because of the check at the very beginning of the top loop.
                 # I.e. Because head_route is an APIRoute, both routes are  APIRoutes too
-                older_route = cast(APIRoute, older_route)
+                older_route = cast("APIRoute", older_route)
                 # Wait.. Why do we need this code again?
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
                     if hasattr(older_route.body_field.type_, "__cadwyn_original_model__"):

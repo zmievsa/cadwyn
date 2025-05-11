@@ -1,9 +1,8 @@
 import re
-from typing import Annotated, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 import pytest
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
@@ -21,6 +20,9 @@ from tests._resources.versioned_app.app import (
     v2022_01_02_router,
 )
 
+if TYPE_CHECKING:
+    from fastapi.routing import APIRoute
+
 
 def test__header_routing__invalid_version_format__error():
     main_app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
@@ -37,7 +39,7 @@ def test__header_routing__invalid_version_format__error():
 
 
 def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_openapi_routes():
-    assert [cast(APIRoute, r).path for r in Cadwyn(versions=VersionBundle(Version("2022-11-16"))).routes] == [
+    assert [cast("APIRoute", r).path for r in Cadwyn(versions=VersionBundle(Version("2022-11-16"))).routes] == [
         "/docs/oauth2-redirect",
         "/changelog",
         "/openapi.json",
@@ -45,7 +47,7 @@ def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_ope
         "/redoc",
     ]
     assert [
-        cast(APIRoute, r).path
+        cast("APIRoute", r).path
         for r in Cadwyn(versions=VersionBundle(Version("2022-11-16")), docs_url=None, redoc_url=None).routes
     ] == [
         "/changelog",
@@ -56,7 +58,7 @@ def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_ope
 
 def test__header_routing_fastapi_init__passing_null_to_oauth2__should_not_add_oauth2_redirect_route():
     app = Cadwyn(versions=VersionBundle(Version("2022-11-16")), swagger_ui_oauth2_redirect_url=None)
-    assert [cast(APIRoute, r).path for r in app.routes] == [
+    assert [cast("APIRoute", r).path for r in app.routes] == [
         "/changelog",
         "/openapi.json",
         "/docs",
@@ -165,7 +167,7 @@ def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empt
         )
     assert len(app.router.versioned_routers) == 1
     assert len(app.router.versioned_routers["2022-11-16"].routes) == 1
-    route = cast(APIRoute, app.router.versioned_routers["2022-11-16"].routes[0])
+    route = cast("APIRoute", app.router.versioned_routers["2022-11-16"].routes[0])
     assert route.path == "/openapi.json"
 
 
@@ -385,9 +387,9 @@ def test__webhooks():
         assert "post-subscription" in openapi_dict["webhooks"], "'post-subscription' webhook is missing"
         assert "post" in openapi_dict["webhooks"]["post-subscription"], "POST method for 'post-subscription' is missing"
         assert "Subscription" in openapi_dict["components"]["schemas"], "'Subscription' component is missing"
-        assert (
-            "monthly_fee" in openapi_dict["components"]["schemas"]["Subscription"]["properties"]
-        ), "monthly_fee field is missing"
+        assert "monthly_fee" in openapi_dict["components"]["schemas"]["Subscription"]["properties"], (
+            "monthly_fee field is missing"
+        )
 
         resp = client.get("/openapi.json?version=2022-11-16")
         openapi_dict = resp.json()
@@ -397,9 +399,9 @@ def test__webhooks():
         assert "post-subscription" in openapi_dict["webhooks"], "'post-subscription' webhook is present"
         assert "post" in openapi_dict["webhooks"]["post-subscription"], "POST method for 'post-subscription' is missing"
         assert "Subscription" in openapi_dict["components"]["schemas"], "'Subscription' component is missing"
-        assert (
-            "monthly_fee" not in openapi_dict["components"]["schemas"]["Subscription"]["properties"]
-        ), "monthly_fee field is present yet it must be deleted"
+        assert "monthly_fee" not in openapi_dict["components"]["schemas"]["Subscription"]["properties"], (
+            "monthly_fee field is present yet it must be deleted"
+        )
 
 
 def test__api_version_header_name_is_deprecated_and_translates_to_api_version_parameter_name():

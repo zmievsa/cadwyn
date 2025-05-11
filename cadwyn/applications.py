@@ -400,7 +400,7 @@ class Cadwyn(FastAPI):
                 init_oauth=self.swagger_ui_init_oauth,
                 swagger_ui_parameters=self.swagger_ui_parameters,
             )
-        return self._render_docs_dashboard(req, cast(str, self.docs_url))
+        return self._render_docs_dashboard(req, cast("str", self.docs_url))
 
     async def redoc_dashboard(self, req: Request) -> Response:
         version = req.query_params.get("version")
@@ -410,7 +410,7 @@ class Cadwyn(FastAPI):
             openapi_url = root_path + f"{self.openapi_url}?version={version}"
             return get_redoc_html(openapi_url=openapi_url, title=f"{self.title} - ReDoc")
 
-        return self._render_docs_dashboard(req, docs_url=cast(str, self.redoc_url))
+        return self._render_docs_dashboard(req, docs_url=cast("str", self.redoc_url))
 
     def _extract_root_path(self, req: Request):
         return req.scope.get("root_path", "").rstrip("/")

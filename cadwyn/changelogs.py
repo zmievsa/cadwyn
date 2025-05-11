@@ -93,7 +93,7 @@ def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -
                     generator_from_newer_version,
                     generator_from_older_version,
                     schemas_from_older_version,
-                    cast(list[APIRoute], routes_from_newer_version),
+                    cast("list[APIRoute]", routes_from_newer_version),
                 )
                 if changelog_entry is not None:  # pragma: no branch # This should never happen
                     version_change_changelog.instructions.append(CadwynVersionChangeInstruction(changelog_entry))
@@ -321,18 +321,18 @@ def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
     if isinstance(instruction, EndpointDidntExistInstruction):
         return CadwynEndpointWasAddedChangelogEntry(
             path=instruction.endpoint_path,
-            methods=cast(Any, instruction.endpoint_methods),
+            methods=cast("Any", instruction.endpoint_methods),
         )
     elif isinstance(instruction, EndpointExistedInstruction):
         return CadwynEndpointWasRemovedChangelogEntry(
             path=instruction.endpoint_path,
-            methods=cast(Any, instruction.endpoint_methods),
+            methods=cast("Any", instruction.endpoint_methods),
         )
     elif isinstance(instruction, EndpointHadInstruction):
         if instruction.attributes.include_in_schema is not Sentinel:
             return CadwynEndpointWasRemovedChangelogEntry(
                 path=instruction.endpoint_path,
-                methods=cast(Any, instruction.endpoint_methods),
+                methods=cast("Any", instruction.endpoint_methods),
             )
 
         renaming_map = {"operation_id": "operationId"}
@@ -379,7 +379,7 @@ def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
             attribute_changes.append(CadwynEndpointAttributeChange(name="responses", new_value=changed_responses))
         return CadwynEndpointHadChangelogEntry(
             path=instruction.endpoint_path,
-            methods=cast(Any, instruction.endpoint_methods),
+            methods=cast("Any", instruction.endpoint_methods),
             changes=attribute_changes,
         )
 

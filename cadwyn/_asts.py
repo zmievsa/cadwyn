@@ -22,7 +22,7 @@ NoneType = type(None)
 
 
 # A parent type of typing._GenericAlias
-_BaseGenericAlias = cast(type, type(List[int])).mro()[1]  # noqa: UP006
+_BaseGenericAlias = cast("type", type(List[int])).mro()[1]  # noqa: UP006
 
 # type(list[int]) and type(List[int]) are different which is why we have to do this.
 # Please note that this problem is much wider than just lists which is why we use typing._BaseGenericAlias
