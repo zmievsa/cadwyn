@@ -184,7 +184,7 @@ def serialize_object(obj: Any):
         modified_list = []
         for v in obj:
             if callable(v):
-                v = v.__name__  # noqa: PLW2901
+                v = v.__name__
             modified_list.append(serialize_object(v))
         return modified_list
     else:
