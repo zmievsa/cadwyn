@@ -408,6 +408,31 @@ print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # False
 
 or to specify migrations using [endpoint path](#path-based-migration-specification) instead of a schema.
 
+## Dependency re-execution warning
+
+Notice that whenever a request comes to Cadwyn, we first validate it against the request's version of the schema, then we migrate it to the latest version, and then validate again to prevent migrations from creating invalid requests.
+
+This means that if you have a dependency that is executed during the request validation, **it will be executed twice**. For example, if you have a dependency that checks whether a user exists in the database, it will be executed twice. This is not a problem if the dependency is idempotent but it is a problem if it is not.
+
+To solve this problem, you can use the `cadwyn.current_dependency_solver` dependency which tell you whether your dependency is getting called before or after the request is migrated. If you want to run it once we migrated the request to the latest version, you should only run it when `current_dependency_solver` is `"cadwyn"`. If you want your dependency to run at the very beginning of handling the request, you should only run it when `current_dependency_solver` is `"fastapi"`.
+
+```python
+from cadwyn import current_dependency_solver
+
+
+def my_dependency(
+    dependency_solver: Annotated[
+        Literal["fastapi", "cadwyn"], Depends(current_dependency_solver)
+    ]
+):
+    if dependency_solver == "fastapi":  # Before migration
+        ...
+    else:  # After migration
+        ...
+```
+
+but the majority of your dependencies will not need this as most dependencies should not have side effects or network calls within them.
+
 ## Version changes with side effects
 
 Sometimes you will use API versioning to handle a breaking change in your **business logic**, not in the schemas themselves. In such cases, it is tempting to add a version check and just follow the new business logic such as:
