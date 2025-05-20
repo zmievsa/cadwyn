@@ -73,6 +73,7 @@ else:
 
 
 class VersionChange:
+    @deprecated("Explicitly setting 'description' is deprecated. Use the class docstring instead.")
     description: ClassVar[str] = Sentinel
     is_hidden_from_changelog: bool = False
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
@@ -147,7 +148,7 @@ class VersionChange:
         if cls.description is Sentinel or not cls.description or not cls.description.strip():
             raise CadwynStructureError(
                 f"Version change description is not set on '{cls.__name__}' but is required. "
-                "It can be set via `description = '...'` or via the class docstring."
+                "Please set it via the class docstring."
             )
         if cls.instructions_to_migrate_to_previous_version is Sentinel:
             raise CadwynStructureError(

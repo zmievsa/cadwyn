@@ -20,7 +20,7 @@ from cadwyn import VersionChange, endpoint
 
 
 class RemoveTaxIDEndpoints(VersionChange):
-    description = "Remove `GET /v1/tax_ids` and `POST /v1/tax_ids` endpoints"
+    """Remove `GET /v1/tax_ids` and `POST /v1/tax_ids` endpoints"""
     instructions_to_migrate_to_previous_version = (
         endpoint("/v1/tax_ids", ["GET", "POST"]).existed,
     )
@@ -110,7 +110,11 @@ versions = VersionBundle(
 
 ### VersionChange.description
 
-The description field of your version change must be even more detailed. In fact, it is intended to be the **name** and the **summary** of the version change for your clients. It must clearly state to you clients **what happened** and **why**. So you need to make it grammatically correct, detailed, concrete, and written for humans. Note that you do not have to use a strict machine-readable format -- it is a portion of documentation, not a set of instructions. Let's take [Stripe's description](https://stripe.com/blog/api-versioning) to one of their version changes as an example:
+The description of your version change is provided via its class docstring. It must be detailed and is intended to be the **name** and the **summary** of the version change for your clients. It must clearly state to your clients **what happened** and **why**. So you need to make it grammatically correct, detailed, concrete, and written for humans. Note that you do not have to use a strict machine-readable format -- it is a portion of documentation, not a set of instructions.
+
+*Note: Previously, the description could be set via a `description` class attribute. This method is now deprecated in favor of using the class docstring.*
+
+Let's take [Stripe's description](https://stripe.com/blog/api-versioning) to one of their version changes as an example:
 
 ```md
 Event objects (and webhooks) will now render `request` subobject that contains a request ID and idempotency key instead of just a string request ID.
