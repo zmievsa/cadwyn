@@ -83,7 +83,8 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
             schema(BaseUser)
             .field("middle_name")
             .existed_as(
-                type=str | None, description="User's Middle Name", default=None
+                type=str | None,
+                info=Field(description="User's Middle Name", default=None),
             ),
         )
     ```
