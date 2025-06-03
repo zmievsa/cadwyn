@@ -762,3 +762,65 @@ def test__schema_field_had__nonexistent_field__should_raise_error(create_runtime
         ),
     ):
         create_runtime_schemas(version_change(schema(SchemaWithOneStrField).field("boo").had(type=int)))
+
+
+def test__schema_with_computed_field__should_not_raise_error(create_runtime_schemas: CreateRuntimeSchemas):
+    """Test that models with computed fields can be versioned without errors."""
+    from pydantic import computed_field
+
+    class SchemaWithComputedField(BaseModel):
+        image_file_key: str = Field(exclude=True)
+
+        @computed_field
+        @property
+        def image_url(self) -> str:
+            return f"https://example.com/{self.image_file_key}"
+
+    # This should not raise an error when creating runtime schemas
+    # Add a dummy version change to create both versions
+    schemas = create_runtime_schemas(version_change())
+
+    # Both versions should be created successfully
+    assert schemas["2000-01-01"][SchemaWithComputedField] is not None
+    assert schemas["2001-01-01"][SchemaWithComputedField] is not None
+
+    # Test that the computed field works in both versions
+    latest_model = schemas["2001-01-01"][SchemaWithComputedField]
+    versioned_model = schemas["2000-01-01"][SchemaWithComputedField]
+
+    latest_instance = latest_model(image_file_key="test.jpg")
+    versioned_instance = versioned_model(image_file_key="test.jpg")
+
+    assert latest_instance.image_url == "https://example.com/test.jpg"
+    assert versioned_instance.image_url == "https://example.com/test.jpg"
+
+
+def test__schema_with_computed_field__remove_computed_field(create_runtime_schemas: CreateRuntimeSchemas):
+    """Test removing a computed field from a model in an older version."""
+    from pydantic import computed_field
+
+    class SchemaWithComputedField(BaseModel):
+        image_file_key: str = Field(exclude=True)
+
+        @computed_field
+        @property
+        def image_url(self) -> str:
+            return f"https://example.com/{self.image_file_key}"
+
+    # This should work - removing the computed field in the older version
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithComputedField).field("image_url").didnt_exist))
+
+    # Latest version should have the computed field
+    latest_model = schemas["2001-01-01"][SchemaWithComputedField]
+    latest_instance = latest_model(image_file_key="test.jpg")
+    assert latest_instance.image_url == "https://example.com/test.jpg"
+
+    # Older version should not have the computed field
+    versioned_model = schemas["2000-01-01"][SchemaWithComputedField]
+    versioned_instance = versioned_model(image_file_key="test.jpg")
+
+    # The computed field should not exist in the older version
+    assert not hasattr(versioned_instance, "image_url")
+
+    # The model dump should not include the computed field
+    assert "image_url" not in versioned_instance.model_dump()
