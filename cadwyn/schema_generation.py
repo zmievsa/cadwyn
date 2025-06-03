@@ -11,7 +11,14 @@ from collections.abc import Callable, Sequence
 from datetime import date
 from enum import Enum
 from functools import cache
-from typing import TYPE_CHECKING, Annotated, Generic, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Generic,
+    Union,
+    _BaseGenericAlias,  # pyright: ignore[reportAttributeAccessIssue]
+    cast,
+)
 
 import fastapi.params
 import fastapi.security.base
@@ -78,11 +85,6 @@ from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPON
 if TYPE_CHECKING:
     from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
 
-
-if sys.version_info >= (3, 10):
-    from typing import _BaseGenericAlias  # pyright: ignore[reportAttributeAccessIssue]
-else:
-    from typing_extensions import _BaseGenericAlias  # pyright: ignore[reportAttributeAccessIssue]
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])
 
@@ -584,7 +586,7 @@ class _AnnotationTransformer:
     def _change_version_of_a_non_container_annotation(self, annotation: Any) -> Any:
         from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
 
-        if isinstance(annotation, (_BaseGenericAlias, types.GenericAlias)):
+        if isinstance(annotation, (types.GenericAlias, _BaseGenericAlias)):
             return get_origin(annotation)[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
         elif is_typealiastype(annotation):
             if (
