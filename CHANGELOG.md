@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.4.1]
+
+### Fixed
+
+* Fixed import error in python 3.9 when using typing_extensions==3.14.0
+
 ## [5.4.0]
 
 ### Added
