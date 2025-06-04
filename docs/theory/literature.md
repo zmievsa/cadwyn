@@ -1,6 +1,6 @@
 # Literature
 
-During Cadwyn's development, I went through countless resources on API Versioning. The following are the most unique and effective ones I could find.
+During Cadwyn's development, I went through countless resources on API Versioning. The following are the most unique and effective ones I managed to find.
 
 ## Cadwyn-like API Versioning
 

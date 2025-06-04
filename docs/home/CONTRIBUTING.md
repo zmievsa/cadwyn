@@ -66,7 +66,7 @@ Then you can serve the documentation with `mkdocs serve`
 
 We welcome contributions that enhance / improve the content of the docs. Feel free to add examples, clarify text, restructure the docs, etc., but make sure to follow these guidelines:
 
-* Write text in idiomatic english, using simple language
+* Write text in idiomatic English, using simple language
 * Opt for [Oxford commas](https://en.wikipedia.org/wiki/Serial_comma) when listing a series of terms
 * Keep examples simple and self contained
 * Provide links where applicable
