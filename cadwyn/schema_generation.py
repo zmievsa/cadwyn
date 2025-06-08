@@ -1078,17 +1078,16 @@ def _delete_field_from_model(model: _PydanticModelWrapper, field_name: str, vers
                     model.validators[validator_name].is_deleted = True
 
     # Check if it's a computed field (stored in validators)
-    elif field_name in model.validators:
+    elif (
+        field_name in model.validators
+        and isinstance(model.validators[field_name], _ValidatorWrapper)
+        and hasattr(model.validators[field_name], "decorator")
+        and model.validators[field_name].decorator == pydantic.computed_field
+    ):
         validator = model.validators[field_name]
-        # Check if this validator is actually a computed field
-        if (
-            isinstance(validator, _ValidatorWrapper)
-            and hasattr(validator, "decorator")
-            and validator.decorator == pydantic.computed_field
-        ):
-            model.validators[field_name].is_deleted = True
-            # Also remove from annotations if present
-            model.annotations.pop(field_name, None)
+        model.validators[field_name].is_deleted = True
+        # Also remove from annotations if present
+        model.annotations.pop(field_name, None)
     else:
         raise InvalidGenerationInstructionError(
             f'You tried to delete a field "{field_name}" from "{model.name}" '
