@@ -11,7 +11,14 @@ from collections.abc import Callable, Sequence
 from datetime import date
 from enum import Enum
 from functools import cache
-from typing import TYPE_CHECKING, Annotated, Generic, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Generic,
+    Union,
+    _BaseGenericAlias,  # pyright: ignore[reportAttributeAccessIssue]
+    cast,
+)
 
 import fastapi.params
 import fastapi.security.base
@@ -31,6 +38,7 @@ from pydantic._internal._decorators import (
     RootValidatorDecoratorInfo,
     ValidatorDecoratorInfo,
 )
+from pydantic._internal._known_annotated_metadata import collect_known_metadata
 from pydantic._internal._typing_extra import try_eval_type as pydantic_try_eval_type
 from pydantic.fields import ComputedFieldInfo, FieldInfo
 from typing_extensions import (
@@ -77,11 +85,6 @@ from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPON
 if TYPE_CHECKING:
     from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
 
-
-if sys.version_info >= (3, 10):
-    from typing import _BaseGenericAlias  # pyright: ignore[reportAttributeAccessIssue]
-else:
-    from typing_extensions import _BaseGenericAlias  # pyright: ignore[reportAttributeAccessIssue]
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])
 
@@ -151,16 +154,12 @@ class PydanticFieldWrapper:
         )
 
 
-def _extract_passed_field_attributes(field_info: FieldInfo):
-    attributes = {
-        attr_name: field_info._attributes_set[attr_name]
-        for attr_name in _all_field_arg_names
-        if attr_name in field_info._attributes_set
+def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]:
+    return {
+        k: v
+        for k, v in (field_info._attributes_set | collect_known_metadata(field_info.metadata)[0]).items()
+        if k in _all_field_arg_names and not (k == "frozen" and v is None)
     }
-    # PydanticV2 always adds frozen to _attributes_set but we don't want it if it wasn't explicitly set
-    if attributes.get("frozen", ...) is None:
-        attributes.pop("frozen")
-    return attributes
 
 
 @dataclasses.dataclass(**DATACLASS_SLOTS)
@@ -592,7 +591,7 @@ class _AnnotationTransformer:
     def _change_version_of_a_non_container_annotation(self, annotation: Any) -> Any:
         from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
 
-        if isinstance(annotation, (_BaseGenericAlias, types.GenericAlias)):
+        if isinstance(annotation, (types.GenericAlias, _BaseGenericAlias)):
             return get_origin(annotation)[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
         elif is_typealiastype(annotation):
             if (
@@ -1046,15 +1045,19 @@ def _delete_field_attributes(
     annotation: Any,
 ) -> None:
     for attr_name in alter_schema_instruction.attributes:
+        deleted = False
+
         if attr_name in field.passed_field_attributes:
             field.delete_attribute(name=attr_name)
-        elif get_origin(annotation) == Annotated and any(  # pragma: no branch
+            deleted = True
+        if get_origin(annotation) == Annotated and any(  # pragma: no branch
             hasattr(sub_ann, attr_name) for sub_ann in get_args(annotation)
         ):
             for sub_ann in get_args(annotation):
                 if hasattr(sub_ann, attr_name):
                     object.__setattr__(sub_ann, attr_name, None)
-        else:
+                    deleted = True
+        if not deleted:
             raise InvalidGenerationInstructionError(
                 f'You tried to delete the attribute "{attr_name}" of field "{alter_schema_instruction.name}" '
                 f'from "{model.name}" in "{version_change_name}" '
