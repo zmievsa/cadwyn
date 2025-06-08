@@ -237,7 +237,7 @@ def _wrap_validator(func: Callable, is_pydantic_v1_style_validator: Any, decorat
     kwargs = dataclasses.asdict(decorator_info)
     decorator_fields = kwargs.pop("fields", None)
 
-    # Special handling for ComputedFieldInfo - remove wrapped_property as it's not accepted by computed_field()
+    # wrapped_property is not accepted by computed_field()
     if isinstance(decorator_info, ComputedFieldInfo):
         kwargs.pop("wrapped_property", None)
 
@@ -1066,7 +1066,6 @@ def _delete_field_attributes(
 
 
 def _delete_field_from_model(model: _PydanticModelWrapper, field_name: str, version_change_name: str):
-    # Check if it's a regular field
     if field_name in model.fields:
         model.fields.pop(field_name)
         model.annotations.pop(field_name)
@@ -1077,7 +1076,6 @@ def _delete_field_from_model(model: _PydanticModelWrapper, field_name: str, vers
                 if not validator.fields:
                     model.validators[validator_name].is_deleted = True
 
-    # Check if it's a computed field (stored in validators)
     elif (
         field_name in model.validators
         and isinstance(model.validators[field_name], _ValidatorWrapper)
@@ -1086,7 +1084,6 @@ def _delete_field_from_model(model: _PydanticModelWrapper, field_name: str, vers
     ):
         validator = model.validators[field_name]
         model.validators[field_name].is_deleted = True
-        # Also remove from annotations if present
         model.annotations.pop(field_name, None)
     else:
         raise InvalidGenerationInstructionError(
