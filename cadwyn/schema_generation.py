@@ -236,6 +236,11 @@ def _wrap_validator(func: Callable, is_pydantic_v1_style_validator: Any, decorat
         func = func.__func__
     kwargs = dataclasses.asdict(decorator_info)
     decorator_fields = kwargs.pop("fields", None)
+
+    # wrapped_property is not accepted by computed_field()
+    if isinstance(decorator_info, ComputedFieldInfo):
+        kwargs.pop("wrapped_property", None)
+
     actual_decorator = PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP[type(decorator_info)]
     if is_pydantic_v1_style_validator:
         # There's an inconsistency in their interfaces so we gotta resort to this
@@ -1061,19 +1066,30 @@ def _delete_field_attributes(
 
 
 def _delete_field_from_model(model: _PydanticModelWrapper, field_name: str, version_change_name: str):
-    if field_name not in model.fields:
+    if field_name in model.fields:
+        model.fields.pop(field_name)
+        model.annotations.pop(field_name)
+        for validator_name, validator in model.validators.copy().items():
+            if isinstance(validator, _PerFieldValidatorWrapper) and field_name in validator.fields:
+                validator.fields.remove(field_name)
+                # TODO: This behavior doesn't feel natural
+                if not validator.fields:
+                    model.validators[validator_name].is_deleted = True
+
+    elif (
+        field_name in model.validators
+        and isinstance(model.validators[field_name], _ValidatorWrapper)
+        and hasattr(model.validators[field_name], "decorator")
+        and model.validators[field_name].decorator == pydantic.computed_field
+    ):
+        validator = model.validators[field_name]
+        model.validators[field_name].is_deleted = True
+        model.annotations.pop(field_name, None)
+    else:
         raise InvalidGenerationInstructionError(
             f'You tried to delete a field "{field_name}" from "{model.name}" '
             f'in "{version_change_name}" but it doesn\'t have such a field.',
         )
-    model.fields.pop(field_name)
-    model.annotations.pop(field_name)
-    for validator_name, validator in model.validators.copy().items():
-        if isinstance(validator, _PerFieldValidatorWrapper) and field_name in validator.fields:
-            validator.fields.remove(field_name)
-            # TODO: This behavior doesn't feel natural
-            if not validator.fields:
-                model.validators[validator_name].is_deleted = True
 
 
 class _DummyEnum(Enum):
