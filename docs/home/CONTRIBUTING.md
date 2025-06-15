@@ -22,6 +22,7 @@ versions on your system.
 4. Make your changes
 5. Commit your changes to git.
 6. Open a [pull request](https://docs.github.com/en/pull-requests). Give the pull request a descriptive title indicating what it changes.
+7. Add yourself as a contributor using the [all-contributors bot](https://allcontributors.org/docs/en/bot/usage)
 
 ## Guidelines for writing code
 
