@@ -5,6 +5,7 @@ from datetime import date
 from logging import getLogger
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Optional, Union, cast
+from urllib.parse import quote
 
 import fastapi
 from fastapi import APIRouter, FastAPI, HTTPException, routing
@@ -389,7 +390,7 @@ class Cadwyn(FastAPI):
 
         if version:
             root_path = self._extract_root_path(req)
-            openapi_url = root_path + f"{self.openapi_url}?version={version}"
+            openapi_url = root_path + f"{self.openapi_url}?version={quote(version, safe='')}"
             oauth2_redirect_url = self.swagger_ui_oauth2_redirect_url
             if oauth2_redirect_url:
                 oauth2_redirect_url = root_path + oauth2_redirect_url
@@ -407,7 +408,7 @@ class Cadwyn(FastAPI):
 
         if version:
             root_path = self._extract_root_path(req)
-            openapi_url = root_path + f"{self.openapi_url}?version={version}"
+            openapi_url = root_path + f"{self.openapi_url}?version={quote(version, safe='')}"
             return get_redoc_html(openapi_url=openapi_url, title=f"{self.title} - ReDoc")
 
         return self._render_docs_dashboard(req, docs_url=cast("str", self.redoc_url))
