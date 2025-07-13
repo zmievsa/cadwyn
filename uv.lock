@@ -98,7 +98,7 @@ wheels = [
 
 [[package]]
 name = "cadwyn"
-version = "5.4.3"
+version = "5.4.4"
 source = { editable = "." }
 dependencies = [
     { name = "backports-strenum", marker = "python_full_version < '3.11'" },
