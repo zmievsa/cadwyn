@@ -14,6 +14,7 @@ from functools import cache
 from typing import (
     TYPE_CHECKING,
     Annotated,
+    ClassVar,
     Generic,
     Union,
     _BaseGenericAlias,  # pyright: ignore[reportAttributeAccessIssue]
@@ -41,6 +42,7 @@ from pydantic._internal._decorators import (
 from pydantic._internal._known_annotated_metadata import collect_known_metadata
 from pydantic._internal._typing_extra import try_eval_type as pydantic_try_eval_type
 from pydantic.fields import ComputedFieldInfo, FieldInfo
+from pydantic_core import PydanticUndefined
 from typing_extensions import (
     Any,
     Doc,
@@ -316,7 +318,7 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
             field_name,
         )
         for field_name in model.__annotations__
-        if field_name in defined_fields
+        if field_name in defined_fields and field_name in model.model_fields
     }
 
     main_attributes = fields | validators
@@ -592,7 +594,12 @@ class _AnnotationTransformer:
         from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
 
         if isinstance(annotation, (types.GenericAlias, _BaseGenericAlias)):
-            return get_origin(annotation)[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
+            origin = get_origin(annotation)
+            args = get_args(annotation)
+            # Classvar does not support generic tuple arguments
+            if origin is ClassVar:
+                return ClassVar[self.change_version_of_annotation(args[0])]
+            return origin[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
         elif is_typealiastype(annotation):
             if (
                 annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
@@ -948,11 +955,20 @@ def _add_field_to_model(
             f'in "{version_change_name}" but there is already a field with that name.',
         )
 
-    field = PydanticFieldWrapper(
-        alter_schema_instruction.field, alter_schema_instruction.field.annotation, alter_schema_instruction.name
-    )
-    model.fields[alter_schema_instruction.name] = field
-    model.annotations[alter_schema_instruction.name] = alter_schema_instruction.field.annotation
+    # Special handling for ClassVar fields
+    if get_origin(alter_schema_instruction.field.annotation) is ClassVar:
+        # ClassVar fields should not be in model.fields, only in annotations and other_attributes
+        model.annotations[alter_schema_instruction.name] = alter_schema_instruction.field.annotation
+        # Set the actual ClassVar value in other_attributes
+        if alter_schema_instruction.field.default is not PydanticUndefined:
+            model.other_attributes[alter_schema_instruction.name] = alter_schema_instruction.field.default
+    else:
+        # Regular field handling
+        field = PydanticFieldWrapper(
+            alter_schema_instruction.field, alter_schema_instruction.field.annotation, alter_schema_instruction.name
+        )
+        model.fields[alter_schema_instruction.name] = field
+        model.annotations[alter_schema_instruction.name] = alter_schema_instruction.field.annotation
 
 
 def _change_field_in_model(
@@ -1085,6 +1101,11 @@ def _delete_field_from_model(model: _PydanticModelWrapper, field_name: str, vers
         validator = model.validators[field_name]
         model.validators[field_name].is_deleted = True
         model.annotations.pop(field_name, None)
+    elif field_name in model.annotations and get_origin(model.annotations[field_name]) is ClassVar:
+        # Handle ClassVar fields - they exist in annotations but not in model.fields
+        model.annotations.pop(field_name)
+        # Also remove the attribute from other_attributes if it exists there
+        model.other_attributes.pop(field_name, None)
     else:
         raise InvalidGenerationInstructionError(
             f'You tried to delete a field "{field_name}" from "{model.name}" '

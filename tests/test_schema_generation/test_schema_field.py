@@ -1,6 +1,6 @@
 import re
 from enum import Enum, auto
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, ClassVar, Literal, Union, get_origin
 
 import pytest
 from pydantic import BaseModel, Field, StringConstraints, ValidationError, computed_field, conint, constr
@@ -807,3 +807,81 @@ def test__schema_with_computed_field__remove_computed_field(create_runtime_schem
 
     assert not hasattr(old_instance, "image_url")
     assert "image_url" not in old_instance.model_dump()
+
+
+def test__schema_with_classvar__should_be_recreated_in_older_version(create_runtime_schemas: CreateRuntimeSchemas):
+    class SchemaWithClassVar(BaseModel):
+        regular_field: str
+        class_level_config: ClassVar[str] = "default_config"
+
+    schemas = create_runtime_schemas(version_change())
+
+    latest_model = schemas["2001-01-01"][SchemaWithClassVar]
+    old_model = schemas["2000-01-01"][SchemaWithClassVar]
+
+    latest_instance = latest_model(regular_field="test")
+    old_instance = old_model(regular_field="test")
+
+    assert latest_model.class_level_config == "default_config"
+    assert old_model.class_level_config == "default_config"
+
+    assert "class_level_config" not in latest_instance.model_dump()
+    assert "class_level_config" not in old_instance.model_dump()
+
+    assert latest_instance.regular_field == "test"
+    assert old_instance.regular_field == "test"
+
+    assert "class_level_config" in latest_model.__annotations__
+    assert "class_level_config" in old_model.__annotations__
+
+    assert get_origin(latest_model.__annotations__["class_level_config"]) is ClassVar
+    assert get_origin(old_model.__annotations__["class_level_config"]) is ClassVar
+
+
+def test__schema_with_classvar__remove_classvar(create_runtime_schemas: CreateRuntimeSchemas):
+    class SchemaWithClassVar(BaseModel):
+        regular_field: str
+        class_level_config: ClassVar[str] = "default_config"
+
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithClassVar).field("class_level_config").didnt_exist))
+
+    latest_model = schemas["2001-01-01"][SchemaWithClassVar]
+    latest_instance = latest_model(regular_field="test")
+
+    assert latest_model.class_level_config == "default_config"
+    assert "class_level_config" not in latest_instance.model_dump()
+
+    old_model = schemas["2000-01-01"][SchemaWithClassVar]
+    old_instance = old_model(regular_field="test")
+
+    assert not hasattr(old_model, "class_level_config")
+    assert "class_level_config" not in old_instance.model_dump()
+
+    assert latest_instance.regular_field == "test"
+    assert old_instance.regular_field == "test"
+
+
+def test__schema_with_classvar__add_classvar_field(create_runtime_schemas: CreateRuntimeSchemas):
+    class SchemaWithoutClassVar(BaseModel):
+        regular_field: str
+
+    schemas = create_runtime_schemas(
+        version_change(),
+        version_change(
+            schema(SchemaWithoutClassVar)
+            .field("new_config")
+            .existed_as(type=ClassVar[str], info=Field(default="added_config")),
+            schema(SchemaWithoutClassVar).field("new_config_without_value").existed_as(type=ClassVar[str]),
+        ),
+    )
+    latest_model = schemas["2002-01-01"][SchemaWithoutClassVar]
+    mid_model = schemas["2001-01-01"][SchemaWithoutClassVar]
+    old_model = schemas["2000-01-01"][SchemaWithoutClassVar]
+
+    assert not hasattr(latest_model, "new_config")
+    assert mid_model.new_config == "added_config"
+    assert old_model.new_config == "added_config"
+
+    assert not hasattr(latest_model, "new_config_without_value")
+    assert not hasattr(mid_model, "new_config_without_value")
+    assert not hasattr(old_model, "new_config_without_value")
