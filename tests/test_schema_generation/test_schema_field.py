@@ -879,8 +879,8 @@ def test__schema_with_classvar__add_classvar_field(create_runtime_schemas: Creat
     old_model = schemas["2000-01-01"][SchemaWithoutClassVar]
 
     assert not hasattr(latest_model, "new_config")
-    assert mid_model.new_config == "added_config"
-    assert old_model.new_config == "added_config"
+    assert mid_model.new_config == "added_config"  # pyright: ignore[reportAttributeAccessIssue]
+    assert old_model.new_config == "added_config"  # pyright: ignore[reportAttributeAccessIssue]
 
     assert not hasattr(latest_model, "new_config_without_value")
     assert not hasattr(mid_model, "new_config_without_value")
