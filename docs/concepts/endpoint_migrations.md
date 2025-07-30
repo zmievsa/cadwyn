@@ -1,8 +1,8 @@
 # Endpoint migrations
 
-Note that the `endpoint(...)` constructor contains a second argument that describes the methods of the endpoints you would like to edit. If you have two routes for a single endpoint and you put both of their methods into the instruction -- both of them are going to be changed as you would expect.
+Note that the `endpoint(...)` constructor contains a second argument that describes the methods of the endpoints you would like to edit. If you have two routes for a single endpoint and you put both of their methods into the instruction -- as expected, both of them will be changed.
 
-## Defining endpoints that didn't exist in new versions
+## Defining endpoints that didn't exist for new versions  
 
 If you had an endpoint in an old version **but want to delete it in a new version**, you must still define it as usual with all your other endpoints but mark it as deleted.
 
@@ -43,7 +43,7 @@ class MyChange(VersionChange):
 
 ## Changing endpoint attributes
 
-If you want to change any attribute of your endpoint in a new version, you can return the attribute's value in all older versions like so:
+If you want to change any attribute of your endpoint in a new version, you can return the attribute's value in all older versions like this:
 
 ```python
 from cadwyn import VersionChange, endpoint
@@ -64,11 +64,11 @@ However, you only need to have a migration if it is a breaking change for your u
 
 Note that changing endpoint `dependencies` is only going to affect the initial validation. So Cadwyn will take your altered dependencies and run them on each request to the endpoint but ultimately your endpoint code is always going to use the HEAD version of your dependencies. So be careful.
 
-Note also that if some of your dependencies were added at app/router level -- they **are** going to be overwritten by this instruction. Most of the time it is rather safe, however, as all the necessary dependencies will still run on HEAD version.
+Also note that if some of your dependencies were added at app/router level, they **are** going to be overwritten by this instruction. Most of the time it is rather safe, however, as all the necessary dependencies will still run on HEAD version.
 
 ## Dealing with endpoint duplicates
 
-Sometimes, when you're doing some advanced changes in between versions, you will need to rewrite your endpoint function entirely. So essentially you'd have the following structure:
+Sometimes, when you're doing some advanced changes in between versions, you need to rewrite your endpoint function entirely. So essentially you'd have the following structure:
 
 ```python
 from fastapi.params import Param
@@ -92,7 +92,7 @@ def get_users_by_name(user_name: Annotated[str, Param()]):
     """Do some logic with user_name"""
 ```
 
-As you see, these two functions have the same methods and paths. And when you have many versions, you can have even more functions like these two. So how do we ask cadwyn to restore only one of them and delete the other one?
+As you see, these two functions have the same parameters and path decorators. And when you have many versions, you can have even more functions like these two. So how do we ask cadwyn to restore only one of them and delete the other one?
 
 ```python
 from cadwyn import VersionChange, endpoint
@@ -104,8 +104,8 @@ class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
         "because using headers is a bad API practice in such scenarios."
     )
     instructions_to_migrate_to_previous_version = (
-        # We need to specify the name, otherwise, we will encounter an exception due to having two identical endpoints
-        # with the same path and method
+        # We need to specify the name, otherwise, we will encounter an exception due to
+        # having two identical endpoints with the same parameters and path decorators
         endpoint(
             "/users",
             ["GET"],
@@ -117,4 +117,4 @@ class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
     )
 ```
 
-So by using a more concrete `func_name`, we are capable to distinguish between different functions that affect the same routes.
+So by using a more concrete `func_name`, we are able to distinguish between different functions that affect the same routes.
