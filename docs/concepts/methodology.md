@@ -2,12 +2,12 @@
 
 Cadwyn implements a methodology that is based on the following set of principles:
 
-* Each version is made up of "version changes" or "compatibility gates" which describe **independent atomic** differences between it and previous version
+* Each version consists of "version changes" or "compatibility gates" which describe **independent, atomic** differences from the previous version
 * We make a new version if and only if we have breaking changes
 * Versions must have little to no effect on the business logic
 * Versions **must always** be compatible in terms of data
 * Creating new versions is avoided at all costs
-* Any backwards compatible features must be backported to all compatible versions
+* Any backward-compatible features must be backported to all compatible versions
 
 These rules give us an ability to have a large number of self-documenting versions while encapsulating their complexity in small version change classes, providing a consistent and stable experience to our users.
 

@@ -27,11 +27,11 @@ class CompletelyHiddenVersionChange(VersionChange):
 
 ## Customizing changelog endpoint
 
-Just pass the `changelog_url` argument to `Cadwyn` and a `GET` to this url will start returning the changelog for all versions based on the contents of your `VersionBundle`.
+The changelog endpoint name can be customized by specifying a new name via the `changelog_url` argument to the `Cadwyn()` constructor. Accessing this url via the `GET` request will return the changelog for all versions based on the content of your `VersionBundle`.
 
-If you want to hide the changelog endpoint, pass `include_changelog_url_in_schema=False` to `Cadwyn`.
+If you want to hide the changelog endpoint, pass `include_changelog_url_in_schema=False` to `Cadwyn()`.
 
-If you want to delete the changelog endpoint, pass `changelog_url=None` to `Cadwyn`.
+If you want to delete the changelog endpoint, pass `changelog_url=None` to `Cadwyn()`.
 
 ## Changelog structure and entry types
 

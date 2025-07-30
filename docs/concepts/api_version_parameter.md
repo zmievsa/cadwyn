@@ -63,7 +63,7 @@ app = Cadwyn(
 )
 ```
 
-In which case only dates will be accepted as valid versions.
+In the example above only dates will be accepted as valid versions.
 
 You can also use an arbitrary string:
 
@@ -80,21 +80,21 @@ app = Cadwyn(
 )
 ```
 
-In which case any string will be accepted as a valid version. Notice how they do not have to be sortable or even ordered. Cadwyn will assume that their actual order is the same as the order of the versions in the `VersionBundle`.
+In the example above any string will be accepted as a valid version. Arbitrary strings can be used, Cadwyn will not sort them. Cadwyn will assume their actual order matches the order of the versions in the `VersionBundle`.
 
 ### API Version waterfalling
 
 For historical reasons, date-based routing also supports waterfalling the requests to the closest earlier version of the API if the request date parameter doesn't match any of the versions exactly.
 
-If the app has two versions: 2022-01-02 and 2022-01-05, and the request date parameter is 2022-01-03, then the request will be routed to 2022-01-02 version as it the closest version, but lower than the request date parameter.
+If the app has two versions: 2022-01-02 and 2022-01-05, and the request date parameter is 2022-01-03, then the request will be routed to the 2022-01-02 version, as it is the closest version, but lower than the request date parameter.
 
-Exact match is always preferred over partial match and a request will never be matched to the higher versioned route.
+An exact match is always preferred to a partial match and a request will never be matched to the higher-versioned route.
 
-We implement routing like this because Cadwyn was born in a microservice architecture and it is extremely convenient to have waterfalling there. For example, imagine that you have two Cadwyn services: Payables and Receivables, each defining its own API versions. Payables service might contain 10 versions while receivables service might contain only 2 versions because it didn't need as many breaking changes. If a client requests a version that does not exist in receivables -- we will just waterfall to some earlier version, making receivables behavior consistent even if API keeps getting new versions.
+We implement routing like this because Cadwyn was born in a microservice architecture and it is extremely convenient to have waterfalling there. For example, imagine that you have two Cadwyn services: Payables and Receivables, each defining its own API versions. Payables service might contain 10 versions while Receivables service might contain only 2 versions because it didn't need as many breaking changes. If a client requests a version that does not exist in Receivables, we will just waterfall to some earlier version, making Receivables behavior consistent even if API keeps getting new versions.
 
 ## API Version Parameter Title and Description
 
-You can pass a title and/or a description to `Cadwyn` constructor. They are equivalent to passing `title` and `description` to `fastapi.Path` or `fastapi.Header` constructors.
+You can pass a title and/or a description to the `Cadwyn` constructor. It is equivalent to passing `title` and `description` to `fastapi.Path` or `fastapi.Header` constructors.
 
 ```python
 app = Cadwyn(
