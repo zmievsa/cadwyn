@@ -40,26 +40,3 @@ The [documentation](https://docs.cadwyn.dev) has everything you need to succeed.
 ## Sponsors
 
 These are our gorgeous sponsors. They are using Cadwyn and are sponsoring it through various means. Contact [me](https://github.com/zmievsa) if you would like to become one, too!
-
-## Contributors
-
-<details>
-
-<summary>Thanks goes to these wonderful people:</summary>
-<a href="https://allcontributors.org/docs/en/emoji-key">Emoji Key </a>
-
-<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
-<!-- prettier-ignore-start -->
-<!-- markdownlint-disable -->
-
-<!-- markdownlint-restore -->
-<!-- prettier-ignore-end -->
-
-<!-- ALL-CONTRIBUTORS-LIST:END -->
-
-This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification.
-Contributions are welcome!
-
-</details>
-
-<!-- contributors-end -->
