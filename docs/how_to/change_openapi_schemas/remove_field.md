@@ -1,4 +1,4 @@
-# Remove a field from openapi schemas
+# Remove a field from OpenAPI schemas
 
 ## From response
 

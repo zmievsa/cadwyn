@@ -1,6 +1,6 @@
 # Change a schema that is not used in any endpoint
 
-In some situations, we may want to use versioning not just for our openapi schemas and endpoints but also within our code such as when we want to send versioned webhooks to our clients.
+In some situations, we may want to use versioning not just for our OpenAPI schemas and endpoints but also within our code such as when we want to send versioned webhooks to our clients.
 
 For example, let's say we want to change the type of an "id" field from integer to string:
 

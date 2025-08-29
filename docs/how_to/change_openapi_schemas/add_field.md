@@ -1,4 +1,4 @@
-# Add a field to openapi schemas
+# Add a field to OpenAPI schemas
 
 ## To response schema
 

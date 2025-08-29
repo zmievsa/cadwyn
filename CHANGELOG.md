@@ -92,13 +92,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 * `__doc__` attribute is now copied from the original enum to the generated enum
 * Python 3.12 type aliases and their typing_extensions backports are now supported (including `pydantic.JsonValue` and other `typing_extensions.TypeAliasType` instances)
 * The bug when solve_dependencies error on the migration of a request to the latest version responds with a non-json serializable error and cadwyn showed a failed to serialize error instead of the actual error
-* Updated minimum fastapi version to 0.112.4 because embed_body_fields was added in 0.112.4
+* Updated minimum FastAPI version to 0.112.4 because embed_body_fields was added in 0.112.4
 
 ## [5.1.2]
 
 ### Fixed
 
-* Generators not being called when fastapi validates the initial request
+* Generators not being called when FastAPI validates the initial request
 
 ### Added
 
@@ -309,7 +309,7 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 ### Changed
 
-* `Cadwyn.enrich_swagger` is now completely unnecessary: openapi is now generated at runtime. It also now does not do anything, is deprecated, and will be removed in a future version
+* `Cadwyn.enrich_swagger` is now completely unnecessary: OpenAPI is now generated at runtime. It also now does not do anything, is deprecated, and will be removed in a future version
 
 ### Fixed
 
@@ -330,7 +330,7 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 ### Fixed
 
-* Openapi not being generated when lifespan was used
+* OpenAPI not being generated when lifespan was used
 
 ## [3.15.1]
 
@@ -719,7 +719,7 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 ### Added
 
-* A link to openapi discussion on enum expansion into docs/recipes
+* A link to OpenAPI discussion on enum expansion into docs/recipes
 * A link to intercom's API versioning article into docs/theory
 
 ## [2.0.1]
