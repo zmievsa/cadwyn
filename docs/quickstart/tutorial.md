@@ -64,11 +64,11 @@ See how we are popping the first address from the list? This is only guaranteed 
 
 See how we added a migration not only for response but also for request? This will allow our business logic to stay completely the same, no matter which version it was called from. Cadwyn will always give your business logic the request model from the HEAD version by wrapping each request in it.
 
-Let's run our app and take a look at the generated dashboard and openapi schemas:
+Let's run our app and take a look at the generated dashboard and OpenAPI schemas:
 
 ![Dashboard with two versions](../img/dashboard_with_two_versions.png)
-![GET /users/{user_id} endpoint in openapi](../img/get_users_endpoint_from_prior_version.png)
+![GET /users/{user_id} endpoint in OpenAPI](../img/get_users_endpoint_from_prior_version.png)
 
-The endpoint above is from the `2000-01-01` version. As you see, our routes and business logic are for the HEAD version but our openapi has all information about all API versions which is the main goal of Cadwyn: a large number of long-living API versions without placing any burden on your business logic.
+The endpoint above is from the `2000-01-01` version. As you see, our routes and business logic are for the HEAD version but our OpenAPI has all information about all API versions which is the main goal of Cadwyn: a large number of long-living API versions without placing any burden on your business logic.
 
 Obviously, this was just a simple example and cadwyn has a lot more features so if you're interested -- take a look at the [how-to](../how_to/index.md) and [concepts](../concepts/index.md) sections.

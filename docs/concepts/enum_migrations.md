@@ -1,6 +1,6 @@
 # Enum migrations
 
-All of the following instructions affect only openapi schemas and their initial validation. All of your incoming requests will still be converted into your HEAD schemas.
+All of the following instructions affect only OpenAPI schemas and their initial validation. All of your incoming requests will still be converted into your HEAD schemas.
 
 ## Adding enum members
 

@@ -1,4 +1,4 @@
-# Change field constraints or validators in openapi schemas
+# Change field constraints or validators in OpenAPI schemas
 
 ## Add or narrow constraints
 
