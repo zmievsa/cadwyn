@@ -18,7 +18,7 @@ HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
 
 @dataclass(**DATACLASS_SLOTS)
 class EndpointAttributesPayload:
-    # Fastapi API routes also have "endpoint" and "dependency_overrides_provider" fields.
+    # FastAPI API routes also have "endpoint" and "dependency_overrides_provider" fields.
     # We do not use them because:
     #   1. "endpoint" must not change -- otherwise this versioning is doomed
     #   2. "dependency_overrides_provider" is taken from router's attributes

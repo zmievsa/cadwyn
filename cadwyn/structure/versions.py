@@ -694,7 +694,7 @@ class VersionBundle:
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
 async def _get_body(
     request: FastapiRequest, body_field: Union[ModelField, None], exit_stack: AsyncExitStack
-):  # pragma: no cover # This is from fastapi
+):  # pragma: no cover # This is from FastAPI
     is_body_form = body_field and isinstance(body_field.field_info, params.Form)
     try:
         body: Any = None

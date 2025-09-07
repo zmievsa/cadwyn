@@ -1047,9 +1047,9 @@ def test__router_generation_updating_unused_dependencies__with_migration(
     assert resp.status_code == 200
 
     assert saved_enum_names == [
-        "b",  # Fastapi called our dependency and got b in 2000
+        "b",  # FastAPI called our dependency and got b in 2000
         "a",  # We called our dependency and got a in 2001
-        "a",  # Fastapi called our dependency and got a in 2001
+        "a",  # FastAPI called our dependency and got a in 2001
         "a",  # We called our dependency and got a in 2001
     ]
 
@@ -1256,7 +1256,7 @@ def test__basic_router_generation__using_custom_class_based_dependency__should_m
     assert response.json() == {"foo": 3}
 
     # This is not a nice behavior but this is the way Cadwyn functions: the dependency is going to be called
-    # twice: once by fastapi with solve_dependencies for the old version and once by Cadwyn
+    # twice: once by FastAPI with solve_dependencies for the old version and once by Cadwyn
     # with solve_dependencies for the new version.
     assert payloads_dependency_was_called_with == [
         {"foo": 3, "bar": "meaw"},  # client_2000

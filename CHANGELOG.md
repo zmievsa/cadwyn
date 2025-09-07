@@ -102,7 +102,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Added
 
-* `cadwyn.current_dependency_solver` function to check whether cadwyn or fastapi is currently solving dependencies. It can be used as a dependency for versioned endpoints like so: `current_dependency_solver: Annotated[Literal["fastapi", "cadwyn"], Depends(current_dependency_solver)]`. If your dependency has side effects, you would likely want to only run it once per request. If you want to run it once we migrated the request to the latest version, you should only run it when `current_dependency_solver` is `"cadwyn"`. If you want your dependency to run at the very beginning of handling the request, you should only run it when `current_dependency_solver` is `"fastapi"`.
+* `cadwyn.current_dependency_solver` function to check whether cadwyn or FastAPI is currently solving dependencies. It can be used as a dependency for versioned endpoints like so: `current_dependency_solver: Annotated[Literal["fastapi", "cadwyn"], Depends(current_dependency_solver)]`. If your dependency has side effects, you would likely want to only run it once per request. If you want to run it once we migrated the request to the latest version, you should only run it when `current_dependency_solver` is `"cadwyn"`. If you want your dependency to run at the very beginning of handling the request, you should only run it when `current_dependency_solver` is `"fastapi"`.
 
 ## [5.1.1]
 
@@ -455,7 +455,7 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 ### Fixed
 
-* When a class-based dependency from **fastapi** was used (anything security related), FastAPI had hardcoded `isinstance` checks for it which it used to enrich swagger with functionality. But when the dependencies were wrapped into our function wrappers, these checks stopped passing, thus breaking this functionality in swagger. Now we ignore all dependencies that FastAPI creates. This also introduces a hard-to-solve bug: if fastapi's class-based security dependency was subclassed and then `__call__` was overridden with new dependencies that are versioned -- we will not migrate them from version to version. I hope this is an extremely rare use case though. In fact, such use case breaks Liskov Substitution Principle and doesn't make much sense because security classes already include `request` parameter which means that no extra dependencies or parameters are necessary.
+* When a class-based dependency from **fastapi** was used (anything security related), FastAPI had hardcoded `isinstance` checks for it which it used to enrich swagger with functionality. But when the dependencies were wrapped into our function wrappers, these checks stopped passing, thus breaking this functionality in swagger. Now we ignore all dependencies that FastAPI creates. This also introduces a hard-to-solve bug: if FastAPI's class-based security dependency was subclassed and then `__call__` was overridden with new dependencies that are versioned -- we will not migrate them from version to version. I hope this is an extremely rare use case though. In fact, such use case breaks Liskov Substitution Principle and doesn't make much sense because security classes already include `request` parameter which means that no extra dependencies or parameters are necessary.
 
 ## [3.6.5]
 
@@ -713,7 +713,7 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 ### Fixed
 
-* Custom body fields created by fastapi caused an exception. Now they are ignored
+* Custom body fields created by FastAPI caused an exception. Now they are ignored
 
 ## [2.0.2]
 
