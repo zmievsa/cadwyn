@@ -4,7 +4,7 @@ Version changes are the backbone of Cadwyn. They allow to describe things like "
 
 In Cadwyn, your business logic always works with a single version -- HEAD, which is the representation of your latest version. This approach decouples your business logic from versioning and allows you to have hundreds of API versions using the same database models and business logic while staying sane.
 
-Follow these steps to add a new version: 
+Follow these steps to add a new version:
 
 1. Make a breaking change in your HEAD version
 2. Reverse it for all your older versions using special "migration instructions" so that your current users are not affected by the breaking changes
