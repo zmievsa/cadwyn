@@ -1,15 +1,17 @@
 # Version Changes
 
-Version changes are the backbone of Cadwyn. They give you an ability to describe things like "This field in that schema had a different name in an older version" or "this endpoint did not exist in all earlier versions".
+Version changes are the backbone of Cadwyn. They allow to describe things like "This field in that schema had a different name in an older version" or "this endpoint did not exist in all earlier versions".
 
-In Cadwyn, your business logic always only works with a single version -- HEAD, which is essentially your representation of your latest version. This approach decouples your business logic from versioning and allows you to have hundreds of API versions using the same database models and business logic while also staying sane at the same time.
+In Cadwyn, your business logic always works with a single version -- HEAD, which is the representation of your latest version. This approach decouples your business logic from versioning and allows you to have hundreds of API versions using the same database models and business logic while staying sane.
 
-Whenever add a new version, you go through the following steps:
+Follow these steps to add a new version:
 
 1. Make a breaking change in your HEAD version
 2. Reverse it for all your older versions using special "migration instructions" so that your current users are not affected by the breaking changes
 
-These migration instructions for reverting the breaking changes are gathered into groups to make them easier to maintain. Let's say that you want to rename the field "creation_date" into "created_at" but you also want to delete the endpoint "GET /v1/tax_ids": these changes are unrelated so they should be put into different groups. On the other hand, deletion of "POST /v1/tax_ids" endpoint should go into the same group as the deleetion of "GET /v1/tax_ids". These groups are very important to make the changes easily understandable for both your users and your developers.
+These migration instructions for reverting the breaking changes are gathered into groups to make them easier to maintain. Let's say that you want to rename the `creation_date` field into `created_at` but you also want to delete the `GET /v1/tax_ids` endpoint: these changes are unrelated so they should be placed into different groups.
+
+On the other hand, deletion of the `POST /v1/tax_ids` endpoint should go into the same group as the deletion of `GET /v1/tax_ids`. These groups are very important to make the changes easily understandable for both your users and your developers.
 
 Each such group is called a **version change**:
 
@@ -31,11 +33,9 @@ After you have described them, you add your version change class(es) into your v
 ```python
 # versions/__init__.py
 
-from cadwyn import VersionBundle, Version
-from datetime import date
+from cadwyn import HeadVersion, Version, VersionBundle
 
 from .v2023_02_10 import RemoveTaxIDEndpoints
-
 
 versions = VersionBundle(
     HeadVersion(),
@@ -50,16 +50,14 @@ Now let's discuss what each of these parts does and why:
 
 ## VersionBundle
 
-`VersionBundle` is your single source of truth for your list of versions. It contains your list of versions and all [version changes](#version-changes) associated with them. Each version change is a single group of breaking changes. Each `Version` contains a group of version changes that caused this version to be created. So for example, if I deleted an endpoint `POST /v1/tax_ids` in version `2023-02-10`, then I'll add the version change for deleting that endpoint into `2023-02-10`. For example:
+`VersionBundle` is your single source of truth for your list of versions. It contains your list of versions and all [version changes](#version-changes) associated with them. Each version change is a single group of breaking changes. Each `Version` contains a group of version changes that caused this version to be created. For example, if I delete the `POST /v1/tax_ids` endpoint in version `2023-02-10`, then I'll add a version change for deleting that endpoint into `2023-02-10`. For example:
 
 ```python
 # versions/__init__.py
 
-from cadwyn import VersionBundle, Version
-from datetime import date
+from cadwyn import HeadVersion, Version, VersionBundle
 
 from .v2023_02_10 import RemoveTaxIDEndpoints
-
 
 versions = VersionBundle(
     HeadVersion(),
@@ -68,26 +66,26 @@ versions = VersionBundle(
 )
 ```
 
-See how our first version, `2022-11-16` does not have any version changes? That is intentional! How can it have breaking changes if there are no versions before it?
+Did you notice that the first version `2022-11-16` does not have any version changes? That is intentional! How can it have breaking changes if there are no prior versions before it?
 
 ## Version
 
-`Version` is simply an ordered collection of version changes that allows you to describe when each version change happened so that Cadwyn is able to generate your schemas and routes for all versions correctly --  based on which version changes are located in which versions.
+`Version` is simply an ordered collection of version changes that allows to describe when each version change happened so that Cadwyn is able to generate your schemas and routes for all versions correctly, based on which version changes are located in which versions.
 
 ### HeadVersion
 
-Cadwyn has a special HEAD version: it is the only version you will write by hand and use directly in your business logic. It is also the version that is used by Cadwyn for generating all other versions.
+Cadwyn has a special HEAD version: it is the only version you will create manually and use directly in your business logic. It is also the version that is used by Cadwyn for generating all other versions.
 
-When handling an HTTP request, Cadwyn will first validate it with the appropriate API version, then Cadwyn will apply all converters from the request's API version and until the latest API version to it, and then finally Cadwyn will convert the request to the appropriate schema from HEAD (the schema that was used for generating the versioned schema from request's API version).
+When handling an HTTP request, Cadwyn first validates it with the appropriate API version, then Cadwyn applies all converters from the request's API version and up to the latest API version to it, and then finally Cadwyn converts the request to the appropriate schema from HEAD version (the schema that was used for generating the versioned schema from request's API version).
 
-So Cadwyn will migrate all requests from all versions to HEAD version to make sure that your business logic knows about only one version.
+So Cadwyn migrates all requests from all versions to HEAD version to make sure that your business logic operates with only one version.
 
-HEAD is very similar to your latest version with a few key differences:
+HEAD is very similar to your latest version but for a few key differences:
 
 * Latest is user-facing while HEAD is only used internally by you and Cadwyn
-* Latest is generated while HEAD is maintained by you by hand
-* Latest only includes the fields that our user is supposed to see in the latest version while HEAD can include some fields missing from latest. For example, if an earlier version contained a field completely incompatible with latest -- HEAD will have it too to make sure that old versions can function same as before. This also applies to field types: if a field became required in latest but was nullable in an earlier version, then HEAD will have it as nullable to make sure that any earlier version request can easily be converted into a HEAD request
-* Latest can include constraints that are incompatible with older versions while HEAD can contain no constraints at all if you want -- the user-facing schemas are used for validation before the request is converted to HEAD so HEAD does not need to re-validate anything if you do not want it to
+* Latest is generated while HEAD is maintained by you manually
+* Latest only includes the fields that our user is supposed to see in the latest version while HEAD can include some fields missing from latest. For example, if an earlier version contained a field completely incompatible with latest, HEAD will have it too to make sure that old versions can function the same as before. This also applies to field types: if a field is required in latest but was nullable in an earlier version, then HEAD will have it as nullable to make sure that any earlier version request can easily be converted into a HEAD request
+* Latest can include constraints that are incompatible with older versions while HEAD can contain no constraints at all if you want -- the user-facing schemas are applied for validation before the request is converted to HEAD so HEAD does not need to re-validate anything if you do not want it to
 
 ## VersionChange
 
@@ -97,7 +95,7 @@ Note, however, that you only need to have a migration if it is a breaking change
 
 ### VersionChange.\_\_name\_\_
 
-The name of the version change, `RemoveTaxIDEndpoints`, describes what breaking change has happened. It must be a verb and it is the best resource for your new developers to quickly understand what happened between the versions. Do not be shy to use really long names -- it is better to have a long name than to create a misunderstanding. Avoid generic names such as `RefactorUserFields`. Better have an ugly name such as `RenameCreationDatetimeAndUpdateDatetimeToCreatedAtAndUpdatedAt` then to have a generic name such as `RefactorFields`. Because after just a few of such version changes, your versioning structure can become completely unreadable:
+The name of a version change, for example `RemoveTaxIDEndpoints`, describes what breaking change has happened. It must be a verb and it is the best clue for your new developers to quickly understand what happened between the versions. Feel free to use long names: it is better to have a long name than a name that fails to convey what exactly happened. Better have a voluminous name such as `RenameCreationDatetimeAndUpdateDatetimeToCreatedAtAndUpdatedAt` than to have a generic name such as `RefactorFields`. Because after just a few of such version changes your versioning structure can become completely unreadable:
 
 ```python
 versions = VersionBundle(
@@ -113,10 +111,10 @@ versions = VersionBundle(
 The description field of your version change must be even more detailed. In fact, it is intended to be the **name** and the **summary** of the version change for your clients. It must clearly state to you clients **what happened** and **why**. So you need to make it grammatically correct, detailed, concrete, and written for humans. Note that you do not have to use a strict machine-readable format -- it is a portion of documentation, not a set of instructions. Let's take [Stripe's description](https://stripe.com/blog/api-versioning) to one of their version changes as an example:
 
 ```md
-Event objects (and webhooks) will now render `request` subobject that contains a request ID and idempotency key instead of just a string request ID.
+Event objects (and webhooks) will now render a `request` subobject that contains a request ID and idempotency key instead of just a string request ID.
 ```
 
-It is concise, descriptive, and human-readable -- just like any good documentation. Now let's look at the bad description:
+It is concise, descriptive, and human-readable -- just like any good documentation. Now let's have a look at a bad description:
 
 ```md
 Migration from first version (2022-11-16) to 2023-09-01 version.
@@ -124,9 +122,9 @@ Changes:
 * Changed schema for 'POST /v1/tax_ids' endpoint
 ```
 
-* Its first line, `Migration from first version (2022-11-16) to 2023-09-01 version.`, duplicates the already-known information -- your developers will know which version `VersionChange` migrates to and from by its location in [VersionBundle](#versionbundle) and most likely by its file name. Your clients will also know that because you can automatically infer this information from  So it is simply standing in the way of actually useful parts of the documentation
-* Its second line, `Changes:`, does not make any sense as well because description of a `VersionChange` cannot describe anything but changes. So again, it's stating the obvious and making it harder for our readers to understand the crux of the change
-* Its third line, `Changed schema for 'POST /v1/tax_ids' endpoint`, gives both too much and too little information. First of all, it talks about changing schema but it never mentions what exactly changed. Remember: we are doing this to make it easy for our clients to migrate from one version to another. Instead, it is much better to mention the OpenAPI model name that you changed, the fields you changed, and why you changed them
+* Its first line, `Migration from first version (2022-11-16) to 2023-09-01 version.`, duplicates the already-known information -- your developers will know which version `VersionChange` migrates to and from by its location in [VersionBundle](#versionbundle) and most likely by its file name. Your clients will also know that because you can automatically infer this information from So it is redundant information
+* Its second line, `Changes:`, does not make any sense as well because description of a `VersionChange` cannot describe anything but changes. So again, it's redundant information
+* Its third line, `Changed schema for 'POST /v1/tax_ids' endpoint`, gives both too much and too little information. It states changing of a schema but it does not mention what exactly was changed. The goal is to make it easy for our clients to migrate from one version to another. The recommended description here is to mention the OpenAPI model name that you changed, the fields you changed, and why you changed them
 
 ### VersionChange.instructions_to_migrate_to_previous_version
 
@@ -475,6 +473,6 @@ So this change can be contained in any version -- your business logic doesn't kn
 
 ### Warning against side effects
 
-Side effects are a very powerful tool but they must be used with great caution. Are you sure you MUST change your business logic? Are you sure whatever you are trying to do cannot just be done by a migration? 90% of time, you will **not** need them. Please, think twice before using them. API Versioning is about having the same underlying app and data while just changing the schemas and api endpoints to interact with it. By introducing side effects, you leak versioning into your business logic and possibly even your data which makes your code much harder to support in the long term. If each side effect adds a single `if` to your logic, than after 100 versions with side effects, you will have 100 more `if`s. If used correctly, Cadwyn can help you support decades worth of API versions at the same time with minimal costs, and side effects make it much harder to do. Changes in the underlying source, structure, or logic of your data should not affect your API or public-facing business logic.
+Side effects are a very powerful tool but they must be used with great caution. Are you sure you MUST change your business logic? Are you sure whatever you are trying to do cannot just be done by a migration? 90% of time, you will **not** need them. Please, think twice before using them. API Versioning is about having the same underlying app and data while just changing the schemas and api endpoints to interact with it. By introducing side effects, you leak versioning into your business logic and possibly even your data which makes your code much harder to support in the long term. If each side effect adds a single `if` to your logic, then after 100 versions with side effects, you will have 100 more `if`s. If used correctly, Cadwyn can help you support decades worth of API versions at the same time with minimal costs, and side effects make it much harder to do. Changes in the underlying source, structure, or logic of your data should not affect your API or public-facing business logic.
 
 However, the [following use cases](../how_to/change_business_logic/index.md) often necessitate side effects.

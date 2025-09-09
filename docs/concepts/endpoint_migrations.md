@@ -2,7 +2,7 @@
 
 Note that the `endpoint(...)` constructor contains a second argument that describes the methods of the endpoints you would like to edit. If you have two routes for a single endpoint and you put both of their methods into the instruction -- as expected, both of them will be changed.
 
-## Defining endpoints that didn't exist for new versions  
+## Defining endpoints that didn't exist for new versions
 
 If you had an endpoint in an old version **but want to delete it in a new version**, you must still define it as usual with all your other endpoints but mark it as deleted.
 

@@ -541,7 +541,7 @@ class _AsyncGeneratorCallableWrapper(_CallableWrapper):
 class _AnnotationTransformer:
     def __init__(self, generator: "SchemaGenerator") -> None:
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
-        # because such copies could produce weird behaviors at runtime, especially if you/fastapi do any comparisons.
+        # because such copies could produce weird behaviors at runtime, especially if you/FastAPI do any comparisons.
         # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
         self.generator = generator
         # TODO: Rewrite this to memoize
