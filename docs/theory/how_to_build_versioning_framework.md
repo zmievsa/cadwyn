@@ -16,7 +16,7 @@ The easier it is, the better off our users are.
 
 ### What exactly do you need to duplicate to create a new version?
 
-The less we duplicate and maintain by hand, the easier it is to support. However, the less we duplicate, the more chance there is to break the old versions with new releases.
+The less we duplicate and maintain manually, the easier it is to support. However, the less we duplicate, the higher the risk of breaking old versions with new releases.
 
 ### How easy is it to notice accidental data versioning?
 
