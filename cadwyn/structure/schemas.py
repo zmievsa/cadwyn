@@ -58,6 +58,7 @@ PossibleFieldAttributes = Literal[
     "allow_mutation",
     "pattern",
     "discriminator",
+    "json_schema_extra",
 ]
 
 
@@ -100,6 +101,7 @@ class FieldChanges:
     allow_mutation: bool
     pattern: str
     discriminator: str
+    json_schema_extra: Union[dict[str, Any], Callable[[dict[str, Any]], None], None]
 
 
 @dataclass(**DATACLASS_SLOTS)
@@ -178,6 +180,7 @@ class AlterFieldInstructionFactory:
         allow_mutation: bool = Sentinel,
         pattern: str = Sentinel,
         discriminator: str = Sentinel,
+        json_schema_extra: Union[dict[str, Any], Callable[[dict[str, Any]], None], None] = Sentinel,
     ) -> FieldHadInstruction:
         return FieldHadInstruction(
             is_hidden_from_changelog=False,
@@ -222,6 +225,7 @@ class AlterFieldInstructionFactory:
                 allow_mutation=allow_mutation,
                 pattern=pattern,
                 discriminator=discriminator,
+                json_schema_extra=json_schema_extra,
             ),
         )
 

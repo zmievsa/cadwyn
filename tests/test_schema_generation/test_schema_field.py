@@ -294,6 +294,31 @@ def test__schema_field_had__float_field(
     )
 
 
+def test_schema_field_had__json_schema_extra_as_dict(create_runtime_schemas: CreateRuntimeSchemas):
+    class SchemaWithFooHadDictJsonSchemaExtra(BaseModel):
+        foo: str
+
+    assert_field_had_changes_apply(
+        SchemaWithFooHadDictJsonSchemaExtra, "json_schema_extra", {"example": "bar"}, create_runtime_schemas
+    )
+
+
+def test__schema_field_had__json_schema_extra_as_callable(create_runtime_schemas: CreateRuntimeSchemas):
+    def modify_schema(schema_dict: dict[str, Any]):
+        schema_dict["example"] = "bar"
+        schema_dict["custom"] = 42
+
+    class SchemaWithFooHadCallableJsonSchemaExtra(BaseModel):
+        foo: str
+
+    assert_field_had_changes_apply(
+        SchemaWithFooHadCallableJsonSchemaExtra,
+        "json_schema_extra",
+        modify_schema,
+        create_runtime_schemas,
+    )
+
+
 def test__schema_field_didnt_have__removing_default(create_runtime_schemas: CreateRuntimeSchemas):
     class SchemaWithDefaults(BaseModel):
         foo: str = "hewwo"
