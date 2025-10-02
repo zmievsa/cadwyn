@@ -314,7 +314,7 @@ def test_schema_field_had__json_schema_extra_as_dict(create_runtime_schemas: Cre
     )
 
     # Validate the JSON Schema produced by Pydantic contains the extra
-    model_cls = schemas["2000-01-01"][SchemaWithFooHadDictJsonSchemaExtra]  # type: ignore
+    model_cls = schemas["2000-01-01"][SchemaWithFooHadDictJsonSchemaExtra]  # pyright: ignore
     json_schema = model_cls.model_json_schema()
     assert json_schema["properties"]["foo"]["example"] == "bar"
 
@@ -336,7 +336,7 @@ def test__schema_field_had__json_schema_extra_as_callable(create_runtime_schemas
     )
 
     # Validate the JSON Schema produced by Pydantic contains changes from the callable
-    model_cls = schemas["2000-01-01"][SchemaWithFooHadCallableJsonSchemaExtra]  # type: ignore
+    model_cls = schemas["2000-01-01"][SchemaWithFooHadCallableJsonSchemaExtra]  # pyright: ignore
     json_schema = model_cls.model_json_schema()
     props = json_schema["properties"]["foo"]
     assert props["example"] == "bar"
