@@ -1,6 +1,6 @@
 import re
 from enum import Enum, auto
-from typing import Annotated, Any, ClassVar, Literal, Union, get_origin
+from typing import Annotated, Any, ClassVar, Literal, Optional, Union, get_origin
 
 import pytest
 from pydantic import BaseModel, Field, StringConstraints, ValidationError, computed_field, conint, constr
@@ -10,6 +10,7 @@ from cadwyn.exceptions import (
     CadwynStructureError,
     InvalidGenerationInstructionError,
 )
+from cadwyn.schema_generation import SchemaGenerator
 from cadwyn.structure import schema
 from tests.conftest import (
     CreateRuntimeSchemas,
@@ -180,7 +181,8 @@ def assert_field_had_changes_apply(
     attr: str,
     attr_value: Any,
     create_runtime_schemas: CreateRuntimeSchemas,
-):
+    return_runtime_schema: bool = False,
+) -> Optional[dict[str, SchemaGenerator]]:
     schemas = create_runtime_schemas(version_change(schema(model).field("foo").had(**{attr: attr_value})))
 
     field_info = schemas["2000-01-01"][model].model_fields["foo"]
@@ -189,6 +191,11 @@ def assert_field_had_changes_apply(
         assert repr(FieldInfo._collect_metadata({attr: attr_value})[0]) in [repr(obj) for obj in field_info.metadata]
     else:
         assert getattr(field_info, attr) == attr_value
+
+    if return_runtime_schema:
+        return schemas
+
+    return None
 
 
 @pytest.mark.parametrize(
@@ -298,9 +305,18 @@ def test_schema_field_had__json_schema_extra_as_dict(create_runtime_schemas: Cre
     class SchemaWithFooHadDictJsonSchemaExtra(BaseModel):
         foo: str
 
-    assert_field_had_changes_apply(
-        SchemaWithFooHadDictJsonSchemaExtra, "json_schema_extra", {"example": "bar"}, create_runtime_schemas
+    schemas = assert_field_had_changes_apply(
+        SchemaWithFooHadDictJsonSchemaExtra,
+        "json_schema_extra",
+        {"example": "bar"},
+        create_runtime_schemas,
+        return_runtime_schema=True,
     )
+
+    # Validate the JSON Schema produced by Pydantic contains the extra
+    model_cls = schemas["2000-01-01"][SchemaWithFooHadDictJsonSchemaExtra]  # type: ignore
+    json_schema = model_cls.model_json_schema()
+    assert json_schema["properties"]["foo"]["example"] == "bar"
 
 
 def test__schema_field_had__json_schema_extra_as_callable(create_runtime_schemas: CreateRuntimeSchemas):
@@ -311,12 +327,20 @@ def test__schema_field_had__json_schema_extra_as_callable(create_runtime_schemas
     class SchemaWithFooHadCallableJsonSchemaExtra(BaseModel):
         foo: str
 
-    assert_field_had_changes_apply(
+    schemas = assert_field_had_changes_apply(
         SchemaWithFooHadCallableJsonSchemaExtra,
         "json_schema_extra",
         modify_schema,
         create_runtime_schemas,
+        return_runtime_schema=True,
     )
+
+    # Validate the JSON Schema produced by Pydantic contains changes from the callable
+    model_cls = schemas["2000-01-01"][SchemaWithFooHadCallableJsonSchemaExtra]  # type: ignore
+    json_schema = model_cls.model_json_schema()
+    props = json_schema["properties"]["foo"]
+    assert props["example"] == "bar"
+    assert props["custom"] == 42
 
 
 def test__schema_field_didnt_have__removing_default(create_runtime_schemas: CreateRuntimeSchemas):
