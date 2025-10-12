@@ -1,6 +1,6 @@
 import re
 from enum import Enum, auto
-from typing import Annotated, Any, ClassVar, Literal, Optional, Union, get_origin
+from typing import Annotated, Any, ClassVar, Literal, Union, get_origin
 
 import pytest
 from pydantic import BaseModel, Field, StringConstraints, ValidationError, computed_field, conint, constr
@@ -182,8 +182,7 @@ def assert_field_had_changes_apply(
     attr: str,
     attr_value: Any,
     create_runtime_schemas: CreateRuntimeSchemas,
-    return_runtime_schema: bool = False,
-) -> Optional[dict[str, SchemaGenerator]]:
+) -> dict[str, SchemaGenerator]:
     schemas = create_runtime_schemas(version_change(schema(model).field("foo").had(**{attr: attr_value})))
 
     field_info = schemas["2000-01-01"][model].model_fields["foo"]
@@ -193,10 +192,7 @@ def assert_field_had_changes_apply(
     else:
         assert getattr(field_info, attr) == attr_value
 
-    if return_runtime_schema:
-        return schemas
-
-    return None
+    return schemas
 
 
 @pytest.mark.parametrize(
@@ -311,7 +307,6 @@ def test_schema_field_had__json_schema_extra_as_dict(create_runtime_schemas: Cre
         "json_schema_extra",
         {"example": "bar"},
         create_runtime_schemas,
-        return_runtime_schema=True,
     )
 
     # Validate the JSON Schema produced by Pydantic contains the extra
@@ -333,7 +328,6 @@ def test__schema_field_had__json_schema_extra_as_callable(create_runtime_schemas
         "json_schema_extra",
         modify_schema,
         create_runtime_schemas,
-        return_runtime_schema=True,
     )
 
     # Validate the JSON Schema produced by Pydantic contains changes from the callable
