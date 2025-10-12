@@ -2,9 +2,13 @@ import copy
 import sys
 from enum import auto
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, cast, get_args
+from typing import Any, Literal, TypeVar, Union, cast, get_args
 
-from fastapi.openapi.constants import REF_TEMPLATE
+from fastapi._compat import (
+    get_compat_model_name_map,
+    get_definitions,
+)
+from fastapi._compat.v2 import ModelField
 from fastapi.openapi.utils import (
     get_fields_from_routes,
     get_openapi,
@@ -34,9 +38,6 @@ from .structure.schemas import (
     ValidatorDidntExistInstruction,
     ValidatorExistedInstruction,
 )
-
-if TYPE_CHECKING:
-    from fastapi._compat import ModelField
 
 if sys.version_info >= (3, 11):  # pragma: no cover
     from enum import StrEnum
@@ -89,7 +90,7 @@ def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -
                     version_change,
                     generator_from_newer_version,
                     generator_from_older_version,
-                    schemas_from_older_version,
+                    schemas_from_older_version,  # pyright: ignore[reportArgumentType]
                     cast("list[APIRoute]", routes_from_newer_version),
                 )
                 if changelog_entry is not None:  # pragma: no branch # This should never happen
@@ -153,21 +154,22 @@ def _get_all_pydantic_models_from_generic(annotation: Any) -> list[type[BaseMode
 
 
 def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: str) -> dict:
-    from fastapi._compat import (
-        GenerateJsonSchema,
-        ModelField,
-        get_compat_model_name_map,
-        get_definitions,
-    )
-
     class CadwynDummyModelForRepresentation(BaseModel):
         my_field: model
 
-    model_name_map = get_compat_model_name_map([CadwynDummyModelForRepresentation.model_fields["my_field"]])
-    schema_generator = GenerateJsonSchema(ref_template=REF_TEMPLATE)
+    model_name_map = get_compat_model_name_map(
+        [
+            CadwynDummyModelForRepresentation.model_fields["my_field"],  # pyright: ignore[reportArgumentType]
+        ]
+    )
+
     _, definitions = get_definitions(
-        fields=[ModelField(CadwynDummyModelForRepresentation.model_fields["my_field"], "my_field")],
-        schema_generator=schema_generator,
+        fields=[
+            ModelField(
+                CadwynDummyModelForRepresentation.model_fields["my_field"],
+                "my_field",
+            ),  # pyright: ignore[reportArgumentType]
+        ],
         model_name_map=model_name_map,
         separate_input_output_schemas=False,
     )

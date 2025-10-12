@@ -10,8 +10,6 @@ from cadwyn.structure.versions import Version, VersionBundle
 from tests.test_cli import code
 
 
-# TODO: Return this test once https://github.com/pydantic/pydantic/pull/11898 is merged
-@pytest.mark.xfail
 def test__render_model__with_weird_types():
     result = render_model_by_path(
         "tests._resources.render.complex.classes:ModelWithWeirdFields",
