@@ -5,6 +5,20 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.5.0]
+
+* Fix the rest of the issues from fastapi==0.119.0
+
+## [5.4.5]
+
+### Fixed
+
+* Many issues after GenerateJsonSchema getting removed in fastapi==0.119.0
+
+### Changed
+
+* A lot of documentation improvements by @Shigerman
+
 ## [5.4.4]
 
 ### Fixed
@@ -33,9 +47,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Added
 
-- `typing_inspection` dependency from pydantic team for complex isinstance checks that must be the same between `typing` and `typing_extensions`
-- Support for `pydantic>=2.12.0` FieldInfo refactoring from https://github.com/pydantic/pydantic/pull/11898
-
+* `typing_inspection` dependency from pydantic team for complex isinstance checks that must be the same between `typing` and `typing_extensions`
+* Support for `pydantic>=2.12.0` FieldInfo refactoring from <https://github.com/pydantic/pydantic/pull/11898>
 
 ## [5.3.3]
 

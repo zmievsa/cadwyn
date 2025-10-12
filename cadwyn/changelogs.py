@@ -5,12 +5,10 @@ from logging import getLogger
 from typing import Any, Literal, TypeVar, Union, cast, get_args
 
 from fastapi._compat import (
-    GenerateJsonSchema,
-    ModelField,
     get_compat_model_name_map,
     get_definitions,
 )
-from fastapi.openapi.constants import REF_TEMPLATE
+from fastapi._compat.v2 import ModelField
 from fastapi.openapi.utils import (
     get_fields_from_routes,
     get_openapi,
@@ -92,7 +90,7 @@ def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -
                     version_change,
                     generator_from_newer_version,
                     generator_from_older_version,
-                    schemas_from_older_version,
+                    schemas_from_older_version,  # pyright: ignore[reportArgumentType]
                     cast("list[APIRoute]", routes_from_newer_version),
                 )
                 if changelog_entry is not None:  # pragma: no branch # This should never happen
@@ -120,7 +118,7 @@ def _get_affected_model_names(
         FieldDidntHaveInstruction,
     ],
     generator_from_newer_version: SchemaGenerator,
-    schemas_from_last_version: list[ModelField],
+    schemas_from_last_version: "list[ModelField]",
 ):
     changed_model = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
     annotations = [model.field_info.annotation for model in schemas_from_last_version]
@@ -159,11 +157,19 @@ def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: s
     class CadwynDummyModelForRepresentation(BaseModel):
         my_field: model
 
-    model_name_map = get_compat_model_name_map([CadwynDummyModelForRepresentation.model_fields["my_field"]])
-    schema_generator = GenerateJsonSchema(ref_template=REF_TEMPLATE)
+    model_name_map = get_compat_model_name_map(
+        [
+            CadwynDummyModelForRepresentation.model_fields["my_field"],  # pyright: ignore[reportArgumentType]
+        ]
+    )
+
     _, definitions = get_definitions(
-        fields=[ModelField(CadwynDummyModelForRepresentation.model_fields["my_field"], "my_field")],
-        schema_generator=schema_generator,
+        fields=[
+            ModelField(
+                CadwynDummyModelForRepresentation.model_fields["my_field"],
+                "my_field",
+            ),  # pyright: ignore[reportArgumentType]
+        ],
         model_name_map=model_name_map,
         separate_input_output_schemas=False,
     )
@@ -315,7 +321,7 @@ def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
     version_change: type[VersionChange],
     generator_from_newer_version: SchemaGenerator,
     generator_from_older_version: SchemaGenerator,
-    schemas_from_older_version: list[ModelField],
+    schemas_from_older_version: "list[ModelField]",
     routes_from_newer_version: list[APIRoute],
 ):
     if isinstance(instruction, EndpointDidntExistInstruction):

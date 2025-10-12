@@ -69,16 +69,17 @@ def test__field_existed_as__original_schema_has_a_field(create_runtime_schemas: 
 
 
 def test__field_existed_as__extras_are_added(create_runtime_schemas: CreateRuntimeSchemas):
-    schemas = create_runtime_schemas(
-        version_change(
-            schema(EmptySchema)
-            .field("foo")
-            .existed_as(
-                type=int,
-                info=Field(deflolbtt="hewwo"),  # pyright: ignore[reportCallIssue]
-            ),
+    with pytest.warns(DeprecationWarning):
+        schemas = create_runtime_schemas(
+            version_change(
+                schema(EmptySchema)
+                .field("foo")
+                .existed_as(
+                    type=int,
+                    info=Field(deflolbtt="hewwo"),  # pyright: ignore[reportCallIssue]
+                ),
+            )
         )
-    )
 
     class ExpectedSchema(BaseModel):
         foo: int = Field(json_schema_extra={"deflolbtt": "hewwo"})
@@ -273,7 +274,7 @@ def test__schema_field_had__decimal_field(attr: str, attr_value: Any, create_run
 
 @pytest.mark.parametrize(
     ("attr", "attr_value"),
-    [("exclude", [16, 17, 18])],
+    [("exclude", True)],
 )
 def test__schema_field_had__list_of_int_field(attr: str, attr_value: Any, create_runtime_schemas: CreateRuntimeSchemas):
     class SchemaWithOneListOfIntField(BaseModel):
