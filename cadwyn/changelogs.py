@@ -2,14 +2,8 @@ import copy
 import sys
 from enum import auto
 from logging import getLogger
-from typing import Any, Literal, TypeVar, Union, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, cast, get_args
 
-from fastapi._compat import (
-    GenerateJsonSchema,
-    ModelField,
-    get_compat_model_name_map,
-    get_definitions,
-)
 from fastapi.openapi.constants import REF_TEMPLATE
 from fastapi.openapi.utils import (
     get_fields_from_routes,
@@ -40,6 +34,9 @@ from .structure.schemas import (
     ValidatorDidntExistInstruction,
     ValidatorExistedInstruction,
 )
+
+if TYPE_CHECKING:
+    from fastapi._compat import ModelField
 
 if sys.version_info >= (3, 11):  # pragma: no cover
     from enum import StrEnum
@@ -120,7 +117,7 @@ def _get_affected_model_names(
         FieldDidntHaveInstruction,
     ],
     generator_from_newer_version: SchemaGenerator,
-    schemas_from_last_version: list[ModelField],
+    schemas_from_last_version: "list[ModelField]",
 ):
     changed_model = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
     annotations = [model.field_info.annotation for model in schemas_from_last_version]
@@ -156,6 +153,13 @@ def _get_all_pydantic_models_from_generic(annotation: Any) -> list[type[BaseMode
 
 
 def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: str) -> dict:
+    from fastapi._compat import (
+        GenerateJsonSchema,
+        ModelField,
+        get_compat_model_name_map,
+        get_definitions,
+    )
+
     class CadwynDummyModelForRepresentation(BaseModel):
         my_field: model
 
@@ -315,7 +319,7 @@ def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
     version_change: type[VersionChange],
     generator_from_newer_version: SchemaGenerator,
     generator_from_older_version: SchemaGenerator,
-    schemas_from_older_version: list[ModelField],
+    schemas_from_older_version: "list[ModelField]",
     routes_from_newer_version: list[APIRoute],
 ):
     if isinstance(instruction, EndpointDidntExistInstruction):
