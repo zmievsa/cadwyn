@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.6.0]
+
+### Added
+
+* `schema(...).had(json_schema_extra=...)` support by @csemanish12
+
 ## [5.5.0]
 
 * Fix the rest of the issues from fastapi==0.119.0
