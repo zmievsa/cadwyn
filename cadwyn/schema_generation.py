@@ -468,7 +468,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             concretes = metadata["args"]
 
             type_map = dict(zip(generics, concretes))
-            return {name: replace_types(field.annotation, type_map) for name, field in self.fields.items()}
+            return {name: replace_types(field, type_map) for name, field in self.annotations.items()}
 
         return self.annotations
 
