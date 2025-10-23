@@ -1,8 +1,8 @@
 import re
-from typing import Any, Generic, TypeVar, Union
+from typing import Annotated, Any, Generic, TypeVar, Union
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cadwyn import schema
 from cadwyn.exceptions import InvalidGenerationInstructionError
@@ -10,6 +10,7 @@ from cadwyn.structure.schemas import PossibleFieldAttributes
 from tests.conftest import (
     CreateRuntimeSchemas,
     assert_models_are_equal,
+    assert_typevar_models_are_equal,
     version_change,
 )
 from tests.test_schema_generation.test_schema_field import assert_field_had_changes_apply
@@ -26,7 +27,7 @@ class ParametrizedSchema(GenericSchema[bool]):
     pass
 
 
-ATTR_MAP: tuple[tuple[str, ...], list[tuple[PossibleFieldAttributes, Any]]] = (
+ATTR_MAP: tuple[tuple[str, str], list[tuple[PossibleFieldAttributes, Any]]] = (
     ("attr", "value"),
     [
         ("title", "Foo"),
@@ -51,13 +52,13 @@ def test__schema_field_existed_as__field_is_typevar(create_runtime_schemas: Crea
         ),
     )
 
-    class ExpectedSchema(BaseModel, Generic[BoolT]):
-        foo: BoolT
+    class ExpectedSchema(BaseModel):
+        foo: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type(s) are derived from TypeVar bound.
         bar: bool
 
-        baz: BoolT
+        baz: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type(s) are derived from TypeVar bound
 
-    assert_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
+    assert_typevar_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
 
 
 def test__schema_field_didnt_exist__field_is_typevar(create_runtime_schemas: CreateRuntimeSchemas):
@@ -70,7 +71,7 @@ def test__schema_field_didnt_exist__field_is_typevar(create_runtime_schemas: Cre
     class ExpectedSchema(BaseModel):
         bar: bool
 
-    assert_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
+    assert_typevar_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
 
 
 @pytest.mark.parametrize(*ATTR_MAP)
@@ -87,6 +88,23 @@ def test__schema_field_had__modifying_typevar_field(
     )
 
 
+@pytest.mark.parametrize(*ATTR_MAP)
+def test__schema_field_didnt_have__modifying_typevar_field(
+    attr: PossibleFieldAttributes, value: Any, create_runtime_schemas: CreateRuntimeSchemas
+):
+    class GenericSchemaWithMetadata(BaseModel, Generic[BoolT]):
+        foo: Annotated[BoolT, Field(**dict(ATTR_MAP[1]))]
+        bar: bool
+
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(GenericSchemaWithMetadata).field("foo").didnt_have(attr),
+        )
+    )
+
+    assert not schemas["2000-01-01"][GenericSchemaWithMetadata].model_fields["foo"].metadata
+
+
 def test__schema_field_had__field_type_is_narrowed(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
@@ -100,11 +118,11 @@ def test__schema_field_had__field_type_is_narrowed(
         ),
     )
 
-    class ExpectedSchema(BaseModel, Generic[BoolT]):
-        foo: BoolT
-        bar: BoolT
+    class ExpectedSchema(BaseModel):
+        foo: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type(s) are derived from TypeVar bound
+        bar: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type(s) are derived from TypeVar bound
 
-    assert_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
+    assert_typevar_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
 
 
 ################
@@ -154,8 +172,7 @@ def test__schema_field_had__field_parametrized_type_is_replaced(create_runtime_s
         ),
     )
 
-    class ExpectedSchema(BaseModel):
-        foo: int
-        bar: bool
+    class ExpectedSchema(GenericSchema[int]):
+        pass
 
     assert_models_are_equal(schemas["2000-01-01"][ParametrizedSchema], ExpectedSchema)

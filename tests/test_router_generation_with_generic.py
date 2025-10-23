@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Annotated, Generic, TypeVar, Union
 
 from fastapi.testclient import TestClient
@@ -10,7 +8,7 @@ from cadwyn import RequestInfo, convert_request_to_next_version_for
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import VersionChange
-from tests.conftest import CreateVersionedApp  # noqa: TC001
+from tests.conftest import CreateVersionedApp
 
 BoolT = TypeVar("BoolT", bound=Union[bool, int])
 

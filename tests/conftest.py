@@ -160,6 +160,15 @@ def assert_models_are_equal(model1: type[BaseModel], model2: type[BaseModel]):
     assert model1_schema == model2_schema
 
 
+def assert_model_annotations_are_equal(model1: type[BaseModel], model2: type[BaseModel]):
+    assert model1.__annotations__ == model2.__annotations__
+
+
+def assert_typevar_models_are_equal(model1: type[BaseModel], model2: type[BaseModel]):
+    assert_models_are_equal(model1, model2)
+    assert_model_annotations_are_equal(model1, model2)
+
+
 def serialize_schema(schema: Any):
     schema = deepcopy(schema)
     if "cls" in schema:
