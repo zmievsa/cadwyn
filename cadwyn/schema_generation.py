@@ -39,7 +39,6 @@ from pydantic._internal._decorators import (
     RootValidatorDecoratorInfo,
     ValidatorDecoratorInfo,
 )
-from pydantic._internal._generics import replace_types
 from pydantic._internal._known_annotated_metadata import collect_known_metadata
 from pydantic._internal._typing_extra import try_eval_type as pydantic_try_eval_type
 from pydantic.fields import ComputedFieldInfo, FieldInfo
@@ -459,19 +458,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return annotations | self.annotations
 
-    def _substitute_generics_with_concretes(self) -> dict[str, Any]:
-        metadata = self.cls.__pydantic_generic_metadata__
-        origin = metadata["origin"]
-
-        if origin is not None:
-            generics = origin.__pydantic_generic_metadata__["parameters"]
-            concretes = metadata["args"]
-
-            type_map = dict(zip(generics, concretes))
-            return {name: replace_types(field, type_map) for name, field in self.annotations.items()}
-
-        return self.annotations
-
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {
             name: validator.decorator(*validator.fields, **validator.kwargs)(validator.func)
@@ -494,11 +480,12 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             | fields
             | {
                 "__annotations__": generator.annotation_transformer.change_version_of_annotation(
-                    self._substitute_generics_with_concretes()
+                    self.annotations,
                 ),
                 "__doc__": self.doc,
                 "__qualname__": self.cls.__qualname__.removesuffix(self.cls.__name__) + self.name,
             },
+            __pydantic_generic_metadata__=self.cls.__pydantic_generic_metadata__,
         )
 
         model_copy.__cadwyn_original_model__ = self.cls

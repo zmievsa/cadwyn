@@ -10,7 +10,6 @@ from cadwyn.structure.schemas import PossibleFieldAttributes
 from tests.conftest import (
     CreateRuntimeSchemas,
     assert_models_are_equal,
-    assert_typevar_models_are_equal,
     version_change,
 )
 from tests.test_schema_generation.test_schema_field import assert_field_had_changes_apply
@@ -53,12 +52,12 @@ def test__schema_field_existed_as__field_is_typevar(create_runtime_schemas: Crea
     )
 
     class ExpectedSchema(BaseModel):
-        foo: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type(s) are derived from TypeVar bound.
+        foo: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type is passed through pydantic metadata.
         bar: bool
 
-        baz: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type(s) are derived from TypeVar bound
+        baz: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type is passed through pydantic metadata.
 
-    assert_typevar_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
+    assert_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
 
 
 def test__schema_field_didnt_exist__field_is_typevar(create_runtime_schemas: CreateRuntimeSchemas):
@@ -71,7 +70,7 @@ def test__schema_field_didnt_exist__field_is_typevar(create_runtime_schemas: Cre
     class ExpectedSchema(BaseModel):
         bar: bool
 
-    assert_typevar_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
+    assert_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
 
 
 @pytest.mark.parametrize(*ATTR_MAP)
@@ -119,10 +118,10 @@ def test__schema_field_had__field_type_is_narrowed(
     )
 
     class ExpectedSchema(BaseModel):
-        foo: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type(s) are derived from TypeVar bound
-        bar: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type(s) are derived from TypeVar bound
+        foo: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type is passed through pydantic metadata.
+        bar: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type is passed through pydantic metadata.
 
-    assert_typevar_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
+    assert_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
 
 
 ################
@@ -154,7 +153,7 @@ def test__schema_field_had__modifying_parametrized_field(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     assert_field_had_changes_apply(
-        GenericSchema,
+        ParametrizedSchema,
         attr,
         value,
         create_runtime_schemas,
