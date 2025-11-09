@@ -141,6 +141,9 @@ ignore = [
 "cadwyn/_utils.py" = [
     "ERA001", # Found commented-out code (it's not actually commented out. It's just comments)
 ]
+"cadwyn/schema_generation.py" = [
+    "ERA001", # Found commented-out code (We want it commented-out and I cannot ignore it per-line)
+]
 
 [lint.mccabe]
 max-complexity = 15

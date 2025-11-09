@@ -546,14 +546,15 @@ class _AsyncGeneratorCallableWrapper(_CallableWrapper):
 @final
 class _AnnotationTransformer:
     def __init__(self, generator: "SchemaGenerator") -> None:
+        self.generator = generator
+        self.change_versions_of_a_non_container_annotation = self._change_version_of_a_non_container_annotation
+        # This cache cannot be used until something is done regarding https://github.com/fastapi/fastapi/pull/14320
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
         # because such copies could produce weird behaviors at runtime, especially if you/FastAPI do any comparisons.
         # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
-        self.generator = generator
-        # TODO: Rewrite this to memoize
-        self.change_versions_of_a_non_container_annotation = functools.cache(
-            self._change_version_of_a_non_container_annotation
-        )
+        # self.change_versions_of_a_non_container_annotation = functools.cache(
+        #     self._change_version_of_a_non_container_annotation,
+        # )
 
     def change_version_of_annotation(self, annotation: Any) -> Any:
         """Recursively go through all annotations and change them to annotations corresponding to the version passed.
