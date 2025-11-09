@@ -13,9 +13,9 @@ _P_T = TypeVar("_P_T")
 _P_R = TypeVar("_P_R")
 
 if sys.version_info >= (3, 13):  # pragma: no cover
-    pass
+    from inspect import iscoroutinefunction
 else:  # pragma: no cover
-    pass
+    from asyncio import iscoroutinefunction  # noqa: F401
 
 
 if sys.version_info >= (3, 10):
