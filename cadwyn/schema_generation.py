@@ -470,19 +470,24 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             if not validator.is_deleted and type(validator) == _ValidatorWrapper  # noqa: E721
         }
         fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
+
         model_copy = type(self.cls)(
             self.name,
-            tuple(generator[cast("type[BaseModel]", base)] for base in self.cls.__bases__),
+            tuple(generator[cast("type[BaseModel]", base)] for base in self.cls.__bases__ if base is not Generic),
             self.other_attributes
             | per_field_validators
             | root_validators
             | fields
             | {
-                "__annotations__": generator.annotation_transformer.change_version_of_annotation(self.annotations),
+                "__annotations__": generator.annotation_transformer.change_version_of_annotation(
+                    self.annotations,
+                ),
                 "__doc__": self.doc,
                 "__qualname__": self.cls.__qualname__.removesuffix(self.cls.__name__) + self.name,
             },
+            __pydantic_generic_metadata__=self.cls.__pydantic_generic_metadata__,
         )
+
         model_copy.__cadwyn_original_model__ = self.cls
         return model_copy
 
