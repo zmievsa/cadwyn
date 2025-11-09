@@ -27,7 +27,6 @@ import fastapi.utils
 import pydantic
 import pydantic._internal._decorators
 from fastapi import Response
-from fastapi.dependencies.utils import is_async_gen_callable, is_coroutine_callable, is_gen_callable
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
@@ -83,6 +82,8 @@ from cadwyn.structure.schemas import (
     _get_model_decorators,
 )
 from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionBundle
+
+from ._utils import iscoroutinefunction
 
 if TYPE_CHECKING:
     from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
@@ -755,6 +756,32 @@ class _AnnotationTransformer:
             call = call._original_callable
 
         return call
+
+
+def is_gen_callable(call: Callable) -> bool:
+    # Copied from fastapi.dependencies.models
+    if inspect.isgeneratorfunction(call):
+        return True
+    dunder_call = getattr(call, "__call__", None)  # noqa: B004
+    return inspect.isgeneratorfunction(dunder_call)
+
+
+def is_async_gen_callable(call: Callable) -> bool:
+    # Copied from fastapi.dependencies.models
+    if inspect.isasyncgenfunction(call):
+        return True
+    dunder_call = getattr(call, "__call__", None)  # noqa: B004
+    return inspect.isasyncgenfunction(dunder_call)
+
+
+def is_coroutine_callable(call: Callable) -> bool:
+    # Copied from fastapi.dependencies.models
+    if inspect.isroutine(call):
+        return iscoroutinefunction(call)
+    if inspect.isclass(call):
+        return False
+    dunder_call = getattr(call, "__call__", None)  # noqa: B004
+    return iscoroutinefunction(dunder_call)
 
 
 def _add_request_and_response_params(route: APIRoute):
