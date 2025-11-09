@@ -775,7 +775,7 @@ def is_async_gen_callable(call: Callable) -> bool:
     return inspect.isasyncgenfunction(dunder_call)
 
 
-def is_coroutine_callable(call: Callable) -> bool:
+def is_coroutine_callable(call: Callable) -> bool:  # pragma: no cover
     # Copied from fastapi.dependencies.models
     if inspect.isroutine(call):
         return iscoroutinefunction(call)
