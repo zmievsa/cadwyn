@@ -27,7 +27,6 @@ import fastapi.utils
 import pydantic
 import pydantic._internal._decorators
 from fastapi import Response
-from fastapi.dependencies.utils import is_async_gen_callable, is_coroutine_callable, is_gen_callable
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
@@ -83,6 +82,8 @@ from cadwyn.structure.schemas import (
     _get_model_decorators,
 )
 from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionBundle
+
+from ._utils import iscoroutinefunction
 
 if TYPE_CHECKING:
     from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
@@ -545,14 +546,15 @@ class _AsyncGeneratorCallableWrapper(_CallableWrapper):
 @final
 class _AnnotationTransformer:
     def __init__(self, generator: "SchemaGenerator") -> None:
+        self.generator = generator
+        self.change_versions_of_a_non_container_annotation = self._change_version_of_a_non_container_annotation
+        # This cache cannot be used until something is done regarding https://github.com/fastapi/fastapi/pull/14320
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
         # because such copies could produce weird behaviors at runtime, especially if you/FastAPI do any comparisons.
         # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
-        self.generator = generator
-        # TODO: Rewrite this to memoize
-        self.change_versions_of_a_non_container_annotation = functools.cache(
-            self._change_version_of_a_non_container_annotation
-        )
+        # self.change_versions_of_a_non_container_annotation = functools.cache(
+        #     self._change_version_of_a_non_container_annotation,
+        # )
 
     def change_version_of_annotation(self, annotation: Any) -> Any:
         """Recursively go through all annotations and change them to annotations corresponding to the version passed.
@@ -755,6 +757,32 @@ class _AnnotationTransformer:
             call = call._original_callable
 
         return call
+
+
+def is_gen_callable(call: Callable) -> bool:
+    # Copied from fastapi.dependencies.models
+    if inspect.isgeneratorfunction(call):
+        return True
+    dunder_call = getattr(call, "__call__", None)  # noqa: B004
+    return inspect.isgeneratorfunction(dunder_call)
+
+
+def is_async_gen_callable(call: Callable) -> bool:
+    # Copied from fastapi.dependencies.models
+    if inspect.isasyncgenfunction(call):
+        return True
+    dunder_call = getattr(call, "__call__", None)  # noqa: B004
+    return inspect.isasyncgenfunction(dunder_call)
+
+
+def is_coroutine_callable(call: Callable) -> bool:  # pragma: no cover
+    # Copied from fastapi.dependencies.models
+    if inspect.isroutine(call):
+        return iscoroutinefunction(call)
+    if inspect.isclass(call):
+        return False
+    dunder_call = getattr(call, "__call__", None)  # noqa: B004
+    return iscoroutinefunction(dunder_call)
 
 
 def _add_request_and_response_params(route: APIRoute):

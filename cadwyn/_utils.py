@@ -12,6 +12,11 @@ _T = TypeVar("_T", bound=Callable)
 _P_T = TypeVar("_P_T")
 _P_R = TypeVar("_P_R")
 
+if sys.version_info >= (3, 13):  # pragma: no cover
+    from inspect import iscoroutinefunction
+else:  # pragma: no cover
+    from asyncio import iscoroutinefunction  # noqa: F401
+
 
 if sys.version_info >= (3, 10):
     UnionType = type(int | str) | type(Union[int, str])
