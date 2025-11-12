@@ -66,7 +66,7 @@ versions = VersionBundle(
 )
 ```
 
-Did you notice that the first version `2022-11-16` does not have any version changes? That is intentional! How can it have breaking changes if there are no prior versions before it?
+Did you notice that the first version `2022-11-16` does not have any version changes? That is intentional. How can it have breaking changes if there are no prior versions before it?
 
 ## Version
 
@@ -130,14 +130,14 @@ Changes:
 
 In Cadwyn, you use the latest version. This attribute is a way for you to describe how your schemas and endpoints looked in previous versions so that Cadwyn can guess schema and route generation to recreate the old schemas and endpoints for your clients. So you only need to maintain your head (latest) schemas and your migrations while Cadwyn takes care of the rest. In fact, you spend minimal effort on **maintaining** your migrations because they are effectively immutable -- they describe the breaking changes that happened in the past so there is no need to ever change them.
 
-This approach of *maintaining the present and describing the past* might appear weird. You just need to form the correct mindset which is counter-intuitive at first but after just one or two attempts at versioning you will see how much sense this approach makes.
+This approach of *maintaining the present and describing the past* might appear weird. You just need to form the correct mindset which is counter-intuitive at first but after one or two attempts at versioning you will see how much sense this approach makes.
 
-Imagine you need to know what your code looked like two weeks ago. You would use `git checkout` or `git reset` with an older commit because `git` stores the latest version of your code (which is also called HEAD) and the diffs between it and each previous version as a chain of changes. This is exactly how Cadwyn works! We store the latest version and use the diffs to regenerate the older versions.
+Imagine you need to know what your code looked like two weeks ago. You would use `git checkout` or `git reset` with an older commit because `git` stores the latest version of your code (which is also called HEAD) and the diffs between it and each previous version as a chain of changes. This is how Cadwyn works. We store the latest version and use the diffs to regenerate the older versions.
 
 <details>
   <summary>Note to curious readers</summary>
 
-  Git doesn't actually work this way internally. My description is closer to how SVN works. It is just a really simple metaphor to explain a concept.
+  Git doesn't actually work this way internally. My description is closer to how SVN works. It is just a simple metaphor to explain a concept.
 </details>
 
 ### Data migrations
@@ -171,7 +171,7 @@ Did you notice how the schema for `InvoiceCreateRequest` is specified in our mig
 
 Now we have not only described how schemas changed but we have also described how to migrate a request of the old version to the new version. When Cadwyn receives a request targeting a particular version, the request is first validated against the schema of that particular version. Then Cadwyn applies all request migrations until the latest version to migrate the request to latest. So now your business logic receives the latest version of the request yet for your clients you have two versions of your API -- you have added variability without introducing any complexity into your business logic.
 
-But wait... What happens to the `Invoice` responses? Your business logic will now return `created_at` so your clients from old versions will be affected! Cadwyn has a tool for that too: we migrate our responses as well. Requests were migrated forward in versions but responses are migrated backward in versions! So your business logic returns a response of the latest version and Cadwyn will use your response migrations to migrate it back to the version of your client's request:
+But wait... What happens to the `Invoice` responses? Your business logic will now return `created_at` so your clients from old versions will be affected. Cadwyn has a tool for that too: we migrate our responses as well. Requests were migrated forward in versions while responses are migrated backward in versions. So your business logic returns a response of the latest version and Cadwyn will use your response migrations to migrate it back to the version of your client's request:
 
 ```python
 from cadwyn import (
@@ -206,7 +206,7 @@ class RemoveTaxIdEndpoints(VersionChange):
 
 Did you notice how the schema for `InvoiceResource` is specified in our migration? This signals Cadwyn to apply it to all routes with this schema as their `response_model`. Notice also that we now use `BaseInvoice` in our instructions -- imagine it is the parent of both `InvoiceCreateRequest` and `InvoiceResource` so renaming it there will rename it in these schemas as well. You can, however, apply the instructions to both individual schemas instead of their parent if you want to.
 
-Now our request comes, Cadwyn migrates it to the latest version using our request migration, then we do our business logic, return the latest response from it, and Cadwyn migrates it back to the request version. Does our business logic or database know about the fact that we have two versions? No, not at all! It is zero-cost. Consider the benefits of supporting not just two, but two hundred versions.
+Now our request comes, Cadwyn migrates it to the latest version using our request migration, then we do our business logic, return the latest response from it, and Cadwyn migrates it back to the request version. Does our business logic or database know about the fact that we have two versions? No, not at all. It is zero-cost. Consider the benefits of supporting not just two, but two hundred versions.
 
 ![The diagram showing how it works](../img/simplified_migration_model.png)
 
@@ -214,7 +214,7 @@ Now our request comes, Cadwyn migrates it to the latest version using our reques
 
 #### Path-based migration specification
 
-Oftentimes you need to migrate based on the endpoint path rather than the request body or response model. This happens when, for example, endpoint does not have a request body or its response model is used in other places that we do not want to migrate. Consider the example [above](#data-migrations), but use paths instead of schemas:
+Often you need to migrate based on the endpoint path rather than the request body or response model. This happens when, for example, endpoint does not have a request body or its response model is used in other places that we do not want to migrate. Consider the example [above](#data-migrations), but use paths instead of schemas:
 
 ```python
 from cadwyn import (
@@ -247,7 +247,7 @@ Though I highly recommend you to stick to schemas as it is much easier to introd
 
 #### Migration of HTTP errors
 
-Oftentimes you need to raise `fastapi.HTTPException` in your code to signal some errors to your users. However, if you want to change the status code of some error, it would be a breaking change because your error status codes and sometimes even their bodies are a part of your API contract.
+Often you need to raise `fastapi.HTTPException` in your code to signal some errors to your users. However, if you want to change the status code of some error, it would be a breaking change because your error status codes and sometimes even their bodies are a part of your API contract.
 
 By default, Cadwyn's response migrations do not handle errors but you can use the `migrate_http_errors` keyword argument to enable it:
 
@@ -292,9 +292,9 @@ Cadwyn can migrate more than just request bodies.
 
 #### Internal representations
 
-We have only reviewed simple cases so far. But what happens when you cannot just migrate your data that easily? It can happen because your earlier versions had **more data** than your newer versions. Or that data had more formats.
+So far, we have only reviewed simple cases. But what happens when you cannot migrate your data that easily? It can happen because your earlier versions had **more data** than your newer versions. Or that data had more formats.
 
-Imagine that previously the `User` schema had a list of addresses but now we want to make a breaking change and turn them into a single address. The naive migration will just take the first address from the list for requests and turn that address into a list for responses like so:
+Imagine that previously the `User` schema had a list of addresses but now we want to make a breaking change and turn them into a single address. The naive migration will take the first address from the list for requests and turn that address into a list for responses like this:
 
 ```python
 from cadwyn import (
@@ -328,13 +328,13 @@ class RemoveTaxIdEndpoints(VersionChange):
         response.body["addresses"] = [response.body.pop("address")]
 ```
 
-But this will not work. If the user from the old version requests to save three addresses, only one will actually be saved. Old data is also going to be affected -- if old users had multiple addresses, we will only be able to return one of them. This is bad -- we have made a breaking change!
+But this will not work. If the user from the old version requests to save three addresses, only one will actually be saved. Old data is also going to be affected: if old users had multiple addresses, we will only be able to return one of them. This is important: a breaking change has been introduced.
 
 In order to solve this issue, Cadwyn uses a concept of **internal representations**. An internal representation of your data is like a database entry of your data -- it is its **latest** version plus all the fields that are incompatible with the latest API version. If we were talking about classes, then internal representation would be a child of your latest schemas -- it has all the same data and a little more, it expands its functionality. Essentially your internal representation of user object can contain much more data than your latest schemas.
 
-So all your requests get migrated to HEAD, which is the internal representation of latest -- but not exactly the latest itself. So its data is really similar to latest. Same happens to your responses -- you do not respond with and migrate from the latest version of your data, you respond with its **internal representation** which is really close to the actual latest schemas.
+So all your requests get migrated to HEAD, which is the internal representation of latest -- but not exactly the latest itself. So its data is really similar to latest. The same applies to your responses: you do not respond with and migrate from the latest version of your data, you respond with its **internal representation** which is really close to the actual latest schemas.
 
-In responses, returning the internal representation is simple: just return your database model or a dict with everything you need for all your versions. In the user address example, we would continue storing the list of addresses in our database but then add the single address to our response. Latest schemas will simply strip it but our older schemas will be able to use it!
+In responses, returning the internal representation is simple: return your database model or a dict with everything you need for all your versions. In the user address example, it is recommended to continue storing the list of addresses in the database and add a single address to a response. The latest schemas will strip it while older schemas will be able to use it.
 
 ```python
 # in your business logic
@@ -361,7 +361,7 @@ Yes, we do not need any of the migrations anymore because responses are handled 
 
 #### Manual body migrations
 
-Oftentimes you will need to migrate your data outside of routing, manually. For example, when you need to send a versioned response to your client via webhook or inside a worker/cronjob. In these instances, you can use `cadwyn.VersionBundle.migrate_response_body`:
+Often you will need to migrate your data outside of routing, manually. For example, when you need to send a versioned response to your client via webhook or inside a worker/cronjob. In these instances, you can use `cadwyn.VersionBundle.migrate_response_body`:
 
 ```python
 from users import UserResource
@@ -380,7 +380,7 @@ Migrations for the bodies of `fastapi.responses.StreamingResponse` and `fastapi.
 
 ## Pydantic RootModel migration warning
 
-Pydantic has an interesting implementation detail: `pydantic.RootModel` instances are memoized. So the following code is going to output `True`:
+Pydantic has an implementation detail: `pydantic.RootModel` instances are memoized. So the following code is going to output `True`:
 
 ```python
 from pydantic import RootModel
@@ -392,7 +392,7 @@ BulkCreateUsersResponseBody = RootModel[list[User]]
 print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # True
 ```
 
-So if you make a migration that should only affect one of these schemas -- it will automatically affect both. A recommended alternative is to either use subclassing:
+A migration intended for only one of these schemas will automatically affect both. A recommended alternative is to either use subclassing:
 
 ```python
 from pydantic import RootModel
@@ -477,10 +477,10 @@ async def create_user(payload):
     ...
 ```
 
-So this change can be contained in any version -- your business logic doesn't know which version it has and shouldn't.
+So this change can be contained in any version. Your business logic doesn't know which version it has. And shouldn't.
 
 ### Warning against side effects
 
-Side effects are a very powerful tool but they must be used with great caution. Are you sure you MUST change your business logic? Are you sure whatever you are trying to do cannot just be done by a migration? 90% of time, you will **not** need them. Please, think twice before using them. API Versioning is about having the same underlying app and data while just changing the schemas and api endpoints to interact with it. By introducing side effects, you leak versioning into your business logic and possibly even your data which makes your code significantly harder to maintain in the long term. If each side effect adds a single `if` to your logic, then after 100 versions with side effects, you will have 100 more `if`s. If used correctly, Cadwyn helps you maintain decades’ worth of API versions with minimal maintenance effort, and side effects make it significantly harder to do. Changes in the underlying source, structure, or logic of your data should not affect your API or public-facing business logic.
+Side effects are a very powerful tool but they must be used with great caution. Are you sure you MUST change your business logic? Are you sure whatever you are trying to do cannot just be done by a migration? 90% of time, you will **not** need them. Please, think twice before using them. API Versioning is about having the same underlying app and data while changing the schemas and api endpoints to interact with it. By introducing side effects, you leak versioning into your business logic and possibly even your data which makes your code significantly harder to maintain in the long term. If each side effect adds a single `if` to your logic, then after 100 versions with side effects, you will have 100 more `if`s. If used correctly, Cadwyn helps you maintain decades’ worth of API versions with minimal maintenance effort, and side effects make it significantly harder to do. Changes in the underlying source, structure, or logic of your data should not affect your API or public-facing business logic.
 
 However, the [following use cases](../how_to/change_business_logic/index.md) often necessitate side effects.

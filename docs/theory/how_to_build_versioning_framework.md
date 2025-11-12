@@ -8,7 +8,7 @@ If it is too easy, it is probably a trap. The framework is probably hiding too m
 
 ### How easy is it to delete an old version?
 
-Your framework must be able to let you clean up versions as simply as possible and cheaply whenever you need to. For example, if your framework tries to minimize the amount of code duplication in your repository by having new routes include old routes within them and new business logic inherit from classes from old business logic, then deleting an old version is going to be painful; oftentimes even dangerous as versions can quickly start interacting with each other in all sorts of ways, turning a single small application into a set of interconnected applications.
+Your framework must be able to let you clean up versions as simply as possible and cheaply whenever you need to. For example, if your framework tries to minimize the amount of code duplication in your repository by having new routes include old routes within them and new business logic inherit from classes from old business logic, then deleting an old version is going to be painful; often even dangerous as versions can quickly start interacting with each other in all sorts of ways, turning a single small application into a set of interconnected applications.
 
 ### How easy is it to see the differences between versions?
 

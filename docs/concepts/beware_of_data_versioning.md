@@ -1,6 +1,6 @@
 # Beware of data versioning
 
-Oftentimes you will want to introduce a breaking change where one of the following is true:
+Often you will want to introduce a breaking change where one of the following is true:
 
 * Old data cannot be automatically converted to the structure of the new response
 * New response cannot be automatically migrated to an older response
