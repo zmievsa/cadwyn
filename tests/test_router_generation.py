@@ -1197,7 +1197,7 @@ class MyHTTPBearer(HTTPBearer):
 
 @pytest.mark.parametrize(
     ("security_cls", "expected_status_code"),
-    [(HTTPBearer, 403), (MyHTTPBearer, 403), (HTTPBasic, 401)],
+    [(HTTPBearer, 401), (MyHTTPBearer, 401), (HTTPBasic, 401)],
 )
 def test__basic_router_generation__using_http_security_dependency__should_generate_the_required_security_params(
     router: VersionedAPIRouter,
