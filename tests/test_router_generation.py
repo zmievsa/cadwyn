@@ -1222,7 +1222,7 @@ def test__basic_router_generation__using_http_security_dependency__should_genera
     client_2000, *_ = create_versioned_clients().values()
 
     dependant = cast("APIRoute", client_2000.app.router.versioned_routers["2000-01-01"].routes[-1]).dependant
-    assert dependant.dependencies[1].dependencies[0].security_requirements[0].security_scheme is auth_header_scheme
+    assert dependant.dependencies[1].dependencies[0]._security_scheme is auth_header_scheme
     response = client_2000.get("/test")
     assert response.status_code == expected_status_code
     assert response.json() == {"detail": "Not authenticated"}
