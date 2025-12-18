@@ -7,40 +7,9 @@ Let's say that our API has a mandatory `UserResource.date_of_birth` field. Let's
 1. Remove `zodiac_sign` field from `users.UserResource`
 2. Add the following migration to `versions.v2001_01_01`:
 
-    ```python
-    from cadwyn import VersionChange, schema
-    from users import UserResource
-    from pydantic import Field
-
-
-    class RemoveZodiacSignFromUser(VersionChange):
-        description = (
-            "Remove 'zodiac_sign' field from UserResource because "
-            "it can be inferred from user's date of birth and because "
-            "only a small number of users has utilized it."
-        )
-        instructions_to_migrate_to_previous_version = (
-            schema(UserResource)
-            .field("zodiac_sign")
-            .existed_as(type=str, info=Field(description="User's magical sign")),
-        )
-    ```
-
-3. Add this migration into the version bundle:
-
-    ```python
-    # versions/__init__.py
-
-    from cadwyn import Version, VersionBundle, HeadVersion
-    from datetime import date
-    from .v2001_01_01 import RemoveZodiacSignFromUser
-
-    version_bundle = VersionBundle(
-        HeadVersion(),
-        Version("2001-01-01", RemoveZodiacSignFromUser),
-        Version("2000-01-01"),
-    )
-    ```
+```python
+{! ./docs_src/how_to/change_openapi_schemas/remove_field/block001.py !}
+```
 
 Thanks to the version change above, your old schemas will now include `zodiac_sign` field but your new schemas will stay the same. Don't remove the zodiac business logic from your router because the old version will still need it. So you always return the zodiac sign but the schemas of the latest version will ignore it.
 
@@ -53,57 +22,11 @@ You can remove the logic for calculating and returning the zodiac sign after ver
 Let's say that we had a nullable `middle_name` field but we decided that it does not make sense anymore and want to remove it now from both requests and responses. This means that a user from an old version will still be able to pass it while the user from a new version will not. We can solve this by having this field in our HEAD, removing it from our latest version but keeping it in all older versions:
 
 0. Keep storing `middle_name` in your database in order to support old versions
-1. Add the following migration to `versions.v2001_01_01` to remove `middle_name` from the latest version:
+1. Add the following migration to `versions.v2001_01_01` to remove `middle_name` from the latest version and leave support for it in older versions:
 
-    ```python
-    from cadwyn import VersionChange, schema
-    from users import BaseUser
-
-
-    class RemoveMiddleNameFromLatestVersion(VersionChange):
-        description = (
-            "Remove 'User.middle_name' from latest but keep it in HEAD "
-            "to support versions before 2001-01-01."
-        )
-        instructions_to_migrate_to_previous_version = (
-            schema(BaseUser).field("middle_name").didnt_exist,
-        )
-    ```
-
-2. Add the following migration to `versions.v2001_01_01` to leave support for `middle_name` in the older versions:
-
-    ```python
-    from cadwyn import VersionChange, schema
-    from users import BaseUser
-
-
-    class RemoveMiddleNameFromUser(VersionChange):
-        description = "Remove 'User.middle_name' field"
-        instructions_to_migrate_to_previous_version = (
-            schema(BaseUser)
-            .field("middle_name")
-            .existed_as(
-                type=str | None,
-                info=Field(description="User's Middle Name", default=None),
-            ),
-        )
-    ```
-
-3. Add these migrations into the version bundle:
-
-    ```python
-    # versions/__init__.py
-
-    from cadwyn import Version, VersionBundle, HeadVersion
-    from datetime import date
-    from .v2001_01_01 import RemoveZodiacSignFromUser
-
-    version_bundle = VersionBundle(
-        HeadVersion(RemoveMiddleNameFromLatestVersion),
-        Version("2001-01-01", RemoveMiddleNameFromUser),
-        Version("2000-01-01"),
-    )
-    ```
+```python
+{! ./docs_src/how_to/change_openapi_schemas/remove_field/block002.py !}
+```
 
 We added a new version with a breaking change but neither the HEAD schema that we use in business logic, neither has the business logic itself have changed one bit.
 
