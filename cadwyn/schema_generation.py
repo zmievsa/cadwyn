@@ -540,14 +540,7 @@ class _AsyncGeneratorCallableWrapper(_CallableWrapper):
 @final
 class _AnnotationTransformer:
     def __init__(self, generator: "SchemaGenerator") -> None:
-        # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
-        # because such copies could produce weird behaviors at runtime, especially if you/FastAPI do any comparisons.
-        # It's defined here and not on the method because of this: https://youtu.be/sVjtp6tGo0g
         self.generator = generator
-        # TODO: Rewrite this to memoize
-        self.change_versions_of_a_non_container_annotation = functools.cache(
-            self._change_version_of_a_non_container_annotation
-        )
 
     def change_version_of_annotation(self, annotation: Any) -> Any:
         """Recursively go through all annotations and change them to annotations corresponding to the version passed.
@@ -565,7 +558,7 @@ class _AnnotationTransformer:
         elif isinstance(annotation, (list, tuple)):
             return type(annotation)(self.change_version_of_annotation(v) for v in annotation)
         else:
-            return self.change_versions_of_a_non_container_annotation(annotation)
+            return self._change_version_of_a_non_container_annotation(annotation)
 
     def migrate_router_to_version(self, router: fastapi.routing.APIRouter):
         for route in router.routes:
