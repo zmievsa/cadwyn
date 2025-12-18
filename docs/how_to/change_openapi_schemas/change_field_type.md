@@ -13,31 +13,9 @@ This is not a breaking change in terms of requests but it [**can be**](#why-enum
 1. Add `moderator` value into `users.UserRoleEnum`
 2. Add the following migration to `versions.v2001_01_01`:
 
-    ```python
-    from cadwyn import (
-        ResponseInfo,
-        VersionChange,
-        convert_response_to_previous_version_for,
-        enum,
-    )
-    from users import UserResource, UserRoleEnum
-
-
-    class AddModeratorRoleToUser(VersionChange):
-        description = (
-            "Add 'moderator' role to users that represents an admin "
-            "that cannot create or remove other admins. This provides "
-            "finer-grained control over permissions."
-        )
-        instructions_to_migrate_to_previous_version = (
-            enum(UserRoleEnum).didnt_have("moderator"),
-        )
-
-        @convert_response_to_previous_version_for(UserResource)
-        def change_moderator_to_regular(response: ResponseInfo):
-            if response.body["role"] == "moderator":
-                response.body["role"] = "regular"
-    ```
+```python
+{! ./docs_src/how_to/change_openapi_schemas/change_field_type/block001.py !}
+```
 
 You convert moderators to regulars in older versions because it is a safer choice for your users.
 
@@ -64,59 +42,9 @@ Suppose that previously users could specify their date of birth as a datetime in
 0. Continue storing `date_of_birth` as a datetime in your database to avoid breaking any old behavior
 1. Add the following migration to `versions.v2001_01_01` which will turn `date_of_birth` into a date in 2001_01_01. Note how the validator is used to make sure that `date_of_birth` is converted to date in the latest version. It is only necessary in Pydantic 2 because it has no implicit casting from datetime to date. Note also how strings are used for types: this is not always necessary; it just allows you to control how Cadwyn is going to render your types. Most of the time you won't need to use strings for types.
 
-    ```python
-    import datetime
-
-    from cadwyn import VersionChange, schema
-    from pydantic import validator
-    from users import BaseUser
-
-
-    @field_validator("date_of_birth", mode="before")
-    def convert_date_of_birth_to_date(cls, v: datetime.date | datetime.datetime):
-        if isinstance(v, datetime.datetime):
-            return v.date()
-        return v
-
-
-    class ChangeDateOfBirthToDateInUserInLatest(VersionChange):
-        description = (
-            "Change 'BaseUser.date_of_birth' field type to datetime in HEAD "
-            "to support versions and data before 2001-01-01. "
-        )
-        instructions_to_migrate_to_previous_version = (
-            schema(BaseUser).field("date_of_birth").had(type=datetime.date),
-            # This step is only necessary in Pydantic 2 because datetime
-            # won't be converted to date automatically.
-            schema(BaseUser).validator(convert_date_of_birth_to_date).existed,
-        )
-    ```
-
-2. Add the following version change to `versions.v2001_01_01` (right under the version change above) which will make sure that `date_of_birth` is a datetime in 2000_01_01:
-
-    ```python
-    class ChangeDateOfBirthToDateInUser(VersionChange):
-        description = (
-            "Change 'User.date_of_birth' field type to date instead of "
-            "a datetime because storing the exact time is unnecessary."
-        )
-        instructions_to_migrate_to_previous_version = (
-            schema(BaseUser).field("date_of_birth").had(type=datetime.datetime),
-            schema(BaseUser).validator(convert_date_of_birth_to_date).didnt_exist,
-        )
-    ```
-
-3. Add both migrations into the VersionBundle:
-
-    ```python
-    from cadwyn import Version, VersionBundle, HeadVersion
-
-    version_bundle = VersionBundle(
-        HeadVersion(ChangeDateOfBirthToDateInUserInLatest),
-        Version("2001-01-01", ChangeDateOfBirthToDateInUser),
-        Version("2000-01-01"),
-    )
-    ```
+```python
+{! ./docs_src/how_to/change_openapi_schemas/change_field_type/block002.py !}
+```
 
 The process above is a bit complex, so let us break it down:
 

@@ -4,52 +4,14 @@
 
 Let's say that we previously allowed users to have a name of arbitrary length but now we want to limit it to 250 characters because we are worried that some users will be using inadequate lengths. You can't do this easily: if you simply add a `max_length` constraint to `User.name` -- the existing data in your database might become incompatible with this field in `UserResource`. So as long as incompatible data is there or can get there from some version -- you cannot add such a constraint to your responses. However, you **can** add it to your requests to prevent the creation of new user accounts with long names.
 
-1. Change `max_length` of `data.v2001_01_01.users.UserCreateRequest.name` to 250 by adding the following migration to `versions.v2001_01_01`. We do this instead of just adding the constraint to HEAD to make sure that old requests will get converted to HEAD successfully -- without facing the constraint:
+The trick is to:
 
-    ```python
-    from cadwyn import VersionChange, schema
-    from users import UserCreateRequest
+1. Add a `HeadVersion` change that adds the constraint to the latest version (so HEAD doesn't have it)
+2. Add a version change that removes the constraint from older versions
 
-
-    class AddLengthConstraintToNameInLatest(VersionChange):
-        description = (
-            "Remove the max_length constraint from the HEAD version to support "
-            "versions older than 2001_01_01 where it did not have the constraint."
-        )
-        instructions_to_migrate_to_previous_version = (
-            schema(UserCreateRequest).field("name").had(max_length=250),
-        )
-    ```
-
-2. Then add this migration right under it into the same file:
-
-    ```python
-    class AddMaxLengthConstraintToUserNames(VersionChange):
-        description = (
-            "Add a max length of 250 to user names when creating new users "
-            "to prevent overly large names from being used."
-        )
-        instructions_to_migrate_to_previous_version = (
-            schema(UserCreateRequest).field("name").didnt_have("max_length"),
-        )
-    ```
-
-3. Add both of these migrations into the version bundle:
-
-    ```python
-    from cadwyn import Version, VersionBundle, HeadVersion
-    from datetime import date
-    from .v2001_01_01 import (
-        AddLengthConstraintToNameInLatest,
-        AddMaxLengthConstraintToUserNames,
-    )
-
-    version_bundle = VersionBundle(
-        HeadVersion(AddLengthConstraintToNameInLatest),
-        Version("2001-01-01", AddMaxLengthConstraintToUserNames),
-        Version("2000-01-01"),
-    )
-    ```
+```python
+{! ./docs_src/how_to/change_openapi_schemas/changing_constraints/block001.py !}
+```
 
 So our HEAD version does not have this constraint, our latest does, and earlier versions do not.
 
