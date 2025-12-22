@@ -12,6 +12,6 @@ Unless there is an endpoint that has `User` as its response_model, this code wil
 
 To avoid it, set `check_usage=False`:
 
-```python hl_lines="25"
+```python hl_lines="21"
 {! ./docs_src/how_to/change_openapi_schemas/change_schema_without_endpoint/block002.py !}
 ```
