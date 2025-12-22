@@ -1,25 +1,25 @@
 # Rename a field in schema
 
-Let's say that we had a "summary" field before but now we want to rename it to "bio".
+Assume you had a `summary` field before but now you want to rename it to `bio`.
 
-1. Rename `summary` field to `bio` in `users.BaseUser`
+1. Rename the `summary` field to `bio` in `users.BaseUser`
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
     from cadwyn import (
-        VersionChange,
-        schema,
-        convert_response_to_previous_version_for,
-        convert_request_to_next_version_for,
-        ResponseInfo,
         RequestInfo,
+        ResponseInfo,
+        VersionChange,
+        convert_request_to_next_version_for,
+        convert_response_to_previous_version_for,
+        schema,
     )
     from users import BaseUser, UserCreateRequest, UserResource
 
 
-    class RenameSummaryIntoBioInUser(VersionChange):
+    class RenameSummaryToBioInUser(VersionChange):
         description = (
-            "Rename 'summary' field into 'bio' to keep up with industry standards"
+            "Rename 'summary' field to 'bio' to keep up with industry standards"
         )
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser).field("bio").had(name="summary"),

@@ -2,7 +2,7 @@
 
 ## Add a new endpoint
 
-It is not a breaking change so it's recommended to simply add it to all versions. If you believe that you still need it, you can use the [following migration](../../concepts/endpoint_migrations.md#defining-endpoints-that-didnt-exist-in-old-versions).
+It is not a breaking change so it's recommended to add it to all versions. If you believe that you still need it, use [following migration](../../concepts/endpoint_migrations.md#defining-endpoints-that-didnt-exist-in-old-versions).
 
 ## Delete an old endpoint
 
@@ -10,9 +10,9 @@ See [concepts](../../concepts/endpoint_migrations.md#defining-endpoints-that-did
 
 ## Change an attribute of an endpoint
 
-Changing a "decoratory" attribute such as description or summary is generally not a breaking change and should just be applied to all versions.
+Modifying a "decorative" attribute such as a description or a summary is not a breaking change so apply it to all versions.
 
-However, you are still free to change almost any attribute of an endpoint in the old version. See [concepts docs](../../concepts/endpoint_migrations.md#changing-endpoint-attributes).
+However, you are still free to change almost any attribute of an endpoint in an old version. See [concepts docs](../../concepts/endpoint_migrations.md#changing-endpoint-attributes).
 
 ## Rename an endpoint
 
