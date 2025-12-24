@@ -58,6 +58,51 @@ _RouteId = int
 PossibleInstructions: TypeAlias = Union[
     AlterSchemaSubInstruction, AlterEndpointSubInstruction, AlterEnumSubInstruction, SchemaHadInstruction, staticmethod
 ]
+
+
+def _normalize_response_content(
+    content: Any,
+    *,
+    exclude_unset: bool = False,
+    exclude_defaults: bool = False,
+    exclude_none: bool = False,
+) -> Any:
+    """Convert Pydantic models to dicts for FastAPI >= 0.126.0 compatibility.
+
+    In FastAPI >= 0.126.0, _prepare_response_content may return Pydantic model
+    instances instead of dicts. This function ensures the content is always
+    a dict/list/primitive for user migrations to work correctly.
+    """
+    if isinstance(content, BaseModel):
+        return content.model_dump(
+            by_alias=True,
+            exclude_unset=exclude_unset,
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+        )
+    elif isinstance(content, list):
+        return [
+            _normalize_response_content(
+                item,
+                exclude_unset=exclude_unset,
+                exclude_defaults=exclude_defaults,
+                exclude_none=exclude_none,
+            )
+            for item in content
+        ]
+    elif isinstance(content, dict):
+        return {
+            k: _normalize_response_content(
+                v,
+                exclude_unset=exclude_unset,
+                exclude_defaults=exclude_defaults,
+                exclude_none=exclude_none,
+            )
+            for k, v in content.items()
+        }
+    return content
+
+
 APIVersionVarType: TypeAlias = Union[ContextVar[Union[VersionType, None]], ContextVar[VersionType]]
 IdentifierPythonPath = str
 
@@ -565,10 +610,16 @@ class VersionBundle:
             else:
                 status_code = 200
             fastapi_response_dependency.status_code = status_code
+            prepared_content = _prepare_response_content(
+                response_or_response_body,
+                exclude_unset=head_route.response_model_exclude_unset,
+                exclude_defaults=head_route.response_model_exclude_defaults,
+                exclude_none=head_route.response_model_exclude_none,
+            )
             response_info = ResponseInfo(
                 fastapi_response_dependency,
-                _prepare_response_content(
-                    response_or_response_body,
+                _normalize_response_content(
+                    prepared_content,
                     exclude_unset=head_route.response_model_exclude_unset,
                     exclude_defaults=head_route.response_model_exclude_defaults,
                     exclude_none=head_route.response_model_exclude_none,

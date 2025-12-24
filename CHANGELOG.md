@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [5.6.2]
+
+### Fixed
+
+- Support for FastAPI 0.126.0+ where `_prepare_response_content` may return Pydantic model instances instead of dicts, breaking response migrations (#314)
+
 ## [5.6.1]
 
 ### Fixed
