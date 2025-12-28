@@ -5,6 +5,16 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [6.0.0]
+
+### Fixed
+
+- Support for FastAPI>=0.128.0+
+
+### Removed
+
+- Support for FastAPI < 0.128.0 and Pydantic v1
+
 ## [5.6.2]
 
 ### Fixed
