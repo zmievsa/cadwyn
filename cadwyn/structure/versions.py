@@ -67,7 +67,10 @@ def _prepare_response_content(
     exclude_defaults: bool = False,
     exclude_none: bool = False,
 ) -> Any:
-    """Serialize Pydantic models to dicts for response processing."""
+    """Serialize Pydantic models to dicts for response processing.
+
+    It is much easier to alter dicts and lists than Pydantic models in request/response migrations
+    """
     if isinstance(res, BaseModel):
         return res.model_dump(
             by_alias=True,
