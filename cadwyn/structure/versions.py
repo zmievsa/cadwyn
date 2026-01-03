@@ -14,13 +14,13 @@ from typing import TYPE_CHECKING, ClassVar, Union, cast
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
-from fastapi._compat import ModelField, _normalize_errors
+from fastapi._compat import ModelField
 from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.routing import APIRoute, _prepare_response_content
+from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
@@ -60,47 +60,45 @@ PossibleInstructions: TypeAlias = Union[
 ]
 
 
-def _normalize_response_content(
-    content: Any,
+def _prepare_response_content(
+    res: Any,
     *,
-    exclude_unset: bool = False,
+    exclude_unset: bool,
     exclude_defaults: bool = False,
     exclude_none: bool = False,
 ) -> Any:
-    """Convert Pydantic models to dicts for FastAPI >= 0.126.0 compatibility.
+    """Serialize Pydantic models to dicts for response processing.
 
-    In FastAPI >= 0.126.0, _prepare_response_content may return Pydantic model
-    instances instead of dicts. This function ensures the content is always
-    a dict/list/primitive for user migrations to work correctly.
+    It is much easier to alter dicts and lists than Pydantic models in request/response migrations
     """
-    if isinstance(content, BaseModel):
-        return content.model_dump(
+    if isinstance(res, BaseModel):
+        return res.model_dump(
             by_alias=True,
             exclude_unset=exclude_unset,
             exclude_defaults=exclude_defaults,
             exclude_none=exclude_none,
         )
-    elif isinstance(content, list):
+    elif isinstance(res, list):
         return [
-            _normalize_response_content(
+            _prepare_response_content(
                 item,
                 exclude_unset=exclude_unset,
                 exclude_defaults=exclude_defaults,
                 exclude_none=exclude_none,
             )
-            for item in content
+            for item in res
         ]
-    elif isinstance(content, dict):
+    elif isinstance(res, dict):
         return {
-            k: _normalize_response_content(
+            k: _prepare_response_content(
                 v,
                 exclude_unset=exclude_unset,
                 exclude_defaults=exclude_defaults,
                 exclude_none=exclude_none,
             )
-            for k, v in content.items()
+            for k, v in res.items()
         }
-    return content
+    return res
 
 
 APIVersionVarType: TypeAlias = Union[ContextVar[Union[VersionType, None]], ContextVar[VersionType]]
@@ -445,9 +443,7 @@ class VersionBundle:
             background_tasks=background_tasks,
         )
         if result.errors:
-            raise CadwynHeadRequestValidationError(
-                _normalize_errors(result.errors), body=request_info.body, version=current_version
-            )
+            raise CadwynHeadRequestValidationError(result.errors, body=request_info.body, version=current_version)
         return result.values
 
     def _migrate_response(
@@ -610,16 +606,10 @@ class VersionBundle:
             else:
                 status_code = 200
             fastapi_response_dependency.status_code = status_code
-            prepared_content = _prepare_response_content(
-                response_or_response_body,
-                exclude_unset=head_route.response_model_exclude_unset,
-                exclude_defaults=head_route.response_model_exclude_defaults,
-                exclude_none=head_route.response_model_exclude_none,
-            )
             response_info = ResponseInfo(
                 fastapi_response_dependency,
-                _normalize_response_content(
-                    prepared_content,
+                _prepare_response_content(
+                    response_or_response_body,
                     exclude_unset=head_route.response_model_exclude_unset,
                     exclude_defaults=head_route.response_model_exclude_defaults,
                     exclude_none=head_route.response_model_exclude_none,
