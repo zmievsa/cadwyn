@@ -1,24 +1,23 @@
 # How to build a versioning framework
 
-## Questions to ask yourself when rating your framework
+## Questions to consider when evaluating your framework
 
-### How easy is it to create a version?
+### How simple is it to create a new API version?
 
-If it is too easy, it is probably a trap. The framework is probably hiding too much complexity from you and will shoot you in the back later. For example, early on we tried a simple "copy the entire business logic into a separate directory" approach which made it so simple to add new versions. We added too many of them in the end, thus it got hellishly hard to maintain or get rid of these versions.
+If it is too simple, it is probably a trap. The framework is probably hiding too much complexity from you. For example, early on the Cadwyn dev team tried a straightforward "copy the entire business logic into a separate directory" approach which made it so easy to add new versions. We added too many of them in the end, thus it got hellishly hard to maintain or get rid of those versions.
 
-### How easy is it to delete an old version?
+### How simple is it to delete an old API version?
 
-Your framework must be able to let you clean up versions as simply as possible and cheaply whenever you need to. For example, if your framework tries to minimize the amount of code duplication in your repository by having new routes include old routes within them and new business logic inherit from classes from old business logic, then deleting an old version is going to be painful; often even dangerous as versions can quickly start interacting with each other in all sorts of ways, turning a single small application into a set of interconnected applications.
+Your framework should allow you to clean up versions as simply and cheaply as possible. For example, if your framework tries to minimize the amount of code duplication in your repository by new routes including old routes and by new business logic inheriting from classes from old business logic, then deleting an old version is going to be painful (often even dangerous) as versions can quickly start interacting with each other turning a single small application into a set of interconnected applications.
 
-### How easy is it to see the differences between versions?
+### How simple is it to see the differences between API versions?
 
-The easier it is, the better off our users are.
+The simpler it is, the better off your users are.
 
-### What exactly do you need to duplicate to create a new version?
+### What exactly do you need to duplicate in order to create a new API version?
 
-The less we duplicate and maintain manually, the easier it is to support. However, the less we duplicate, the higher the risk of breaking old versions with new releases.
+The less you duplicate and maintain manually, the simpler it is to support. However, the less you duplicate, the greater the risk of breaking older versions in subsequent releases.
 
-### How easy is it to notice accidental data versioning?
+### How simple is it to detect accidental data versioning?
 
-Data versioning is an incredibly big issue when versioning your API.
-So if your framework makes it hard to version data -- it's really good!
+Data versioning is an important issue when versioning your API. If your framework makes it hard to version data -- it's really good!
