@@ -133,7 +133,7 @@ nav:
   - "Changelog": "home/CHANGELOG.md"
   - "Theory":
       - "How we got here": "theory/how_we_got_here.md"
-      - "Literature": "theory/literature.md"
+      - "References": "theory/references.md"
       - "How to build a versioning framework": "theory/how_to_build_versioning_framework.md"
 
 watch:

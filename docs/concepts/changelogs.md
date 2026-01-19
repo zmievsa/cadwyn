@@ -1,13 +1,13 @@
 # Changelogs
 
-Cadwyn can automatically generate API changelogs for your versions. By default they are available through the unversioned endpoint `GET /changelog`. You can also get it from `Cadwyn.generate_changelog` method.
+Cadwyn can automatically generate API changelogs for your versions. By default, they are available through the unversioned endpoint `GET /changelog`. You can also access it via `Cadwyn.generate_changelog()` method.
 
 ## Hiding version changes and instructions
 
-Sometimes you might want to do private internal version changes or instructions within the version changes that should not be visible to the public. You can do this by using the `cadwyn.hidden` function. For example:
+Sometimes you might want to make private internal version changes or instructions within the version changes that should not be visible to the public. You can do this by using the `cadwyn.hidden()` function. Consider the example below:
 
 ```python
-from cadwyn import hidden, VersionChange, endpoint
+from cadwyn import VersionChange, endpoint, hidden
 
 
 class VersionChangeWithOneHiddenInstruction(VersionChange):
@@ -35,4 +35,4 @@ If you want to delete the changelog endpoint, pass `changelog_url=None` to `Cadw
 
 ## Changelog structure and entry types
 
-Please, visit the swagger page for your app and check the structure and values of enums in the `/changelog` endpoint.
+Please visit the Swagger page for your app and check the structure and values of enums in the `/changelog` endpoint.
