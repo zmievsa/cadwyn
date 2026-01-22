@@ -683,8 +683,13 @@ class _AnnotationTransformer:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
         old_params = inspect.signature(call).parameters
         callable_annotations = annotation_modifying_wrapper.__annotations__
+        # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
+        if is_regular_function(call):
+            call_globals = call.__globals__
+        else:
+            call_globals = call.__call__.__globals__
         callable_annotations = {
-            k: v if type(v) is not str else _try_eval_type(v, call.__globals__) for k, v in callable_annotations.items()
+            k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
         }
         annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
         annotation_modifying_wrapper.__defaults__ = modify_defaults(
