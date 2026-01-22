@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [6.0.1]
+
+### Fixed
+
+- Fixed AttributeError when using callable class dependencies with `from __future__ import annotations` (#321)
+
 ## [6.0.0]
 
 ### Fixed
