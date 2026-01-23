@@ -9,7 +9,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-- Fixed AttributeError when using callable class dependencies with `from __future__ import annotations` (#321)
+- Fixed AttributeError when using callable class dependencies with `from __future__ import annotations`. Note that this introduces another problem in python 3.9 in the same case that is currently not yet solved (#321)
 
 ## [6.0.0]
 
