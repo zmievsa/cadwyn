@@ -64,8 +64,9 @@ dependencies = [
 [project.optional-dependencies]
 standard = ["fastapi[standard]>=0.119.0", "typer>=0.7.0"]
 
-[tool.uv]
-dev-dependencies = [
+
+[dependency-groups]
+dev = [
     "python-multipart >=0.0.6",
     "better-devtools ~=0.13.3",
     "pytest-sugar ~=1.0.0",
@@ -91,6 +92,10 @@ dev-dependencies = [
     "inline-snapshot>=0.20.7",
     "pydantic-settings>=2.8.1",
 ]
+
+[tool.uv]
+default-groups = ['dev']
+
 
 [project.urls]
 "Source code" = "https://github.com/zmievsa/cadwyn"
