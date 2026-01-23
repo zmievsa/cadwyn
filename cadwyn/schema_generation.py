@@ -687,7 +687,7 @@ class _AnnotationTransformer:
         if is_regular_function(call):
             call_globals = call.__globals__
         else:
-            call_globals = call.__call__.__globals__
+            call_globals = call.__call__.__globals__  # pyright: ignore[reportAttributeAccessIssue]
         callable_annotations = {
             k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
         }
