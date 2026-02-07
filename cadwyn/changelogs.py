@@ -5,10 +5,9 @@ from logging import getLogger
 from typing import Any, Literal, TypeVar, Union, cast, get_args
 
 from fastapi._compat import (
-    get_compat_model_name_map,
     get_definitions,
 )
-from fastapi._compat.v2 import ModelField
+from fastapi._compat.v2 import ModelField, get_flat_models_from_fields, get_model_name_map
 from fastapi.openapi.utils import (
     get_fields_from_routes,
     get_openapi,
@@ -157,19 +156,21 @@ def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: s
     class CadwynDummyModelForRepresentation(BaseModel):
         my_field: model
 
-    model_name_map = get_compat_model_name_map(
-        [
-            CadwynDummyModelForRepresentation.model_fields["my_field"],  # pyright: ignore[reportArgumentType]
-        ]
+    fields = [
+        ModelField(
+            CadwynDummyModelForRepresentation.model_fields["my_field"],
+            "my_field",
+        ),
+    ]
+    model_name_map = get_model_name_map(
+        get_flat_models_from_fields(
+            fields,  # pyright: ignore[reportArgumentType]
+            known_models=set(),
+        )
     )
 
     _, definitions = get_definitions(
-        fields=[
-            ModelField(
-                CadwynDummyModelForRepresentation.model_fields["my_field"],
-                "my_field",
-            ),  # pyright: ignore[reportArgumentType]
-        ],
+        fields=fields,  # pyright: ignore[reportArgumentType]
         model_name_map=model_name_map,
         separate_input_output_schemas=False,
     )
