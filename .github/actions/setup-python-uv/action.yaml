@@ -16,7 +16,7 @@ runs:
     - uses: actions/setup-python@v6
       with:
         python-version: ${{ inputs.python-version }}
-    - uses: astral-sh/setup-uv@v5
+    - uses: astral-sh/setup-uv@v7
       with:
         version: ${{ inputs.uv-version }}
         enable-cache: true
