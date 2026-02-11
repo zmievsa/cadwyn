@@ -109,21 +109,18 @@ def copy_route(route: _RouteT) -> _RouteT:
     # This is slightly wasteful in terms of resources but it makes it easy for us
     # to make sure that new versions of FastAPI are going to be supported even if
     # APIRoute gets new attributes.
-    # We detach attributes containing ModelField objects before deepcopy because
-    # they can hold TypeAdapters for recursive types (e.g. JsonValue) that cause
+    # Pre-populate deepcopy's memo so it returns the original objects for attributes
+    # containing ModelField/TypeAdapter instances instead of recursing into them.
+    # These can hold TypeAdapters for recursive types (e.g. JsonValue) that cause
     # infinite recursion during deepcopy.
-    saved = {}
+    memo: dict[int, Any] = {}
     for attr in ("dependant", "_flat_dependant", "body_field"):
-        if hasattr(route, attr):
-            saved[attr] = getattr(route, attr)
-            setattr(route, attr, None)
-    try:
-        new_route = deepcopy(route)
-    finally:
-        for attr, val in saved.items():
-            setattr(route, attr, val)
+        obj = getattr(route, attr, None)
+        if obj is not None:
+            memo[id(obj)] = obj
+    new_route = deepcopy(route, memo)
     new_route.dependant = copy(route.dependant)
-    if hasattr(route, "_flat_dependant") and route._flat_dependant is not None:
+    if getattr(route, "_flat_dependant", None) is not None:
         new_route._flat_dependant = copy(route._flat_dependant)
     new_route.body_field = route.body_field
     new_route.dependencies = copy(route.dependencies)
