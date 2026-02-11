@@ -115,14 +115,6 @@ def copy_route(route: _RouteT) -> _RouteT:
     return new_route
 
 
-def _get_body_model(route: APIRoute) -> Union[Any, None]:
-    if route.body_field is not None and _route_has_a_simple_body_schema(route):
-        _body_type = getattr(route.body_field, "type_", None) or route.body_field.field_info.annotation
-        if _body_type is not None:
-            return getattr(_body_type, "__cadwyn_original_model__", _body_type)
-    return None
-
-
 class _EndpointTransformer(Generic[_R, _WR]):
     def __init__(self, parent_router: _R, versions: VersionBundle, webhooks: _WR) -> None:
         super().__init__()
@@ -177,7 +169,13 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 # I.e. Because head_route is an APIRoute, both routes are  APIRoutes too
                 older_route = cast("APIRoute", older_route)
                 # Wait.. Why do we need this code again?
-                template_older_body_model = _get_body_model(older_route)
+                if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
+                    if hasattr(older_route.body_field.type_, "__cadwyn_original_model__"):
+                        template_older_body_model = older_route.body_field.type_.__cadwyn_original_model__
+                    else:
+                        template_older_body_model = older_route.body_field.type_
+                else:
+                    template_older_body_model = None
                 _add_data_migrations_to_route(
                     older_route,
                     # NOTE: The fact that we use latest here assumes that the route can never change its response schema
