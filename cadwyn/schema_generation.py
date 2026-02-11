@@ -588,7 +588,6 @@ class _AnnotationTransformer:
                 type_=route.response_model,
                 mode="serialization",
             )
-            route.secure_cloned_response_field = fastapi.utils.create_cloned_field(route.response_field)
         route.dependencies = self.change_version_of_annotation(route.dependencies)
         route.endpoint = self.change_version_of_annotation(route.endpoint)
         for callback in route.callbacks or []:

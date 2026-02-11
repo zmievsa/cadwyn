@@ -109,8 +109,23 @@ def copy_route(route: _RouteT) -> _RouteT:
     # This is slightly wasteful in terms of resources but it makes it easy for us
     # to make sure that new versions of FastAPI are going to be supported even if
     # APIRoute gets new attributes.
-    new_route = deepcopy(route)
+    # We detach attributes containing ModelField objects before deepcopy because
+    # they can hold TypeAdapters for recursive types (e.g. JsonValue) that cause
+    # infinite recursion during deepcopy.
+    saved = {}
+    for attr in ("dependant", "_flat_dependant", "body_field"):
+        if hasattr(route, attr):
+            saved[attr] = getattr(route, attr)
+            setattr(route, attr, None)
+    try:
+        new_route = deepcopy(route)
+    finally:
+        for attr, val in saved.items():
+            setattr(route, attr, val)
     new_route.dependant = copy(route.dependant)
+    if hasattr(route, "_flat_dependant") and route._flat_dependant is not None:
+        new_route._flat_dependant = copy(route._flat_dependant)
+    new_route.body_field = route.body_field
     new_route.dependencies = copy(route.dependencies)
     return new_route
 
@@ -170,10 +185,10 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 older_route = cast("APIRoute", older_route)
                 # Wait.. Why do we need this code again?
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
-                    if hasattr(older_route.body_field.type_, "__cadwyn_original_model__"):
-                        template_older_body_model = older_route.body_field.type_.__cadwyn_original_model__
+                    if hasattr(older_route.body_field.field_info.annotation, "__cadwyn_original_model__"):
+                        template_older_body_model = getattr(older_route.body_field.field_info.annotation, "__cadwyn_original_model__", None)
                     else:
-                        template_older_body_model = older_route.body_field.type_
+                        template_older_body_model = older_route.body_field.field_info.annotation
                 else:
                     template_older_body_model = None
                 _add_data_migrations_to_route(

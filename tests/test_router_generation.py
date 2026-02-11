@@ -43,7 +43,7 @@ from tests.conftest import (
 Default = object()
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
 
-TYPE_ATTR, ANNOTATION_ATTR = "type_", "annotation"
+ANNOTATION_ATTR = "annotation"
 
 
 class StrEnum(str, Enum):
@@ -775,14 +775,14 @@ def test__router_generation__updating_request_models(
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
     schema_2000 = schemas["2000-01-01"][SchemaWithOnePydanticField]
-    assert getattr(body_param_2000, TYPE_ATTR) == dict[str, list[schema_2000]]
+    assert body_param_2000.field_info.annotation == dict[str, list[schema_2000]]
 
     body_param_2001 = routes_2001[1].dependant.body_params[0]
     schema_2001 = schemas["2001-01-01"][SchemaWithOnePydanticField]
-    assert getattr(body_param_2001, TYPE_ATTR) == dict[str, list[schema_2001]]
+    assert body_param_2001.field_info.annotation == dict[str, list[schema_2001]]
 
-    assert get_nested_field_type(getattr(routes_2000[1].dependant.body_params[0], TYPE_ATTR)) == list[str]
-    assert get_nested_field_type(getattr(routes_2001[1].dependant.body_params[0], TYPE_ATTR)) is int
+    assert get_nested_field_type(routes_2000[1].dependant.body_params[0].field_info.annotation) == list[str]
+    assert get_nested_field_type(routes_2001[1].dependant.body_params[0].field_info.annotation) is int
 
 
 def test__router_generation__updating_request_models_with_inheritance(
@@ -808,8 +808,8 @@ def test__router_generation__updating_request_models_with_inheritance(
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
     body_param_2001 = routes_2001[1].dependant.body_params[0]
-    assert set(getattr(body_param_2000, TYPE_ATTR).model_fields) == {"bar"}
-    assert set(getattr(body_param_2001, TYPE_ATTR).model_fields) == {"foo", "bar"}
+    assert set(body_param_2000.field_info.annotation.model_fields) == {"bar"}
+    assert set(body_param_2001.field_info.annotation.model_fields) == {"foo", "bar"}
 
 
 def test__router_generation__using_unversioned_models(
@@ -837,14 +837,44 @@ def test__router_generation__using_unversioned_models(
     routes_2001 = cast("list[APIRoute]", app.router.versioned_routers["2001-01-01"].routes)
 
     assert len(routes_2000) == len(routes_2001) == 4
-    assert routes_2000[1].dependant.body_params[0].type_ is schemas["2000-01-01"][UnversionedSchema1]
-    assert routes_2001[1].dependant.body_params[0].type_ is schemas["2001-01-01"][UnversionedSchema1]
+    assert routes_2000[1].dependant.body_params[0].field_info.annotation is schemas["2000-01-01"][UnversionedSchema1]
+    assert routes_2001[1].dependant.body_params[0].field_info.annotation is schemas["2001-01-01"][UnversionedSchema1]
 
-    assert routes_2000[2].dependant.body_params[0].type_ is schemas["2000-01-01"][UnversionedSchema2]
-    assert routes_2001[2].dependant.body_params[0].type_ is schemas["2001-01-01"][UnversionedSchema2]
+    assert routes_2000[2].dependant.body_params[0].field_info.annotation is schemas["2000-01-01"][UnversionedSchema2]
+    assert routes_2001[2].dependant.body_params[0].field_info.annotation is schemas["2001-01-01"][UnversionedSchema2]
 
-    assert routes_2000[3].dependant.body_params[0].type_ is schemas["2000-01-01"][UnversionedSchema3]
-    assert routes_2001[3].dependant.body_params[0].type_ is schemas["2001-01-01"][UnversionedSchema3]
+    assert routes_2000[3].dependant.body_params[0].field_info.annotation is schemas["2000-01-01"][UnversionedSchema3]
+    assert routes_2001[3].dependant.body_params[0].field_info.annotation is schemas["2001-01-01"][UnversionedSchema3]
+
+
+def test__router_generation__body_field_annotation_resolves_cadwyn_original_model(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    """When a schema has version changes, route.body_field.field_info.annotation gets a versioned copy
+    with __cadwyn_original_model__ pointing to the head schema. This test verifies that the annotation
+    is correctly resolved via field_info.annotation for both changed and unchanged versions."""
+
+    @router.post("/test")
+    async def test_endpoint(body: SchemaWithOneIntField):
+        raise NotImplementedError
+
+    app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
+
+    route_2000 = cast("APIRoute", app.router.versioned_routers["2000-01-01"].routes[1])
+    route_2001 = cast("APIRoute", app.router.versioned_routers["2001-01-01"].routes[1])
+
+    # body_field.field_info.annotation should be a versioned copy, not the original
+    assert route_2000.body_field.field_info.annotation is not SchemaWithOneIntField
+    assert route_2001.body_field.field_info.annotation is not SchemaWithOneIntField
+
+    # __cadwyn_original_model__ should point back to the head schema
+    assert route_2000.body_field.field_info.annotation.__cadwyn_original_model__ is SchemaWithOneIntField
+    assert route_2001.body_field.field_info.annotation.__cadwyn_original_model__ is SchemaWithOneIntField
+
+    # The older version should have the altered field type
+    assert route_2000.body_field.field_info.annotation.model_fields["foo"].annotation == list[str]
+    assert route_2001.body_field.field_info.annotation.model_fields["foo"].annotation is int
 
 
 def test__router_generation__using_newtype_and_union_typehints(
@@ -862,11 +892,11 @@ def test__router_generation__using_newtype_and_union_typehints(
     )
     assert len(routes_2000) == len(routes_2001) == 2
 
-    assert getattr(routes_2000[1].dependant.body_params[0], TYPE_ATTR) is newtype
-    assert getattr(routes_2001[1].dependant.body_params[0], TYPE_ATTR) is newtype
+    assert routes_2000[1].dependant.body_params[0].field_info.annotation is newtype
+    assert routes_2001[1].dependant.body_params[0].field_info.annotation is newtype
 
-    assert getattr(routes_2000[1].dependant.body_params[1], TYPE_ATTR) == Union[str, int]
-    assert getattr(routes_2001[1].dependant.body_params[1], TYPE_ATTR) == Union[str, int]
+    assert routes_2000[1].dependant.body_params[1].field_info.annotation == Union[str, int]
+    assert routes_2001[1].dependant.body_params[1].field_info.annotation == Union[str, int]
 
 
 def test__router_generation__using_uploadfile_typehint(
@@ -889,7 +919,7 @@ def test__router_generation__using_jsonvalue_typehint(
     create_versioned_clients: CreateVersionedClients,
 ):
     @router.post("/test")
-    async def test(param1: JsonValue = Body()):
+    async def test(param1: Annotated[JsonValue, Body()]):
         return param1
 
     clients = create_versioned_clients(
@@ -1081,14 +1111,14 @@ def test__router_generation__updating_callbacks(
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
-    assert generated_callback.dependant.body_params[0].type_.model_fields["bar"].annotation is str
+    assert generated_callback.dependant.body_params[0].field_info.annotation.model_fields["bar"].annotation is str
 
     route = app.router.versioned_routers["2001-01-01"].routes[1]
     assert isinstance(route, APIRoute)
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
-    assert "bar" not in generated_callback.dependant.body_params[0].type_.model_fields
+    assert "bar" not in generated_callback.dependant.body_params[0].field_info.annotation.model_fields
 
 
 def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: ContextVar[Union[str, None]]):
