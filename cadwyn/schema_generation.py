@@ -682,7 +682,12 @@ class _AnnotationTransformer:
     ) -> _Call:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
         old_params = inspect.signature(call).parameters
-        callable_annotations = annotation_modifying_wrapper.__annotations__
+        if sys.version_info >= (3, 14):  # pragma: no cover
+            from annotationlib import get_annotations
+
+            callable_annotations = get_annotations(annotation_modifying_wrapper)
+        else:
+            callable_annotations = annotation_modifying_wrapper.__annotations__
         # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
         if is_regular_function(call):
             call_globals = call.__globals__
