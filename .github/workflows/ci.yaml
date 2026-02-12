@@ -11,6 +11,7 @@ on:
     types: [opened, synchronize]
     paths:
       - ".github/workflows/ci.yaml" # self
+      - ".github/actions/**"
       - "**.py"
       - "**.toml"
       - "**.lock"
