@@ -806,6 +806,8 @@ def test__router_generation__updating_request_models_with_inheritance(
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
     body_param_2001 = routes_2001[1].dependant.body_params[0]
+    assert body_param_2000.field_info.annotation is not None
+    assert body_param_2001.field_info.annotation is not None
     assert set(body_param_2000.field_info.annotation.model_fields) == {"bar"}
     assert set(body_param_2001.field_info.annotation.model_fields) == {"foo", "bar"}
 
@@ -864,6 +866,11 @@ def test__router_generation__body_field_annotation_resolves_cadwyn_original_mode
 
     route_2000 = cast("APIRoute", app.router.versioned_routers["2000-01-01"].routes[1])
     route_2001 = cast("APIRoute", app.router.versioned_routers["2001-01-01"].routes[1])
+
+    assert route_2000.body_field is not None
+    assert route_2001.body_field is not None
+    assert route_2000.body_field.field_info.annotation is not None
+    assert route_2001.body_field.field_info.annotation is not None
 
     # body_field.field_info.annotation should be a versioned copy, not the original
     assert route_2000.body_field.field_info.annotation is not SchemaWithOneIntField
@@ -1113,6 +1120,7 @@ def test__router_generation__updating_callbacks(
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
+    assert generated_callback.dependant.body_params[0].field_info.annotation is not None
     assert generated_callback.dependant.body_params[0].field_info.annotation.model_fields["bar"].annotation is str
 
     route = app.router.versioned_routers["2001-01-01"].routes[1]
@@ -1120,6 +1128,7 @@ def test__router_generation__updating_callbacks(
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
+    assert generated_callback.dependant.body_params[0].field_info.annotation is not None
     assert "bar" not in generated_callback.dependant.body_params[0].field_info.annotation.model_fields
 
 

@@ -184,9 +184,8 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
                     if hasattr(older_route.body_field.field_info.annotation, "__cadwyn_original_model__"):
                         template_older_body_model = (
-                            older_route.body_field.field_info.annotation,
-                            "__cadwyn_original_model__",
-                        )
+                            older_route.body_field.field_info.annotation.__cadwyn_original_model__
+                        )  # pyright: ignore[reportOptionalMemberAccess]
                     else:
                         template_older_body_model = older_route.body_field.field_info.annotation
                 else:
