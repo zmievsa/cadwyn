@@ -43,8 +43,6 @@ from tests.conftest import (
 Default = object()
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
 
-ANNOTATION_ATTR = "annotation"
-
 
 class StrEnum(str, Enum):
     a = auto()
@@ -851,9 +849,12 @@ def test__router_generation__body_field_annotation_resolves_cadwyn_original_mode
     router: VersionedAPIRouter,
     create_versioned_app: CreateVersionedApp,
 ):
-    """When a schema has version changes, route.body_field.field_info.annotation gets a versioned copy
+    """Verify body_field annotation resolution with versioned schemas.
+
+    When a schema has version changes, route.body_field.field_info.annotation gets a versioned copy
     with __cadwyn_original_model__ pointing to the head schema. This test verifies that the annotation
-    is correctly resolved via field_info.annotation for both changed and unchanged versions."""
+    is correctly resolved via field_info.annotation for both changed and unchanged versions.
+    """
 
     @router.post("/test")
     async def test_endpoint(body: SchemaWithOneIntField):
@@ -918,6 +919,7 @@ def test__router_generation__using_jsonvalue_typehint(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
 ):
+    # We fall into a recursion error if we use an unannotated syntax for this parameter
     @router.post("/test")
     async def test(param1: Annotated[JsonValue, Body()]):
         return param1
