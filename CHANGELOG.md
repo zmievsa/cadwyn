@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [6.0.2]
+
+### Fixed
+
+- Resolved `...has no attribute '__annotations__'` error by @ulgens (#334)
+
 ## [6.0.1]
 
 ### Fixed
