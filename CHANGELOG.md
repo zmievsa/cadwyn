@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [6.0.3]
+
+### Fixed
+
+- Tolerate FastAPI 0.128+ utils removal, restrict fastapi >= 0.128.6 by @shahar1 (#327)
+
 ## [6.0.2]
 
 ### Fixed
