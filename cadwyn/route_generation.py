@@ -182,12 +182,11 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 older_route = cast("APIRoute", older_route)
                 # Wait.. Why do we need this code again?
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
-                    if hasattr(older_route.body_field.field_info.annotation, "__cadwyn_original_model__"):
-                        template_older_body_model = (
-                            older_route.body_field.field_info.annotation.__cadwyn_original_model__
-                        )  # pyright: ignore[reportOptionalMemberAccess]
+                    annotation = older_route.body_field.field_info.annotation
+                    if hasattr(annotation, "__cadwyn_original_model__"):
+                        template_older_body_model = annotation.__cadwyn_original_model__  # pyright: ignore[reportOptionalMemberAccess]
                     else:
-                        template_older_body_model = older_route.body_field.field_info.annotation
+                        template_older_body_model = annotation
                 else:
                     template_older_body_model = None
                 _add_data_migrations_to_route(

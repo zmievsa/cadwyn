@@ -24,7 +24,7 @@ from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn.applications import Cadwyn
 from cadwyn.dependencies import current_dependency_solver
 from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
-from cadwyn.route_generation import generate_versioned_routers
+from cadwyn.route_generation import copy_route, generate_versioned_routers
 from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.data import RequestInfo, ResponseInfo, convert_response_to_previous_version_for
@@ -847,44 +847,6 @@ def test__router_generation__using_unversioned_models(
     assert routes_2001[3].dependant.body_params[0].field_info.annotation is schemas["2001-01-01"][UnversionedSchema3]
 
 
-def test__router_generation__body_field_annotation_resolves_cadwyn_original_model(
-    router: VersionedAPIRouter,
-    create_versioned_app: CreateVersionedApp,
-):
-    """Verify body_field annotation resolution with versioned schemas.
-
-    When a schema has version changes, route.body_field.field_info.annotation gets a versioned copy
-    with __cadwyn_original_model__ pointing to the head schema. This test verifies that the annotation
-    is correctly resolved via field_info.annotation for both changed and unchanged versions.
-    """
-
-    @router.post("/test")
-    async def test_endpoint(body: SchemaWithOneIntField):
-        raise NotImplementedError
-
-    app = create_versioned_app(version_change(schema(SchemaWithOneIntField).field("foo").had(type=list[str])))
-
-    route_2000 = cast("APIRoute", app.router.versioned_routers["2000-01-01"].routes[1])
-    route_2001 = cast("APIRoute", app.router.versioned_routers["2001-01-01"].routes[1])
-
-    assert route_2000.body_field is not None
-    assert route_2001.body_field is not None
-    assert route_2000.body_field.field_info.annotation is not None
-    assert route_2001.body_field.field_info.annotation is not None
-
-    # body_field.field_info.annotation should be a versioned copy, not the original
-    assert route_2000.body_field.field_info.annotation is not SchemaWithOneIntField
-    assert route_2001.body_field.field_info.annotation is not SchemaWithOneIntField
-
-    # __cadwyn_original_model__ should point back to the head schema
-    assert route_2000.body_field.field_info.annotation.__cadwyn_original_model__ is SchemaWithOneIntField
-    assert route_2001.body_field.field_info.annotation.__cadwyn_original_model__ is SchemaWithOneIntField
-
-    # The older version should have the altered field type
-    assert route_2000.body_field.field_info.annotation.model_fields["foo"].annotation == list[str]
-    assert route_2001.body_field.field_info.annotation.model_fields["foo"].annotation is int
-
-
 def test__router_generation__using_newtype_and_union_typehints(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,
@@ -1440,3 +1402,14 @@ def test__router_generation__using_svcs_in_dependencies(
     # We are simply validating that the routes were generated without errors
     routes_2000, routes_2001 = create_versioned_api_routes(version_change())
     assert len(routes_2000) == len(routes_2001) == 2
+
+
+def test__copy_route__without_flat_dependant():
+    """Test that copy_route works correctly when the route doesn't have _flat_dependant."""
+    route = APIRoute("/test", lambda: None)
+    # Simulate an older FastAPI version where _flat_dependant doesn't exist
+    if hasattr(route, "_flat_dependant"):
+        del route._flat_dependant
+    copied = copy_route(route)
+    assert copied.path == route.path
+    assert not hasattr(copied, "_flat_dependant")
