@@ -1408,8 +1408,7 @@ def test__copy_route__without_flat_dependant():
     """Test that copy_route works correctly when the route doesn't have _flat_dependant."""
     route = APIRoute("/test", lambda: None)
     # Simulate an older FastAPI version where _flat_dependant doesn't exist
-    if hasattr(route, "_flat_dependant"):
-        del route._flat_dependant
+    del route._flat_dependant
     copied = copy_route(route)
     assert copied.path == route.path
     assert not hasattr(copied, "_flat_dependant")
