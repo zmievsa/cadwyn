@@ -1,5 +1,6 @@
 import http.cookies
 import re
+import sys
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from io import StringIO
@@ -809,7 +810,7 @@ class TestHowAndWhenMigrationsApply:
             "set-cookie": IsStr(),
             "x-api-version": "2000-01-01",
         }
-        assert dict(http.cookies.SimpleCookie(resp_2000.headers["set-cookie"])["cookie_key"]) == {
+        expected_cookie_attrs = {
             "expires": IsStr(),
             "path": "/",
             "comment": "",
@@ -820,6 +821,9 @@ class TestHowAndWhenMigrationsApply:
             "version": "",
             "samesite": "lax",
         }
+        if sys.version_info >= (3, 14):
+            expected_cookie_attrs["partitioned"] = ""
+        assert dict(http.cookies.SimpleCookie(resp_2000.headers["set-cookie"])["cookie_key"]) == expected_cookie_attrs
         assert dict(resp_2001.cookies) == {"cookie_key": "cookie_val"}
         assert dict(resp_2001.headers) == {
             "content-length": "2",

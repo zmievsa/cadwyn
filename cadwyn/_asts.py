@@ -1,5 +1,6 @@
 import ast
 import inspect
+import sys
 from collections.abc import Callable
 from enum import Enum, auto
 from types import GenericAlias, LambdaType
@@ -29,6 +30,9 @@ _BaseGenericAlias = cast("type", type(List[int])).mro()[1]  # noqa: UP006
 # instead of typing._GenericAlias.
 GenericAliasUnion = Union[GenericAlias, _BaseGenericAlias]
 GenericAliasUnionArgs = get_args(GenericAliasUnion)
+if sys.version_info >= (3, 14):  # pragma: no cover
+    # In Python 3.14, Union types are no longer subtypes of _BaseGenericAlias
+    GenericAliasUnionArgs = (*GenericAliasUnionArgs, type(Union[int, str]))
 
 
 def get_fancy_repr(value: Any) -> Any:
@@ -38,6 +42,8 @@ def get_fancy_repr(value: Any) -> Any:
         return transform_collection(value)
     if isinstance(value, dict):
         return transform_dict(value)
+    if isinstance(value, UnionType):
+        return transform_union(value)
     if isinstance(value, GenericAliasUnionArgs):
         return transform_generic_alias(value)
     if value is None or value is NoneType:
@@ -48,8 +54,6 @@ def get_fancy_repr(value: Any) -> Any:
         return transform_enum(value)
     if isinstance(value, auto):  # pragma: no cover # it works but we no longer use auto
         return transform_auto(value)
-    if isinstance(value, UnionType):
-        return transform_union(value)  # pragma: no cover
     if isinstance(value, LambdaType) and _LambdaFunctionName == value.__name__:
         return transform_lambda(value)
     if inspect.isfunction(value):
@@ -105,7 +109,7 @@ def transform_auto(_: auto) -> Any:  # pragma: no cover # it works but we no lon
     return PlainRepr("auto()")
 
 
-def transform_union(value: UnionType) -> Any:  # pragma: no cover
+def transform_union(value: UnionType) -> Any:
     return "typing.Union[" + (", ".join(get_fancy_repr(a) for a in get_args(value))) + "]"
 
 
