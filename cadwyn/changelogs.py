@@ -2,7 +2,7 @@ import copy
 import sys
 from enum import auto
 from logging import getLogger
-from typing import Any, Literal, TypeVar, Union, cast, get_args
+from typing import Any, Literal, TypeVar, Union, cast, get_args, get_origin
 
 from fastapi._compat import (
     get_definitions,
@@ -138,7 +138,13 @@ def _get_affected_model_names(
 
 
 def _get_all_pydantic_models_from_generic(annotation: Any) -> list[type[BaseModel]]:
-    if not isinstance(annotation, GenericAliasUnionArgs):
+    # https://docs.python.org/3/whatsnew/3.14.html#typing
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        is_union = get_origin(annotation) is Union and not isinstance(annotation, type)
+    else:
+        is_union = isinstance(annotation, GenericAliasUnionArgs)
+
+    if not is_union:
         if isinstance(annotation, type) and issubclass(annotation, BaseModel):
             return [annotation]
         else:
