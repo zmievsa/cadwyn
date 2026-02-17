@@ -629,10 +629,7 @@ class _AnnotationTransformer:
                 use_cache=annotation.use_cache,
             )
         elif isinstance(annotation, UnionType):  # pragma: no cover
-            getitem = typing.Union.__getitem__  # pyright: ignore[reportAttributeAccessIssue]
-            return getitem(
-                tuple(self.change_version_of_annotation(a) for a in get_args(annotation)),
-            )
+            return typing.Union[tuple(self.change_version_of_annotation(a) for a in get_args(annotation))]
         elif is_any(annotation) or is_newtype(annotation):
             return annotation
         elif isinstance(annotation, type):
