@@ -1,6 +1,6 @@
 [project]
 name = "cadwyn"
-version = "6.0.1"
+version = "6.0.3"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = [{ name = "Stanislav Zmiev", email = "zmievsa@gmail.com" }]
 license = "MIT"
@@ -51,7 +51,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
 ]
 dependencies = [
-    "fastapi >=0.121.1",
+    "fastapi >=0.128.6",
     "starlette >=0.30.0",
     "pydantic >=2.11.0",
     "jinja2 >=3.1.2",

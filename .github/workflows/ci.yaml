@@ -11,6 +11,7 @@ on:
     types: [opened, synchronize]
     paths:
       - ".github/workflows/ci.yaml" # self
+      - ".github/actions/**"
       - "**.py"
       - "**.toml"
       - "**.lock"
@@ -39,13 +40,13 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-python-uv
         with:
           python-version: ${{ matrix.python-version }}
       - run: tox run -e py
       - name: Upload coverage results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: matrix.os == 'ubuntu-latest' # Cross-platform coverage combination doesn't work
         with:
           name: coverage-results-${{ matrix.python-version }}
@@ -55,8 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     name: Tutorial tests
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
       - name: Install cadwyn with instructions from docs
@@ -66,7 +67,7 @@ jobs:
           uv pip install --system pytest coverage dirty-equals
           coverage run -m pytest docs_src
       - name: Upload coverage results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-results-docs
           path: .coverage*
@@ -75,14 +76,14 @@ jobs:
     needs: [Tests, Tutorial-tests]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Download coverage info
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: coverage-results-*
           merge-multiple: true
           path: .
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: |
@@ -98,8 +99,8 @@ jobs:
   Lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: |
@@ -110,7 +111,7 @@ jobs:
   Validate-links:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-python-uv
         with:
           # When this version is updated,
@@ -127,7 +128,7 @@ jobs:
   Typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-python-uv
         with:
           # When this version is updated,

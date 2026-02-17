@@ -588,7 +588,6 @@ class _AnnotationTransformer:
                 type_=route.response_model,
                 mode="serialization",
             )
-            route.secure_cloned_response_field = fastapi.utils.create_cloned_field(route.response_field)
         route.dependencies = self.change_version_of_annotation(route.dependencies)
         route.endpoint = self.change_version_of_annotation(route.endpoint)
         for callback in route.callbacks or []:
@@ -630,10 +629,7 @@ class _AnnotationTransformer:
                 use_cache=annotation.use_cache,
             )
         elif isinstance(annotation, UnionType):  # pragma: no cover
-            getitem = typing.Union.__getitem__  # pyright: ignore[reportAttributeAccessIssue]
-            return getitem(
-                tuple(self.change_version_of_annotation(a) for a in get_args(annotation)),
-            )
+            return typing.Union[tuple(self.change_version_of_annotation(a) for a in get_args(annotation))]
         elif is_any(annotation) or is_newtype(annotation):
             return annotation
         elif isinstance(annotation, type):
@@ -682,7 +678,12 @@ class _AnnotationTransformer:
     ) -> _Call:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
         old_params = inspect.signature(call).parameters
-        callable_annotations = annotation_modifying_wrapper.__annotations__
+        if sys.version_info >= (3, 14):  # pragma: no cover
+            from annotationlib import get_annotations
+
+            callable_annotations = get_annotations(annotation_modifying_wrapper)
+        else:
+            callable_annotations = annotation_modifying_wrapper.__annotations__
         # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
         if is_regular_function(call):
             call_globals = call.__globals__
