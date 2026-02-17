@@ -18,18 +18,11 @@ else:  # pragma: no cover
     from asyncio import iscoroutinefunction  # noqa: F401
 
 
-if sys.version_info >= (3, 10):
-    UnionType = type(int | str) | type(Union[int, str])
-    DATACLASS_SLOTS: dict[str, Any] = {"slots": True}
-    ZIP_STRICT_TRUE: dict[str, Any] = {"strict": True}
-    ZIP_STRICT_FALSE: dict[str, Any] = {"strict": False}
-    DATACLASS_KW_ONLY: dict[str, Any] = {"kw_only": True}
-else:
-    UnionType = type(Union[int, str])
-    DATACLASS_SLOTS: dict[str, Any] = {}
-    DATACLASS_KW_ONLY: dict[str, Any] = {}
-    ZIP_STRICT_TRUE: dict[str, Any] = {}
-    ZIP_STRICT_FALSE: dict[str, Any] = {}
+UnionType = type(int | str) | type(Union[int, str])
+DATACLASS_SLOTS: dict[str, Any] = {"slots": True}
+ZIP_STRICT_TRUE: dict[str, Any] = {"strict": True}
+ZIP_STRICT_FALSE: dict[str, Any] = {"strict": False}
+DATACLASS_KW_ONLY: dict[str, Any] = {"kw_only": True}
 
 
 def get_name_of_function_wrapped_in_pydantic_validator(func: Any) -> str:

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import sys
 from typing import Annotated
 
-import pytest
 from fastapi import Depends, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, WithJsonSchema
@@ -80,10 +78,6 @@ class CallableClassDependency:
         pass
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 10),
-    reason="FastAPI doesn't properly resolve Request forward refs in callable class dependencies on Python 3.9",
-)
 def test__router_generation__using_callable_class_dependency_with_forwardref():
     """Test that callable class instances work as dependencies with future annotations.
 
