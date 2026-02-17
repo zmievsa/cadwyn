@@ -79,10 +79,7 @@ def generate_versioned_routers(
 ) -> GeneratedRouters[_R, _WR]:
     if webhooks is None:
         webhooks = cast("_WR", APIRouter())
-    try:
-        return _EndpointTransformer(router, versions, webhooks).transform()
-    except RecursionError:
-        raise ImportError("Missing of Literal import causes RecursionError") from None
+    return _EndpointTransformer(router, versions, webhooks).transform()
 
 
 class VersionedAPIRouter(fastapi.routing.APIRouter):
