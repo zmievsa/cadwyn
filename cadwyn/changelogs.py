@@ -2,7 +2,7 @@ import copy
 import sys
 from enum import auto
 from logging import getLogger
-from typing import Any, Literal, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, Literal, TypeVar, Union, cast, get_args
 
 from fastapi._compat import (
     get_definitions,
@@ -15,7 +15,6 @@ from fastapi.openapi.utils import (
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
 
-from cadwyn._asts import GenericAliasUnionArgs
 from cadwyn._utils import ZIP_STRICT_FALSE, Sentinel
 from cadwyn.route_generation import _get_routes
 from cadwyn.routing import _RootCadwynAPIRouter
@@ -138,17 +137,9 @@ def _get_affected_model_names(
 
 
 def _get_all_pydantic_models_from_generic(annotation: Any) -> list[type[BaseModel]]:
-    # https://docs.python.org/3/whatsnew/3.14.html#typing
-    if sys.version_info >= (3, 14):  # pragma: no cover
-        is_union = get_origin(annotation) is Union and not isinstance(annotation, type)
-    else:
-        is_union = isinstance(annotation, GenericAliasUnionArgs)
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return [annotation]
 
-    if not is_union:
-        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            return [annotation]
-        else:
-            return []
     sub_annotations = get_args(annotation)
     models = []
 
