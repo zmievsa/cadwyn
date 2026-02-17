@@ -1,5 +1,6 @@
 import http.cookies
 import re
+import sys
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from io import StringIO
@@ -815,6 +816,8 @@ class TestHowAndWhenMigrationsApply:
             "comment": "",
             "domain": "",
             "max-age": "0",
+            # https://github.com/python/cpython/pull/112714
+            **({"partitioned": ""} if sys.version_info >= (3, 14) else {}),
             "secure": "",
             "httponly": "",
             "version": "",
