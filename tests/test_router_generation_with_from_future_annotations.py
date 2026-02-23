@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from typing import Annotated
+from unittest.mock import patch
 
 import pytest
 from fastapi import Depends, Request
@@ -107,3 +108,13 @@ def test__router_generation__using_callable_class_dependency_with_forwardref():
     response = client.get("/run")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test__hello():
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    with patch.dict(sys.modules, {"Annotated": None}):
+        pytest.raises(
+            ImportError,
+            match="You are likely missing an import from typing such as typing.Literal which causes RecursionError",
+        )
+        client_2000.post("/test", json={"foo": 1}).json()

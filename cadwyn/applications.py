@@ -267,7 +267,9 @@ class Cadwyn(FastAPI):
                 versions=self.versions,
             )
         except RecursionError as e:
-            raise ImportError("Likely missing import from typing causes RecursionError") from e
+            raise ImportError(
+                "You are likely missing an import from typing such as typing.Literal which causes RecursionError"
+            ) from e
         for version, router in generated_routers.endpoints.items():
             self._add_versioned_routers(router, version=version)
 
