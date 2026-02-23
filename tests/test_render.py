@@ -26,12 +26,8 @@ def test__render_model__with_weird_types():
     else:
         rend_ann = "Annotated"
 
-    if sys.version_info >= (3, 10):
-        rend_len = "Len(min_length=0, max_length=None)"
-        rend_interval = "Interval(gt=12, ge=None, lt=None, le=None)"
-    else:
-        rend_len = "Len()"
-        rend_interval = "Interval(gt=12)"
+    rend_len = "Len(min_length=0, max_length=None)"
+    rend_interval = "Interval(gt=12, ge=None, lt=None, le=None)"
 
     # TODO: As you see, we do not rename bases correctly in render. We gotta fix it some day...
     assert code(result) == code(

@@ -1,10 +1,8 @@
-import ast
 import copy
 import dataclasses
 import functools
 import inspect
 import sys
-import textwrap
 import types
 import typing
 from collections.abc import Callable, Sequence
@@ -297,21 +295,7 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
         for name, value in model.__annotations__.items()
     }
 
-    if sys.version_info >= (3, 10):
-        defined_fields = model.__annotations__
-    else:
-        # Before 3.9, pydantic fills model_fields with all fields -- even the ones that were inherited.
-        # So we need to get the list of fields from the AST.
-        try:
-            defined_fields, _ = _get_field_and_validator_names_from_model(model)
-        except OSError:  # pragma: no cover
-            defined_fields = model.model_fields
-        annotations = {
-            name: value
-            for name, value in annotations.items()
-            # We need to filter out fields that were inherited
-            if name not in model.model_fields or name in defined_fields
-        }
+    defined_fields = model.__annotations__
     fields = {
         field_name: PydanticFieldWrapper(
             model.model_fields[field_name],
@@ -344,43 +328,6 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
         validators=validators,
         annotations=annotations,
     )
-
-
-@cache
-def _get_field_and_validator_names_from_model(cls: type) -> tuple[set[_FieldName], set[str]]:
-    fields = cls.model_fields
-    source = inspect.getsource(cls)
-    cls_ast = cast("ast.ClassDef", ast.parse(textwrap.dedent(source)).body[0])
-    validator_names = (
-        _get_validator_info_or_none(node)
-        for node in cls_ast.body
-        if isinstance(node, ast.FunctionDef) and node.decorator_list
-    )
-    validator_names = {name for name in validator_names if name is not None}
-
-    return (
-        {
-            node.target.id
-            for node in cls_ast.body
-            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id in fields
-        },
-        validator_names,
-    )
-
-
-def _get_validator_info_or_none(method: ast.FunctionDef) -> Union[str, None]:
-    for decorator in method.decorator_list:
-        # The cases we handle here:
-        # * `Name(id="root_validator")`
-        # * `Call(func=Name(id="validator"), args=[Constant(value="foo")])`
-        # * `Attribute(value=Name(id="pydantic"), attr="root_validator")`
-        # * `Call(func=Attribute(value=Name(id="pydantic"), attr="root_validator"), args=[])`
-
-        if (isinstance(decorator, ast.Call) and ast.unparse(decorator.func).endswith("validator")) or (
-            isinstance(decorator, (ast.Name, ast.Attribute)) and ast.unparse(decorator).endswith("validator")
-        ):
-            return method.name
-    return None
 
 
 @final
