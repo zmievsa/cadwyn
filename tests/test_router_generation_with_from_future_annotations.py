@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import sys
 from typing import Annotated
 from unittest.mock import patch
 
+import pytest
 from fastapi import Depends, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, WithJsonSchema
@@ -104,7 +106,8 @@ def test__router_generation__using_callable_class_dependency_with_forwardref():
     assert response.json() == {"status": "ok"}
 
 
-def test__hello():
+def test__missing_an_import():
+    """Regression test for https://github.com/zmievsa/cadwyn/issues/324"""
     client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
     with patch.dict(sys.modules, {"Annotated": None}):
         pytest.raises(
