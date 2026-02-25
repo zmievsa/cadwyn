@@ -35,7 +35,7 @@ def test__missing_an_import_used_in_annotations_with_from_future_import_annotati
     router = VersionedAPIRouter()
 
     async def dep_with_solver(
-        dependency_solver: Annotated[Literal[fastapi, cadwyn], Depends(current_dependency_solver)],  # noqa: F821
+        dependency_solver: Annotated[Literal[fastapi, cadwyn], Depends(current_dependency_solver)],  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
     ):
         pass
 
