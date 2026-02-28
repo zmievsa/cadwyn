@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.10"
+          python-version: "3.14"
       - name: Install cadwyn with instructions from docs
         run: sh docs_src/quickstart/setup/block001.sh
       - run: |
@@ -85,7 +85,7 @@ jobs:
           path: .
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - run: |
           pip install uv
           uv pip install --system tox tox-uv
@@ -102,7 +102,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - run: |
           python -m pip install uv
           uv pip install --system pre-commit pre-commit-uv
