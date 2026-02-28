@@ -76,7 +76,7 @@ dev = [
     "httpx >=0.26.0",
     "pytest-fixture-classes >=1.0.3",
     # pytest==8.3.5 has a bug that fails our windows python 3.10 tests
-    "pytest==8.3.4",
+    "pytest==8.4.2",
     "pytest-cov >=4.0.0",
     "dirty-equals >=0.6.0",
     "uvicorn ~=0.23.0",
