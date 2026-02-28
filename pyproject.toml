@@ -70,7 +70,7 @@ standard = ["fastapi[standard]>=0.119.0", "typer>=0.7.0"]
 dev = [
     "python-multipart >=0.0.6",
     "better-devtools ~=0.13.3",
-    "pytest-sugar ~=1.0.0",
+    "pytest-sugar ~=1.1.1",
     # tests
     "svcs ~=24.1.0",
     "httpx >=0.26.0",
