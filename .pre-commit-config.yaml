@@ -46,12 +46,3 @@ repos:
     rev: 0.10.7
     hooks:
       - id: uv-lock
-
-  - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: 0.36.2
-    hooks:
-      - id: check-renovate
-        files: ^renovate.json5$
-        language: python
-        additional_dependencies:
-          - pyjson5==2.0.0
