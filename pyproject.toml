@@ -79,7 +79,7 @@ dev = [
     "pytest==8.4.2",
     "pytest-cov >=4.0.0",
     "dirty-equals >=0.6.0",
-    "uvicorn ~=0.23.0",
+    "uvicorn ~=0.41.0",
     # type checking
     "pyright>=1.1.390",
     # docs
