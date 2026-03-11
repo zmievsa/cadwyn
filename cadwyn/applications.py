@@ -260,11 +260,16 @@ class Cadwyn(FastAPI):
         await self.__call__(scope, receive, send)
 
     def _cadwyn_initialize(self) -> None:
-        generated_routers = generate_versioned_routers(
-            self._latest_version_router,
-            webhooks=self.webhooks,
-            versions=self.versions,
-        )
+        try:
+            generated_routers = generate_versioned_routers(
+                self._latest_version_router,
+                webhooks=self.webhooks,
+                versions=self.versions,
+            )
+        except RecursionError as e:
+            raise ImportError(
+                "You are likely missing an import from typing such as typing.Literal which causes RecursionError"
+            ) from e
         for version, router in generated_routers.endpoints.items():
             self._add_versioned_routers(router, version=version)
 

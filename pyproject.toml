@@ -1,6 +1,6 @@
 [project]
 name = "cadwyn"
-version = "6.0.3"
+version = "6.0.4"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = [{ name = "Stanislav Zmiev", email = "zmievsa@gmail.com" }]
 license = "MIT"
@@ -22,6 +22,7 @@ keywords = [
     "python311",
     "python312",
     "python313",
+    "python314",
 ]
 classifiers = [
     "Intended Audience :: Information Technology",
@@ -33,6 +34,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Internet",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -74,7 +76,7 @@ dev = [
     "httpx >=0.26.0",
     "pytest-fixture-classes >=1.0.3",
     # pytest==8.3.5 has a bug that fails our windows python 3.10 tests
-    "pytest==8.3.4",
+    "pytest==8.4.2",
     "pytest-cov >=4.0.0",
     "dirty-equals >=0.6.0",
     "uvicorn ~=0.23.0",

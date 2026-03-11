@@ -5,6 +5,23 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [6.0.4]
+
+### Added
+
+- Python 3.14 support (#345)
+
+### Fixed
+
+- Fixed missing type imports with future annotations in `Depend` leading to `RecursionError` in `generate_versioned_routers` by @Shigerman (#329)
+- Resolved `'__getitem__' requires a 'typing.Union'` error by @ulgens (#336)
+- Adopted Python 3.14 related union handling changes by @ulgens (#337)
+- Adopted Python 3.14 related `http.cookies` changes by @ulgens (#338)
+
+### Removed
+
+- Python 3.9 support by @ulgens (#342)
+
 ## [6.0.3]
 
 ### Fixed

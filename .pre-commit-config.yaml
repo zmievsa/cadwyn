@@ -26,6 +26,7 @@ repos:
     rev: 1.19.1 # replace with latest tag on GitHub
     hooks:
       - id: blacken-docs
+        language: python
         additional_dependencies:
           - black==22.12.0
         args:
@@ -42,6 +43,6 @@ repos:
           - MD013
 
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.10.0
+    rev: 0.10.7
     hooks:
       - id: uv-lock
