@@ -901,7 +901,7 @@ def test__form_migration__can_modify_string_form_field(
 
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
-        request.form["name"] = "migrated_name"  # type: ignore[index]
+        request.form[:] = [(k, "migrated_name") if k == "name" else (k, v) for k, v in request.form]  # type: ignore[index]
 
     clients = create_versioned_clients(version_change(migrator=migrator))
     resp_2000 = clients["2000-01-01"].post(test_path, data={"name": "original_name", "age": "25"})
@@ -943,7 +943,7 @@ def test__form_migration__can_add_new_form_field(
 
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
-        request.form["extra"] = "added_by_migration"  # type: ignore[index]
+        request.form.append(("extra", "added_by_migration"))  # type: ignore[union-attr]
 
     clients = create_versioned_clients(version_change(migrator=migrator))
     resp_2000 = clients["2000-01-01"].post(test_path, data={"name": "my_name"})
@@ -951,6 +951,125 @@ def test__form_migration__can_add_new_form_field(
 
     assert resp_2000.json() == {"name": "my_name", "extra": "added_by_migration"}
     assert resp_2001.json() == {"name": "my_name", "extra": "default"}
+
+
+def test__form_migration__multi_value_fields_are_preserved(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(tags: list[str] = Form(...)):
+        return {"tags": tags}
+
+    clients = create_versioned_clients(version_change())
+    resp_2000 = clients["2000-01-01"].post(
+        test_path,
+        content=b"tags=python&tags=web",
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    resp_2001 = clients["2001-01-01"].post(
+        test_path,
+        content=b"tags=python&tags=web",
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+
+    assert resp_2000.json() == {"tags": ["python", "web"]}
+    assert resp_2001.json() == {"tags": ["python", "web"]}
+
+
+def test__request_body_parsing__empty_body_with_optional_params(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(name: Optional[str] = Body(default=None), age: Optional[int] = Body(default=None)):
+        return {"name": name, "age": age}
+
+    clients = create_versioned_clients(version_change())
+    resp = clients["2000-01-01"].post(
+        test_path,
+        content=b"",
+        headers={"content-type": "application/json"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"name": None, "age": None}
+
+
+def test__request_body_parsing__json_body_without_content_type(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(name: Optional[str] = Body(default=None), age: Optional[int] = Body(default=None)):
+        return {"name": name, "age": age}
+
+    clients = create_versioned_clients(version_change())
+    resp = clients["2000-01-01"].post(test_path, content=b'{"name": "test", "age": 25}')
+
+    assert resp.status_code == 200
+    assert resp.json() == {"name": "test", "age": 25}
+
+
+def test__request_body_parsing__non_application_content_type(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(name: Optional[str] = Body(default=None), age: Optional[int] = Body(default=None)):
+        return {"name": name, "age": age}
+
+    clients = create_versioned_clients(version_change())
+    resp = clients["2000-01-01"].post(
+        test_path,
+        content=b'{"name": "test", "age": 25}',
+        headers={"content-type": "text/plain"},
+    )
+
+    assert resp.status_code in [200, 422]
+
+
+def test__request_body_parsing__application_xml_body(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(name: Optional[str] = Body(default=None), age: Optional[int] = Body(default=None)):
+        return {"name": name, "age": age}
+
+    clients = create_versioned_clients(version_change())
+    resp = clients["2000-01-01"].post(
+        test_path,
+        content=b"<root/>",
+        headers={"content-type": "application/xml"},
+    )
+
+    assert resp.status_code in [200, 422]
+
+
+def test__request_body_parsing__malformed_json_returns_422(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(name: Optional[str] = Body(default=None), age: Optional[int] = Body(default=None)):
+        return {"name": name, "age": age}
+
+    clients = create_versioned_clients(version_change())
+    resp = clients["2000-01-01"].post(
+        test_path,
+        content=b"not valid json",
+        headers={"content-type": "application/json"},
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["type"] == "json_invalid"
 
 
 def test__request_and_response_migrations__for_paths_with_variables__can_match(

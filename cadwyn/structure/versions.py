@@ -432,9 +432,7 @@ class VersionBundle:
         del request._headers
         # This gives us the ability to tell the user whether cadwyn is running its dependencies or FastAPI
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
-        body_for_solving = (
-            FormData(list(request_info._form.items())) if request_info._form is not None else request_info.body
-        )
+        body_for_solving = FormData(request_info._form) if request_info._form is not None else request_info.body
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
         result = await solve_dependencies(
             request=request,
@@ -737,9 +735,7 @@ class VersionBundle:
 
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
-async def _get_body(
-    request: FastapiRequest, body_field: Union[ModelField, None], exit_stack: AsyncExitStack
-):  # pragma: no cover # This is from FastAPI
+async def _get_body(request: FastapiRequest, body_field: Union[ModelField, None], exit_stack: AsyncExitStack):
     is_body_form = body_field and isinstance(body_field.field_info, params.Form)
     try:
         body: Any = None
@@ -778,10 +774,10 @@ async def _get_body(
             ],
             body=e.doc,
         ) from e
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="There was an error parsing the body") from e
+    except HTTPException:  # pragma: no cover
+        raise  # pragma: no cover
+    except Exception as e:  # pragma: no cover
+        raise HTTPException(status_code=400, detail="There was an error parsing the body") from e  # pragma: no cover
     return body
 
 

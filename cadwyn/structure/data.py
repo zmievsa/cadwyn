@@ -25,7 +25,7 @@ class RequestInfo:
         self._query_params = request.query_params._dict
         self._request = request
         if isinstance(body, FormData):
-            self._form: Union[dict[str, Union[UploadFile, str]], None] = dict(body.multi_items())
+            self._form: Union[list[tuple[str, Union[UploadFile, str]]], None] = list(body.multi_items())
         else:
             self._form = None
 
@@ -38,7 +38,7 @@ class RequestInfo:
         return self._query_params
 
     @property
-    def form(self) -> Union[dict[str, Union[UploadFile, str]], None]:
+    def form(self) -> Union[list[tuple[str, Union[UploadFile, str]]], None]:
         return self._form
 
 
