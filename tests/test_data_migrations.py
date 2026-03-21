@@ -901,8 +901,7 @@ def test__form_migration__can_modify_string_form_field(
 
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
-        if request.form is not None:
-            request.form["name"] = "migrated_name"
+        request.form["name"] = "migrated_name"  # type: ignore[index]
 
     clients = create_versioned_clients(version_change(migrator=migrator))
     resp_2000 = clients["2000-01-01"].post(test_path, data={"name": "original_name", "age": "25"})
@@ -944,8 +943,7 @@ def test__form_migration__can_add_new_form_field(
 
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
-        if request.form is not None:
-            request.form["extra"] = "added_by_migration"
+        request.form["extra"] = "added_by_migration"  # type: ignore[index]
 
     clients = create_versioned_clients(version_change(migrator=migrator))
     resp_2000 = clients["2000-01-01"].post(test_path, data={"name": "my_name"})
