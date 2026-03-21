@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar, Union, cast
 
 from fastapi import Request, Response
-from starlette.datastructures import MutableHeaders
+from starlette.datastructures import FormData, MutableHeaders, UploadFile
 from typing_extensions import Any, ParamSpec, overload
 
 from cadwyn._utils import same_definition_as_in
@@ -14,9 +14,8 @@ from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_met
 _P = ParamSpec("_P")
 
 
-# TODO (https://github.com/zmievsa/cadwyn/issues/49): Add form handling
 class RequestInfo:
-    __slots__ = ("_cookies", "_query_params", "_request", "body", "headers")
+    __slots__ = ("_cookies", "_form", "_query_params", "_request", "body", "headers")
 
     def __init__(self, request: Request, body: Any):
         super().__init__()
@@ -25,6 +24,10 @@ class RequestInfo:
         self._cookies = request.cookies
         self._query_params = request.query_params._dict
         self._request = request
+        if isinstance(body, FormData):
+            self._form: Union[dict[str, Union[UploadFile, str]], None] = dict(body.multi_items())
+        else:
+            self._form = None
 
     @property
     def cookies(self) -> dict[str, str]:
@@ -33,6 +36,10 @@ class RequestInfo:
     @property
     def query_params(self) -> dict[str, str]:
         return self._query_params
+
+    @property
+    def form(self) -> Union[dict[str, Union[UploadFile, str]], None]:
+        return self._form
 
 
 # TODO (https://github.com/zmievsa/cadwyn/issues/111): handle _response.media_type and _response.background

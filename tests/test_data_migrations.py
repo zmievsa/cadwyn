@@ -9,7 +9,7 @@ from typing import Any, Literal, Optional, Union
 import fastapi
 import pytest
 from dirty_equals import IsPartialDict, IsStr
-from fastapi import APIRouter, Body, Cookie, File, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Body, Cookie, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -888,6 +888,71 @@ def test__uploadfile_can_work(
             "content-type": "application/octet-stream",
         },
     }
+
+
+def test__form_migration__can_modify_string_form_field(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(name: str = Form(...), age: int = Form(...)):
+        return {"name": name, "age": age}
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        if request.form is not None:
+            request.form["name"] = "migrated_name"
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    resp_2000 = clients["2000-01-01"].post(test_path, data={"name": "original_name", "age": "25"})
+    resp_2001 = clients["2001-01-01"].post(test_path, data={"name": "original_name", "age": "25"})
+
+    assert resp_2000.json() == {"name": "migrated_name", "age": 25}
+    assert resp_2001.json() == {"name": "original_name", "age": 25}
+
+
+def test__form_migration__form_is_none_for_non_form_requests(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, response_model=AnyResponseSchema)
+    async def endpoint(payload: AnyRequestSchema):
+        return payload
+
+    captured = []
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        captured.append(request.form)
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].post(test_path, json={"foo": "bar"})
+
+    assert captured == [None]
+
+
+def test__form_migration__can_add_new_form_field(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(name: str = Form(...), extra: str = Form("default")):
+        return {"name": name, "extra": extra}
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        if request.form is not None:
+            request.form["extra"] = "added_by_migration"
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    resp_2000 = clients["2000-01-01"].post(test_path, data={"name": "my_name"})
+    resp_2001 = clients["2001-01-01"].post(test_path, data={"name": "my_name"})
+
+    assert resp_2000.json() == {"name": "my_name", "extra": "added_by_migration"}
+    assert resp_2001.json() == {"name": "my_name", "extra": "default"}
 
 
 def test__request_and_response_migrations__for_paths_with_variables__can_match(

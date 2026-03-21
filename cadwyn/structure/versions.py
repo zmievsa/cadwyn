@@ -24,6 +24,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
+from starlette.datastructures import FormData
 from typing_extensions import Any, ParamSpec, TypeAlias, TypeVar, assert_never, deprecated, get_args
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
@@ -431,12 +432,15 @@ class VersionBundle:
         del request._headers
         # This gives us the ability to tell the user whether cadwyn is running its dependencies or FastAPI
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
+        body_for_solving = (
+            FormData(list(request_info._form.items())) if request_info._form is not None else request_info.body
+        )
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
         result = await solve_dependencies(
             request=request,
             response=response,
             dependant=head_dependant,
-            body=request_info.body,
+            body=body_for_solving,
             dependency_overrides_provider=head_route.dependency_overrides_provider,
             async_exit_stack=exit_stack,
             embed_body_fields=embed_body_fields,
