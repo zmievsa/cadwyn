@@ -735,7 +735,9 @@ class VersionBundle:
 
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
-async def _get_body(request: FastapiRequest, body_field: Union[ModelField, None], exit_stack: AsyncExitStack):
+async def _get_body(  # pragma: no cover
+    request: FastapiRequest, body_field: Union[ModelField, None], exit_stack: AsyncExitStack
+):
     is_body_form = body_field and isinstance(body_field.field_info, params.Form)
     try:
         body: Any = None
@@ -774,10 +776,10 @@ async def _get_body(request: FastapiRequest, body_field: Union[ModelField, None]
             ],
             body=e.doc,
         ) from e
-    except HTTPException:  # pragma: no cover
-        raise  # pragma: no cover
-    except Exception as e:  # pragma: no cover
-        raise HTTPException(status_code=400, detail="There was an error parsing the body") from e  # pragma: no cover
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="There was an error parsing the body") from e
     return body
 
 
