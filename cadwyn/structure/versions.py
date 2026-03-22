@@ -432,7 +432,12 @@ class VersionBundle:
         del request._headers
         # This gives us the ability to tell the user whether cadwyn is running its dependencies or FastAPI
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
-        body_for_solving = FormData(request_info._form) if request_info._form is not None else request_info.body
+
+        if request_info._form is not None:
+            body_for_solving = FormData(request_info._form)
+        else:
+            body_for_solving = request_info.body
+
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
         result = await solve_dependencies(
             request=request,
