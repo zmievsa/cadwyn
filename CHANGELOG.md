@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [6.1.1]
+
+### Fixed
+
+- Fixed false `RouterPathParamsModifiedError` when renaming path-versioned endpoints (#357)
+
 ## [6.1.0]
 
 ### Added
