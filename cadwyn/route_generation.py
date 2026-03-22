@@ -48,6 +48,8 @@ from cadwyn.structure.versions import VersionChange
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
 
+    from cadwyn.middleware import APIVersionLocation
+
 _Call = TypeVar("_Call", bound=Callable[..., Any])
 _R = TypeVar("_R", bound=APIRouter)
 _WR = TypeVar("_WR", bound=APIRouter, default=APIRouter)
@@ -76,10 +78,14 @@ def generate_versioned_routers(
     versions: VersionBundle,
     *,
     webhooks: Union[_WR, None] = None,
+    api_version_parameter_name: str = "X-API-Version",
+    api_version_location: "APIVersionLocation" = "custom_header",
 ) -> GeneratedRouters[_R, _WR]:
     if webhooks is None:
         webhooks = cast("_WR", APIRouter())
-    return _EndpointTransformer(router, versions, webhooks).transform()
+    return _EndpointTransformer(
+        router, versions, webhooks, api_version_parameter_name, api_version_location
+    ).transform()
 
 
 class VersionedAPIRouter(fastapi.routing.APIRouter):
@@ -128,11 +134,20 @@ def copy_route(route: _RouteT) -> _RouteT:
 
 
 class _EndpointTransformer(Generic[_R, _WR]):
-    def __init__(self, parent_router: _R, versions: VersionBundle, webhooks: _WR) -> None:
+    def __init__(
+        self,
+        parent_router: _R,
+        versions: VersionBundle,
+        webhooks: _WR,
+        api_version_parameter_name: str,
+        api_version_location: "APIVersionLocation",
+    ) -> None:
         super().__init__()
         self.parent_router = parent_router
         self.versions = versions
         self.parent_webhooks_router = webhooks
+        self.api_version_parameter_name = api_version_parameter_name
+        self.api_version_location: APIVersionLocation = api_version_location
         self.schema_generators = generate_versioned_models(versions)
 
         self.routes_that_never_existed = [
@@ -425,7 +440,13 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 elif isinstance(instruction, EndpointHadInstruction):
                     for original_route in original_routes:
                         methods_to_which_we_applied_changes |= original_route.methods
-                        _apply_endpoint_had_instruction(version_change.__name__, instruction, original_route)
+                        _apply_endpoint_had_instruction(
+                            version_change.__name__,
+                            instruction,
+                            original_route,
+                            api_version_parameter_name=self.api_version_parameter_name,
+                            api_version_location=self.api_version_location,
+                        )
                     err = (
                         'Endpoint "{endpoint_methods} {endpoint_path}" you tried to change in'
                         ' "{version_change_name}" doesn\'t exist'
@@ -484,6 +505,8 @@ def _apply_endpoint_had_instruction(
     version_change_name: str,
     instruction: EndpointHadInstruction,
     original_route: APIRoute,
+    api_version_parameter_name: str,
+    api_version_location: "APIVersionLocation",
 ):
     for attr_name in instruction.attributes.__dataclass_fields__:
         attr = getattr(instruction.attributes, attr_name)
@@ -499,6 +522,8 @@ def _apply_endpoint_had_instruction(
             if attr_name == "path":
                 original_path_params = {p.alias for p in original_route.dependant.path_params}
                 new_path_params = set(re.findall("{(.*?)}", attr))
+                if api_version_location == "path":
+                    new_path_params.discard(api_version_parameter_name)
                 if new_path_params != original_path_params:
                     raise RouterPathParamsModifiedError(
                         f'When altering the path of "{list(original_route.methods)} {original_route.path}" '

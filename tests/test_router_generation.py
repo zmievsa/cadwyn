@@ -253,6 +253,34 @@ def test__endpoint_had_another_path_variable(
         )
 
 
+def test__endpoint_had__path_rename_with_api_version_in_prefix__should_not_raise():
+    app_router = VersionedAPIRouter(prefix="/{api_version}")
+    sub_router = VersionedAPIRouter()
+
+    @sub_router.get("")
+    async def list_items():
+        return 83
+
+    app_router.include_router(sub_router, prefix="/new-name")
+
+    versions = VersionBundle(
+        Version("v2", version_change(endpoint("/{api_version}/new-name", ["GET"]).had(path="/{api_version}/old-name"))),
+        Version("v1"),
+    )
+
+    cadwyn_app = Cadwyn(
+        versions=versions,
+        api_version_location="path",
+        api_version_parameter_name="api_version",
+        api_version_format="string",
+    )
+    cadwyn_app.generate_and_include_versioned_routers(app_router)
+
+    client_v2 = TestClient(cadwyn_app)
+    assert client_v2.get("/v2/new-name").json() == 83
+    assert client_v2.get("/v1/old-name").json() == 83
+
+
 def test__endpoint_had__another_path_with_the_other_migration_at_the_same_time__should_require_old_name(
     create_versioned_app: CreateVersionedApp,
 ):
