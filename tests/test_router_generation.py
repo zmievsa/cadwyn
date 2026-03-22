@@ -263,14 +263,8 @@ def test__endpoint_had__path_rename_with_api_version_in_prefix__should_not_raise
 
     app_router.include_router(sub_router, prefix="/new-name")
 
-    class RenameEndpoint(VersionChange):
-        description = "Rename /old-name to /new-name"
-        instructions_to_migrate_to_previous_version = (
-            endpoint("/{api_version}/new-name", ["GET"]).had(path="/{api_version}/old-name"),
-        )
-
     versions = VersionBundle(
-        Version("v2", RenameEndpoint),
+        Version("v2", version_change(endpoint("/{api_version}/new-name", ["GET"]).had(path="/{api_version}/old-name"))),
         Version("v1"),
     )
 
