@@ -208,6 +208,7 @@ class Cadwyn(FastAPI):
             "generate_unique_id_function": generate_unique_id_function,
         }
         self.api_version_format = api_version_format
+        self._api_version_location: APIVersionLocation = api_version_location
         self.api_version_parameter_name = api_version_parameter_name
         self.api_version_pythonic_parameter_name = api_version_parameter_name.replace("-", "_")
         self.api_version_title = api_version_title
@@ -215,11 +216,9 @@ class Cadwyn(FastAPI):
         if api_version_location == "custom_header":
             self._api_version_manager = HeaderVersionManager(api_version_parameter_name=api_version_parameter_name)
             self._api_version_fastapi_depends_class = fastapi.Header
-            self._api_version_path_param_name: Union[str, None] = None
         elif api_version_location == "path":
             self._api_version_manager = URLVersionManager(possible_version_values=self.versions._version_values_set)
             self._api_version_fastapi_depends_class = fastapi.Path
-            self._api_version_path_param_name = api_version_parameter_name
         else:
             assert_never(api_version_location)
         # TODO: Add a test validating the error message when there are no versions
@@ -267,7 +266,8 @@ class Cadwyn(FastAPI):
                 self._latest_version_router,
                 webhooks=self.webhooks,
                 versions=self.versions,
-                api_version_parameter_name=self._api_version_path_param_name,
+                api_version_parameter_name=self.api_version_parameter_name,
+                api_version_location=self._api_version_location,
             )
         except RecursionError as e:
             raise ImportError(
