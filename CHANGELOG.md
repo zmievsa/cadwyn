@@ -5,6 +5,16 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [6.1.0]
+
+### Added
+
+- Added `form` property to `RequestInfo` for reading and modifying multipart/form-encoded fields (strings and file uploads) inside `convert_request_to_next_version_for` handlers (#359)
+
+### Fixed
+
+- Fixed false `RouterPathParamsModifiedError` when renaming path-versioned endpoints (#357)
+
 ## [6.0.4]
 
 ### Added

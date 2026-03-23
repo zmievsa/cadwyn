@@ -208,6 +208,7 @@ class Cadwyn(FastAPI):
             "generate_unique_id_function": generate_unique_id_function,
         }
         self.api_version_format = api_version_format
+        self._api_version_location: APIVersionLocation = api_version_location
         self.api_version_parameter_name = api_version_parameter_name
         self.api_version_pythonic_parameter_name = api_version_parameter_name.replace("-", "_")
         self.api_version_title = api_version_title
@@ -265,6 +266,8 @@ class Cadwyn(FastAPI):
                 self._latest_version_router,
                 webhooks=self.webhooks,
                 versions=self.versions,
+                api_version_parameter_name=self.api_version_parameter_name,
+                api_version_location=self._api_version_location,
             )
         except RecursionError as e:
             raise ImportError(
