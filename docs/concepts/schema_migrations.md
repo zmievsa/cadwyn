@@ -1,8 +1,8 @@
 # Schema migrations
 
-All of the following instructions affect only OpenAPI schemas and their initial validation. All of your incoming requests will still be converted into your HEAD schemas.
+The following instructions affect only OpenAPI schemas and their initial validation. All your incoming requests will still be converted to your HEAD schemas.
 
-Please note that you only need to have a migration if it is a breaking change for your users. The scenarios below only describe "what you can do" but not "what you should do". For the "should" part, please refer to the [how-to docs](../how_to/change_openapi_schemas/add_field.md).
+Please note that you only need a migration if it is a breaking change for your users. The scenarios below only describe "what you can do" but not "what you should do". For the "should" part, please refer to the [how-to docs](../how_to/change_openapi_schemas/add_field.md).
 
 ## Add a field to the older version
 
@@ -35,7 +35,7 @@ class MyChange(VersionChange):
 
 ## Change a field in the older version
 
-The following code allows to set an attribute of a field, such as a description:
+The following code sets an attribute of a field, such as a description:
 
 ```python
 from cadwyn import VersionChange, schema
@@ -48,7 +48,7 @@ class MyChange(VersionChange):
     )
 ```
 
-The following code allows to un-set an attribute of a field, as if it never existed:
+The following code un-sets an attribute of a field, as if it never existed:
 
 ```python
 from cadwyn import VersionChange, schema
@@ -63,19 +63,19 @@ class MyChange(VersionChange):
 
 **DEFAULTS WARNING:**
 
-If you add `default` or `default_factory` into the old version of a schema -- it will not manifest in code automatically. Instead, you should add both the `default` or `default_factory`, and then also add the default value using a request migration.
+If you add `default` or `default_factory` to the old version of a schema, it will not manifest in the code automatically. Instead, you should add both the `default` and `default_factory`, and then also add the default value using a request migration.
 
-The reason for such behaviour is the way how Cadwyn works with pydantic and unfortunately this cannot be changed:
+The reason for such behaviour is the way Cadwyn works with Pydantic and unfortunately this cannot be changed:
 
 Cadwyn:
 
 1. Receives a request for API version `V`
 2. Validates the request using the schemas from `V`
-3. Marshalls the unmarshalled request body into a raw data structure using `BaseModel.dict` (`BaseModel.model_dump` in Pydantic v2) using **exclude_unset=True**
+3. Marshalls the unmarshalled request body into a raw data structure using `BaseModel.dict` (`BaseModel.model_dump` in Pydantic v2) with **exclude_unset=True**
 4. Passes the request through all request migrations from `V` to `latest`
 5. Validates the request using `latest` schemas
 
-The part that causes the aforementioned problem is cadwyn's usage of `exclude_unset=True`. Unfortunately, when we use it, all default fields do not get set, so `latest` does not receive them. And if `latest` does not have the same defaults (for example, if the field has no default and is required in `latest`), then an error will occur. If we used `exclude_unset=False`, then `exclude_unset` would lose all its purpose for the users of our library so we cannot give it up. Instead, you should set all extras on step 4 in your request migrations.
+The part that causes the aforementioned problem is Cadwyn's use of `exclude_unset=True`. Unfortunately, when Cadwyn uses it, default fields are not set, so `latest` does not receive them. And if latest does not have the same defaults (for example, if the field has no default and is required in latest), then an error will occur. If Cadwyn used `exclude_unset=False`, then `exclude_unset` would lose its purpose for Cadwyn users, so giving it up is impractical. Instead, you should set all extras in step 4 in your request migrations.
 
 ## Add a validator to the older version
 
@@ -114,7 +114,7 @@ class MyChange(VersionChange):
 
 ## Rename a schema in the older version
 
-The following code allows to replace all schema name occurrences with the new one to make sure that the name is different in openapi.json:
+The following code replaces all schema name occurrences with a new one to ensure that the name is different in openapi.json:
 
 
 ```python
