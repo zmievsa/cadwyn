@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [6.1.1]
+
+### Fixed
+
+- Fixed compatibility with Starlette 1.0.0 which removed the deprecated `TemplateResponse(name, context)` calling convention
+
 ## [6.1.0]
 
 ### Added

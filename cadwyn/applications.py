@@ -432,8 +432,9 @@ class Cadwyn(FastAPI):
         if self._there_are_public_unversioned_routes():
             table |= {"unversioned": f"{base_url}{docs_url}?version=unversioned"}
         return self._templates.TemplateResponse(
-            "docs.html",
-            {"request": req, "table": table},
+            request=req,
+            name="docs.html",
+            context={"table": table},
         )
 
     @deprecated("Use generate_and_include_versioned_routers and VersionBundle versions instead")

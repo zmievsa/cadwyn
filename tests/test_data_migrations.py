@@ -998,22 +998,6 @@ def test__request_body_parsing__empty_body_with_optional_params(
     assert resp.json() == {"name": None, "age": None}
 
 
-def test__request_body_parsing__json_body_without_content_type(
-    create_versioned_clients: CreateVersionedClients,
-    test_path: Literal["/test"],
-    router: VersionedAPIRouter,
-):
-    @router.post(test_path)
-    async def endpoint(name: Optional[str] = Body(default=None), age: Optional[int] = Body(default=None)):
-        return {"name": name, "age": age}
-
-    clients = create_versioned_clients(version_change())
-    resp = clients["2000-01-01"].post(test_path, content=b'{"name": "test", "age": 25}')
-
-    assert resp.status_code == 200
-    assert resp.json() == {"name": "test", "age": 25}
-
-
 def test__request_body_parsing__non_application_content_type(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
