@@ -404,6 +404,29 @@ def test__webhooks():
         )
 
 
+def test__docs_dashboards__custom_static_asset_urls():
+    app = Cadwyn(
+        versions=VersionBundle(Version("2022-11-16")),
+        changelog_url=None,
+        swagger_js_url="/static/swagger.js",
+        swagger_css_url="/static/swagger.css",
+        swagger_favicon_url="/static/swagger-favicon.png",
+        redoc_js_url="/static/redoc.js",
+        redoc_favicon_url="/static/redoc-favicon.png",
+    )
+    with TestClient(app) as client:
+        swagger_resp = client.get("/docs?version=2022-11-16")
+        assert swagger_resp.status_code == 200
+        assert "/static/swagger.js" in swagger_resp.text
+        assert "/static/swagger.css" in swagger_resp.text
+        assert "/static/swagger-favicon.png" in swagger_resp.text
+
+        redoc_resp = client.get("/redoc?version=2022-11-16")
+        assert redoc_resp.status_code == 200
+        assert "/static/redoc.js" in redoc_resp.text
+        assert "/static/redoc-favicon.png" in redoc_resp.text
+
+
 def test__api_version_header_name_is_deprecated_and_translates_to_api_version_parameter_name():
     with pytest.warns(DeprecationWarning):
         cadwyn = Cadwyn(api_version_header_name="x-api-version", versions=VersionBundle(Version("2022-11-16")))

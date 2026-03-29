@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [6.2.0]
+
+### Added
+
+- Added `swagger_js_url`, `swagger_css_url`, `swagger_favicon_url`, `redoc_js_url`, and `redoc_favicon_url` parameters to `Cadwyn` for customizing docs static asset URLs (#361)
+
 ## [6.1.1]
 
 ### Fixed

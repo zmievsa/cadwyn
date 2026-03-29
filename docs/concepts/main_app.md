@@ -40,3 +40,18 @@ However, header-based routing is the default way to use Cadwyn. If you want to u
 ### VersionedAPIRouter
 
 Cadwyn has its own API Router class: `cadwyn.VersionedAPIRouter`. You are free to use a regular `fastapi.APIRouter` but `cadwyn.VersionedAPIRouter` has a special decorator `only_exists_in_older_versions(route)` which allows you to define routes that have been previously deleted. First you define the route and then add this decorator to it.
+
+## Custom docs static assets
+
+By default, Swagger UI and ReDoc load JavaScript and CSS from CDNs. You can override these URLs to serve assets locally:
+
+```python
+app = Cadwyn(
+    versions=my_version_bundle,
+    swagger_js_url="/static/swagger-ui-bundle.js",
+    swagger_css_url="/static/swagger-ui.css",
+    swagger_favicon_url="/static/favicon.png",
+    redoc_js_url="/static/redoc.standalone.js",
+    redoc_favicon_url="/static/favicon.png",
+)
+```
