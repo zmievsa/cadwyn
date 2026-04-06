@@ -1,0 +1,3 @@
+- When writing tests, never mock
+- Only test through the PUBLIC interfaces of our library
+- At the end of the session, run all tests against all supported versions with tox

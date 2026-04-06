@@ -118,6 +118,11 @@ class Cadwyn(FastAPI):
         deprecated: Union[bool, None] = None,
         include_in_schema: bool = True,
         swagger_ui_parameters: Union[dict[str, Any], None] = None,
+        swagger_js_url: str = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js",
+        swagger_css_url: str = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css",
+        swagger_favicon_url: str = "https://fastapi.tiangolo.com/img/favicon.png",
+        redoc_js_url: str = "https://cdn.jsdelivr.net/npm/redoc@2/bundles/redoc.standalone.js",
+        redoc_favicon_url: str = "https://fastapi.tiangolo.com/img/favicon.png",
         generate_unique_id_function: Callable[[routing.APIRoute], str] = Default(  # noqa: B008
             generate_unique_id
         ),
@@ -191,6 +196,11 @@ class Cadwyn(FastAPI):
         self.redoc_url = redoc_url
         self.openapi_url = openapi_url
         self.redoc_url = redoc_url
+        self.swagger_js_url = swagger_js_url
+        self.swagger_css_url = swagger_css_url
+        self.swagger_favicon_url = swagger_favicon_url
+        self.redoc_js_url = redoc_js_url
+        self.redoc_favicon_url = redoc_favicon_url
 
         self._kwargs_to_router: dict[str, Any] = {
             "routes": routes,
@@ -408,6 +418,9 @@ class Cadwyn(FastAPI):
                 oauth2_redirect_url=oauth2_redirect_url,
                 init_oauth=self.swagger_ui_init_oauth,
                 swagger_ui_parameters=self.swagger_ui_parameters,
+                swagger_js_url=self.swagger_js_url,
+                swagger_css_url=self.swagger_css_url,
+                swagger_favicon_url=self.swagger_favicon_url,
             )
         return self._render_docs_dashboard(req, cast("str", self.docs_url))
 
@@ -417,7 +430,12 @@ class Cadwyn(FastAPI):
         if version:
             root_path = self._extract_root_path(req)
             openapi_url = root_path + f"{self.openapi_url}?version={quote(version, safe='')}"
-            return get_redoc_html(openapi_url=openapi_url, title=f"{self.title} - ReDoc")
+            return get_redoc_html(
+                openapi_url=openapi_url,
+                title=f"{self.title} - ReDoc",
+                redoc_js_url=self.redoc_js_url,
+                redoc_favicon_url=self.redoc_favicon_url,
+            )
 
         return self._render_docs_dashboard(req, docs_url=cast("str", self.redoc_url))
 
