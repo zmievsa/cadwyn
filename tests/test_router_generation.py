@@ -1440,3 +1440,34 @@ def test__copy_route__without_flat_dependant():
     copied = copy_route(route)
     assert copied.path == route.path
     assert not hasattr(copied, "_flat_dependant")
+
+
+def test__copy_route__preserves_response_model():
+    """Test that copy_route preserves the response_model without deep-copying it."""
+    route = APIRoute("/test", lambda: None, response_model=SchemaWithOneIntField)
+    copied = copy_route(route)
+    assert copied.path == route.path
+    assert copied.response_model is route.response_model
+
+
+def test__router_generation__remake_endpoint_dependencies_preserves_response_model(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    """Test that _remake_endpoint_dependencies correctly passes response_model
+
+    when recreating the route, ensuring response_field stays consistent.
+    """
+
+    @router.get(
+        "/test",
+        response_model=SchemaWithOneIntField,
+    )
+    async def test():
+        raise NotImplementedError
+
+    app = create_versioned_app(version_change())
+    routes_2001 = cast("list[APIRoute]", app.router.versioned_routers["2001-01-01"].routes)
+    api_route = next(r for r in routes_2001 if r.path == "/test")
+    assert api_route.response_model is not None
+    assert api_route.response_field is not None
