@@ -397,6 +397,7 @@ class Cadwyn(FastAPI):
                 webhooks=webhook_routes,
                 tags=self.openapi_tags,
                 servers=self.servers,
+                separate_input_output_schemas=self.separate_input_output_schemas,
             )
         )
 
