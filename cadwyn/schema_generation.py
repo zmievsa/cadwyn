@@ -609,7 +609,9 @@ class _AnnotationTransformer:
     def _remake_endpoint_dependencies(cls, route: fastapi.routing.APIRoute):
         # Unlike get_dependant, APIRoute is the public API of FastAPI and it's (almost) guaranteed to be stable.
 
-        route_copy = fastapi.routing.APIRoute(route.path, route.endpoint, dependencies=route.dependencies)
+        route_copy = fastapi.routing.APIRoute(
+            route.path, route.endpoint, dependencies=route.dependencies, response_model=route.response_model
+        )
         route.dependant = route_copy.dependant
         route.body_field = route_copy.body_field
         _add_request_and_response_params(route)

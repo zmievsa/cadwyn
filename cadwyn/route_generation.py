@@ -120,7 +120,7 @@ def copy_route(route: _RouteT) -> _RouteT:
     # These can hold TypeAdapters for recursive types (e.g. JsonValue) that cause
     # infinite recursion during deepcopy.
     memo: dict[int, Any] = {}
-    for attr in ("dependant", "_flat_dependant", "body_field"):
+    for attr in ("dependant", "_flat_dependant", "body_field", "response_model"):
         obj = getattr(route, attr, None)
         if obj is not None:
             memo[id(obj)] = obj
