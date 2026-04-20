@@ -43,6 +43,8 @@ from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.structure import VersionBundle
 
 if TYPE_CHECKING:
+    from enum import Enum
+
     from cadwyn.structure.common import VersionType
 
 CURR_DIR = Path(__file__).resolve()
@@ -383,6 +385,8 @@ class Cadwyn(FastAPI):
         if version in self._versioned_webhook_routers:
             webhook_routes = self._versioned_webhook_routers[version].routes
 
+        tags = self._filter_openapi_tags(routes)
+
         return JSONResponse(
             get_openapi(
                 title=self.title,
@@ -395,13 +399,22 @@ class Cadwyn(FastAPI):
                 license_info=self.license_info,
                 routes=routes,
                 webhooks=webhook_routes,
-                tags=self.openapi_tags,
+                tags=tags,
                 servers=self.servers,
             )
         )
 
     def _there_are_public_unversioned_routes(self):
         return any(isinstance(route, Route) and route.include_in_schema for route in self.router.unversioned_routes)
+
+    def _filter_openapi_tags(self, routes: list) -> Union[list[dict[str, Any]], None]:
+        if not self.openapi_tags:
+            return self.openapi_tags
+        used_tags: set[str | Enum] = set()
+        for route in routes:
+            if isinstance(route, routing.APIRoute) and route.include_in_schema:
+                used_tags.update(route.tags)
+        return [tag for tag in self.openapi_tags if tag.get("name") in used_tags]
 
     async def swagger_dashboard(self, req: Request) -> Response:
         version = req.query_params.get("version")

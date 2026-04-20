@@ -433,6 +433,43 @@ def test__api_version_header_name_is_deprecated_and_translates_to_api_version_pa
     assert cadwyn.api_version_parameter_name == "x-api-version"
 
 
+def test__openapi_tags__unversioned_should_only_include_tags_used_by_routes():
+    app = Cadwyn(
+        versions=VersionBundle(Version("2022-11-16")),
+        openapi_tags=[
+            {"name": "users", "description": "User operations"},
+            {"name": "settings", "description": "Settings operations"},
+        ],
+    )
+
+    versioned_router = VersionedAPIRouter()
+
+    @versioned_router.get("/users", tags=["users"])
+    def get_users():
+        raise NotImplementedError
+
+    app.generate_and_include_versioned_routers(versioned_router)
+
+    @app.post("/my_settings", tags=["settings"])
+    def my_settings():
+        raise NotImplementedError
+
+    with TestClient(app) as client:
+        # Versioned schema should only include "users" tag (the only tag used by versioned routes)
+        resp = client.get("/openapi.json?version=2022-11-16")
+        versioned_tags = resp.json().get("tags", [])
+        versioned_tag_names = [t["name"] for t in versioned_tags]
+        assert "users" in versioned_tag_names
+        assert "settings" not in versioned_tag_names
+
+        # Unversioned schema should only include "settings" tag (the only tag used by unversioned routes)
+        resp = client.get("/openapi.json?version=unversioned")
+        unversioned_tags = resp.json().get("tags", [])
+        unversioned_tag_names = [t["name"] for t in unversioned_tags]
+        assert "settings" in unversioned_tag_names
+        assert "users" not in unversioned_tag_names
+
+
 def test__api_version_default_value_with_path_location__should_raise_error():
     with pytest.raises(
         CadwynStructureError,
