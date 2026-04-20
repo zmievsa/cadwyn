@@ -1,3 +1,6 @@
 - When writing tests, never mock
-- Only test through the PUBLIC interfaces of our library
+- Only test through the PUBLIC interfaces of our library, external behaviors -- not internal implementation details
+- New tests should almost always be placed next to similar tests
+- New tests should reuse existing fixtures where appropriate to minimize future rework
+- New tests should not "overtest" and re-test the logic that is already covered by other tests -- they should be focused around their own functionality
 - At the end of the session, run all tests against all supported versions with tox
