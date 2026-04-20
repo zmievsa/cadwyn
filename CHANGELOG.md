@@ -5,6 +5,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [6.2.2]
+
 ## [6.2.1]
 
 ### Fixed
