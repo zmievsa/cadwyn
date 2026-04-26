@@ -159,7 +159,6 @@ reportUnsupportedDunderAll = true
 reportUnnecessaryTypeIgnoreComment = "warning" # TODO: Move to true once pyright fixes its bugs
 reportMissingSuperCall = true
 reportFunctionMemberAccess = false
-reportCircularImports = true
 reportInvalidTypeForm = false
 reportPrivateImportUsage = false
 
