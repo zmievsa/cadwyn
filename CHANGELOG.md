@@ -5,7 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
-- Fixed duplicated lifecycle callbacks in Cadwyn routers, see [this issue](https://github.com/zmievsa/cadwyn/issues/372) for more details
+## [7.0.0]
+
+- Breaking change if you relied on lifespan running multiple times: Fixed duplicated lifecycle callbacks in Cadwyn routers, see [this issue](https://github.com/zmievsa/cadwyn/issues/372) for more details
+- Fixed `Cadwyn.mount()` routes, including `StaticFiles`, returning 404 instead of being served as unversioned routes (#374)
 
 ## [6.2.2]
 
