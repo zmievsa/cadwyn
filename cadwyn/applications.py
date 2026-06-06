@@ -204,13 +204,15 @@ class Cadwyn(FastAPI):
         self.redoc_js_url = redoc_js_url
         self.redoc_favicon_url = redoc_favicon_url
 
+        # NOTE: lifespan/on_startup/on_shutdown are intentionally NOT included here. This dict is reused to
+        # construct the unversioned and versioned child routers, which are then merged into the root router via
+        # include_router. FastAPI's include_router merges lifespans and re-registers startup/shutdown handlers,
+        # so including them here would run the user's lifespan/handlers once per child router (see issue #372).
+        # They belong solely to the root router and are passed to it explicitly below.
         self._kwargs_to_router: dict[str, Any] = {
             "routes": routes,
             "redirect_slashes": redirect_slashes,
             "dependency_overrides_provider": self,
-            "on_startup": on_startup,
-            "on_shutdown": on_shutdown,
-            "lifespan": lifespan,
             "default_response_class": default_response_class,
             "dependencies": dependencies,
             "callbacks": callbacks,
@@ -243,6 +245,9 @@ class Cadwyn(FastAPI):
             assert_never(default_version_example)
         self.router: _RootCadwynAPIRouter = _RootCadwynAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
             **self._kwargs_to_router,
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            lifespan=lifespan,
             api_version_parameter_name=api_version_parameter_name,
             api_version_var=self.versions.api_version_var,
             api_version_format=api_version_format,
