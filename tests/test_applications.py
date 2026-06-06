@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Annotated, cast
 
 import pytest
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
@@ -270,6 +271,21 @@ def test__get_docs__with_mounted_app__should_return_all_versioned_doc_urls():
 
     resp = client.get("/my_api/docs")
     assert "http://testserver/my_api/docs?version=2022-11-16" in resp.content.decode()
+
+
+def test__mount__static_files__should_serve_file(tmp_path):
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "hello.txt").write_text("Hello World")
+
+    app = Cadwyn(changelog_url=None, versions=VersionBundle(HeadVersion(), Version("2022-11-16")))
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    with TestClient(app) as client:
+        resp = client.get("/static/hello.txt")
+
+    assert resp.status_code == 200
+    assert resp.text == "Hello World"
 
 
 def test__get_docs__with_unversioned_routes__should_return_all_versioned_doc_urls():
