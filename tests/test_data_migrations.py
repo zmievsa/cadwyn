@@ -406,7 +406,8 @@ class TestResponseMigrations:
             "headers": {
                 "host": "testserver",
                 "accept": "*/*",
-                "accept-encoding": "gzip, deflate",
+                # 3.14+ also sends zstd
+                "accept-encoding": IsStr(regex=r"^gzip, deflate(, zstd)?$"),
                 "connection": "keep-alive",
                 "user-agent": "testclient",
                 "content-length": "2",
@@ -418,7 +419,7 @@ class TestResponseMigrations:
             "body_key": "body_val",
         }
         assert dict(resp.headers) == {
-            "content-length": "281",
+            "content-length": str(len(resp.content)),
             "content-type": "application/json",
             "header": "header_val",
             "set-cookie": "cookie_key=cookie_val; Max-Age=83; Path=/; SameSite=lax",
@@ -434,7 +435,7 @@ class TestResponseMigrations:
             "headers": {
                 "host": "testserver",
                 "accept": "*/*",
-                "accept-encoding": "gzip, deflate",
+                "accept-encoding": IsStr(regex=r"^gzip, deflate(, zstd)?$"),
                 "connection": "keep-alive",
                 "user-agent": "testclient",
                 "3": "4",
@@ -448,7 +449,7 @@ class TestResponseMigrations:
             "body_key": "body_val",
         }
         assert dict(resp.headers) == {
-            "content-length": "367",
+            "content-length": str(len(resp.content)),
             "content-type": "application/json",
             "header": "header_val",
             "set-cookie": "cookie_key=cookie_val; Max-Age=83; Path=/; SameSite=lax",
@@ -472,7 +473,7 @@ class TestResponseMigrations:
         clients = create_versioned_clients(version_change(migrator=migrator))
         resp = clients["2000-01-01"].get(test_path)
         assert dict(resp.headers) == {
-            "content-length": "194",
+            "content-length": str(len(resp.content)),
             "content-type": "application/json",
             "header_key": "header-val",
             "set-cookie": "cookie_key=cookie_val; Max-Age=83; Path=/; SameSite=lax",

@@ -74,6 +74,7 @@ dev = [
     # tests
     "svcs ~=24.1.0",
     "httpx >=0.26.0",
+    "httpx2 >=2.3.0",
     "pytest-fixture-classes >=1.0.3",
     # pytest==8.3.5 has a bug that fails our windows python 3.10 tests
     "pytest==9.0.3",
