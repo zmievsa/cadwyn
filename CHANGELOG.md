@@ -5,10 +5,6 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
-### Fixed
-
-- Fixed twice-daily dependency update CI with newer Starlette test client dependencies and Python 3.14 `Accept-Encoding` defaults.
-
 ## [6.2.2]
 
 ## [6.2.1]

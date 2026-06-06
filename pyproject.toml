@@ -74,7 +74,6 @@ dev = [
     # tests
     "svcs ~=24.1.0",
     "httpx >=0.26.0",
-    "httpx2 >=2.3.0",
     "pytest-fixture-classes >=1.0.3",
     # pytest==8.3.5 has a bug that fails our windows python 3.10 tests
     "pytest==9.0.3",
@@ -171,6 +170,9 @@ filterwarnings = [
     # Older starlette syntax is currently supported.
     "ignore:The `name` is not the first parameter anymore:DeprecationWarning:starlette.templating",
     "ignore:The on_startup and on_shutdown parameters are deprecated:DeprecationWarning:starlette.routing",
+
+    # FastAPI still uses httpx, we cannot fix it
+    "ignore: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead",
 
     # Older pydantic syntax is currently supported.
     "ignore:Using extra keyword arguments on `Field` is deprecated:DeprecationWarning:pydantic.fields",
