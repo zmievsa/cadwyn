@@ -106,6 +106,11 @@ class _RootCadwynAPIRouter(APIRouter):
         super().add_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
+    @same_definition_as_in(APIRouter.mount)
+    def mount(self, *args: Any, **kwargs: Any):
+        super().mount(*args, **kwargs)
+        self.unversioned_routes.append(self.routes[-1])
+
     @same_definition_as_in(APIRouter.add_api_websocket_route)
     def add_api_websocket_route(self, *args: Any, **kwargs: Any):  # pragma: no cover
         super().add_api_websocket_route(*args, **kwargs)
