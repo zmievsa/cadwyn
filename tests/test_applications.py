@@ -1,4 +1,5 @@
 import re
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, cast
 
 import pytest
@@ -484,6 +485,80 @@ def test__openapi_tags__unversioned_should_only_include_tags_used_by_routes():
         unversioned_tag_names = [t["name"] for t in unversioned_tags]
         assert "settings" in unversioned_tag_names
         assert "users" not in unversioned_tag_names
+
+
+class _LifespanSchema(BaseModel):
+    name: str
+    monthly_fee: float
+
+
+def _multi_version_bundle():
+    class RemoveMonthlyFee(VersionChange):
+        description = "Remove monthly_fee from the schema in the older version"
+        instructions_to_migrate_to_previous_version = [schema(_LifespanSchema).field("monthly_fee").didnt_exist]
+
+    return VersionBundle(
+        HeadVersion(),
+        Version("2023-04-12", RemoveMonthlyFee),
+        Version("2022-11-16"),
+    )
+
+
+def test__lifespan__should_be_entered_exactly_once_per_startup():
+    entered = 0
+    exited = 0
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        nonlocal entered, exited
+        entered += 1
+        yield
+        exited += 1
+
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    async def get_items() -> _LifespanSchema:  # pragma: no cover
+        return _LifespanSchema(name="a", monthly_fee=1.0)
+
+    app = Cadwyn(versions=_multi_version_bundle(), lifespan=lifespan)
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app):
+        assert entered == 1
+    assert entered == 1
+    assert exited == 1
+
+
+def test__on_startup_and_on_shutdown__should_run_exactly_once_per_startup():
+    startups = 0
+    shutdowns = 0
+
+    def on_startup():
+        nonlocal startups
+        startups += 1
+
+    def on_shutdown():
+        nonlocal shutdowns
+        shutdowns += 1
+
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    async def get_items() -> _LifespanSchema:  # pragma: no cover
+        return _LifespanSchema(name="a", monthly_fee=1.0)
+
+    app = Cadwyn(
+        versions=_multi_version_bundle(),
+        on_startup=[on_startup],
+        on_shutdown=[on_shutdown],
+    )
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app):
+        assert startups == 1
+    assert startups == 1
+    assert shutdowns == 1
 
 
 def test__api_version_default_value_with_path_location__should_raise_error():

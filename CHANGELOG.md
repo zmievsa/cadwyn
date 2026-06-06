@@ -5,6 +5,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+- Fixed duplicated lifecycle callbacks in Cadwyn routers, see [this issue](https://github.com/zmievsa/cadwyn/issues/372) for more details
+
 ## [6.2.2]
 
 ## [6.2.1]
