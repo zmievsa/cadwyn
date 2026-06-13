@@ -43,6 +43,8 @@ from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.structure import VersionBundle
 
 if TYPE_CHECKING:
+    from enum import Enum
+
     from cadwyn.structure.common import VersionType
 
 CURR_DIR = Path(__file__).resolve()
@@ -202,13 +204,15 @@ class Cadwyn(FastAPI):
         self.redoc_js_url = redoc_js_url
         self.redoc_favicon_url = redoc_favicon_url
 
+        # NOTE: lifespan/on_startup/on_shutdown are intentionally NOT included here. This dict is reused to
+        # construct the unversioned and versioned child routers, which are then merged into the root router via
+        # include_router. FastAPI's include_router merges lifespans and re-registers startup/shutdown handlers,
+        # so including them here would run the user's lifespan/handlers once per child router (see issue #372).
+        # They belong solely to the root router and are passed to it explicitly below.
         self._kwargs_to_router: dict[str, Any] = {
             "routes": routes,
             "redirect_slashes": redirect_slashes,
             "dependency_overrides_provider": self,
-            "on_startup": on_startup,
-            "on_shutdown": on_shutdown,
-            "lifespan": lifespan,
             "default_response_class": default_response_class,
             "dependencies": dependencies,
             "callbacks": callbacks,
@@ -241,6 +245,9 @@ class Cadwyn(FastAPI):
             assert_never(default_version_example)
         self.router: _RootCadwynAPIRouter = _RootCadwynAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
             **self._kwargs_to_router,
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            lifespan=lifespan,
             api_version_parameter_name=api_version_parameter_name,
             api_version_var=self.versions.api_version_var,
             api_version_format=api_version_format,
@@ -383,6 +390,8 @@ class Cadwyn(FastAPI):
         if version in self._versioned_webhook_routers:
             webhook_routes = self._versioned_webhook_routers[version].routes
 
+        tags = self._filter_openapi_tags(routes)
+
         return JSONResponse(
             get_openapi(
                 title=self.title,
@@ -395,13 +404,23 @@ class Cadwyn(FastAPI):
                 license_info=self.license_info,
                 routes=routes,
                 webhooks=webhook_routes,
-                tags=self.openapi_tags,
+                tags=tags,
                 servers=self.servers,
+                separate_input_output_schemas=self.separate_input_output_schemas,
             )
         )
 
     def _there_are_public_unversioned_routes(self):
         return any(isinstance(route, Route) and route.include_in_schema for route in self.router.unversioned_routes)
+
+    def _filter_openapi_tags(self, routes: list) -> Union[list[dict[str, Any]], None]:
+        if not self.openapi_tags:
+            return self.openapi_tags
+        used_tags: set[str | Enum] = set()
+        for route in routes:
+            if isinstance(route, routing.APIRoute) and route.include_in_schema:
+                used_tags.update(route.tags)
+        return [tag for tag in self.openapi_tags if tag.get("name") in used_tags]
 
     async def swagger_dashboard(self, req: Request) -> Response:
         version = req.query_params.get("version")

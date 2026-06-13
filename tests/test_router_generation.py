@@ -17,7 +17,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, JsonValue
 from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, JSONResponse
 from typing_extensions import Any, NewType, TypeAlias, TypeAliasType, get_args
 
 from cadwyn import VersionBundle, VersionedAPIRouter
@@ -769,6 +769,20 @@ def test__router_generation__updating_response_model(
 
     assert get_nested_field_type(routes_2000[1].response_model) == list[str]
     assert get_nested_field_type(routes_2001[1].response_model) == int  # noqa: E721
+
+
+def test__router_generation__response_model_with_union_return_type(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.get("/test", response_model=SchemaWithOneIntField)
+    async def test() -> SchemaWithOneIntField | JSONResponse:
+        return SchemaWithOneIntField(foo=83)
+
+    clients = create_versioned_clients()
+    response = clients["2000-01-01"].get("/test")
+    assert response.status_code == 200
+    assert response.json() == {"foo": 83}
 
 
 def test__router_generation__using_unversioned_schema_from_versioned_base_dir__should_not_raise_error(

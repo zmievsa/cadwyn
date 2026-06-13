@@ -1,8 +1,10 @@
 import re
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, cast
 
 import pytest
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
@@ -271,6 +273,21 @@ def test__get_docs__with_mounted_app__should_return_all_versioned_doc_urls():
     assert "http://testserver/my_api/docs?version=2022-11-16" in resp.content.decode()
 
 
+def test__mount__static_files__should_serve_file(tmp_path):
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "hello.txt").write_text("Hello World")
+
+    app = Cadwyn(changelog_url=None, versions=VersionBundle(HeadVersion(), Version("2022-11-16")))
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    with TestClient(app) as client:
+        resp = client.get("/static/hello.txt")
+
+    assert resp.status_code == 200
+    assert resp.text == "Hello World"
+
+
 def test__get_docs__with_unversioned_routes__should_return_all_versioned_doc_urls():
     app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     with pytest.warns(DeprecationWarning):
@@ -431,6 +448,117 @@ def test__api_version_header_name_is_deprecated_and_translates_to_api_version_pa
     with pytest.warns(DeprecationWarning):
         cadwyn = Cadwyn(api_version_header_name="x-api-version", versions=VersionBundle(Version("2022-11-16")))
     assert cadwyn.api_version_parameter_name == "x-api-version"
+
+
+def test__openapi_tags__unversioned_should_only_include_tags_used_by_routes():
+    app = Cadwyn(
+        versions=VersionBundle(Version("2022-11-16")),
+        openapi_tags=[
+            {"name": "users", "description": "User operations"},
+            {"name": "settings", "description": "Settings operations"},
+        ],
+    )
+
+    versioned_router = VersionedAPIRouter()
+
+    @versioned_router.get("/users", tags=["users"])
+    def get_users():
+        raise NotImplementedError
+
+    app.generate_and_include_versioned_routers(versioned_router)
+
+    @app.post("/my_settings", tags=["settings"])
+    def my_settings():
+        raise NotImplementedError
+
+    with TestClient(app) as client:
+        # Versioned schema should only include "users" tag (the only tag used by versioned routes)
+        resp = client.get("/openapi.json?version=2022-11-16")
+        versioned_tags = resp.json().get("tags", [])
+        versioned_tag_names = [t["name"] for t in versioned_tags]
+        assert "users" in versioned_tag_names
+        assert "settings" not in versioned_tag_names
+
+        # Unversioned schema should only include "settings" tag (the only tag used by unversioned routes)
+        resp = client.get("/openapi.json?version=unversioned")
+        unversioned_tags = resp.json().get("tags", [])
+        unversioned_tag_names = [t["name"] for t in unversioned_tags]
+        assert "settings" in unversioned_tag_names
+        assert "users" not in unversioned_tag_names
+
+
+class _LifespanSchema(BaseModel):
+    name: str
+    monthly_fee: float
+
+
+def _multi_version_bundle():
+    class RemoveMonthlyFee(VersionChange):
+        description = "Remove monthly_fee from the schema in the older version"
+        instructions_to_migrate_to_previous_version = [schema(_LifespanSchema).field("monthly_fee").didnt_exist]
+
+    return VersionBundle(
+        HeadVersion(),
+        Version("2023-04-12", RemoveMonthlyFee),
+        Version("2022-11-16"),
+    )
+
+
+def test__lifespan__should_be_entered_exactly_once_per_startup():
+    entered = 0
+    exited = 0
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        nonlocal entered, exited
+        entered += 1
+        yield
+        exited += 1
+
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    async def get_items() -> _LifespanSchema:  # pragma: no cover
+        return _LifespanSchema(name="a", monthly_fee=1.0)
+
+    app = Cadwyn(versions=_multi_version_bundle(), lifespan=lifespan)
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app):
+        assert entered == 1
+    assert entered == 1
+    assert exited == 1
+
+
+def test__on_startup_and_on_shutdown__should_run_exactly_once_per_startup():
+    startups = 0
+    shutdowns = 0
+
+    def on_startup():
+        nonlocal startups
+        startups += 1
+
+    def on_shutdown():
+        nonlocal shutdowns
+        shutdowns += 1
+
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    async def get_items() -> _LifespanSchema:  # pragma: no cover
+        return _LifespanSchema(name="a", monthly_fee=1.0)
+
+    app = Cadwyn(
+        versions=_multi_version_bundle(),
+        on_startup=[on_startup],
+        on_shutdown=[on_shutdown],
+    )
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app):
+        assert startups == 1
+    assert startups == 1
+    assert shutdowns == 1
 
 
 def test__api_version_default_value_with_path_location__should_raise_error():
