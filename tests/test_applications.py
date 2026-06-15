@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, cast
 
 import pytest
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -24,7 +24,6 @@ from tests._resources.versioned_app.app import (
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
-
 
 def test__header_routing__invalid_version_format__error():
     main_app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
@@ -158,6 +157,186 @@ def test__cadwyn__with_dependency_overrides__overrides_should_be_applied():
         assert client.post("/hello").json() == "new"
         assert client.post("/darkness", headers={"x-api-version": "2022-11-16"}).json() == "new"
         assert client.post("/my_old_friend", headers={"x-api-version": "2022-11-16"}).json() == "new"
+
+
+def test__unversioned_include_router__route_added_after_inclusion_is_available():
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
+    parent_router = APIRouter(prefix="/api")
+    child_router = APIRouter()
+
+    def mark_parent_router_dependency(response: Response):
+        response.headers["x-parent-router-dependency"] = "ran"
+
+    parent_router.include_router(
+        child_router,
+        prefix="/health",
+        dependencies=[Depends(mark_parent_router_dependency)],
+    )
+    app.include_router(parent_router)
+
+    @child_router.get("")
+    async def healthcheck():
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        response = client.get("/api/health")
+
+    assert response.status_code == 200, response.json()
+    assert response.json() == {"ok": True}
+    assert response.headers["x-parent-router-dependency"] == "ran"
+
+
+def test__unversioned_include_router__route_added_after_first_request_is_available():
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
+    parent_router = APIRouter(prefix="/api")
+    child_router = APIRouter()
+    parent_router.include_router(child_router, prefix="/late")
+    app.include_router(parent_router)
+
+    with TestClient(app) as client:
+        response = client.get("/api/late/route")
+        assert response.status_code == 404, response.json()
+
+        @child_router.get("/route", name="late_route")
+        async def late_route():
+            return {"late": True}
+
+        assert app.url_path_for("late_route") == "/api/late/route"
+
+        response = client.get("/api/late/route")
+
+    assert response.status_code == 200, response.json()
+    assert response.json() == {"late": True}
+
+
+def test__unversioned_include_router__hidden_late_route_does_not_create_public_openapi_schema():
+    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    parent_router = APIRouter()
+    child_router = APIRouter()
+    parent_router.include_router(child_router, prefix="/internal", include_in_schema=False)
+    app.include_router(parent_router)
+
+    @child_router.get("/health")
+    async def healthcheck():
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        route_response = client.get("/internal/health")
+        schema_response = client.get("/openapi.json?version=unversioned")
+        docs_response = client.get("/docs")
+
+    assert route_response.status_code == 200, route_response.json()
+    assert route_response.json() == {"ok": True}
+    assert schema_response.status_code == 404, schema_response.json()
+    assert "version=unversioned" not in docs_response.text
+
+
+def test__unversioned_include_router__hidden_plain_route_does_not_create_public_openapi_schema():
+    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    router = APIRouter()
+
+    async def hidden_route(_request):
+        return Response("hidden")
+
+    router.add_route("/internal/health", hidden_route, methods=["GET"], include_in_schema=False)
+    app.include_router(router)
+
+    with TestClient(app) as client:
+        route_response = client.get("/internal/health")
+        schema_response = client.get("/openapi.json?version=unversioned")
+        docs_response = client.get("/docs")
+
+    assert route_response.status_code == 200, route_response.text
+    assert route_response.text == "hidden"
+    assert schema_response.status_code == 404, schema_response.json()
+    assert "version=unversioned" not in docs_response.text
+
+
+def test__unversioned_include_router__included_tags_are_used_for_openapi_tag_filtering():
+    app = Cadwyn(
+        versions=VersionBundle(Version("2022-11-16")),
+        openapi_tags=[
+            {"name": "public", "description": "Public operations"},
+            {"name": "private", "description": "Private operations"},
+        ],
+    )
+    parent_router = APIRouter(tags=["private"])
+    child_router = APIRouter()
+    parent_router.include_router(child_router, prefix="/settings", tags=["public"])
+    app.include_router(parent_router)
+
+    @child_router.get("")
+    async def get_settings():
+        return {"settings": True}
+
+    with TestClient(app) as client:
+        route_response = client.get("/settings")
+        response = client.get("/openapi.json?version=unversioned")
+
+    assert route_response.status_code == 200, route_response.json()
+    assert route_response.json() == {"settings": True}
+    assert response.status_code == 200, response.json()
+    tag_names = {tag["name"] for tag in response.json()["tags"]}
+    assert tag_names == {"public", "private"}
+
+
+def test__versioned_include_router__late_route_uses_dependency_overrides():
+    app = Cadwyn(versions=VersionBundle(HeadVersion(), Version("2022-11-16")))
+    parent_router = VersionedAPIRouter(prefix="/api")
+    child_router = VersionedAPIRouter()
+
+    async def old_dependency():
+        raise NotImplementedError
+
+    async def new_dependency():
+        return "new"
+
+    parent_router.include_router(child_router, prefix="/deps")
+    app.generate_and_include_versioned_routers(parent_router)
+
+    @child_router.get("")
+    async def read_dependency_value(dependency: Annotated[str, Depends(old_dependency)]):
+        return dependency
+
+    app.dependency_overrides[old_dependency] = new_dependency
+
+    with TestClient(app) as client:
+        response = client.get("/api/deps", headers={"x-api-version": "2022-11-16"})
+
+    assert response.status_code == 200, response.json()
+    assert response.json() == "new"
+
+
+def test__default_version__unversioned_included_route_added_late_still_has_priority():
+    app = Cadwyn(
+        versions=VersionBundle(HeadVersion(), Version("2022-11-16")),
+        api_version_default_value="2022-11-16",
+    )
+    parent_router = APIRouter(prefix="/api")
+    child_router = APIRouter()
+    parent_router.include_router(child_router, prefix="/items")
+    app.include_router(parent_router)
+
+    versioned_router = VersionedAPIRouter(prefix="/api")
+
+    @versioned_router.get("/items")
+    async def versioned_items():
+        return {"source": "versioned"}
+
+    app.generate_and_include_versioned_routers(versioned_router)
+
+    @child_router.get("")
+    async def unversioned_items():
+        return {"source": "unversioned"}
+
+    with TestClient(app) as client:
+        default_response = client.get("/api/items")
+        versioned_response = client.get("/api/items", headers={"x-api-version": "2022-11-16"})
+
+    assert default_response.status_code == 200, default_response.json()
+    assert default_response.json() == {"source": "unversioned"}
+    assert versioned_response.status_code == 200, versioned_response.json()
+    assert versioned_response.json() == {"source": "versioned"}
 
 
 def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empty__version_should_not_have_any_routes():

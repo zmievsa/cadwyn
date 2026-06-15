@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [7.1.0]
+
+### Added
+
+- Support FastAPI 0.137.1+ included-router trees, including routes added to included routers after inclusion, for Cadwyn's versioned and unversioned routing
+
 ## [7.0.0]
 
 - Breaking change if you relied on lifespan running multiple times: Fixed duplicated lifecycle callbacks in Cadwyn routers, see [this issue](https://github.com/zmievsa/cadwyn/issues/372) for more details

@@ -11,12 +11,9 @@ from typing import (
     cast,
 )
 
-import fastapi.params
 import fastapi.routing
-import fastapi.security.base
-import fastapi.utils
 from fastapi import APIRouter
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, _EffectiveRouteContext, _iter_routes_with_context
 from pydantic import BaseModel
 from starlette.routing import BaseRoute
 from typing_extensions import TypeVar, assert_never
@@ -104,11 +101,26 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
 
 def copy_router(router: _R) -> _R:
     router = copy(router)
-    router.routes = [copy_route(r) for r in router.routes]
+    router.routes = [
+        copy_route(route, effective_route_context)
+        for route, effective_route_context in _iter_routes_with_context(router.routes)
+    ]
+    router._mark_routes_changed()
     return router
 
 
-def copy_route(route: _RouteT) -> _RouteT:
+def copy_route(route: _RouteT, effective_route_context: _EffectiveRouteContext | None = None) -> _RouteT:
+    """Copy a route and materialize FastAPI's include-router context into the copy.
+
+    FastAPI 0.137+ keeps included routers as tree nodes. Its _EffectiveRouteContext is the merged
+    route state produced by that tree: prefix, dependencies, tags, responses, schema flags, etc.
+    Cadwyn mutates copied routes per API version, so it must copy the original route and apply that
+    effective state to the copy. The original router tree is left intact.
+    """
+    if effective_route_context is not None and not isinstance(route, APIRoute):
+        if effective_route_context.starlette_route is not None:
+            return cast("_RouteT", copy(effective_route_context.starlette_route))
+
     if not isinstance(route, APIRoute):
         return copy(route)
 
@@ -120,17 +132,44 @@ def copy_route(route: _RouteT) -> _RouteT:
     # These can hold TypeAdapters for recursive types (e.g. JsonValue) that cause
     # infinite recursion during deepcopy.
     memo: dict[int, Any] = {}
-    for attr in ("dependant", "_flat_dependant", "body_field", "response_model"):
+    for attr in ("dependant", "_flat_dependant", "body_field", "response_model", "dependency_overrides_provider"):
         obj = getattr(route, attr, None)
         if obj is not None:
             memo[id(obj)] = obj
     new_route = deepcopy(route, memo)
-    new_route.dependant = copy(route.dependant)
-    if getattr(route, "_flat_dependant", None) is not None:
-        new_route._flat_dependant = copy(route._flat_dependant)
-    new_route.body_field = route.body_field
-    new_route.dependencies = copy(route.dependencies)
+    if effective_route_context is not None:
+        _apply_effective_route_context_to_route(new_route, effective_route_context)
+        _refresh_route_app(new_route)
+    else:
+        new_route.dependant = copy(route.dependant)
+        if getattr(route, "_flat_dependant", None) is not None:
+            new_route._flat_dependant = copy(route._flat_dependant)
+        new_route.body_field = route.body_field
+        new_route.dependencies = copy(route.dependencies)
     return new_route
+
+
+def _apply_effective_route_context_to_route(route: APIRoute, effective_route_context: _EffectiveRouteContext) -> None:
+    for attr_name, attr_value in vars(effective_route_context).items():
+        if attr_name in {"original_route", "starlette_route"}:
+            continue
+        setattr(route, attr_name, _copy_effective_route_context_attr(attr_name, attr_value))
+
+
+def _copy_effective_route_context_attr(attr_name: str, attr_value: Any) -> Any:
+    if attr_name in {"dependant", "_flat_dependant"} and attr_value is not None:
+        return copy(attr_value)
+    if isinstance(attr_value, (dict, list, set)):
+        return copy(attr_value)
+    return attr_value
+
+
+def _refresh_route_app(route: APIRoute) -> None:
+    route.app = fastapi.routing.request_response(route.get_route_handler())
+
+
+def _route_methods(route: APIRoute) -> set[str]:
+    return route.methods or set()
 
 
 class _EndpointTransformer(Generic[_R, _WR]):
@@ -149,9 +188,12 @@ class _EndpointTransformer(Generic[_R, _WR]):
         self.api_version_parameter_name = api_version_parameter_name
         self.api_version_location: APIVersionLocation = api_version_location
         self.schema_generators = generate_versioned_models(versions)
+        self.head_router = copy_router(parent_router)
 
         self.routes_that_never_existed = [
-            route for route in parent_router.routes if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
+            route
+            for route in self.head_router.routes
+            if isinstance(route, APIRoute) and _DELETED_ROUTE_TAG in route.tags
         ]
 
     def transform(self) -> GeneratedRouters[_R, _WR]:
@@ -165,7 +207,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
             self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(router)
             self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(webhook_router)
 
-            self._attach_routes_to_data_converters(router, self.parent_router, version)
+            self._attach_routes_to_data_converters(router, self.head_router, version)
 
             routers[version.value] = router
             webhook_routers[version.value] = webhook_router
@@ -183,7 +225,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 f"{self.routes_that_never_existed}",
             )
 
-        for route_index, head_route in enumerate(self.parent_router.routes):
+        for route_index, head_route in enumerate(self.head_router.routes):
             if not isinstance(head_route, APIRoute):
                 continue
             _add_request_and_response_params(head_route)
@@ -326,7 +368,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     annotation = route.body_field.field_info.annotation
                     if annotation is not None and lenient_issubclass(annotation, BaseModel):
                         request_bodies.add(annotation)
-                for method in route.methods:
+                for method in _route_methods(route):
                     path_to_route_methods_mapping[route.path][method].add(index)
 
         head_response_models = {model.__cadwyn_original_model__ for model in response_models}
@@ -363,7 +405,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     if deleted_routes:
                         method_union = set()
                         for deleted_route in deleted_routes:
-                            method_union |= deleted_route.methods
+                            method_union |= _route_methods(deleted_route)
                         raise RouterGenerationError(
                             f'Endpoint "{list(method_union)} {instruction.endpoint_path}" you tried to delete in '
                             f'"{version_change.__name__}" was already deleted in a newer version. If you really have '
@@ -372,7 +414,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             f"{[r.endpoint.__name__ for r in deleted_routes]}",
                         )
                     for original_route in original_routes:
-                        methods_to_which_we_applied_changes |= original_route.methods
+                        methods_to_which_we_applied_changes |= _route_methods(original_route)
                         original_route.tags.append(_DELETED_ROUTE_TAG)
                     err = (
                         'Endpoint "{endpoint_methods} {endpoint_path}" you tried to delete in'
@@ -382,7 +424,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     if original_routes:
                         method_union = set()
                         for original_route in original_routes:
-                            method_union |= original_route.methods
+                            method_union |= _route_methods(original_route)
                         raise RouterGenerationError(
                             f'Endpoint "{list(method_union)} {instruction.endpoint_path}" you tried to restore in'
                             f' "{version_change.__name__}" already existed in a newer version. If you really have two '
@@ -408,13 +450,13 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             f"endpoints that can be restored: {[r.endpoint.__name__ for r in e.routes]}",
                         ) from e
                     for deleted_route in deleted_routes:
-                        methods_to_which_we_applied_changes |= deleted_route.methods
+                        methods_to_which_we_applied_changes |= _route_methods(deleted_route)
                         deleted_route.tags.remove(_DELETED_ROUTE_TAG)
 
                         routes_that_never_existed = _get_routes(
                             self.routes_that_never_existed,
                             deleted_route.path,
-                            deleted_route.methods,
+                            _route_methods(deleted_route),
                             deleted_route.endpoint.__name__,
                             is_deleted=True,
                         )
@@ -425,7 +467,8 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             # to remove it because I like its clarity very much
                             routes = routes_that_never_existed
                             raise RouterGenerationError(
-                                f'Endpoint "{list(deleted_route.methods)} {deleted_route.path}" you tried to restore '
+                                f'Endpoint "{list(_route_methods(deleted_route))} {deleted_route.path}" '
+                                "you tried to restore "
                                 f'in "{version_change.__name__}" has {len(routes_that_never_existed)} applicable '
                                 f"routes with the same function name and path that could be restored. This can cause "
                                 f"problems during version generation. Specifically, Cadwyn won't be able to warn "
@@ -439,7 +482,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     )
                 elif isinstance(instruction, EndpointHadInstruction):
                     for original_route in original_routes:
-                        methods_to_which_we_applied_changes |= original_route.methods
+                        methods_to_which_we_applied_changes |= _route_methods(original_route)
                         _apply_endpoint_had_instruction(
                             version_change.__name__,
                             instruction,
@@ -468,7 +511,7 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
     route_map = {}
 
     for route in routes:
-        route_info = _EndpointInfo(route.path, frozenset(route.methods))
+        route_info = _EndpointInfo(route.path, frozenset(_route_methods(route)))
         if route_info in route_map:
             raise RouteAlreadyExistsError(route, route_map[route_info])
         route_map[route_info] = route
@@ -485,7 +528,8 @@ def _add_data_migrations_to_route(
     if not (route.dependant.request_param_name and route.dependant.response_param_name):  # pragma: no cover
         raise CadwynError(
             f"{route.dependant.request_param_name=}, {route.dependant.response_param_name=} "
-            f"for route {list(route.methods)} {route.path} which should not be possible. Please, contact my author.",
+            f"for route {list(_route_methods(route))} {route.path} which should not be possible. "
+            "Please, contact my author.",
         )
 
     route.endpoint = versions._versioned(
@@ -514,7 +558,7 @@ def _apply_endpoint_had_instruction(
             if getattr(original_route, attr_name) == attr:
                 raise RouterGenerationError(
                     f'Expected attribute "{attr_name}" of endpoint'
-                    f' "{list(original_route.methods)} {original_route.path}"'
+                    f' "{list(_route_methods(original_route))} {original_route.path}"'
                     f' to be different in "{version_change_name}", but it was the same.'
                     " It means that your version change has no effect on the attribute"
                     " and can be removed.",
@@ -526,7 +570,7 @@ def _apply_endpoint_had_instruction(
                     new_path_params.discard(api_version_parameter_name)
                 if new_path_params != original_path_params:
                     raise RouterPathParamsModifiedError(
-                        f'When altering the path of "{list(original_route.methods)} {original_route.path}" '
+                        f'When altering the path of "{list(_route_methods(original_route))} {original_route.path}" '
                         f'in "{version_change_name}", you have tried to change its path params '
                         f'from "{list(original_path_params)}" to "{list(new_path_params)}". It is not allowed to '
                         "change the path params of a route because the endpoint was created to handle the old path "
@@ -552,7 +596,7 @@ def _get_routes(
         if (
             isinstance(route, fastapi.routing.APIRoute)
             and route.path.rstrip("/") == endpoint_path
-            and set(route.methods).issubset(endpoint_methods)
+            and _route_methods(route).issubset(endpoint_methods)
             and (endpoint_func_name is None or route.endpoint.__name__ == endpoint_func_name)
             and (_DELETED_ROUTE_TAG in route.tags) == is_deleted
         )
@@ -563,7 +607,7 @@ def _get_route_from_func(
     routes: Sequence[BaseRoute],
     endpoint: Endpoint,
 ) -> Union[fastapi.routing.APIRoute, None]:
-    for route in routes:
+    for route, _effective_route_context in _iter_routes_with_context(routes):
         if isinstance(route, fastapi.routing.APIRoute) and (route.endpoint == endpoint):
             return route
     return None
