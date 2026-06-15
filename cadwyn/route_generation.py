@@ -117,9 +117,12 @@ def copy_route(route: _RouteT, effective_route_context: _EffectiveRouteContext |
     Cadwyn mutates copied routes per API version, so it must copy the original route and apply that
     effective state to the copy. The original router tree is left intact.
     """
-    if effective_route_context is not None and not isinstance(route, APIRoute):
-        if effective_route_context.starlette_route is not None:
-            return cast("_RouteT", copy(effective_route_context.starlette_route))
+    if (
+        effective_route_context is not None
+        and not isinstance(route, APIRoute)
+        and effective_route_context.starlette_route is not None
+    ):
+        return cast("_RouteT", copy(effective_route_context.starlette_route))
 
     if not isinstance(route, APIRoute):
         return copy(route)

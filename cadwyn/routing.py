@@ -106,7 +106,7 @@ class _RootCadwynAPIRouter(APIRouter):
         routes_before = len(self.routes)
         unversioned_routes_before = len(self.unversioned_routes)
         super().include_router(*args, **kwargs)
-        if len(self.unversioned_routes) == unversioned_routes_before:
+        if len(self.unversioned_routes) == unversioned_routes_before:  # pragma: no branch
             self.unversioned_routes.extend(self.routes[routes_before:])
 
     @same_definition_as_in(APIRouter.add_route)

@@ -25,6 +25,7 @@ from tests._resources.versioned_app.app import (
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
 
+
 def test__header_routing__invalid_version_format__error():
     main_app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     with pytest.warns(DeprecationWarning):

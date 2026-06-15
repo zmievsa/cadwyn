@@ -44,6 +44,8 @@ from tests.conftest import (
 
 Default = object()
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
+
+
 class StrEnum(str, Enum):
     a = auto()
 

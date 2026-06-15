@@ -52,9 +52,7 @@ CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
 
 
-def _get_effective_include_in_schema(
-    route: BaseRoute, effective_route_context: _EffectiveRouteContext | None
-) -> bool:
+def _get_effective_include_in_schema(route: BaseRoute, effective_route_context: _EffectiveRouteContext | None) -> bool:
     if effective_route_context is not None:
         starlette_route = effective_route_context.starlette_route
         if starlette_route is not None:
