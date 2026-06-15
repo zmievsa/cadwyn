@@ -8,16 +8,18 @@ from uuid import UUID
 
 import pytest
 import svcs
-from fastapi import APIRouter, Body, Depends, UploadFile
-from fastapi.routing import APIRoute
+from fastapi import APIRouter, Body, Depends, Response, UploadFile
+from fastapi.routing import APIRoute, _EffectiveRouteContext
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.security.http import HTTPBasic
+from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, JsonValue
 from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, PlainTextResponse
+from starlette.routing import Route
 from typing_extensions import Any, NewType, TypeAlias, TypeAliasType, get_args
 
 from cadwyn import VersionBundle, VersionedAPIRouter
@@ -29,7 +31,7 @@ from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.data import RequestInfo, ResponseInfo, convert_response_to_previous_version_for
 from cadwyn.structure.enums import enum
-from cadwyn.structure.versions import VersionChange
+from cadwyn.structure.versions import HeadVersion, VersionChange
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
@@ -140,6 +142,42 @@ def test__endpoint_existed(
 
     assert len(routes_2001) == 2
     assert endpoints_equal(routes_2001[1].endpoint, test_endpoint_post)
+
+
+def test__endpoint_existed__route_from_included_router(
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+):
+    router = VersionedAPIRouter()
+    child_router = VersionedAPIRouter()
+
+    @child_router.get("/test")
+    async def test_endpoint():
+        raise NotImplementedError
+
+    router.include_router(child_router)
+    router.only_exists_in_older_versions(test_endpoint)
+
+    routes_2000, routes_2001 = create_versioned_api_routes(
+        version_change(endpoint("/test", ["GET"]).existed),
+        router=router,
+    )
+
+    assert len(routes_2000) == 2
+    assert endpoints_equal(routes_2000[1].endpoint, test_endpoint)
+    assert len(routes_2001) == 1
+
+
+def test__copy_route__copies_plain_route_when_effective_context_has_no_starlette_route():
+    def plain_route(_request):
+        return PlainTextResponse("plain")
+
+    route = Route("/plain", plain_route, methods=["GET"])
+    copied_route = copy_route(route, _EffectiveRouteContext(original_route=route))
+
+    assert copied_route is not route
+    assert copied_route.path == "/plain"
+    assert copied_route.endpoint is plain_route
+    assert copied_route.endpoint(None).body == b"plain"
 
 
 def test__endpoint_existed__endpoint_removed_in_latest_but_never_restored__should_raise_error(
@@ -279,6 +317,198 @@ def test__endpoint_had__path_rename_with_api_version_in_prefix__should_not_raise
     client_v2 = TestClient(cadwyn_app)
     assert client_v2.get("/v2/new-name").json() == 83
     assert client_v2.get("/v1/old-name").json() == 83
+
+
+def test__versioned_router_generation__uses_routes_added_to_included_router_after_inclusion():
+    api_router = VersionedAPIRouter(prefix="/api/v1")
+    widgets_router = VersionedAPIRouter()
+
+    def mark_included_router_dependency(response: Response):
+        response.headers["x-included-router-dependency"] = "ran"
+
+    api_router.include_router(
+        widgets_router,
+        prefix="/widgets",
+        dependencies=[Depends(mark_included_router_dependency)],
+    )
+
+    class V2003(VersionChange):
+        description = ""
+        instructions_to_migrate_to_previous_version = [
+            endpoint("/api/v1/widgets/{widget_id}/details", ["GET"]).had(path="/api/v1/widgets/{widget_id}"),
+        ]
+
+    class V2002(VersionChange):
+        description = ""
+        instructions_to_migrate_to_previous_version = [
+            endpoint("/api/v1/widgets/{widget_id}", ["GET"]).had(path="/api/v1/items/{widget_id}"),
+        ]
+
+    app = Cadwyn(
+        versions=VersionBundle(
+            HeadVersion(),
+            Version("2003-01-01", V2003),
+            Version("2002-01-01", V2002),
+            Version("2001-01-01"),
+        )
+    )
+    app.generate_and_include_versioned_routers(api_router)
+
+    @widgets_router.get("/{widget_id}/details")
+    async def get_widget(widget_id: int):
+        return {"widget_id": widget_id}
+
+    with TestClient(app) as client:
+        response_2003 = client.get("/api/v1/widgets/7/details", headers={"x-api-version": "2003-01-01"})
+        response_2002 = client.get("/api/v1/widgets/7", headers={"x-api-version": "2002-01-01"})
+        response_2001 = client.get("/api/v1/items/7", headers={"x-api-version": "2001-01-01"})
+
+    for response in (response_2003, response_2002, response_2001):
+        assert response.status_code == 200, response.json()
+        assert response.json() == {"widget_id": 7}
+        assert response.headers["x-included-router-dependency"] == "ran"
+
+
+def test__versioned_router_generation__preserves_included_route_openapi_metadata():
+    class Widget(BaseModel):
+        name: str
+
+    api_router = VersionedAPIRouter(prefix="/api/v1", tags=["api"], responses={400: {"description": "Bad API"}})
+    widgets_router = VersionedAPIRouter(tags=["widgets"])
+
+    api_router.include_router(
+        widgets_router,
+        prefix="/widgets",
+        tags=["included"],
+        responses={401: {"description": "Unauthorized"}},
+        deprecated=True,
+    )
+
+    app = Cadwyn(
+        versions=VersionBundle(
+            HeadVersion(),
+            Version("2003-01-01"),
+            Version("2002-01-01"),
+            Version("2001-01-01"),
+        )
+    )
+    app.generate_and_include_versioned_routers(api_router)
+
+    @widgets_router.post(
+        "/{widget_id}",
+        response_model=Widget,
+        status_code=201,
+        operation_id="createWidget",
+        tags=["handler"],
+        responses={404: {"description": "Missing widget"}},
+        openapi_extra={"x-widget-operation": "create"},
+    )
+    async def create_widget(widget_id: int, body: Widget):
+        return body
+
+    with TestClient(app) as client:
+        route_response = client.post(
+            "/api/v1/widgets/7",
+            headers={"x-api-version": "2003-01-01"},
+            json={"name": "hammer"},
+        )
+        schema_response = client.get("/openapi.json?version=2003-01-01")
+
+    assert route_response.status_code == 201, route_response.json()
+    assert route_response.json() == {"name": "hammer"}
+    assert schema_response.status_code == 200, schema_response.json()
+    operation = schema_response.json()["paths"]["/api/v1/widgets/{widget_id}"]["post"]
+    assert operation["deprecated"] is True
+    assert operation["operationId"] == "createWidget"
+    assert operation["x-widget-operation"] == "create"
+    assert operation["tags"] == ["api", "included", "widgets", "handler"]
+    assert operation["responses"]["201"]["description"] == "Successful Response"
+    assert operation["responses"]["400"]["description"] == "Bad API"
+    assert operation["responses"]["401"]["description"] == "Unauthorized"
+    assert operation["responses"]["404"]["description"] == "Missing widget"
+
+
+def test__versioned_router_generation__hidden_included_route_still_routes_but_is_removed_from_openapi():
+    api_router = VersionedAPIRouter(prefix="/api")
+    internal_router = VersionedAPIRouter()
+    api_router.include_router(internal_router, prefix="/internal", include_in_schema=False)
+
+    app = Cadwyn(versions=VersionBundle(HeadVersion(), Version("2022-11-16")))
+    app.generate_and_include_versioned_routers(api_router)
+
+    @internal_router.get("/health")
+    async def healthcheck():
+        return {"ok": True}
+
+    with TestClient(app) as client:
+        route_response = client.get("/api/internal/health", headers={"x-api-version": "2022-11-16"})
+        schema_response = client.get("/openapi.json?version=2022-11-16")
+
+    assert route_response.status_code == 200, route_response.json()
+    assert route_response.json() == {"ok": True}
+    assert "/api/internal/health" not in schema_response.json()["paths"]
+
+
+def test__versioned_router_generation__materializes_plain_routes_and_mounts_added_after_inclusion(tmp_path):
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "hello.txt").write_text("Hello World")
+
+    api_router = VersionedAPIRouter(prefix="/api")
+    tools_router = VersionedAPIRouter()
+    api_router.include_router(tools_router, prefix="/tools")
+
+    app = Cadwyn(versions=VersionBundle(HeadVersion(), Version("2022-11-16")))
+    app.generate_and_include_versioned_routers(api_router)
+
+    async def plain_route(_request):
+        return PlainTextResponse("plain")
+
+    tools_router.add_route("/plain", plain_route, methods=["GET"])
+    tools_router.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    with TestClient(app) as client:
+        plain_response = client.get("/api/tools/plain", headers={"x-api-version": "2022-11-16"})
+        static_response = client.get("/api/tools/static/hello.txt", headers={"x-api-version": "2022-11-16"})
+
+    assert plain_response.status_code == 200, plain_response.text
+    assert plain_response.text == "plain"
+    assert static_response.status_code == 200, static_response.text
+    assert static_response.text == "Hello World"
+
+
+def test__add_header_versioned_routers__uses_routes_added_to_included_router_after_cadwyn_inclusion():
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
+    api_router = APIRouter(prefix="/api")
+    items_router = APIRouter()
+
+    def mark_included_router_dependency(response: Response):
+        response.headers["x-included-router-dependency"] = "ran"
+
+    api_router.include_router(
+        items_router,
+        prefix="/items",
+        dependencies=[Depends(mark_included_router_dependency)],
+    )
+
+    with pytest.warns(DeprecationWarning, match="Use generate_and_include_versioned_routers"):
+        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+            api_router,
+            header_value="2022-11-16",
+        )
+
+    @items_router.get("/{item_id}")
+    async def get_item(item_id: int):
+        return {"item_id": item_id}
+
+    with TestClient(app) as client:
+        response = client.get("/api/items/11", headers={"x-api-version": "2022-11-16"})
+        schema_response = client.get("/openapi.json?version=2022-11-16")
+
+    assert response.status_code == 200, response.json()
+    assert response.json() == {"item_id": 11}
+    assert response.headers["x-included-router-dependency"] == "ran"
+    assert "/api/items/{item_id}" in schema_response.json()["paths"]
 
 
 def test__endpoint_had__another_path_with_the_other_migration_at_the_same_time__should_require_old_name(

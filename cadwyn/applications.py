@@ -18,6 +18,7 @@ from fastapi.openapi.docs import (
 from fastapi.openapi.utils import get_openapi
 from fastapi.params import Depends
 from fastapi.responses import HTMLResponse
+from fastapi.routing import _EffectiveRouteContext, _IncludedRouter, _iter_routes_with_context
 from fastapi.templating import Jinja2Templates
 from fastapi.utils import generate_unique_id
 from starlette.middleware import Middleware
@@ -38,7 +39,7 @@ from cadwyn.middleware import (
     VersionPickingMiddleware,
     _generate_api_version_dependency,
 )
-from cadwyn.route_generation import generate_versioned_routers
+from cadwyn.route_generation import copy_route, generate_versioned_routers
 from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.structure import VersionBundle
 
@@ -49,6 +50,22 @@ if TYPE_CHECKING:
 
 CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
+
+
+def _get_effective_include_in_schema(route: BaseRoute, effective_route_context: _EffectiveRouteContext | None) -> bool:
+    if effective_route_context is not None:
+        starlette_route = effective_route_context.starlette_route
+        if starlette_route is not None:
+            return bool(getattr(starlette_route, "include_in_schema", False))
+        return bool(effective_route_context.include_in_schema)
+    return bool(getattr(route, "include_in_schema", False))
+
+
+def _materialize_routes(routes: Sequence[BaseRoute]) -> list[BaseRoute]:
+    return [
+        copy_route(route, effective_route_context) if effective_route_context is not None else route
+        for route, effective_route_context in _iter_routes_with_context(routes)
+    ]
 
 
 @dataclasses.dataclass(**DATACLASS_SLOTS)
@@ -255,7 +272,13 @@ class Cadwyn(FastAPI):
         unversioned_router = APIRouter(**self._kwargs_to_router)
         self._add_utility_endpoints(unversioned_router)
         self._add_default_versioned_routers()
+        route_count_before_include = len(self.router.routes)
+        unversioned_route_count_before_include = len(self.router.unversioned_routes)
         self.include_router(unversioned_router)
+        utility_routes = _materialize_routes(self.router.routes[route_count_before_include:])
+        self.router.routes[route_count_before_include:] = utility_routes
+        self.router.unversioned_routes[unversioned_route_count_before_include:] = utility_routes
+        self.router._mark_routes_changed()
         self.add_middleware(
             versioning_middleware_class,
             api_version_parameter_name=api_version_parameter_name,
@@ -411,15 +434,19 @@ class Cadwyn(FastAPI):
         )
 
     def _there_are_public_unversioned_routes(self):
-        return any(isinstance(route, Route) and route.include_in_schema for route in self.router.unversioned_routes)
+        return any(
+            isinstance(route, Route) and _get_effective_include_in_schema(route, effective_route_context)
+            for route, effective_route_context in _iter_routes_with_context(self.router.unversioned_routes)
+        )
 
     def _filter_openapi_tags(self, routes: list) -> Union[list[dict[str, Any]], None]:
         if not self.openapi_tags:
             return self.openapi_tags
         used_tags: set[str | Enum] = set()
-        for route in routes:
-            if isinstance(route, routing.APIRoute) and route.include_in_schema:
-                used_tags.update(route.tags)
+        for route, effective_route_context in _iter_routes_with_context(routes):
+            route_data = cast("Any", effective_route_context or route)
+            if isinstance(route, routing.APIRoute) and route_data.include_in_schema:
+                used_tags.update(route_data.tags)
         return [tag for tag in self.openapi_tags if tag.get("name") in used_tags]
 
     async def swagger_dashboard(self, req: Request) -> Response:
@@ -505,8 +532,8 @@ class Cadwyn(FastAPI):
             )
             added_routes.append(versioned_router.routes[-1])
 
-        added_route_count = 0
         for router in (first_router, *other_routers):
+            route_count_before_include = len(versioned_router.routes)
             self.router.versioned_routers[version].include_router(
                 router,
                 dependencies=[
@@ -522,9 +549,15 @@ class Cadwyn(FastAPI):
                     )
                 ],
             )
-            added_route_count += len(router.routes)
+            newly_added_routes = versioned_router.routes[route_count_before_include:]
+            if not any(isinstance(route, _IncludedRouter) for route in router.routes):
+                # There is no nested FastAPI include tree to preserve, so Cadwyn can materialize the plain
+                # routes here and keep the root router's version bookkeeping stable.
+                newly_added_routes = _materialize_routes(newly_added_routes)
+                versioned_router.routes[route_count_before_include:] = newly_added_routes
+                versioned_router._mark_routes_changed()
+            added_routes.extend(newly_added_routes)
 
-        added_routes.extend(versioned_router.routes[-added_route_count:])
-        self.router.routes.extend(added_routes)
+        self.router.extend_routes(added_routes)
 
         return added_routes

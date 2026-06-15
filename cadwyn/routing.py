@@ -101,6 +101,14 @@ class _RootCadwynAPIRouter(APIRouter):
         super().add_api_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
+    @same_definition_as_in(APIRouter.include_router)
+    def include_router(self, *args: Any, **kwargs: Any):
+        routes_before = len(self.routes)
+        unversioned_routes_before = len(self.unversioned_routes)
+        super().include_router(*args, **kwargs)
+        if len(self.unversioned_routes) == unversioned_routes_before:  # pragma: no branch
+            self.unversioned_routes.extend(self.routes[routes_before:])
+
     @same_definition_as_in(APIRouter.add_route)
     def add_route(self, *args: Any, **kwargs: Any):
         super().add_route(*args, **kwargs)
@@ -162,3 +170,7 @@ class _RootCadwynAPIRouter(APIRouter):
                     return None
 
         return await self.default(scope, receive, send)
+
+    def extend_routes(self, routes: Sequence[BaseRoute]) -> None:
+        self.routes.extend(routes)
+        self._mark_routes_changed()
