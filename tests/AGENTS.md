@@ -4,3 +4,4 @@
 - New tests should reuse existing fixtures where appropriate to minimize future rework
 - New tests should not "overtest" and re-test the logic that is already covered by other tests -- they should be focused around their own functionality
 - At the end of the session, run all tests against all supported versions with tox
+- Never skip, return early, downgrade assertions, or silently pass because of missing environment. Let the test hard-fail, then fix the environment or implementation
