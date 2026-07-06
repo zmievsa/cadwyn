@@ -2,11 +2,11 @@
 
 ## Add a new endpoint
 
-It is not a breaking change so it's recommended to add it to all versions. If you believe that you still need it, use [following migration](../../concepts/endpoint_migrations.md#defining-endpoints-that-didnt-exist-in-old-versions).
+It is not a breaking change so it's recommended to add it to all versions. If you believe that you still need it, use [following migration](../../concepts/endpoint_migrations.md#defining-endpoints-that-did-not-exist-for-old-versions).
 
 ## Delete an old endpoint
 
-See [concepts](../../concepts/endpoint_migrations.md#defining-endpoints-that-didnt-exist-in-new-versions)
+See [concepts](../../concepts/endpoint_migrations.md#defining-endpoints-that-did-not-exist-for-new-versions)
 
 ## Change an attribute of an endpoint
 

@@ -1,0 +1,5 @@
+dirs:
+  - .
+useGitIgnore: true
+timeout: 5000
+retryCount: 1

@@ -3,12 +3,14 @@
 ## Setting up the environment
 
 * The minimum supported version is Python 3.10. It is recommended to manage multiple Python versions on your system with [uv](https://docs.astral.sh/uv/)
+* Running the full local check suite also requires Node.js and npm for link validation
 * We maintain a Makefile with several commands to help with common tasks
 
 1. Install [uv](https://docs.astral.sh/uv/)
-2. Run `uv sync` to create a virtual environment and install the dependencies
-3. Install [pre-commit](https://pre-commit.com/) using uv: `uv tool install pre-commit`
-4. Run `pre-commit install --install-hooks` to install pre-commit hooks
+2. Install the standalone developer tools with `uv tool install prek` and `uv tool install tox`
+3. Run `uv sync` to create a virtual environment and install the dependencies
+4. Install [prek](https://prek.j178.dev/) hooks with `prek install -f`
+5. Run `make check` to verify that the local CI-equivalent checks pass
 
 ## Code contributions
 
@@ -39,7 +41,15 @@ directory structure as the `cadwyn` module. If you are adding a test
 case, it should be located within the correct submodule of `tests`. E.g.
 tests for `cadwyn/codegen.py` reside in `tests/codegen`.
 
-`make test` to run tests located in `tests`
+`make check` runs the local CI-equivalent suite with tox's default automatic
+parallelism. It runs the supported Python test matrix, tutorial tests, coverage,
+prek linting, documentation build, link validation, pyright, and package build
+checks.
+
+If `prek` or `tox` is missing, the Makefile will stop early and print the
+matching `uv tool install ...` command to install it.
+
+`make test` runs the same full check suite.
 
 ### Running type checkers
 
