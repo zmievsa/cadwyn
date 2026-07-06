@@ -1,7 +1,8 @@
 from enum import Enum, auto
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, StringConstraints, conint
+from annotated_types import Interval
+from pydantic import BaseModel, Field, StringConstraints
 
 
 class AlmostEmptyEnum(Enum):
@@ -28,6 +29,6 @@ class ModelWithWeirdFields(A):
     bar: list[int] = Field(default_factory=my_default_factory)
     baz: Literal[MyEnum.foo]
     saz: Annotated[str, StringConstraints(to_upper=True)]
-    laz: conint(gt=12)
+    laz: Annotated[int, None, Interval(gt=12), None] = Field(gt=12)
     taz: Union[int, str, None] = Field(default_factory=lambda: 83)  # pragma: no branch
     naz: list[int] = Field(default=[1, 2, 3])

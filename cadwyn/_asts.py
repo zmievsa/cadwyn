@@ -1,9 +1,9 @@
 import ast
+import dataclasses
 import inspect
 import sys
-from collections.abc import Callable
 from enum import Enum, auto
-from types import GenericAlias, LambdaType
+from types import FunctionType, GenericAlias, LambdaType
 from typing import (  # noqa: UP035
     Any,
     List,
@@ -23,13 +23,12 @@ NoneType = type(None)
 
 
 # A parent type of typing._GenericAlias
-_BaseGenericAlias = cast("type", type(List[int])).mro()[1]  # noqa: UP006
+_BaseGenericAlias: type = cast("type", type(List[int])).mro()[1]  # noqa: UP006
 
 # type(list[int]) and type(List[int]) are different which is why we have to do this.
 # Please note that this problem is much wider than just lists which is why we use typing._BaseGenericAlias
 # instead of typing._GenericAlias.
-GenericAliasUnion = Union[GenericAlias, _BaseGenericAlias]
-GenericAliasUnionArgs = get_args(GenericAliasUnion)
+GenericAliasUnionArgs = (GenericAlias, _BaseGenericAlias)
 if sys.version_info >= (3, 14):  # pragma: no cover
     # In Python 3.14, Union types are no longer subtypes of _BaseGenericAlias
     GenericAliasUnionArgs = (*GenericAliasUnionArgs, type(Union[int, str]))
@@ -56,7 +55,7 @@ def get_fancy_repr(value: Any) -> Any:
         return transform_auto(value)
     if isinstance(value, LambdaType) and _LambdaFunctionName == value.__name__:
         return transform_lambda(value)
-    if inspect.isfunction(value):
+    if isinstance(value, FunctionType):
         return transform_function(value)
     else:
         return transform_other(value)
@@ -67,7 +66,7 @@ def transform_grouped_metadata(value: "annotated_types.GroupedMetadata"):
 
     modified_fields = [
         (key, getattr(value, key))
-        for key in value.__dataclass_fields__  # pyright: ignore[reportAttributeAccessIssue]
+        for key in (field.name for field in dataclasses.fields(type(value)))
         if getattr(value, key) != getattr(empty_obj, key)
     ]
 
@@ -89,7 +88,7 @@ def transform_dict(value: dict) -> Any:
     )
 
 
-def transform_generic_alias(value: GenericAliasUnion) -> Any:
+def transform_generic_alias(value: object) -> Any:
     return f"{get_fancy_repr(get_origin(value))}[{', '.join(get_fancy_repr(a) for a in get_args(value))}]"
 
 
@@ -119,7 +118,7 @@ def transform_lambda(value: LambdaType) -> Any:
     return _get_lambda_source_from_default_factory(inspect.getsource(value).strip(" \n\t."))
 
 
-def transform_function(value: Callable) -> Any:
+def transform_function(value: FunctionType) -> Any:
     return PlainRepr(value.__name__)
 
 

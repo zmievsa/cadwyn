@@ -140,7 +140,7 @@ def version_change(
     **body_items: Any,
 ) -> type[VersionChange]:
     return type(VersionChange)(
-        "MyVersionChange",  # pyright: ignore
+        "MyVersionChange",
         (VersionChange,),
         {
             "description": "",

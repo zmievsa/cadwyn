@@ -3,4 +3,4 @@
 import collections
 from collections.abc import Callable
 
-collections.Callable = Callable  # pyright: ignore[reportAttributeAccessIssue]
+vars(collections)["Callable"] = Callable

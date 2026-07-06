@@ -49,11 +49,15 @@ class PlainRepr(str):
         return str(self)
 
 
-def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
-    def decorator(f: Callable) -> _T:
-        return f  # pyright: ignore[reportReturnType]
+def same_definition_as_in(t: _T) -> Callable[[_T], _T]:
+    def decorator(f: _T) -> _T:
+        return f
 
     return decorator
+
+
+def set_runtime_attr(obj: object, name: str, value: object) -> None:
+    setattr(obj, name, value)
 
 
 def fully_unwrap_decorator(func: Callable, is_pydantic_v1_style_validator: Any):

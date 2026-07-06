@@ -1,8 +1,7 @@
 import copy
 import sys
-from enum import auto
 from logging import getLogger
-from typing import Any, Literal, TypeVar, Union, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, cast, get_args
 
 from fastapi._compat import (
     get_definitions,
@@ -13,7 +12,7 @@ from fastapi.openapi.utils import (
     get_openapi,
 )
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field, RootModel, create_model
 
 from cadwyn._asts import GenericAliasUnionArgs
 from cadwyn._utils import ZIP_STRICT_FALSE, Sentinel
@@ -38,7 +37,12 @@ from .structure.schemas import (
     ValidatorExistedInstruction,
 )
 
-if sys.version_info >= (3, 11):  # pragma: no cover
+if TYPE_CHECKING:
+    from enum import Enum
+
+    class StrEnum(str, Enum): ...
+
+elif sys.version_info >= (3, 11):  # pragma: no cover
     from enum import StrEnum
 else:  # pragma: no cover
     from backports.strenum import StrEnum
@@ -89,7 +93,7 @@ def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -
                     version_change,
                     generator_from_newer_version,
                     generator_from_older_version,
-                    schemas_from_older_version,  # pyright: ignore[reportArgumentType]
+                    schemas_from_older_version,
                     cast("list[APIRoute]", routes_from_newer_version),
                 )
                 if changelog_entry is not None:  # pragma: no branch # This should never happen
@@ -153,24 +157,26 @@ def _get_all_pydantic_models_from_generic(annotation: Any) -> list[type[BaseMode
 
 
 def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: str) -> dict:
-    class CadwynDummyModelForRepresentation(BaseModel):
-        my_field: model
+    cadwyn_dummy_model_for_representation = create_model(
+        "CadwynDummyModelForRepresentation",
+        my_field=(model, ...),
+    )
 
     fields = [
         ModelField(
-            CadwynDummyModelForRepresentation.model_fields["my_field"],
+            cadwyn_dummy_model_for_representation.model_fields["my_field"],
             "my_field",
         ),
     ]
     model_name_map = get_model_name_map(
         get_flat_models_from_fields(
-            fields,  # pyright: ignore[reportArgumentType]
+            fields,
             known_models=set(),
         )
     )
 
     _, definitions = get_definitions(
-        fields=fields,  # pyright: ignore[reportArgumentType]
+        fields=fields,
         model_name_map=model_name_map,
         separate_input_output_schemas=False,
     )
@@ -191,9 +197,9 @@ class ChangelogEntryType(StrEnum):
 
 
 class CadwynAttributeChangeStatus(StrEnum):
-    added = auto()
-    changed = auto()
-    removed = auto()
+    added = "added"
+    changed = "changed"
+    removed = "removed"
 
 
 class CadwynEndpointAttributeChange(BaseModel):
@@ -209,9 +215,7 @@ class CadwynAttributeChange(BaseModel):
 
 
 class CadwynFieldAttributesWereChangedChangelogEntry(BaseModel):
-    type: Literal[ChangelogEntryType.schema_field_attributes_changed] = (
-        ChangelogEntryType.schema_field_attributes_changed
-    )
+    type: Literal["schema.field.attributes.changed"] = "schema.field.attributes.changed"
     models: list[str]
     field: str
     attribute_changes: list[CadwynAttributeChange]
@@ -222,20 +226,20 @@ class CadwynModelModifiedAttributes(BaseModel):
 
 
 class CadwynSchemaWasChangedChangelogEntry(BaseModel):
-    type: Literal[ChangelogEntryType.schema_changed] = ChangelogEntryType.schema_changed
+    type: Literal["schema.changed"] = "schema.changed"
     model: str
     modified_attributes: CadwynModelModifiedAttributes
 
 
 class CadwynSchemaFieldWasAddedChangelogEntry(BaseModel):
-    type: Literal[ChangelogEntryType.schema_field_added] = ChangelogEntryType.schema_field_added
+    type: Literal["schema.field.added"] = "schema.field.added"
     models: list[str]
     field: str
     field_info: dict[str, Any]
 
 
 class CadwynSchemaFieldWasRemovedChangelogEntry(BaseModel):
-    type: Literal[ChangelogEntryType.schema_field_removed] = ChangelogEntryType.schema_field_removed
+    type: Literal["schema.field.removed"] = "schema.field.removed"
     models: list[str]
     field: str
 
@@ -246,13 +250,13 @@ class CadwynEnumMember(BaseModel):
 
 
 class CadwynEnumMembersWereAddedChangelogEntry(BaseModel):
-    type: Literal[ChangelogEntryType.enum_members_added] = ChangelogEntryType.enum_members_added
+    type: Literal["enum.members.added"] = "enum.members.added"
     enum: str
     members: list[CadwynEnumMember]
 
 
 class CadwynEnumMembersWereChangedChangelogEntry(BaseModel):
-    type: Literal[ChangelogEntryType.enum_members_removed] = ChangelogEntryType.enum_members_removed
+    type: Literal["enum.members.removed"] = "enum.members.removed"
     enum: str
     member_changes: list[CadwynAttributeChange]
 
@@ -269,20 +273,20 @@ class HTTPMethod(StrEnum):
 
 
 class CadwynEndpointHadChangelogEntry(BaseModel):
-    type: Literal[ChangelogEntryType.endpoint_changed] = ChangelogEntryType.endpoint_changed
+    type: Literal["endpoint.changed"] = "endpoint.changed"
     path: str
     methods: list[HTTPMethod]
     changes: list[CadwynEndpointAttributeChange]
 
 
 class CadwynEndpointWasAddedChangelogEntry(BaseModel):
-    type: Literal[ChangelogEntryType.endpoint_added] = ChangelogEntryType.endpoint_added
+    type: Literal["endpoint.added"] = "endpoint.added"
     path: str
     methods: list[HTTPMethod]
 
 
 class CadwynEndpointWasRemovedChangelogEntry(BaseModel):
-    type: Literal[ChangelogEntryType.endpoint_removed] = ChangelogEntryType.endpoint_removed
+    type: Literal["endpoint.removed"] = "endpoint.removed"
     path: str
     methods: list[HTTPMethod]
 

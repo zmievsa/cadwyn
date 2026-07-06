@@ -13,6 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, Requ
 from starlette.types import ASGIApp
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
+from cadwyn._utils import set_runtime_attr
 from cadwyn.structure.common import VersionType
 
 
@@ -61,27 +62,30 @@ def _generate_api_version_dependency(
     title: Optional[str] = None,
     description: Optional[str] = None,
 ):
-    def api_version_dependency(**kwargs: Any):
+    def api_version_dependency(**kwargs: Any) -> Any:
         # TODO: What do I return?
         return next(iter(kwargs.values()))
 
-    api_version_dependency.__signature__ = inspect.Signature(
-        parameters=[
-            inspect.Parameter(
-                api_version_pythonic_parameter_name,
-                inspect.Parameter.KEYWORD_ONLY,
-                annotation=Annotated[
-                    validation_data_type,
-                    fastapi_depends_class(
-                        openapi_examples={"default": {"value": default_value}},
-                        title=title,
-                        description=description,
-                    ),
-                ],
-                # Path-based parameters do not support a default value in FastAPI :(
-                default=default_value if fastapi_depends_class != fastapi.Path else inspect.Signature.empty,
-            ),
-        ],
+    set_runtime_attr(
+        api_version_dependency,
+        "__signature__",
+        inspect.Signature(
+            parameters=[
+                inspect.Parameter(
+                    api_version_pythonic_parameter_name,
+                    inspect.Parameter.KEYWORD_ONLY,
+                    annotation=Annotated[
+                        validation_data_type,
+                        fastapi_depends_class(
+                            openapi_examples={"default": {"value": default_value}},
+                            title=title,
+                            description=description,
+                        ),
+                    ],
+                    default=default_value if fastapi_depends_class != fastapi.Path else inspect.Signature.empty,
+                )
+            ]
+        ),
     )
     return api_version_dependency
 
@@ -114,10 +118,11 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         api_version = self._api_version_manager.get(request)
 
         if api_version is None:
-            if callable(self.api_version_default_value):
-                api_version = await self.api_version_default_value(request)
+            api_version_default_value = self.api_version_default_value
+            if isinstance(api_version_default_value, str) or api_version_default_value is None:
+                api_version = api_version_default_value
             else:
-                api_version = self.api_version_default_value
+                api_version = await api_version_default_value(request)
             DEFAULT_API_VERSION_VAR.set(api_version)
 
         self.api_version_var.set(api_version)

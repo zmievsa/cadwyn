@@ -1,6 +1,6 @@
 import re
 from contextvars import ContextVar
-from typing import Any, Union, get_args
+from typing import TYPE_CHECKING, Any, Union, get_args
 
 import pytest
 from pydantic import BaseModel
@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from cadwyn.applications import Cadwyn
 from cadwyn.exceptions import CadwynError, CadwynStructureError, LintingError
 from cadwyn.structure import (
+    RequestInfo,
+    ResponseInfo,
     Version,
     VersionBundle,
     VersionChange,
@@ -101,7 +103,7 @@ class TestVersionChange:
 
             class DummySubClass(VersionChange):
                 description = "dummy description"
-                instructions_to_migrate_to_previous_version = True  # pyright: ignore[reportAssignmentType]
+                instructions_to_migrate_to_previous_version = True
 
     def test__instructions_to_migrate_to_previous_version__non_instruction_specified_in_list__should_raise_error(self):
         with pytest.raises(
@@ -113,7 +115,7 @@ class TestVersionChange:
 
             class DummySubClass(VersionChange):
                 description = "dummy description"
-                instructions_to_migrate_to_previous_version = [True]  # pyright: ignore[reportAssignmentType]
+                instructions_to_migrate_to_previous_version = [True]
 
     def test__non_instruction_attribute_set__should_raise_error(self):
         with pytest.raises(
@@ -351,10 +353,15 @@ def test__convert_response_to_previous_version_for__with_incorrect_args__should_
             "Method 'my_conversion_method' must have only 1 parameter: response",
         ),
     ):
+        if TYPE_CHECKING:
 
-        @convert_response_to_previous_version_for(SomeSchema)
-        def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
-            raise NotImplementedError
+            def my_conversion_method(response: ResponseInfo) -> None: ...
+        else:
+
+            def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
+                raise NotImplementedError
+
+        convert_response_to_previous_version_for(SomeSchema)(my_conversion_method)
 
 
 def test__convert_response_to_previous_version_for__with_no_args__should_raise_error():
@@ -364,10 +371,15 @@ def test__convert_response_to_previous_version_for__with_no_args__should_raise_e
             "Method 'my_conversion_method2' must have only 1 parameter: response",
         ),
     ):
+        if TYPE_CHECKING:
 
-        @convert_response_to_previous_version_for(SomeSchema)
-        def my_conversion_method2():  # pragma: no branch
-            raise NotImplementedError
+            def my_conversion_method2(response: ResponseInfo) -> None: ...
+        else:
+
+            def my_conversion_method2():  # pragma: no branch
+                raise NotImplementedError
+
+        convert_response_to_previous_version_for(SomeSchema)(my_conversion_method2)
 
 
 def test__convert_request_to_next_version_for__with_incorrect_args__should_raise_error():
@@ -377,10 +389,15 @@ def test__convert_request_to_next_version_for__with_incorrect_args__should_raise
             "Method 'my_conversion_method' must have only 1 parameter: request",
         ),
     ):
+        if TYPE_CHECKING:
 
-        @convert_request_to_next_version_for(SomeSchema)
-        def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
-            raise NotImplementedError
+            def my_conversion_method(request: RequestInfo) -> None: ...
+        else:
+
+            def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
+                raise NotImplementedError
+
+        convert_request_to_next_version_for(SomeSchema)(my_conversion_method)
 
 
 def test__convert_request_to_next_version_for__with_no_args__should_raise_error():
@@ -390,10 +407,15 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
             "Method 'my_conversion_method2' must have only 1 parameter: request",
         ),
     ):
+        if TYPE_CHECKING:
 
-        @convert_request_to_next_version_for(SomeSchema)
-        def my_conversion_method2():  # pragma: no branch
-            raise NotImplementedError
+            def my_conversion_method2(request: RequestInfo) -> None: ...
+        else:
+
+            def my_conversion_method2():  # pragma: no branch
+                raise NotImplementedError
+
+        convert_request_to_next_version_for(SomeSchema)(my_conversion_method2)
 
 
 def test__schema_field_had_arguments_are_in_sync_with_schema_field_didnt_have_typehints():

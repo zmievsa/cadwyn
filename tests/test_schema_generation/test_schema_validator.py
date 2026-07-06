@@ -5,8 +5,8 @@ from pydantic import (
     BaseModel,
     field_validator,
     model_validator,
-    root_validator,  # pyright: ignore[reportDeprecated]
-    validator,  # pyright: ignore[reportDeprecated]
+    root_validator,
+    validator,
 )
 
 from cadwyn.exceptions import InvalidGenerationInstructionError
@@ -64,12 +64,12 @@ def test__schema_validator_existed__with_deprecated_validators(
 ):
     with pytest.warns(DeprecationWarning):
 
-        @root_validator(pre=True)  # pyright: ignore[reportDeprecated]
+        @root_validator(pre=True)
         def hewwo(cls, values):
             values["foo"] += "_root"
             return values
 
-        @validator("foo")  # pyright: ignore[reportDeprecated]
+        @validator("foo")
         def dawkness(cls, value):
             return value + "_field"
 
@@ -184,7 +184,7 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
 
         with pytest.warns(DeprecationWarning):
 
-            @validator("bar")  # pyright: ignore[reportDeprecated]
+            @validator("bar")
             def validate_bar(cls, value):
                 raise NotImplementedError
 
@@ -197,7 +197,7 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
     class ExpectedSchema(BaseModel):
         bar: str
 
-        @validator("bar")  # pyright: ignore[reportDeprecated]
+        @validator("bar")
         def validate_bar(cls, value):
             raise NotImplementedError
 

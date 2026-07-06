@@ -4,7 +4,7 @@ import http
 import inspect
 import json
 from collections import defaultdict
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Coroutine, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
@@ -28,7 +28,7 @@ from starlette.datastructures import FormData
 from typing_extensions import Any, ParamSpec, TypeAlias, TypeVar, assert_never, deprecated, get_args
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
-from cadwyn._utils import classproperty
+from cadwyn._utils import classproperty, set_runtime_attr
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -233,7 +233,7 @@ class VersionChange:
                 f"Can't subclass {cls.__name__} as it was never meant to be subclassed.",
             )
 
-    def __init__(self) -> None:  # pyright: ignore[reportMissingSuperCall]
+    def __init__(self) -> None:
         raise TypeError(
             f"Can't instantiate {self.__class__.__name__} as it was never meant to be instantiated.",
         )
@@ -248,7 +248,7 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
             )
 
     @classproperty
-    def is_applied(cls: type["VersionChangeWithSideEffects"]) -> bool:  # pyright: ignore[reportGeneralTypeIssues]
+    def is_applied(cls: type["VersionChangeWithSideEffects"]) -> bool:
         if (
             cls._bound_version_bundle is None
             or cls not in cls._bound_version_bundle._version_changes_to_version_mapping
@@ -491,14 +491,14 @@ class VersionBundle:
         request_param_name: str,
         background_tasks_param_name: Union[str, None],
         response_param_name: str,
-    ) -> "Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]":
-        def wrapper(endpoint: "Endpoint[_P, _R]") -> "Endpoint[_P, _R]":
+    ) -> "Callable[[Endpoint[_P, _R]], Callable[..., Coroutine[Any, Any, _R]]]":
+        def wrapper(endpoint: "Endpoint[_P, _R]") -> "Callable[..., Coroutine[Any, Any, _R]]":
             @functools.wraps(endpoint)
             async def decorator(*args: Any, **kwargs: Any) -> _R:
                 request_param: FastapiRequest = kwargs[request_param_name]
                 response_param: FastapiResponse = kwargs[response_param_name]
-                background_tasks: Union[BackgroundTasks, None] = kwargs.get(
-                    background_tasks_param_name,  # pyright: ignore[reportArgumentType]
+                background_tasks: Union[BackgroundTasks, None] = (
+                    kwargs.get(background_tasks_param_name) if background_tasks_param_name is not None else None
                 )
                 method = request_param.method
                 response = Sentinel
@@ -534,7 +534,8 @@ class VersionBundle:
                         "application code is raising an exception and a dependency with yield "
                         "has a block with a bare except, or a block with except Exception, "
                         "and is not raising the exception again. Read more about it in the "
-                        "docs: https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/#dependencies-with-yield-and-except"
+                        "docs: https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/"
+                        "#dependencies-with-yield-and-except"
                     )
                 return response
 
@@ -543,7 +544,7 @@ class VersionBundle:
             if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
 
-            return decorator  # pyright: ignore[reportReturnType]
+            return decorator
 
         return wrapper
 
@@ -604,7 +605,7 @@ class VersionBundle:
 
             response_info = ResponseInfo(response_or_response_body, body)
         else:
-            if fastapi_response_dependency.status_code is not None:  # pyright: ignore[reportUnnecessaryComparison]
+            if fastapi_response_dependency.status_code is not None:
                 status_code = fastapi_response_dependency.status_code
             elif route.status_code is not None:
                 status_code = route.status_code
@@ -794,9 +795,11 @@ def _add_keyword_only_parameter(
     param_annotation: type,
 ):
     signature = inspect.signature(func)
-    func.__signature__ = signature.replace(
-        parameters=(
-            [
+    set_runtime_attr(
+        func,
+        "__signature__",
+        signature.replace(
+            parameters=[
                 *list(signature.parameters.values()),
                 inspect.Parameter(param_name, kind=inspect._ParameterKind.KEYWORD_ONLY, annotation=param_annotation),
             ]

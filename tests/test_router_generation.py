@@ -3,6 +3,7 @@ import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
+from types import GenericAlias
 from typing import Annotated, Union, cast
 from uuid import UUID
 
@@ -63,9 +64,22 @@ class SchemaWithOnePydanticField(BaseModel):
 
 
 def get_wrapped_endpoint(endpoint: Endpoint) -> Endpoint:
-    while hasattr(endpoint, "__wrapped__"):
-        endpoint = endpoint.__wrapped__
+    while callable(wrapped_endpoint := getattr(endpoint, "__wrapped__", None)):
+        endpoint = wrapped_endpoint
     return endpoint
+
+
+def endpoint_name(endpoint: Endpoint) -> str:
+    return getattr(endpoint, "__name__", endpoint.__class__.__name__)
+
+
+def route_endpoint(route: object) -> Endpoint:
+    assert isinstance(route, APIRoute)
+    return route.endpoint
+
+
+def dict_str_list_of(model: type[BaseModel]) -> GenericAlias:
+    return GenericAlias(dict, (str, GenericAlias(list, (model,))))
 
 
 def endpoints_equal(endpoint1: Endpoint, endpoint2: Endpoint) -> bool:
@@ -492,7 +506,7 @@ def test__add_header_versioned_routers__uses_routes_added_to_included_router_aft
     )
 
     with pytest.warns(DeprecationWarning, match="Use generate_and_include_versioned_routers"):
-        app.add_header_versioned_routers(  # pyright: ignore[reportDeprecated]
+        app.add_header_versioned_routers(
             api_router,
             header_value="2022-11-16",
         )
@@ -887,13 +901,13 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
     class MyVersionChange2(VersionChange):
         description = "..."
         instructions_to_migrate_to_previous_version = [
-            endpoint("/test", ["GET"], func_name=route_to_restore_first.__name__).existed,
+            endpoint("/test", ["GET"], func_name=endpoint_name(route_to_restore_first)).existed,
         ]
 
     class MyVersionChange1(VersionChange):
         description = "..."
         instructions_to_migrate_to_previous_version = [
-            endpoint("/test", ["GET"], func_name=route_to_restore_second.__name__).existed,
+            endpoint("/test", ["GET"], func_name=endpoint_name(route_to_restore_second)).existed,
         ]
 
     versions = VersionBundle(
@@ -908,10 +922,10 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
     assert len(routers.endpoints["2001-01-01"].routes) == 1
     assert len(routers.endpoints["2000-01-01"].routes) == 2
 
-    assert endpoints_equal(routers.endpoints["2001-01-01"].routes[0].endpoint, route_to_restore_first)  # pyright: ignore
+    assert endpoints_equal(route_endpoint(routers.endpoints["2001-01-01"].routes[0]), route_to_restore_first)
     assert {
-        get_wrapped_endpoint(routers.endpoints["2000-01-01"].routes[0].endpoint),  # pyright: ignore
-        get_wrapped_endpoint(routers.endpoints["2000-01-01"].routes[1].endpoint),  # pyright: ignore
+        get_wrapped_endpoint(route_endpoint(routers.endpoints["2000-01-01"].routes[0])),
+        get_wrapped_endpoint(route_endpoint(routers.endpoints["2000-01-01"].routes[1])),
     } == {
         route_to_restore_first,
         route_to_restore_second,
@@ -992,10 +1006,10 @@ def test__router_generation__updating_response_model(
     assert len(routes_2000) == len(routes_2001) == 2
 
     schema_2000 = schemas["2000-01-01"][SchemaWithOnePydanticField]
-    assert routes_2000[1].response_model == dict[str, list[schema_2000]]
+    assert routes_2000[1].response_model == dict_str_list_of(schema_2000)
 
     schema_2001 = schemas["2001-01-01"][SchemaWithOnePydanticField]
-    assert routes_2001[1].response_model == dict[str, list[schema_2001]]
+    assert routes_2001[1].response_model == dict_str_list_of(schema_2001)
 
     assert get_nested_field_type(routes_2000[1].response_model) == list[str]
     assert get_nested_field_type(routes_2001[1].response_model) == int  # noqa: E721
@@ -1045,11 +1059,11 @@ def test__router_generation__updating_request_models(
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
     schema_2000 = schemas["2000-01-01"][SchemaWithOnePydanticField]
-    assert body_param_2000.field_info.annotation == dict[str, list[schema_2000]]
+    assert body_param_2000.field_info.annotation == dict_str_list_of(schema_2000)
 
     body_param_2001 = routes_2001[1].dependant.body_params[0]
     schema_2001 = schemas["2001-01-01"][SchemaWithOnePydanticField]
-    assert body_param_2001.field_info.annotation == dict[str, list[schema_2001]]
+    assert body_param_2001.field_info.annotation == dict_str_list_of(schema_2001)
 
     assert get_nested_field_type(routes_2000[1].dependant.body_params[0].field_info.annotation) == list[str]
     assert get_nested_field_type(routes_2001[1].dependant.body_params[0].field_info.annotation) is int
@@ -1179,7 +1193,7 @@ def test__router_generation__using_typealias_type_typehint(
     class MySchema(BaseModel):
         foo: str
 
-    typealias = TypeAliasType("typealias", list[MySchema])  # pyright: ignore[reportGeneralTypeIssues]
+    typealias = TypeAliasType("typealias", list[MySchema])
 
     @router.post("/test")
     async def test(param1: typealias = Body()):
@@ -1219,7 +1233,7 @@ def test__router_generation__updating_request_depends(
 
     # TASK: What if "a" gets deleted? https://github.com/zmievsa/cadwyn/issues/25
     def dependency2(
-        dep: Annotated[EmptySchema, Depends(sub_dependency2)] = None,  # pyright: ignore[reportArgumentType]
+        dep: Annotated[Union[EmptySchema, None], Depends(sub_dependency2)] = None,
     ):
         return dep
 
@@ -1456,14 +1470,14 @@ def test__generate_versioned_routers__two_routers(
     assert len(routers["2001-01-01"].routes) == 2
     assert len(routers["2000-01-01"].routes) == 1
     assert {
-        get_wrapped_endpoint(routers["2001-01-01"].routes[0].endpoint),  # pyright: ignore
-        get_wrapped_endpoint(routers["2001-01-01"].routes[1].endpoint),  # pyright: ignore
+        get_wrapped_endpoint(route_endpoint(routers["2001-01-01"].routes[0])),
+        get_wrapped_endpoint(route_endpoint(routers["2001-01-01"].routes[1])),
     } == {
         test_endpoint,
         test_endpoint2,
     }
-    assert endpoints_equal(routers["2000-01-01"].routes[0].endpoint, test_endpoint2)  # pyright: ignore
-    assert endpoints_equal(routers["2000-01-01"].routes[0].endpoint, test_endpoint2)  # pyright: ignore
+    assert endpoints_equal(route_endpoint(routers["2000-01-01"].routes[0]), test_endpoint2)
+    assert endpoints_equal(route_endpoint(routers["2000-01-01"].routes[0]), test_endpoint2)
 
 
 class MyHTTPBearer(HTTPBearer):
@@ -1547,13 +1561,14 @@ def test__basic_router_generation__subclass_of_security_class_based_dependency_w
 ):
     payloads_dependency_was_called_with = []
 
-    class MyCustomDependency(HTTPBearer):
-        def __call__(self, my_body: SchemaWithOneIntField):  # pyright: ignore[reportIncompatibleMethodOverride]
-            payloads_dependency_was_called_with.append(my_body.model_dump())
-            return my_body
+    def custom_dependency_call(self: HTTPBearer, my_body: SchemaWithOneIntField):
+        payloads_dependency_was_called_with.append(my_body.model_dump())
+        return my_body
+
+    my_custom_dependency = type("MyCustomDependency", (HTTPBearer,), {"__call__": custom_dependency_call})
 
     @router.post("/test")
-    async def route(dependency: Any = Depends(MyCustomDependency())):
+    async def route(dependency: Any = Depends(my_custom_dependency())):
         return dependency
 
     client_2000, client_2001 = create_versioned_clients(

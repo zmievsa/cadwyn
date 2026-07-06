@@ -51,11 +51,11 @@ def test__schema_field_existed_as__field_is_typevar(create_runtime_schemas: Crea
         ),
     )
 
-    class ExpectedSchema(BaseModel):
-        foo: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type is passed through pydantic metadata.
+    class ExpectedSchema(BaseModel, Generic[BoolT]):
+        foo: BoolT
         bar: bool
 
-        baz: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type is passed through pydantic metadata.
+        baz: BoolT
 
     assert_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
 
@@ -117,9 +117,9 @@ def test__schema_field_had__field_type_is_narrowed(
         ),
     )
 
-    class ExpectedSchema(BaseModel):
-        foo: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type is passed through pydantic metadata.
-        bar: BoolT  # pyright: ignore[reportGeneralTypeIssues] # Generics are actually erased, but the type is passed through pydantic metadata.
+    class ExpectedSchema(BaseModel, Generic[BoolT]):
+        foo: BoolT
+        bar: BoolT
 
     assert_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
 

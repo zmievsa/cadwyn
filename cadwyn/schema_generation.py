@@ -15,7 +15,6 @@ from typing import (
     ClassVar,
     Generic,
     Union,
-    _BaseGenericAlias,  # pyright: ignore[reportAttributeAccessIssue]
     cast,
 )
 
@@ -43,9 +42,8 @@ from pydantic_core import PydanticUndefined
 from typing_extensions import (
     Any,
     Doc,
-    Self,
     TypeAlias,
-    TypeAliasType,
+    TypeGuard,
     TypeVar,
     _AnnotatedAlias,
     assert_never,
@@ -55,6 +53,7 @@ from typing_extensions import (
     overload,
 )
 
+from cadwyn._asts import GenericAliasUnionArgs
 from cadwyn._utils import (
     DATACLASS_KW_ONLY,
     DATACLASS_SLOTS,
@@ -63,6 +62,7 @@ from cadwyn._utils import (
     fully_unwrap_decorator,
     get_name_of_function_wrapped_in_pydantic_validator,
     lenient_issubclass,
+    set_runtime_attr,
 )
 from cadwyn.exceptions import CadwynError, InvalidGenerationInstructionError
 from cadwyn.structure.common import VersionType
@@ -94,11 +94,11 @@ _T_ANY_MODEL = TypeVar("_T_ANY_MODEL", bound=Union[BaseModel, Enum])
 _T_ENUM = TypeVar("_T_ENUM", bound=Enum)
 
 _T_PYDANTIC_MODEL = TypeVar("_T_PYDANTIC_MODEL", bound=BaseModel)
-PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP = {
-    ValidatorDecoratorInfo: pydantic.validator,  # pyright: ignore[reportDeprecated]
+PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP: dict[type[_decorators.DecoratorInfo], Callable[..., Any]] = {
+    ValidatorDecoratorInfo: pydantic.validator,
     FieldValidatorDecoratorInfo: pydantic.field_validator,
     FieldSerializerDecoratorInfo: pydantic.field_serializer,
-    RootValidatorDecoratorInfo: pydantic.root_validator,  # pyright: ignore[reportDeprecated]
+    RootValidatorDecoratorInfo: pydantic.root_validator,
     ModelValidatorDecoratorInfo: pydantic.model_validator,
     ModelSerializerDecoratorInfo: pydantic.model_serializer,
     ComputedFieldInfo: pydantic.computed_field,
@@ -213,7 +213,7 @@ def migrate_response_body(
 
 def _unwrap_model(model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
     while hasattr(model, "__cadwyn_original_model__"):
-        model = model.__cadwyn_original_model__  # pyright: ignore[reportAttributeAccessIssue]
+        model = cast("type[_T_ANY_MODEL]", model.__cadwyn_original_model__)
     return model
 
 
@@ -268,8 +268,6 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
     # For example, when "from __future__ import annotations" is used in the file with the schema
     if model is not BaseModel:
         model.model_rebuild(raise_errors=False)
-    model = cast("type[_T_PYDANTIC_MODEL]", model)
-
     decorators = _get_model_decorators(model)
     validators = {}
     for decorator_wrapper in decorators:
@@ -284,10 +282,7 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
             if not field_info.metadata:
                 return field_info.annotation
 
-            if sys.version_info >= (3, 13):
-                return Annotated.__getitem__((field_info.annotation, *field_info.metadata))  # pyright: ignore[reportAttributeAccessIssue]
-            else:
-                return Annotated.__class_getitem__((field_info.annotation, *field_info.metadata))  # pyright: ignore[reportAttributeAccessIssue]
+            return _AnnotatedAlias(field_info.annotation, tuple(field_info.metadata))
         return model.__annotations__[name]  # pragma: no cover
 
     annotations = {
@@ -346,12 +341,14 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     validators: dict[str, Union[_PerFieldValidatorWrapper, _ValidatorWrapper]] = dataclasses.field(repr=False)
     other_attributes: dict[str, Any] = dataclasses.field(repr=False)
     annotations: dict[str, Any] = dataclasses.field(repr=False)
-    _parents: Union[list[Self], None] = dataclasses.field(init=False, default=None, repr=False)
+    _parents: Union[list["_PydanticModelWrapper[BaseModel]"], None] = dataclasses.field(
+        init=False, default=None, repr=False
+    )
 
     def __post_init__(self):
         # This isn't actually supposed to run, it's just a precaution
         while hasattr(self.cls, "__cadwyn_original_model__"):  # pragma: no cover
-            self.cls = self.cls.__cadwyn_original_model__  # pyright: ignore[reportAttributeAccessIssue]
+            self.cls = cast("type[_T_PYDANTIC_MODEL]", self.cls.__cadwyn_original_model__)
 
         for k, annotation in self.annotations.items():
             if get_origin(annotation) == Annotated:
@@ -378,19 +375,25 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     def __hash__(self) -> int:
         return hash(id(self))
 
-    def _get_parents(self, schemas: "dict[type, Self]"):
+    def _get_parents(
+        self, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]"
+    ) -> "list[_PydanticModelWrapper[BaseModel]]":
         if self._parents is not None:
             return self._parents
-        parents = []
+        parents: list[_PydanticModelWrapper[BaseModel]] = []
         for base in self.cls.mro()[1:]:
+            if not issubclass(base, BaseModel):
+                continue
             if base in schemas:
                 parents.append(schemas[base])
-            elif lenient_issubclass(base, BaseModel):
+            else:
                 parents.append(_wrap_pydantic_model(base))
         self._parents = parents
         return parents
 
-    def _get_defined_fields_through_mro(self, schemas: "dict[type, Self]") -> dict[str, PydanticFieldWrapper]:
+    def _get_defined_fields_through_mro(
+        self, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]"
+    ) -> dict[str, PydanticFieldWrapper]:
         fields = {}
 
         for parent in reversed(self._get_parents(schemas)):
@@ -398,7 +401,9 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return fields | self.fields
 
-    def _get_defined_annotations_through_mro(self, schemas: "dict[type, Self]") -> dict[str, Any]:
+    def _get_defined_annotations_through_mro(
+        self, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]"
+    ) -> dict[str, Any]:
         annotations = {}
 
         for parent in reversed(self._get_parents(schemas)):
@@ -407,16 +412,15 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         return annotations | self.annotations
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
-        per_field_validators = {
-            name: validator.decorator(*validator.fields, **validator.kwargs)(validator.func)
-            for name, validator in self.validators.items()
-            if not validator.is_deleted and type(validator) == _PerFieldValidatorWrapper  # noqa: E721
-        }
-        root_validators = {
-            name: validator.decorator(**validator.kwargs)(validator.func)
-            for name, validator in self.validators.items()
-            if not validator.is_deleted and type(validator) == _ValidatorWrapper  # noqa: E721
-        }
+        per_field_validators = {}
+        root_validators = {}
+        for name, validator in self.validators.items():
+            if validator.is_deleted:
+                continue
+            if isinstance(validator, _PerFieldValidatorWrapper):
+                per_field_validators[name] = validator.decorator(*validator.fields, **validator.kwargs)(validator.func)
+            else:
+                root_validators[name] = validator.decorator(**validator.kwargs)(validator.func)
         fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
 
         model_copy = type(self.cls)(
@@ -436,20 +440,28 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             __pydantic_generic_metadata__=self.cls.__pydantic_generic_metadata__,
         )
 
-        model_copy.__cadwyn_original_model__ = self.cls
-        return model_copy
+        set_runtime_attr(model_copy, "__cadwyn_original_model__", self.cls)
+        return cast("type[_T_PYDANTIC_MODEL]", model_copy)
 
 
-def is_regular_function(call: Callable):
+def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, types.MethodType]]:
     return isinstance(call, (types.FunctionType, types.MethodType))
 
 
+def _function_globals(call: Union[types.FunctionType, types.MethodType]) -> dict[str, Any]:
+    return dict(inspect.getclosurevars(call).globals)
+
+
 class _CallableWrapper:
+    __annotations__: dict[str, Any]
+    __defaults__: Union[tuple[Any, ...], None]
+    __signature__: inspect.Signature
+
     # __eq__ and __hash__ are needed to make sure that dependency overrides work correctly.
     # They are based on putting dependencies (functions) as keys for the dictionary so if we want to be able to
     # override the wrapper, we need to make sure that it is equivalent to the original in __hash__ and __eq__
 
-    def __init__(self, original_callable: Callable) -> None:
+    def __init__(self, original_callable: Callable[..., Any]) -> None:
         super().__init__()
         self._original_callable = original_callable
         if not is_regular_function(original_callable):
@@ -458,11 +470,16 @@ class _CallableWrapper:
         functools.update_wrapper(self, original_callable)
 
     @property
-    def __globals__(self):
+    def __globals__(self) -> dict[str, Any]:  # pragma: no cover
         # FastAPI uses __globals__ to resolve forward references in type hints
         # It's supposed to be an attribute on the function but we use it as property to prevent python
         # from trying to pickle globals when we deepcopy this wrapper
-        return self._original_callable.__globals__
+        if is_regular_function(self._original_callable):
+            return _function_globals(self._original_callable)
+        dunder_call = self._original_callable.__call__
+        if is_regular_function(dunder_call):
+            return _function_globals(dunder_call)
+        return {}
 
     def __call__(self, *args: Any, **kwargs: Any):
         return self._original_callable(*args, **kwargs)
@@ -480,12 +497,12 @@ class _AsyncCallableWrapper(_CallableWrapper):
 
 
 class _GeneratorCallableWrapper(_CallableWrapper):
-    def __call__(self, *args: Any, **kwargs: Any):
+    def __call__(self, *args: Any, **kwargs: Any):  # pragma: no cover
         yield from self._original_callable(*args, **kwargs)
 
 
 class _AsyncGeneratorCallableWrapper(_CallableWrapper):
-    async def __call__(self, *args: Any, **kwargs: Any):
+    async def __call__(self, *args: Any, **kwargs: Any):  # pragma: no cover
         async for value in self._original_callable(*args, **kwargs):
             yield value
 
@@ -546,7 +563,7 @@ class _AnnotationTransformer:
     def _change_version_of_a_non_container_annotation(self, annotation: Any) -> Any:
         from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
 
-        if isinstance(annotation, (types.GenericAlias, _BaseGenericAlias)):
+        if isinstance(annotation, GenericAliasUnionArgs):
             origin = get_origin(annotation)
             args = get_args(annotation)
             # Classvar does not support generic tuple arguments
@@ -559,7 +576,7 @@ class _AnnotationTransformer:
             ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES:
                 return annotation
             else:
-                return TypeAliasType(  # pyright: ignore[reportGeneralTypeIssues]
+                return type(annotation)(
                     name=annotation.__name__,
                     value=self.change_version_of_annotation(annotation.__value__),
                     type_params=self.change_version_of_annotation(annotation.__type_params__),
@@ -623,7 +640,7 @@ class _AnnotationTransformer:
         modify_annotations: Callable[[dict[str, Any]], dict[str, Any]] = lambda a: a,
         modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,
         *,
-        annotation_modifying_wrapper_factory: Callable[[_Call], _Call],
+        annotation_modifying_wrapper_factory: Callable[[_Call], _CallableWrapper],
     ) -> _Call:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
         old_params = inspect.signature(call).parameters
@@ -635,9 +652,10 @@ class _AnnotationTransformer:
             callable_annotations = annotation_modifying_wrapper.__annotations__
         # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
         if is_regular_function(call):
-            call_globals = call.__globals__
+            call_globals = _function_globals(call)
         else:
-            call_globals = call.__call__.__globals__  # pyright: ignore[reportAttributeAccessIssue]
+            dunder_call = inspect.getattr_static(call, "__call__", None)
+            call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
         callable_annotations = {
             k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
         }
@@ -650,11 +668,11 @@ class _AnnotationTransformer:
             old_params,
         )
 
-        return annotation_modifying_wrapper
+        return cast("_Call", annotation_modifying_wrapper)
 
     @staticmethod
     def _generate_signature(
-        new_callable: Callable,
+        new_callable: _CallableWrapper,
         old_params: types.MappingProxyType[str, inspect.Parameter],
     ):
         parameters = []
@@ -689,7 +707,7 @@ class _AnnotationTransformer:
         )
 
     @classmethod
-    def _copy_function_through_class_based_wrapper(cls, call: Any):
+    def _copy_function_through_class_based_wrapper(cls, call: _Call) -> _CallableWrapper:
         """Separate from copy_endpoint because endpoints MUST be functions in FastAPI, they cannot be cls instances"""
         call = cls._unwrap_callable(call)
         if not is_regular_function(call):
@@ -787,17 +805,17 @@ class SchemaGenerator:
     ) -> "Union[_PydanticModelWrapper[BaseModel], _EnumWrapper[Enum]]":
         model = _unwrap_model(model)
 
-        if model in self.model_bundle.schemas:
-            return self.model_bundle.schemas[model]
-        elif model in self.model_bundle.enums:
-            return self.model_bundle.enums[model]
-
-        if lenient_issubclass(model, BaseModel):
+        if issubclass(model, BaseModel):
+            if model in self.model_bundle.schemas:
+                return self.model_bundle.schemas[model]
             # TODO: My god, what if one of its fields is in our concrete schemas and we don't use it? :O
             # TODO: Add an argument with our concrete schemas for _wrap_pydantic_model
             wrapper = _wrap_pydantic_model(model)
             self.model_bundle.schemas[model] = wrapper
-        elif lenient_issubclass(model, Enum):
+        elif issubclass(model, Enum):
+            model = cast("type[Enum]", model)
+            if model in self.model_bundle.enums:
+                return self.model_bundle.enums[model]
             wrapper = _EnumWrapper(model)
             self.model_bundle.enums[model] = wrapper
         else:
@@ -844,7 +862,7 @@ def _migrate_classes(context: _RuntimeSchemaGenContext) -> None:
 
 
 def _apply_alter_schema_instructions(
-    modified_schemas: dict[type, _PydanticModelWrapper],
+    modified_schemas: dict[type[BaseModel], _PydanticModelWrapper[BaseModel]],
     alter_schema_instructions: Sequence[Union[AlterSchemaSubInstruction, SchemaHadInstruction]],
     version_change_name: str,
 ) -> None:
@@ -890,7 +908,7 @@ def _apply_alter_schema_instructions(
 
 
 def _apply_alter_enum_instructions(
-    enums: "dict[type, _EnumWrapper]",
+    enums: "dict[type[Enum], _EnumWrapper[Enum]]",
     alter_enum_instructions: Sequence[AlterEnumSubInstruction],
     version_change_name: str,
 ):
@@ -932,7 +950,7 @@ def _change_model(
 
 def _add_field_to_model(
     model: _PydanticModelWrapper,
-    schemas: "dict[type, _PydanticModelWrapper]",
+    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
     alter_schema_instruction: FieldExistedAsInstruction,
     version_change_name: str,
 ):
@@ -961,7 +979,7 @@ def _add_field_to_model(
 
 def _change_field_in_model(
     model: _PydanticModelWrapper,
-    schemas: "dict[type, _PydanticModelWrapper]",
+    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
     alter_schema_instruction: Union[FieldHadInstruction, FieldDidntHaveInstruction],
     version_change_name: str,
 ):
@@ -1129,7 +1147,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
             enum_dict[attr_name] = attr
         enum_dict["__doc__"] = self.cls.__doc__
         model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict))
-        model_copy.__cadwyn_original_model__ = self.cls  # pyright: ignore[reportAttributeAccessIssue]
+        set_runtime_attr(model_copy, "__cadwyn_original_model__", self.cls)
         return model_copy
 
     @staticmethod
