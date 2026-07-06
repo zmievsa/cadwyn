@@ -1593,7 +1593,17 @@ def test__router_generation__with_generator_dependencies(
         yield "sync dependency"
         dependency_cache.append(f"{current_dependency_runner} sync dependency end")
 
-    @router.get("/test")
+    def route_sync_dependency(my_enum: "StrEnum"):
+        dependency_cache.append(f"route sync {my_enum.name} start")
+        yield
+        dependency_cache.append(f"route sync {my_enum.name} end")
+
+    async def route_async_dependency(my_enum: "StrEnum"):
+        dependency_cache.append(f"route async {my_enum.name} start")
+        yield
+        dependency_cache.append(f"route async {my_enum.name} end")
+
+    @router.get("/test", dependencies=[Depends(route_sync_dependency), Depends(route_async_dependency)])
     async def test(
         my_async_dep: Annotated[str, Depends(my_async_dependency)],
         my_sync_dep: Annotated[str, Depends(my_sync_dependency)],
@@ -1601,32 +1611,59 @@ def test__router_generation__with_generator_dependencies(
         assert my_async_dep == "async dependency"
         assert my_sync_dep == "sync dependency"
 
-    client = TestClient(create_versioned_app(version_change()))
-    assert client.get("/test", headers={"x-api-version": "2000-01-01"}).status_code == 200
+    def migration(request: Any):
+        return None
+
+    client = TestClient(
+        create_versioned_app(
+            version_change(
+                enum(StrEnum).didnt_have("a"),
+                enum(StrEnum).had(b="1"),
+                migration=convert_request_to_next_version_for("/test", ["GET"])(migration),
+            )
+        )
+    )
+    assert client.get("/test", params={"my_enum": "1"}, headers={"x-api-version": "2000-01-01"}).status_code == 200
     assert dependency_cache == snapshot(
         [
+            "route sync a start",
+            "route async a start",
             "fastapi async dependency start",
             "fastapi sync dependency start",
+            "route sync a start",
+            "route async a start",
             "cadwyn async dependency start",
             "cadwyn sync dependency start",
             "cadwyn sync dependency end",
             "cadwyn async dependency end",
+            "route async a end",
+            "route sync a end",
             "fastapi sync dependency end",
             "fastapi async dependency end",
+            "route async a end",
+            "route sync a end",
         ]
     )
     dependency_cache.clear()
-    assert client.get("/test", headers={"x-api-version": "2001-01-01"}).status_code == 200
+    assert client.get("/test", params={"my_enum": "1"}, headers={"x-api-version": "2001-01-01"}).status_code == 200
     assert dependency_cache == snapshot(
         [
+            "route sync a start",
+            "route async a start",
             "fastapi async dependency start",
             "fastapi sync dependency start",
+            "route sync a start",
+            "route async a start",
             "cadwyn async dependency start",
             "cadwyn sync dependency start",
             "cadwyn sync dependency end",
             "cadwyn async dependency end",
+            "route async a end",
+            "route sync a end",
             "fastapi sync dependency end",
             "fastapi async dependency end",
+            "route async a end",
+            "route sync a end",
         ]
     )
 

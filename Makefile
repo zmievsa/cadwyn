@@ -5,7 +5,10 @@ install:
 	uv sync --all-extras --dev
 
 lint:
-	pre-commit run --all-files
+	prek run --all-files
+
+check:
+	uv run tox run-parallel --parallel-no-spinner
 
 test:
-	uv run --with tox --with tox-uv tox
+	uv run tox run-parallel --parallel-no-spinner

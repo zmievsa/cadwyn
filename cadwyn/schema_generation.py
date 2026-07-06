@@ -462,7 +462,7 @@ class _CallableWrapper:
         # FastAPI uses __globals__ to resolve forward references in type hints
         # It's supposed to be an attribute on the function but we use it as property to prevent python
         # from trying to pickle globals when we deepcopy this wrapper
-        return self._original_callable.__globals__
+        return self._original_callable.__globals__  # pragma: no cover
 
     def __call__(self, *args: Any, **kwargs: Any):
         return self._original_callable(*args, **kwargs)

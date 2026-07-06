@@ -85,7 +85,7 @@ jobs:
           path: .
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.10"
       - run: |
           pip install uv
           uv pip install --system tox tox-uv
@@ -102,11 +102,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.10"
       - run: |
           python -m pip install uv
-          uv pip install --system pre-commit pre-commit-uv
-          pre-commit run --all-files
+          uv pip install --system prek
+          prek run --all-files
 
   Validate-links:
     runs-on: ubuntu-latest
@@ -115,8 +115,8 @@ jobs:
       - uses: ./.github/actions/setup-python-uv
         with:
           # When this version is updated,
-          # update the pyright `base_python` version in `tox.ini`, too.
-          python-version: "3.12"
+          # update the docs `base_python` version in `tox.ini`, too.
+          python-version: "3.10"
       - run: tox run -e docs
       - name: Validate links
         uses: umbrelladocs/action-linkspector@v1
@@ -133,5 +133,5 @@ jobs:
         with:
           # When this version is updated,
           # update the pyright `base_python` version in `tox.ini`, too.
-          python-version: "3.12"
+          python-version: "3.10"
       - run: tox run -e pyright

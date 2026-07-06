@@ -960,7 +960,7 @@ def test__form_migration__multi_value_fields_are_preserved(
     router: VersionedAPIRouter,
 ):
     @router.post(test_path)
-    async def endpoint(tags: list[str] = Form(...)):
+    async def endpoint(tags: list[str] = Form(...)):  # pragma: no cover
         return {"tags": tags}
 
     clients = create_versioned_clients(version_change())
@@ -1047,6 +1047,11 @@ def test__request_body_parsing__malformed_json_returns_422(
         return {"name": name, "age": age}
 
     clients = create_versioned_clients(version_change())
+    assert clients["2000-01-01"].post(test_path, json={"name": "Bob", "age": 42}).json() == {
+        "name": "Bob",
+        "age": 42,
+    }
+
     resp = clients["2000-01-01"].post(
         test_path,
         content=b"not valid json",
