@@ -7,9 +7,10 @@
 * We maintain a Makefile with several commands to help with common tasks
 
 1. Install [uv](https://docs.astral.sh/uv/)
-2. Run `uv sync` to create a virtual environment and install the dependencies
-3. Install [prek](https://prek.j178.dev/) hooks with `uv run prek install -f`
-4. Run `make check` to verify that the local CI-equivalent checks pass
+2. Install the standalone developer tools with `uv tool install prek` and `uv tool install tox`
+3. Run `uv sync` to create a virtual environment and install the dependencies
+4. Install [prek](https://prek.j178.dev/) hooks with `prek install -f`
+5. Run `make check` to verify that the local CI-equivalent checks pass
 
 ## Code contributions
 
@@ -44,6 +45,9 @@ tests for `cadwyn/codegen.py` reside in `tests/codegen`.
 parallelism. It runs the supported Python test matrix, tutorial tests, coverage,
 prek linting, documentation build, link validation, pyright, and package build
 checks.
+
+If `prek` or `tox` is missing, the Makefile will stop early and print the
+matching `uv tool install ...` command to install it.
 
 `make test` runs the same full check suite.
 
