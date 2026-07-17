@@ -139,9 +139,6 @@ exclude_lines = [
 ]
 omit = ["./docs/plugin.py", "./site/plugin.py", "scripts/*.py"]
 
-[tool.ty.environment]
-python-version = "3.10"
-
 [tool.pytest.ini_options]
 filterwarnings = [
     # When debugging `ResourceWarning`s, change this to "all" and set PYTHONTRACEMALLOC.

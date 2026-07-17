@@ -2,13 +2,13 @@ import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import ClassVar, Literal, Union, cast
+from typing import ClassVar, Union, cast
 
 from fastapi import Request, Response
 from starlette.datastructures import FormData, MutableHeaders, UploadFile
 from typing_extensions import Any, overload
 
+from cadwyn._utils import same_method_definition_as_in
 from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
 
 
@@ -61,49 +61,13 @@ class ResponseInfo:
     def headers(self) -> MutableHeaders:
         return self._response.headers
 
-    def set_cookie(
-        self,
-        key: str,
-        value: str = "",
-        max_age: Union[int, None] = None,
-        expires: Union[datetime, str, int, None] = None,
-        path: Union[str, None] = "/",
-        domain: Union[str, None] = None,
-        secure: bool = False,
-        httponly: bool = False,
-        samesite: Union[Literal["lax", "strict", "none"], None] = "lax",
-        partitioned: bool = False,
-    ) -> None:
-        return self._response.set_cookie(
-            key,
-            value,
-            max_age=max_age,
-            expires=expires,
-            path=path,
-            domain=domain,
-            secure=secure,
-            httponly=httponly,
-            samesite=samesite,
-            partitioned=partitioned,
-        )
+    @same_method_definition_as_in(Response.set_cookie)
+    def set_cookie(self, *args: Any, **kwargs: Any) -> None:
+        return self._response.set_cookie(*args, **kwargs)
 
-    def delete_cookie(
-        self,
-        key: str,
-        path: str = "/",
-        domain: Union[str, None] = None,
-        secure: bool = False,
-        httponly: bool = False,
-        samesite: Union[Literal["lax", "strict", "none"], None] = "lax",
-    ) -> None:
-        return self._response.delete_cookie(
-            key,
-            path=path,
-            domain=domain,
-            secure=secure,
-            httponly=httponly,
-            samesite=samesite,
-        )
+    @same_method_definition_as_in(Response.delete_cookie)
+    def delete_cookie(self, *args: Any, **kwargs: Any) -> None:
+        return self._response.delete_cookie(*args, **kwargs)
 
 
 @dataclass

@@ -14,8 +14,12 @@ from typing import (
     Annotated,
     ClassVar,
     Generic,
+    TypeAlias,
+    TypeGuard,
     Union,
     cast,
+    get_args,
+    get_origin,
 )
 
 import fastapi.params
@@ -42,14 +46,10 @@ from pydantic_core import PydanticUndefined
 from typing_extensions import (
     Any,
     Doc,
-    TypeAlias,
-    TypeGuard,
     TypeVar,
     _AnnotatedAlias,
     assert_never,
     final,
-    get_args,
-    get_origin,
     overload,
 )
 
@@ -95,10 +95,10 @@ _T_ENUM = TypeVar("_T_ENUM", bound=Enum)
 
 _T_PYDANTIC_MODEL = TypeVar("_T_PYDANTIC_MODEL", bound=BaseModel)
 PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP: dict[type[_decorators.DecoratorInfo], Callable[..., Any]] = {
-    ValidatorDecoratorInfo: pydantic.validator,
+    ValidatorDecoratorInfo: pydantic.validator,  # ty: ignore[deprecated]  # Preserve Pydantic v1 migrations.
     FieldValidatorDecoratorInfo: pydantic.field_validator,
     FieldSerializerDecoratorInfo: pydantic.field_serializer,
-    RootValidatorDecoratorInfo: pydantic.root_validator,
+    RootValidatorDecoratorInfo: pydantic.root_validator,  # ty: ignore[deprecated]  # Preserve Pydantic v1 migrations.
     ModelValidatorDecoratorInfo: pydantic.model_validator,
     ModelSerializerDecoratorInfo: pydantic.model_serializer,
     ComputedFieldInfo: pydantic.computed_field,
@@ -445,7 +445,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
 
 def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, types.MethodType]]:
-    return isinstance(call, (types.FunctionType, types.MethodType))
+    return isinstance(call, types.FunctionType | types.MethodType)
 
 
 def _function_globals(call: Union[types.FunctionType, types.MethodType]) -> dict[str, Any]:
@@ -533,7 +533,7 @@ class _AnnotationTransformer:
                 for key, value in annotation.items()
             }
 
-        elif isinstance(annotation, (list, tuple)):
+        elif isinstance(annotation, list | tuple):
             return type(annotation)(self.change_version_of_annotation(v) for v in annotation)
         else:
             return self.change_versions_of_a_non_container_annotation(annotation)
@@ -870,7 +870,7 @@ def _apply_alter_schema_instructions(
         schema_info = modified_schemas[alter_schema_instruction.schema]
         if isinstance(alter_schema_instruction, FieldExistedAsInstruction):
             _add_field_to_model(schema_info, modified_schemas, alter_schema_instruction, version_change_name)
-        elif isinstance(alter_schema_instruction, (FieldHadInstruction, FieldDidntHaveInstruction)):
+        elif isinstance(alter_schema_instruction, FieldHadInstruction | FieldDidntHaveInstruction):
             _change_field_in_model(
                 schema_info,
                 modified_schemas,

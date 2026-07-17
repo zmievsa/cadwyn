@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import TYPE_CHECKING
 
 import pytest
 from starlette.requests import Request
@@ -10,6 +10,9 @@ from cadwyn import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
 from tests._resources.app_for_testing_routing import mixed_hosts_app
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def test__populate_routes():

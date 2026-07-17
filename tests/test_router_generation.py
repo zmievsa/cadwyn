@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
 from types import GenericAlias
-from typing import Annotated, Union, cast
+from typing import Annotated, NewType, TypeAlias, Union, cast, get_args
 from uuid import UUID
 
 import pytest
@@ -21,7 +21,7 @@ from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse
 from starlette.routing import Route
-from typing_extensions import Any, NewType, TypeAlias, TypeAliasType, get_args
+from typing_extensions import Any, TypeAliasType
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn.applications import Cadwyn
@@ -506,7 +506,7 @@ def test__add_header_versioned_routers__uses_routes_added_to_included_router_aft
     )
 
     with pytest.warns(DeprecationWarning, match="Use generate_and_include_versioned_routers"):
-        app.add_header_versioned_routers(
+        app.add_header_versioned_routers(  # ty: ignore[deprecated]  # This test verifies the legacy API.
             api_router,
             header_value="2022-11-16",
         )

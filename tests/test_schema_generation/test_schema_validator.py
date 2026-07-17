@@ -5,8 +5,8 @@ from pydantic import (
     BaseModel,
     field_validator,
     model_validator,
-    root_validator,
-    validator,
+    root_validator,  # ty: ignore[deprecated]  # Tests intentionally cover Pydantic v1 validators.
+    validator,  # ty: ignore[deprecated]  # Tests intentionally cover Pydantic v1 validators.
 )
 
 from cadwyn.exceptions import InvalidGenerationInstructionError
@@ -64,12 +64,12 @@ def test__schema_validator_existed__with_deprecated_validators(
 ):
     with pytest.warns(DeprecationWarning):
 
-        @root_validator(pre=True)
+        @root_validator(pre=True)  # ty: ignore[deprecated]  # Compatibility coverage for Pydantic v1 validators.
         def hewwo(cls, values):
             values["foo"] += "_root"
             return values
 
-        @validator("foo")
+        @validator("foo")  # ty: ignore[deprecated]  # Compatibility coverage for Pydantic v1 validators.
         def dawkness(cls, value):
             return value + "_field"
 
@@ -184,7 +184,7 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
 
         with pytest.warns(DeprecationWarning):
 
-            @validator("bar")
+            @validator("bar")  # ty: ignore[deprecated]  # Compatibility coverage for Pydantic v1 validators.
             def validate_bar(cls, value):
                 raise NotImplementedError
 
@@ -197,7 +197,7 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
     class ExpectedSchema(BaseModel):
         bar: str
 
-        @validator("bar")
+        @validator("bar")  # ty: ignore[deprecated]  # Compatibility coverage for Pydantic v1 validators.
         def validate_bar(cls, value):
             raise NotImplementedError
 

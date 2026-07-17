@@ -21,11 +21,11 @@ async def lifespan(app: FastAPI):
 
 versioned_app = Cadwyn(versions=VersionBundle(Version("2021-01-01")), lifespan=lifespan)
 with pytest.warns(DeprecationWarning):
-    versioned_app.add_header_versioned_routers(
+    versioned_app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy API fixture.
         v2021_01_01_router,
         header_value="2021-01-01",
     )
-    versioned_app.add_header_versioned_routers(
+    versioned_app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy API fixture.
         v2022_01_02_router,
         header_value="2022-02-02",
     )
@@ -35,10 +35,10 @@ versioned_app_with_custom_api_version_var = Cadwyn(
     versions=VersionBundle(Version("2021-01-01")), lifespan=lifespan, api_version_var=ContextVar("My api version")
 )
 with pytest.warns(DeprecationWarning):
-    versioned_app_with_custom_api_version_var.add_header_versioned_routers(
+    versioned_app_with_custom_api_version_var.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy fixture.
         v2021_01_01_router, header_value="2021-01-01"
     )
-    versioned_app_with_custom_api_version_var.add_header_versioned_routers(
+    versioned_app_with_custom_api_version_var.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy fixture.
         v2022_01_02_router, header_value="2022-02-02"
     )
 versioned_app_with_custom_api_version_var.include_router(unversioned_router)

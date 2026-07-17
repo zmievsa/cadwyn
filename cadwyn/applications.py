@@ -25,10 +25,10 @@ from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
-from starlette.types import Lifespan, Receive, Scope, Send
+from starlette.types import Lifespan
 from typing_extensions import Self, assert_never, deprecated
 
-from cadwyn._utils import DATACLASS_SLOTS
+from cadwyn._utils import DATACLASS_SLOTS, same_method_definition_as_in
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
@@ -293,10 +293,11 @@ class Cadwyn(FastAPI):
                 "Versions are not sorted correctly. Please sort them in descending order.",
             )
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+    @same_method_definition_as_in(FastAPI.__call__)
+    async def __call__(self, *args: Any, **kwargs: Any) -> None:
         if not self._cadwyn_initialized:
             self._cadwyn_initialize()
-        await super().__call__(scope, receive, send)
+        await super().__call__(*args, **kwargs)
 
     def _cadwyn_initialize(self) -> None:
         try:
