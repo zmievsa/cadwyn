@@ -584,7 +584,7 @@ def test__schema_field_had__default_factory(create_runtime_schemas: CreateRuntim
         version_change(schema(SchemaWithOneStrField).field("foo").had(default_factory=lambda: "mew"))
     )
 
-    assert schemas["2000-01-01"][SchemaWithOneStrField].model_validate({}).foo == "mew"
+    assert schemas["2000-01-01"][SchemaWithOneStrField]().foo == "mew"  # ty: ignore[missing-argument]
 
 
 def test__schema_field_had__type(create_runtime_schemas: CreateRuntimeSchemas):
