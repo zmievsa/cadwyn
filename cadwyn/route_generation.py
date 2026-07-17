@@ -619,7 +619,8 @@ def _get_route_from_func(
 
 
 def _callable_name(call: Callable[..., Any]) -> str:
-    return getattr(call, "__name__", call.__class__.__name__)
+    name = getattr(call, "__name__", None)
+    return name if isinstance(name, str) else type(call).__name__
 
 
 def _route_has_a_simple_body_schema(route: APIRoute) -> bool:

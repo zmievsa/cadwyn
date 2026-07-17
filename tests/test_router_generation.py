@@ -605,6 +605,27 @@ def test__only_exists_in_older_versions__endpoint_is_not_a_route__error(
             raise NotImplementedError
 
 
+def test__only_exists_in_older_versions__with_non_string_callable_name__should_use_class_name(
+    router: VersionedAPIRouter,
+):
+    class EndpointWithNonStringName:
+        @property
+        def __name__(self) -> int:
+            return 42
+
+        async def __call__(self) -> None:
+            raise NotImplementedError
+
+    with pytest.raises(
+        LookupError,
+        match=re.escape(
+            'Route not found on endpoint: "EndpointWithNonStringName". '
+            "Are you sure it's a route and decorators are in the correct order?",
+        ),
+    ):
+        router.only_exists_in_older_versions(EndpointWithNonStringName())
+
+
 def test__only_exists_in_older_versions__applied_twice__should_raise_error(
     router: VersionedAPIRouter,
     create_versioned_api_routes: CreateVersionedAPIRoutes,

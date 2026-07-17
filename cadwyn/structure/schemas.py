@@ -11,7 +11,6 @@ from cadwyn._utils import (
     Sentinel,
     fully_unwrap_decorator,
     get_name_of_function_wrapped_in_pydantic_validator,
-    lenient_issubclass,
 )
 from cadwyn.exceptions import CadwynStructureError
 
@@ -328,7 +327,7 @@ class AlterSchemaInstructionFactory:
                 owner = func.__self__
                 if (
                     isinstance(owner, type)
-                    and lenient_issubclass(owner, BaseModel)
+                    and issubclass(owner, BaseModel)
                     and any(  # pragma: no branch
                         fully_unwrap_decorator(decorator.func, decorator.shim) == func
                         for decorator in _get_model_decorators(owner)

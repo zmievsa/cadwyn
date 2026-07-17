@@ -1,6 +1,6 @@
 import re
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Union, get_args
+from typing import Any, Union, get_args
 
 import pytest
 from pydantic import BaseModel
@@ -8,8 +8,6 @@ from pydantic import BaseModel
 from cadwyn.applications import Cadwyn
 from cadwyn.exceptions import CadwynError, CadwynStructureError, LintingError
 from cadwyn.structure import (
-    RequestInfo,
-    ResponseInfo,
     Version,
     VersionBundle,
     VersionChange,
@@ -353,15 +351,10 @@ def test__convert_response_to_previous_version_for__with_incorrect_args__should_
             "Method 'my_conversion_method' must have only 1 parameter: response",
         ),
     ):
-        if TYPE_CHECKING:
 
-            def my_conversion_method(response: ResponseInfo) -> None: ...
-        else:
-
-            def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
-                raise NotImplementedError
-
-        convert_response_to_previous_version_for(SomeSchema)(my_conversion_method)
+        @convert_response_to_previous_version_for(SomeSchema)  # ty: ignore[invalid-argument-type]
+        def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
+            raise NotImplementedError
 
 
 def test__convert_response_to_previous_version_for__with_no_args__should_raise_error():
@@ -371,15 +364,10 @@ def test__convert_response_to_previous_version_for__with_no_args__should_raise_e
             "Method 'my_conversion_method2' must have only 1 parameter: response",
         ),
     ):
-        if TYPE_CHECKING:
 
-            def my_conversion_method2(response: ResponseInfo) -> None: ...
-        else:
-
-            def my_conversion_method2():  # pragma: no branch
-                raise NotImplementedError
-
-        convert_response_to_previous_version_for(SomeSchema)(my_conversion_method2)
+        @convert_response_to_previous_version_for(SomeSchema)  # ty: ignore[invalid-argument-type]
+        def my_conversion_method2():  # pragma: no branch
+            raise NotImplementedError
 
 
 def test__convert_request_to_next_version_for__with_incorrect_args__should_raise_error():
@@ -389,15 +377,10 @@ def test__convert_request_to_next_version_for__with_incorrect_args__should_raise
             "Method 'my_conversion_method' must have only 1 parameter: request",
         ),
     ):
-        if TYPE_CHECKING:
 
-            def my_conversion_method(request: RequestInfo) -> None: ...
-        else:
-
-            def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
-                raise NotImplementedError
-
-        convert_request_to_next_version_for(SomeSchema)(my_conversion_method)
+        @convert_request_to_next_version_for(SomeSchema)  # ty: ignore[invalid-argument-type]
+        def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
+            raise NotImplementedError
 
 
 def test__convert_request_to_next_version_for__with_no_args__should_raise_error():
@@ -407,15 +390,28 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
             "Method 'my_conversion_method2' must have only 1 parameter: request",
         ),
     ):
-        if TYPE_CHECKING:
 
-            def my_conversion_method2(request: RequestInfo) -> None: ...
-        else:
+        @convert_request_to_next_version_for(SomeSchema)  # ty: ignore[invalid-argument-type]
+        def my_conversion_method2():  # pragma: no branch
+            raise NotImplementedError
 
-            def my_conversion_method2():  # pragma: no branch
-                raise NotImplementedError
 
-        convert_request_to_next_version_for(SomeSchema)(my_conversion_method2)
+def test__convert_request_to_next_version_for__with_non_string_callable_name__should_use_class_name():
+    class MigrationWithNonStringName:
+        @property
+        def __name__(self) -> int:
+            return 42
+
+        def __call__(self, request: object, extra: object) -> None:
+            raise NotImplementedError
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape("Method 'MigrationWithNonStringName' must have only 1 parameter: request"),
+    ):
+        convert_request_to_next_version_for(SomeSchema)(
+            MigrationWithNonStringName(),  # ty: ignore[invalid-argument-type]
+        )
 
 
 def test__schema_field_had_arguments_are_in_sync_with_schema_field_didnt_have_typehints():

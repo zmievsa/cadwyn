@@ -268,7 +268,8 @@ def convert_response_to_previous_version_for(
 
 
 def _callable_name(call: Callable[..., object]) -> str:
-    return getattr(call, "__name__", call.__class__.__name__)
+    name = getattr(call, "__name__", None)
+    return name if isinstance(name, str) else type(call).__name__
 
 
 def _validate_decorator_args(
