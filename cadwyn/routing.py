@@ -12,7 +12,7 @@ from starlette.routing import BaseRoute, Match
 from starlette.types import Receive, Scope, Send
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
-from cadwyn._utils import same_definition_as_in
+from cadwyn._utils import same_method_definition_as_in
 from cadwyn.middleware import APIVersionFormat
 from cadwyn.structure.common import VersionType
 
@@ -96,12 +96,12 @@ class _RootCadwynAPIRouter(APIRouter):
     def versions(self):
         return sorted(self.versioned_routers.keys())
 
-    @same_definition_as_in(APIRouter.add_api_route)
+    @same_method_definition_as_in(APIRouter.add_api_route)
     def add_api_route(self, *args: Any, **kwargs: Any):
         super().add_api_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
-    @same_definition_as_in(APIRouter.include_router)
+    @same_method_definition_as_in(APIRouter.include_router)
     def include_router(self, *args: Any, **kwargs: Any):
         routes_before = len(self.routes)
         unversioned_routes_before = len(self.unversioned_routes)
@@ -109,22 +109,22 @@ class _RootCadwynAPIRouter(APIRouter):
         if len(self.unversioned_routes) == unversioned_routes_before:  # pragma: no branch
             self.unversioned_routes.extend(self.routes[routes_before:])
 
-    @same_definition_as_in(APIRouter.add_route)
+    @same_method_definition_as_in(APIRouter.add_route)
     def add_route(self, *args: Any, **kwargs: Any):
         super().add_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
-    @same_definition_as_in(APIRouter.mount)
+    @same_method_definition_as_in(APIRouter.mount)
     def mount(self, *args: Any, **kwargs: Any):
         super().mount(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
-    @same_definition_as_in(APIRouter.add_api_websocket_route)
+    @same_method_definition_as_in(APIRouter.add_api_websocket_route)
     def add_api_websocket_route(self, *args: Any, **kwargs: Any):  # pragma: no cover
         super().add_api_websocket_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
-    @same_definition_as_in(APIRouter.add_websocket_route)
+    @same_method_definition_as_in(APIRouter.add_websocket_route)
     def add_websocket_route(self, *args: Any, **kwargs: Any):  # pragma: no cover
         super().add_websocket_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])

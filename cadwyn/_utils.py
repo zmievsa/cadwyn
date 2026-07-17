@@ -3,10 +3,13 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
 
 from pydantic._internal._decorators import unwrap_wrapped_function
+from typing_extensions import Concatenate, ParamSpec
 
 Sentinel: Any = object()
 
-_T = TypeVar("_T", bound=Callable)
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+_SourceSelf = TypeVar("_SourceSelf")
 
 
 _P_T = TypeVar("_P_T")
@@ -49,8 +52,10 @@ class PlainRepr(str):
         return str(self)
 
 
-def same_definition_as_in(t: _T) -> Callable[[_T], _T]:
-    def decorator(f: _T) -> _T:
+def same_method_definition_as_in(
+    t: Callable[Concatenate[_SourceSelf, _P], _R],
+) -> Callable[[Callable[..., _R]], Callable[Concatenate[object, _P], _R]]:
+    def decorator(f: Callable[..., _R]) -> Callable[Concatenate[object, _P], _R]:
         return f
 
     return decorator
