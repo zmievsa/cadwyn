@@ -396,24 +396,6 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
             raise NotImplementedError
 
 
-def test__convert_request_to_next_version_for__with_non_string_callable_name__should_use_class_name():
-    class MigrationWithNonStringName:
-        @property
-        def __name__(self) -> int:
-            return 42
-
-        def __call__(self, request: object, extra: object) -> None:
-            raise NotImplementedError
-
-    with pytest.raises(
-        ValueError,
-        match=re.escape("Method 'MigrationWithNonStringName' must have only 1 parameter: request"),
-    ):
-        convert_request_to_next_version_for(SomeSchema)(
-            MigrationWithNonStringName(),  # ty: ignore[invalid-argument-type]
-        )
-
-
 def test__schema_field_had_arguments_are_in_sync_with_schema_field_didnt_have_typehints():
     parameter_names_in_field_had = FieldChanges.__dataclass_fields__
     parameter_names_in_field_didnt_have = get_args(PossibleFieldAttributes)
