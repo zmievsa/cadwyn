@@ -164,7 +164,7 @@ def _apply_effective_route_context_to_route(route: APIRoute, effective_route_con
 def _copy_effective_route_context_attr(attr_name: str, attr_value: Any) -> Any:
     if attr_name in {"dependant", "_flat_dependant"} and attr_value is not None:
         return copy(attr_value)
-    if isinstance(attr_value, (dict, list, set)):
+    if isinstance(attr_value, dict | list | set):
         return copy(attr_value)
     return attr_value
 

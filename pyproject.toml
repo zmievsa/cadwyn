@@ -17,7 +17,6 @@ keywords = [
     "api-versioning",
     "pydantic",
     "fastapi",
-    "python39",
     "python310",
     "python311",
     "python312",
@@ -92,10 +91,18 @@ dev = [
     "markdown-include-variants>=0.0.4",
     "inline-snapshot>=0.20.7",
     "pydantic-settings>=2.8.1",
+    "tox>=4.56.1",
+    "tox-uv>=1.35.2",
+    "prek>=0.4.7",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.uv]
 default-groups = ['dev']
+
+[tool.hatch.build]
+exclude = ["/node_modules"]
+skip-excluded-dirs = true
 
 
 [project.urls]
@@ -112,6 +119,7 @@ format-command = "ruff format --stdin-filename {filename}"
 [tool.coverage.run]
 parallel = true
 branch = true
+patch = ["subprocess"]
 
 [tool.coverage.report]
 fail_under = 100

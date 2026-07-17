@@ -9,7 +9,7 @@ from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar, Union, cast
+from typing import TYPE_CHECKING, ClassVar, TypeAlias, Union, cast, get_args
 
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
 from starlette.datastructures import FormData
-from typing_extensions import Any, ParamSpec, TypeAlias, TypeVar, assert_never, deprecated, get_args
+from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
 from cadwyn._utils import classproperty, set_runtime_attr
@@ -206,12 +206,10 @@ class VersionChange:
         for attr_name, attr_value in cls.__dict__.items():
             if not isinstance(
                 attr_value,
-                (
-                    _AlterRequestBySchemaInstruction,
-                    _AlterRequestByPathInstruction,
-                    _AlterResponseBySchemaInstruction,
-                    _AlterResponseByPathInstruction,
-                ),
+                _AlterRequestBySchemaInstruction
+                | _AlterRequestByPathInstruction
+                | _AlterResponseBySchemaInstruction
+                | _AlterResponseByPathInstruction,
             ) and attr_name not in {
                 "description",
                 "side_effects",
@@ -588,11 +586,11 @@ class VersionBundle:
             # TODO (https://github.com/zmievsa/cadwyn/issues/126): Add support for migrating `FileResponse`
             # Starlette breaks Liskov Substitution principle and
             # doesn't define `body` for `StreamingResponse` and `FileResponse`
-            if isinstance(response_or_response_body, (StreamingResponse, FileResponse)):
+            if isinstance(response_or_response_body, StreamingResponse | FileResponse):
                 body = None
             elif response_or_response_body.body:
                 if (isinstance(response_or_response_body, JSONResponse) or raised_exception is not None) and isinstance(
-                    response_or_response_body.body, (str, bytes)
+                    response_or_response_body.body, str | bytes
                 ):
                     body = json.loads(response_or_response_body.body)
                 elif isinstance(response_or_response_body.body, bytes):

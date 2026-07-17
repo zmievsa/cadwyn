@@ -15,7 +15,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel, create_model
 
 from cadwyn._asts import GenericAliasUnionArgs
-from cadwyn._utils import ZIP_STRICT_FALSE, Sentinel
+from cadwyn._utils import Sentinel
 from cadwyn.route_generation import _get_routes
 from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.schema_generation import SchemaGenerator, _change_field_in_model, generate_versioned_models
@@ -54,7 +54,7 @@ T = TypeVar("T", bound=Union[PossibleInstructions, type[VersionChange]])
 
 def hidden(instruction_or_version_change: T) -> T:
     if isinstance(
-        instruction_or_version_change, (staticmethod, ValidatorDidntExistInstruction, ValidatorExistedInstruction)
+        instruction_or_version_change, staticmethod | ValidatorDidntExistInstruction | ValidatorExistedInstruction
     ):
         return instruction_or_version_change
 
@@ -65,7 +65,7 @@ def hidden(instruction_or_version_change: T) -> T:
 def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -> "CadwynChangelogResource":
     changelog = CadwynChangelogResource()
     schema_generators = generate_versioned_models(versions)
-    for version, older_version in zip(versions, versions.versions[1:], **ZIP_STRICT_FALSE):
+    for version, older_version in zip(versions, versions.versions[1:], strict=False):
         routes_from_newer_version = router.versioned_routers[version.value].routes
         schemas_from_older_version = get_fields_from_routes(router.versioned_routers[older_version.value].routes)
         version_changelog = CadwynVersion(value=version.value)
@@ -84,7 +84,7 @@ def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -
                 *version_change.alter_schema_instructions,
             ]:
                 if (
-                    isinstance(instruction, (ValidatorDidntExistInstruction, ValidatorExistedInstruction))
+                    isinstance(instruction, ValidatorDidntExistInstruction | ValidatorExistedInstruction)
                     or instruction.is_hidden_from_changelog
                 ):
                     continue
@@ -394,7 +394,7 @@ def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
             changes=attribute_changes,
         )
 
-    elif isinstance(instruction, (FieldHadInstruction, FieldDidntHaveInstruction)):
+    elif isinstance(instruction, FieldHadInstruction | FieldDidntHaveInstruction):
         old_field_name = _get_older_field_name(instruction.schema, instruction.name, generator_from_older_version)
 
         if isinstance(instruction, FieldHadInstruction) and instruction.new_name is not Sentinel:

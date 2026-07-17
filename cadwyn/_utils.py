@@ -1,9 +1,9 @@
 import sys
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
 
 from pydantic._internal._decorators import unwrap_wrapped_function
-from typing_extensions import Concatenate, ParamSpec
+from typing_extensions import ParamSpec
 
 Sentinel: Any = object()
 
@@ -23,8 +23,6 @@ else:  # pragma: no cover
 
 UnionType = type(int | str) | type(Union[int, str])
 DATACLASS_SLOTS: dict[str, Any] = {"slots": True}
-ZIP_STRICT_TRUE: dict[str, Any] = {"strict": True}
-ZIP_STRICT_FALSE: dict[str, Any] = {"strict": False}
 DATACLASS_KW_ONLY: dict[str, Any] = {"kw_only": True}
 
 

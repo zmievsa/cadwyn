@@ -35,9 +35,9 @@ if sys.version_info >= (3, 14):  # pragma: no cover
 
 
 def get_fancy_repr(value: Any) -> Any:
-    if isinstance(value, annotated_types.GroupedMetadata) and hasattr(type(value), "__dataclass_fields__"):
-        return transform_grouped_metadata(value)
-    if isinstance(value, (list, tuple, set, frozenset)):
+    if isinstance(value, annotated_types.GroupedMetadata) and dataclasses.is_dataclass(value):
+        return transform_grouped_metadata(value, dataclasses.fields(value))
+    if isinstance(value, list | tuple | set | frozenset):
         return transform_collection(value)
     if isinstance(value, dict):
         return transform_dict(value)
@@ -61,12 +61,12 @@ def get_fancy_repr(value: Any) -> Any:
         return transform_other(value)
 
 
-def transform_grouped_metadata(value: "annotated_types.GroupedMetadata"):
+def transform_grouped_metadata(value: "annotated_types.GroupedMetadata", fields: tuple[dataclasses.Field[Any], ...]):
     empty_obj = type(value)
 
     modified_fields = [
         (key, getattr(value, key))
-        for key in (field.name for field in dataclasses.fields(type(value)))
+        for key in (field.name for field in fields)
         if getattr(value, key) != getattr(empty_obj, key)
     ]
 
