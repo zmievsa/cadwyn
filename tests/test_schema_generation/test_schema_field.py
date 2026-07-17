@@ -3,8 +3,7 @@ from enum import Enum, auto
 from typing import Annotated, Any, ClassVar, Literal, Union, get_origin
 
 import pytest
-from annotated_types import Interval
-from pydantic import BaseModel, Field, StringConstraints, ValidationError, computed_field, constr, create_model
+from pydantic import BaseModel, Field, StringConstraints, ValidationError, computed_field, conint, constr, create_model
 from pydantic.fields import FieldInfo
 
 from cadwyn.exceptions import (
@@ -361,7 +360,7 @@ def test__schema_field_didnt_have__removing_default(create_runtime_schemas: Crea
 
 
 class SchemaWithConstraints(BaseModel):
-    foo: Annotated[int, Interval(lt=7)]
+    foo: conint(lt=7)  # ty: ignore[invalid-type-form]
     bar: str = Field(min_length=0, max_length=7)
 
 
@@ -376,7 +375,7 @@ def test__schema_field_didnt_have__constrained_field_constraints_removed__constr
     )
 
     class ExpectedSchema(BaseModel):
-        foo: int
+        foo: conint()  # ty: ignore[invalid-type-form]
         bar: str
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
@@ -393,7 +392,7 @@ def test__schema_field_had_constrained_field__only_non_constraint_field_args_wer
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[int, Interval(lt=7)] = Field(alias="foo1")
+        foo: conint(lt=7) = Field(alias="foo1")  # ty: ignore[invalid-type-form]
         bar: str = Field(min_length=0, max_length=7, alias="bar1")
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
@@ -424,7 +423,7 @@ def test__schema_field_had_constrained_field__constraints_have_been_modified(
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[int, Interval(lt=7)] = Field(gt=8)
+        foo: conint(lt=7) = Field(gt=8)  # ty: ignore[invalid-type-form]
         bar: str = Field(min_length=2, max_length=7)
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
@@ -441,14 +440,14 @@ def test__schema_field_had_constrained_field__both_constraints_and_non_constrain
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[int, Interval(lt=7)] = Field(alias="foo1", gt=8)
+        foo: conint(lt=7) = Field(alias="foo1", gt=8)  # ty: ignore[invalid-type-form]
         bar: str = Field(min_length=2, max_length=7, alias="bar1")
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
 
 
 class SchemaWithConstraintsAndField(BaseModel):
-    foo: Annotated[str, StringConstraints(max_length=5)] = Field(default="hewwo")
+    foo: constr(max_length=5) = Field(default="hewwo")  # ty: ignore[invalid-type-form]
 
 
 def test__schema_field_had_constrained_field__constraint_field_args_were_modified_in_type(
@@ -482,7 +481,7 @@ def test__schema_field_had_constrained_field__constraint_only_args_were_modified
 
 
 class SchemaWithAnnotatedConstraints(BaseModel):
-    foo: Annotated[int, Interval(lt=7), Field(description="awaw")]
+    foo: Annotated[conint(lt=7), Field(description="awaw")]  # ty: ignore[invalid-type-form]
 
 
 def test__schema_field_didnt_have_annotated_constrained_field(create_runtime_schemas: CreateRuntimeSchemas):
@@ -491,7 +490,7 @@ def test__schema_field_didnt_have_annotated_constrained_field(create_runtime_sch
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[int, Field(description="awaw")]
+        foo: Annotated[conint(), Field(description="awaw")]  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
@@ -502,7 +501,7 @@ def test__schema_field_had_annotated_constrained_field(create_runtime_schemas: C
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[int, Interval(lt=7), Field(description="awaw", alias="foo1")]
+        foo: Annotated[conint(lt=7), Field(description="awaw", alias="foo1")]  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
@@ -515,7 +514,7 @@ def test__schema_field_had_annotated_constrained_field__adding_default_default_s
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[int, Interval(lt=7), Field(description="awaw")] = 2
+        foo: Annotated[conint(lt=7), Field(description="awaw")] = 2  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
@@ -526,7 +525,7 @@ def test__schema_field_had_annotated_constrained_field__adding_one_other_constra
     schemas = create_runtime_schemas(version_change(schema(SchemaWithAnnotatedConstraints).field("foo").had(gt=8)))
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[int, Interval(lt=7), Field(description="awaw", gt=8)]
+        foo: Annotated[conint(lt=7), Field(description="awaw", gt=8)]  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
@@ -539,7 +538,7 @@ def test__schema_field_had_annotated_constrained_field__adding_another_constrain
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[int, Interval(lt=7), Field(description="awaw", alias="foo1", gt=8)]
+        foo: Annotated[conint(lt=7), Field(description="awaw", alias="foo1", gt=8)]  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
@@ -548,14 +547,14 @@ def test__schema_field_had_constrained_field__schema_has_special_constraints_con
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     class SchemaWithSpecialConstraints(BaseModel):
-        foo: Annotated[str, StringConstraints(to_upper=True)]
+        foo: constr(to_upper=True)  # ty: ignore[invalid-type-form]
 
     schemas = create_runtime_schemas(
         version_change(schema(SchemaWithSpecialConstraints).field("foo").had(max_length=8))
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[str, StringConstraints(to_upper=True)] = Field(max_length=8)
+        foo: constr(to_upper=True) = Field(max_length=8)  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithSpecialConstraints], ExpectedSchema)
 
