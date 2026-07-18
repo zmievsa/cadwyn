@@ -923,11 +923,10 @@ def test__schema_with_classvar__add_classvar_field(create_runtime_schemas: Creat
     latest_model = schemas["2002-01-01"][SchemaWithoutClassVar]
     mid_model = schemas["2001-01-01"][SchemaWithoutClassVar]
     old_model = schemas["2000-01-01"][SchemaWithoutClassVar]
-    new_config_attr = "new_config"
 
-    assert not hasattr(latest_model, new_config_attr)
-    assert getattr(mid_model, new_config_attr) == "added_config"
-    assert getattr(old_model, new_config_attr) == "added_config"
+    assert not hasattr(latest_model, "new_config")
+    assert getattr(mid_model, "new_config", None) == "added_config"
+    assert getattr(old_model, "new_config", None) == "added_config"
 
     assert not hasattr(latest_model, "new_config_without_value")
     assert not hasattr(mid_model, "new_config_without_value")

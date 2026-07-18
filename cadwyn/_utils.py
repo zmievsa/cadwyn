@@ -1,5 +1,6 @@
 import sys
 from collections.abc import Callable
+from inspect import signature
 from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
 
 from pydantic._internal._decorators import unwrap_wrapped_function
@@ -50,17 +51,18 @@ class PlainRepr(str):
         return str(self)
 
 
+def set_runtime_attr(obj: object, name: str, value: object) -> None:
+    setattr(obj, name, value)
+
+
 def same_method_definition_as_in(
     t: Callable[Concatenate[_SourceSelf, _P], _R],
 ) -> Callable[[Callable[..., _R]], Callable[Concatenate[object, _P], _R]]:
     def decorator(f: Callable[..., _R]) -> Callable[Concatenate[object, _P], _R]:
+        set_runtime_attr(f, "__signature__", signature(t))
         return f
 
     return decorator
-
-
-def set_runtime_attr(obj: object, name: str, value: object) -> None:
-    setattr(obj, name, value)
 
 
 def fully_unwrap_decorator(func: Callable, is_pydantic_v1_style_validator: Any):
