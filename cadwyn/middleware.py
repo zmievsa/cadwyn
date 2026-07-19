@@ -113,11 +113,10 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         api_version = self._api_version_manager.get(request)
 
         if api_version is None:
-            api_version_default_value = self.api_version_default_value
-            if isinstance(api_version_default_value, str) or api_version_default_value is None:
-                api_version = api_version_default_value
+            if isinstance(self.api_version_default_value, str | None):
+                api_version = self.api_version_default_value
             else:
-                api_version = await api_version_default_value(request)
+                api_version = await self.api_version_default_value(request)
             DEFAULT_API_VERSION_VAR.set(api_version)
 
         self.api_version_var.set(api_version)
