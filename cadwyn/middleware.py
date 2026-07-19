@@ -13,7 +13,6 @@ from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, Requ
 from starlette.types import ASGIApp
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
-from cadwyn._utils import set_runtime_attr
 from cadwyn.structure.common import VersionType
 
 
@@ -66,26 +65,22 @@ def _generate_api_version_dependency(
         # TODO: What do I return?
         return next(iter(kwargs.values()))
 
-    set_runtime_attr(
-        api_version_dependency,
-        "__signature__",
-        inspect.Signature(
-            parameters=[
-                inspect.Parameter(
-                    api_version_pythonic_parameter_name,
-                    inspect.Parameter.KEYWORD_ONLY,
-                    annotation=Annotated[
-                        validation_data_type,
-                        fastapi_depends_class(
-                            openapi_examples={"default": {"value": default_value}},
-                            title=title,
-                            description=description,
-                        ),
-                    ],
-                    default=default_value if fastapi_depends_class != fastapi.Path else inspect.Signature.empty,
-                )
-            ]
-        ),
+    api_version_dependency.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]
+        parameters=[
+            inspect.Parameter(
+                api_version_pythonic_parameter_name,
+                inspect.Parameter.KEYWORD_ONLY,
+                annotation=Annotated[
+                    validation_data_type,
+                    fastapi_depends_class(
+                        openapi_examples={"default": {"value": default_value}},
+                        title=title,
+                        description=description,
+                    ),
+                ],
+                default=default_value if fastapi_depends_class != fastapi.Path else inspect.Signature.empty,
+            )
+        ]
     )
     return api_version_dependency
 

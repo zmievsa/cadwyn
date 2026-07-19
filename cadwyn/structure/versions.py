@@ -28,7 +28,7 @@ from starlette.datastructures import FormData
 from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
-from cadwyn._utils import classproperty, set_runtime_attr
+from cadwyn._utils import classproperty
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -793,13 +793,9 @@ def _add_keyword_only_parameter(
     param_annotation: type,
 ):
     signature = inspect.signature(func)
-    set_runtime_attr(
-        func,
-        "__signature__",
-        signature.replace(
-            parameters=[
-                *list(signature.parameters.values()),
-                inspect.Parameter(param_name, kind=inspect._ParameterKind.KEYWORD_ONLY, annotation=param_annotation),
-            ]
-        ),
+    func.__signature__ = signature.replace(  # ty: ignore[unresolved-attribute]
+        parameters=[
+            *list(signature.parameters.values()),
+            inspect.Parameter(param_name, kind=inspect._ParameterKind.KEYWORD_ONLY, annotation=param_annotation),
+        ]
     )

@@ -28,7 +28,8 @@ _BaseGenericAlias: type = cast("type", type(List[int])).mro()[1]  # noqa: UP006
 # type(list[int]) and type(List[int]) are different which is why we have to do this.
 # Please note that this problem is much wider than just lists which is why we use typing._BaseGenericAlias
 # instead of typing._GenericAlias.
-GenericAliasUnionArgs = (GenericAlias, _BaseGenericAlias)
+GenericAliasUnion = Union[GenericAlias, _BaseGenericAlias]  # ty: ignore[invalid-type-form]
+GenericAliasUnionArgs = get_args(GenericAliasUnion)
 if sys.version_info >= (3, 14):  # pragma: no cover
     # In Python 3.14, Union types are no longer subtypes of _BaseGenericAlias
     GenericAliasUnionArgs = (*GenericAliasUnionArgs, type(Union[int, str]))

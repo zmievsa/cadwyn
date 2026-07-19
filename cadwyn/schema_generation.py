@@ -62,7 +62,6 @@ from cadwyn._utils import (
     fully_unwrap_decorator,
     get_name_of_function_wrapped_in_pydantic_validator,
     lenient_issubclass,
-    set_runtime_attr,
 )
 from cadwyn.exceptions import CadwynError, InvalidGenerationInstructionError
 from cadwyn.structure.common import VersionType
@@ -440,7 +439,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             __pydantic_generic_metadata__=self.cls.__pydantic_generic_metadata__,
         )
 
-        set_runtime_attr(model_copy, "__cadwyn_original_model__", self.cls)
+        model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         return cast("type[_T_PYDANTIC_MODEL]", model_copy)
 
 
@@ -1147,7 +1146,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
             enum_dict[attr_name] = attr
         enum_dict["__doc__"] = self.cls.__doc__
         model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict))
-        set_runtime_attr(model_copy, "__cadwyn_original_model__", self.cls)
+        model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         return model_copy
 
     @staticmethod
