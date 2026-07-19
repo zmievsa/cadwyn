@@ -1,7 +1,7 @@
 import copy
 import sys
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, cast, get_args
+from typing import Any, Literal, TypeVar, Union, cast, get_args
 
 from fastapi._compat import (
     get_definitions,
@@ -37,12 +37,7 @@ from .structure.schemas import (
     ValidatorExistedInstruction,
 )
 
-if TYPE_CHECKING:
-    from enum import Enum
-
-    class StrEnum(str, Enum): ...
-
-elif sys.version_info >= (3, 11):  # pragma: no cover
+if sys.version_info >= (3, 11):  # pragma: no cover
     from enum import StrEnum
 else:  # pragma: no cover
     from backports.strenum import StrEnum
