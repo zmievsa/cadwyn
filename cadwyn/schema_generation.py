@@ -812,7 +812,6 @@ class SchemaGenerator:
             wrapper = _wrap_pydantic_model(model)
             self.model_bundle.schemas[model] = wrapper
         elif issubclass(model, Enum):
-            model = cast("type[Enum]", model)
             if model in self.model_bundle.enums:
                 return self.model_bundle.enums[model]
             wrapper = _EnumWrapper(model)
