@@ -8,7 +8,7 @@ from fastapi import Request, Response
 from starlette.datastructures import FormData, MutableHeaders, UploadFile
 from typing_extensions import Any, overload
 
-from cadwyn._utils import same_method_definition_as_in
+from cadwyn._utils import _callable_name, same_method_definition_as_in
 from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
 
 
@@ -265,11 +265,6 @@ def convert_response_to_previous_version_for(
             )
 
     return decorator
-
-
-def _callable_name(call: Callable[..., object]) -> str:
-    name = getattr(call, "__name__", None)
-    return name if isinstance(name, str) else type(call).__name__
 
 
 def _validate_decorator_args(

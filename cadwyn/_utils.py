@@ -80,3 +80,8 @@ else:
             return issubclass(cls, other)
         except TypeError:  # pragma: no cover
             return False
+
+
+def _callable_name(call: Callable[..., object]) -> str:
+    name = getattr(call, "__name__", None)
+    return name if isinstance(name, str) else type(call).__name__

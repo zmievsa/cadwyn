@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from starlette.routing import BaseRoute
 from typing_extensions import TypeVar, assert_never
 
-from cadwyn._utils import DATACLASS_SLOTS, Sentinel, lenient_issubclass
+from cadwyn._utils import DATACLASS_SLOTS, Sentinel, _callable_name, lenient_issubclass
 from cadwyn.exceptions import (
     CadwynError,
     RouteAlreadyExistsError,
@@ -616,11 +616,6 @@ def _get_route_from_func(
         if isinstance(route, fastapi.routing.APIRoute) and (route.endpoint == endpoint):
             return route
     return None
-
-
-def _callable_name(call: Callable[..., Any]) -> str:
-    name = getattr(call, "__name__", None)
-    return name if isinstance(name, str) else type(call).__name__
 
 
 def _route_has_a_simple_body_schema(route: APIRoute) -> bool:
