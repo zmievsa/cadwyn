@@ -24,6 +24,7 @@ from starlette.routing import Route
 from typing_extensions import Any, TypeAliasType
 
 from cadwyn import VersionBundle, VersionedAPIRouter
+from cadwyn._utils import _callable_name
 from cadwyn.applications import Cadwyn
 from cadwyn.dependencies import current_dependency_solver
 from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
@@ -67,10 +68,6 @@ def get_wrapped_endpoint(endpoint: Endpoint) -> Endpoint:
     while callable(wrapped_endpoint := getattr(endpoint, "__wrapped__", None)):
         endpoint = wrapped_endpoint
     return endpoint
-
-
-def endpoint_name(endpoint: Endpoint) -> str:
-    return getattr(endpoint, "__name__", endpoint.__class__.__name__)
 
 
 def route_endpoint(route: object) -> Endpoint:
@@ -922,13 +919,13 @@ def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpo
     class MyVersionChange2(VersionChange):
         description = "..."
         instructions_to_migrate_to_previous_version = [
-            endpoint("/test", ["GET"], func_name=endpoint_name(route_to_restore_first)).existed,
+            endpoint("/test", ["GET"], func_name=_callable_name(route_to_restore_first)).existed,
         ]
 
     class MyVersionChange1(VersionChange):
         description = "..."
         instructions_to_migrate_to_previous_version = [
-            endpoint("/test", ["GET"], func_name=endpoint_name(route_to_restore_second)).existed,
+            endpoint("/test", ["GET"], func_name=_callable_name(route_to_restore_second)).existed,
         ]
 
     versions = VersionBundle(

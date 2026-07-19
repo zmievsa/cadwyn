@@ -3,7 +3,7 @@ from enum import Enum, auto
 from typing import Annotated, Any, ClassVar, Literal, Union, get_origin
 
 import pytest
-from pydantic import BaseModel, Field, StringConstraints, ValidationError, computed_field, conint, constr, create_model
+from pydantic import BaseModel, Field, StringConstraints, ValidationError, computed_field, conint, constr
 from pydantic.fields import FieldInfo
 
 from cadwyn.exceptions import (
@@ -111,14 +111,12 @@ def test__schema_field_existed_as__with_new_weird_data_types(create_runtime_sche
         )
     )
 
-    expected_schema = create_model(
-        "ExpectedSchema",
-        foo=(dict[str, int], Field(default={"a": "b"})),
-        bar=(list[int], Field(default_factory=lambda: 83)),  # pragma: no branch
-        baz=(Literal[MyEnum.foo], ...),
-    )
+    class ExpectedSchema(BaseModel):
+        foo: dict[str, int] = Field(default={"a": "b"})  # ty: ignore[invalid-assignment]
+        bar: list[int] = Field(default_factory=lambda: 83)  # pragma: no branch # ty: ignore[invalid-assignment]
+        baz: Literal[MyEnum.foo]
 
-    assert_models_are_equal(schemas["2000-01-01"][EmptySchema], expected_schema)
+    assert_models_are_equal(schemas["2000-01-01"][EmptySchema], ExpectedSchema)
 
 
 ################
@@ -171,7 +169,7 @@ def test__schema_field_didnt_exist__with_inheritance_and_child_not_versioned__ch
 
     assert_models_are_equal(schemas["2000-01-01"][ParentSchema], ExpectedParentSchema)
     assert set(schemas["2000-01-01"][ChildSchema].model_fields) == {"baz"}
-    assert schemas["2000-01-01"][ChildSchema].model_validate({"baz": 83})
+    assert schemas["2000-01-01"][ChildSchema](baz=83)  # ty: ignore[missing-argument]
 
 
 #######
@@ -925,8 +923,8 @@ def test__schema_with_classvar__add_classvar_field(create_runtime_schemas: Creat
     old_model = schemas["2000-01-01"][SchemaWithoutClassVar]
 
     assert not hasattr(latest_model, "new_config")
-    assert getattr(mid_model, "new_config", None) == "added_config"
-    assert getattr(old_model, "new_config", None) == "added_config"
+    assert mid_model.new_config == "added_config"  # ty: ignore[unresolved-attribute]
+    assert old_model.new_config == "added_config"  # ty: ignore[unresolved-attribute]
 
     assert not hasattr(latest_model, "new_config_without_value")
     assert not hasattr(mid_model, "new_config_without_value")
