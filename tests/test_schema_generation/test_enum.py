@@ -53,8 +53,8 @@ def test__enum_had__original_enum_has_methods__all_methods_are_preserved(
     )
     model = models["2000-01-01"][EnumWithOneMemberAndMethods]
     assert model.foo.value == 83
-    assert model.__members__["hello_member"].value == 10
-    assert model.__members__["world_member"].value == 20
+    assert model.hello_member.value == 10  # ty: ignore[unresolved-attribute]
+    assert model.world_member.value == 20  # ty: ignore[unresolved-attribute]
     assert model.foo._hello().value == 10
     assert model.world().value == 20
 
