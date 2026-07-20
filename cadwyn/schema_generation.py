@@ -448,7 +448,7 @@ def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, typ
 
 
 def _function_globals(call: Union[types.FunctionType, types.MethodType]) -> dict[str, Any]:
-    return dict(inspect.getclosurevars(call).globals)
+    return call.__globals__  # ty: ignore[unresolved-attribute]  # MethodType forwards function attributes at runtime.
 
 
 class _CallableWrapper:
