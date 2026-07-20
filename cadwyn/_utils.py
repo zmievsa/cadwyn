@@ -4,7 +4,7 @@ from inspect import signature
 from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
 
 from pydantic._internal._decorators import unwrap_wrapped_function
-from typing_extensions import ParamSpec
+from typing_extensions import ParamSpec, override
 
 Sentinel: Any = object()
 
@@ -47,6 +47,7 @@ class classproperty(Generic[_P_T, _P_R]):  # noqa: N801
 class PlainRepr(str):
     """String class where repr doesn't include quotes"""
 
+    @override
     def __repr__(self) -> str:
         return str(self)
 
@@ -61,7 +62,7 @@ def same_method_definition_as_in(
     return decorator
 
 
-def fully_unwrap_decorator(func: Callable, is_pydantic_v1_style_validator: Any):
+def fully_unwrap_decorator(func: Callable[..., object], is_pydantic_v1_style_validator: Any):
     func = unwrap_wrapped_function(func)
     if is_pydantic_v1_style_validator and func.__closure__:
         func = func.__closure__[0].cell_contents

@@ -51,6 +51,7 @@ from typing_extensions import (
     assert_never,
     final,
     overload,
+    override,
 )
 
 from cadwyn._asts import GenericAliasUnionArgs
@@ -164,8 +165,8 @@ def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]
 
 @dataclasses.dataclass(**DATACLASS_SLOTS)
 class _ModelBundle:
-    enums: dict[type[Enum], "_EnumWrapper"]
-    schemas: dict[type[BaseModel], "_PydanticModelWrapper"]
+    enums: dict[type[Enum], "_EnumWrapper[Enum]"]
+    schemas: dict[type[BaseModel], "_PydanticModelWrapper[BaseModel]"]
 
 
 @dataclasses.dataclass(**DATACLASS_SLOTS, **DATACLASS_KW_ONLY)
@@ -219,8 +220,8 @@ def _unwrap_model(model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
 @dataclasses.dataclass(**DATACLASS_SLOTS, **DATACLASS_KW_ONLY)
 class _ValidatorWrapper:
     kwargs: dict[str, Any]
-    func: Callable
-    decorator: Callable
+    func: Callable[..., object]
+    decorator: Callable[..., Callable[..., object]]
     is_deleted: bool = False
 
 
@@ -229,7 +230,11 @@ class _PerFieldValidatorWrapper(_ValidatorWrapper):
     fields: list[str] = dataclasses.field(default_factory=list)
 
 
-def _wrap_validator(func: Callable, is_pydantic_v1_style_validator: Any, decorator_info: _decorators.DecoratorInfo):
+def _wrap_validator(
+    func: Callable[..., object],
+    is_pydantic_v1_style_validator: Any,
+    decorator_info: _decorators.DecoratorInfo,
+):
     # This is only for pydantic v1 style validators
     func = fully_unwrap_decorator(func, is_pydantic_v1_style_validator)
     if inspect.ismethod(func):
@@ -371,6 +376,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         memo[id(self)] = result
         return result
 
+    @override
     def __hash__(self) -> int:
         return hash(id(self))
 
@@ -483,24 +489,29 @@ class _CallableWrapper:
     def __call__(self, *args: Any, **kwargs: Any):
         return self._original_callable(*args, **kwargs)
 
+    @override
     def __hash__(self):
         return hash(self._original_callable)
 
+    @override
     def __eq__(self, value: object) -> bool:
         return self._original_callable == value
 
 
 class _AsyncCallableWrapper(_CallableWrapper):
+    @override
     async def __call__(self, *args: Any, **kwargs: Any):
         return await self._original_callable(*args, **kwargs)
 
 
 class _GeneratorCallableWrapper(_CallableWrapper):
+    @override
     def __call__(self, *args: Any, **kwargs: Any):  # pragma: no cover
         yield from self._original_callable(*args, **kwargs)
 
 
 class _AsyncGeneratorCallableWrapper(_CallableWrapper):
+    @override
     async def __call__(self, *args: Any, **kwargs: Any):  # pragma: no cover
         async for value in self._original_callable(*args, **kwargs):
             yield value
@@ -731,7 +742,7 @@ class _AnnotationTransformer:
         return call
 
 
-def is_gen_callable(call: Callable) -> bool:
+def is_gen_callable(call: Callable[..., object]) -> bool:
     # Copied from fastapi.dependencies.models
     if inspect.isgeneratorfunction(call):
         return True
@@ -739,7 +750,7 @@ def is_gen_callable(call: Callable) -> bool:
     return inspect.isgeneratorfunction(dunder_call)
 
 
-def is_async_gen_callable(call: Callable) -> bool:
+def is_async_gen_callable(call: Callable[..., object]) -> bool:
     # Copied from fastapi.dependencies.models
     if inspect.isasyncgenfunction(call):
         return True
@@ -747,7 +758,7 @@ def is_async_gen_callable(call: Callable) -> bool:
     return inspect.isasyncgenfunction(dunder_call)
 
 
-def is_coroutine_callable(call: Callable) -> bool:  # pragma: no cover
+def is_coroutine_callable(call: Callable[..., object]) -> bool:  # pragma: no cover
     # Copied from fastapi.dependencies.models
     if inspect.isroutine(call):
         return iscoroutinefunction(call)
@@ -787,11 +798,11 @@ class SchemaGenerator:
         model = _unwrap_model(model)
 
         if model in self.concrete_models:
-            return self.concrete_models[model]
-
-        wrapper = self._get_wrapper_for_model(model)
-        model_copy = wrapper.generate_model_copy(self)
-        self.concrete_models[model] = model_copy
+            model_copy = self.concrete_models[model]
+        else:
+            wrapper = self._get_wrapper_for_model(model)
+            model_copy = wrapper.generate_model_copy(self)
+            self.concrete_models[model] = model_copy
         return cast("type[_T_ANY_MODEL]", model_copy)
 
     @overload
@@ -880,7 +891,8 @@ def _apply_alter_schema_instructions(
         elif isinstance(alter_schema_instruction, ValidatorExistedInstruction):
             validator_name = get_name_of_function_wrapped_in_pydantic_validator(alter_schema_instruction.validator)
             raw_validator = cast(
-                "pydantic._internal._decorators.PydanticDescriptorProxy", alter_schema_instruction.validator
+                "pydantic._internal._decorators.PydanticDescriptorProxy[object]",
+                alter_schema_instruction.validator,
             )
             schema_info.validators[validator_name] = _wrap_validator(
                 raw_validator.wrapped,
@@ -933,7 +945,7 @@ def _apply_alter_enum_instructions(
 
 
 def _change_model(
-    model: _PydanticModelWrapper,
+    model: _PydanticModelWrapper[BaseModel],
     alter_schema_instruction: SchemaHadInstruction,
     version_change_name: str,
 ):
@@ -947,7 +959,7 @@ def _change_model(
 
 
 def _add_field_to_model(
-    model: _PydanticModelWrapper,
+    model: _PydanticModelWrapper[BaseModel],
     schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
     alter_schema_instruction: FieldExistedAsInstruction,
     version_change_name: str,
@@ -976,7 +988,7 @@ def _add_field_to_model(
 
 
 def _change_field_in_model(
-    model: _PydanticModelWrapper,
+    model: _PydanticModelWrapper[BaseModel],
     schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
     alter_schema_instruction: Union[FieldHadInstruction, FieldDidntHaveInstruction],
     version_change_name: str,
@@ -1014,7 +1026,7 @@ def _change_field_in_model(
 
 
 def _change_field(
-    model: _PydanticModelWrapper,
+    model: _PydanticModelWrapper[BaseModel],
     alter_schema_instruction: FieldHadInstruction,
     version_change_name: str,
     defined_annotations: dict[str, Any],
@@ -1058,7 +1070,7 @@ def _change_field(
 
 
 def _delete_field_attributes(
-    model: _PydanticModelWrapper,
+    model: _PydanticModelWrapper[BaseModel],
     alter_schema_instruction: FieldDidntHaveInstruction,
     version_change_name: str,
     field: PydanticFieldWrapper,
@@ -1085,7 +1097,7 @@ def _delete_field_attributes(
             )
 
 
-def _delete_field_from_model(model: _PydanticModelWrapper, field_name: str, version_change_name: str):
+def _delete_field_from_model(model: _PydanticModelWrapper[BaseModel], field_name: str, version_change_name: str):
     if field_name in model.fields:
         model.fields.pop(field_name)
         model.annotations.pop(field_name)

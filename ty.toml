@@ -1,8 +1,25 @@
 [environment]
+python-platform = "all"
 python-version = "3.10"
+
+[analysis]
+respect-type-ignore-comments = false
+strict-literal-narrowing = true
+
+[rules]
+blanket-ignore-comment = "error"
+division-by-zero = "error"
+missing-override-decorator = "error"
+missing-type-argument = "error"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
+possibly-unresolved-reference = "error"
+unsupported-dynamic-base = "error"
 
 [[overrides]]
 include = ["tests/**"]
 
 [overrides.rules]
+missing-type-argument = "ignore"
+possibly-missing-attribute = "ignore"
 unsupported-base = "ignore"

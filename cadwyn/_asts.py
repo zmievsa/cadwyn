@@ -79,11 +79,13 @@ def transform_grouped_metadata(value: "annotated_types.GroupedMetadata", fields:
     )
 
 
-def transform_collection(value: Union[list, tuple, set, frozenset]) -> Any:
+def transform_collection(
+    value: Union[list[object], tuple[object, ...], set[object], frozenset[object]],
+) -> Any:
     return PlainRepr(value.__class__(map(get_fancy_repr, value)))
 
 
-def transform_dict(value: dict) -> Any:
+def transform_dict(value: dict[object, object]) -> Any:
     return PlainRepr(
         value.__class__((get_fancy_repr(k), get_fancy_repr(v)) for k, v in value.items()),
     )

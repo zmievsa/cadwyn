@@ -83,7 +83,7 @@ def _render_model_from_ast(
         return _render_pydantic_model(wrapper, model_ast)
 
 
-def _render_enum_model(wrapper: _EnumWrapper, original_cls_node: ast.ClassDef):
+def _render_enum_model(wrapper: _EnumWrapper[Enum], original_cls_node: ast.ClassDef):
     # This is for possible schema renaming
     original_cls_node.name = wrapper.cls.__name__
 
@@ -107,7 +107,7 @@ def _render_enum_model(wrapper: _EnumWrapper, original_cls_node: ast.ClassDef):
     return original_cls_node
 
 
-def _render_pydantic_model(wrapper: _PydanticModelWrapper, original_cls_node: ast.ClassDef):
+def _render_pydantic_model(wrapper: _PydanticModelWrapper[BaseModel], original_cls_node: ast.ClassDef):
     # This is for possible schema renaming
     original_cls_node.name = wrapper.name
 

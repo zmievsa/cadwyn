@@ -11,6 +11,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
+from typing_extensions import override
 
 from cadwyn import Cadwyn, VersionBundle, VersionedAPIRouter
 from cadwyn._utils import same_method_definition_as_in
@@ -56,6 +57,7 @@ class TestClientWithHardcodedAPIVersion(CadwynTestClient):
         self.api_version_var = api_version_var
         self.api_version = api_version
 
+    @override
     def request(self, *args, **kwargs):
         if self.api_version is not Undefined and self.api_version_var:
             self.api_version_var.set(self.api_version)
