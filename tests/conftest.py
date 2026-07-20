@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
 
 from cadwyn import Cadwyn, VersionBundle, VersionedAPIRouter
-from cadwyn._utils import same_definition_as_in
+from cadwyn._utils import same_method_definition_as_in
 from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
@@ -38,7 +38,7 @@ def random_uuid():
 
 
 class CadwynTestClient(TestClient):
-    @same_definition_as_in(TestClient.__init__)
+    @same_method_definition_as_in(TestClient.__init__)
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.app: Cadwyn
@@ -140,7 +140,7 @@ def version_change(
     **body_items: Any,
 ) -> type[VersionChange]:
     return type(VersionChange)(
-        "MyVersionChange",  # pyright: ignore
+        "MyVersionChange",
         (VersionChange,),
         {
             "description": "",

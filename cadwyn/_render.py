@@ -97,7 +97,7 @@ def _render_enum_model(wrapper: _EnumWrapper, original_cls_node: ast.ClassDef):
     ]
 
     old_body = [
-        n for n in original_cls_node.body if not isinstance(n, (ast.AnnAssign, ast.Assign, ast.Pass, ast.Constant))
+        n for n in original_cls_node.body if not isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)
     ]
     docstring = pop_docstring_from_cls_body(old_body)
 
@@ -130,7 +130,7 @@ def _render_pydantic_model(wrapper: _PydanticModelWrapper, original_cls_node: as
         n
         for n in original_cls_node.body
         if not (
-            isinstance(n, (ast.AnnAssign, ast.Assign, ast.Pass, ast.Constant))
+            isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)
             or (isinstance(n, ast.FunctionDef) and n.name in wrapper.validators)
         )
     ]

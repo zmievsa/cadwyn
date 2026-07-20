@@ -28,6 +28,6 @@ class ModelWithWeirdFields(A):
     bar: list[int] = Field(default_factory=my_default_factory)
     baz: Literal[MyEnum.foo]
     saz: Annotated[str, StringConstraints(to_upper=True)]
-    laz: conint(gt=12)
+    laz: conint(gt=12)  # ty: ignore[invalid-type-form]  # Intentionally exercise the legacy Pydantic interface.
     taz: Union[int, str, None] = Field(default_factory=lambda: 83)  # pragma: no branch
     naz: list[int] = Field(default=[1, 2, 3])

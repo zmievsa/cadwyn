@@ -80,7 +80,7 @@ dev = [
     "dirty-equals >=0.6.0",
     "uvicorn ~=0.23.0",
     # type checking
-    "pyright>=1.1.390",
+    "ty>=0.0.56",
     # docs
     "mkdocs >=1.5.2",
     "mkdocs-material >=9.3.1",
@@ -146,29 +146,6 @@ exclude_lines = [
     "def .+: \\.\\.\\.",
 ]
 omit = ["./docs/plugin.py", "./site/plugin.py", "scripts/*.py"]
-
-[tool.pyright]
-reportMissingImports = true
-strictListInference = true
-strictDictionaryInference = true
-strictSetInference = true
-reportPropertyTypeMismatch = true
-reportImportCycles = true
-reportUntypedFunctionDecorator = "warning"
-reportUntypedClassDecorator = "warning"
-reportUntypedBaseClass = "warning"
-reportDeprecated = "warning"
-reportInvalidTypeVarUse = true
-reportUnnecessaryCast = true
-reportUnnecessaryComparison = true
-reportUnnecessaryContains = true
-reportAssertAlwaysTrue = true
-reportUnsupportedDunderAll = true
-reportUnnecessaryTypeIgnoreComment = "warning" # TODO: Move to true once pyright fixes its bugs
-reportMissingSuperCall = true
-reportFunctionMemberAccess = false
-reportInvalidTypeForm = false
-reportPrivateImportUsage = false
 
 [tool.pytest.ini_options]
 filterwarnings = [

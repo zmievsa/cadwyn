@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from starlette.routing import BaseRoute
 from typing_extensions import TypeVar, assert_never
 
-from cadwyn._utils import DATACLASS_SLOTS, Sentinel, lenient_issubclass
+from cadwyn._utils import DATACLASS_SLOTS, Sentinel, _callable_name, lenient_issubclass
 from cadwyn.exceptions import (
     CadwynError,
     RouteAlreadyExistsError,
@@ -90,11 +90,13 @@ class VersionedAPIRouter(fastapi.routing.APIRouter):
         route = _get_route_from_func(self.routes, endpoint)
         if route is None:
             raise LookupError(
-                f'Route not found on endpoint: "{endpoint.__name__}". '
+                f'Route not found on endpoint: "{_callable_name(endpoint)}". '
                 "Are you sure it's a route and decorators are in the correct order?",
             )
         if _DELETED_ROUTE_TAG in route.tags:
-            raise CadwynError(f'The route "{endpoint.__name__}" was already deleted. You can\'t delete it again.')
+            raise CadwynError(
+                f'The route "{_callable_name(endpoint)}" was already deleted. You can\'t delete it again.'
+            )
         route.tags.append(_DELETED_ROUTE_TAG)
         return endpoint
 
@@ -162,7 +164,7 @@ def _apply_effective_route_context_to_route(route: APIRoute, effective_route_con
 def _copy_effective_route_context_attr(attr_name: str, attr_value: Any) -> Any:
     if attr_name in {"dependant", "_flat_dependant"} and attr_value is not None:
         return copy(attr_value)
-    if isinstance(attr_value, (dict, list, set)):
+    if isinstance(attr_value, dict | list | set):
         return copy(attr_value)
     return attr_value
 
@@ -244,7 +246,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
                     annotation = older_route.body_field.field_info.annotation
                     if hasattr(annotation, "__cadwyn_original_model__"):
-                        template_older_body_model = annotation.__cadwyn_original_model__  # pyright: ignore[reportOptionalMemberAccess]
+                        template_older_body_model = annotation.__cadwyn_original_model__
                     else:
                         template_older_body_model = annotation
                 else:
@@ -297,7 +299,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     if missing_models:
                         raise RouteRequestBySchemaConverterDoesNotApplyToAnythingError(
                             f"Request by body schema converter "
-                            f'"{version_change.__name__}.{by_schema_converter.transformer.__name__}" '
+                            f'"{version_change.__name__}.{_callable_name(by_schema_converter.transformer)}" '
                             f"failed to find routes with the following body schemas: "
                             f"{[m.__name__ for m in missing_models]}. "
                             f"This means that you are trying to apply this converter to non-existing endpoint(s). "
@@ -310,13 +312,13 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     if missing_models:
                         raise RouteResponseBySchemaConverterDoesNotApplyToAnythingError(
                             f"Response by response model converter "
-                            f'"{version_change.__name__}.{by_schema_converter.transformer.__name__}" '
+                            f'"{version_change.__name__}.{_callable_name(by_schema_converter.transformer)}" '
                             f"failed to find routes with the following response models: "
                             f"{[m.__name__ for m in missing_models]}. "
                             f"This means that you are trying to apply this converter to non-existing endpoint(s). "
                             "If this is intentional and this converter really does not apply to any endpoints, then "
                             "pass check_usage=False argument to "
-                            f"{version_change.__name__}.{by_schema_converter.transformer.__name__}"
+                            f"{version_change.__name__}.{_callable_name(by_schema_converter.transformer)}"
                         )
 
     def _attach_routes_by_path_converter(
@@ -341,7 +343,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
         if missing_methods:
             raise RouteByPathConverterDoesNotApplyToAnythingError(
                 f"{by_path_converter.repr_name} "
-                f'"{version_change.__name__}.{by_path_converter.transformer.__name__}" '
+                f'"{version_change.__name__}.{_callable_name(by_path_converter.transformer)}" '
                 f"failed to find routes with the following methods: {list(missing_methods)}. "
                 f"This means that you are trying to apply this converter to non-existing endpoint(s). "
                 "Please, check whether the path and methods are correct. (hint: path must include "
@@ -414,7 +416,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             f'"{version_change.__name__}" was already deleted in a newer version. If you really have '
                             f'two routes with the same paths and methods, please, use "endpoint(..., func_name=...)" '
                             f"to distinguish between them. Function names of endpoints that were already deleted: "
-                            f"{[r.endpoint.__name__ for r in deleted_routes]}",
+                            f"{[_callable_name(r.endpoint) for r in deleted_routes]}",
                         )
                     for original_route in original_routes:
                         methods_to_which_we_applied_changes |= _route_methods(original_route)
@@ -433,7 +435,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             f' "{version_change.__name__}" already existed in a newer version. If you really have two '
                             f'routes with the same paths and methods, please, use "endpoint(..., func_name=...)" to '
                             f"distinguish between them. Function names of endpoints that already existed: "
-                            f"{[r.endpoint.__name__ for r in original_routes]}",
+                            f"{[_callable_name(r.endpoint) for r in original_routes]}",
                         )
                     deleted_routes = _get_routes(
                         routes,
@@ -450,7 +452,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             f'restore in "{version_change.__name__}" has {len(e.routes)} applicable routes that could '
                             f"be restored. If you really have two routes with the same paths and methods, please, use "
                             f'"endpoint(..., func_name=...)" to distinguish between them. Function names of '
-                            f"endpoints that can be restored: {[r.endpoint.__name__ for r in e.routes]}",
+                            f"endpoints that can be restored: {[_callable_name(r.endpoint) for r in e.routes]}",
                         ) from e
                     for deleted_route in deleted_routes:
                         methods_to_which_we_applied_changes |= _route_methods(deleted_route)
@@ -460,7 +462,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             self.routes_that_never_existed,
                             deleted_route.path,
                             _route_methods(deleted_route),
-                            deleted_route.endpoint.__name__,
+                            _callable_name(deleted_route.endpoint),
                             is_deleted=True,
                         )
                         if len(routes_that_never_existed) == 1:
@@ -477,7 +479,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                                 f"problems during version generation. Specifically, Cadwyn won't be able to warn "
                                 f"you when you deleted a route and never restored it. Please, make sure that "
                                 f"functions for all these routes have different names: "
-                                f"{[f'{r.endpoint.__module__}.{r.endpoint.__name__}' for r in routes]}",
+                                f"{[f'{r.endpoint.__module__}.{_callable_name(r.endpoint)}' for r in routes]}",
                             )
                     err = (
                         'Endpoint "{endpoint_methods} {endpoint_path}" you tried to restore in'
@@ -600,7 +602,7 @@ def _get_routes(
             isinstance(route, fastapi.routing.APIRoute)
             and route.path.rstrip("/") == endpoint_path
             and _route_methods(route).issubset(endpoint_methods)
-            and (endpoint_func_name is None or route.endpoint.__name__ == endpoint_func_name)
+            and (endpoint_func_name is None or _callable_name(route.endpoint) == endpoint_func_name)
             and (_DELETED_ROUTE_TAG in route.tags) == is_deleted
         )
     ]

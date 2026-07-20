@@ -169,7 +169,7 @@ def _post_endpoint_with_extra_depends(
     request: pytest.FixtureRequest,
     router: VersionedAPIRouter,
     test_path: Literal["/test"],
-    _post_endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],  # pyright: ignore[reportRedeclaration]
+    _post_endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
 ):
     if request.param == "without_request":
         router.routes = []
@@ -838,7 +838,7 @@ def test__invalid_path_migration_syntax():
         TypeError,
         match=re.escape("If path was provided as a first argument, methods must be provided as a second argument"),
     ):
-        convert_request_to_next_version_for("/test")  # pyright: ignore[reportArgumentType]
+        convert_request_to_next_version_for("/test")  # ty: ignore[invalid-argument-type]
 
 
 def test__schema_migration_syntax__with_methods_after_a_schema__should_raise_error():
@@ -846,7 +846,7 @@ def test__schema_migration_syntax__with_methods_after_a_schema__should_raise_err
         TypeError,
         match=re.escape("If schema was provided as a first argument, all other arguments must also be schemas"),
     ):
-        convert_request_to_next_version_for(AnyRequestSchema, ["POST"])  # pyright: ignore
+        convert_request_to_next_version_for(AnyRequestSchema, ["POST"])  # ty: ignore[no-matching-overload]
 
 
 def test__schema_migration_syntax__with_additional_schemas_after_methods__should_raise_error():
@@ -854,7 +854,7 @@ def test__schema_migration_syntax__with_additional_schemas_after_methods__should
         TypeError,
         match=re.escape("If path was provided as a first argument, then additional schemas cannot be added"),
     ):
-        convert_request_to_next_version_for("/v1/test", ["POST"], AnyRequestSchema)  # pyright: ignore[reportArgumentType]
+        convert_request_to_next_version_for("/v1/test", ["POST"], AnyRequestSchema)  # ty: ignore[invalid-argument-type]
 
 
 def test__uploadfile_can_work(
@@ -902,7 +902,8 @@ def test__form_migration__can_modify_string_form_field(
 
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
-        request.form[:] = [(k, "migrated_name") if k == "name" else (k, v) for k, v in request.form]  # type: ignore[index]
+        assert request.form is not None
+        request.form[:] = [(k, "migrated_name") if k == "name" else (k, v) for k, v in request.form]
 
     clients = create_versioned_clients(version_change(migrator=migrator))
     resp_2000 = clients["2000-01-01"].post(test_path, data={"name": "original_name", "age": "25"})
@@ -944,7 +945,8 @@ def test__form_migration__can_add_new_form_field(
 
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
-        request.form.append(("extra", "added_by_migration"))  # type: ignore[union-attr]
+        assert request.form is not None
+        request.form.append(("extra", "added_by_migration"))
 
     clients = create_versioned_clients(version_change(migrator=migrator))
     resp_2000 = clients["2000-01-01"].post(test_path, data={"name": "my_name"})
@@ -1044,7 +1046,7 @@ def test__request_body_parsing__malformed_json_returns_422(
 ):
     @router.post(test_path)
     async def endpoint(name: Optional[str] = Body(default=None), age: Optional[int] = Body(default=None)):
-        return {"name": name, "age": age}
+        return {"name": name, "age": age}  # pragma: no cover
 
     clients = create_versioned_clients(version_change())
     assert clients["2000-01-01"].post(test_path, json={"name": "Bob", "age": 42}).json() == {

@@ -28,7 +28,7 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
 from typing_extensions import Self, assert_never, deprecated
 
-from cadwyn._utils import DATACLASS_SLOTS, same_definition_as_in
+from cadwyn._utils import DATACLASS_SLOTS, same_method_definition_as_in
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
@@ -260,7 +260,7 @@ class Cadwyn(FastAPI):
             self.api_version_validation_data_type = str
         else:
             assert_never(default_version_example)
-        self.router: _RootCadwynAPIRouter = _RootCadwynAPIRouter(  # pyright: ignore[reportIncompatibleVariableOverride]
+        self.router: _RootCadwynAPIRouter = _RootCadwynAPIRouter(
             **self._kwargs_to_router,
             on_startup=on_startup,
             on_shutdown=on_shutdown,
@@ -293,12 +293,11 @@ class Cadwyn(FastAPI):
                 "Versions are not sorted correctly. Please sort them in descending order.",
             )
 
-    @same_definition_as_in(FastAPI.__call__)
-    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+    @same_method_definition_as_in(FastAPI.__call__)
+    async def __call__(self, *args: Any, **kwargs: Any) -> None:
         if not self._cadwyn_initialized:
             self._cadwyn_initialize()
-        self.__call__ = super().__call__
-        await self.__call__(scope, receive, send)
+        await super().__call__(*args, **kwargs)
 
     def _cadwyn_initialize(self) -> None:
         try:
@@ -333,7 +332,7 @@ class Cadwyn(FastAPI):
         return self._dependency_overrides_provider.dependency_overrides
 
     @dependency_overrides.setter
-    def dependency_overrides(  # pyright: ignore[reportIncompatibleVariableOverride]
+    def dependency_overrides(
         self,
         value: dict[Callable[..., Any], Callable[..., Any]],
     ) -> None:

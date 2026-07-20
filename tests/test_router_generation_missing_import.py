@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Annotated  # Note: _no_ import of Literal. This triggers the bug!
+from typing import TYPE_CHECKING, Annotated  # Note: _no_ runtime import of Literal. This triggers the bug!
 
-import fastapi
+if TYPE_CHECKING:
+    from typing import Literal
+
 import pytest
 from fastapi import Depends
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
 
-import cadwyn
 from cadwyn import current_dependency_solver
 from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
@@ -35,7 +36,7 @@ def test__missing_an_import_used_in_annotations_with_from_future_import_annotati
     router = VersionedAPIRouter()
 
     async def dep_with_solver(
-        dependency_solver: Annotated[Literal[fastapi, cadwyn], Depends(current_dependency_solver)],  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
+        dependency_solver: Annotated[Literal["fastapi", "cadwyn"], Depends(current_dependency_solver)],
     ):
         pass  # pragma: no cover
 

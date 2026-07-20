@@ -22,7 +22,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --refresh --all-extras --dev --upgrade
       - run: uv run pytest . # We intentionally don't use tox here to run tests "as is"
-      - run: uv run pyright --version && uv run pyright .
+      - run: uv run ty version && uv run ty check --exit-zero-on-warning
 
   notify-on-failure:
     name: Notify on failure

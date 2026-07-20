@@ -1,0 +1,8 @@
+[environment]
+python-version = "3.10"
+
+[[overrides]]
+include = ["tests/**"]
+
+[overrides.rules]
+unsupported-base = "ignore"

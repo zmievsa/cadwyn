@@ -27,10 +27,10 @@
 ## Guidelines for writing code
 
 * Code should be [Pythonic and zen](https://peps.python.org/pep-0020/)
-* All code should be fully [typed](https://peps.python.org/pep-0484/). This is enforced via [ruff](https://github.com/astral-sh/ruff) but the type hinting itself will be enforced by [pyright](https://github.com/microsoft/pyright/) in the future
+* All code should be fully [typed](https://peps.python.org/pep-0484/). This is enforced via [ruff](https://github.com/astral-sh/ruff) and [ty](https://github.com/astral-sh/ty)
   * When complex types are required, use [type aliases](https://docs.python.org/3/library/typing.html#type-aliases)
   * If something cannot be typed correctly due to the limitations of the type checkers, use [typing.cast](https://docs.python.org/3/library/typing.html#typing.cast) to resolve the issue. However, use `typing.cast` only as a last resort, after exhausting all other options of [type narrowing](https://mypy.readthedocs.io/en/stable/type_narrowing.html), such as [isinstance()](https://docs.python.org/3/library/functions.html#isinstance) checks and [type guards](https://docs.python.org/3/library/typing.html#typing.TypeGuard)
-  * Use `pyright: ignore` once you have verified that the line is correct, but pyright has issues with it
+  * Use `ty: ignore` once you have verified that the line is correct, but ty has issues with it
 * If you are adding or modifying existing code, make sure that it's fully tested. 100% test coverage is mandatory, and will be checked on the PR using [Github Actions](https://github.com/features/actions)
 * When adding a new public interface, make sure you have included it in the concept documentation located in `docs/concepts.md`. If applicable, add or modify examples in the docs related to the new functionality
 
@@ -53,10 +53,10 @@ matching `uv tool install ...` command to install it.
 
 ### Running type checkers
 
-We use [pyright](https://github.com/microsoft/pyright/) to enforce type safety.
+We use [ty](https://github.com/astral-sh/ty) to enforce type safety.
 You can run it with:
 
-`uv run pyright .`
+`uv run ty check --exit-zero-on-warning`
 
 ## Project documentation
 

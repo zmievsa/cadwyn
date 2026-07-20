@@ -45,7 +45,7 @@ You convert moderators to regulars in older versions because it is a safer choic
 
 Suppose your schema contained a list that contains euros and/or dollars. To unmarshal the JSON, Cadwyn takes the JSON string and tries to convert it to a list of euros and/or dollars. If there appears Georgian lari in the list, Cadwyn will fail to unmarshal such a list, which makes adding an enum value a breaking change for a list of items.
 
-If an API client expects `Array<Euro | Dollar>`, then `Array<Euro>` and `Array<Dollar>` would both be considered compatible responses but `Array<Euro | Dollar | Lari>` would not. That happens because `Array<Euro | Dollar | Lari>` is a not a subtype of `Array<Euro | Dollar>` while `Array<Euro>` is.
+If an API client expects `Array<Euro | Dollar>`, then `Array<Euro>` and `Array<Dollar>` would both be considered compatible responses but `Array<Euro | Dollar | Lari>` would not. That happens because `Array<Euro | Dollar | Lari>` is not a subtype of `Array<Euro | Dollar>` while `Array<Euro>` is.
 
 In a sense, extending an enum that has `USD` with `USD | EUR` is equivalent to turning an `int` field into an `int | str` field, which is a breaking change. Hence extending an enum is often a breaking change and thus you might not need to solve this problem at all.
 

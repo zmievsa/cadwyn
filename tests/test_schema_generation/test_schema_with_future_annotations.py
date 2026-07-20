@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated
+from typing import Annotated, TypeAlias
 
 import pytest
 from pydantic import BaseModel, WithJsonSchema
-from typing_extensions import TypeAlias
 
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure.schemas import schema
