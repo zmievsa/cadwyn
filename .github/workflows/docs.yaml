@@ -53,5 +53,5 @@ jobs:
         uses: umbrelladocs/action-linkspector@6c637d70424624231467a4ca918be54fa3b792d0 # v1.5.4
         with:
           reporter: github-check
-          filter_mode: nofilter
+          filter_mode: diff_context
           fail_level: any
