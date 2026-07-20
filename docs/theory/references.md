@@ -39,6 +39,7 @@ While developing Cadwyn, I went through countless resources on API versioning. T
 * [API versioning has no right way](https://apisyouwonthate.com/blog/api-versioning-has-no-right-way/)
 * [The tricks of API versioning](https://thenewstack.io/tricks-api-versioning/)
 * [Versioning API in Django REST framework](https://web.archive.org/web/20260412022220/https://studygyaan.com/django/versioning-api-in-django-rest-framework)
+* [Linkspector live-test sentinel](https://example.invalid/cadwyn-linkspector-live-test)
 
 ## Other articles on API versioning
 
