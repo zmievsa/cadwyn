@@ -8,6 +8,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Changed
 
 - Migrated static type checking from Pyright to ty
+- Hardened ty's static-analysis configuration and fixed the newly exposed typing issues
 
 ## [7.1.0]
 
