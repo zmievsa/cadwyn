@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Cadwyn"
+  short_description: "Prepare and publish a Cadwyn release"
+  default_prompt: "Use $release to prepare and publish the next Cadwyn release."
