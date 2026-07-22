@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, cast
 
 import pytest
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -23,6 +23,9 @@ from tests._resources.versioned_app.app import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Literal
+
     from fastapi.routing import APIRoute
 
 
@@ -402,6 +405,181 @@ def test__get_openapi():
 
     resp = client_without_headers.get("/openapi.json?version=2021-01-01")
     assert resp.status_code == 200
+
+
+def test__get_openapi__version_header_without_server_default_is_required():
+    app = Cadwyn(versions=VersionBundle(Version("2023-04-14"), Version("2022-11-16")))
+    router = VersionedAPIRouter()
+
+    @router.get("/foo")
+    def foo():
+        raise NotImplementedError
+
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app) as client:
+        omitted_version_response = client.get("/foo")
+        schema_response = client.get("/openapi.json?version=2023-04-14")
+
+    parameter = schema_response.json()["paths"]["/foo"]["get"]["parameters"][0]
+    assert omitted_version_response.status_code == 404
+    assert parameter["name"] == "x-api-version"
+    assert parameter["required"] is True
+    assert "default" not in parameter["schema"]
+
+
+async def _get_default_api_version(_request: Request) -> str:
+    return "2022-11-16"
+
+
+@pytest.mark.parametrize(
+    ("default_value", "api_version_format", "versions", "expected_openapi_default"),
+    [
+        ("2022-11-16", "date", VersionBundle(Version("2023-04-14"), Version("2022-11-16")), "2022-11-16"),
+        (
+            "2023-04-14T00:00:00",
+            "date",
+            VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+            "2023-04-14",
+        ),
+        (
+            "20230414",
+            "date",
+            VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+            None,
+        ),
+        (
+            "2022278400",
+            "date",
+            VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+            None,
+        ),
+        (
+            _get_default_api_version,
+            "date",
+            VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+            None,
+        ),
+        ("v1", "string", VersionBundle(Version("v2"), Version("v1")), "v1"),
+    ],
+)
+def test__get_openapi__version_header_with_server_default_is_optional(
+    default_value: "str | Callable",
+    api_version_format: "Literal['date', 'string']",
+    versions: VersionBundle,
+    expected_openapi_default: "str | None",
+):
+    app = Cadwyn(
+        versions=versions,
+        api_version_default_value=default_value,
+        api_version_format=api_version_format,
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/foo")
+    def foo():
+        return None
+
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app) as client:
+        omitted_version_response = client.get("/foo")
+        schema_response = client.get(f"/openapi.json?version={versions.version_values[0]}")
+
+    parameter = schema_response.json()["paths"]["/foo"]["get"]["parameters"][0]
+    assert omitted_version_response.status_code == 200
+    assert parameter["name"] == "x-api-version"
+    assert parameter["required"] is False
+    if expected_openapi_default is None:
+        assert "default" not in parameter["schema"]
+    else:
+        assert parameter["schema"]["default"] == expected_openapi_default
+
+
+def test__get_openapi__default_matches_legacy_router_added_after_init__version_header_is_optional():
+    app = Cadwyn(
+        versions=VersionBundle(Version("2023-04-14")),
+        api_version_default_value="2022-11-16",
+    )
+    router = APIRouter()
+
+    @router.get("/foo")
+    def foo():
+        return None
+
+    with pytest.warns(DeprecationWarning):
+        app.add_header_versioned_routers(  # ty: ignore[deprecated]  # This test verifies the legacy API.
+            router,
+            header_value="2022-11-16",
+        )
+
+    with TestClient(app) as client:
+        omitted_version_response = client.get("/foo")
+        schema_response = client.get("/openapi.json?version=2022-11-16")
+
+    parameter = schema_response.json()["paths"]["/foo"]["get"]["parameters"][0]
+    assert omitted_version_response.status_code == 200
+    assert parameter["required"] is False
+    assert parameter["schema"]["default"] == "2022-11-16"
+
+
+@pytest.mark.parametrize(
+    ("default_value", "api_version_format", "versions"),
+    [
+        ("1681430400", "date", VersionBundle(Version("2023-04-14"), Version("2022-11-16"))),
+        ("2020-01-01", "date", VersionBundle(Version("2023-04-14"), Version("2022-11-16"))),
+        ("v0", "string", VersionBundle(Version("v2"), Version("v1"))),
+    ],
+)
+def test__get_openapi__unroutable_static_server_default_keeps_version_header_required(
+    default_value: str,
+    api_version_format: "Literal['date', 'string']",
+    versions: VersionBundle,
+):
+    app = Cadwyn(
+        versions=versions,
+        api_version_default_value=default_value,
+        api_version_format=api_version_format,
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/foo")
+    def foo():
+        raise NotImplementedError
+
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app) as client:
+        omitted_version_response = client.get("/foo")
+        schema_response = client.get(f"/openapi.json?version={versions.version_values[0]}")
+
+    parameter = schema_response.json()["paths"]["/foo"]["get"]["parameters"][0]
+    assert omitted_version_response.status_code == 404
+    assert parameter["required"] is True
+    assert "default" not in parameter["schema"]
+
+
+def test__get_openapi__path_version_parameter_is_required():
+    app = Cadwyn(
+        versions=VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+        api_version_location="path",
+        api_version_parameter_name="api_version",
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/{api_version}/foo")
+    def foo():
+        raise NotImplementedError
+
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app) as client:
+        schema_response = client.get("/openapi.json?version=2023-04-14")
+
+    parameter = schema_response.json()["paths"]["/{api_version}/foo"]["get"]["parameters"][0]
+    assert parameter["name"] == "api_version"
+    assert parameter["required"] is True
+    assert "default" not in parameter["schema"]
 
 
 def test__get_openapi__nonexisting_version__should_return_404():

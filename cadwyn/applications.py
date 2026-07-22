@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.routing import _EffectiveRouteContext, _IncludedRouter, _iter_routes_with_context
 from fastapi.templating import Jinja2Templates
 from fastapi.utils import generate_unique_id
+from pydantic import TypeAdapter, ValidationError
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -40,7 +41,7 @@ from cadwyn.middleware import (
     _generate_api_version_dependency,
 )
 from cadwyn.route_generation import copy_route, generate_versioned_routers
-from cadwyn.routing import _RootCadwynAPIRouter
+from cadwyn.routing import _get_closest_suitable_version, _RootCadwynAPIRouter
 from cadwyn.structure import VersionBundle
 
 if TYPE_CHECKING:
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
 
 CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
+_API_VERSION_DATE_ADAPTER = TypeAdapter(date)
 
 
 def _get_effective_include_in_schema(route: BaseRoute, effective_route_context: _EffectiveRouteContext | None) -> bool:
@@ -66,6 +68,30 @@ def _materialize_routes(routes: Sequence[BaseRoute]) -> list[BaseRoute]:
         copy_route(route, effective_route_context) if effective_route_context is not None else route
         for route, effective_route_context in _iter_routes_with_context(routes)
     ]
+
+
+def _get_api_version_parameter_metadata(
+    default_value: str,
+    *,
+    api_version_format: APIVersionFormat,
+    version_values: set[str],
+) -> tuple[bool, Union[str, None]]:
+    """Return whether the parameter is required and any default that OpenAPI can represent."""
+    if api_version_format == "date":
+        sorted_version_values = sorted(version_values)
+        routed_version = _get_closest_suitable_version(default_value, sorted_version_values)
+        if routed_version is None:
+            return True, None
+        try:
+            normalized_default_value = _API_VERSION_DATE_ADAPTER.validate_python(default_value).isoformat()
+        except ValidationError:
+            return False, None
+        if _get_closest_suitable_version(normalized_default_value, sorted_version_values) != routed_version:
+            return False, None
+        return False, normalized_default_value
+    if api_version_format == "string":
+        return (False, default_value) if default_value in version_values else (True, None)
+    assert_never(api_version_format)
 
 
 @dataclasses.dataclass(**DATACLASS_SLOTS)
@@ -244,6 +270,7 @@ class Cadwyn(FastAPI):
         self.api_version_pythonic_parameter_name = api_version_parameter_name.replace("-", "_")
         self.api_version_title = api_version_title
         self.api_version_description = api_version_description
+        self._api_version_default_value = api_version_default_value
         if api_version_location == "custom_header":
             self._api_version_manager = HeaderVersionManager(api_version_parameter_name=api_version_parameter_name)
             self._api_version_fastapi_depends_class = fastapi.Header
@@ -523,6 +550,18 @@ class Cadwyn(FastAPI):
         if version not in self.router.versioned_routers:  # pragma: no branch
             self.router.versioned_routers[version] = APIRouter(**self._kwargs_to_router)
 
+        if isinstance(self._api_version_default_value, str):
+            api_version_parameter_is_required, api_version_parameter_default_value = (
+                _get_api_version_parameter_metadata(
+                    self._api_version_default_value,
+                    api_version_format=self.api_version_format,
+                    version_values=set(self.router.versioned_routers),
+                )
+            )
+        else:
+            api_version_parameter_is_required = self._api_version_default_value is None
+            api_version_parameter_default_value = None
+
         versioned_router = self.router.versioned_routers[version]
         if self.openapi_url is not None:  # pragma: no branch
             versioned_router.add_route(
@@ -540,7 +579,9 @@ class Cadwyn(FastAPI):
                     Depends(
                         _generate_api_version_dependency(
                             api_version_pythonic_parameter_name=self.api_version_pythonic_parameter_name,
-                            default_value=version,
+                            version_example=version,
+                            api_version_is_required=api_version_parameter_is_required,
+                            api_version_default_value=api_version_parameter_default_value,
                             fastapi_depends_class=self._api_version_fastapi_depends_class,
                             validation_data_type=self.api_version_validation_data_type,
                             title=self.api_version_title,
