@@ -43,8 +43,8 @@ tests for `cadwyn/codegen.py` reside in `tests/codegen`.
 
 `make check` runs the local CI-equivalent suite with tox's default automatic
 parallelism. It runs the supported Python test matrix, tutorial tests, coverage,
-prek linting, documentation build, link validation, ty, and package build
-checks.
+prek linting, documentation build, link validation, and package build checks.
+Each supported Python test environment runs ty before its tests.
 
 If `prek`, `tox`, or the `tox-uv` plugin is missing, the Makefile will stop
 early and print the matching `uv tool install ...` command to install it.
@@ -54,9 +54,10 @@ early and print the matching `uv tool install ...` command to install it.
 ### Running type checkers
 
 We use [ty](https://github.com/astral-sh/ty) to enforce type safety.
-You can run it with:
+It runs before the test suite on every supported Python version. You can run it
+against your active project environment with:
 
-`tox run -e ty`
+`uv run ty check`
 
 ## Project documentation
 

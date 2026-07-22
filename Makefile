@@ -13,7 +13,7 @@ fi
 endef
 
 define check-tox-runner
-if command -v tox >/dev/null 2>&1 && ! tox config -e ty >/dev/null 2>&1; then \
+if command -v tox >/dev/null 2>&1 && ! tox config -e py3.10 >/dev/null 2>&1; then \
 		echo "Required tox runner 'uv-venv-lock-runner' was not found."; \
 		echo "Install it with:"; \
 		echo "  uv tool install tox --with tox-uv"; \
