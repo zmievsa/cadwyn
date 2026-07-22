@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-def test__populate_routes__should_combine_unversioned_and_versioned_routes():
+def test__populate_routes__with_versioned_and_unversioned_routes__should_combine_both_route_sets():
     versioned_routes = [
         route for router in mixed_hosts_app.router.versioned_routers.values() for route in router.routes
     ]
@@ -25,7 +25,7 @@ def test__populate_routes__should_combine_unversioned_and_versioned_routes():
     )
 
 
-def test__header_routing__should_select_requested_or_closest_earlier_version():
+def test__header_routing__with_defined_and_compatible_versions__should_select_requested_or_closest_earlier_version():
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "2022-02-11"})
 
     response = client.get("/v1/users/tom/83")
@@ -122,7 +122,7 @@ def test__url_path_for__parameters_for_child_route_passed_to_mount__should_raise
         mixed_hosts_app.url_path_for("api", path="hellow", username="tom")
 
 
-def test__lifespan__should_run_async_startup_and_shutdown_handlers():
+def test__lifespan__with_async_startup_and_shutdown_handlers__should_run_each_handler():
     startup_complete = False
     shutdown_complete = False
 
