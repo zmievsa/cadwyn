@@ -19,6 +19,7 @@ from cadwyn._utils import Sentinel
 from cadwyn.route_generation import _get_routes
 from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.schema_generation import SchemaGenerator, _change_field_in_model, generate_versioned_models
+from cadwyn.structure.common import _HiddenAttributeMixin
 from cadwyn.structure.versions import PossibleInstructions, VersionBundle, VersionChange, VersionChangeWithSideEffects
 
 from .structure.endpoints import (
@@ -48,12 +49,13 @@ T = TypeVar("T", bound=Union[PossibleInstructions, type[VersionChange]])
 
 
 def hidden(instruction_or_version_change: T) -> T:
-    if isinstance(
-        instruction_or_version_change, staticmethod | ValidatorDidntExistInstruction | ValidatorExistedInstruction
-    ):
+    if isinstance(instruction_or_version_change, _HiddenAttributeMixin):
+        # Weird ty bug, or I am dumb.
+        instruction_or_version_change.is_hidden_from_changelog = True  # ty: ignore[possibly-missing-attribute]
         return instruction_or_version_change
 
-    instruction_or_version_change.is_hidden_from_changelog = True
+    if isinstance(instruction_or_version_change, type) and issubclass(instruction_or_version_change, VersionChange):
+        cast("type[VersionChange]", instruction_or_version_change).is_hidden_from_changelog = True
     return instruction_or_version_change
 
 
@@ -151,7 +153,7 @@ def _get_all_pydantic_models_from_generic(annotation: Any) -> list[type[BaseMode
     return models
 
 
-def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: str) -> dict:
+def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: str) -> dict[str, object]:
     class CadwynDummyModelForRepresentation(BaseModel):
         my_field: model  # ty: ignore[invalid-type-form]
 

@@ -159,7 +159,7 @@ def convert_request_to_next_version_for(
         if isinstance(schema_or_path, str):
             return _AlterRequestByPathInstruction(
                 path=schema_or_path,
-                methods=set(cast("list", methods_or_second_schema)),
+                methods=set(cast("list[str]", methods_or_second_schema)),
                 transformer=transformer,
             )
         else:
@@ -248,7 +248,7 @@ def convert_response_to_previous_version_for(
             # The validation above checks that methods is not None
             return _AlterResponseByPathInstruction(
                 path=schema_or_path,
-                methods=set(cast("list", methods_or_second_schema)),
+                methods=set(cast("list[str]", methods_or_second_schema)),
                 transformer=transformer,
                 migrate_http_errors=migrate_http_errors,
             )

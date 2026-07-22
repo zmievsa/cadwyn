@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
 from starlette.datastructures import FormData
-from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated
+from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated, override
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
 from cadwyn._utils import classproperty
@@ -56,8 +56,18 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _RouteId = int
 
+# ty requires staticmethod's type arguments, but runtime isinstance() requires the bare class.
+if TYPE_CHECKING:
+    _StaticMethodInstruction: TypeAlias = staticmethod[..., object]
+else:
+    _StaticMethodInstruction = staticmethod
+
 PossibleInstructions: TypeAlias = Union[
-    AlterSchemaSubInstruction, AlterEndpointSubInstruction, AlterEnumSubInstruction, SchemaHadInstruction, staticmethod
+    AlterSchemaSubInstruction,
+    AlterEndpointSubInstruction,
+    AlterEnumSubInstruction,
+    SchemaHadInstruction,
+    _StaticMethodInstruction,
 ]
 
 
@@ -118,7 +128,7 @@ else:
 
 class VersionChange:
     description: ClassVar[str] = Sentinel
-    is_hidden_from_changelog: bool = False
+    is_hidden_from_changelog: ClassVar[bool] = False
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
     alter_schema_instructions: ClassVar[list[Union[AlterSchemaSubInstruction, SchemaHadInstruction]]] = Sentinel
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
@@ -239,6 +249,7 @@ class VersionChange:
 
 class VersionChangeWithSideEffects(VersionChange, _abstract=True):
     @classmethod
+    @override
     def _check_no_subclassing(cls):
         if cls.mro() != [cls, VersionChangeWithSideEffects, VersionChange, object]:
             raise TypeError(
@@ -274,6 +285,7 @@ class Version:
     def version_changes(self):  # pragma: no cover
         return self.changes
 
+    @override
     def __repr__(self) -> str:
         return f"Version('{self.value}')"
 
@@ -788,7 +800,7 @@ async def _get_body(
 
 
 def _add_keyword_only_parameter(
-    func: Callable,
+    func: Callable[..., object],
     param_name: str,
     param_annotation: type,
 ):

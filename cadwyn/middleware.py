@@ -11,6 +11,7 @@ import fastapi
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
 from starlette.types import ASGIApp
+from typing_extensions import override
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn.structure.common import VersionType
@@ -103,6 +104,7 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         self.api_version_var = api_version_var
         self.api_version_default_value = api_version_default_value
 
+    @override
     async def dispatch(
         self,
         request: Request,

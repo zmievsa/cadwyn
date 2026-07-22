@@ -12,6 +12,15 @@ if ! command -v $(1) >/dev/null 2>&1; then \
 fi
 endef
 
+define check-tox-runner
+if command -v tox >/dev/null 2>&1 && ! tox config -e ty >/dev/null 2>&1; then \
+		echo "Required tox runner 'uv-venv-lock-runner' was not found."; \
+		echo "Install it with:"; \
+		echo "  uv tool install tox --with tox-uv"; \
+		status=127; \
+fi
+endef
+
 install:
 	uv sync --all-extras --dev
 
@@ -27,7 +36,8 @@ test: check-tools
 check-tools:
 	@status=0; \
 	$(call check-command,prek,uv tool install prek); \
-	$(call check-command,tox,uv tool install tox); \
+	$(call check-command,tox,uv tool install tox --with tox-uv); \
+	$(call check-tox-runner); \
 	exit $$status
 
 check-prek:
@@ -37,5 +47,6 @@ check-prek:
 
 check-tox:
 	@status=0; \
-	$(call check-command,tox,uv tool install tox); \
+	$(call check-command,tox,uv tool install tox --with tox-uv); \
+	$(call check-tox-runner); \
 	exit $$status

@@ -26,7 +26,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan
-from typing_extensions import Self, assert_never, deprecated
+from typing_extensions import Self, assert_never, deprecated, override
 
 from cadwyn._utils import DATACLASS_SLOTS, same_method_definition_as_in
 from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
@@ -294,6 +294,7 @@ class Cadwyn(FastAPI):
             )
 
     @same_method_definition_as_in(FastAPI.__call__)
+    @override
     async def __call__(self, *args: Any, **kwargs: Any) -> None:
         if not self._cadwyn_initialized:
             self._cadwyn_initialize()
@@ -438,7 +439,7 @@ class Cadwyn(FastAPI):
             for route, effective_route_context in _iter_routes_with_context(self.router.unversioned_routes)
         )
 
-    def _filter_openapi_tags(self, routes: list) -> Union[list[dict[str, Any]], None]:
+    def _filter_openapi_tags(self, routes: list[BaseRoute]) -> Union[list[dict[str, Any]], None]:
         if not self.openapi_tags:
             return self.openapi_tags
         used_tags: set[str | Enum] = set()
