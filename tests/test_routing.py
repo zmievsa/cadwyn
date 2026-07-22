@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-def test__populate_routes():
+def test__populate_routes__should_combine_unversioned_and_versioned_routes():
     versioned_routes = [
         route for router in mixed_hosts_app.router.versioned_routers.values() for route in router.routes
     ]
@@ -25,7 +25,7 @@ def test__populate_routes():
     )
 
 
-def test__header_routing():
+def test__header_routing__should_select_requested_or_closest_earlier_version():
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "2022-02-11"})
 
     response = client.get("/v1/users/tom/83")
@@ -62,7 +62,7 @@ def test__header_routing():
 
 
 @pytest.mark.parametrize("version", ["2022-04-19", "2022-05-01", "2025-11-12"])
-def test__host_routing__backward__ok(version: str):
+def test__header_routing__version_after_route_introduction__should_use_closest_earlier_route(version: str):
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": version})
 
     response = client.get("/v1/doggies/tom")
@@ -70,18 +70,18 @@ def test__host_routing__backward__ok(version: str):
     assert response.json() == {"doggies": [{"dogname": "tom"}]}
 
 
-def test__host_routing__lowest_version__404():
+def test__header_routing__version_before_route_introduction__should_return_404():
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "1993-11-15"})
 
     response = client.get("/v1/doggies/tom")
     assert response.status_code == 404
 
 
-def test__host_routing__non_http():
+def test__header_routing__websocket_scope__should_not_match():
     assert mixed_hosts_app.routes[-1].matches({"type": "websocket", "path": "/v1/"}) == (Match.NONE, {})
 
 
-def test__host_routing__non_date_api_version_header__not_valid_format():
+def test__header_routing__invalid_date_header__should_return_422():
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "2025-40-01"})
 
     response = client.get("/v1/users")
@@ -99,14 +99,14 @@ def test__host_routing__non_date_api_version_header__not_valid_format():
     }
 
 
-def test__host_routing__partial_match__error():
+def test__header_routing__path_match_with_wrong_method__should_return_405():
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "2022-02-11"})
 
     response = client.post("/v1/users/tom/83")
     assert response.status_code == 405
 
 
-def test__url_path_for__not_enough_params__error():
+def test__url_path_for__missing_path_parameter__should_raise_no_match_found():
     with pytest.raises(
         NoMatchFound,
         match='No route exists for name "api:users" and params "username".',
@@ -114,7 +114,7 @@ def test__url_path_for__not_enough_params__error():
         mixed_hosts_app.url_path_for("api:users", username="tom")
 
 
-def test__url_path_for__not_enough_params__error2():
+def test__url_path_for__parameters_for_child_route_passed_to_mount__should_raise_no_match_found():
     with pytest.raises(
         NoMatchFound,
         match='No route exists for name "api" and params "path, username".',
@@ -122,7 +122,7 @@ def test__url_path_for__not_enough_params__error2():
         mixed_hosts_app.url_path_for("api", path="hellow", username="tom")
 
 
-def test__lifespan_async():
+def test__lifespan__should_run_async_startup_and_shutdown_handlers():
     startup_complete = False
     shutdown_complete = False
 
@@ -154,7 +154,7 @@ def test__lifespan_async():
     assert shutdown_complete
 
 
-def test__host_routing__partial_match__404():
+def test__header_routing__exact_oldest_version__should_route_successfully():
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "1998-11-16"})
 
     response = client.get("/v1/doggies/tom")
@@ -166,7 +166,9 @@ async def get_default_version(req: Request):
 
 
 @pytest.mark.parametrize("default_version", ["2023-04-14", get_default_version])
-def test__get_unversioned_endpoints__with_default_version(default_version: "str | Callable"):
+def test__default_version__unversioned_route__should_take_priority_over_versioned_route(
+    default_version: "str | Callable",
+):
     app = Cadwyn(
         versions=VersionBundle(HeadVersion(), Version("2023-04-14"), Version("2022-11-16")),
         api_version_default_value=default_version,

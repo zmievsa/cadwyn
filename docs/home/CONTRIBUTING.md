@@ -58,6 +58,17 @@ early and print the matching `uv tool install ...` command to install it.
 Use `make lint` to run only the prek hooks. For a focused test run, use
 `uv run pytest` followed by the test path and any pytest options.
 
+Name tests after the behavior they exercise, the relevant context, and the
+observable outcome:
+
+`test__{behavior}__{context}__should_{outcome}`
+
+The context or outcome may be omitted when it is already obvious from the
+behavior. Prefer concrete outcomes such as `should_return_404` or
+`should_raise_router_generation_error` over generic suffixes such as `error`,
+`ok`, or numbered variants. Test names should let a reader understand a failed
+test without first opening its implementation.
+
 ### Running type checkers
 
 We use [ty](https://github.com/astral-sh/ty) to enforce type safety.
