@@ -20,9 +20,8 @@ jobs:
       - uses: ./.github/actions/setup-python-uv
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --refresh --all-extras --dev --upgrade
-      - run: uv run ty check --python-version ${{ matrix.python-version }}
-      - run: uv run pytest . # We intentionally don't use tox here to run tests "as is"
+      - run: uv lock --refresh --upgrade
+      - run: tox run -e py${{ matrix.python-version }}
 
   notify-on-failure:
     name: Notify on failure
