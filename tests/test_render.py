@@ -17,9 +17,9 @@ def test__render_model__with_weird_types():
         "2000-01-01",
     )
     if sys.version_info >= (3, 11):
-        rendered_lambda = "lambda: 83"
+        rendered_lambda = "lambda: 91"
     else:
-        rendered_lambda = "lambda : 83"
+        rendered_lambda = "lambda : 91"
 
     if sys.version_info >= (3, 13):
         rend_ann = "typing.Annotated"

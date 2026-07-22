@@ -1039,6 +1039,51 @@ def test__request_body_parsing__application_xml_body(
     assert resp.status_code in [200, 422]
 
 
+def test__request_body_parsing__non_json_application_body_is_preserved(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Optional[bytes] = Body(default=None), was_migrated: bool = Body(default=False)):
+        return {"body": list(body or b""), "was_migrated": was_migrated}
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrate_raw_body(request: RequestInfo):
+        request.body = {"body": request.body, "was_migrated": True}
+
+    clients = create_versioned_clients(version_change(migrate_raw_body=migrate_raw_body))
+    body = b"\x00cadwyn\xff"
+    resp = clients["2000-01-01"].post(
+        test_path,
+        content=body,
+        headers={"content-type": "application/octet-stream"},
+    )
+
+    assert resp.status_code == 200, resp.json()
+    assert resp.json() == {"body": list(body), "was_migrated": True}
+
+
+def test__request_body_parsing__application_vendor_json_is_parsed(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(answer: int = Body(), version: int = Body()):
+        return {"answer": answer, "version": version}
+
+    clients = create_versioned_clients(version_change())
+    resp = clients["2000-01-01"].post(
+        test_path,
+        content=b'{"answer": 42, "version": 7}',
+        headers={"content-type": "application/vnd.cadwyn+json"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"answer": 42, "version": 7}
+
+
 def test__request_body_parsing__malformed_json_returns_422(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
