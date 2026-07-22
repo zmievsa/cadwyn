@@ -11,7 +11,7 @@ from cadwyn import VersionChange, schema
 from pydantic import Field
 
 
-class MyChange(VersionChange):
+class RemoveFooFromMySchema(VersionChange):
     """'MySchema.foo' has been removed because clients no longer need the
     legacy list of values.
     """
@@ -29,7 +29,7 @@ class MyChange(VersionChange):
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
+class AddFooToMySchema(VersionChange):
     """'MySchema.foo' is now available so clients can read the value directly
     instead of deriving it from other fields.
     """
@@ -47,7 +47,7 @@ The following code sets an attribute of a field, such as a description:
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
+class ChangeMySchemaFooDescription(VersionChange):
     """The documentation for 'MySchema.foo' now explains the field's purpose
     so clients can interpret its value correctly.
     """
@@ -63,7 +63,7 @@ The following code un-sets an attribute of a field, as if it never existed:
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
+class AddDescriptionToMySchemaFoo(VersionChange):
     """'MySchema.foo' now has a documented meaning so clients do not need to
     infer how to use it.
     """
@@ -103,7 +103,7 @@ def validate_foo(cls, value):
     return value
 
 
-class MyChange(VersionChange):
+class RemoveFooValidatorFromMySchema(VersionChange):
     """'MySchema.foo' no longer requires colon-separated values because the
     field now accepts plain text.
     """
@@ -120,7 +120,7 @@ from cadwyn import VersionChange, schema
 from pydantic import Field, validator
 
 
-class MyChange(VersionChange):
+class AddFooValidatorToMySchema(VersionChange):
     """'MySchema.foo' must now contain a colon to distinguish the value's two
     components.
     """
@@ -139,7 +139,7 @@ The following code replaces all schema name occurrences with a new one to ensure
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
+class RenameOtherSchemaToMySchema(VersionChange):
     """'OtherSchema' has been renamed to 'MySchema' to match the resource name
     used throughout the API.
     """

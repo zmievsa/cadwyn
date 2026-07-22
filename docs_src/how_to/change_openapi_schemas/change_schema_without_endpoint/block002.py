@@ -13,7 +13,7 @@ class User(BaseModel):
     id: str
 
 
-class ChangeUserIDToString(VersionChange):
+class ChangeUserIdFromIntegerToString(VersionChange):
     """'User.id' is now a string so the API can support identifiers that are not numeric."""
 
     instructions_to_migrate_to_previous_version = [

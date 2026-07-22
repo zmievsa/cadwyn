@@ -155,7 +155,7 @@ from cadwyn import (
 from invoices import InvoiceCreateRequest
 
 
-class RemoveTaxIdEndpoints(VersionChange):
+class RenameInvoiceCreationDateToCreatedAt(VersionChange):
     """Invoice creation timestamps are now returned as 'created_at' instead of
     'creation_date' to align with the API's other timestamp fields.
     """
@@ -193,7 +193,7 @@ from invoices import (
 )
 
 
-class RemoveTaxIdEndpoints(VersionChange):
+class RenameInvoiceCreationDateToCreatedAt(VersionChange):
     """Invoice creation timestamps are now returned as 'created_at' instead of
     'creation_date' to align with the API's other timestamp fields.
     """
@@ -235,7 +235,7 @@ from cadwyn import (
 from invoices import BaseInvoice
 
 
-class RemoveTaxIdEndpoints(VersionChange):
+class RenameInvoiceCreationDateToCreatedAt(VersionChange):
     """Invoice creation timestamps are now returned as 'created_at' instead of
     'creation_date' to align with the API's other timestamp fields.
     """
@@ -269,7 +269,7 @@ from cadwyn import (
 )
 
 
-class RemoveTaxIdEndpoints(VersionChange):
+class ReplaceInvoiceNotFoundStatusCode400With404(VersionChange):
     """Missing invoices from 'GET /v1/invoices' now return 404 instead of 400
     so clients can distinguish absent resources from invalid requests.
     """
@@ -322,7 +322,7 @@ from users import BaseUser
 
 
 # THIS IS AN EXAMPLE OF A POOR MIGRATION
-class RemoveTaxIdEndpoints(VersionChange):
+class ReplaceUserAddressesWithAddress(VersionChange):
     """Users now expose a single 'address' instead of 'addresses' because only
     one mailing address is supported.
     """
@@ -365,7 +365,7 @@ from cadwyn import VersionChange, schema
 from users import User
 
 
-class RemoveTaxIdEndpoints(VersionChange):
+class ReplaceUserAddressesWithAddress(VersionChange):
     """Users now expose a single 'address' instead of 'addresses' because only
     one mailing address is supported.
     """
@@ -477,7 +477,9 @@ As an example, let's use the tutorial section's case with the user and their add
 from cadwyn import VersionChangeWithSideEffects
 
 
-class UserAddressIsCheckedInExternalService(VersionChangeWithSideEffects):
+class RejectUserAddressesMissingFromExternalService(
+    VersionChangeWithSideEffects
+):
     """User addresses are now verified by an external service during creation;
     invalid addresses return 400 to prevent storing undeliverable locations.
     """
@@ -486,11 +488,11 @@ class UserAddressIsCheckedInExternalService(VersionChangeWithSideEffects):
 Then you will have the following check in your business logic:
 
 ```python
-from src.versions import versions, UserAddressIsCheckedInExternalService
+from src.versions import versions, RejectUserAddressesMissingFromExternalService
 
 
 async def create_user(payload):
-    if UserAddressIsCheckedInExternalService.is_applied:
+    if RejectUserAddressesMissingFromExternalService.is_applied:
         check_user_address_exists_in_an_external_service(payload.address)
     ...
 ```

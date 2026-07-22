@@ -10,7 +10,7 @@ Sometimes you might want to make private internal version changes or instruction
 from cadwyn import VersionChange, endpoint, hidden
 
 
-class VersionChangeWithOneHiddenInstruction(VersionChange):
+class RenameUserIdPathParameter(VersionChange):
     """User lookup routes now use consistent path-parameter names to make
     generated clients easier to use.
     """
@@ -21,7 +21,7 @@ class VersionChangeWithOneHiddenInstruction(VersionChange):
 
 
 @hidden
-class CompletelyHiddenVersionChange(VersionChange):
+class RemoveAddressFromUser(VersionChange):
     """The legacy 'User.address' field has been removed because addresses are
     now managed as separate resources.
     """
