@@ -29,7 +29,7 @@ from cadwyn.exceptions import (
     RouterPathParamsModifiedError,
 )
 from cadwyn.schema_generation import (
-    _add_request_and_response_params,
+    _add_data_migration_params,
     generate_versioned_models,
 )
 from cadwyn.structure import Version, VersionBundle
@@ -233,7 +233,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
         for route_index, head_route in enumerate(self.head_router.routes):
             if not isinstance(head_route, APIRoute):
                 continue
-            _add_request_and_response_params(head_route)
+            _add_data_migration_params(head_route)
             copy_of_dependant = copy(head_route.dependant)
 
             for older_router in list(routers.values()):

@@ -52,6 +52,7 @@ from .schemas import AlterSchemaSubInstruction, SchemaHadInstruction
 
 _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
 _CADWYN_RESPONSE_PARAM_NAME = "cadwyn_response_param"
+_CADWYN_BACKGROUND_TASKS_PARAM_NAME = "cadwyn_background_tasks_param"
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _RouteId = int
@@ -539,6 +540,7 @@ class VersionBundle:
                         response_param_name,
                         kwargs,
                         response_param,
+                        background_tasks=background_tasks,
                     )
                 if response is Sentinel:  # pragma: no cover
                     raise CadwynError(
@@ -555,6 +557,8 @@ class VersionBundle:
                 _add_keyword_only_parameter(decorator, _CADWYN_REQUEST_PARAM_NAME, FastapiRequest)
             if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
+            if background_tasks_param_name == _CADWYN_BACKGROUND_TASKS_PARAM_NAME:
+                _add_keyword_only_parameter(decorator, _CADWYN_BACKGROUND_TASKS_PARAM_NAME, BackgroundTasks)
 
             return decorator
 
@@ -570,6 +574,8 @@ class VersionBundle:
         response_param_name: str,
         kwargs: dict[str, Any],
         fastapi_response_dependency: FastapiResponse,
+        *,
+        background_tasks: Union[BackgroundTasks, None],
     ) -> Any:
         raised_exception = None
         if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
@@ -634,6 +640,7 @@ class VersionBundle:
                     exclude_defaults=head_route.response_model_exclude_defaults,
                     exclude_none=head_route.response_model_exclude_none,
                 ),
+                _background_tasks=background_tasks,
             )
 
         response_info = self._migrate_response(
@@ -707,6 +714,7 @@ class VersionBundle:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
             kwargs.pop(request_param_name)
+        kwargs.pop(_CADWYN_BACKGROUND_TASKS_PARAM_NAME, None)
 
         api_version = self.api_version_var.get()
         if api_version is None:
@@ -748,6 +756,8 @@ class VersionBundle:
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:
             new_kwargs.pop(_CADWYN_REQUEST_PARAM_NAME)
+        if _CADWYN_BACKGROUND_TASKS_PARAM_NAME in new_kwargs:
+            new_kwargs.pop(_CADWYN_BACKGROUND_TASKS_PARAM_NAME)
 
         return new_kwargs
 

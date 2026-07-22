@@ -9,7 +9,20 @@ from typing import Any, Literal, Optional, Union
 import fastapi
 import pytest
 from dirty_equals import IsPartialDict, IsStr
-from fastapi import APIRouter, Body, Cookie, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Cookie,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -441,6 +454,57 @@ class TestResponseMigrations:
 
         assert clients["2001-01-01"].get(test_path).json() == {"message": "hello"}
         assert completed_tasks == ["migrated", "original"]
+
+    def test__response_background_migration__replaces_tasks_for_an_ordinary_response_body(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        completed_tasks: list[str] = []
+
+        @router.get(test_path)
+        async def endpoint():
+            return {"message": "hello"}
+
+        @convert_response_to_previous_version_for(test_path, ["GET"])
+        def migrator(response: ResponseInfo):
+            assert response.background is None
+            response.background = BackgroundTask(completed_tasks.append, "migrated")
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+
+        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
+        assert completed_tasks == ["migrated"]
+
+    def test__response_background_migration__removes_tasks_for_an_ordinary_response_body(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        completed_tasks: list[str] = []
+
+        @router.get(test_path)
+        async def endpoint(background_tasks: BackgroundTasks):
+            background_tasks.add_task(completed_tasks.append, "original")
+            return {"message": "hello"}
+
+        @convert_response_to_previous_version_for(test_path, ["GET"])
+        def migrator(response: ResponseInfo):
+            background = response.background
+            assert background is not None
+            response.background = background
+            assert response.background is background
+            response.background = None
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+
+        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
+        assert completed_tasks == []
+
+        assert clients["2001-01-01"].get(test_path).json() == {"message": "hello"}
+        assert completed_tasks == ["original"]
 
     def test__all_response_components_migration__post_endpoint__migration_filled_results_up(
         self,

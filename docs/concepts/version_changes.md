@@ -305,8 +305,9 @@ Cadwyn can migrate more than just request bodies.
 * [set_cookie](https://www.starlette.io/responses/#set-cookie)
 * [delete_cookie](https://www.starlette.io/responses/#delete-cookie)
 
-`media_type` and `background` map directly to the corresponding Starlette response attributes. As in Starlette,
-changing `media_type` after response initialization does not rewrite the existing `Content-Type` header.
+`media_type` maps directly to the corresponding Starlette response attribute. As in Starlette, changing it after
+response initialization does not rewrite the existing `Content-Type` header. `background` controls the task attached
+to the final response, including when an endpoint returns a response body instead of a `Response` instance.
 
 #### Internal representations
 

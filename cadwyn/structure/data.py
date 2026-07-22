@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar, Union, cast
 
 from fastapi import Request, Response
-from starlette.background import BackgroundTask
+from starlette.background import BackgroundTask, BackgroundTasks
 from starlette.datastructures import FormData, MutableHeaders, UploadFile
 from typing_extensions import Any, overload
 
@@ -42,12 +42,22 @@ class RequestInfo:
 
 
 class ResponseInfo:
-    __slots__ = ("_response", "body")
+    __slots__ = ("_background", "_background_tasks", "_response", "body")
 
-    def __init__(self, response: Response, body: Any):
+    def __init__(
+        self,
+        response: Response,
+        body: Any,
+        *,
+        _background_tasks: Union[BackgroundTasks, None] = None,
+    ):
         super().__init__()
         self.body = body
         self._response = response
+        self._background_tasks = _background_tasks
+        self._background: Union[BackgroundTask, None] = (
+            _background_tasks if _background_tasks is not None and _background_tasks.tasks else None
+        )
 
     @property
     def status_code(self) -> int:
@@ -71,11 +81,22 @@ class ResponseInfo:
 
     @property
     def background(self) -> Union[BackgroundTask, None]:
-        return self._response.background
+        if self._background_tasks is None:
+            return self._response.background
+        return self._background
 
     @background.setter
     def background(self, value: Union[BackgroundTask, None]) -> None:
-        self._response.background = value
+        if self._background_tasks is None:
+            self._response.background = value
+        else:
+            self._background = value
+            if value is None:
+                self._background_tasks.tasks.clear()
+            elif isinstance(value, BackgroundTasks):
+                self._background_tasks.tasks[:] = value.tasks
+            else:
+                self._background_tasks.tasks[:] = [value]
 
     @same_method_definition_as_in(Response.set_cookie)
     def set_cookie(self, *args: Any, **kwargs: Any) -> None:

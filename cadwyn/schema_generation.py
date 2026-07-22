@@ -79,7 +79,12 @@ from cadwyn.structure.schemas import (
     ValidatorExistedInstruction,
     _get_model_decorators,
 )
-from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionBundle
+from cadwyn.structure.versions import (
+    _CADWYN_BACKGROUND_TASKS_PARAM_NAME,
+    _CADWYN_REQUEST_PARAM_NAME,
+    _CADWYN_RESPONSE_PARAM_NAME,
+    VersionBundle,
+)
 
 from ._utils import iscoroutinefunction
 
@@ -641,7 +646,7 @@ class _AnnotationTransformer:
         )
         route.dependant = route_copy.dependant
         route.body_field = route_copy.body_field
-        _add_request_and_response_params(route)
+        _add_data_migration_params(route)
 
     @classmethod
     def _modify_callable_annotations(  # pragma: no branch # because of lambdas
@@ -768,11 +773,13 @@ def is_coroutine_callable(call: Callable[..., object]) -> bool:  # pragma: no co
     return iscoroutinefunction(dunder_call)
 
 
-def _add_request_and_response_params(route: APIRoute):
+def _add_data_migration_params(route: APIRoute):
     if not route.dependant.request_param_name:
         route.dependant.request_param_name = _CADWYN_REQUEST_PARAM_NAME
     if not route.dependant.response_param_name:
         route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
+    if not route.dependant.background_tasks_param_name:
+        route.dependant.background_tasks_param_name = _CADWYN_BACKGROUND_TASKS_PARAM_NAME
 
 
 @final
