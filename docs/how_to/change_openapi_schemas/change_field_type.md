@@ -78,7 +78,7 @@ Suppose that previously users could specify their date of birth as a datetime in
         return v
 
 
-    class ChangeDateOfBirthToDateInUserInLatest(VersionChange):
+    class ChangeUserDateOfBirthFromDatetimeToDateInLatest(VersionChange):
         description = (
             "'User.date_of_birth' is now a calendar date instead of a timestamp "
             "because a time of day is not meaningful for a birth date."
@@ -94,7 +94,7 @@ Suppose that previously users could specify their date of birth as a datetime in
 2. Add the following version change to `versions.v2001_01_01` (right under the version change above) which will make sure that `date_of_birth` is a datetime in 2000_01_01:
 
     ```python
-    class ChangeDateOfBirthToDateInUser(VersionChange):
+    class ChangeUserDateOfBirthFromDatetimeToDate(VersionChange):
         description = (
             "'User.date_of_birth' is now a calendar date instead of a timestamp "
             "because a time of day is not meaningful for a birth date."
@@ -111,8 +111,8 @@ Suppose that previously users could specify their date of birth as a datetime in
     from cadwyn import Version, VersionBundle, HeadVersion
 
     version_bundle = VersionBundle(
-        HeadVersion(ChangeDateOfBirthToDateInUserInLatest),
-        Version("2001-01-01", ChangeDateOfBirthToDateInUser),
+        HeadVersion(ChangeUserDateOfBirthFromDatetimeToDateInLatest),
+        Version("2001-01-01", ChangeUserDateOfBirthFromDatetimeToDate),
         Version("2000-01-01"),
     )
     ```

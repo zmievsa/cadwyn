@@ -39,7 +39,7 @@ class UserAddressResourceList(BaseModel):
     data: list[UserAddressResource]
 
 
-class ChangeAddressToList(VersionChange):
+class ReplaceUserAddressWithListOfAddresses(VersionChange):
     description = (
         "Users can now store multiple addresses instead of a single address so "
         "they can choose among delivery locations."
@@ -59,7 +59,7 @@ class ChangeAddressToList(VersionChange):
         response.body["address"] = response.body["addresses"][0]
 
 
-class ChangeAddressesToSubresource(VersionChange):
+class MoveUserAddressesToSubresource(VersionChange):
     description = (
         "User addresses are now separate resources with stable IDs, allowing "
         "clients to retrieve each address independently."
@@ -87,7 +87,7 @@ class ChangeAddressesToSubresource(VersionChange):
         ]
 
 
-class RemoveAddressesToCreateFromLatest(VersionChange):
+class RemoveAddressesToCreateFromLatestUserSchema(VersionChange):
     description = (
         "'addresses_to_create' is no longer accepted when creating users because "
         "additional addresses are now managed as separate resources."
@@ -98,9 +98,9 @@ class RemoveAddressesToCreateFromLatest(VersionChange):
 
 
 version_bundle = VersionBundle(
-    HeadVersion(RemoveAddressesToCreateFromLatest),
-    Version("v10", ChangeAddressesToSubresource),
-    Version("v9", ChangeAddressToList),
+    HeadVersion(RemoveAddressesToCreateFromLatestUserSchema),
+    Version("v10", MoveUserAddressesToSubresource),
+    Version("v9", ReplaceUserAddressWithListOfAddresses),
     Version("v8"),
 )
 

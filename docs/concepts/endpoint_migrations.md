@@ -19,7 +19,7 @@ and then define it as existing in one of the older versions:
 from cadwyn import VersionChange, endpoint
 
 
-class MyChange(VersionChange):
+class RemoveGetUserByIdEndpoint(VersionChange):
     description = (
         "The 'GET /users/{user_id}' endpoint has been removed because user "
         "profiles are now retrieved through the users collection."
@@ -37,7 +37,7 @@ If you have an endpoint in a new version that should not exist in older versions
 from cadwyn import VersionChange, endpoint
 
 
-class MyChange(VersionChange):
+class AddGetCompanyByIdEndpoint(VersionChange):
     description = (
         "Clients can now retrieve an individual company with "
         "'GET /companies/{company_id}' instead of filtering the company list."
@@ -55,7 +55,7 @@ If you want to change an endpoint attribute (like description) in a new version,
 from cadwyn import VersionChange, endpoint
 
 
-class MyChange(VersionChange):
+class ChangeGetUserByIdEndpointDescription(VersionChange):
     description = (
         "The 'GET /users/{user_id}' documentation now clarifies the returned "
         "user data so clients can interpret the response correctly."

@@ -41,7 +41,7 @@ async def get_user(user_id: uuid.UUID) -> UserResource:
     return database_parody[user_id]
 
 
-class ChangeAddressToList(VersionChange):
+class ReplaceUserAddressWithListOfAddresses(VersionChange):
     description = (
         "Users can now store multiple addresses instead of a single address so "
         "they can choose among delivery locations."
@@ -64,7 +64,7 @@ class ChangeAddressToList(VersionChange):
 
 app = Cadwyn(
     versions=VersionBundle(
-        Version("2001-01-01", ChangeAddressToList),
+        Version("2001-01-01", ReplaceUserAddressWithListOfAddresses),
         Version("2000-01-01"),
     )
 )

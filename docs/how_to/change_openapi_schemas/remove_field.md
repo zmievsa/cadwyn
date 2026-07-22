@@ -59,7 +59,7 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
     from users import BaseUser
 
 
-    class RemoveMiddleNameFromLatestVersion(VersionChange):
+    class RemoveUserMiddleNameFromLatestVersion(VersionChange):
         description = (
             "User requests and responses no longer include 'middle_name' because "
             "the product no longer uses it."
@@ -101,7 +101,7 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
     from .v2001_01_01 import RemoveZodiacSignFromUser
 
     version_bundle = VersionBundle(
-        HeadVersion(RemoveMiddleNameFromLatestVersion),
+        HeadVersion(RemoveUserMiddleNameFromLatestVersion),
         Version("2001-01-01", RemoveMiddleNameFromUser),
         Version("2000-01-01"),
     )

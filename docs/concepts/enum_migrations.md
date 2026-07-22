@@ -14,7 +14,7 @@ from enum import auto
 from cadwyn import VersionChange, enum
 
 
-class MyChange(VersionChange):
+class RemoveFooAndBarFromMyEnum(VersionChange):
     description = (
         "'foo' and 'bar' are no longer returned in 'my_enum' because those "
         "legacy states are no longer supported."
@@ -30,7 +30,7 @@ class MyChange(VersionChange):
 from cadwyn import VersionChange, enum
 
 
-class MyChange(VersionChange):
+class AddFooAndBarToMyEnum(VersionChange):
     description = (
         "'my_enum' now includes 'foo' and 'bar' so clients can represent the "
         "newly supported states."
