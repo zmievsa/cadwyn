@@ -1,0 +1,7 @@
+{
+  "name": "cadwyn",
+  "private": true,
+  "devDependencies": {
+    "@umbrelladocs/linkspector": "^0.5.5"
+  }
+}

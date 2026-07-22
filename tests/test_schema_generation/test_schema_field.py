@@ -76,7 +76,7 @@ def test__field_existed_as__extras_are_added(create_runtime_schemas: CreateRunti
                 .field("foo")
                 .existed_as(
                     type=int,
-                    info=Field(deflolbtt="hewwo"),  # pyright: ignore[reportCallIssue]
+                    info=Field(deflolbtt="hewwo"),
                 ),
             )
         )
@@ -112,8 +112,8 @@ def test__schema_field_existed_as__with_new_weird_data_types(create_runtime_sche
     )
 
     class ExpectedSchema(BaseModel):
-        foo: dict[str, int] = Field(default={"a": "b"})  # pyright: ignore[reportAssignmentType]
-        bar: list[int] = Field(default_factory=lambda: 83)  # pragma: no branch # pyright: ignore[reportAssignmentType]
+        foo: dict[str, int] = Field(default={"a": "b"})  # ty: ignore[invalid-assignment]
+        bar: list[int] = Field(default_factory=lambda: 83)  # pragma: no branch # ty: ignore[invalid-assignment]
         baz: Literal[MyEnum.foo]
 
     assert_models_are_equal(schemas["2000-01-01"][EmptySchema], ExpectedSchema)
@@ -169,7 +169,7 @@ def test__schema_field_didnt_exist__with_inheritance_and_child_not_versioned__ch
 
     assert_models_are_equal(schemas["2000-01-01"][ParentSchema], ExpectedParentSchema)
     assert set(schemas["2000-01-01"][ChildSchema].model_fields) == {"baz"}
-    assert schemas["2000-01-01"][ChildSchema](baz=83)  # pyright: ignore[reportCallIssue]
+    assert schemas["2000-01-01"][ChildSchema](baz=83)  # ty: ignore[missing-argument]
 
 
 #######
@@ -310,7 +310,7 @@ def test_schema_field_had__json_schema_extra_as_dict(create_runtime_schemas: Cre
     )
 
     # Validate the JSON Schema produced by Pydantic contains the extra
-    model_cls = schemas["2000-01-01"][SchemaWithFooHadDictJsonSchemaExtra]  # pyright: ignore
+    model_cls = schemas["2000-01-01"][SchemaWithFooHadDictJsonSchemaExtra]
     json_schema = model_cls.model_json_schema()
     assert json_schema["properties"]["foo"]["example"] == "bar"
 
@@ -331,7 +331,7 @@ def test__schema_field_had__json_schema_extra_as_callable(create_runtime_schemas
     )
 
     # Validate the JSON Schema produced by Pydantic contains changes from the callable
-    model_cls = schemas["2000-01-01"][SchemaWithFooHadCallableJsonSchemaExtra]  # pyright: ignore
+    model_cls = schemas["2000-01-01"][SchemaWithFooHadCallableJsonSchemaExtra]
     json_schema = model_cls.model_json_schema()
     props = json_schema["properties"]["foo"]
     assert props["example"] == "bar"
@@ -358,7 +358,7 @@ def test__schema_field_didnt_have__removing_default(create_runtime_schemas: Crea
 
 
 class SchemaWithConstraints(BaseModel):
-    foo: conint(lt=7)
+    foo: conint(lt=7)  # ty: ignore[invalid-type-form]
     bar: str = Field(min_length=0, max_length=7)
 
 
@@ -373,7 +373,7 @@ def test__schema_field_didnt_have__constrained_field_constraints_removed__constr
     )
 
     class ExpectedSchema(BaseModel):
-        foo: conint()
+        foo: conint()  # ty: ignore[invalid-type-form]
         bar: str
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
@@ -390,7 +390,7 @@ def test__schema_field_had_constrained_field__only_non_constraint_field_args_wer
     )
 
     class ExpectedSchema(BaseModel):
-        foo: conint(lt=7) = Field(alias="foo1")
+        foo: conint(lt=7) = Field(alias="foo1")  # ty: ignore[invalid-type-form]
         bar: str = Field(min_length=0, max_length=7, alias="bar1")
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
@@ -421,7 +421,7 @@ def test__schema_field_had_constrained_field__constraints_have_been_modified(
     )
 
     class ExpectedSchema(BaseModel):
-        foo: conint(lt=7) = Field(gt=8)
+        foo: conint(lt=7) = Field(gt=8)  # ty: ignore[invalid-type-form]
         bar: str = Field(min_length=2, max_length=7)
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
@@ -438,14 +438,14 @@ def test__schema_field_had_constrained_field__both_constraints_and_non_constrain
     )
 
     class ExpectedSchema(BaseModel):
-        foo: conint(lt=7) = Field(alias="foo1", gt=8)
+        foo: conint(lt=7) = Field(alias="foo1", gt=8)  # ty: ignore[invalid-type-form]
         bar: str = Field(min_length=2, max_length=7, alias="bar1")
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithConstraints], ExpectedSchema)
 
 
 class SchemaWithConstraintsAndField(BaseModel):
-    foo: constr(max_length=5) = Field(default="hewwo")
+    foo: constr(max_length=5) = Field(default="hewwo")  # ty: ignore[invalid-type-form]
 
 
 def test__schema_field_had_constrained_field__constraint_field_args_were_modified_in_type(
@@ -479,7 +479,7 @@ def test__schema_field_had_constrained_field__constraint_only_args_were_modified
 
 
 class SchemaWithAnnotatedConstraints(BaseModel):
-    foo: Annotated[conint(lt=7), Field(description="awaw")]
+    foo: Annotated[conint(lt=7), Field(description="awaw")]  # ty: ignore[invalid-type-form]
 
 
 def test__schema_field_didnt_have_annotated_constrained_field(create_runtime_schemas: CreateRuntimeSchemas):
@@ -488,7 +488,7 @@ def test__schema_field_didnt_have_annotated_constrained_field(create_runtime_sch
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[conint(), Field(description="awaw")]
+        foo: Annotated[conint(), Field(description="awaw")]  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
@@ -499,7 +499,7 @@ def test__schema_field_had_annotated_constrained_field(create_runtime_schemas: C
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[conint(lt=7), Field(description="awaw", alias="foo1")]
+        foo: Annotated[conint(lt=7), Field(description="awaw", alias="foo1")]  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
@@ -512,7 +512,7 @@ def test__schema_field_had_annotated_constrained_field__adding_default_default_s
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[conint(lt=7), Field(description="awaw")] = 2
+        foo: Annotated[conint(lt=7), Field(description="awaw")] = 2  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
@@ -523,7 +523,7 @@ def test__schema_field_had_annotated_constrained_field__adding_one_other_constra
     schemas = create_runtime_schemas(version_change(schema(SchemaWithAnnotatedConstraints).field("foo").had(gt=8)))
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[conint(lt=7), Field(description="awaw", gt=8)]
+        foo: Annotated[conint(lt=7), Field(description="awaw", gt=8)]  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
@@ -536,7 +536,7 @@ def test__schema_field_had_annotated_constrained_field__adding_another_constrain
     )
 
     class ExpectedSchema(BaseModel):
-        foo: Annotated[conint(lt=7), Field(description="awaw", alias="foo1", gt=8)]
+        foo: Annotated[conint(lt=7), Field(description="awaw", alias="foo1", gt=8)]  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
 
@@ -545,14 +545,14 @@ def test__schema_field_had_constrained_field__schema_has_special_constraints_con
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     class SchemaWithSpecialConstraints(BaseModel):
-        foo: constr(to_upper=True)
+        foo: constr(to_upper=True)  # ty: ignore[invalid-type-form]
 
     schemas = create_runtime_schemas(
         version_change(schema(SchemaWithSpecialConstraints).field("foo").had(max_length=8))
     )
 
     class ExpectedSchema(BaseModel):
-        foo: constr(to_upper=True) = Field(max_length=8)
+        foo: constr(to_upper=True) = Field(max_length=8)  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithSpecialConstraints], ExpectedSchema)
 
@@ -582,7 +582,7 @@ def test__schema_field_had__default_factory(create_runtime_schemas: CreateRuntim
         version_change(schema(SchemaWithOneStrField).field("foo").had(default_factory=lambda: "mew"))
     )
 
-    assert schemas["2000-01-01"][SchemaWithOneStrField]().foo == "mew"  # pyright: ignore[reportCallIssue]
+    assert schemas["2000-01-01"][SchemaWithOneStrField]().foo == "mew"  # ty: ignore[missing-argument]
 
 
 def test__schema_field_had__type(create_runtime_schemas: CreateRuntimeSchemas):
@@ -671,8 +671,8 @@ def test__schema_that_overrides_fields_from_mro(create_runtime_schemas: CreateRu
         bar: int = Field(default=83)
 
     class SchemaThatOverridesField(ParentSchema):
-        foo: str = Field(description="What?")  # pyright: ignore
-        bar: str = Field(description="What?")  # pyright: ignore
+        foo: str = Field(description="What?")
+        bar: str = Field(description="What?")
 
     schemas = create_runtime_schemas(
         version_change(
@@ -682,8 +682,8 @@ def test__schema_that_overrides_fields_from_mro(create_runtime_schemas: CreateRu
     )
 
     class ExpectedSchema(schemas["2000-01-01"][ParentSchema]):
-        foo: bytes = Field(description="What?")  # pyright: ignore
-        bar: str = Field(description="What?", alias="baz")  # pyright: ignore
+        foo: bytes = Field(description="What?")
+        bar: str = Field(description="What?", alias="baz")
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaThatOverridesField], ExpectedSchema)
 
@@ -717,7 +717,7 @@ def test__schema_field_didnt_have__using_incorrect_attribute__should_raise_error
         CadwynStructureError,
         match=re.escape("Unknown attribute 'defaults'. Are you sure it's a valid field attribute?"),
     ):
-        version_change(schema(BaseModel).field("foo").didnt_have("defaults"))  # pyright: ignore[reportArgumentType]
+        version_change(schema(BaseModel).field("foo").didnt_have("defaults"))  # ty: ignore[invalid-argument-type]
 
 
 def test__schema_field_didnt_have__removing_nonexistent_attribute__should_raise_error(
@@ -923,8 +923,8 @@ def test__schema_with_classvar__add_classvar_field(create_runtime_schemas: Creat
     old_model = schemas["2000-01-01"][SchemaWithoutClassVar]
 
     assert not hasattr(latest_model, "new_config")
-    assert mid_model.new_config == "added_config"  # pyright: ignore[reportAttributeAccessIssue]
-    assert old_model.new_config == "added_config"  # pyright: ignore[reportAttributeAccessIssue]
+    assert mid_model.new_config == "added_config"  # ty: ignore[unresolved-attribute]
+    assert old_model.new_config == "added_config"  # ty: ignore[unresolved-attribute]
 
     assert not hasattr(latest_model, "new_config_without_value")
     assert not hasattr(mid_model, "new_config_without_value")

@@ -83,7 +83,7 @@ def _render_model_from_ast(
         return _render_pydantic_model(wrapper, model_ast)
 
 
-def _render_enum_model(wrapper: _EnumWrapper, original_cls_node: ast.ClassDef):
+def _render_enum_model(wrapper: _EnumWrapper[Enum], original_cls_node: ast.ClassDef):
     # This is for possible schema renaming
     original_cls_node.name = wrapper.cls.__name__
 
@@ -97,7 +97,7 @@ def _render_enum_model(wrapper: _EnumWrapper, original_cls_node: ast.ClassDef):
     ]
 
     old_body = [
-        n for n in original_cls_node.body if not isinstance(n, (ast.AnnAssign, ast.Assign, ast.Pass, ast.Constant))
+        n for n in original_cls_node.body if not isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)
     ]
     docstring = pop_docstring_from_cls_body(old_body)
 
@@ -107,7 +107,7 @@ def _render_enum_model(wrapper: _EnumWrapper, original_cls_node: ast.ClassDef):
     return original_cls_node
 
 
-def _render_pydantic_model(wrapper: _PydanticModelWrapper, original_cls_node: ast.ClassDef):
+def _render_pydantic_model(wrapper: _PydanticModelWrapper[BaseModel], original_cls_node: ast.ClassDef):
     # This is for possible schema renaming
     original_cls_node.name = wrapper.name
 
@@ -130,7 +130,7 @@ def _render_pydantic_model(wrapper: _PydanticModelWrapper, original_cls_node: as
         n
         for n in original_cls_node.body
         if not (
-            isinstance(n, (ast.AnnAssign, ast.Assign, ast.Pass, ast.Constant))
+            isinstance(n, ast.AnnAssign | ast.Assign | ast.Pass | ast.Constant)
             or (isinstance(n, ast.FunctionDef) and n.name in wrapper.validators)
         )
     ]

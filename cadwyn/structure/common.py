@@ -1,8 +1,9 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TypeAlias
 
 from pydantic import BaseModel
-from typing_extensions import ParamSpec, TypeAlias, TypeVar
+from typing_extensions import ParamSpec, TypeVar
 
 from cadwyn._utils import DATACLASS_KW_ONLY, DATACLASS_SLOTS
 

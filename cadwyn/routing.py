@@ -10,9 +10,10 @@ from starlette.datastructures import URL
 from starlette.responses import RedirectResponse
 from starlette.routing import BaseRoute, Match
 from starlette.types import Receive, Scope, Send
+from typing_extensions import override
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
-from cadwyn._utils import same_definition_as_in
+from cadwyn._utils import same_method_definition_as_in
 from cadwyn.middleware import APIVersionFormat
 from cadwyn.structure.common import VersionType
 
@@ -64,6 +65,7 @@ class _RootCadwynAPIRouter(APIRouter):
             return self.versioned_routers[picked_version].routes
         return []  # pragma: no cover # This should not be possible
 
+    @override
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if "router" not in scope:  # pragma: no cover
             scope["router"] = self
@@ -82,6 +84,7 @@ class _RootCadwynAPIRouter(APIRouter):
             routes = self.versioned_routers[version].routes
         else:
             routes = await self._get_routes_from_closest_suitable_version(version)
+        scope["cadwyn.api_version"] = self.api_version_var.get(None)
         if default_version_that_was_picked:
             # We add unversioned routes to versioned routes because otherwise unversioned routes
             # will be completely unavailable when a default version is passed. So routes such as
@@ -96,12 +99,14 @@ class _RootCadwynAPIRouter(APIRouter):
     def versions(self):
         return sorted(self.versioned_routers.keys())
 
-    @same_definition_as_in(APIRouter.add_api_route)
+    @same_method_definition_as_in(APIRouter.add_api_route)
+    @override
     def add_api_route(self, *args: Any, **kwargs: Any):
         super().add_api_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
-    @same_definition_as_in(APIRouter.include_router)
+    @same_method_definition_as_in(APIRouter.include_router)
+    @override
     def include_router(self, *args: Any, **kwargs: Any):
         routes_before = len(self.routes)
         unversioned_routes_before = len(self.unversioned_routes)
@@ -109,22 +114,26 @@ class _RootCadwynAPIRouter(APIRouter):
         if len(self.unversioned_routes) == unversioned_routes_before:  # pragma: no branch
             self.unversioned_routes.extend(self.routes[routes_before:])
 
-    @same_definition_as_in(APIRouter.add_route)
+    @same_method_definition_as_in(APIRouter.add_route)
+    @override
     def add_route(self, *args: Any, **kwargs: Any):
         super().add_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
-    @same_definition_as_in(APIRouter.mount)
+    @same_method_definition_as_in(APIRouter.mount)
+    @override
     def mount(self, *args: Any, **kwargs: Any):
         super().mount(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
-    @same_definition_as_in(APIRouter.add_api_websocket_route)
+    @same_method_definition_as_in(APIRouter.add_api_websocket_route)
+    @override
     def add_api_websocket_route(self, *args: Any, **kwargs: Any):  # pragma: no cover
         super().add_api_websocket_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])
 
-    @same_definition_as_in(APIRouter.add_websocket_route)
+    @same_method_definition_as_in(APIRouter.add_websocket_route)
+    @override
     def add_websocket_route(self, *args: Any, **kwargs: Any):  # pragma: no cover
         super().add_websocket_route(*args, **kwargs)
         self.unversioned_routes.append(self.routes[-1])

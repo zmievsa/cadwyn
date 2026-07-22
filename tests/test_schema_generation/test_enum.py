@@ -26,12 +26,12 @@ class EnumWithTwoMembers(Enum):
 class EnumWithOneMemberAndMethods(Enum):
     foo = 83
 
-    def _hello(self):
-        return self.hello_member  # pyright: ignore[reportAttributeAccessIssue]
+    def _hello(self) -> "EnumWithOneMemberAndMethods":
+        return self.__class__.__members__["hello_member"]
 
     @classmethod
-    def world(cls) -> int:
-        return cls.world_member  # pyright: ignore[reportAttributeAccessIssue]
+    def world(cls) -> "EnumWithOneMemberAndMethods":
+        return cls.__members__["world_member"]
 
 
 def test__enum_had__should_copy_docstring_too(create_runtime_schemas: CreateRuntimeSchemas):
@@ -53,10 +53,10 @@ def test__enum_had__original_enum_has_methods__all_methods_are_preserved(
     )
     model = models["2000-01-01"][EnumWithOneMemberAndMethods]
     assert model.foo.value == 83
-    assert model.hello_member.value == 10  # pyright: ignore[reportAttributeAccessIssue]
-    assert model.world_member.value == 20  # pyright: ignore[reportAttributeAccessIssue]
+    assert model.hello_member.value == 10  # ty: ignore[unresolved-attribute]
+    assert model.world_member.value == 20  # ty: ignore[unresolved-attribute]
     assert model.foo._hello().value == 10
-    assert model.world().value == 20  # pyright: ignore[reportAttributeAccessIssue]
+    assert model.world().value == 20
 
 
 def test__enum_had__original_enum_is_nonempty(create_runtime_schemas: CreateRuntimeSchemas):

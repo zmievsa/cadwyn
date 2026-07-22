@@ -3,12 +3,14 @@
 ## Setting up the environment
 
 * The minimum supported version is Python 3.10. It is recommended to manage multiple Python versions on your system with [uv](https://docs.astral.sh/uv/)
+* Running the full local check suite also requires Node.js and npm for link validation
 * We maintain a Makefile with several commands to help with common tasks
 
 1. Install [uv](https://docs.astral.sh/uv/)
-2. Run `uv sync` to create a virtual environment and install the dependencies
-3. Install [pre-commit](https://pre-commit.com/) using uv: `uv tool install pre-commit`
-4. Run `pre-commit install --install-hooks` to install pre-commit hooks
+2. Install the standalone developer tools with `uv tool install prek` and `uv tool install tox --with tox-uv`
+3. Run `uv sync` to create a virtual environment and install the dependencies
+4. Install [prek](https://prek.j178.dev/) hooks with `prek install -f`
+5. Run `make check` to verify that the local CI-equivalent checks pass
 
 ## Code contributions
 
@@ -25,10 +27,10 @@
 ## Guidelines for writing code
 
 * Code should be [Pythonic and zen](https://peps.python.org/pep-0020/)
-* All code should be fully [typed](https://peps.python.org/pep-0484/). This is enforced via [ruff](https://github.com/astral-sh/ruff) but the type hinting itself will be enforced by [pyright](https://github.com/microsoft/pyright/) in the future
+* All code should be fully [typed](https://peps.python.org/pep-0484/). This is enforced via [ruff](https://github.com/astral-sh/ruff) and [ty](https://github.com/astral-sh/ty)
   * When complex types are required, use [type aliases](https://docs.python.org/3/library/typing.html#type-aliases)
   * If something cannot be typed correctly due to the limitations of the type checkers, use [typing.cast](https://docs.python.org/3/library/typing.html#typing.cast) to resolve the issue. However, use `typing.cast` only as a last resort, after exhausting all other options of [type narrowing](https://mypy.readthedocs.io/en/stable/type_narrowing.html), such as [isinstance()](https://docs.python.org/3/library/functions.html#isinstance) checks and [type guards](https://docs.python.org/3/library/typing.html#typing.TypeGuard)
-  * Use `pyright: ignore` once you have verified that the line is correct, but pyright has issues with it
+  * Use `ty: ignore` once you have verified that the line is correct, but ty has issues with it
 * If you are adding or modifying existing code, make sure that it's fully tested. 100% test coverage is mandatory, and will be checked on the PR using [Github Actions](https://github.com/features/actions)
 * When adding a new public interface, make sure you have included it in the concept documentation located in `docs/concepts.md`. If applicable, add or modify examples in the docs related to the new functionality
 
@@ -39,14 +41,23 @@ directory structure as the `cadwyn` module. If you are adding a test
 case, it should be located within the correct submodule of `tests`. E.g.
 tests for `cadwyn/codegen.py` reside in `tests/codegen`.
 
-`make test` to run tests located in `tests`
+`make check` runs the local CI-equivalent suite with tox's default automatic
+parallelism. It runs the supported Python test matrix, tutorial tests, coverage,
+prek linting, documentation build, link validation, and package build checks.
+Each supported Python test environment runs ty before its tests.
+
+If `prek`, `tox`, or the `tox-uv` plugin is missing, the Makefile will stop
+early and print the matching `uv tool install ...` command to install it.
+
+`make test` runs the same full check suite.
 
 ### Running type checkers
 
-We use [pyright](https://github.com/microsoft/pyright/) to enforce type safety.
-You can run it with:
+We use [ty](https://github.com/astral-sh/ty) to enforce type safety.
+It runs before the test suite on every supported Python version. You can run it
+against your active project environment with:
 
-`uv run pyright .`
+`uv run ty check`
 
 ## Project documentation
 

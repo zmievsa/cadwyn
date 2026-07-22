@@ -1,0 +1,58 @@
+name: Documentation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 3.x.x]
+    paths:
+      - ".github/workflows/docs.yaml"
+      - ".github/actions/**"
+      - ".gitignore"
+      - ".linkspector.yml"
+      - "docs/**"
+      - "docs_src/**"
+      - "**.md"
+      - "mkdocs.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "pyproject.toml"
+      - "tox.ini"
+      - "uv.lock"
+  pull_request:
+    branches: [main, 3.x.x]
+    paths:
+      - ".github/workflows/docs.yaml"
+      - ".github/actions/**"
+      - ".gitignore"
+      - ".linkspector.yml"
+      - "docs/**"
+      - "docs_src/**"
+      - "**.md"
+      - "mkdocs.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "pyproject.toml"
+      - "tox.ini"
+      - "uv.lock"
+
+jobs:
+  Validate-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-python-uv
+        with:
+          # When this version is updated,
+          # update the docs `base_python` version in `tox.ini`, too.
+          python-version: "3.10"
+      - run: tox run -e docs
+      - name: Validate links
+        uses: umbrelladocs/action-linkspector@6c637d70424624231467a4ca918be54fa3b792d0 # v1.5.4
+        with:
+          reporter: github-check
+          filter_mode: ${{ github.event_name == 'pull_request' && 'diff_context' || 'nofilter' }}
+          fail_level: any

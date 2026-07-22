@@ -1,6 +1,5 @@
 import copy
 import sys
-from enum import auto
 from logging import getLogger
 from typing import Any, Literal, TypeVar, Union, cast, get_args
 
@@ -16,10 +15,11 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
 
 from cadwyn._asts import GenericAliasUnionArgs
-from cadwyn._utils import ZIP_STRICT_FALSE, Sentinel
+from cadwyn._utils import Sentinel
 from cadwyn.route_generation import _get_routes
 from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.schema_generation import SchemaGenerator, _change_field_in_model, generate_versioned_models
+from cadwyn.structure.common import _HiddenAttributeMixin
 from cadwyn.structure.versions import PossibleInstructions, VersionBundle, VersionChange, VersionChangeWithSideEffects
 
 from .structure.endpoints import (
@@ -49,19 +49,21 @@ T = TypeVar("T", bound=Union[PossibleInstructions, type[VersionChange]])
 
 
 def hidden(instruction_or_version_change: T) -> T:
-    if isinstance(
-        instruction_or_version_change, (staticmethod, ValidatorDidntExistInstruction, ValidatorExistedInstruction)
-    ):
+    if isinstance(instruction_or_version_change, _HiddenAttributeMixin):
+        # Weird ty bug, or I am dumb.
+        instruction_or_version_change.is_hidden_from_changelog = True  # ty: ignore[possibly-missing-attribute]
         return instruction_or_version_change
 
-    instruction_or_version_change.is_hidden_from_changelog = True
+    if isinstance(instruction_or_version_change, type) and issubclass(instruction_or_version_change, VersionChange):
+        # Weird ty bug, or I am dumb.
+        instruction_or_version_change.is_hidden_from_changelog = True  # ty: ignore[possibly-missing-attribute]
     return instruction_or_version_change
 
 
 def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -> "CadwynChangelogResource":
     changelog = CadwynChangelogResource()
     schema_generators = generate_versioned_models(versions)
-    for version, older_version in zip(versions, versions.versions[1:], **ZIP_STRICT_FALSE):
+    for version, older_version in zip(versions, versions.versions[1:], strict=False):
         routes_from_newer_version = router.versioned_routers[version.value].routes
         schemas_from_older_version = get_fields_from_routes(router.versioned_routers[older_version.value].routes)
         version_changelog = CadwynVersion(value=version.value)
@@ -80,7 +82,7 @@ def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -
                 *version_change.alter_schema_instructions,
             ]:
                 if (
-                    isinstance(instruction, (ValidatorDidntExistInstruction, ValidatorExistedInstruction))
+                    isinstance(instruction, ValidatorDidntExistInstruction | ValidatorExistedInstruction)
                     or instruction.is_hidden_from_changelog
                 ):
                     continue
@@ -89,7 +91,7 @@ def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -
                     version_change,
                     generator_from_newer_version,
                     generator_from_older_version,
-                    schemas_from_older_version,  # pyright: ignore[reportArgumentType]
+                    schemas_from_older_version,
                     cast("list[APIRoute]", routes_from_newer_version),
                 )
                 if changelog_entry is not None:  # pragma: no branch # This should never happen
@@ -152,9 +154,9 @@ def _get_all_pydantic_models_from_generic(annotation: Any) -> list[type[BaseMode
     return models
 
 
-def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: str) -> dict:
+def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: str) -> dict[str, object]:
     class CadwynDummyModelForRepresentation(BaseModel):
-        my_field: model
+        my_field: model  # ty: ignore[invalid-type-form]
 
     fields = [
         ModelField(
@@ -164,13 +166,13 @@ def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: s
     ]
     model_name_map = get_model_name_map(
         get_flat_models_from_fields(
-            fields,  # pyright: ignore[reportArgumentType]
+            fields,
             known_models=set(),
         )
     )
 
     _, definitions = get_definitions(
-        fields=fields,  # pyright: ignore[reportArgumentType]
+        fields=fields,
         model_name_map=model_name_map,
         separate_input_output_schemas=False,
     )
@@ -191,9 +193,9 @@ class ChangelogEntryType(StrEnum):
 
 
 class CadwynAttributeChangeStatus(StrEnum):
-    added = auto()
-    changed = auto()
-    removed = auto()
+    added = "added"
+    changed = "changed"
+    removed = "removed"
 
 
 class CadwynEndpointAttributeChange(BaseModel):
@@ -390,7 +392,7 @@ def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
             changes=attribute_changes,
         )
 
-    elif isinstance(instruction, (FieldHadInstruction, FieldDidntHaveInstruction)):
+    elif isinstance(instruction, FieldHadInstruction | FieldDidntHaveInstruction):
         old_field_name = _get_older_field_name(instruction.schema, instruction.name, generator_from_older_version)
 
         if isinstance(instruction, FieldHadInstruction) and instruction.new_name is not Sentinel:

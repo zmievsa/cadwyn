@@ -6,12 +6,10 @@ from typing import ClassVar, Union, cast
 
 from fastapi import Request, Response
 from starlette.datastructures import FormData, MutableHeaders, UploadFile
-from typing_extensions import Any, ParamSpec, overload
+from typing_extensions import Any, overload
 
-from cadwyn._utils import same_definition_as_in
+from cadwyn._utils import _callable_name, same_method_definition_as_in
 from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
-
-_P = ParamSpec("_P")
 
 
 class RequestInfo:
@@ -63,12 +61,12 @@ class ResponseInfo:
     def headers(self) -> MutableHeaders:
         return self._response.headers
 
-    @same_definition_as_in(Response.set_cookie)
-    def set_cookie(self, *args: Any, **kwargs: Any):
+    @same_method_definition_as_in(Response.set_cookie)
+    def set_cookie(self, *args: Any, **kwargs: Any) -> None:
         return self._response.set_cookie(*args, **kwargs)
 
-    @same_definition_as_in(Response.delete_cookie)
-    def delete_cookie(self, *args: Any, **kwargs: Any):
+    @same_method_definition_as_in(Response.delete_cookie)
+    def delete_cookie(self, *args: Any, **kwargs: Any) -> None:
         return self._response.delete_cookie(*args, **kwargs)
 
 
@@ -82,7 +80,7 @@ class _AlterDataInstruction:
         signature = inspect.signature(self.transformer)
         if list(signature.parameters) != [self._payload_arg_name]:
             raise ValueError(
-                f"Method '{self.transformer.__name__}' must have only 1 parameter: {self._payload_arg_name}",
+                f"Method '{_callable_name(self.transformer)}' must have only 1 parameter: {self._payload_arg_name}",
             )
 
         functools.update_wrapper(self, self.transformer)
@@ -125,13 +123,25 @@ class _AlterRequestByPathInstruction(_BaseAlterRequestInstruction):
 def convert_request_to_next_version_for(
     first_schema: type,
     /,
-    *additional_schemas: type,
+    *,
     check_usage: bool = True,
-) -> "type[staticmethod[_P, None]]": ...
+) -> Callable[[Callable[[RequestInfo], None]], _AlterRequestBySchemaInstruction]: ...
 
 
 @overload
-def convert_request_to_next_version_for(path: str, methods: list[str], /) -> "type[staticmethod[_P, None]]": ...
+def convert_request_to_next_version_for(
+    first_schema: type,
+    second_schema: type,
+    /,
+    *additional_schemas: type,
+    check_usage: bool = True,
+) -> Callable[[Callable[[RequestInfo], None]], _AlterRequestBySchemaInstruction]: ...
+
+
+@overload
+def convert_request_to_next_version_for(
+    path: str, methods: list[str], /
+) -> Callable[[Callable[[RequestInfo], None]], _AlterRequestByPathInstruction]: ...
 
 
 def convert_request_to_next_version_for(
@@ -140,14 +150,16 @@ def convert_request_to_next_version_for(
     /,
     *additional_schemas: type,
     check_usage: bool = True,
-) -> "type[staticmethod[_P, None]]":
+) -> Callable[[Callable[[RequestInfo], None]], Union[_AlterRequestBySchemaInstruction, _AlterRequestByPathInstruction]]:
     _validate_decorator_args(schema_or_path, methods_or_second_schema, additional_schemas)
 
-    def decorator(transformer: Callable[[RequestInfo], None]) -> Any:
+    def decorator(
+        transformer: Callable[[RequestInfo], None],
+    ) -> Union[_AlterRequestBySchemaInstruction, _AlterRequestByPathInstruction]:
         if isinstance(schema_or_path, str):
             return _AlterRequestByPathInstruction(
                 path=schema_or_path,
-                methods=set(cast("list", methods_or_second_schema)),
+                methods=set(cast("list[str]", methods_or_second_schema)),
                 transformer=transformer,
             )
         else:
@@ -161,7 +173,7 @@ def convert_request_to_next_version_for(
                 check_usage=check_usage,
             )
 
-    return decorator  # pyright: ignore[reportReturnType]
+    return decorator
 
 
 ###########
@@ -190,10 +202,21 @@ class _AlterResponseByPathInstruction(_BaseAlterResponseInstruction):
 def convert_response_to_previous_version_for(
     first_schema: type,
     /,
+    *,
+    migrate_http_errors: bool = False,
+    check_usage: bool = True,
+) -> Callable[[Callable[[ResponseInfo], None]], _AlterResponseBySchemaInstruction]: ...
+
+
+@overload
+def convert_response_to_previous_version_for(
+    first_schema: type,
+    second_schema: type,
+    /,
     *schemas: type,
     migrate_http_errors: bool = False,
     check_usage: bool = True,
-) -> "type[staticmethod[_P, None]]": ...
+) -> Callable[[Callable[[ResponseInfo], None]], _AlterResponseBySchemaInstruction]: ...
 
 
 @overload
@@ -203,7 +226,7 @@ def convert_response_to_previous_version_for(
     /,
     *,
     migrate_http_errors: bool = False,
-) -> "type[staticmethod[_P, None]]": ...
+) -> Callable[[Callable[[ResponseInfo], None]], _AlterResponseByPathInstruction]: ...
 
 
 def convert_response_to_previous_version_for(
@@ -213,15 +236,19 @@ def convert_response_to_previous_version_for(
     *additional_schemas: type,
     migrate_http_errors: bool = False,
     check_usage: bool = True,
-) -> "type[staticmethod[_P, None]]":
+) -> Callable[
+    [Callable[[ResponseInfo], None]], Union[_AlterResponseBySchemaInstruction, _AlterResponseByPathInstruction]
+]:
     _validate_decorator_args(schema_or_path, methods_or_second_schema, additional_schemas)
 
-    def decorator(transformer: Callable[[ResponseInfo], None]) -> Any:
+    def decorator(
+        transformer: Callable[[ResponseInfo], None],
+    ) -> Union[_AlterResponseBySchemaInstruction, _AlterResponseByPathInstruction]:
         if isinstance(schema_or_path, str):
             # The validation above checks that methods is not None
             return _AlterResponseByPathInstruction(
                 path=schema_or_path,
-                methods=set(cast("list", methods_or_second_schema)),
+                methods=set(cast("list[str]", methods_or_second_schema)),
                 transformer=transformer,
                 migrate_http_errors=migrate_http_errors,
             )
@@ -237,7 +264,7 @@ def convert_response_to_previous_version_for(
                 check_usage=check_usage,
             )
 
-    return decorator  # pyright: ignore[reportReturnType]
+    return decorator
 
 
 def _validate_decorator_args(

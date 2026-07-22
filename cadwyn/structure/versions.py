@@ -4,12 +4,12 @@ import http
 import inspect
 import json
 from collections import defaultdict
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Coroutine, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar, Union, cast
+from typing import TYPE_CHECKING, ClassVar, TypeAlias, Union, cast, get_args
 
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
 from starlette.datastructures import FormData
-from typing_extensions import Any, ParamSpec, TypeAlias, TypeVar, assert_never, deprecated, get_args
+from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated, override
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
 from cadwyn._utils import classproperty
@@ -56,8 +56,18 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _RouteId = int
 
+# ty requires staticmethod's type arguments, but runtime isinstance() requires the bare class.
+if TYPE_CHECKING:
+    _StaticMethodInstruction: TypeAlias = staticmethod[..., object]
+else:
+    _StaticMethodInstruction = staticmethod
+
 PossibleInstructions: TypeAlias = Union[
-    AlterSchemaSubInstruction, AlterEndpointSubInstruction, AlterEnumSubInstruction, SchemaHadInstruction, staticmethod
+    AlterSchemaSubInstruction,
+    AlterEndpointSubInstruction,
+    AlterEnumSubInstruction,
+    SchemaHadInstruction,
+    _StaticMethodInstruction,
 ]
 
 
@@ -118,7 +128,7 @@ else:
 
 class VersionChange:
     description: ClassVar[str] = Sentinel
-    is_hidden_from_changelog: bool = False
+    is_hidden_from_changelog: ClassVar[bool] = False
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
     alter_schema_instructions: ClassVar[list[Union[AlterSchemaSubInstruction, SchemaHadInstruction]]] = Sentinel
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel
@@ -206,12 +216,10 @@ class VersionChange:
         for attr_name, attr_value in cls.__dict__.items():
             if not isinstance(
                 attr_value,
-                (
-                    _AlterRequestBySchemaInstruction,
-                    _AlterRequestByPathInstruction,
-                    _AlterResponseBySchemaInstruction,
-                    _AlterResponseByPathInstruction,
-                ),
+                _AlterRequestBySchemaInstruction
+                | _AlterRequestByPathInstruction
+                | _AlterResponseBySchemaInstruction
+                | _AlterResponseByPathInstruction,
             ) and attr_name not in {
                 "description",
                 "side_effects",
@@ -233,7 +241,7 @@ class VersionChange:
                 f"Can't subclass {cls.__name__} as it was never meant to be subclassed.",
             )
 
-    def __init__(self) -> None:  # pyright: ignore[reportMissingSuperCall]
+    def __init__(self) -> None:
         raise TypeError(
             f"Can't instantiate {self.__class__.__name__} as it was never meant to be instantiated.",
         )
@@ -241,6 +249,7 @@ class VersionChange:
 
 class VersionChangeWithSideEffects(VersionChange, _abstract=True):
     @classmethod
+    @override
     def _check_no_subclassing(cls):
         if cls.mro() != [cls, VersionChangeWithSideEffects, VersionChange, object]:
             raise TypeError(
@@ -248,7 +257,7 @@ class VersionChangeWithSideEffects(VersionChange, _abstract=True):
             )
 
     @classproperty
-    def is_applied(cls: type["VersionChangeWithSideEffects"]) -> bool:  # pyright: ignore[reportGeneralTypeIssues]
+    def is_applied(cls: type["VersionChangeWithSideEffects"]) -> bool:
         if (
             cls._bound_version_bundle is None
             or cls not in cls._bound_version_bundle._version_changes_to_version_mapping
@@ -276,6 +285,7 @@ class Version:
     def version_changes(self):  # pragma: no cover
         return self.changes
 
+    @override
     def __repr__(self) -> str:
         return f"Version('{self.value}')"
 
@@ -491,14 +501,14 @@ class VersionBundle:
         request_param_name: str,
         background_tasks_param_name: Union[str, None],
         response_param_name: str,
-    ) -> "Callable[[Endpoint[_P, _R]], Endpoint[_P, _R]]":
-        def wrapper(endpoint: "Endpoint[_P, _R]") -> "Endpoint[_P, _R]":
+    ) -> "Callable[[Endpoint[_P, _R]], Callable[..., Coroutine[Any, Any, _R]]]":
+        def wrapper(endpoint: "Endpoint[_P, _R]") -> "Callable[..., Coroutine[Any, Any, _R]]":
             @functools.wraps(endpoint)
             async def decorator(*args: Any, **kwargs: Any) -> _R:
                 request_param: FastapiRequest = kwargs[request_param_name]
                 response_param: FastapiResponse = kwargs[response_param_name]
-                background_tasks: Union[BackgroundTasks, None] = kwargs.get(
-                    background_tasks_param_name,  # pyright: ignore[reportArgumentType]
+                background_tasks: Union[BackgroundTasks, None] = (
+                    kwargs.get(background_tasks_param_name) if background_tasks_param_name is not None else None
                 )
                 method = request_param.method
                 response = Sentinel
@@ -534,7 +544,8 @@ class VersionBundle:
                         "application code is raising an exception and a dependency with yield "
                         "has a block with a bare except, or a block with except Exception, "
                         "and is not raising the exception again. Read more about it in the "
-                        "docs: https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/#dependencies-with-yield-and-except"
+                        "docs: https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/"
+                        "#dependencies-with-yield-and-except"
                     )
                 return response
 
@@ -543,7 +554,7 @@ class VersionBundle:
             if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
 
-            return decorator  # pyright: ignore[reportReturnType]
+            return decorator
 
         return wrapper
 
@@ -587,11 +598,11 @@ class VersionBundle:
             # TODO (https://github.com/zmievsa/cadwyn/issues/126): Add support for migrating `FileResponse`
             # Starlette breaks Liskov Substitution principle and
             # doesn't define `body` for `StreamingResponse` and `FileResponse`
-            if isinstance(response_or_response_body, (StreamingResponse, FileResponse)):
+            if isinstance(response_or_response_body, StreamingResponse | FileResponse):
                 body = None
             elif response_or_response_body.body:
                 if (isinstance(response_or_response_body, JSONResponse) or raised_exception is not None) and isinstance(
-                    response_or_response_body.body, (str, bytes)
+                    response_or_response_body.body, str | bytes
                 ):
                     body = json.loads(response_or_response_body.body)
                 elif isinstance(response_or_response_body.body, bytes):
@@ -604,7 +615,7 @@ class VersionBundle:
 
             response_info = ResponseInfo(response_or_response_body, body)
         else:
-            if fastapi_response_dependency.status_code is not None:  # pyright: ignore[reportUnnecessaryComparison]
+            if fastapi_response_dependency.status_code is not None:
                 status_code = fastapi_response_dependency.status_code
             elif route.status_code is not None:
                 status_code = route.status_code
@@ -789,16 +800,14 @@ async def _get_body(
 
 
 def _add_keyword_only_parameter(
-    func: Callable,
+    func: Callable[..., object],
     param_name: str,
     param_annotation: type,
 ):
     signature = inspect.signature(func)
-    func.__signature__ = signature.replace(
-        parameters=(
-            [
-                *list(signature.parameters.values()),
-                inspect.Parameter(param_name, kind=inspect._ParameterKind.KEYWORD_ONLY, annotation=param_annotation),
-            ]
-        ),
+    func.__signature__ = signature.replace(  # ty: ignore[unresolved-attribute]
+        parameters=[
+            *list(signature.parameters.values()),
+            inspect.Parameter(param_name, kind=inspect._ParameterKind.KEYWORD_ONLY, annotation=param_annotation),
+        ]
     )

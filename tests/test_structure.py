@@ -101,7 +101,7 @@ class TestVersionChange:
 
             class DummySubClass(VersionChange):
                 description = "dummy description"
-                instructions_to_migrate_to_previous_version = True  # pyright: ignore[reportAssignmentType]
+                instructions_to_migrate_to_previous_version = True
 
     def test__instructions_to_migrate_to_previous_version__non_instruction_specified_in_list__should_raise_error(self):
         with pytest.raises(
@@ -113,7 +113,7 @@ class TestVersionChange:
 
             class DummySubClass(VersionChange):
                 description = "dummy description"
-                instructions_to_migrate_to_previous_version = [True]  # pyright: ignore[reportAssignmentType]
+                instructions_to_migrate_to_previous_version = [True]
 
     def test__non_instruction_attribute_set__should_raise_error(self):
         with pytest.raises(
@@ -352,7 +352,7 @@ def test__convert_response_to_previous_version_for__with_incorrect_args__should_
         ),
     ):
 
-        @convert_response_to_previous_version_for(SomeSchema)
+        @convert_response_to_previous_version_for(SomeSchema)  # ty: ignore[invalid-argument-type]
         def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
             raise NotImplementedError
 
@@ -365,7 +365,7 @@ def test__convert_response_to_previous_version_for__with_no_args__should_raise_e
         ),
     ):
 
-        @convert_response_to_previous_version_for(SomeSchema)
+        @convert_response_to_previous_version_for(SomeSchema)  # ty: ignore[invalid-argument-type]
         def my_conversion_method2():  # pragma: no branch
             raise NotImplementedError
 
@@ -378,7 +378,7 @@ def test__convert_request_to_next_version_for__with_incorrect_args__should_raise
         ),
     ):
 
-        @convert_request_to_next_version_for(SomeSchema)
+        @convert_request_to_next_version_for(SomeSchema)  # ty: ignore[invalid-argument-type]
         def my_conversion_method(cls: Any, payload: Any):  # pragma: no branch
             raise NotImplementedError
 
@@ -391,7 +391,7 @@ def test__convert_request_to_next_version_for__with_no_args__should_raise_error(
         ),
     ):
 
-        @convert_request_to_next_version_for(SomeSchema)
+        @convert_request_to_next_version_for(SomeSchema)  # ty: ignore[invalid-argument-type]
         def my_conversion_method2():  # pragma: no branch
             raise NotImplementedError
 

@@ -1,12 +1,16 @@
 import sys
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
+from inspect import signature
+from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
 
 from pydantic._internal._decorators import unwrap_wrapped_function
+from typing_extensions import ParamSpec, override
 
 Sentinel: Any = object()
 
-_T = TypeVar("_T", bound=Callable)
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+_SourceSelf = TypeVar("_SourceSelf")
 
 
 _P_T = TypeVar("_P_T")
@@ -20,8 +24,6 @@ else:  # pragma: no cover
 
 UnionType = type(int | str) | type(Union[int, str])
 DATACLASS_SLOTS: dict[str, Any] = {"slots": True}
-ZIP_STRICT_TRUE: dict[str, Any] = {"strict": True}
-ZIP_STRICT_FALSE: dict[str, Any] = {"strict": False}
 DATACLASS_KW_ONLY: dict[str, Any] = {"kw_only": True}
 
 
@@ -45,18 +47,22 @@ class classproperty(Generic[_P_T, _P_R]):  # noqa: N801
 class PlainRepr(str):
     """String class where repr doesn't include quotes"""
 
+    @override
     def __repr__(self) -> str:
         return str(self)
 
 
-def same_definition_as_in(t: _T) -> Callable[[Callable], _T]:
-    def decorator(f: Callable) -> _T:
-        return f  # pyright: ignore[reportReturnType]
+def same_method_definition_as_in(
+    t: Callable[Concatenate[_SourceSelf, _P], _R],
+) -> Callable[[Callable[..., _R]], Callable[Concatenate[object, _P], _R]]:
+    def decorator(f: Callable[..., _R]) -> Callable[Concatenate[object, _P], _R]:
+        f.__signature__ = signature(t)  # ty: ignore[unresolved-attribute]
+        return f
 
     return decorator
 
 
-def fully_unwrap_decorator(func: Callable, is_pydantic_v1_style_validator: Any):
+def fully_unwrap_decorator(func: Callable[..., object], is_pydantic_v1_style_validator: Any):
     func = unwrap_wrapped_function(func)
     if is_pydantic_v1_style_validator and func.__closure__:
         func = func.__closure__[0].cell_contents
@@ -75,3 +81,8 @@ else:
             return issubclass(cls, other)
         except TypeError:  # pragma: no cover
             return False
+
+
+def _callable_name(call: Callable[..., object]) -> str:
+    name = getattr(call, "__name__", None)
+    return name if isinstance(name, str) else type(call).__name__

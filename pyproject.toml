@@ -1,6 +1,6 @@
 [project]
 name = "cadwyn"
-version = "7.1.0"
+version = "7.1.1"
 description = "Production-ready community-driven modern Stripe-like API versioning in FastAPI"
 authors = [{ name = "Stanislav Zmiev", email = "zmievsa@gmail.com" }]
 license = "MIT"
@@ -17,7 +17,6 @@ keywords = [
     "api-versioning",
     "pydantic",
     "fastapi",
-    "python39",
     "python310",
     "python311",
     "python312",
@@ -81,7 +80,7 @@ dev = [
     "dirty-equals >=0.6.0",
     "uvicorn ~=0.23.0",
     # type checking
-    "pyright>=1.1.390",
+    "ty>=0.0.56",
     # docs
     "mkdocs >=1.5.2",
     "mkdocs-material >=9.3.1",
@@ -92,10 +91,18 @@ dev = [
     "markdown-include-variants>=0.0.4",
     "inline-snapshot>=0.20.7",
     "pydantic-settings>=2.8.1",
+    "tox>=4.56.1",
+    "tox-uv>=1.35.2",
+    "prek>=0.4.7",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.uv]
 default-groups = ['dev']
+
+[tool.hatch.build]
+exclude = ["/node_modules"]
+skip-excluded-dirs = true
 
 
 [project.urls]
@@ -112,6 +119,7 @@ format-command = "ruff format --stdin-filename {filename}"
 [tool.coverage.run]
 parallel = true
 branch = true
+patch = ["subprocess"]
 
 [tool.coverage.report]
 fail_under = 100
@@ -138,29 +146,6 @@ exclude_lines = [
     "def .+: \\.\\.\\.",
 ]
 omit = ["./docs/plugin.py", "./site/plugin.py", "scripts/*.py"]
-
-[tool.pyright]
-reportMissingImports = true
-strictListInference = true
-strictDictionaryInference = true
-strictSetInference = true
-reportPropertyTypeMismatch = true
-reportImportCycles = true
-reportUntypedFunctionDecorator = "warning"
-reportUntypedClassDecorator = "warning"
-reportUntypedBaseClass = "warning"
-reportDeprecated = "warning"
-reportInvalidTypeVarUse = true
-reportUnnecessaryCast = true
-reportUnnecessaryComparison = true
-reportUnnecessaryContains = true
-reportAssertAlwaysTrue = true
-reportUnsupportedDunderAll = true
-reportUnnecessaryTypeIgnoreComment = "warning" # TODO: Move to true once pyright fixes its bugs
-reportMissingSuperCall = true
-reportFunctionMemberAccess = false
-reportInvalidTypeForm = false
-reportPrivateImportUsage = false
 
 [tool.pytest.ini_options]
 filterwarnings = [

@@ -11,6 +11,7 @@ import fastapi
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
 from starlette.types import ASGIApp
+from typing_extensions import override
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn.structure.common import VersionType
@@ -61,11 +62,11 @@ def _generate_api_version_dependency(
     title: Optional[str] = None,
     description: Optional[str] = None,
 ):
-    def api_version_dependency(**kwargs: Any):
+    def api_version_dependency(**kwargs: Any) -> Any:
         # TODO: What do I return?
         return next(iter(kwargs.values()))
 
-    api_version_dependency.__signature__ = inspect.Signature(
+    api_version_dependency.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]
         parameters=[
             inspect.Parameter(
                 api_version_pythonic_parameter_name,
@@ -78,10 +79,9 @@ def _generate_api_version_dependency(
                         description=description,
                     ),
                 ],
-                # Path-based parameters do not support a default value in FastAPI :(
                 default=default_value if fastapi_depends_class != fastapi.Path else inspect.Signature.empty,
-            ),
-        ],
+            )
+        ]
     )
     return api_version_dependency
 
@@ -104,6 +104,7 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         self.api_version_var = api_version_var
         self.api_version_default_value = api_version_default_value
 
+    @override
     async def dispatch(
         self,
         request: Request,
@@ -114,10 +115,10 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         api_version = self._api_version_manager.get(request)
 
         if api_version is None:
-            if callable(self.api_version_default_value):
-                api_version = await self.api_version_default_value(request)
-            else:
+            if isinstance(self.api_version_default_value, str | None):
                 api_version = self.api_version_default_value
+            else:
+                api_version = await self.api_version_default_value(request)
             DEFAULT_API_VERSION_VAR.set(api_version)
 
         self.api_version_var.set(api_version)
@@ -126,6 +127,6 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         if api_version is not None:
             # We return it because we will be returning the **matched** version, not the requested one.
             # In date-based versioning with waterfalling, it makes sense.
-            response.headers[self.api_version_parameter_name] = api_version
+            response.headers[self.api_version_parameter_name] = request.scope.get("cadwyn.api_version", api_version)
 
         return response

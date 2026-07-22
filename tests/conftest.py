@@ -11,9 +11,10 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from pytest_fixture_classes import fixture_class
+from typing_extensions import override
 
 from cadwyn import Cadwyn, VersionBundle, VersionedAPIRouter
-from cadwyn._utils import same_definition_as_in
+from cadwyn._utils import same_method_definition_as_in
 from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
@@ -38,7 +39,7 @@ def random_uuid():
 
 
 class CadwynTestClient(TestClient):
-    @same_definition_as_in(TestClient.__init__)
+    @same_method_definition_as_in(TestClient.__init__)
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.app: Cadwyn
@@ -56,6 +57,7 @@ class TestClientWithHardcodedAPIVersion(CadwynTestClient):
         self.api_version_var = api_version_var
         self.api_version = api_version
 
+    @override
     def request(self, *args, **kwargs):
         if self.api_version is not Undefined and self.api_version_var:
             self.api_version_var.set(self.api_version)
@@ -140,7 +142,7 @@ def version_change(
     **body_items: Any,
 ) -> type[VersionChange]:
     return type(VersionChange)(
-        "MyVersionChange",  # pyright: ignore
+        "MyVersionChange",
         (VersionChange,),
         {
             "description": "",
