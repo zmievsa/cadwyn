@@ -10,6 +10,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Migrated static type checking from Pyright to ty
 - Hardened ty's static-analysis configuration and fixed the newly exposed typing issues
 
+### Fixed
+
+- Return the matched API version in the response header after waterfalling, by @Sanjays2402 (#384)
+
 ## [7.1.0]
 
 ### Added

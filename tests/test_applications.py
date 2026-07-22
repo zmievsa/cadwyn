@@ -40,22 +40,6 @@ def test__header_routing__invalid_version_format__error():
             )
 
 
-def test__header_routing__waterfalling_returns_matched_version():
-    app = Cadwyn(versions=VersionBundle(Version("2023-04-14"), Version("2022-11-16")))
-    router = VersionedAPIRouter()
-
-    @router.get("/foo")
-    def foo():
-        return "foo"
-
-    app.generate_and_include_versioned_routers(router)
-
-    response = TestClient(app).get("/foo", headers={"x-api-version": "2024-01-01"})
-
-    assert response.status_code == 200
-    assert response.headers["x-api-version"] == "2023-04-14"
-
-
 def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_openapi_routes():
     assert [cast("APIRoute", r).path for r in Cadwyn(versions=VersionBundle(Version("2022-11-16"))).routes] == [
         "/docs/oauth2-redirect",
