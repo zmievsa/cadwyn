@@ -84,6 +84,7 @@ class _RootCadwynAPIRouter(APIRouter):
             routes = self.versioned_routers[version].routes
         else:
             routes = await self._get_routes_from_closest_suitable_version(version)
+        scope["cadwyn.api_version"] = self.api_version_var.get(None)
         if default_version_that_was_picked:
             # We add unversioned routes to versioned routes because otherwise unversioned routes
             # will be completely unavailable when a default version is passed. So routes such as

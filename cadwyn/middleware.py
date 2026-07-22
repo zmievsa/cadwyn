@@ -127,6 +127,6 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         if api_version is not None:
             # We return it because we will be returning the **matched** version, not the requested one.
             # In date-based versioning with waterfalling, it makes sense.
-            response.headers[self.api_version_parameter_name] = api_version
+            response.headers[self.api_version_parameter_name] = request.scope.get("cadwyn.api_version", api_version)
 
         return response
