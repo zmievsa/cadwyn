@@ -20,8 +20,6 @@ from cadwyn import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
-    """..."""
-
     instructions_to_migrate_to_previous_version = (
         endpoint("/users/{user_id}", ["GET"]).existed,
     )
@@ -36,8 +34,6 @@ from cadwyn import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
-    """..."""
-
     instructions_to_migrate_to_previous_version = (
         endpoint("/companies/{company_id}", ["GET"]).didnt_exist,
     )
@@ -52,8 +48,6 @@ from cadwyn import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
-    """..."""
-
     instructions_to_migrate_to_previous_version = (
         endpoint("/users/{user_id}", ["GET"]).had(
             description="My old description",

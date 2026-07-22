@@ -15,8 +15,6 @@ from cadwyn import VersionChange, enum
 
 
 class MyChange(VersionChange):
-    """..."""
-
     instructions_to_migrate_to_previous_version = (
         enum(my_enum).had(foo="baz", bar=auto()),
     )
@@ -29,8 +27,6 @@ from cadwyn import VersionChange, enum
 
 
 class MyChange(VersionChange):
-    """..."""
-
     instructions_to_migrate_to_previous_version = (
         enum(my_enum).didnt_have("foo", "bar"),
     )
