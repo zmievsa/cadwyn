@@ -8,6 +8,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Changed
 
 - Simplified contributor setup and development commands (#387)
+- Standardized test names around the `what`, `when`, and `expected` convention and documented test organization (#397)
 
 ## [7.1.1]
 
