@@ -17,7 +17,7 @@ Assume you had a `summary` field before but now you want to rename it to `bio`.
     from users import BaseUser, UserCreateRequest, UserResource
 
 
-    class RenameSummaryToBioInUser(VersionChange):
+    class RenameUserSummaryToBio(VersionChange):
         description = (
             "Rename 'summary' field to 'bio' to keep up with industry standards"
         )

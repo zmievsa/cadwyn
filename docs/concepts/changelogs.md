@@ -10,7 +10,7 @@ Sometimes you might want to make private internal version changes or instruction
 from cadwyn import VersionChange, endpoint, hidden
 
 
-class VersionChangeWithOneHiddenInstruction(VersionChange):
+class RenameUserIdPathParameter(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         hidden(endpoint("/users/{user_id}", ["GET"]).had(path="/users/{uid}")),
@@ -18,7 +18,7 @@ class VersionChangeWithOneHiddenInstruction(VersionChange):
 
 
 @hidden
-class CompletelyHiddenVersionChange(VersionChange):
+class RemoveAddressFromUser(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(User).field("address").existed_as(type=str),

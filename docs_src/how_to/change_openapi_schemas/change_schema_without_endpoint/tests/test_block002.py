@@ -2,11 +2,12 @@ from fastapi.testclient import TestClient
 
 from cadwyn import Cadwyn, Version, VersionBundle
 from docs_src.how_to.change_openapi_schemas.change_schema_without_endpoint.block002 import (
-    ChangeUserIDToString,
+    ChangeUserIdFromIntegerToString,
 )
 
 versions = VersionBundle(
-    Version("2023-04-12", ChangeUserIDToString), Version("2022-11-16")
+    Version("2023-04-12", ChangeUserIdFromIntegerToString),
+    Version("2022-11-16"),
 )
 app = Cadwyn(versions=versions)
 

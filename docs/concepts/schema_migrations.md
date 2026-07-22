@@ -11,7 +11,7 @@ from cadwyn import VersionChange, schema
 from pydantic import Field
 
 
-class MyChange(VersionChange):
+class RemoveFooFromMySchema(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema)
@@ -26,7 +26,7 @@ class MyChange(VersionChange):
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
+class AddFooToMySchema(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").didnt_exist,
@@ -41,7 +41,7 @@ The following code sets an attribute of a field, such as a description:
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
+class ChangeMySchemaFooDescription(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").had(description="Foo"),
@@ -54,7 +54,7 @@ The following code un-sets an attribute of a field, as if it never existed:
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
+class AddDescriptionToMySchemaFoo(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").didnt_have("description"),
@@ -91,7 +91,7 @@ def validate_foo(cls, value):
     return value
 
 
-class MyChange(VersionChange):
+class RemoveFooValidatorFromMySchema(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).validator(validate_foo).existed,
@@ -105,7 +105,7 @@ from cadwyn import VersionChange, schema
 from pydantic import Field, validator
 
 
-class MyChange(VersionChange):
+class AddFooValidatorToMySchema(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).validator(MySchema.validate_foo).didnt_exist,
@@ -121,7 +121,7 @@ The following code replaces all schema name occurrences with a new one to ensure
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
+class RenameOtherSchemaToMySchema(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).had(name="OtherSchema"),

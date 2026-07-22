@@ -11,7 +11,7 @@ Suppose you previously allowed users to have a name of arbitrary length but now 
     from users import UserCreateRequest
 
 
-    class AddLengthConstraintToNameInLatest(VersionChange):
+    class LimitUserNamesTo250CharactersInLatest(VersionChange):
         description = (
             "Remove the 'max_length' constraint from the HEAD version to "
             "support versions older than 2001_01_01 where the constraint "
@@ -25,7 +25,7 @@ Suppose you previously allowed users to have a name of arbitrary length but now 
 2. Then add the following migration under the migration above in the same file:
 
     ```python
-    class AddMaxLengthConstraintToUserNames(VersionChange):
+    class LimitUserNamesTo250Characters(VersionChange):
         description = (
             "Add a max length of 250 to user names when creating new "
             "users to prevent excessively large names from being used."
@@ -41,13 +41,13 @@ Suppose you previously allowed users to have a name of arbitrary length but now 
     from cadwyn import HeadVersion, Version, VersionBundle
 
     from .v2001_01_01 import (
-        AddLengthConstraintToNameInLatest,
-        AddMaxLengthConstraintToUserNames,
+        LimitUserNamesTo250CharactersInLatest,
+        LimitUserNamesTo250Characters,
     )
 
     version_bundle = VersionBundle(
-        HeadVersion(AddLengthConstraintToNameInLatest),
-        Version("2001-01-01", AddMaxLengthConstraintToUserNames),
+        HeadVersion(LimitUserNamesTo250CharactersInLatest),
+        Version("2001-01-01", LimitUserNamesTo250Characters),
         Version("2000-01-01"),
     )
     ```

@@ -76,7 +76,7 @@ So we will make `phone` nullable in HEAD, then make it required in `latest`, and
     from users import UserCreateRequest
 
 
-    class MakePhoneNonNullableInLatest(VersionChange):
+    class MakeUserPhoneNonNullableInLatest(VersionChange):
         description = (
             "Make sure the phone is nullable in the HEAD version to support "
             "versions older than 2001_01_01 where it became non-nullable"
@@ -90,7 +90,7 @@ So we will make `phone` nullable in HEAD, then make it required in `latest`, and
 4. Add the following version change to `versions.v2001_01_01` (right under the version change above) which will make sure that `phone` is nullable in 2000_01_01:
 
     ```python
-    class AddPhoneToUser(VersionChange):
+    class AddRequiredPhoneToUser(VersionChange):
         description = (
             "Add a required phone field to User to allow us to do 2fa and to "
             "make it possible to verify new user accounts using an sms."
@@ -107,12 +107,15 @@ So we will make `phone` nullable in HEAD, then make it required in `latest`, and
     ```python
     from cadwyn import Version, VersionBundle, HeadVersion
     from datetime import date
-    from .v2001_01_01 import MakePhoneNonNullableInLatest, AddPhoneToUser
+    from .v2001_01_01 import (
+        MakeUserPhoneNonNullableInLatest,
+        AddRequiredPhoneToUser,
+    )
 
 
     version_bundle = VersionBundle(
-        HeadVersion(MakePhoneNonNullableInLatest),
-        Version("2001-01-01", AddPhoneToUser),
+        HeadVersion(MakeUserPhoneNonNullableInLatest),
+        Version("2001-01-01", AddRequiredPhoneToUser),
         Version("2000-01-01"),
     )
     ```

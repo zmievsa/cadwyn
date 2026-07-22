@@ -14,7 +14,7 @@ from enum import auto
 from cadwyn import VersionChange, enum
 
 
-class MyChange(VersionChange):
+class RemoveFooAndBarFromMyEnum(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         enum(my_enum).had(foo="baz", bar=auto()),
@@ -27,7 +27,7 @@ class MyChange(VersionChange):
 from cadwyn import VersionChange, enum
 
 
-class MyChange(VersionChange):
+class AddFooAndBarToMyEnum(VersionChange):
     description = "..."
     instructions_to_migrate_to_previous_version = (
         enum(my_enum).didnt_have("foo", "bar"),

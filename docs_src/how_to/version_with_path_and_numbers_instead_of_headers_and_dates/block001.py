@@ -39,7 +39,7 @@ class UserAddressResourceList(BaseModel):
     data: list[UserAddressResource]
 
 
-class ChangeAddressToList(VersionChange):
+class ReplaceUserAddressWithListOfAddresses(VersionChange):
     description = "Change vat id to list"
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser).field("addresses").didnt_exist,
@@ -56,7 +56,7 @@ class ChangeAddressToList(VersionChange):
         response.body["address"] = response.body["addresses"][0]
 
 
-class ChangeAddressesToSubresource(VersionChange):
+class MoveUserAddressesToSubresource(VersionChange):
     description = "Change vat ids to subresource"
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser)
@@ -81,7 +81,7 @@ class ChangeAddressesToSubresource(VersionChange):
         ]
 
 
-class RemoveAddressesToCreateFromLatest(VersionChange):
+class RemoveAddressesToCreateFromLatestUserSchema(VersionChange):
     description = (
         "In order to support old versions, we gotta have `addresses_to_create` "
         "located in head schemas but we do not need this field in latest schemas."
@@ -92,9 +92,9 @@ class RemoveAddressesToCreateFromLatest(VersionChange):
 
 
 version_bundle = VersionBundle(
-    HeadVersion(RemoveAddressesToCreateFromLatest),
-    Version("v10", ChangeAddressesToSubresource),
-    Version("v9", ChangeAddressToList),
+    HeadVersion(RemoveAddressesToCreateFromLatestUserSchema),
+    Version("v10", MoveUserAddressesToSubresource),
+    Version("v9", ReplaceUserAddressWithListOfAddresses),
     Version("v8"),
 )
 

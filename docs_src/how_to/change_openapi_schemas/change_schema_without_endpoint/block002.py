@@ -13,7 +13,7 @@ class User(BaseModel):
     id: str
 
 
-class ChangeUserIDToString(VersionChange):
+class ChangeUserIdFromIntegerToString(VersionChange):
     description = (
         "Change users' ID field to a string to support any kind of ID. "
         "Be careful: if you use a non-integer ID in a new version and "

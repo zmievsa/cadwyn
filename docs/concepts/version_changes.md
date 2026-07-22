@@ -150,7 +150,7 @@ from cadwyn import (
 from invoices import InvoiceCreateRequest
 
 
-class RemoveTaxIdEndpoints(VersionChange):
+class RenameInvoiceCreationDateToCreatedAt(VersionChange):
     description = "Rename 'Invoice.creation_date' to 'Invoice.created_at'."
     instructions_to_migrate_to_previous_version = (
         schema(InvoiceCreateRequest)
@@ -185,7 +185,7 @@ from invoices import (
 )
 
 
-class RemoveTaxIdEndpoints(VersionChange):
+class RenameInvoiceCreationDateToCreatedAt(VersionChange):
     description = "Rename 'Invoice.creation_date' to 'Invoice.created_at'."
     instructions_to_migrate_to_previous_version = (
         schema(BaseInvoice).field("creation_date").had(name="created_at"),
@@ -224,7 +224,7 @@ from cadwyn import (
 from invoices import BaseInvoice
 
 
-class RemoveTaxIdEndpoints(VersionChange):
+class RenameInvoiceCreationDateToCreatedAt(VersionChange):
     description = "Rename 'Invoice.creation_date' to 'Invoice.created_at'."
     instructions_to_migrate_to_previous_version = (
         schema(BaseInvoice).field("creation_date").had(name="created_at"),
@@ -255,7 +255,7 @@ from cadwyn import (
 )
 
 
-class RemoveTaxIdEndpoints(VersionChange):
+class ReplaceInvoiceNotFoundStatusCode400With404(VersionChange):
     description = "Replace status code 400 with 404 in 'GET /v1/invoices' if invoice is not found"
     instructions_to_migrate_to_previous_version = ()
 
@@ -305,7 +305,7 @@ from users import BaseUser
 
 
 # THIS IS AN EXAMPLE OF A POOR MIGRATION
-class RemoveTaxIdEndpoints(VersionChange):
+class ReplaceUserAddressesWithAddress(VersionChange):
     description = "Users now have 'address' field instead of 'addresses'"
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser).field("address").didnt_exist,
@@ -345,7 +345,7 @@ from cadwyn import VersionChange, schema
 from users import User
 
 
-class RemoveTaxIdEndpoints(VersionChange):
+class ReplaceUserAddressesWithAddress(VersionChange):
     description = "Users now have 'address' field instead of 'addresses'"
     instructions_to_migrate_to_previous_version = (
         schema(User).field("address").didnt_exist,
@@ -454,7 +454,9 @@ As an example, let's use the tutorial section's case with the user and their add
 from cadwyn import VersionChangeWithSideEffects
 
 
-class UserAddressIsCheckedInExternalService(VersionChangeWithSideEffects):
+class RejectUserAddressesMissingFromExternalService(
+    VersionChangeWithSideEffects
+):
     description = (
         "User's address is now checked against existence in an external service. "
         "If it is not found, a 400 code is returned."
@@ -464,11 +466,11 @@ class UserAddressIsCheckedInExternalService(VersionChangeWithSideEffects):
 Then you will have the following check in your business logic:
 
 ```python
-from src.versions import versions, UserAddressIsCheckedInExternalService
+from src.versions import versions, RejectUserAddressesMissingFromExternalService
 
 
 async def create_user(payload):
-    if UserAddressIsCheckedInExternalService.is_applied:
+    if RejectUserAddressesMissingFromExternalService.is_applied:
         check_user_address_exists_in_an_external_service(payload.address)
     ...
 ```
