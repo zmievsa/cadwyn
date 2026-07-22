@@ -12,7 +12,8 @@ from pydantic import Field
 
 
 class MyChange(VersionChange):
-    description = "..."
+    """..."""
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema)
         .field("foo")
@@ -27,7 +28,8 @@ from cadwyn import VersionChange, schema
 
 
 class MyChange(VersionChange):
-    description = "..."
+    """..."""
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").didnt_exist,
     )
@@ -42,7 +44,8 @@ from cadwyn import VersionChange, schema
 
 
 class MyChange(VersionChange):
-    description = "..."
+    """..."""
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").had(description="Foo"),
     )
@@ -55,7 +58,8 @@ from cadwyn import VersionChange, schema
 
 
 class MyChange(VersionChange):
-    description = "..."
+    """..."""
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").didnt_have("description"),
     )
@@ -92,7 +96,8 @@ def validate_foo(cls, value):
 
 
 class MyChange(VersionChange):
-    description = "..."
+    """..."""
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).validator(validate_foo).existed,
     )
@@ -106,7 +111,8 @@ from pydantic import Field, validator
 
 
 class MyChange(VersionChange):
-    description = "..."
+    """..."""
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).validator(MySchema.validate_foo).didnt_exist,
     )
@@ -122,7 +128,8 @@ from cadwyn import VersionChange, schema
 
 
 class MyChange(VersionChange):
-    description = "..."
+    """..."""
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).had(name="OtherSchema"),
     )

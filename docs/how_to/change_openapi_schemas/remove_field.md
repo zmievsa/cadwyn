@@ -14,11 +14,11 @@ Let's say that our API has a mandatory `UserResource.date_of_birth` field. Let's
 
 
     class RemoveZodiacSignFromUser(VersionChange):
-        description = (
-            "Remove 'zodiac_sign' field from UserResource because "
-            "it can be inferred from user's date of birth and because "
-            "only a small number of users has utilized it."
-        )
+        """Remove 'zodiac_sign' field from UserResource because
+        it can be inferred from user's date of birth and because
+        only a small number of users has utilized it.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(UserResource)
             .field("zodiac_sign")
@@ -61,10 +61,10 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
 
 
     class RemoveMiddleNameFromLatestVersion(VersionChange):
-        description = (
-            "Remove 'User.middle_name' from latest but keep it in HEAD "
-            "to support versions before 2001-01-01."
-        )
+        """Remove 'User.middle_name' from latest but keep it in HEAD
+        to support versions before 2001-01-01.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser).field("middle_name").didnt_exist,
         )
@@ -78,7 +78,8 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
 
 
     class RemoveMiddleNameFromUser(VersionChange):
-        description = "Remove 'User.middle_name' field"
+        """Remove 'User.middle_name' field."""
+
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser)
             .field("middle_name")

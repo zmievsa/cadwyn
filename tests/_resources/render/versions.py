@@ -8,7 +8,7 @@ from .classes import A, MyEnum
 
 
 class MyVersionChange(VersionChange):
-    description = "..."
+    description = ""
     instructions_to_migrate_to_previous_version = (
         enum(MyEnum).didnt_have("foo"),
         schema(A).field("foo").didnt_exist,

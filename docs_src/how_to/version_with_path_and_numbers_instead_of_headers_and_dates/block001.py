@@ -40,7 +40,8 @@ class UserAddressResourceList(BaseModel):
 
 
 class ChangeAddressToList(VersionChange):
-    description = "Change vat id to list"
+    """Change vat id to list."""
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser).field("addresses").didnt_exist,
         schema(BaseUser).field("address").existed_as(type=str, info=Field()),
@@ -57,7 +58,8 @@ class ChangeAddressToList(VersionChange):
 
 
 class ChangeAddressesToSubresource(VersionChange):
-    description = "Change vat ids to subresource"
+    """Change vat ids to subresource."""
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser)
         .field("addresses")
@@ -82,10 +84,11 @@ class ChangeAddressesToSubresource(VersionChange):
 
 
 class RemoveAddressesToCreateFromLatest(VersionChange):
-    description = (
-        "In order to support old versions, we gotta have `addresses_to_create` "
-        "located in head schemas but we do not need this field in latest schemas."
-    )
+    """Keep `addresses_to_create` in HEAD to support old versions.
+
+    Remove this field from the latest schemas where it is not needed.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(UserCreateRequest).field("addresses_to_create").didnt_exist,
     )

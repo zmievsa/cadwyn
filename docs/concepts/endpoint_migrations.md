@@ -20,7 +20,8 @@ from cadwyn import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
-    description = "..."
+    """..."""
+
     instructions_to_migrate_to_previous_version = (
         endpoint("/users/{user_id}", ["GET"]).existed,
     )
@@ -35,7 +36,8 @@ from cadwyn import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
-    description = "..."
+    """..."""
+
     instructions_to_migrate_to_previous_version = (
         endpoint("/companies/{company_id}", ["GET"]).didnt_exist,
     )
@@ -50,7 +52,8 @@ from cadwyn import VersionChange, endpoint
 
 
 class MyChange(VersionChange):
-    description = "..."
+    """..."""
+
     instructions_to_migrate_to_previous_version = (
         endpoint("/users/{user_id}", ["GET"]).had(
             description="My old description",
@@ -100,10 +103,10 @@ from cadwyn import VersionChange, endpoint
 
 
 class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
-    description = (
-        "Use params instead of headers for user name filtering in 'GET /users' "
-        "because using headers is a poor API practice in such scenarios."
-    )
+    """Use params instead of headers for user name filtering in 'GET /users'
+    because using headers is a poor API practice in such scenarios.
+    """
+
     instructions_to_migrate_to_previous_version = (
         # Specify the name; otherwise you will encounter an exception due to
         # having two identical endpoints with the same parameters and path decorators

@@ -105,7 +105,7 @@ versions = VersionBundle(
 
 ### VersionChange.description
 
-The description of your version change must be even more detailed. In fact, it is intended to be the **name** and the **summary** of the version change for your clients. Cadwyn uses a non-empty class docstring as the description when you do not set the `description` attribute explicitly. Explicit descriptions remain supported and take precedence over class docstrings.
+Write the description of your version change as its class docstring. Cadwyn uses this docstring as the **name** and the **summary** of the version change for your clients.
 
 The description must clearly state to your clients **what happened** and **why**. So you need to make it grammatically correct, detailed, specific, and written for humans. Note that you do not have to use a strict machine-readable format -- it is a portion of documentation, not a set of instructions. Have a look at [Stripe's description](https://stripe.com/blog/api-versioning) of one of their version changes as an example:
 
@@ -154,7 +154,8 @@ from invoices import InvoiceCreateRequest
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    description = "Rename 'Invoice.creation_date' to 'Invoice.created_at'."
+    """Rename 'Invoice.creation_date' to 'Invoice.created_at'."""
+
     instructions_to_migrate_to_previous_version = (
         schema(InvoiceCreateRequest)
         .field("creation_date")
@@ -189,7 +190,8 @@ from invoices import (
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    description = "Rename 'Invoice.creation_date' to 'Invoice.created_at'."
+    """Rename 'Invoice.creation_date' to 'Invoice.created_at'."""
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseInvoice).field("creation_date").had(name="created_at"),
     )
@@ -228,7 +230,8 @@ from invoices import BaseInvoice
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    description = "Rename 'Invoice.creation_date' to 'Invoice.created_at'."
+    """Rename 'Invoice.creation_date' to 'Invoice.created_at'."""
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseInvoice).field("creation_date").had(name="created_at"),
     )
@@ -259,7 +262,8 @@ from cadwyn import (
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    description = "Replace status code 400 with 404 in 'GET /v1/invoices' if invoice is not found"
+    """Replace status code 400 with 404 in 'GET /v1/invoices' if invoice is not found."""
+
     instructions_to_migrate_to_previous_version = ()
 
     @convert_response_to_previous_version_for(
@@ -309,7 +313,8 @@ from users import BaseUser
 
 # THIS IS AN EXAMPLE OF A POOR MIGRATION
 class RemoveTaxIdEndpoints(VersionChange):
-    description = "Users now have 'address' field instead of 'addresses'"
+    """Users now have 'address' field instead of 'addresses'."""
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser).field("address").didnt_exist,
         schema(BaseUser).field("addresses").existed_as(type=list[str]),
@@ -349,7 +354,8 @@ from users import User
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    description = "Users now have 'address' field instead of 'addresses'"
+    """Users now have 'address' field instead of 'addresses'."""
+
     instructions_to_migrate_to_previous_version = (
         schema(User).field("address").didnt_exist,
         schema(User).field("addresses").existed_as(type=list[str]),
@@ -458,10 +464,9 @@ from cadwyn import VersionChangeWithSideEffects
 
 
 class UserAddressIsCheckedInExternalService(VersionChangeWithSideEffects):
-    description = (
-        "User's address is now checked against existence in an external service. "
-        "If it is not found, a 400 code is returned."
-    )
+    """User's address is now checked against existence in an external service.
+    If it is not found, a 400 code is returned.
+    """
 ```
 
 Then you will have the following check in your business logic:

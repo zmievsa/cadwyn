@@ -11,7 +11,7 @@ from .classes import A, AlmostEmptyEnum, ModelWithWeirdFields, MyEnum
 
 
 class MyVersionChange(VersionChange):
-    description = "..."
+    description = ""
     instructions_to_migrate_to_previous_version = (
         enum(MyEnum).didnt_have("baz"),
         enum(AlmostEmptyEnum).didnt_have("foo"),

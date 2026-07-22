@@ -35,7 +35,8 @@ Let's say that our users had a field `country` that defaulted to `USA` but our p
 
 
     class MakeUserCountryRequired(VersionChange):
-        description = 'Make user country required instead of the "USA" default'
+        """Make user country required instead of the "USA" default."""
+
         instructions_to_migrate_to_previous_version = (
             schema(UserCreateRequest).field("country").had(default="USA"),
         )
@@ -77,10 +78,10 @@ So we will make `phone` nullable in HEAD, then make it required in `latest`, and
 
 
     class MakePhoneNonNullableInLatest(VersionChange):
-        description = (
-            "Make sure the phone is nullable in the HEAD version to support "
-            "versions older than 2001_01_01 where it became non-nullable"
-        )
+        """Make sure the phone is nullable in the HEAD version to support
+        versions older than 2001_01_01 where it became non-nullable.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(UserCreateRequest).field("phone").had(type=str),
             schema(UserCreateRequest).field("phone").didnt_have("default"),
@@ -91,10 +92,10 @@ So we will make `phone` nullable in HEAD, then make it required in `latest`, and
 
     ```python
     class AddPhoneToUser(VersionChange):
-        description = (
-            "Add a required phone field to User to allow us to do 2fa and to "
-            "make it possible to verify new user accounts using an sms."
-        )
+        """Add a required phone field to User to allow us to do 2fa and to
+        make it possible to verify new user accounts using an sms.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(UserCreateRequest)
             .field("phone")

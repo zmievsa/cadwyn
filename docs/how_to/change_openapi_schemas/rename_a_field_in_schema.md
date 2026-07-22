@@ -18,9 +18,8 @@ Assume you had a `summary` field before but now you want to rename it to `bio`.
 
 
     class RenameSummaryToBioInUser(VersionChange):
-        description = (
-            "Rename 'summary' field to 'bio' to keep up with industry standards"
-        )
+        """Rename 'summary' field to 'bio' to keep up with industry standards."""
+
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser).field("bio").had(name="summary"),
         )

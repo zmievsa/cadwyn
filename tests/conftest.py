@@ -145,7 +145,7 @@ def version_change(
         "MyVersionChange",
         (VersionChange,),
         {
-            "description": "...",
+            "description": "",
             "instructions_to_migrate_to_previous_version": instructions,
             **body_items,
         },

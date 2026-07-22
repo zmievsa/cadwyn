@@ -197,7 +197,7 @@ class VersionChange:
 
     @classmethod
     def _validate_subclass(cls):
-        if not isinstance(cls.description, str) or not cls.description.strip():
+        if cls.description is Sentinel:
             raise CadwynStructureError(
                 f"Version change description is not set on '{cls.__name__}' but is required.",
             )

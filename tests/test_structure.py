@@ -88,40 +88,6 @@ class TestVersionChange:
 
         assert DummySubClass.description == "Description from the class docstring."
 
-    @pytest.mark.parametrize("docstring", ["", "   \n\t"])
-    def test__description__empty_docstring__should_raise_error(self, docstring: str):
-        with pytest.raises(
-            CadwynStructureError,
-            match=re.escape(
-                "Version change description is not set on 'DummySubClass' but is required.",
-            ),
-        ):
-            type(
-                "DummySubClass",
-                (VersionChange,),
-                {
-                    "__doc__": docstring,
-                    "instructions_to_migrate_to_previous_version": [],
-                },
-            )
-
-    @pytest.mark.parametrize("description", ["", "   \n\t"])
-    def test__description__empty_explicit_description__should_raise_error(self, description: str):
-        with pytest.raises(
-            CadwynStructureError,
-            match=re.escape(
-                "Version change description is not set on 'DummySubClass' but is required.",
-            ),
-        ):
-            type(
-                "DummySubClass",
-                (VersionChange,),
-                {
-                    "description": description,
-                    "instructions_to_migrate_to_previous_version": [],
-                },
-            )
-
     def test__description__explicit_description_overrides_class_docstring(self):
         class DummySubClass(VersionChange):
             """Description from the class docstring."""

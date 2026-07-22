@@ -344,13 +344,13 @@ def test__versioned_router_generation__uses_routes_added_to_included_router_afte
     )
 
     class V2003(VersionChange):
-        description = "..."
+        description = ""
         instructions_to_migrate_to_previous_version = [
             endpoint("/api/v1/widgets/{widget_id}/details", ["GET"]).had(path="/api/v1/widgets/{widget_id}"),
         ]
 
     class V2002(VersionChange):
-        description = "..."
+        description = ""
         instructions_to_migrate_to_previous_version = [
             endpoint("/api/v1/widgets/{widget_id}", ["GET"]).had(path="/api/v1/items/{widget_id}"),
         ]
@@ -1405,7 +1405,7 @@ def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: C
         return 83
 
     class V2002(VersionChange):
-        description = "..."
+        description = ""
         instructions_to_migrate_to_previous_version = [endpoint("/test", ["GET"]).existed]
 
     versions = VersionBundle(
@@ -1430,7 +1430,7 @@ def test__cascading_router_didnt_exist(
         return 83
 
     class V2002(VersionChange):
-        description = "..."
+        description = ""
         instructions_to_migrate_to_previous_version = [
             endpoint("/test", ["GET"]).didnt_exist,
         ]
@@ -1467,7 +1467,7 @@ def test__generate_versioned_routers__two_routers(
         raise NotImplementedError
 
     class V2001(VersionChange):
-        description = "..."
+        description = ""
         instructions_to_migrate_to_previous_version = [
             endpoint(test_path, ["GET"]).didnt_exist,
             endpoint("/api2/test", ["GET"]).had(description="Meaw"),
