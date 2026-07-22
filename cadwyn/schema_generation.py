@@ -289,20 +289,25 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
             return _AnnotatedAlias(field_info.annotation, tuple(field_info.metadata))
         return model.__annotations__[name]  # pragma: no cover
 
+    generic_metadata = getattr(model, "__pydantic_generic_metadata__", {})
+    if generic_metadata.get("origin") is not None:
+        defined_annotations = {name: field.annotation for name, field in model.model_fields.items()}
+    else:
+        defined_annotations = model.__annotations__
+
     annotations = {
         name: value if not isinstance(value, str) else _rebuild_annotated(name)
-        for name, value in model.__annotations__.items()
+        for name, value in defined_annotations.items()
     }
 
-    defined_fields = model.__annotations__
     fields = {
         field_name: PydanticFieldWrapper(
             model.model_fields[field_name],
             annotations[field_name],
             field_name,
         )
-        for field_name in model.__annotations__
-        if field_name in defined_fields and field_name in model.model_fields
+        for field_name in defined_annotations
+        if field_name in model.model_fields
     }
 
     main_attributes = fields | validators

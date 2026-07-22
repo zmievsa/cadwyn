@@ -2,6 +2,24 @@
 
 Cadwyn automatically generates versioned schemas and everything related to them from HEAD version at runtime — no code is actually generated. These versioned schemas will be automatically used in requests to and responses from [versioned API routes](./main_app.md#main-app).
 
+## Schemas nested in external generic models
+
+Cadwyn also finds versioned schemas nested inside external Pydantic models, such as pagination or response wrappers. You only migrate the nested schema; the external wrapper does not need its own migration.
+
+For example, this dependency-free generic model stands in for a wrapper imported from an external package:
+
+```python
+{! ./docs_src/concepts/schema_generation/external_wrapper.py !}
+```
+
+It can wrap a versioned `Customer` schema directly in `response_model`:
+
+```python
+{! ./docs_src/concepts/schema_generation/nested_schema.py !}
+```
+
+Cadwyn recreates `Page[Customer]` for each API version and replaces its nested `Customer` with the generated schema for that version. The `2000-01-01` response therefore omits `address`, while the `2001-01-01` response and schema include it.
+
 ## Rendering schemas
 
 If you have many versions and schemas, it is quite challenging to know what validators, fields, and other attributes are defined in each schema in a specific version. To address this issue, there is a way to **render** the generated Pydantic models and enums as code using the command-line interface.
