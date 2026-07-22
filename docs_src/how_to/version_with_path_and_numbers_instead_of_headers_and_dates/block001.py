@@ -40,7 +40,7 @@ class UserAddressResourceList(BaseModel):
 
 
 class ChangeAddressToList(VersionChange):
-    """Change vat id to list."""
+    """Users can now store multiple addresses instead of a single address so they can choose among delivery locations."""
 
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser).field("addresses").didnt_exist,
@@ -58,7 +58,7 @@ class ChangeAddressToList(VersionChange):
 
 
 class ChangeAddressesToSubresource(VersionChange):
-    """Change vat ids to subresource."""
+    """User addresses are now separate resources with stable IDs, allowing clients to retrieve each address independently."""
 
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser)
@@ -84,9 +84,9 @@ class ChangeAddressesToSubresource(VersionChange):
 
 
 class RemoveAddressesToCreateFromLatest(VersionChange):
-    """Keep `addresses_to_create` in HEAD to support old versions.
+    """Stop accepting 'addresses_to_create' when creating users.
 
-    Remove this field from the latest schemas where it is not needed.
+    Additional addresses are now managed as separate resources.
     """
 
     instructions_to_migrate_to_previous_version = (

@@ -42,7 +42,7 @@ async def get_user(user_id: uuid.UUID) -> UserResource:
 
 
 class ChangeAddressToList(VersionChange):
-    """Give user the ability to have multiple addresses at the same time."""
+    """Users can now store multiple addresses instead of a single address so they can choose among delivery locations."""
 
     instructions_to_migrate_to_previous_version = (
         schema(UserCreateRequest)

@@ -15,6 +15,10 @@ from cadwyn import VersionChange, enum
 
 
 class MyChange(VersionChange):
+    """'foo' and 'bar' are no longer returned in 'my_enum' because those
+    legacy states are no longer supported.
+    """
+
     instructions_to_migrate_to_previous_version = (
         enum(my_enum).had(foo="baz", bar=auto()),
     )
@@ -27,6 +31,10 @@ from cadwyn import VersionChange, enum
 
 
 class MyChange(VersionChange):
+    """'my_enum' now includes 'foo' and 'bar' so clients can represent the
+    newly supported states.
+    """
+
     instructions_to_migrate_to_previous_version = (
         enum(my_enum).didnt_have("foo", "bar"),
     )

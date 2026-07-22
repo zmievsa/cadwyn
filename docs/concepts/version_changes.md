@@ -20,7 +20,9 @@ from cadwyn import VersionChange, endpoint
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    """Remove 'GET /v1/tax_ids' and 'POST /v1/tax_ids' endpoints."""
+    """The 'GET /v1/tax_ids' and 'POST /v1/tax_ids' endpoints have been
+    removed because tax IDs are now managed on customer records.
+    """
 
     instructions_to_migrate_to_previous_version = (
         endpoint("/v1/tax_ids", ["GET", "POST"]).existed,
@@ -154,7 +156,9 @@ from invoices import InvoiceCreateRequest
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    """Rename 'Invoice.creation_date' to 'Invoice.created_at'."""
+    """Invoice creation timestamps are now returned as 'created_at' instead of
+    'creation_date' to align with the API's other timestamp fields.
+    """
 
     instructions_to_migrate_to_previous_version = (
         schema(InvoiceCreateRequest)
@@ -190,7 +194,9 @@ from invoices import (
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    """Rename 'Invoice.creation_date' to 'Invoice.created_at'."""
+    """Invoice creation timestamps are now returned as 'created_at' instead of
+    'creation_date' to align with the API's other timestamp fields.
+    """
 
     instructions_to_migrate_to_previous_version = (
         schema(BaseInvoice).field("creation_date").had(name="created_at"),
@@ -230,7 +236,9 @@ from invoices import BaseInvoice
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    """Rename 'Invoice.creation_date' to 'Invoice.created_at'."""
+    """Invoice creation timestamps are now returned as 'created_at' instead of
+    'creation_date' to align with the API's other timestamp fields.
+    """
 
     instructions_to_migrate_to_previous_version = (
         schema(BaseInvoice).field("creation_date").had(name="created_at"),
@@ -262,7 +270,9 @@ from cadwyn import (
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    """Replace status code 400 with 404 in 'GET /v1/invoices' if invoice is not found."""
+    """Missing invoices from 'GET /v1/invoices' now return 404 instead of 400
+    so clients can distinguish absent resources from invalid requests.
+    """
 
     instructions_to_migrate_to_previous_version = ()
 
@@ -313,7 +323,9 @@ from users import BaseUser
 
 # THIS IS AN EXAMPLE OF A POOR MIGRATION
 class RemoveTaxIdEndpoints(VersionChange):
-    """Users now have 'address' field instead of 'addresses'."""
+    """Users now expose a single 'address' instead of 'addresses' because only
+    one mailing address is supported.
+    """
 
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser).field("address").didnt_exist,
@@ -354,7 +366,9 @@ from users import User
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    """Users now have 'address' field instead of 'addresses'."""
+    """Users now expose a single 'address' instead of 'addresses' because only
+    one mailing address is supported.
+    """
 
     instructions_to_migrate_to_previous_version = (
         schema(User).field("address").didnt_exist,
@@ -464,8 +478,8 @@ from cadwyn import VersionChangeWithSideEffects
 
 
 class UserAddressIsCheckedInExternalService(VersionChangeWithSideEffects):
-    """User's address is now checked against existence in an external service.
-    If it is not found, a 400 code is returned.
+    """User addresses are now verified by an external service during creation;
+    invalid addresses return 400 to prevent storing undeliverable locations.
     """
 ```
 
