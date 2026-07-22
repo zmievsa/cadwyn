@@ -271,7 +271,7 @@ def _get_model_decorators(model: type[BaseModel]):
 @dataclass(**DATACLASS_SLOTS)
 class ValidatorExistedInstruction:
     schema: type[BaseModel]
-    validator: Union[Callable[..., Any], PydanticDescriptorProxy[object]]
+    validator: object
 
 
 @dataclass(**DATACLASS_SLOTS)
@@ -283,7 +283,7 @@ class ValidatorDidntExistInstruction:
 @dataclass(**DATACLASS_SLOTS)
 class AlterValidatorInstructionFactory:
     schema: type[BaseModel]
-    func: Union[Callable[..., Any], PydanticDescriptorProxy[object]]
+    func: object
 
     @property
     def existed(self) -> ValidatorExistedInstruction:
@@ -324,24 +324,22 @@ class AlterSchemaInstructionFactory:
         func: "Union[Callable[..., Any], classmethod[Any, Any, Any], PydanticDescriptorProxy[_ValidatorReturnT]]",
         /,
     ) -> AlterValidatorInstructionFactory:
-        unwrapped_func = cast(
-            "Union[Callable[..., Any], PydanticDescriptorProxy[object]]", unwrap_wrapped_function(func)
-        )
+        func = unwrap_wrapped_function(func)
 
-        if not isinstance(unwrapped_func, PydanticDescriptorProxy):
-            if hasattr(unwrapped_func, "__self__"):
-                owner = unwrapped_func.__self__
+        if not isinstance(func, PydanticDescriptorProxy):
+            if hasattr(func, "__self__"):
+                owner = func.__self__
                 if (
                     isinstance(owner, type)
                     and issubclass(owner, BaseModel)
                     and any(  # pragma: no branch
-                        fully_unwrap_decorator(decorator.func, decorator.shim) == unwrapped_func
+                        fully_unwrap_decorator(decorator.func, decorator.shim) == func
                         for decorator in _get_model_decorators(owner)
                     )
                 ):
-                    return AlterValidatorInstructionFactory(self.schema, unwrapped_func)
+                    return AlterValidatorInstructionFactory(self.schema, func)
             raise CadwynStructureError("The passed function must be a pydantic validator")
-        return AlterValidatorInstructionFactory(self.schema, unwrapped_func)
+        return AlterValidatorInstructionFactory(self.schema, func)
 
     def had(self, *, name: str) -> SchemaHadInstruction:
         return SchemaHadInstruction(is_hidden_from_changelog=False, schema=self.schema, name=name)

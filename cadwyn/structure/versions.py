@@ -57,7 +57,6 @@ _R = TypeVar("_R")
 _RouteId = int
 
 if TYPE_CHECKING:
-    # ty requires staticmethod's type arguments, but the runtime alias must stay unsubscripted for isinstance().
     _StaticMethodInstruction: TypeAlias = staticmethod[..., object]
 else:
     _StaticMethodInstruction = staticmethod
