@@ -13,9 +13,8 @@ Suppose you previously allowed users to have a name of arbitrary length but now 
 
     class AddLengthConstraintToNameInLatest(VersionChange):
         description = (
-            "Remove the 'max_length' constraint from the HEAD version to "
-            "support versions older than 2001_01_01 where the constraint "
-            "did not exist."
+            "User names in creation requests are now limited to 250 characters "
+            "to prevent impractically large values."
         )
         instructions_to_migrate_to_previous_version = (
             schema(UserCreateRequest).field("name").had(max_length=250),
@@ -27,8 +26,8 @@ Suppose you previously allowed users to have a name of arbitrary length but now 
     ```python
     class AddMaxLengthConstraintToUserNames(VersionChange):
         description = (
-            "Add a max length of 250 to user names when creating new "
-            "users to prevent excessively large names from being used."
+            "User names in creation requests are now limited to 250 characters "
+            "to prevent impractically large values."
         )
         instructions_to_migrate_to_previous_version = (
             schema(UserCreateRequest).field("name").didnt_have("max_length"),
