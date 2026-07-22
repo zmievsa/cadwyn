@@ -55,7 +55,8 @@ def hidden(instruction_or_version_change: T) -> T:
         return instruction_or_version_change
 
     if isinstance(instruction_or_version_change, type) and issubclass(instruction_or_version_change, VersionChange):
-        cast("type[VersionChange]", instruction_or_version_change).is_hidden_from_changelog = True
+        # Weird ty bug, or I am dumb.
+        instruction_or_version_change.is_hidden_from_changelog = True  # ty: ignore[possibly-missing-attribute]
     return instruction_or_version_change
 
 
