@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, Union, cast
 
 from pydantic import AliasChoices, AliasPath, BaseModel, Field
 from pydantic._internal._decorators import PydanticDescriptorProxy, unwrap_wrapped_function
@@ -61,6 +61,7 @@ PossibleFieldAttributes = Literal[
 ]
 
 _ValidatorReturnT = TypeVar("_ValidatorReturnT")
+_ValidatorReference: TypeAlias = Union[Callable[..., object], PydanticDescriptorProxy[object]]
 
 
 # TODO: Add json_schema_extra as a breaking change in a major version
@@ -271,7 +272,7 @@ def _get_model_decorators(model: type[BaseModel]):
 @dataclass(**DATACLASS_SLOTS)
 class ValidatorExistedInstruction:
     schema: type[BaseModel]
-    validator: object
+    validator: _ValidatorReference
 
 
 @dataclass(**DATACLASS_SLOTS)
@@ -283,7 +284,7 @@ class ValidatorDidntExistInstruction:
 @dataclass(**DATACLASS_SLOTS)
 class AlterValidatorInstructionFactory:
     schema: type[BaseModel]
-    func: object
+    func: _ValidatorReference
 
     @property
     def existed(self) -> ValidatorExistedInstruction:
@@ -326,20 +327,20 @@ class AlterSchemaInstructionFactory:
     ) -> AlterValidatorInstructionFactory:
         func = unwrap_wrapped_function(func)
 
-        if not isinstance(func, PydanticDescriptorProxy):
-            if hasattr(func, "__self__"):
-                owner = func.__self__
-                if (
-                    isinstance(owner, type)
-                    and issubclass(owner, BaseModel)
-                    and any(  # pragma: no branch
-                        fully_unwrap_decorator(decorator.func, decorator.shim) == func
-                        for decorator in _get_model_decorators(owner)
-                    )
-                ):
-                    return AlterValidatorInstructionFactory(self.schema, func)
-            raise CadwynStructureError("The passed function must be a pydantic validator")
-        return AlterValidatorInstructionFactory(self.schema, func)
+        if isinstance(func, PydanticDescriptorProxy):
+            return AlterValidatorInstructionFactory(self.schema, func)
+        if hasattr(func, "__self__"):
+            owner = func.__self__
+            if (
+                isinstance(owner, type)
+                and issubclass(owner, BaseModel)
+                and any(  # pragma: no branch
+                    fully_unwrap_decorator(decorator.func, decorator.shim) == func
+                    for decorator in _get_model_decorators(owner)
+                )
+            ):
+                return AlterValidatorInstructionFactory(self.schema, cast("Callable[..., object]", func))
+        raise CadwynStructureError("The passed function must be a pydantic validator")
 
     def had(self, *, name: str) -> SchemaHadInstruction:
         return SchemaHadInstruction(is_hidden_from_changelog=False, schema=self.schema, name=name)
