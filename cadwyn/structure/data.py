@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar, Union, cast
 
 from fastapi import Request, Response
+from starlette.background import BackgroundTask
 from starlette.datastructures import FormData, MutableHeaders, UploadFile
 from typing_extensions import Any, overload
 
@@ -40,7 +41,6 @@ class RequestInfo:
         return self._form
 
 
-# TODO (https://github.com/zmievsa/cadwyn/issues/111): handle _response.media_type and _response.background
 class ResponseInfo:
     __slots__ = ("_response", "body")
 
@@ -60,6 +60,28 @@ class ResponseInfo:
     @property
     def headers(self) -> MutableHeaders:
         return self._response.headers
+
+    @property
+    def media_type(self) -> Union[str, None]:
+        return self._response.media_type
+
+    @media_type.setter
+    def media_type(self, value: Union[str, None]) -> None:
+        self._response.media_type = value
+        if value is None:
+            del self.headers["content-type"]
+        elif value.startswith("text/") and "charset=" not in value.lower():
+            self.headers["content-type"] = f"{value}; charset={self._response.charset}"
+        else:
+            self.headers["content-type"] = value
+
+    @property
+    def background(self) -> Union[BackgroundTask, None]:
+        return self._response.background
+
+    @background.setter
+    def background(self, value: Union[BackgroundTask, None]) -> None:
+        self._response.background = value
 
     @same_method_definition_as_in(Response.set_cookie)
     def set_cookie(self, *args: Any, **kwargs: Any) -> None:

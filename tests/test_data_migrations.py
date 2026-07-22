@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, RootModel
+from starlette.background import BackgroundTask
 from starlette.responses import StreamingResponse
 
 from cadwyn import VersionedAPIRouter
@@ -383,6 +384,74 @@ class TestRequestMigrations:
 
 
 class TestResponseMigrations:
+    @pytest.mark.parametrize(
+        ("migrated_media_type", "expected_content_type"),
+        [
+            ("application/vnd.cadwyn.v1+json", "application/vnd.cadwyn.v1+json"),
+            ("text/vnd.cadwyn", "text/vnd.cadwyn; charset=utf-8"),
+            (None, None),
+        ],
+    )
+    def test__response_media_type_migration__updates_the_public_response(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+        migrated_media_type: Union[str, None],
+        expected_content_type: Union[str, None],
+    ):
+        @router.get(test_path)
+        async def endpoint():
+            return JSONResponse("hello")
+
+        @convert_response_to_previous_version_for(test_path, ["GET"])
+        def migrator(response: ResponseInfo):
+            assert response.media_type == "application/json"
+            response.media_type = migrated_media_type
+            assert response.media_type == migrated_media_type
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+
+        migrated_response = clients["2000-01-01"].get(test_path)
+        assert migrated_response.headers.get("content-type") == expected_content_type
+        assert migrated_response.json() == "hello"
+
+        latest_response = clients["2001-01-01"].get(test_path)
+        assert latest_response.headers["content-type"] == "application/json"
+        assert latest_response.json() == "hello"
+
+    def test__response_background_migration__replaces_the_public_response_task(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        completed_tasks: list[str] = []
+
+        def record_completed_task(task_name: str) -> None:
+            completed_tasks.append(task_name)
+
+        original_background = BackgroundTask(record_completed_task, "original")
+        migrated_background = BackgroundTask(record_completed_task, "migrated")
+
+        @router.get(test_path)
+        async def endpoint():
+            return JSONResponse({"message": "hello"}, background=original_background)
+
+        @convert_response_to_previous_version_for(test_path, ["GET"])
+        def migrator(response: ResponseInfo):
+            assert response.background is original_background
+            response.background = migrated_background
+            assert response.background is migrated_background
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+
+        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
+        assert completed_tasks == ["migrated"]
+
+        assert clients["2001-01-01"].get(test_path).json() == {"message": "hello"}
+        assert completed_tasks == ["migrated", "original"]
+
     def test__all_response_components_migration__post_endpoint__migration_filled_results_up(
         self,
         create_versioned_clients: CreateVersionedClients,
