@@ -47,14 +47,20 @@ def test__changelog__with_multiple_versions():
         data: list[UserAddressResource]
 
     class ChangeAddressToList(VersionChange):
-        description = "Change vat id to list"
+        description = (
+            "Users can now store multiple addresses instead of a single address so "
+            "they can choose among delivery locations."
+        )
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser).field("addresses").didnt_exist,
             schema(BaseUser).field("address").existed_as(type=str, info=Field()),
         )
 
     class ChangeAddressesToSubresource(VersionChange):
-        description = "Change vat ids to subresource"
+        description = (
+            "User addresses are now separate resources with stable IDs, allowing "
+            "clients to retrieve each address independently."
+        )
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser).field("addresses").existed_as(type=list[str], info=Field()),
             schema(UserCreateRequest).field("default_address").didnt_exist,
@@ -62,7 +68,10 @@ def test__changelog__with_multiple_versions():
         )
 
     class RemoveAddressesToCreateFromLatest(VersionChange):
-        description = "..."
+        description = (
+            "'addresses_to_create' is no longer accepted when creating users because "
+            "additional addresses are now managed as separate resources."
+        )
         instructions_to_migrate_to_previous_version = (
             schema(UserCreateRequest).field("addresses_to_create").didnt_exist,
         )
@@ -103,7 +112,10 @@ def test__changelog__with_multiple_versions():
                 "value": "2002-01-01",
                 "changes": [
                     {
-                        "description": "Change vat ids to subresource",
+                        "description": (
+                            "User addresses are now separate resources with stable IDs, allowing "
+                            "clients to retrieve each address independently."
+                        ),
                         "side_effects": False,
                         "instructions": [
                             {
@@ -130,7 +142,10 @@ def test__changelog__with_multiple_versions():
                 "value": "2001-01-01",
                 "changes": [
                     {
-                        "description": "Change vat id to list",
+                        "description": (
+                            "Users can now store multiple addresses instead of a single address so "
+                            "they can choose among delivery locations."
+                        ),
                         "side_effects": False,
                         "instructions": [
                             {
