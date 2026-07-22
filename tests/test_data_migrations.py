@@ -398,6 +398,17 @@ class TestRequestMigrations:
 
 
 class TestResponseMigrations:
+    def test__response_background__maps_directly_to_response_without_fastapi_background_tasks(self):
+        original_background = BackgroundTask(lambda: None)
+        migrated_background = BackgroundTask(lambda: None)
+        response = Response(background=original_background)
+        response_info = ResponseInfo(response, body=None)
+
+        assert response_info.background is original_background
+        response_info.background = migrated_background
+        assert response_info.background is migrated_background
+        assert response.background is migrated_background
+
     def test__response_media_type_migration__updates_the_public_attribute(
         self,
         create_versioned_clients: CreateVersionedClients,
@@ -556,6 +567,49 @@ class TestResponseMigrations:
 
         assert clients["2001-01-01"].get(test_path).json() == {"message": "hello"}
         assert completed_tasks == ["original"]
+
+    def test__response_background_migration__removes_dependency_tasks_for_an_explicit_response(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        completed_tasks: list[str] = []
+
+        def dependency(background_tasks: BackgroundTasks) -> None:
+            background_tasks.add_task(completed_tasks.append, "original")
+
+        @router.get(test_path)
+        async def endpoint(_dependency: None = Depends(dependency)):
+            return JSONResponse({"message": "hello"})
+
+        @convert_response_to_previous_version_for(test_path, ["GET"])
+        def migrator(response: ResponseInfo):
+            assert response.background is not None
+            response.background = None
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+
+        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
+        assert completed_tasks == []
+
+        assert clients["2001-01-01"].get(test_path).json() == {"message": "hello"}
+        assert completed_tasks == ["original"]
+
+    def test__data_migration_params__are_inserted_before_variadic_keyword_params(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        @router.get(test_path)
+        async def endpoint(request: Request, response: Response, **kwargs: Any):
+            return {"message": "hello"}
+
+        clients = create_versioned_clients()
+
+        assert set(clients) == {"2000-01-01"}
+        assert clients["2000-01-01"].get(test_path, params={"kwargs": "value"}).json() == {"message": "hello"}
 
     def test__all_response_components_migration__post_endpoint__migration_filled_results_up(
         self,

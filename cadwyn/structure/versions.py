@@ -623,7 +623,7 @@ class VersionBundle:
                 body = None
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
 
-            response_info = ResponseInfo(response_or_response_body, body)
+            response_info = ResponseInfo(response_or_response_body, body, _background_tasks=background_tasks)
         else:
             if fastapi_response_dependency.status_code is not None:
                 status_code = fastapi_response_dependency.status_code
@@ -695,6 +695,7 @@ class VersionBundle:
                 raised_exception.status_code = response_info.status_code
 
                 raise raised_exception
+            response_info._response.background = response_info.background
             return response_info._response
         return response_info.body
 
@@ -819,9 +820,15 @@ def _add_keyword_only_parameter(
     param_annotation: type,
 ):
     signature = inspect.signature(func)
+    parameters = list(signature.parameters.values())
+    variadic_keyword_index = next(
+        (index for index, parameter in enumerate(parameters) if parameter.kind is inspect.Parameter.VAR_KEYWORD),
+        len(parameters),
+    )
+    parameters.insert(
+        variadic_keyword_index,
+        inspect.Parameter(param_name, kind=inspect.Parameter.KEYWORD_ONLY, annotation=param_annotation),
+    )
     func.__signature__ = signature.replace(  # ty: ignore[unresolved-attribute]
-        parameters=[
-            *list(signature.parameters.values()),
-            inspect.Parameter(param_name, kind=inspect._ParameterKind.KEYWORD_ONLY, annotation=param_annotation),
-        ]
+        parameters=parameters
     )

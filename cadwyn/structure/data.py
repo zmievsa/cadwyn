@@ -55,9 +55,12 @@ class ResponseInfo:
         self.body = body
         self._response = response
         self._background_tasks = _background_tasks
-        self._background: Union[BackgroundTask, None] = (
-            _background_tasks if _background_tasks is not None and _background_tasks.tasks else None
-        )
+        if response.background is not None:
+            self._background: Union[BackgroundTask, None] = response.background
+        elif _background_tasks is not None and _background_tasks.tasks:
+            self._background = _background_tasks
+        else:
+            self._background = None
 
     @property
     def status_code(self) -> int:
