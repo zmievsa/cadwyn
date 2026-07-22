@@ -394,7 +394,7 @@ def test__changelog__with_hidden_instructions(create_versioned_app: CreateVersio
 
     assert app.generate_changelog().model_dump(mode="json")["versions"] == [
         {"value": "2002-01-01", "changes": []},
-        {"value": "2001-01-01", "changes": [{"description": "", "side_effects": False, "instructions": []}]},
+        {"value": "2001-01-01", "changes": [{"description": "...", "side_effects": False, "instructions": []}]},
     ]
 
 
@@ -425,7 +425,7 @@ def test__changelog__with_child_overriding_changed_field_in_parent__unused_model
             "value": "2001-01-01",
             "changes": [
                 {
-                    "description": "",
+                    "description": "...",
                     "side_effects": False,
                     "instructions": [
                         {

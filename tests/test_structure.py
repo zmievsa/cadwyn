@@ -79,6 +79,58 @@ class TestVersionChange:
             class DummySubClass(VersionChange):
                 instructions_to_migrate_to_previous_version = []
 
+    @pytest.mark.parametrize("version_change_type", [VersionChange, VersionChangeWithSideEffects])
+    def test__description__not_set__uses_class_docstring(self, version_change_type: type[VersionChange]):
+        class DummySubClass(version_change_type):
+            """Description from the class docstring."""
+
+            instructions_to_migrate_to_previous_version = []
+
+        assert DummySubClass.description == "Description from the class docstring."
+
+    @pytest.mark.parametrize("docstring", ["", "   \n\t"])
+    def test__description__empty_docstring__should_raise_error(self, docstring: str):
+        with pytest.raises(
+            CadwynStructureError,
+            match=re.escape(
+                "Version change description is not set on 'DummySubClass' but is required.",
+            ),
+        ):
+            type(
+                "DummySubClass",
+                (VersionChange,),
+                {
+                    "__doc__": docstring,
+                    "instructions_to_migrate_to_previous_version": [],
+                },
+            )
+
+    @pytest.mark.parametrize("description", ["", "   \n\t"])
+    def test__description__empty_explicit_description__should_raise_error(self, description: str):
+        with pytest.raises(
+            CadwynStructureError,
+            match=re.escape(
+                "Version change description is not set on 'DummySubClass' but is required.",
+            ),
+        ):
+            type(
+                "DummySubClass",
+                (VersionChange,),
+                {
+                    "description": description,
+                    "instructions_to_migrate_to_previous_version": [],
+                },
+            )
+
+    def test__description__explicit_description_overrides_class_docstring(self):
+        class DummySubClass(VersionChange):
+            """Description from the class docstring."""
+
+            description = "This description was set explicitly."
+            instructions_to_migrate_to_previous_version = []
+
+        assert DummySubClass.description == "This description was set explicitly."
+
     def test__instructions_to_migrate_to_previous_version__not_set__should_raise_error(self):
         with pytest.raises(
             CadwynStructureError,
