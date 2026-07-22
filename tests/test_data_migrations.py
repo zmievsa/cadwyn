@@ -384,21 +384,11 @@ class TestRequestMigrations:
 
 
 class TestResponseMigrations:
-    @pytest.mark.parametrize(
-        ("migrated_media_type", "expected_content_type"),
-        [
-            ("application/vnd.cadwyn.v1+json", "application/vnd.cadwyn.v1+json"),
-            ("text/vnd.cadwyn", "text/vnd.cadwyn; charset=utf-8"),
-            (None, None),
-        ],
-    )
-    def test__response_media_type_migration__updates_the_public_response(
+    def test__response_media_type_migration__updates_the_public_attribute(
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
-        migrated_media_type: Union[str, None],
-        expected_content_type: Union[str, None],
     ):
         @router.get(test_path)
         async def endpoint():
@@ -407,13 +397,13 @@ class TestResponseMigrations:
         @convert_response_to_previous_version_for(test_path, ["GET"])
         def migrator(response: ResponseInfo):
             assert response.media_type == "application/json"
-            response.media_type = migrated_media_type
-            assert response.media_type == migrated_media_type
+            response.media_type = "text/vnd.cadwyn"
+            assert response.media_type == "text/vnd.cadwyn"
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
         migrated_response = clients["2000-01-01"].get(test_path)
-        assert migrated_response.headers.get("content-type") == expected_content_type
+        assert migrated_response.headers["content-type"] == "application/json"
         assert migrated_response.json() == "hello"
 
         latest_response = clients["2001-01-01"].get(test_path)

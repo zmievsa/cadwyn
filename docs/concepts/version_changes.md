@@ -305,6 +305,9 @@ Cadwyn can migrate more than just request bodies.
 * [set_cookie](https://www.starlette.io/responses/#set-cookie)
 * [delete_cookie](https://www.starlette.io/responses/#delete-cookie)
 
+`media_type` and `background` map directly to the corresponding Starlette response attributes. As in Starlette,
+changing `media_type` after response initialization does not rewrite the existing `Content-Type` header.
+
 #### Internal representations
 
 So far, only simple cases were reviewed above. But what happens if you cannot migrate your data that easily? It can happen because your earlier versions had **more data** than your newer versions. Or that data had more formats.

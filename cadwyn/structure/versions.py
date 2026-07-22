@@ -595,7 +595,6 @@ class VersionBundle:
         if api_version is None:
             return response_or_response_body
 
-        original_content_type: Union[str, None] = None
         if isinstance(response_or_response_body, FastapiResponse):
             # TODO (https://github.com/zmievsa/cadwyn/issues/125): Add support for migrating `StreamingResponse`
             # TODO (https://github.com/zmievsa/cadwyn/issues/126): Add support for migrating `FileResponse`
@@ -617,7 +616,6 @@ class VersionBundle:
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
 
             response_info = ResponseInfo(response_or_response_body, body)
-            original_content_type = response_info.headers.get("content-type")
         else:
             if fastapi_response_dependency.status_code is not None:
                 status_code = fastapi_response_dependency.status_code
@@ -658,7 +656,10 @@ class VersionBundle:
             # that do not have it. We don't support it too.
             if response_info.body is not None and hasattr(response_info._response, "body"):
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
-                if isinstance(response_info.body, str) and original_content_type != "application/json":
+                if (
+                    isinstance(response_info.body, str)
+                    and response_info._response.headers.get("content-type") != "application/json"
+                ):
                     response_info._response.body = response_info.body.encode(response_info._response.charset)
                 else:
                     response_info._response.body = json.dumps(

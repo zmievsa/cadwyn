@@ -68,12 +68,6 @@ class ResponseInfo:
     @media_type.setter
     def media_type(self, value: Union[str, None]) -> None:
         self._response.media_type = value
-        if value is None:
-            del self.headers["content-type"]
-        elif value.startswith("text/") and "charset=" not in value.lower():
-            self.headers["content-type"] = f"{value}; charset={self._response.charset}"
-        else:
-            self.headers["content-type"] = value
 
     @property
     def background(self) -> Union[BackgroundTask, None]:
