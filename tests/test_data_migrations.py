@@ -14,6 +14,7 @@ from fastapi import (
     BackgroundTasks,
     Body,
     Cookie,
+    Depends,
     File,
     Form,
     Header,
@@ -476,6 +477,56 @@ class TestResponseMigrations:
 
         assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
         assert completed_tasks == ["migrated"]
+
+    def test__response_background_migration__keeps_assigned_background_tasks_live(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        completed_tasks: list[str] = []
+
+        @router.get(test_path)
+        async def endpoint():
+            return {"message": "hello"}
+
+        @convert_response_to_previous_version_for(test_path, ["GET"])
+        def migrator(response: ResponseInfo):
+            migrated_background = BackgroundTasks()
+            response.background = migrated_background
+            migrated_background.add_task(completed_tasks.append, "migrated")
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+
+        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
+        assert completed_tasks == ["migrated"]
+
+    def test__response_background_migration__does_not_duplicate_tasks_added_by_dependencies(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        completed_tasks: list[str] = []
+
+        def dependency(background_tasks: BackgroundTasks) -> None:
+            background_tasks.add_task(completed_tasks.append, "dependency")
+
+        @router.get(test_path)
+        async def endpoint(_dependency: None = Depends(dependency)):
+            return {"message": "hello"}
+
+        @convert_response_to_previous_version_for(test_path, ["GET"])
+        def migrator(response: ResponseInfo):
+            assert response.background is not None
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+
+        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
+        assert completed_tasks == ["dependency"]
+
+        assert clients["2001-01-01"].get(test_path).json() == {"message": "hello"}
+        assert completed_tasks == ["dependency", "dependency"]
 
     def test__response_background_migration__removes_tasks_for_an_ordinary_response_body(
         self,

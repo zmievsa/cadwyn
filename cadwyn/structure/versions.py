@@ -428,7 +428,7 @@ class VersionBundle:
         *,
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
-        background_tasks: Union[BackgroundTasks, None],
+        background_tasks: BackgroundTasks,
     ) -> dict[str, Any]:
         start = self.reversed_version_values.index(current_version)
         head_route_id = id(head_route)
@@ -452,6 +452,9 @@ class VersionBundle:
             body_for_solving = request_info.body
 
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
+        # FastAPI has already resolved these dependencies with the same holder. Preserve its tasks so this second
+        # resolution can validate the migrated request without scheduling dependency background tasks twice.
+        background_tasks_before_resolving_head_dependencies = list(background_tasks.tasks)
         result = await solve_dependencies(
             request=request,
             response=response,
@@ -462,6 +465,7 @@ class VersionBundle:
             embed_body_fields=embed_body_fields,
             background_tasks=background_tasks,
         )
+        background_tasks.tasks[:] = background_tasks_before_resolving_head_dependencies
         if result.errors:
             raise CadwynHeadRequestValidationError(result.errors, body=request_info.body, version=current_version)
         return result.values
@@ -502,7 +506,7 @@ class VersionBundle:
         dependant_for_request_migrations: Dependant,
         *,
         request_param_name: str,
-        background_tasks_param_name: Union[str, None],
+        background_tasks_param_name: str,
         response_param_name: str,
     ) -> "Callable[[Endpoint[_P, _R]], Callable[..., Coroutine[Any, Any, _R]]]":
         def wrapper(endpoint: "Endpoint[_P, _R]") -> "Callable[..., Coroutine[Any, Any, _R]]":
@@ -510,9 +514,7 @@ class VersionBundle:
             async def decorator(*args: Any, **kwargs: Any) -> _R:
                 request_param: FastapiRequest = kwargs[request_param_name]
                 response_param: FastapiResponse = kwargs[response_param_name]
-                background_tasks: Union[BackgroundTasks, None] = (
-                    kwargs.get(background_tasks_param_name) if background_tasks_param_name is not None else None
-                )
+                background_tasks: BackgroundTasks = kwargs[background_tasks_param_name]
                 method = request_param.method
                 response = Sentinel
                 async with AsyncExitStack() as exit_stack:
@@ -575,7 +577,7 @@ class VersionBundle:
         kwargs: dict[str, Any],
         fastapi_response_dependency: FastapiResponse,
         *,
-        background_tasks: Union[BackgroundTasks, None],
+        background_tasks: BackgroundTasks,
     ) -> Any:
         raised_exception = None
         if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
@@ -709,7 +711,7 @@ class VersionBundle:
         *,
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
-        background_tasks: Union[BackgroundTasks, None],
+        background_tasks: BackgroundTasks,
     ) -> dict[str, Any]:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:

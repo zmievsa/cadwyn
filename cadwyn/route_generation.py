@@ -530,9 +530,14 @@ def _add_data_migrations_to_route(
     dependant_for_request_migrations: "Dependant",
     versions: VersionBundle,
 ):
-    if not (route.dependant.request_param_name and route.dependant.response_param_name):  # pragma: no cover
+    if not (  # pragma: no cover
+        route.dependant.request_param_name
+        and route.dependant.response_param_name
+        and route.dependant.background_tasks_param_name
+    ):
         raise CadwynError(
-            f"{route.dependant.request_param_name=}, {route.dependant.response_param_name=} "
+            f"{route.dependant.request_param_name=}, {route.dependant.response_param_name=}, "
+            f"{route.dependant.background_tasks_param_name=} "
             f"for route {list(_route_methods(route))} {route.path} which should not be possible. "
             "Please, contact my author.",
         )

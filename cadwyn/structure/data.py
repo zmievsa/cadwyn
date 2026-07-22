@@ -92,11 +92,11 @@ class ResponseInfo:
         else:
             self._background = value
             if value is None:
-                self._background_tasks.tasks.clear()
+                self._background_tasks.tasks = []
             elif isinstance(value, BackgroundTasks):
-                self._background_tasks.tasks[:] = value.tasks
+                self._background_tasks.tasks = value.tasks
             else:
-                self._background_tasks.tasks[:] = [value]
+                self._background_tasks.tasks = [value]
 
     @same_method_definition_as_in(Response.set_cookie)
     def set_cookie(self, *args: Any, **kwargs: Any) -> None:
