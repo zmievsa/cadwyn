@@ -779,7 +779,11 @@ def _add_data_migration_params(route: APIRoute):
     if not route.dependant.response_param_name:
         route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
     if not route.dependant.background_tasks_param_name:
-        route.dependant.background_tasks_param_name = _CADWYN_BACKGROUND_TASKS_PARAM_NAME
+        parameter_names = inspect.signature(route.endpoint).parameters
+        background_tasks_param_name = _CADWYN_BACKGROUND_TASKS_PARAM_NAME
+        while background_tasks_param_name in parameter_names:
+            background_tasks_param_name = f"_{background_tasks_param_name}"
+        route.dependant.background_tasks_param_name = background_tasks_param_name
 
 
 @final

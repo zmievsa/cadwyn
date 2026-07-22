@@ -510,6 +510,10 @@ class VersionBundle:
         response_param_name: str,
     ) -> "Callable[[Endpoint[_P, _R]], Callable[..., Coroutine[Any, Any, _R]]]":
         def wrapper(endpoint: "Endpoint[_P, _R]") -> "Callable[..., Coroutine[Any, Any, _R]]":
+            background_tasks_param_is_synthetic = (
+                background_tasks_param_name not in inspect.signature(endpoint).parameters
+            )
+
             @functools.wraps(endpoint)
             async def decorator(*args: Any, **kwargs: Any) -> _R:
                 request_param: FastapiRequest = kwargs[request_param_name]
@@ -532,6 +536,8 @@ class VersionBundle:
                         exit_stack=exit_stack,
                         embed_body_fields=route._embed_body_fields,
                         background_tasks=background_tasks,
+                        background_tasks_param_name=background_tasks_param_name,
+                        background_tasks_param_is_synthetic=background_tasks_param_is_synthetic,
                     )
 
                     response = await self._convert_endpoint_response_to_version(
@@ -559,8 +565,8 @@ class VersionBundle:
                 _add_keyword_only_parameter(decorator, _CADWYN_REQUEST_PARAM_NAME, FastapiRequest)
             if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
-            if background_tasks_param_name == _CADWYN_BACKGROUND_TASKS_PARAM_NAME:
-                _add_keyword_only_parameter(decorator, _CADWYN_BACKGROUND_TASKS_PARAM_NAME, BackgroundTasks)
+            if background_tasks_param_is_synthetic:
+                _add_keyword_only_parameter(decorator, background_tasks_param_name, BackgroundTasks)
 
             return decorator
 
@@ -645,11 +651,26 @@ class VersionBundle:
                 _background_tasks=background_tasks,
             )
 
+        background_before_migration = response_info.background
+        effective_background_tasks_before_migration = (
+            tuple(background_before_migration.tasks)
+            if isinstance(background_before_migration, BackgroundTasks)
+            else None
+        )
+        fastapi_background_tasks_before_migration = tuple(background_tasks.tasks)
         response_info = self._migrate_response(
             response_info,
             api_version,
             head_route.response_model,
             head_route,
+        )
+        effective_background_tasks_after_migration = (
+            tuple(response_info.background.tasks) if isinstance(response_info.background, BackgroundTasks) else None
+        )
+        background_was_migrated = (
+            response_info.background is not background_before_migration
+            or effective_background_tasks_after_migration != effective_background_tasks_before_migration
+            or tuple(background_tasks.tasks) != fastapi_background_tasks_before_migration
         )
 
         if isinstance(response_or_response_body, FastapiResponse):
@@ -694,7 +715,8 @@ class VersionBundle:
                 raised_exception.headers = dict(response_info.headers)
                 raised_exception.status_code = response_info.status_code
 
-                raise raised_exception
+                if not background_was_migrated:
+                    raise raised_exception
             response_info._response.background = response_info.background
             return response_info._response
         return response_info.body
@@ -713,11 +735,14 @@ class VersionBundle:
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
         background_tasks: BackgroundTasks,
+        background_tasks_param_name: str,
+        background_tasks_param_is_synthetic: bool,
     ) -> dict[str, Any]:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
             kwargs.pop(request_param_name)
-        kwargs.pop(_CADWYN_BACKGROUND_TASKS_PARAM_NAME, None)
+        if background_tasks_param_is_synthetic:
+            kwargs.pop(background_tasks_param_name, None)
 
         api_version = self.api_version_var.get()
         if api_version is None:
@@ -759,8 +784,8 @@ class VersionBundle:
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:
             new_kwargs.pop(_CADWYN_REQUEST_PARAM_NAME)
-        if _CADWYN_BACKGROUND_TASKS_PARAM_NAME in new_kwargs:
-            new_kwargs.pop(_CADWYN_BACKGROUND_TASKS_PARAM_NAME)
+        if background_tasks_param_is_synthetic:
+            new_kwargs.pop(background_tasks_param_name, None)
 
         return new_kwargs
 

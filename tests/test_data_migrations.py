@@ -611,6 +611,28 @@ class TestResponseMigrations:
         assert set(clients) == {"2000-01-01"}
         assert clients["2000-01-01"].get(test_path, params={"kwargs": "value"}).json() == {"message": "hello"}
 
+    def test__background_tasks_param__does_not_collide_with_user_params(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        router: VersionedAPIRouter,
+    ):
+        completed_tasks: list[str] = []
+
+        @router.get("/query-param")
+        async def query_param_endpoint(cadwyn_background_tasks_param: str):
+            return cadwyn_background_tasks_param
+
+        @router.get("/background-tasks-param")
+        async def background_tasks_param_endpoint(cadwyn_background_tasks_param: BackgroundTasks):
+            cadwyn_background_tasks_param.add_task(completed_tasks.append, "completed")
+            return {"message": "hello"}
+
+        client = create_versioned_clients()["2000-01-01"]
+
+        assert client.get("/query-param", params={"cadwyn_background_tasks_param": "value"}).json() == "value"
+        assert client.get("/background-tasks-param").json() == {"message": "hello"}
+        assert completed_tasks == ["completed"]
+
     def test__all_response_components_migration__post_endpoint__migration_filled_results_up(
         self,
         create_versioned_clients: CreateVersionedClients,
@@ -1380,6 +1402,33 @@ def test__request_and_response_migrations__for_endpoint_with_http_exception__can
     resp_2001 = clients["2001-01-01"].post("/test")
     assert resp_2001.status_code == 404
     assert resp_2001.json() == {"detail": "Not Found"}
+
+
+def test__request_and_response_migrations__for_http_exception__can_add_background_task(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+):
+    completed_tasks: list[str] = []
+
+    @router.post("/test")
+    async def endpoint():
+        raise HTTPException(status_code=400, detail="bad request")
+
+    @convert_response_to_previous_version_for("/test", ["POST"], migrate_http_errors=True)
+    def response_converter(response: ResponseInfo):
+        response.background = BackgroundTask(completed_tasks.append, "migrated")
+
+    clients = create_versioned_clients(version_change(resp=response_converter))
+
+    resp_2000 = clients["2000-01-01"].post("/test")
+    assert resp_2000.status_code == 400
+    assert resp_2000.json() == {"detail": "bad request"}
+    assert completed_tasks == ["migrated"]
+
+    resp_2001 = clients["2001-01-01"].post("/test")
+    assert resp_2001.status_code == 400
+    assert resp_2001.json() == {"detail": "bad request"}
+    assert completed_tasks == ["migrated"]
 
 
 def test__request_and_response_migrations__for_endpoint_with_no_default_status_code__response_should_contain_default(
