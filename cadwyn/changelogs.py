@@ -50,7 +50,8 @@ T = TypeVar("T", bound=Union[PossibleInstructions, type[VersionChange]])
 
 def hidden(instruction_or_version_change: T) -> T:
     if isinstance(instruction_or_version_change, _HiddenAttributeMixin):
-        cast("_HiddenAttributeMixin", instruction_or_version_change).is_hidden_from_changelog = True
+        # Weird ty bug, or I am dumb.
+        instruction_or_version_change.is_hidden_from_changelog = True  # ty: ignore[possibly-missing-attribute]
         return instruction_or_version_change
 
     if isinstance(instruction_or_version_change, type) and issubclass(instruction_or_version_change, VersionChange):
