@@ -20,7 +20,7 @@ jobs:
       - uses: ./.github/actions/setup-python-uv
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv lock --refresh --upgrade
+      - run: uv lock --upgrade
       - run: tox run -e py${{ matrix.python-version }}
 
   notify-on-failure:
