@@ -1300,6 +1300,41 @@ def test__router_generation__updating_request_depends(
     assert client_2001.post("/test2", json={"my_schema": {"foo": "bar"}}).json() == {}
 
 
+def test__router_generation__enum_member_dependency_default_works_only_in_versions_where_member_exists(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    def dependency(value: StrEnum = StrEnum.a) -> StrEnum:
+        return value
+
+    @router.get("/test")
+    async def route(value: StrEnum = Depends(dependency)):
+        return value.name
+
+    clients = create_versioned_clients(
+        version_change(enum(StrEnum).had(a=StrEnum.a.value)),
+        version_change(enum(StrEnum).didnt_have("a")),
+    )
+
+    assert clients["2002-01-01"].get("/test").json() == "a"
+    response = clients["2001-01-01"].get("/test")
+    assert response.status_code == 422
+    assert response.json() == snapshot(
+        {
+            "detail": [
+                {
+                    "type": "is_instance_of",
+                    "loc": ["query", "value"],
+                    "msg": "Input should be an instance of StrEnum",
+                    "input": StrEnum.a.value,
+                    "ctx": {"class": "StrEnum"},
+                }
+            ]
+        }
+    )
+    assert clients["2000-01-01"].get("/test").json() == "a"
+
+
 def test__router_generation__using_unversioned_schema_in_body(
     router: VersionedAPIRouter, create_versioned_app: CreateVersionedApp
 ):
