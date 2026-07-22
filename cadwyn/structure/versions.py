@@ -56,6 +56,7 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _RouteId = int
 
+# ty requires staticmethod's type arguments, but runtime isinstance() requires the bare class.
 if TYPE_CHECKING:
     _StaticMethodInstruction: TypeAlias = staticmethod[..., object]
 else:
