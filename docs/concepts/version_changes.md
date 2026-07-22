@@ -20,10 +20,10 @@ from cadwyn import VersionChange, endpoint
 
 
 class RemoveTaxIdEndpoints(VersionChange):
-    description = (
-        "The 'GET /v1/tax_ids' and 'POST /v1/tax_ids' endpoints have been "
-        "removed because tax IDs are now managed on customer records."
-    )
+    """The 'GET /v1/tax_ids' and 'POST /v1/tax_ids' endpoints have been
+    removed because tax IDs are now managed on customer records.
+    """
+
     instructions_to_migrate_to_previous_version = (
         endpoint("/v1/tax_ids", ["GET", "POST"]).existed,
     )
@@ -107,7 +107,9 @@ versions = VersionBundle(
 
 ### VersionChange.description
 
-The description field of your version change must be even more detailed. In fact, it is intended to be the **name** and the **summary** of the version change for your clients. It must clearly state to you clients **what happened** and **why**. So you need to make it grammatically correct, detailed, specific, and written for humans. Note that you do not have to use a strict machine-readable format -- it is a portion of documentation, not a set of instructions. Have a look at [Stripe's description](https://stripe.com/blog/api-versioning) of one of their version changes as an example:
+Write the description of your version change as its class docstring. Cadwyn uses this docstring as the **name** and the **summary** of the version change for your clients.
+
+The description must clearly state to your clients **what happened** and **why**. So you need to make it grammatically correct, detailed, specific, and written for humans. Note that you do not have to use a strict machine-readable format -- it is a portion of documentation, not a set of instructions. Have a look at [Stripe's description](https://stripe.com/blog/api-versioning) of one of their version changes as an example:
 
 ```md
 Event objects (and webhooks) will now render a `request` subobject that contains a request Id and idempotency key instead of a string request Id.
@@ -154,10 +156,10 @@ from invoices import InvoiceCreateRequest
 
 
 class RenameInvoiceCreationDateToCreatedAt(VersionChange):
-    description = (
-        "Invoice creation timestamps are now returned as 'created_at' instead of "
-        "'creation_date' to align with the API's other timestamp fields."
-    )
+    """Invoice creation timestamps are now returned as 'created_at' instead of
+    'creation_date' to align with the API's other timestamp fields.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(InvoiceCreateRequest)
         .field("creation_date")
@@ -192,10 +194,10 @@ from invoices import (
 
 
 class RenameInvoiceCreationDateToCreatedAt(VersionChange):
-    description = (
-        "Invoice creation timestamps are now returned as 'created_at' instead of "
-        "'creation_date' to align with the API's other timestamp fields."
-    )
+    """Invoice creation timestamps are now returned as 'created_at' instead of
+    'creation_date' to align with the API's other timestamp fields.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseInvoice).field("creation_date").had(name="created_at"),
     )
@@ -234,10 +236,10 @@ from invoices import BaseInvoice
 
 
 class RenameInvoiceCreationDateToCreatedAt(VersionChange):
-    description = (
-        "Invoice creation timestamps are now returned as 'created_at' instead of "
-        "'creation_date' to align with the API's other timestamp fields."
-    )
+    """Invoice creation timestamps are now returned as 'created_at' instead of
+    'creation_date' to align with the API's other timestamp fields.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseInvoice).field("creation_date").had(name="created_at"),
     )
@@ -268,10 +270,10 @@ from cadwyn import (
 
 
 class ReplaceInvoiceNotFoundStatusCode400With404(VersionChange):
-    description = (
-        "Missing invoices from 'GET /v1/invoices' now return 404 instead of 400 "
-        "so clients can distinguish absent resources from invalid requests."
-    )
+    """Missing invoices from 'GET /v1/invoices' now return 404 instead of 400
+    so clients can distinguish absent resources from invalid requests.
+    """
+
     instructions_to_migrate_to_previous_version = ()
 
     @convert_response_to_previous_version_for(
@@ -321,10 +323,10 @@ from users import BaseUser
 
 # THIS IS AN EXAMPLE OF A POOR MIGRATION
 class ReplaceUserAddressesWithAddress(VersionChange):
-    description = (
-        "Users now expose a single 'address' instead of 'addresses' because only "
-        "one mailing address is supported."
-    )
+    """Users now expose a single 'address' instead of 'addresses' because only
+    one mailing address is supported.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser).field("address").didnt_exist,
         schema(BaseUser).field("addresses").existed_as(type=list[str]),
@@ -364,10 +366,10 @@ from users import User
 
 
 class ReplaceUserAddressesWithAddress(VersionChange):
-    description = (
-        "Users now expose a single 'address' instead of 'addresses' because only "
-        "one mailing address is supported."
-    )
+    """Users now expose a single 'address' instead of 'addresses' because only
+    one mailing address is supported.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(User).field("address").didnt_exist,
         schema(User).field("addresses").existed_as(type=list[str]),
@@ -478,10 +480,9 @@ from cadwyn import VersionChangeWithSideEffects
 class RejectUserAddressesMissingFromExternalService(
     VersionChangeWithSideEffects
 ):
-    description = (
-        "User addresses are now verified by an external service during creation; "
-        "invalid addresses return 400 to prevent storing undeliverable locations."
-    )
+    """User addresses are now verified by an external service during creation;
+    invalid addresses return 400 to prevent storing undeliverable locations.
+    """
 ```
 
 Then you will have the following check in your business logic:

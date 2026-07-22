@@ -12,10 +12,10 @@ Suppose you previously allowed users to have a name of arbitrary length but now 
 
 
     class LimitUserNamesTo250CharactersInLatest(VersionChange):
-        description = (
-            "User names in creation requests are now limited to 250 characters "
-            "to prevent impractically large values."
-        )
+        """User names in creation requests are now limited to 250 characters
+        to prevent impractically large values.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(UserCreateRequest).field("name").had(max_length=250),
         )
@@ -25,10 +25,10 @@ Suppose you previously allowed users to have a name of arbitrary length but now 
 
     ```python
     class LimitUserNamesTo250Characters(VersionChange):
-        description = (
-            "User names in creation requests are now limited to 250 characters "
-            "to prevent impractically large values."
-        )
+        """User names in creation requests are now limited to 250 characters
+        to prevent impractically large values.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(UserCreateRequest).field("name").didnt_have("max_length"),
         )

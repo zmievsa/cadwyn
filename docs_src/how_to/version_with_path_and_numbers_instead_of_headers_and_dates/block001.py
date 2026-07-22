@@ -40,10 +40,8 @@ class UserAddressResourceList(BaseModel):
 
 
 class ReplaceUserAddressWithListOfAddresses(VersionChange):
-    description = (
-        "Users can now store multiple addresses instead of a single address so "
-        "they can choose among delivery locations."
-    )
+    """Users can now store multiple addresses instead of a single address so they can choose among delivery locations."""
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser).field("addresses").didnt_exist,
         schema(BaseUser).field("address").existed_as(type=str, info=Field()),
@@ -60,10 +58,8 @@ class ReplaceUserAddressWithListOfAddresses(VersionChange):
 
 
 class MoveUserAddressesToSubresource(VersionChange):
-    description = (
-        "User addresses are now separate resources with stable IDs, allowing "
-        "clients to retrieve each address independently."
-    )
+    """User addresses are now separate resources with stable IDs, allowing clients to retrieve each address independently."""
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser)
         .field("addresses")
@@ -88,10 +84,11 @@ class MoveUserAddressesToSubresource(VersionChange):
 
 
 class RemoveAddressesToCreateFromLatestUserSchema(VersionChange):
-    description = (
-        "'addresses_to_create' is no longer accepted when creating users because "
-        "additional addresses are now managed as separate resources."
-    )
+    """Stop accepting 'addresses_to_create' when creating users.
+
+    Additional addresses are now managed as separate resources.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(UserCreateRequest).field("addresses_to_create").didnt_exist,
     )

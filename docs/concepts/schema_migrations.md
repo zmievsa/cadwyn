@@ -12,10 +12,10 @@ from pydantic import Field
 
 
 class RemoveFooFromMySchema(VersionChange):
-    description = (
-        "'MySchema.foo' has been removed because clients no longer need the "
-        "legacy list of values."
-    )
+    """'MySchema.foo' has been removed because clients no longer need the
+    legacy list of values.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema)
         .field("foo")
@@ -30,10 +30,10 @@ from cadwyn import VersionChange, schema
 
 
 class AddFooToMySchema(VersionChange):
-    description = (
-        "'MySchema.foo' is now available so clients can read the value directly "
-        "instead of deriving it from other fields."
-    )
+    """'MySchema.foo' is now available so clients can read the value directly
+    instead of deriving it from other fields.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").didnt_exist,
     )
@@ -48,10 +48,10 @@ from cadwyn import VersionChange, schema
 
 
 class ChangeMySchemaFooDescription(VersionChange):
-    description = (
-        "The documentation for 'MySchema.foo' now explains the field's purpose "
-        "so clients can interpret its value correctly."
-    )
+    """The documentation for 'MySchema.foo' now explains the field's purpose
+    so clients can interpret its value correctly.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").had(description="Foo"),
     )
@@ -64,10 +64,10 @@ from cadwyn import VersionChange, schema
 
 
 class AddDescriptionToMySchemaFoo(VersionChange):
-    description = (
-        "'MySchema.foo' now has a documented meaning so clients do not need to "
-        "infer how to use it."
-    )
+    """'MySchema.foo' now has a documented meaning so clients do not need to
+    infer how to use it.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").didnt_have("description"),
     )
@@ -104,10 +104,10 @@ def validate_foo(cls, value):
 
 
 class RemoveFooValidatorFromMySchema(VersionChange):
-    description = (
-        "'MySchema.foo' no longer requires colon-separated values because the "
-        "field now accepts plain text."
-    )
+    """'MySchema.foo' no longer requires colon-separated values because the
+    field now accepts plain text.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).validator(validate_foo).existed,
     )
@@ -121,10 +121,10 @@ from pydantic import Field, validator
 
 
 class AddFooValidatorToMySchema(VersionChange):
-    description = (
-        "'MySchema.foo' must now contain a colon to distinguish the value's two "
-        "components."
-    )
+    """'MySchema.foo' must now contain a colon to distinguish the value's two
+    components.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).validator(MySchema.validate_foo).didnt_exist,
     )
@@ -140,10 +140,10 @@ from cadwyn import VersionChange, schema
 
 
 class RenameOtherSchemaToMySchema(VersionChange):
-    description = (
-        "'OtherSchema' has been renamed to 'MySchema' to match the resource name "
-        "used throughout the API."
-    )
+    """'OtherSchema' has been renamed to 'MySchema' to match the resource name
+    used throughout the API.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).had(name="OtherSchema"),
     )

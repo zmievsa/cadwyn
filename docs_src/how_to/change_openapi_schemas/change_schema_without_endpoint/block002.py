@@ -14,10 +14,8 @@ class User(BaseModel):
 
 
 class ChangeUserIdFromIntegerToString(VersionChange):
-    description = (
-        "'User.id' is now a string so the API can support identifiers that are "
-        "not numeric."
-    )
+    """'User.id' is now a string so the API can support identifiers that are not numeric."""
+
     instructions_to_migrate_to_previous_version = [
         schema(User).field("id").had(type=int),
     ]

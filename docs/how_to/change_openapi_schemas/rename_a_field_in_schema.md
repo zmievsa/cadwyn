@@ -18,10 +18,10 @@ Assume you had a `summary` field before but now you want to rename it to `bio`.
 
 
     class RenameUserSummaryToBio(VersionChange):
-        description = (
-            "The user profile field 'summary' is now named 'bio' to match familiar "
-            "profile terminology."
-        )
+        """The user profile field 'summary' is now named 'bio' to match familiar
+        profile terminology.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser).field("bio").had(name="summary"),
         )

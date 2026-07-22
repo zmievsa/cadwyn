@@ -148,6 +148,8 @@ class VersionChange:
 
         if _abstract:
             return
+        if cls.description is Sentinel and cls.__doc__:
+            cls.description = cls.__doc__
         cls._validate_subclass()
         cls._extract_list_instructions_into_correct_containers()
         cls._extract_body_instructions_into_correct_containers()

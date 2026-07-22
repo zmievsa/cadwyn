@@ -20,10 +20,10 @@ from cadwyn import VersionChange, endpoint
 
 
 class RemoveGetUserByIdEndpoint(VersionChange):
-    description = (
-        "The 'GET /users/{user_id}' endpoint has been removed because user "
-        "profiles are now retrieved through the users collection."
-    )
+    """The 'GET /users/{user_id}' endpoint has been removed because user
+    profiles are now retrieved through the users collection.
+    """
+
     instructions_to_migrate_to_previous_version = (
         endpoint("/users/{user_id}", ["GET"]).existed,
     )
@@ -38,10 +38,10 @@ from cadwyn import VersionChange, endpoint
 
 
 class AddGetCompanyByIdEndpoint(VersionChange):
-    description = (
-        "Clients can now retrieve an individual company with "
-        "'GET /companies/{company_id}' instead of filtering the company list."
-    )
+    """Clients can now retrieve an individual company with
+    'GET /companies/{company_id}' instead of filtering the company list.
+    """
+
     instructions_to_migrate_to_previous_version = (
         endpoint("/companies/{company_id}", ["GET"]).didnt_exist,
     )
@@ -56,10 +56,10 @@ from cadwyn import VersionChange, endpoint
 
 
 class ChangeGetUserByIdEndpointDescription(VersionChange):
-    description = (
-        "The 'GET /users/{user_id}' documentation now clarifies the returned "
-        "user data so clients can interpret the response correctly."
-    )
+    """The 'GET /users/{user_id}' documentation now clarifies the returned
+    user data so clients can interpret the response correctly.
+    """
+
     instructions_to_migrate_to_previous_version = (
         endpoint("/users/{user_id}", ["GET"]).had(
             description="My old description",
@@ -109,10 +109,10 @@ from cadwyn import VersionChange, endpoint
 
 
 class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
-    description = (
-        "'GET /users' now accepts the user-name filter as a query parameter "
-        "instead of a header, following standard HTTP filtering conventions."
-    )
+    """'GET /users' now accepts the user-name filter as a query parameter
+    instead of a header, following standard HTTP filtering conventions.
+    """
+
     instructions_to_migrate_to_previous_version = (
         # Specify the name; otherwise you will encounter an exception due to
         # having two identical endpoints with the same parameters and path decorators

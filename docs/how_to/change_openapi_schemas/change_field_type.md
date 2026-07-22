@@ -24,10 +24,10 @@ This is not a breaking change in terms of requests but it [**can be**](#why-enum
 
 
     class AddModeratorRoleToUser(VersionChange):
-        description = (
-            "Users can now have a 'moderator' role with administrative access but "
-            "without permission to create or remove admins, enabling safer delegation."
-        )
+        """Users can now have a 'moderator' role with administrative access but
+        without permission to create or remove admins, enabling safer delegation.
+        """
+
         instructions_to_migrate_to_previous_version = (
             enum(UserRoleEnum).didnt_have("moderator"),
         )
@@ -79,10 +79,10 @@ Suppose that previously users could specify their date of birth as a datetime in
 
 
     class ChangeUserDateOfBirthFromDatetimeToDateInLatest(VersionChange):
-        description = (
-            "'User.date_of_birth' is now a calendar date instead of a timestamp "
-            "because a time of day is not meaningful for a birth date."
-        )
+        """'User.date_of_birth' is now a calendar date instead of a timestamp
+        because a time of day is not meaningful for a birth date.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser).field("date_of_birth").had(type=datetime.date),
             # This step is only necessary in Pydantic 2 because datetime
@@ -95,10 +95,10 @@ Suppose that previously users could specify their date of birth as a datetime in
 
     ```python
     class ChangeUserDateOfBirthFromDatetimeToDate(VersionChange):
-        description = (
-            "'User.date_of_birth' is now a calendar date instead of a timestamp "
-            "because a time of day is not meaningful for a birth date."
-        )
+        """'User.date_of_birth' is now a calendar date instead of a timestamp
+        because a time of day is not meaningful for a birth date.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser).field("date_of_birth").had(type=datetime.datetime),
             schema(BaseUser).validator(convert_date_of_birth_to_date).didnt_exist,
