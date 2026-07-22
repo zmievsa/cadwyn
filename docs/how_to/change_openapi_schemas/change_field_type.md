@@ -25,9 +25,8 @@ This is not a breaking change in terms of requests but it [**can be**](#why-enum
 
     class AddModeratorRoleToUser(VersionChange):
         description = (
-            "Add 'moderator' role to users that represents an admin "
-            "that cannot create or remove other admins. This provides "
-            "finer-grained control over permissions."
+            "Users can now have a 'moderator' role with administrative access but "
+            "without permission to create or remove admins, enabling safer delegation."
         )
         instructions_to_migrate_to_previous_version = (
             enum(UserRoleEnum).didnt_have("moderator"),
@@ -81,8 +80,8 @@ Suppose that previously users could specify their date of birth as a datetime in
 
     class ChangeUserDateOfBirthFromDatetimeToDateInLatest(VersionChange):
         description = (
-            "Change 'BaseUser.date_of_birth' field type to datetime in HEAD "
-            "to support versions and data before 2001-01-01. "
+            "'User.date_of_birth' is now a calendar date instead of a timestamp "
+            "because a time of day is not meaningful for a birth date."
         )
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser).field("date_of_birth").had(type=datetime.date),
@@ -97,8 +96,8 @@ Suppose that previously users could specify their date of birth as a datetime in
     ```python
     class ChangeUserDateOfBirthFromDatetimeToDate(VersionChange):
         description = (
-            "Change 'User.date_of_birth' field type to date instead of "
-            "a datetime because storing the exact time is unnecessary."
+            "'User.date_of_birth' is now a calendar date instead of a timestamp "
+            "because a time of day is not meaningful for a birth date."
         )
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser).field("date_of_birth").had(type=datetime.datetime),

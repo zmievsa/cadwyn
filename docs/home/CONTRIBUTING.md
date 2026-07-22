@@ -4,13 +4,19 @@
 
 * The minimum supported version is Python 3.10. It is recommended to manage multiple Python versions on your system with [uv](https://docs.astral.sh/uv/)
 * Running the full local check suite also requires Node.js and npm for link validation
-* We maintain a Makefile with several commands to help with common tasks
+* Run `make` to see the available developer commands
 
 1. Install [uv](https://docs.astral.sh/uv/)
-2. Install the standalone developer tools with `uv tool install prek` and `uv tool install tox --with tox-uv`
-3. Run `uv sync` to create a virtual environment and install the dependencies
-4. Install [prek](https://prek.j178.dev/) hooks with `prek install -f`
-5. Run `make check` to verify that the local CI-equivalent checks pass
+2. Run `make install` to install the project and standalone developer tools
+3. Run `make hooks` to install the [prek](https://prek.j178.dev/) git hooks
+4. Run `make check` to verify that the local CI-equivalent checks pass
+
+`make install` uses uv to create the project environment with every development
+and optional dependency. It also installs prek and tox with the `tox-uv` plugin
+as standalone tools so repeated checks start quickly.
+
+Skip `make hooks` if you already manage hooks with Git's `core.hooksPath`
+setting. You can still run every hook manually with `make lint`.
 
 ## Code contributions
 
@@ -49,7 +55,8 @@ Each supported Python test environment runs ty before its tests.
 If `prek`, `tox`, or the `tox-uv` plugin is missing, the Makefile will stop
 early and print the matching `uv tool install ...` command to install it.
 
-`make test` runs the same full check suite.
+Use `make lint` to run only the prek hooks. For a focused test run, use
+`uv run pytest` followed by the test path and any pytest options.
 
 ### Running type checkers
 
@@ -70,7 +77,7 @@ We welcome contributions that improve the appearance and usability of the docs. 
 
 ### Running the docs locally
 
-After improving the docs, serve the documentation with `mkdocs serve`
+After improving the docs, serve the documentation with `uv run mkdocs serve`.
 
 ### Writing and editing docs
 
