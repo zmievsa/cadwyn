@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from fastapi.routing import APIRoute
 
 
-def test__header_routing__invalid_version_format__error():
+def test__header_routing__invalid_version_format__should_raise_value_error():
     main_app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     with pytest.warns(DeprecationWarning):
         main_app.add_header_versioned_routers(  # ty: ignore[deprecated]  # This test verifies the legacy API.
@@ -404,7 +404,7 @@ def test__get_openapi():
     assert resp.status_code == 200
 
 
-def test__get_openapi__nonexisting_version__error():
+def test__get_openapi__nonexisting_version__should_return_404():
     resp = client_without_headers.get("/openapi.json?version=2023-01-01")
     assert resp.status_code == 404
     assert resp.json() == {"detail": "OpenApi file of with version `2023-01-01` not found"}

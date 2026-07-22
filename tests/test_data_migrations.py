@@ -742,7 +742,7 @@ class TestHowAndWhenMigrationsApply:
         )
 
     # TODO: An error is a better behavior here
-    def test__try_migrating_to_version_below_earliest__undefined_behaior(
+    def test__try_migrating_to_version_below_earliest__should_apply_all_migrations(
         self,
         create_versioned_clients: CreateVersionedClients,
         version_change_1: type[VersionChange],

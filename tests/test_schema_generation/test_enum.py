@@ -79,7 +79,7 @@ def test__enum_had__original_schema_is_empty(create_runtime_schemas: CreateRunti
     assert serialize_enum(models["2000-01-01"][EmptyEnum]) == {"b": 7}
 
 
-def test__enum_had__same_name_as_other_value__error(
+def test__enum_had__same_name_as_other_value__should_raise_invalid_generation_instruction_error(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     with pytest.raises(
@@ -92,7 +92,7 @@ def test__enum_had__same_name_as_other_value__error(
         create_runtime_schemas(version_change(enum(EnumWithOneMember).had(foo=83)))
 
 
-def test__enum_didnt_have__nonexisting_name__error(
+def test__enum_didnt_have__nonexisting_name__should_raise_invalid_generation_instruction_error(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     with pytest.raises(

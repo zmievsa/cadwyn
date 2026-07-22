@@ -43,9 +43,13 @@ setting. You can still run every hook manually with `make lint`.
 ### Writing and running tests
 
 Tests are contained within the `tests` directory, and follow roughly the same
-directory structure as the `cadwyn` module. If you are adding a test
-case, it should be located within the correct submodule of `tests`. E.g.
-tests for `cadwyn/codegen.py` reside in `tests/codegen`.
+directory structure as the `cadwyn` module. Place each test according to the
+public interface it exercises. If a test has no natural location in that
+structure, check whether it is testing an internal implementation detail that
+would be better covered through a public interface.
+
+Keep tests atomic. Separate distinct positive and negative scenarios, and use
+parametrization when the same behavior needs to be checked with several inputs.
 
 `make check` runs the local CI-equivalent suite with tox's default automatic
 parallelism. It runs the supported Python test matrix, tutorial tests, coverage,
@@ -57,6 +61,17 @@ early and print the matching `uv tool install ...` command to install it.
 
 Use `make lint` to run only the prek hooks. For a focused test run, use
 `uv run pytest` followed by the test path and any pytest options.
+
+Name tests using the `what`, `when`, `expected` convention:
+
+`test__{what}__{when}__{expected}`
+
+`what` is the function or public interface under test, `when` describes the
+conditions in which it is exercised, and `expected` states the observable
+result. Prefer concrete outcomes such as `should_return_404` or
+`should_raise_router_generation_error` over generic suffixes such as `error`,
+`ok`, or numbered variants. A test name should let a reader understand a
+failure without first opening its implementation.
 
 ### Running type checkers
 
