@@ -2,7 +2,7 @@ import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import ClassVar, Union
+from typing import ClassVar, Union, cast
 
 from fastapi import Request, Response
 from starlette.datastructures import FormData, MutableHeaders, UploadFile
@@ -157,11 +157,9 @@ def convert_request_to_next_version_for(
         transformer: Callable[[RequestInfo], None],
     ) -> Union[_AlterRequestBySchemaInstruction, _AlterRequestByPathInstruction]:
         if isinstance(schema_or_path, str):
-            if not isinstance(methods_or_second_schema, list):  # pragma: no cover
-                raise TypeError("Decorator arguments were validated above")
             return _AlterRequestByPathInstruction(
                 path=schema_or_path,
-                methods=set(methods_or_second_schema),
+                methods=set(cast("list[str]", methods_or_second_schema)),
                 transformer=transformer,
             )
         else:
@@ -248,11 +246,9 @@ def convert_response_to_previous_version_for(
     ) -> Union[_AlterResponseBySchemaInstruction, _AlterResponseByPathInstruction]:
         if isinstance(schema_or_path, str):
             # The validation above checks that methods is not None
-            if not isinstance(methods_or_second_schema, list):  # pragma: no cover
-                raise TypeError("Decorator arguments were validated above")
             return _AlterResponseByPathInstruction(
                 path=schema_or_path,
-                methods=set(methods_or_second_schema),
+                methods=set(cast("list[str]", methods_or_second_schema)),
                 transformer=transformer,
                 migrate_http_errors=migrate_http_errors,
             )

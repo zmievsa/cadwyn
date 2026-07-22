@@ -48,21 +48,13 @@ _logger = getLogger(__name__)
 T = TypeVar("T", bound=Union[PossibleInstructions, type[VersionChange]])
 
 
-def _hide_instruction(instruction: _HiddenAttributeMixin) -> None:
-    instruction.is_hidden_from_changelog = True
-
-
-def _hide_version_change(version_change: type[VersionChange]) -> None:
-    version_change.is_hidden_from_changelog = True
-
-
 def hidden(instruction_or_version_change: T) -> T:
     if isinstance(instruction_or_version_change, _HiddenAttributeMixin):
-        _hide_instruction(instruction_or_version_change)
+        cast("_HiddenAttributeMixin", instruction_or_version_change).is_hidden_from_changelog = True
         return instruction_or_version_change
 
     if isinstance(instruction_or_version_change, type) and issubclass(instruction_or_version_change, VersionChange):
-        _hide_version_change(instruction_or_version_change)
+        cast("type[VersionChange]", instruction_or_version_change).is_hidden_from_changelog = True
     return instruction_or_version_change
 
 
