@@ -11,6 +11,7 @@ from cadwyn.structure.versions import VersionChange
 from tests.conftest import CreateVersionedApp
 
 BoolT = TypeVar("BoolT", bound=Union[bool, int])
+SchemaT = TypeVar("SchemaT")
 
 
 class GenericSchema(BaseModel, Generic[BoolT]):
@@ -20,6 +21,15 @@ class GenericSchema(BaseModel, Generic[BoolT]):
 
 class ParametrizedSchema(GenericSchema[bool]):
     pass
+
+
+class ExternalGenericWrapper(BaseModel, Generic[SchemaT]):
+    items: list[SchemaT]
+
+
+class SchemaNestedInExternalWrapper(BaseModel):
+    foo: int
+    bar: str
 
 
 class GenericVersionChange(VersionChange):
@@ -44,6 +54,11 @@ class ParametrizedVersionChange(VersionChange):
     )
 
 
+class NestedSchemaVersionChange(VersionChange):
+    description = "Add bar to the nested schema"
+    instructions_to_migrate_to_previous_version = (schema(SchemaNestedInExternalWrapper).field("bar").didnt_exist,)
+
+
 router = VersionedAPIRouter()
 
 
@@ -55,6 +70,14 @@ async def route_with_generic_schema(dep: GenericSchema) -> None:
 @router.post("/parametrized", status_code=HTTP_204_NO_CONTENT)
 async def route_with_parametrized_schema(dep: ParametrizedSchema) -> None:
     pass
+
+
+@router.get(
+    "/external-generic-wrapper",
+    response_model=ExternalGenericWrapper[SchemaNestedInExternalWrapper],
+)
+async def route_with_schema_nested_in_external_generic_wrapper() -> dict[str, object]:
+    return {"items": [{"foo": 1, "bar": "two"}]}
 
 
 def test__router_generation__using_generic_schema_in_body(
@@ -95,3 +118,20 @@ def test__router_generation__using_parametrized_schema_in_body(
 
     assert unversioned_client.get("/openapi.json?version=2000-01-01").status_code == HTTP_200_OK
     assert unversioned_client.get("/openapi.json?version=2001-01-01").status_code == HTTP_200_OK
+
+
+def test__router_generation__migrates_schema_nested_in_external_generic_wrapper(
+    create_versioned_app: CreateVersionedApp,
+):
+    app = create_versioned_app(NestedSchemaVersionChange, router=router)
+
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+
+    response_2000 = client_2000.get("/external-generic-wrapper")
+    response_2001 = client_2001.get("/external-generic-wrapper")
+
+    assert response_2000.status_code == HTTP_200_OK
+    assert response_2000.json() == {"items": [{"foo": 1}]}
+    assert response_2001.status_code == HTTP_200_OK
+    assert response_2001.json() == {"items": [{"foo": 1, "bar": "two"}]}
