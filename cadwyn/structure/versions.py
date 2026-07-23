@@ -16,11 +16,14 @@ from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
 from fastapi._compat import ModelField
 from fastapi.concurrency import run_in_threadpool
+from fastapi.datastructures import DefaultPlaceholder
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import solve_dependencies
-from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, serialize_response
+from fastapi.utils import is_body_allowed_for_status_code
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
@@ -111,6 +114,83 @@ def _prepare_response_content(
             for k, v in res.items()
         }
     return res
+
+
+def _get_actual_response_class(route: APIRoute) -> type[FastapiResponse]:
+    if isinstance(route.response_class, DefaultPlaceholder):
+        return route.response_class.value
+    return route.response_class
+
+
+def _serialize_response_for_metadata(route: APIRoute, response_body: object) -> object:
+    if route.response_field is None:
+        return jsonable_encoder(response_body)
+
+    value, errors = route.response_field.validate(response_body, {}, loc=("response",))
+    if errors:
+        raise ResponseValidationError(errors=errors, body=response_body)
+    return route.response_field.serialize(
+        value,
+        include=route.response_model_include,
+        exclude=route.response_model_exclude,
+        by_alias=route.response_model_by_alias,
+        exclude_unset=route.response_model_exclude_unset,
+        exclude_defaults=route.response_model_exclude_defaults,
+        exclude_none=route.response_model_exclude_none,
+    )
+
+
+def _get_response_metadata(
+    route: APIRoute,
+    status_code: int,
+    background_tasks: Union[BackgroundTasks, None],
+    response_body: object,
+) -> tuple[Union[str, None], str]:
+    probe_background_tasks = None
+    if background_tasks is not None:
+        probe_background_tasks = BackgroundTasks()
+        probe_background_tasks.tasks.extend(background_tasks.tasks)
+    response = _get_actual_response_class(route)(
+        _serialize_response_for_metadata(route, response_body),
+        status_code=status_code,
+        background=probe_background_tasks,
+    )
+    return response.media_type, response.charset
+
+
+async def _materialize_response(
+    response_info: ResponseInfo,
+    route: APIRoute,
+    background_tasks: Union[BackgroundTasks, None],
+) -> FastapiResponse:
+    use_dump_json = route.response_field is not None and isinstance(route.response_class, DefaultPlaceholder)
+    content = await serialize_response(
+        field=route.response_field,
+        response_content=response_info.body,
+        include=route.response_model_include,
+        exclude=route.response_model_exclude,
+        by_alias=route.response_model_by_alias,
+        exclude_unset=route.response_model_exclude_unset,
+        exclude_defaults=route.response_model_exclude_defaults,
+        exclude_none=route.response_model_exclude_none,
+        is_coroutine=True,
+        dump_json=use_dump_json,
+    )
+    if use_dump_json:
+        response = FastapiResponse(content=content, status_code=response_info.status_code)
+    else:
+        response = _get_actual_response_class(route)(
+            content,
+            status_code=response_info.status_code,
+            background=background_tasks,
+        )
+    response.media_type = response_info.media_type
+    if "content-type" in response.headers:
+        del response.headers["content-type"]
+    response.headers.raw.extend(response_info.headers.raw)
+    if not is_body_allowed_for_status_code(response.status_code):
+        response.body = b""
+    return response
 
 
 APIVersionVarType: TypeAlias = Union[ContextVar[Union[VersionType, None]], ContextVar[VersionType]]
@@ -428,7 +508,7 @@ class VersionBundle:
         *,
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
-        background_tasks: BackgroundTasks,
+        background_tasks: Union[BackgroundTasks, None],
     ) -> dict[str, Any]:
         start = self.reversed_version_values.index(current_version)
         head_route_id = id(head_route)
@@ -452,9 +532,6 @@ class VersionBundle:
             body_for_solving = request_info.body
 
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
-        # FastAPI has already resolved these dependencies with the same holder. Preserve its tasks so this second
-        # resolution can validate the migrated request without scheduling dependency background tasks twice.
-        background_tasks_before_resolving_head_dependencies = list(background_tasks.tasks)
         result = await solve_dependencies(
             request=request,
             response=response,
@@ -465,7 +542,6 @@ class VersionBundle:
             embed_body_fields=embed_body_fields,
             background_tasks=background_tasks,
         )
-        background_tasks.tasks[:] = background_tasks_before_resolving_head_dependencies
         if result.errors:
             raise CadwynHeadRequestValidationError(result.errors, body=request_info.body, version=current_version)
         return result.values
@@ -506,11 +582,11 @@ class VersionBundle:
         dependant_for_request_migrations: Dependant,
         *,
         request_param_name: str,
-        background_tasks_param_name: str,
+        background_tasks_param_name: Union[str, None],
         response_param_name: str,
     ) -> "Callable[[Endpoint[_P, _R]], Callable[..., Coroutine[Any, Any, _R]]]":
         def wrapper(endpoint: "Endpoint[_P, _R]") -> "Callable[..., Coroutine[Any, Any, _R]]":
-            background_tasks_param_is_synthetic = (
+            background_tasks_param_is_synthetic = background_tasks_param_name is not None and (
                 background_tasks_param_name not in inspect.signature(endpoint).parameters
             )
 
@@ -518,7 +594,9 @@ class VersionBundle:
             async def decorator(*args: Any, **kwargs: Any) -> _R:
                 request_param: FastapiRequest = kwargs[request_param_name]
                 response_param: FastapiResponse = kwargs[response_param_name]
-                background_tasks: BackgroundTasks = kwargs[background_tasks_param_name]
+                background_tasks: Union[BackgroundTasks, None] = (
+                    kwargs[background_tasks_param_name] if background_tasks_param_name is not None else None
+                )
                 method = request_param.method
                 response = Sentinel
                 async with AsyncExitStack() as exit_stack:
@@ -565,7 +643,7 @@ class VersionBundle:
                 _add_keyword_only_parameter(decorator, _CADWYN_REQUEST_PARAM_NAME, FastapiRequest)
             if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
-            if background_tasks_param_is_synthetic:
+            if background_tasks_param_is_synthetic and background_tasks_param_name is not None:
                 _add_keyword_only_parameter(decorator, background_tasks_param_name, BackgroundTasks)
 
             return decorator
@@ -583,7 +661,7 @@ class VersionBundle:
         kwargs: dict[str, Any],
         fastapi_response_dependency: FastapiResponse,
         *,
-        background_tasks: BackgroundTasks,
+        background_tasks: Union[BackgroundTasks, None],
     ) -> Any:
         raised_exception = None
         if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
@@ -609,7 +687,9 @@ class VersionBundle:
         if api_version is None:
             return response_or_response_body
 
+        initial_content_type: Union[str, None] = None
         if isinstance(response_or_response_body, FastapiResponse):
+            initial_content_type = response_or_response_body.headers.get("content-type")
             # TODO (https://github.com/zmievsa/cadwyn/issues/125): Add support for migrating `StreamingResponse`
             # TODO (https://github.com/zmievsa/cadwyn/issues/126): Add support for migrating `FileResponse`
             # Starlette breaks Liskov Substitution principle and
@@ -629,7 +709,7 @@ class VersionBundle:
                 body = None
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
 
-            response_info = ResponseInfo(response_or_response_body, body, _background_tasks=background_tasks)
+            response_info = ResponseInfo(response_or_response_body, body)
         else:
             if fastapi_response_dependency.status_code is not None:
                 status_code = fastapi_response_dependency.status_code
@@ -639,39 +719,37 @@ class VersionBundle:
                 raise NotImplementedError
             else:
                 status_code = 200
+            body = _prepare_response_content(
+                response_or_response_body,
+                exclude_unset=head_route.response_model_exclude_unset,
+                exclude_defaults=head_route.response_model_exclude_defaults,
+                exclude_none=head_route.response_model_exclude_none,
+            )
+            response_class = _get_actual_response_class(route)
+            media_type_resolver = None
+            if response_class.media_type is None and response_class.__init__ is not FastapiResponse.__init__:
+                media_type_resolver = functools.partial(
+                    _get_response_metadata,
+                    route,
+                    status_code,
+                    background_tasks,
+                )
+            fastapi_response_dependency.charset = response_class.charset
+            fastapi_response_dependency.media_type = response_class.media_type
             fastapi_response_dependency.status_code = status_code
             response_info = ResponseInfo(
                 fastapi_response_dependency,
-                _prepare_response_content(
-                    response_or_response_body,
-                    exclude_unset=head_route.response_model_exclude_unset,
-                    exclude_defaults=head_route.response_model_exclude_defaults,
-                    exclude_none=head_route.response_model_exclude_none,
-                ),
-                _background_tasks=background_tasks,
+                body,
+                _media_type_resolver=media_type_resolver,
             )
 
-        background_before_migration = response_info.background
-        effective_background_tasks_before_migration = (
-            tuple(background_before_migration.tasks)
-            if isinstance(background_before_migration, BackgroundTasks)
-            else None
-        )
-        fastapi_background_tasks_before_migration = tuple(background_tasks.tasks)
         response_info = self._migrate_response(
             response_info,
             api_version,
             head_route.response_model,
             head_route,
         )
-        effective_background_tasks_after_migration = (
-            tuple(response_info.background.tasks) if isinstance(response_info.background, BackgroundTasks) else None
-        )
-        background_was_migrated = (
-            response_info.background is not background_before_migration
-            or effective_background_tasks_after_migration != effective_background_tasks_before_migration
-            or tuple(background_tasks.tasks) != fastapi_background_tasks_before_migration
-        )
+        media_type_was_migrated = response_info._media_type_was_set
 
         if isinstance(response_or_response_body, FastapiResponse):
             # a webserver (uvicorn for instance) calculates the body at the endpoint level.
@@ -686,10 +764,12 @@ class VersionBundle:
             # that do not have it. We don't support it too.
             if response_info.body is not None and hasattr(response_info._response, "body"):
                 # TODO (https://github.com/zmievsa/cadwyn/issues/51): Only do this if there are migrations
-                if (
-                    isinstance(response_info.body, str)
-                    and response_info._response.headers.get("content-type") != "application/json"
-                ):
+                content_type_for_rendering = (
+                    initial_content_type
+                    if response_info._media_type_was_set
+                    else response_info._response.headers.get("content-type")
+                )
+                if isinstance(response_info.body, str) and content_type_for_rendering != "application/json":
                     response_info._response.body = response_info.body.encode(response_info._response.charset)
                 else:
                     response_info._response.body = json.dumps(
@@ -715,10 +795,10 @@ class VersionBundle:
                 raised_exception.headers = dict(response_info.headers)
                 raised_exception.status_code = response_info.status_code
 
-                if not background_was_migrated:
-                    raise raised_exception
-            response_info._response.background = response_info.background
+                raise raised_exception
             return response_info._response
+        if media_type_was_migrated:
+            return await _materialize_response(response_info, route, background_tasks)
         return response_info.body
 
     async def _convert_endpoint_kwargs_to_version(
@@ -734,14 +814,14 @@ class VersionBundle:
         *,
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
-        background_tasks: BackgroundTasks,
-        background_tasks_param_name: str,
+        background_tasks: Union[BackgroundTasks, None],
+        background_tasks_param_name: Union[str, None],
         background_tasks_param_is_synthetic: bool,
     ) -> dict[str, Any]:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
             kwargs.pop(request_param_name)
-        if background_tasks_param_is_synthetic:
+        if background_tasks_param_is_synthetic and background_tasks_param_name is not None:
             kwargs.pop(background_tasks_param_name, None)
 
         api_version = self.api_version_var.get()
@@ -779,13 +859,15 @@ class VersionBundle:
             head_route,
             exit_stack=exit_stack,
             embed_body_fields=embed_body_fields,
-            background_tasks=background_tasks,
+            background_tasks=None,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:
             new_kwargs.pop(_CADWYN_REQUEST_PARAM_NAME)
-        if background_tasks_param_is_synthetic:
+        if background_tasks_param_name is not None and background_tasks_param_is_synthetic:
             new_kwargs.pop(background_tasks_param_name, None)
+        elif background_tasks_param_name is not None:
+            new_kwargs[background_tasks_param_name] = background_tasks
 
         return new_kwargs
 

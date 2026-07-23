@@ -4,6 +4,7 @@ import sys
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from io import StringIO
+from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
 import fastapi
@@ -24,10 +25,10 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field, RootModel, field_serializer
 from starlette.background import BackgroundTask
 from starlette.responses import StreamingResponse
 
@@ -398,148 +399,242 @@ class TestRequestMigrations:
 
 
 class TestResponseMigrations:
-    def test__response_background__maps_directly_to_response_without_fastapi_background_tasks(self):
-        original_background = BackgroundTask(lambda: None)
-        migrated_background = BackgroundTask(lambda: None)
-        response = Response(background=original_background)
-        response_info = ResponseInfo(response, body=None)
-
-        assert response_info.background is original_background
-        response_info.background = migrated_background
-        assert response_info.background is migrated_background
-        assert response.background is migrated_background
-
-    def test__response_media_type_migration__updates_the_public_attribute(
+    @pytest.mark.parametrize("returns_response", [False, True])
+    def test__response_media_type_migration__updates_the_final_response(
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
+        *,
+        returns_response: bool,
     ):
-        @router.get(test_path)
-        async def endpoint():
-            return JSONResponse("hello")
+        completed_tasks: list[str] = []
+
+        def add_background_task(background_tasks: BackgroundTasks) -> None:
+            background_tasks.add_task(completed_tasks.append, "completed")
+
+        if returns_response:
+
+            @router.get(test_path)
+            async def endpoint(_: None = Depends(add_background_task)):
+                return JSONResponse("hello")
+
+        else:
+
+            @router.get(test_path)
+            async def endpoint(_: None = Depends(add_background_task)) -> str:
+                return "hello"
 
         @convert_response_to_previous_version_for(test_path, ["GET"])
         def migrator(response: ResponseInfo):
             assert response.media_type == "application/json"
             response.media_type = "text/vnd.cadwyn"
             assert response.media_type == "text/vnd.cadwyn"
+            response.headers["content-type"] = "text/vnd.cadwyn; profile=legacy"
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
         migrated_response = clients["2000-01-01"].get(test_path)
-        assert migrated_response.headers["content-type"] == "application/json"
+        assert migrated_response.headers.get_list("content-type") == ["text/vnd.cadwyn; profile=legacy"]
         assert migrated_response.json() == "hello"
+        assert completed_tasks == ["completed"]
 
         latest_response = clients["2001-01-01"].get(test_path)
         assert latest_response.headers["content-type"] == "application/json"
         assert latest_response.json() == "hello"
+        assert completed_tasks == ["completed", "completed"]
 
-    def test__response_background_migration__replaces_the_public_response_task(
+    def test__response_media_type_migration__resolves_file_response_media_type(
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
+        tmp_path: Path,
     ):
-        completed_tasks: list[str] = []
+        response_path = tmp_path / "response.txt"
+        response_path.write_text("hello")
 
-        def record_completed_task(task_name: str) -> None:
-            completed_tasks.append(task_name)
-
-        original_background = BackgroundTask(record_completed_task, "original")
-        migrated_background = BackgroundTask(record_completed_task, "migrated")
-
-        @router.get(test_path)
+        @router.get(test_path, response_class=FileResponse)
         async def endpoint():
-            return JSONResponse({"message": "hello"}, background=original_background)
+            return response_path
 
         @convert_response_to_previous_version_for(test_path, ["GET"])
         def migrator(response: ResponseInfo):
-            assert response.background is original_background
-            response.background = migrated_background
-            assert response.background is migrated_background
+            assert response.media_type == "text/plain"
+            response.media_type = "text/vnd.cadwyn"
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
-        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
-        assert completed_tasks == ["migrated"]
+        migrated_response = clients["2000-01-01"].get(test_path)
+        assert migrated_response.headers.get_list("content-type") == ["text/vnd.cadwyn; charset=utf-8"]
+        assert migrated_response.text == "hello"
 
-        assert clients["2001-01-01"].get(test_path).json() == {"message": "hello"}
-        assert completed_tasks == ["migrated", "original"]
+        latest_response = clients["2001-01-01"].get(test_path)
+        assert latest_response.headers["content-type"] == "text/plain; charset=utf-8"
+        assert latest_response.text == "hello"
 
-    def test__response_background_migration__replaces_tasks_for_an_ordinary_response_body(
+    def test__response_media_type_migration__uses_response_class_charset(
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
     ):
-        completed_tasks: list[str] = []
+        class LatinResponse(Response):
+            media_type = "text/plain"
+            charset = "iso-8859-1"
 
-        @router.get(test_path)
-        async def endpoint():
-            return {"message": "hello"}
+        @router.get(test_path, response_class=LatinResponse)
+        async def endpoint() -> str:
+            return "olá"
 
         @convert_response_to_previous_version_for(test_path, ["GET"])
         def migrator(response: ResponseInfo):
-            assert response.background is None
-            response.background = BackgroundTask(completed_tasks.append, "migrated")
+            assert response.media_type == "text/plain"
+            response.media_type = "text/vnd.cadwyn"
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
-        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
-        assert completed_tasks == ["migrated"]
+        migrated_response = clients["2000-01-01"].get(test_path)
+        assert migrated_response.headers["content-type"] == "text/vnd.cadwyn; charset=iso-8859-1"
+        assert migrated_response.content == b"ol\xe1"
 
-    def test__response_background_migration__keeps_assigned_background_tasks_live(
+        latest_response = clients["2001-01-01"].get(test_path)
+        assert latest_response.headers["content-type"] == "text/plain; charset=iso-8859-1"
+        assert latest_response.content == b"ol\xe1"
+
+    def test__response_media_type_migration__supports_required_background_constructor_parameter(
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
     ):
-        completed_tasks: list[str] = []
+        response_initializations = 0
 
-        @router.get(test_path)
-        async def endpoint():
-            return {"message": "hello"}
+        class DynamicResponse(Response):
+            media_type = None
+
+            def __init__(
+                self,
+                content: str,
+                status_code: int = 200,
+                *,
+                background: Union[BackgroundTask, None],
+            ):
+                nonlocal response_initializations
+                response_initializations += 1
+                super().__init__(content, status_code, media_type="text/dynamic", background=background)
+
+        @router.get(test_path, response_class=DynamicResponse)
+        async def endpoint() -> str:
+            return "hello"
 
         @convert_response_to_previous_version_for(test_path, ["GET"])
         def migrator(response: ResponseInfo):
-            migrated_background = BackgroundTasks()
-            response.background = migrated_background
-            migrated_background.add_task(completed_tasks.append, "migrated")
+            assert response.media_type == "text/dynamic"
+            response.media_type = "text/vnd.cadwyn"
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
-        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
-        assert completed_tasks == ["migrated"]
+        migrated_response = clients["2000-01-01"].get(test_path)
+        assert migrated_response.headers["content-type"] == "text/vnd.cadwyn; charset=utf-8"
+        assert migrated_response.text == "hello"
+        assert response_initializations == 2
 
-    def test__response_background_migration__does_not_duplicate_tasks_added_by_dependencies(
+        latest_response = clients["2001-01-01"].get(test_path)
+        assert latest_response.headers["content-type"] == "text/dynamic; charset=utf-8"
+        assert latest_response.text == "hello"
+        assert response_initializations == 3
+
+    def test__response_media_type_migration__probes_with_serialized_content(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        class ResponseModel(BaseModel):
+            value: int
+
+            @field_serializer("value")
+            def serialize_value(self, value: int) -> str:
+                return f"value={value}"
+
+        class SerializedContentResponse(Response):
+            media_type = None
+
+            def __init__(
+                self,
+                content: dict[str, str],
+                status_code: int = 200,
+                *,
+                background: Union[BackgroundTask, None],
+            ):
+                assert content == {"value": "value=1"}
+                super().__init__(content["value"], status_code, media_type="text/plain", background=background)
+
+        @router.get(test_path, response_model=ResponseModel, response_class=SerializedContentResponse)
+        async def endpoint() -> dict[str, int]:
+            return {"value": 1}
+
+        @convert_response_to_previous_version_for(test_path, ["GET"])
+        def migrator(response: ResponseInfo):
+            assert response.media_type == "text/plain"
+            response.media_type = "text/vnd.cadwyn"
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+
+        migrated_response = clients["2000-01-01"].get(test_path)
+        assert migrated_response.headers["content-type"] == "text/vnd.cadwyn; charset=utf-8"
+        assert migrated_response.text == "value=1"
+
+        latest_response = clients["2001-01-01"].get(test_path)
+        assert latest_response.headers["content-type"] == "text/plain; charset=utf-8"
+        assert latest_response.text == "value=1"
+
+    def test__response_media_type_migration__preserves_dependency_background_tasks(
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
         router: VersionedAPIRouter,
     ):
         completed_tasks: list[str] = []
+
+        class FallbackBackgroundResponse(Response):
+            media_type = "text/plain"
+
+            def __init__(
+                self,
+                content: str,
+                status_code: int = 200,
+                *,
+                background: Union[BackgroundTask, None],
+            ):
+                super().__init__(
+                    content,
+                    status_code,
+                    media_type=self.media_type,
+                    background=background or BackgroundTask(completed_tasks.append, "constructor"),
+                )
 
         def dependency(background_tasks: BackgroundTasks) -> None:
             background_tasks.add_task(completed_tasks.append, "dependency")
 
-        @router.get(test_path)
-        async def endpoint(_dependency: None = Depends(dependency)):
-            return {"message": "hello"}
+        @router.get(test_path, response_class=FallbackBackgroundResponse)
+        async def endpoint(_: None = Depends(dependency)) -> str:
+            return "hello"
 
         @convert_response_to_previous_version_for(test_path, ["GET"])
         def migrator(response: ResponseInfo):
-            assert response.background is not None
+            response.media_type = "text/vnd.cadwyn"
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
-        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
+        assert clients["2000-01-01"].get(test_path).text == "hello"
         assert completed_tasks == ["dependency"]
 
-        assert clients["2001-01-01"].get(test_path).json() == {"message": "hello"}
+        assert clients["2001-01-01"].get(test_path).text == "hello"
         assert completed_tasks == ["dependency", "dependency"]
 
-    def test__response_background_migration__removes_tasks_for_an_ordinary_response_body(
+    def test__response_media_type_migration__does_not_inject_an_empty_background_holder(
         self,
         create_versioned_clients: CreateVersionedClients,
         test_path: Literal["/test"],
@@ -547,54 +642,38 @@ class TestResponseMigrations:
     ):
         completed_tasks: list[str] = []
 
-        @router.get(test_path)
-        async def endpoint(background_tasks: BackgroundTasks):
-            background_tasks.add_task(completed_tasks.append, "original")
-            return {"message": "hello"}
+        class FallbackBackgroundResponse(Response):
+            media_type = "text/plain"
+
+            def __init__(
+                self,
+                content: str,
+                status_code: int = 200,
+                *,
+                background: Union[BackgroundTask, None],
+            ):
+                super().__init__(
+                    content,
+                    status_code,
+                    media_type=self.media_type,
+                    background=background or BackgroundTask(completed_tasks.append, "constructor"),
+                )
+
+        @router.get(test_path, response_class=FallbackBackgroundResponse)
+        async def endpoint() -> str:
+            return "hello"
 
         @convert_response_to_previous_version_for(test_path, ["GET"])
         def migrator(response: ResponseInfo):
-            background = response.background
-            assert background is not None
-            response.background = background
-            assert response.background is background
-            response.background = None
+            response.media_type = "text/vnd.cadwyn"
 
         clients = create_versioned_clients(version_change(migrator=migrator))
 
-        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
-        assert completed_tasks == []
+        assert clients["2000-01-01"].get(test_path).text == "hello"
+        assert completed_tasks == ["constructor"]
 
-        assert clients["2001-01-01"].get(test_path).json() == {"message": "hello"}
-        assert completed_tasks == ["original"]
-
-    def test__response_background_migration__removes_dependency_tasks_for_an_explicit_response(
-        self,
-        create_versioned_clients: CreateVersionedClients,
-        test_path: Literal["/test"],
-        router: VersionedAPIRouter,
-    ):
-        completed_tasks: list[str] = []
-
-        def dependency(background_tasks: BackgroundTasks) -> None:
-            background_tasks.add_task(completed_tasks.append, "original")
-
-        @router.get(test_path)
-        async def endpoint(_dependency: None = Depends(dependency)):
-            return JSONResponse({"message": "hello"})
-
-        @convert_response_to_previous_version_for(test_path, ["GET"])
-        def migrator(response: ResponseInfo):
-            assert response.background is not None
-            response.background = None
-
-        clients = create_versioned_clients(version_change(migrator=migrator))
-
-        assert clients["2000-01-01"].get(test_path).json() == {"message": "hello"}
-        assert completed_tasks == []
-
-        assert clients["2001-01-01"].get(test_path).json() == {"message": "hello"}
-        assert completed_tasks == ["original"]
+        assert clients["2001-01-01"].get(test_path).text == "hello"
+        assert completed_tasks == ["constructor", "constructor"]
 
     def test__data_migration_params__are_inserted_before_variadic_keyword_params(
         self,
@@ -1402,33 +1481,6 @@ def test__request_and_response_migrations__for_endpoint_with_http_exception__can
     resp_2001 = clients["2001-01-01"].post("/test")
     assert resp_2001.status_code == 404
     assert resp_2001.json() == {"detail": "Not Found"}
-
-
-def test__request_and_response_migrations__for_http_exception__can_add_background_task(
-    create_versioned_clients: CreateVersionedClients,
-    router: VersionedAPIRouter,
-):
-    completed_tasks: list[str] = []
-
-    @router.post("/test")
-    async def endpoint():
-        raise HTTPException(status_code=400, detail="bad request")
-
-    @convert_response_to_previous_version_for("/test", ["POST"], migrate_http_errors=True)
-    def response_converter(response: ResponseInfo):
-        response.background = BackgroundTask(completed_tasks.append, "migrated")
-
-    clients = create_versioned_clients(version_change(resp=response_converter))
-
-    resp_2000 = clients["2000-01-01"].post("/test")
-    assert resp_2000.status_code == 400
-    assert resp_2000.json() == {"detail": "bad request"}
-    assert completed_tasks == ["migrated"]
-
-    resp_2001 = clients["2001-01-01"].post("/test")
-    assert resp_2001.status_code == 400
-    assert resp_2001.json() == {"detail": "bad request"}
-    assert completed_tasks == ["migrated"]
 
 
 def test__request_and_response_migrations__for_endpoint_with_no_default_status_code__response_should_contain_default(

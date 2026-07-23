@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from typing import ClassVar, Union, cast
 
 from fastapi import Request, Response
-from starlette.background import BackgroundTask, BackgroundTasks
 from starlette.datastructures import FormData, MutableHeaders, UploadFile
 from typing_extensions import Any, overload
 
@@ -42,25 +41,25 @@ class RequestInfo:
 
 
 class ResponseInfo:
-    __slots__ = ("_background", "_background_tasks", "_response", "body")
+    __slots__ = ("_media_type_resolver", "_media_type_was_set", "_response", "body")
 
     def __init__(
         self,
         response: Response,
         body: Any,
         *,
-        _background_tasks: Union[BackgroundTasks, None] = None,
+        _media_type_resolver: Union[Callable[[object], tuple[Union[str, None], str]], None] = None,
     ):
         super().__init__()
         self.body = body
         self._response = response
-        self._background_tasks = _background_tasks
-        if response.background is not None:
-            self._background: Union[BackgroundTask, None] = response.background
-        elif _background_tasks is not None and _background_tasks.tasks:
-            self._background = _background_tasks
-        else:
-            self._background = None
+        self._media_type_resolver = _media_type_resolver
+        self._media_type_was_set = False
+
+    def _resolve_media_type(self) -> None:
+        if self._media_type_resolver is not None:
+            self._response.media_type, self._response.charset = self._media_type_resolver(self.body)
+            self._media_type_resolver = None
 
     @property
     def status_code(self) -> int:
@@ -76,30 +75,20 @@ class ResponseInfo:
 
     @property
     def media_type(self) -> Union[str, None]:
+        self._resolve_media_type()
         return self._response.media_type
 
     @media_type.setter
     def media_type(self, value: Union[str, None]) -> None:
+        self._resolve_media_type()
         self._response.media_type = value
-
-    @property
-    def background(self) -> Union[BackgroundTask, None]:
-        if self._background_tasks is None:
-            return self._response.background
-        return self._background
-
-    @background.setter
-    def background(self, value: Union[BackgroundTask, None]) -> None:
-        if self._background_tasks is None:
-            self._response.background = value
-        else:
-            self._background = value
-            if value is None:
-                self._background_tasks.tasks = []
-            elif isinstance(value, BackgroundTasks):
-                self._background_tasks.tasks = value.tasks
-            else:
-                self._background_tasks.tasks = [value]
+        self._media_type_was_set = True
+        if "content-type" in self._response.headers:
+            del self._response.headers["content-type"]
+        if value is not None:
+            if value.startswith("text/") and "charset=" not in value.lower():
+                value += "; charset=" + self._response.charset
+            self._response.headers["content-type"] = value
 
     @same_method_definition_as_in(Response.set_cookie)
     def set_cookie(self, *args: Any, **kwargs: Any) -> None:

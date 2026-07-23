@@ -301,13 +301,11 @@ Cadwyn can migrate more than just request bodies.
 * `status_code: int`
 * `headers: starlette.datastructures.MutableHeaders`
 * `media_type: str | None`
-* `background: starlette.background.BackgroundTask | None`
 * [set_cookie](https://www.starlette.io/responses/#set-cookie)
 * [delete_cookie](https://www.starlette.io/responses/#delete-cookie)
 
-`media_type` maps directly to the corresponding Starlette response attribute. As in Starlette, changing it after
-response initialization does not rewrite the existing `Content-Type` header. `background` controls the task attached
-to the final response, including when an endpoint returns a response body instead of a `Response` instance.
+Changing `media_type` also updates the final response's `Content-Type` header, whether the endpoint returns a
+Starlette response or an ordinary response body.
 
 #### Internal representations
 

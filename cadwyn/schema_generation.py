@@ -28,6 +28,7 @@ import fastapi.utils
 import pydantic
 import pydantic._internal._decorators
 from fastapi import Response
+from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
@@ -646,7 +647,7 @@ class _AnnotationTransformer:
         )
         route.dependant = route_copy.dependant
         route.body_field = route_copy.body_field
-        _add_data_migration_params(route)
+        _add_request_and_response_params(route)
 
     @classmethod
     def _modify_callable_annotations(  # pragma: no branch # because of lambdas
@@ -773,12 +774,20 @@ def is_coroutine_callable(call: Callable[..., object]) -> bool:  # pragma: no co
     return iscoroutinefunction(dunder_call)
 
 
-def _add_data_migration_params(route: APIRoute):
+def _dependant_uses_background_tasks(dependant: Dependant) -> bool:
+    return dependant.background_tasks_param_name is not None or any(
+        _dependant_uses_background_tasks(dependency) for dependency in dependant.dependencies
+    )
+
+
+def _add_request_and_response_params(route: APIRoute):
     if not route.dependant.request_param_name:
         route.dependant.request_param_name = _CADWYN_REQUEST_PARAM_NAME
     if not route.dependant.response_param_name:
         route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
-    if not route.dependant.background_tasks_param_name:
+    if not route.dependant.background_tasks_param_name and any(
+        _dependant_uses_background_tasks(dependency) for dependency in route.dependant.dependencies
+    ):
         parameter_names = inspect.signature(route.endpoint).parameters
         background_tasks_param_name = _CADWYN_BACKGROUND_TASKS_PARAM_NAME
         while background_tasks_param_name in parameter_names:

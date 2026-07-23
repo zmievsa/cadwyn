@@ -29,7 +29,7 @@ from cadwyn.exceptions import (
     RouterPathParamsModifiedError,
 )
 from cadwyn.schema_generation import (
-    _add_data_migration_params,
+    _add_request_and_response_params,
     generate_versioned_models,
 )
 from cadwyn.structure import Version, VersionBundle
@@ -233,7 +233,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
         for route_index, head_route in enumerate(self.head_router.routes):
             if not isinstance(head_route, APIRoute):
                 continue
-            _add_data_migration_params(head_route)
+            _add_request_and_response_params(head_route)
             copy_of_dependant = copy(head_route.dependant)
 
             for older_router in list(routers.values()):
@@ -530,14 +530,9 @@ def _add_data_migrations_to_route(
     dependant_for_request_migrations: "Dependant",
     versions: VersionBundle,
 ):
-    if not (  # pragma: no cover
-        route.dependant.request_param_name
-        and route.dependant.response_param_name
-        and route.dependant.background_tasks_param_name
-    ):
+    if not (route.dependant.request_param_name and route.dependant.response_param_name):  # pragma: no cover
         raise CadwynError(
-            f"{route.dependant.request_param_name=}, {route.dependant.response_param_name=}, "
-            f"{route.dependant.background_tasks_param_name=} "
+            f"{route.dependant.request_param_name=}, {route.dependant.response_param_name=} "
             f"for route {list(_route_methods(route))} {route.path} which should not be possible. "
             "Please, contact my author.",
         )
