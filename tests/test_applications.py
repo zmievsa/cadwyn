@@ -256,6 +256,29 @@ def test__unversioned_include_router__hidden_plain_route_does_not_create_public_
     assert "version=unversioned" not in docs_response.text
 
 
+def test__unversioned_include_router__visible_nested_plain_route_creates_public_openapi_schema():
+    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    parent_router = APIRouter()
+    child_router = APIRouter()
+    parent_router.include_router(child_router, prefix="/public")
+    app.include_router(parent_router)
+
+    async def public_route(_request):
+        return Response("public")
+
+    child_router.add_route("/health", public_route, methods=["GET"])
+
+    with TestClient(app) as client:
+        route_response = client.get("/public/health")
+        schema_response = client.get("/openapi.json?version=unversioned")
+        docs_response = client.get("/docs")
+
+    assert route_response.status_code == 200, route_response.text
+    assert route_response.text == "public"
+    assert schema_response.status_code == 200, schema_response.json()
+    assert "version=unversioned" in docs_response.text
+
+
 def test__unversioned_include_router__included_tags_are_used_for_openapi_tag_filtering():
     app = Cadwyn(
         versions=VersionBundle(Version("2022-11-16")),
@@ -402,6 +425,42 @@ def test__get_openapi():
 
     resp = client_without_headers.get("/openapi.json?version=2021-01-01")
     assert resp.status_code == 200
+
+
+def test__get_openapi__api_version_header_has_configured_metadata_and_date_schema():
+    app = Cadwyn(
+        versions=VersionBundle(Version("2022-11-16")),
+        api_version_title="Requested API version",
+        api_version_description="Selects the version contract",
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    async def get_items():
+        return []
+
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app) as client:
+        response = client.get("/openapi.json?version=2022-11-16")
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["paths"]["/items"]["get"]["parameters"] == [
+        {
+            "name": "x-api-version",
+            "in": "header",
+            "required": False,
+            "schema": {
+                "type": "string",
+                "format": "date",
+                "title": "Requested API version",
+                "description": "Selects the version contract",
+                "default": "2022-11-16",
+            },
+            "description": "Selects the version contract",
+            "examples": {"default": {"value": "2022-11-16"}},
+        }
+    ]
 
 
 def test__get_openapi__nonexisting_version__should_return_404():

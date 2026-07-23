@@ -19,6 +19,9 @@ class MyVersionChange(VersionChange):
         schema(ModelWithWeirdFields)
         .field("gaz")
         .existed_as(type=conbytes(strict=True), info=Field(min_length=3, title="Hewwo")),
+        schema(ModelWithWeirdFields)
+        .field("taz")
+        .had(default_factory=lambda: 91),  # fmt: skip  # Keep inspect.getsource() starting with `.had`.
     )
 
 
