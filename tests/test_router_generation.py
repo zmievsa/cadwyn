@@ -586,7 +586,7 @@ def test__endpoint_had_dependencies(
     assert len(routes_2001[1].dependencies) == 1
 
 
-def test__only_exists_in_older_versions__endpoint_is_not_a_route__error(
+def test__only_exists_in_older_versions__endpoint_is_not_a_route__should_raise_lookup_error(
     router: VersionedAPIRouter,
     test_endpoint: Endpoint,
 ):
@@ -639,7 +639,7 @@ def test__only_exists_in_older_versions__applied_twice__should_raise_error(
             raise NotImplementedError
 
 
-def test__router_generation__changing_a_deleted_endpoint__error(
+def test__router_generation__changing_a_deleted_endpoint__should_raise_router_generation_error(
     router: VersionedAPIRouter,
     create_versioned_app: CreateVersionedApp,
 ):
@@ -657,7 +657,7 @@ def test__router_generation__changing_a_deleted_endpoint__error(
         create_versioned_app(version_change(endpoint("/test", ["GET"]).had(description="Hewwo")))
 
 
-def test__router_generation__changing_a_non_existent_endpoint__error(
+def test__router_generation__changing_a_non_existent_endpoint__should_raise_router_generation_error(
     router: VersionedAPIRouter,
     create_versioned_app: CreateVersionedApp,
 ):
@@ -670,7 +670,7 @@ def test__router_generation__changing_a_non_existent_endpoint__error(
         create_versioned_app(version_change(endpoint("/test", ["GET"]).had(dependencies=[])))
 
 
-def test__router_generation__re_creating_an_existing_endpoint__error(
+def test__router_generation__re_creating_an_existing_endpoint__should_raise_router_generation_error(
     test_endpoint: Endpoint,
     test_path: str,
     create_versioned_app: CreateVersionedApp,
@@ -766,7 +766,7 @@ def test__router_generation__editing_multiple_methods_of_multiple_endpoints__sho
     assert routes_2001[2].description == ""
 
 
-def test__router_generation__deleting_a_deleted_endpoint__error(
+def test__router_generation__deleting_a_deleted_endpoint__should_raise_router_generation_error(
     router: VersionedAPIRouter,
     create_versioned_app: CreateVersionedApp,
 ):
@@ -959,7 +959,7 @@ def get_nested_field_type(annotation: Any) -> Union[type[BaseModel], None]:
     return annotation_of_its_foo_field.model_fields["foo"].annotation
 
 
-def test__router_generation__re_creating_a_non_endpoint__error(
+def test__router_generation__re_creating_a_non_endpoint__should_raise_router_generation_error(
     create_versioned_app: CreateVersionedApp,
 ):
     with pytest.raises(
@@ -971,7 +971,7 @@ def test__router_generation__re_creating_a_non_endpoint__error(
         create_versioned_app(version_change(endpoint("/test", ["GET"]).existed))
 
 
-def test__router_generation__changing_attribute_to_the_same_value__error(
+def test__router_generation__changing_attribute_to_the_same_value__should_raise_router_generation_error(
     test_endpoint: Endpoint,
     test_path: str,
     create_versioned_app: CreateVersionedApp,
@@ -1298,6 +1298,41 @@ def test__router_generation__updating_request_depends(
 
     assert client_2001.post("/test2", json={}).json() == {}
     assert client_2001.post("/test2", json={"my_schema": {"foo": "bar"}}).json() == {}
+
+
+def test__router_generation__enum_member_dependency_default_works_only_in_versions_where_member_exists(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    def dependency(value: StrEnum = StrEnum.a) -> StrEnum:
+        return value
+
+    @router.get("/test")
+    async def route(value: StrEnum = Depends(dependency)):
+        return value.name
+
+    clients = create_versioned_clients(
+        version_change(enum(StrEnum).had(a=StrEnum.a.value)),
+        version_change(enum(StrEnum).didnt_have("a")),
+    )
+
+    assert clients["2002-01-01"].get("/test").json() == "a"
+    response = clients["2001-01-01"].get("/test")
+    assert response.status_code == 422
+    assert response.json() == snapshot(
+        {
+            "detail": [
+                {
+                    "type": "is_instance_of",
+                    "loc": ["query", "value"],
+                    "msg": "Input should be an instance of StrEnum",
+                    "input": StrEnum.a.value,
+                    "ctx": {"class": "StrEnum"},
+                }
+            ]
+        }
+    )
+    assert clients["2000-01-01"].get("/test").json() == "a"
 
 
 def test__router_generation__using_unversioned_schema_in_body(

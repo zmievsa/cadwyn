@@ -41,8 +41,11 @@ class UserAddressResourceList(BaseModel):
     data: list[UserAddressResource]
 
 
-class ChangeAddressToList(VersionChange):
-    description = "Change vat id to list"
+class ReplaceUserAddressWithListOfAddresses(VersionChange):
+    description = (
+        "Users can now store multiple addresses instead of a single address so "
+        "they can choose among delivery locations."
+    )
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser).field("addresses").didnt_exist,
         schema(BaseUser).field("address").existed_as(type=str, info=Field()),
@@ -58,8 +61,11 @@ class ChangeAddressToList(VersionChange):
         response.body["address"] = response.body["addresses"][0]
 
 
-class ChangeAddressesToSubresource(VersionChange):
-    description = "Change vat ids to subresource"
+class MoveUserAddressesToSubresource(VersionChange):
+    description = (
+        "User addresses are now separate resources with stable IDs, allowing "
+        "clients to retrieve each address independently."
+    )
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser).field("addresses").existed_as(type=list[str], info=Field()),
         schema(UserCreateRequest).field("default_address").didnt_exist,
@@ -77,18 +83,18 @@ class ChangeAddressesToSubresource(VersionChange):
         response.body["addresses"] = [id["value"] for id in response.body["_prefetched_addresses"]]
 
 
-class RemoveAddressesToCreateFromLatest(VersionChange):
+class RemoveAddressesToCreateFromLatestUserSchema(VersionChange):
     description = (
-        "In order to support old versions, we gotta have `addresses_to_create` located in "
-        "head schemas but we do not need this field in latest schemas."
+        "'addresses_to_create' is no longer accepted when creating users because "
+        "additional addresses are now managed as separate resources."
     )
     instructions_to_migrate_to_previous_version = (schema(UserCreateRequest).field("addresses_to_create").didnt_exist,)
 
 
 version_bundle = VersionBundle(
-    HeadVersion(RemoveAddressesToCreateFromLatest),
-    Version("2002-01-01", ChangeAddressesToSubresource),
-    Version("2001-01-01", ChangeAddressToList),
+    HeadVersion(RemoveAddressesToCreateFromLatestUserSchema),
+    Version("2002-01-01", MoveUserAddressesToSubresource),
+    Version("2001-01-01", ReplaceUserAddressWithListOfAddresses),
     Version("2000-01-01"),
 )
 

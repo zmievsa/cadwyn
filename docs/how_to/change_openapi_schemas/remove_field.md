@@ -14,11 +14,10 @@ Let's say that our API has a mandatory `UserResource.date_of_birth` field. Let's
 
 
     class RemoveZodiacSignFromUser(VersionChange):
-        description = (
-            "Remove 'zodiac_sign' field from UserResource because "
-            "it can be inferred from user's date of birth and because "
-            "only a small number of users has utilized it."
-        )
+        """User responses no longer include 'zodiac_sign' because it can be
+        derived from 'date_of_birth' and is rarely used.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(UserResource)
             .field("zodiac_sign")
@@ -60,11 +59,11 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
     from users import BaseUser
 
 
-    class RemoveMiddleNameFromLatestVersion(VersionChange):
-        description = (
-            "Remove 'User.middle_name' from latest but keep it in HEAD "
-            "to support versions before 2001-01-01."
-        )
+    class RemoveUserMiddleNameFromLatestVersion(VersionChange):
+        """User requests and responses no longer include 'middle_name' because
+        the product no longer uses it.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser).field("middle_name").didnt_exist,
         )
@@ -78,7 +77,10 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
 
 
     class RemoveMiddleNameFromUser(VersionChange):
-        description = "Remove 'User.middle_name' field"
+        """User requests and responses no longer include 'middle_name' because
+        the product no longer uses it.
+        """
+
         instructions_to_migrate_to_previous_version = (
             schema(BaseUser)
             .field("middle_name")
@@ -99,7 +101,7 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
     from .v2001_01_01 import RemoveZodiacSignFromUser
 
     version_bundle = VersionBundle(
-        HeadVersion(RemoveMiddleNameFromLatestVersion),
+        HeadVersion(RemoveUserMiddleNameFromLatestVersion),
         Version("2001-01-01", RemoveMiddleNameFromUser),
         Version("2000-01-01"),
     )

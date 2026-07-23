@@ -39,8 +39,9 @@ class UserAddressResourceList(BaseModel):
     data: list[UserAddressResource]
 
 
-class ChangeAddressToList(VersionChange):
-    description = "Change vat id to list"
+class ReplaceUserAddressWithListOfAddresses(VersionChange):
+    """Users can now store multiple addresses instead of a single address so they can choose among delivery locations."""
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser).field("addresses").didnt_exist,
         schema(BaseUser).field("address").existed_as(type=str, info=Field()),
@@ -56,8 +57,9 @@ class ChangeAddressToList(VersionChange):
         response.body["address"] = response.body["addresses"][0]
 
 
-class ChangeAddressesToSubresource(VersionChange):
-    description = "Change vat ids to subresource"
+class MoveUserAddressesToSubresource(VersionChange):
+    """User addresses are now separate resources with stable IDs, allowing clients to retrieve each address independently."""
+
     instructions_to_migrate_to_previous_version = (
         schema(BaseUser)
         .field("addresses")
@@ -81,20 +83,21 @@ class ChangeAddressesToSubresource(VersionChange):
         ]
 
 
-class RemoveAddressesToCreateFromLatest(VersionChange):
-    description = (
-        "In order to support old versions, we gotta have `addresses_to_create` "
-        "located in head schemas but we do not need this field in latest schemas."
-    )
+class RemoveAddressesToCreateFromLatestUserSchema(VersionChange):
+    """Stop accepting 'addresses_to_create' when creating users.
+
+    Additional addresses are now managed as separate resources.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(UserCreateRequest).field("addresses_to_create").didnt_exist,
     )
 
 
 version_bundle = VersionBundle(
-    HeadVersion(RemoveAddressesToCreateFromLatest),
-    Version("v10", ChangeAddressesToSubresource),
-    Version("v9", ChangeAddressToList),
+    HeadVersion(RemoveAddressesToCreateFromLatestUserSchema),
+    Version("v10", MoveUserAddressesToSubresource),
+    Version("v9", ReplaceUserAddressWithListOfAddresses),
     Version("v8"),
 )
 
