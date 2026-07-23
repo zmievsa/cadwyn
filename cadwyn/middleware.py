@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from typing import Annotated, Any, Literal, Optional, Protocol, Union
 
-import fastapi
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
 from starlette.types import ASGIApp
@@ -56,7 +55,9 @@ class URLVersionManager:
 def _generate_api_version_dependency(
     *,
     api_version_pythonic_parameter_name: str,
-    default_value: str,
+    version_example: str,
+    api_version_is_required: bool,
+    api_version_default_value: Union[str, None],
     fastapi_depends_class: Callable[..., Any],
     validation_data_type: Any,
     title: Optional[str] = None,
@@ -74,12 +75,12 @@ def _generate_api_version_dependency(
                 annotation=Annotated[
                     validation_data_type,
                     fastapi_depends_class(
-                        openapi_examples={"default": {"value": default_value}},
+                        openapi_examples={"default": {"value": version_example}},
                         title=title,
                         description=description,
                     ),
                 ],
-                default=default_value if fastapi_depends_class != fastapi.Path else inspect.Signature.empty,
+                default=inspect.Signature.empty if api_version_is_required else api_version_default_value,
             )
         ]
     )

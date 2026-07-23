@@ -20,6 +20,11 @@ from cadwyn.structure.common import VersionType
 _logger = getLogger(__name__)
 
 
+def _get_closest_suitable_version(version: VersionType, versions: Sequence[VersionType]) -> Union[VersionType, None]:
+    index = bisect.bisect_right(versions, version)
+    return versions[index - 1] if index else None
+
+
 class _RootCadwynAPIRouter(APIRouter):
     def __init__(
         self,
@@ -54,14 +59,11 @@ class _RootCadwynAPIRouter(APIRouter):
         to some earlier version, making receivables behavior consistent even if API keeps getting new versions.
         """
         if self.api_version_format == "date":
-            index = bisect.bisect_left(self.versions, version)
+            picked_version = _get_closest_suitable_version(version, self.versions)
             # That's when we try to get a version earlier than the earliest possible version
-            if index == 0:
+            if picked_version is None:
                 return []
-            picked_version = self.versions[index - 1]
             self.api_version_var.set(picked_version)
-            # as bisect_left returns the index where to insert item x in list a, assuming a is sorted
-            # we need to get the previous item and that will be a match
             return self.versioned_routers[picked_version].routes
         return []  # pragma: no cover # This should not be possible
 

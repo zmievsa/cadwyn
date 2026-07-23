@@ -10,6 +10,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Simplified contributor setup and development commands (#387)
 - Standardized test names around the `what`, `when`, and `expected` convention and documented test organization (#397)
 
+### Fixed
+
+- Mark the OpenAPI API version parameter as required unless the server has a configured default value (#277)
+
 ## [7.1.1]
 
 ### Changed
