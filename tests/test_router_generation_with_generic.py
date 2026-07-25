@@ -2,6 +2,7 @@ from typing import Annotated, Generic, TypeVar, Union
 
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
+from pydantic.functional_validators import AfterValidator
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
 
 from cadwyn import RequestInfo, convert_request_to_next_version_for
@@ -23,8 +24,17 @@ class ParametrizedSchema(GenericSchema[bool]):
     pass
 
 
-class ExternalGenericWrapper(BaseModel, Generic[SchemaT]):
+class ExternalGenericWrapperBase(BaseModel):
+    total: int
+
+
+def uppercase(value: str) -> str:
+    return value.upper()
+
+
+class ExternalGenericWrapper(ExternalGenericWrapperBase, Generic[SchemaT]):
     items: list[SchemaT]
+    label: Annotated[str, AfterValidator(uppercase)]
 
 
 class SchemaNestedInExternalWrapper(BaseModel):
@@ -55,8 +65,11 @@ class ParametrizedVersionChange(VersionChange):
 
 
 class NestedSchemaVersionChange(VersionChange):
-    description = "Add bar to the nested schema"
-    instructions_to_migrate_to_previous_version = (schema(SchemaNestedInExternalWrapper).field("bar").didnt_exist,)
+    description = "Add fields to the nested schema and its external wrapper base"
+    instructions_to_migrate_to_previous_version = (
+        schema(SchemaNestedInExternalWrapper).field("bar").didnt_exist,
+        schema(ExternalGenericWrapperBase).field("total").didnt_exist,
+    )
 
 
 router = VersionedAPIRouter()
@@ -77,7 +90,11 @@ async def route_with_parametrized_schema(dep: ParametrizedSchema) -> None:
     response_model=ExternalGenericWrapper[SchemaNestedInExternalWrapper],
 )
 async def route_with_schema_nested_in_external_generic_wrapper() -> dict[str, object]:
-    return {"items": [{"foo": 1, "bar": "two"}]}
+    return {
+        "items": [{"foo": 1, "bar": "two"}],
+        "label": "wrapped",
+        "total": 1,
+    }
 
 
 def test__router_generation__using_generic_schema_in_body(
@@ -132,6 +149,10 @@ def test__router_generation__migrates_schema_nested_in_external_generic_wrapper(
     response_2001 = client_2001.get("/external-generic-wrapper")
 
     assert response_2000.status_code == HTTP_200_OK
-    assert response_2000.json() == {"items": [{"foo": 1}]}
+    assert response_2000.json() == {"items": [{"foo": 1}], "label": "WRAPPED"}
     assert response_2001.status_code == HTTP_200_OK
-    assert response_2001.json() == {"items": [{"foo": 1, "bar": "two"}]}
+    assert response_2001.json() == {
+        "items": [{"foo": 1, "bar": "two"}],
+        "label": "WRAPPED",
+        "total": 1,
+    }

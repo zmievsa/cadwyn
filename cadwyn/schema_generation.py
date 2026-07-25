@@ -290,8 +290,10 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
         return model.__annotations__[name]  # pragma: no cover
 
     generic_metadata = getattr(model, "__pydantic_generic_metadata__", {})
-    if generic_metadata.get("origin") is not None:
-        defined_annotations = {name: field.annotation for name, field in model.model_fields.items()}
+    if (generic_origin := generic_metadata.get("origin")) is not None:
+        defined_annotations = {
+            name: _rebuild_annotated(name) for name in generic_origin.__annotations__ if name in model.model_fields
+        }
     else:
         defined_annotations = model.__annotations__
 
