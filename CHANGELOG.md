@@ -12,7 +12,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-- Mark the OpenAPI API version parameter as required unless the server has a configured default value (#277)
+- Mark each OpenAPI API version parameter as required unless omitting it can select that documented version (#277)
 
 ## [7.1.1]
 

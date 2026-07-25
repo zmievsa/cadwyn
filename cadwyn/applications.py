@@ -74,13 +74,14 @@ def _get_api_version_parameter_metadata(
     default_value: str,
     *,
     api_version_format: APIVersionFormat,
+    documented_version: str,
     version_values: set[str],
 ) -> tuple[bool, Union[str, None]]:
     """Return whether the parameter is required and any default that OpenAPI can represent."""
     if api_version_format == "date":
         sorted_version_values = sorted(version_values)
         routed_version = _get_closest_suitable_version(default_value, sorted_version_values)
-        if routed_version is None:
+        if routed_version != documented_version:
             return True, None
         try:
             normalized_default_value = _API_VERSION_DATE_ADAPTER.validate_python(default_value).isoformat()
@@ -90,7 +91,7 @@ def _get_api_version_parameter_metadata(
             return False, None
         return False, normalized_default_value
     if api_version_format == "string":
-        return (False, default_value) if default_value in version_values else (True, None)
+        return (False, default_value) if default_value == documented_version else (True, None)
     assert_never(api_version_format)
 
 
@@ -555,6 +556,7 @@ class Cadwyn(FastAPI):
                 _get_api_version_parameter_metadata(
                     self._api_version_default_value,
                     api_version_format=self.api_version_format,
+                    documented_version=version,
                     version_values=set(self.router.versioned_routers),
                 )
             )

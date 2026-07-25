@@ -433,40 +433,51 @@ async def _get_default_api_version(_request: Request) -> str:
 
 
 @pytest.mark.parametrize(
-    ("default_value", "api_version_format", "versions", "expected_openapi_default"),
+    ("default_value", "api_version_format", "versions", "documented_version", "expected_openapi_default"),
     [
-        ("2022-11-16", "date", VersionBundle(Version("2023-04-14"), Version("2022-11-16")), "2022-11-16"),
+        (
+            "2022-11-16",
+            "date",
+            VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+            "2022-11-16",
+            "2022-11-16",
+        ),
         (
             "2023-04-14T00:00:00",
             "date",
             VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+            "2023-04-14",
             "2023-04-14",
         ),
         (
             "20230414",
             "date",
             VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+            "2023-04-14",
             None,
         ),
         (
             "2022278400",
             "date",
             VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+            "2022-11-16",
             None,
         ),
         (
             _get_default_api_version,
             "date",
             VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+            "2022-11-16",
             None,
         ),
-        ("v1", "string", VersionBundle(Version("v2"), Version("v1")), "v1"),
+        ("v1", "string", VersionBundle(Version("v2"), Version("v1")), "v1", "v1"),
     ],
 )
 def test__get_openapi__version_header_with_server_default_is_optional(
     default_value: "str | Callable",
     api_version_format: "Literal['date', 'string']",
     versions: VersionBundle,
+    documented_version: str,
     expected_openapi_default: "str | None",
 ):
     app = Cadwyn(
@@ -484,7 +495,7 @@ def test__get_openapi__version_header_with_server_default_is_optional(
 
     with TestClient(app) as client:
         omitted_version_response = client.get("/foo")
-        schema_response = client.get(f"/openapi.json?version={versions.version_values[0]}")
+        schema_response = client.get(f"/openapi.json?version={documented_version}")
 
     parameter = schema_response.json()["paths"]["/foo"]["get"]["parameters"][0]
     assert omitted_version_response.status_code == 200
@@ -494,6 +505,62 @@ def test__get_openapi__version_header_with_server_default_is_optional(
         assert "default" not in parameter["schema"]
     else:
         assert parameter["schema"]["default"] == expected_openapi_default
+
+
+@pytest.mark.parametrize(
+    "router_registration_order",
+    [
+        ("2023-04-14", "2022-11-16"),
+        ("2022-11-16", "2023-04-14"),
+    ],
+)
+def test__get_openapi__static_default_only_makes_its_routed_version_optional(
+    router_registration_order: tuple[str, str],
+):
+    app = Cadwyn(
+        versions=VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+        api_version_default_value="2022-11-16",
+    )
+    newer_router = APIRouter()
+    older_router = APIRouter()
+
+    @newer_router.get("/new-only")
+    def new_only():
+        return {"version": "2023-04-14"}
+
+    @older_router.get("/old-only")
+    def old_only():
+        return {"version": "2022-11-16"}
+
+    routers = {
+        "2023-04-14": newer_router,
+        "2022-11-16": older_router,
+    }
+    with pytest.warns(DeprecationWarning):
+        for version in router_registration_order:
+            app.add_header_versioned_routers(  # ty: ignore[deprecated]  # This test verifies the legacy API.
+                routers[version],
+                header_value=version,
+            )
+
+    with TestClient(app) as client:
+        omitted_newer_response = client.get("/new-only")
+        explicit_newer_response = client.get("/new-only", headers={"x-api-version": "2023-04-14"})
+        omitted_older_response = client.get("/old-only")
+        newer_schema_response = client.get("/openapi.json?version=2023-04-14")
+        older_schema_response = client.get("/openapi.json?version=2022-11-16")
+
+    assert omitted_newer_response.status_code == 404
+    assert explicit_newer_response.status_code == 200
+    assert omitted_older_response.status_code == 200
+
+    newer_parameter = newer_schema_response.json()["paths"]["/new-only"]["get"]["parameters"][0]
+    assert newer_parameter["required"] is True
+    assert "default" not in newer_parameter["schema"]
+
+    older_parameter = older_schema_response.json()["paths"]["/old-only"]["get"]["parameters"][0]
+    assert older_parameter["required"] is False
+    assert older_parameter["schema"]["default"] == "2022-11-16"
 
 
 def test__get_openapi__default_matches_legacy_router_added_after_init__version_header_is_optional():
