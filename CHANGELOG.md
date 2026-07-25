@@ -7,6 +7,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Changed
 
+- Added FastAPI 0.140 compatibility coverage for security dependencies (#400)
 - Simplified contributor setup and development commands (#387)
 - Standardized test names around the `what`, `when`, and `expected` convention and documented test organization (#397)
 
