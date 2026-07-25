@@ -5,6 +5,11 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- Simplified contributor setup and development commands (#387)
+- Standardized test names around the `what`, `when`, and `expected` convention and documented test organization (#397)
+
 ### Fixed
 
 - Preserve nested schema migrations and `Annotated` field metadata in external generic wrappers (#394)

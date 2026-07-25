@@ -231,7 +231,7 @@ class _PerFieldValidatorWrapper(_ValidatorWrapper):
 
 
 def _wrap_validator(
-    func: Callable[..., object],
+    func: "_decorators.DecoratedType[object]",
     is_pydantic_v1_style_validator: Any,
     decorator_info: _decorators.DecoratorInfo,
 ):

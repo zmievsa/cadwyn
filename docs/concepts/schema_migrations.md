@@ -11,8 +11,11 @@ from cadwyn import VersionChange, schema
 from pydantic import Field
 
 
-class MyChange(VersionChange):
-    description = "..."
+class RemoveFooFromMySchema(VersionChange):
+    """'MySchema.foo' has been removed because clients no longer need the
+    legacy list of values.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema)
         .field("foo")
@@ -26,8 +29,11 @@ class MyChange(VersionChange):
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
-    description = "..."
+class AddFooToMySchema(VersionChange):
+    """'MySchema.foo' is now available so clients can read the value directly
+    instead of deriving it from other fields.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").didnt_exist,
     )
@@ -41,8 +47,11 @@ The following code sets an attribute of a field, such as a description:
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
-    description = "..."
+class ChangeMySchemaFooDescription(VersionChange):
+    """The documentation for 'MySchema.foo' now explains the field's purpose
+    so clients can interpret its value correctly.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").had(description="Foo"),
     )
@@ -54,8 +63,11 @@ The following code un-sets an attribute of a field, as if it never existed:
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
-    description = "..."
+class AddDescriptionToMySchemaFoo(VersionChange):
+    """'MySchema.foo' now has a documented meaning so clients do not need to
+    infer how to use it.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).field("foo").didnt_have("description"),
     )
@@ -91,8 +103,11 @@ def validate_foo(cls, value):
     return value
 
 
-class MyChange(VersionChange):
-    description = "..."
+class RemoveFooValidatorFromMySchema(VersionChange):
+    """'MySchema.foo' no longer requires colon-separated values because the
+    field now accepts plain text.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).validator(validate_foo).existed,
     )
@@ -105,8 +120,11 @@ from cadwyn import VersionChange, schema
 from pydantic import Field, validator
 
 
-class MyChange(VersionChange):
-    description = "..."
+class AddFooValidatorToMySchema(VersionChange):
+    """'MySchema.foo' must now contain a colon to distinguish the value's two
+    components.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).validator(MySchema.validate_foo).didnt_exist,
     )
@@ -121,8 +139,11 @@ The following code replaces all schema name occurrences with a new one to ensure
 from cadwyn import VersionChange, schema
 
 
-class MyChange(VersionChange):
-    description = "..."
+class RenameOtherSchemaToMySchema(VersionChange):
+    """'OtherSchema' has been renamed to 'MySchema' to match the resource name
+    used throughout the API.
+    """
+
     instructions_to_migrate_to_previous_version = (
         schema(MySchema).had(name="OtherSchema"),
     )
