@@ -430,6 +430,7 @@ def test__get_openapi():
 def test__get_openapi__api_version_header_has_configured_metadata_and_date_schema():
     app = Cadwyn(
         versions=VersionBundle(Version("2022-11-16")),
+        api_version_default_value="2022-11-16",
         api_version_title="Requested API version",
         api_version_description="Selects the version contract",
     )
@@ -442,8 +443,11 @@ def test__get_openapi__api_version_header_has_configured_metadata_and_date_schem
     app.generate_and_include_versioned_routers(router)
 
     with TestClient(app) as client:
+        items_response = client.get("/items")
         response = client.get("/openapi.json?version=2022-11-16")
 
+    assert items_response.status_code == 200
+    assert items_response.json() == []
     assert response.status_code == 200, response.json()
     assert response.json()["paths"]["/items"]["get"]["parameters"] == [
         {
