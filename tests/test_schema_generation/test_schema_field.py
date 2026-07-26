@@ -69,7 +69,7 @@ def test__field_existed_as__original_schema_has_a_field(create_runtime_schemas: 
 
 
 def test__field_existed_as__extras_are_added(create_runtime_schemas: CreateRuntimeSchemas):
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match="Using extra keyword arguments on"):
         schemas = create_runtime_schemas(
             version_change(
                 schema(EmptySchema)

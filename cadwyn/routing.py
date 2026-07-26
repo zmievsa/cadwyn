@@ -28,7 +28,7 @@ class _RootCadwynAPIRouter(APIRouter):
         api_version_var: ContextVar[Union[str, None]],
         api_version_format: APIVersionFormat,
         **kwargs: Any,
-    ):
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.versioned_routers: dict[VersionType, APIRouter] = {}
         self.api_version_parameter_name = api_version_parameter_name.lower()

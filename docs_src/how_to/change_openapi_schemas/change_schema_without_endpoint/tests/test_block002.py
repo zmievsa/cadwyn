@@ -1,6 +1,6 @@
+from cadwyn import Cadwyn, Version, VersionBundle
 from fastapi.testclient import TestClient
 
-from cadwyn import Cadwyn, Version, VersionBundle
 from docs_src.how_to.change_openapi_schemas.change_schema_without_endpoint.block002 import (
     ChangeUserIdFromIntegerToString,
 )

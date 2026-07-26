@@ -62,12 +62,14 @@ def test__schema_validator_existed(create_runtime_schemas: CreateRuntimeSchemas)
 def test__schema_validator_existed__with_deprecated_validators(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match="Pydantic V1 style"):
 
         @root_validator(pre=True)  # ty: ignore[deprecated]  # Compatibility coverage for Pydantic v1 validators.
         def hewwo(cls, values):
             values["foo"] += "_root"
             return values
+
+    with pytest.warns(DeprecationWarning, match="Pydantic V1 style"):
 
         @validator("foo")  # ty: ignore[deprecated]  # Compatibility coverage for Pydantic v1 validators.
         def dawkness(cls, value):
@@ -182,7 +184,7 @@ def test__schema_field_didnt_exist__with_validator_that_covers_multiple_fields__
         foo: str
         bar: str
 
-        with pytest.warns(DeprecationWarning):
+        with pytest.warns(DeprecationWarning, match="Pydantic V1 style"):
 
             @validator("bar")  # ty: ignore[deprecated]  # Compatibility coverage for Pydantic v1 validators.
             def validate_bar(cls, value):

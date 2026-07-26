@@ -47,6 +47,8 @@ class classproperty(Generic[_P_T, _P_R]):  # noqa: N801
 class PlainRepr(str):
     """String class where repr doesn't include quotes"""
 
+    __slots__ = ()
+
     @override
     def __repr__(self) -> str:
         return str(self)

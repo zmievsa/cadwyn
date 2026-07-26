@@ -1,13 +1,12 @@
 import uuid
 
-from pydantic import BaseModel
-
 from cadwyn import (
     Cadwyn,
     Version,
     VersionBundle,
     VersionedAPIRouter,
 )
+from pydantic import BaseModel
 
 
 class UserCreateRequest(BaseModel):

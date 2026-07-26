@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal, Optional, Protocol, Union
 import fastapi
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
+from starlette.responses import Response
 from starlette.types import ASGIApp
 from typing_extensions import override
 
@@ -92,7 +93,7 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         app: ASGIApp,
         *,
         api_version_parameter_name: str,
-        api_version_default_value: Union[str, None, Callable[[Request], Awaitable[str]]],
+        api_version_default_value: Union[str, Callable[[Request], Awaitable[str]], None],
         api_version_var: ContextVar[Union[VersionType, None]],
         api_version_manager: VersionManager,
         dispatch: Union[DispatchFunction, None] = None,
@@ -109,7 +110,7 @@ class VersionPickingMiddleware(BaseHTTPMiddleware):
         self,
         request: Request,
         call_next: RequestResponseEndpoint,
-    ):
+    ) -> Response:
         # We handle api version at middleware level because if we try to add a Dependency to all routes, it won't work:
         # we use this header for routing so the user will simply get a 404 if the header is invalid.
         api_version = self._api_version_manager.get(request)

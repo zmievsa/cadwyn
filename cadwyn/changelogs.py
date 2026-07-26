@@ -360,11 +360,6 @@ def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
             )
 
         if any(
-            getattr(instruction.attributes, attr) is not Sentinel
-            for attr in ["path", "methods", "summary", "description", "tags", "deprecated"]
-        ):
-            pass
-        if any(
             attr is not Sentinel
             for attr in [
                 instruction.attributes.response_model,
