@@ -1,9 +1,9 @@
 import pytest
-
 from cadwyn import Cadwyn, Version, VersionBundle
 from cadwyn.exceptions import (
     RouteResponseBySchemaConverterDoesNotApplyToAnythingError,
 )
+
 from docs_src.how_to.change_openapi_schemas.change_schema_without_endpoint.block001 import (
     ChangeUserIdFromIntegerToString,
 )

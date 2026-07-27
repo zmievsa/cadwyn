@@ -1,1 +1,2 @@
 - For each new feature (not a bugfix), update the relevant docs
+- Update `CHANGELOG.md` for every user-facing change, including typing, documentation, and performance changes

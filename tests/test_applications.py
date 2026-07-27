@@ -25,19 +25,24 @@ from tests._resources.versioned_app.app import (
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
 
+_ADD_HEADER_WARNING = "Use generate_and_include_versioned_routers"
+
 
 def test__header_routing__invalid_version_format__should_raise_value_error():
     main_app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         main_app.add_header_versioned_routers(  # ty: ignore[deprecated]  # This test verifies the legacy API.
             APIRouter(),
             header_value=DEFAULT_API_VERSION,
         )
-        with pytest.raises(ValueError, match=re.escape("header_value should be in ISO 8601 format")):
-            main_app.add_header_versioned_routers(  # ty: ignore[deprecated]  # This test verifies the legacy API.
-                APIRouter(),
-                header_value="2022-01_01",
-            )
+    with (
+        pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING),
+        pytest.raises(ValueError, match=re.escape("header_value should be in ISO 8601 format")),
+    ):
+        main_app.add_header_versioned_routers(  # ty: ignore[deprecated]  # This test verifies the legacy API.
+            APIRouter(),
+            header_value="2022-01_01",
+        )
 
 
 def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_openapi_routes():
@@ -66,7 +71,7 @@ def test__header_routing_fastapi_init__passing_null_to_oauth2__should_not_add_oa
         "/docs",
         "/redoc",
     ]
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             v2021_01_01_router,
             header_value="2021-01-01",
@@ -78,11 +83,12 @@ def test__header_routing_fastapi_init__passing_null_to_oauth2__should_not_add_oa
 
 def test__header_routing_fastapi_init__changing_openapi_url__docs_still_return_200():
     app = Cadwyn(versions=VersionBundle(Version("2022-11-16")), openapi_url="/openpapi")
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             v2021_01_01_router,
             header_value="2021-01-01",
         )
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             v2022_01_02_router,
             header_value="2022-02-02",
@@ -94,11 +100,12 @@ def test__header_routing_fastapi_init__changing_openapi_url__docs_still_return_2
 
 def test__header_routing_fastapi__calling_openapi_incorrectly__docs_should_return_404():
     app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             v2021_01_01_router,
             header_value="2021-01-01",
         )
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             v2022_01_02_router,
             header_value="2022-02-02",
@@ -142,7 +149,7 @@ def test__cadwyn__with_dependency_overrides__overrides_should_be_applied():
     async def darkness(dependency: Annotated[str, Depends(old_dependency)]):
         return dependency
 
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             regular_router,
             header_value="2022-11-16",
@@ -368,7 +375,7 @@ def test__default_version__unversioned_included_route_added_late_still_has_prior
 
 def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empty__version_should_not_have_any_routes():
     app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # This test verifies the legacy API.
             APIRouter(),
             header_value="2022-11-16",
@@ -485,11 +492,12 @@ def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
 
 def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_urls():
     app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             v2021_01_01_router,
             header_value="2021-01-01",
         )
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             v2022_01_02_router,
             header_value="2022-02-02",
@@ -536,11 +544,12 @@ def test__mount__static_files__should_serve_file(tmp_path):
 
 def test__get_docs__with_unversioned_routes__should_return_all_versioned_doc_urls():
     app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             v2021_01_01_router,
             header_value="2021-01-01",
         )
+    with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             v2022_01_02_router,
             header_value="2022-02-02",
@@ -691,7 +700,10 @@ def test__docs_dashboards__custom_static_asset_urls():
 
 
 def test__api_version_header_name_is_deprecated_and_translates_to_api_version_parameter_name():
-    with pytest.warns(DeprecationWarning):
+    with pytest.warns(
+        DeprecationWarning,
+        match="api_version_header_name is deprecated",
+    ):
         cadwyn = Cadwyn(api_version_header_name="x-api-version", versions=VersionBundle(Version("2022-11-16")))
     assert cadwyn.api_version_parameter_name == "x-api-version"
 
@@ -758,8 +770,10 @@ def test__lifespan__should_be_entered_exactly_once_per_startup():
     async def lifespan(_app):
         nonlocal entered, exited
         entered += 1
-        yield
-        exited += 1
+        try:
+            yield
+        finally:
+            exited += 1
 
     router = VersionedAPIRouter()
 

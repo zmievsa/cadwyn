@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Annotated  # Note: _no_ runtime import of Literal. This triggers the bug!
 
 if TYPE_CHECKING:
@@ -51,6 +52,8 @@ def test__missing_an_import_used_in_annotations_with_from_future_import_annotati
     client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
     with pytest.raises(
         ImportError,
-        match="You are likely missing an import from typing such as typing.Literal which causes RecursionError",
+        match=re.escape(
+            "You are likely missing an import from typing such as typing.Literal which causes RecursionError"
+        ),
     ):
         assert client_2000.post("/test", json={"foo": 1}).json() == {"foo": 1}

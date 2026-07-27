@@ -1,3 +1,4 @@
+import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -109,7 +110,7 @@ def test__header_routing__path_match_with_wrong_method__should_return_405():
 def test__url_path_for__missing_path_parameter__should_raise_no_match_found():
     with pytest.raises(
         NoMatchFound,
-        match='No route exists for name "api:users" and params "username".',
+        match=re.escape('No route exists for name "api:users" and params "username".'),
     ):
         mixed_hosts_app.url_path_for("api:users", username="tom")
 
@@ -117,7 +118,7 @@ def test__url_path_for__missing_path_parameter__should_raise_no_match_found():
 def test__url_path_for__parameters_for_child_route_passed_to_mount__should_raise_no_match_found():
     with pytest.raises(
         NoMatchFound,
-        match='No route exists for name "api" and params "path, username".',
+        match=re.escape('No route exists for name "api" and params "path, username".'),
     ):
         mixed_hosts_app.url_path_for("api", path="hellow", username="tom")
 

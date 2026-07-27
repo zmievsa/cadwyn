@@ -1,14 +1,13 @@
 import uuid
 from typing import Annotated
 
-from pydantic import BaseModel, Field
-
 from cadwyn import (
     Cadwyn,
     Version,
     VersionBundle,
     VersionedAPIRouter,
 )
+from pydantic import BaseModel, Field
 
 
 class UserCreateRequest(BaseModel):

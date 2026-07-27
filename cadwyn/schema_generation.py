@@ -84,7 +84,7 @@ from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPON
 from ._utils import iscoroutinefunction
 
 if TYPE_CHECKING:
-    from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
+    from cadwyn.structure.versions import HeadVersion, Version
 
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])
@@ -140,10 +140,10 @@ class PydanticFieldWrapper:
 
     passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
 
-    def __post_init__(self, init_model_field: FieldInfo):
+    def __post_init__(self, init_model_field: FieldInfo) -> None:
         self.passed_field_attributes = _extract_passed_field_attributes(init_model_field)
 
-    def update_attribute(self, *, name: str, value: Any):
+    def update_attribute(self, *, name: str, value: Any) -> None:
         self.passed_field_attributes[name] = value
 
     def delete_attribute(self, *, name: str) -> None:
@@ -176,7 +176,7 @@ class _RuntimeSchemaGenContext:
     models: _ModelBundle
     latest_version: "Version" = dataclasses.field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.latest_version = max(self.version_bundle.versions, key=lambda v: v.value)
 
 
@@ -231,7 +231,7 @@ class _PerFieldValidatorWrapper(_ValidatorWrapper):
 
 
 def _wrap_validator(
-    func: Callable[..., object],
+    func: "_decorators.DecoratedType[object]",
     is_pydantic_v1_style_validator: Any,
     decorator_info: _decorators.DecoratorInfo,
 ):
@@ -349,7 +349,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         init=False, default=None, repr=False
     )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # This isn't actually supposed to run, it's just a precaution
         while hasattr(self.cls, "__cadwyn_original_model__"):  # pragma: no cover
             self.cls = cast("type[_T_PYDANTIC_MODEL]", self.cls.__cadwyn_original_model__)
@@ -363,7 +363,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                     copy.deepcopy(sub_annotations[0]), tuple(copy.deepcopy(sub_ann) for sub_ann in sub_annotations[1:])
                 )
 
-    def __deepcopy__(self, memo: dict[int, Any]):
+    def __deepcopy__(self, memo: dict[int, Any]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
         result = _PydanticModelWrapper(
             self.cls,
             name=self.name,
@@ -486,11 +486,11 @@ class _CallableWrapper:
             return _function_globals(dunder_call)
         return {}
 
-    def __call__(self, *args: Any, **kwargs: Any):
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self._original_callable(*args, **kwargs)
 
     @override
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self._original_callable)
 
     @override
@@ -500,19 +500,19 @@ class _CallableWrapper:
 
 class _AsyncCallableWrapper(_CallableWrapper):
     @override
-    async def __call__(self, *args: Any, **kwargs: Any):
+    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return await self._original_callable(*args, **kwargs)
 
 
 class _GeneratorCallableWrapper(_CallableWrapper):
     @override
-    def __call__(self, *args: Any, **kwargs: Any):  # pragma: no cover
+    def __call__(self, *args: Any, **kwargs: Any) -> typing.Iterator[Any]:  # pragma: no cover
         yield from self._original_callable(*args, **kwargs)
 
 
 class _AsyncGeneratorCallableWrapper(_CallableWrapper):
     @override
-    async def __call__(self, *args: Any, **kwargs: Any):  # pragma: no cover
+    async def __call__(self, *args: Any, **kwargs: Any) -> typing.AsyncIterator[Any]:  # pragma: no cover
         async for value in self._original_callable(*args, **kwargs):
             yield value
 
@@ -626,14 +626,14 @@ class _AnnotationTransformer:
         else:
             return annotation
 
-    def _change_version_of_type(self, annotation: type):
+    def _change_version_of_type(self, annotation: type) -> type:
         if lenient_issubclass(annotation, (BaseModel, Enum)):
             return self.generator[annotation]
         else:
             return annotation
 
     @classmethod
-    def _remake_endpoint_dependencies(cls, route: fastapi.routing.APIRoute):
+    def _remake_endpoint_dependencies(cls, route: fastapi.routing.APIRoute) -> None:
         # Unlike get_dependant, APIRoute is the public API of FastAPI and it's (almost) guaranteed to be stable.
 
         route_copy = fastapi.routing.APIRoute(
@@ -684,7 +684,7 @@ class _AnnotationTransformer:
     def _generate_signature(
         new_callable: _CallableWrapper,
         old_params: types.MappingProxyType[str, inspect.Parameter],
-    ):
+    ) -> inspect.Signature:
         parameters = []
         default_counter = 0
         for param in old_params.values():
@@ -1137,12 +1137,12 @@ class _DummyEnum(Enum):
 class _EnumWrapper(Generic[_T_ENUM]):
     __slots__ = "cls", "members", "name"
 
-    def __init__(self, cls: type[_T_ENUM]):
+    def __init__(self, cls: type[_T_ENUM]) -> None:
         self.cls = _unwrap_model(cls)
         self.name = cls.__name__
         self.members = {member.name: member.value for member in cls}
 
-    def __deepcopy__(self, memo: Any):
+    def __deepcopy__(self, memo: Any) -> "_EnumWrapper[_T_ENUM]":
         result = _EnumWrapper(self.cls)
         result.members = self.members.copy()
         memo[id(self)] = result
@@ -1161,7 +1161,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
         return model_copy
 
     @staticmethod
-    def _get_initialization_namespace_for_enum(enum_cls: type[Enum]):
+    def _get_initialization_namespace_for_enum(enum_cls: type[Enum]) -> dict[str, Any]:
         mro_without_the_class_itself = enum_cls.mro()[1:]
 
         mro_dict = {}

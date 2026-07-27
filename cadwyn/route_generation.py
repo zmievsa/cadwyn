@@ -570,7 +570,7 @@ def _apply_endpoint_had_instruction(
                 )
             if attr_name == "path":
                 original_path_params = {p.alias for p in original_route.dependant.path_params}
-                new_path_params = set(re.findall("{(.*?)}", attr))
+                new_path_params = set(re.findall(r"{(.*?)}", attr))
                 if api_version_location == "path":
                     new_path_params.discard(api_version_parameter_name)
                 if new_path_params != original_path_params:

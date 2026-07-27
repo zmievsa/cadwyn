@@ -15,7 +15,7 @@ from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_met
 class RequestInfo:
     __slots__ = ("_cookies", "_form", "_query_params", "_request", "body", "headers")
 
-    def __init__(self, request: Request, body: Any):
+    def __init__(self, request: Request, body: Any) -> None:
         super().__init__()
         self.body = body
         self.headers = request.headers.mutablecopy()
@@ -44,7 +44,7 @@ class RequestInfo:
 class ResponseInfo:
     __slots__ = ("_response", "body")
 
-    def __init__(self, response: Response, body: Any):
+    def __init__(self, response: Response, body: Any) -> None:
         super().__init__()
         self.body = body
         self._response = response
@@ -54,7 +54,7 @@ class ResponseInfo:
         return self._response.status_code
 
     @status_code.setter
-    def status_code(self, value: int):
+    def status_code(self, value: int) -> None:
         self._response.status_code = value
 
     @property
@@ -76,7 +76,7 @@ class _AlterDataInstruction:
     owner: type = field(init=False)
     _payload_arg_name: ClassVar[str]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         signature = inspect.signature(self.transformer)
         if list(signature.parameters) != [self._payload_arg_name]:
             raise ValueError(
@@ -85,7 +85,7 @@ class _AlterDataInstruction:
 
         functools.update_wrapper(self, self.transformer)
 
-    def __set_name__(self, owner: type, name: str):
+    def __set_name__(self, owner: type, name: str) -> None:
         self.owner = owner
 
     def __call__(self, __request_or_response: Union[RequestInfo, ResponseInfo], /) -> None:
@@ -116,7 +116,7 @@ class _AlterRequestBySchemaInstruction(_BaseAlterBySchemaInstruction, _BaseAlter
 class _AlterRequestByPathInstruction(_BaseAlterRequestInstruction):
     path: str
     methods: set[str]
-    repr_name = "Request by path converter"
+    repr_name: ClassVar[str] = "Request by path converter"
 
 
 @overload
@@ -146,7 +146,7 @@ def convert_request_to_next_version_for(
 
 def convert_request_to_next_version_for(
     schema_or_path: Union[type, str],
-    methods_or_second_schema: Union[list[str], None, type] = None,
+    methods_or_second_schema: Union[list[str], type, None] = None,
     /,
     *additional_schemas: type,
     check_usage: bool = True,
@@ -195,7 +195,7 @@ class _AlterResponseBySchemaInstruction(_BaseAlterBySchemaInstruction, _BaseAlte
 class _AlterResponseByPathInstruction(_BaseAlterResponseInstruction):
     path: str
     methods: set[str]
-    repr_name = "Response by path converter"
+    repr_name: ClassVar[str] = "Response by path converter"
 
 
 @overload

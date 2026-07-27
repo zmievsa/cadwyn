@@ -25,7 +25,7 @@ render_subapp = typer.Typer(
 app.add_typer(render_subapp)
 
 
-def version_callback(value: bool):
+def version_callback(value: bool) -> None:
     if value:
         from . import __version__
 
@@ -33,7 +33,7 @@ def version_callback(value: bool):
         raise typer.Exit
 
 
-def output_code(code: str, raw: bool):
+def output_code(code: str, raw: bool) -> None:
     if raw:
         typer.echo(code)
     else:  # pragma: no cover
@@ -71,7 +71,7 @@ def render_module(
 @app.callback()
 def main(
     version: bool = typer.Option(None, "-V", "--version", callback=version_callback, is_eager=True),
-): ...
+) -> None: ...
 
 
 if __name__ == "__main__":

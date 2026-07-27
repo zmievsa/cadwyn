@@ -50,7 +50,7 @@ class TestClientWithHardcodedAPIVersion(CadwynTestClient):
         self,
         *args,
         api_version_var: Union[ContextVar, None] = None,
-        api_version: Union[str, None, object] = Undefined,
+        api_version: Union[str, object, None] = Undefined,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)

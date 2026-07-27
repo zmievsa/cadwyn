@@ -159,7 +159,7 @@ class VersionChange:
         cls._route_to_response_migration_mapping = defaultdict(list)
 
     @classmethod
-    def _extract_body_instructions_into_correct_containers(cls):
+    def _extract_body_instructions_into_correct_containers(cls) -> None:
         for instruction in cls.__dict__.values():
             if isinstance(instruction, _AlterRequestBySchemaInstruction):
                 for schema in instruction.schemas:
@@ -173,7 +173,7 @@ class VersionChange:
                 cls.alter_response_by_path_instructions[instruction.path].append(instruction)
 
     @classmethod
-    def _extract_list_instructions_into_correct_containers(cls):
+    def _extract_list_instructions_into_correct_containers(cls) -> None:
         cls.alter_schema_instructions = []
         cls.alter_enum_instructions = []
         cls.alter_endpoint_instructions = []
@@ -196,7 +196,7 @@ class VersionChange:
                 assert_never(alter_instruction)
 
     @classmethod
-    def _validate_subclass(cls):
+    def _validate_subclass(cls) -> None:
         if cls.description is Sentinel:
             raise CadwynStructureError(
                 f"Version change description is not set on '{cls.__name__}' but is required.",
@@ -237,7 +237,7 @@ class VersionChange:
                 )
 
     @classmethod
-    def _check_no_subclassing(cls):
+    def _check_no_subclassing(cls) -> None:
         if cls.mro() != [cls, VersionChange, object]:
             raise TypeError(
                 f"Can't subclass {cls.__name__} as it was never meant to be subclassed.",
@@ -252,7 +252,7 @@ class VersionChange:
 class VersionChangeWithSideEffects(VersionChange, _abstract=True):
     @classmethod
     @override
-    def _check_no_subclassing(cls):
+    def _check_no_subclassing(cls) -> None:
         if cls.mro() != [cls, VersionChangeWithSideEffects, VersionChange, object]:
             raise TypeError(
                 f"Can't subclass {cls.__name__} as it was never meant to be subclassed.",
@@ -284,7 +284,7 @@ class Version:
 
     @property
     @deprecated("'version_changes' attribute is deprecated and will be removed in Cadwyn 5.x.x. Use 'changes' instead.")
-    def version_changes(self):  # pragma: no cover
+    def version_changes(self) -> tuple[type[VersionChange], ...]:  # pragma: no cover
         return self.changes
 
     @override
@@ -312,7 +312,7 @@ class HeadVersion:
 
     @property
     @deprecated("'version_changes' attribute is deprecated and will be removed in Cadwyn 5.x.x. Use 'changes' instead.")
-    def version_changes(self):  # pragma: no cover
+    def version_changes(self) -> tuple[type[VersionChange], ...]:  # pragma: no cover
         return self.changes
 
 
@@ -379,7 +379,7 @@ class VersionBundle:
 
     @property
     @deprecated("Use 'version_values' instead.")
-    def version_dates(self):  # pragma: no cover
+    def version_dates(self) -> tuple[str, ...]:  # pragma: no cover
         return self.version_values
 
     @functools.cached_property

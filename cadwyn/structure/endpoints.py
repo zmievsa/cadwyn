@@ -122,7 +122,7 @@ class EndpointInstructionFactory:
         callbacks: list[BaseRoute] = Sentinel,
         openapi_extra: dict[str, Any] = Sentinel,
         generate_unique_id_function: Callable[[APIRoute], str] = Sentinel,
-    ):
+    ) -> EndpointHadInstruction:
         return EndpointHadInstruction(
             is_hidden_from_changelog=False,
             endpoint_path=self.endpoint_path,

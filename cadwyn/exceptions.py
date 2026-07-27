@@ -61,7 +61,7 @@ class RouteByPathConverterDoesNotApplyToAnythingError(RouterGenerationError):
 
 
 class RouteAlreadyExistsError(RouterGenerationError):
-    def __init__(self, *routes: APIRoute):
+    def __init__(self, *routes: APIRoute) -> None:
         self.routes = routes
         super().__init__(f"The following routes are duplicates of each other: {routes}")
 

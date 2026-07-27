@@ -90,7 +90,7 @@ class Cadwyn(FastAPI):
         api_version_location: APIVersionLocation = "custom_header",
         api_version_format: APIVersionFormat = "date",
         api_version_parameter_name: str = "x-api-version",
-        api_version_default_value: Union[str, None, Callable[[Request], Awaitable[str]]] = None,
+        api_version_default_value: Union[str, Callable[[Request], Awaitable[str]], None] = None,
         api_version_title: Optional[str] = None,
         api_version_description: Optional[str] = None,
         versioning_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
