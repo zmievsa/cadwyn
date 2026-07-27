@@ -906,6 +906,40 @@ def test__router_generation__restoring_two_deleted_routes_for_same_path__should_
         create_versioned_api_routes(version_change(endpoint("/test", ["GET"]).existed))
 
 
+def test__router_generation__restoring_routes_distinguishes_paths_and_methods(
+    router: VersionedAPIRouter,
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+):
+    @router.only_exists_in_older_versions
+    @router.get("/test")
+    async def get_without_trailing_slash():
+        raise NotImplementedError
+
+    @router.only_exists_in_older_versions
+    @router.get("/test/")
+    async def get_with_trailing_slash():
+        raise NotImplementedError
+
+    @router.only_exists_in_older_versions
+    @router.post("/test")
+    async def post_without_trailing_slash():
+        raise NotImplementedError
+
+    routes_2000, routes_2001 = create_versioned_api_routes(version_change(endpoint("/test", ["GET", "POST"]).existed))
+
+    assert len(routes_2000) == 4
+    assert len(routes_2001) == 1
+    restored_route_identities = set()
+    for route in routes_2000[1:]:
+        assert route.methods is not None
+        restored_route_identities.add((route.path, frozenset(route.methods)))
+    assert restored_route_identities == {
+        ("/test", frozenset({"GET"})),
+        ("/test/", frozenset({"GET"})),
+        ("/test", frozenset({"POST"})),
+    }
+
+
 @pytest.mark.parametrize("route_index_to_restore_first", [0, 1])
 def test__endpoint_existed__deleting_and_restoring_two_routes_for_the_same_endpoint(
     router: VersionedAPIRouter,
