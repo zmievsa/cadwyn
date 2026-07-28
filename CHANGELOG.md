@@ -5,11 +5,17 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [7.1.2]
+
 ### Changed
 
 - Simplified contributor setup and development commands (#387)
 - Standardized test names around the `what`, `when`, and `expected` convention and documented test organization (#397)
 - Expanded Ruff coverage, including return annotations, preview correctness checks, and explicit tracking of reviewed rules
+
+### Fixed
+
+- Restored compatibility with FastAPI 0.140.2+ after it stopped retaining flattened dependency trees
 
 ## [7.1.1]
 

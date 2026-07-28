@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
+    Final,
     Generic,
     Union,
     cast,
@@ -53,6 +54,7 @@ _WR = TypeVar("_WR", bound=APIRouter, default=APIRouter)
 _RouteT = TypeVar("_RouteT", bound=BaseRoute)
 # This is a hack we do because we can't guarantee how the user will use the router.
 _DELETED_ROUTE_TAG = "_CADWYN_DELETED_ROUTE"
+_FLAT_DEPENDANT_ATTR: Final = "_flat_dependant"
 _RoutePath = str
 _RouteMethod = str
 _RouteId = int
@@ -137,7 +139,7 @@ def copy_route(route: _RouteT, effective_route_context: _EffectiveRouteContext |
     # These can hold TypeAdapters for recursive types (e.g. JsonValue) that cause
     # infinite recursion during deepcopy.
     memo: dict[int, Any] = {}
-    for attr in ("dependant", "_flat_dependant", "body_field", "response_model", "dependency_overrides_provider"):
+    for attr in ("dependant", _FLAT_DEPENDANT_ATTR, "body_field", "response_model", "dependency_overrides_provider"):
         obj = getattr(route, attr, None)
         if obj is not None:
             memo[id(obj)] = obj
@@ -147,8 +149,9 @@ def copy_route(route: _RouteT, effective_route_context: _EffectiveRouteContext |
         _refresh_route_app(new_route)
     else:
         new_route.dependant = copy(route.dependant)
-        if getattr(route, "_flat_dependant", None) is not None:
-            new_route._flat_dependant = copy(route._flat_dependant)
+        flat_dependant = getattr(route, _FLAT_DEPENDANT_ATTR, None)
+        if flat_dependant is not None:
+            setattr(new_route, _FLAT_DEPENDANT_ATTR, copy(flat_dependant))
         new_route.body_field = route.body_field
         new_route.dependencies = copy(route.dependencies)
     return new_route
@@ -162,7 +165,7 @@ def _apply_effective_route_context_to_route(route: APIRoute, effective_route_con
 
 
 def _copy_effective_route_context_attr(attr_name: str, attr_value: Any) -> Any:
-    if attr_name in {"dependant", "_flat_dependant"} and attr_value is not None:
+    if attr_name in {"dependant", _FLAT_DEPENDANT_ATTR} and attr_value is not None:
         return copy(attr_value)
     if isinstance(attr_value, dict | list | set):
         return copy(attr_value)

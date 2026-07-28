@@ -1815,11 +1815,26 @@ def test__router_generation__using_svcs_in_dependencies(
     assert len(routes_2000) == len(routes_2001) == 2
 
 
-def test__copy_route__without_flat_dependant():
-    """Test that copy_route works correctly when the route doesn't have _flat_dependant."""
+def test__copy_route__when_route_has_no_flat_dependant__then_copies_route():
     route = APIRoute("/test", lambda: None)
-    # Simulate an older FastAPI version where _flat_dependant doesn't exist
-    del route._flat_dependant
+    flat_dependant_attr = "_flat_dependant"
+    setattr(route, flat_dependant_attr, route.dependant)
+    delattr(route, flat_dependant_attr)
+
     copied = copy_route(route)
+
     assert copied.path == route.path
-    assert not hasattr(copied, "_flat_dependant")
+    assert not hasattr(copied, flat_dependant_attr)
+
+
+def test__copy_route__when_route_has_flat_dependant__then_copies_flat_dependant():
+    route = APIRoute("/test", lambda: None)
+    flat_dependant = route.dependant
+    flat_dependant_attr = "_flat_dependant"
+    setattr(route, flat_dependant_attr, flat_dependant)
+
+    copied = copy_route(route)
+
+    copied_flat_dependant = getattr(copied, flat_dependant_attr)
+    assert copied_flat_dependant is not flat_dependant
+    assert copied_flat_dependant.call is flat_dependant.call
