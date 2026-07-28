@@ -12,6 +12,8 @@ from .classes import A, AlmostEmptyEnum, ModelWithWeirdFields, MyEnum
 
 class MyVersionChange(VersionChange):
     description = ""
+    # Keep inspect.getsource() starting with `.had`.
+    # fmt: off
     instructions_to_migrate_to_previous_version = (
         enum(MyEnum).didnt_have("baz"),
         enum(AlmostEmptyEnum).didnt_have("foo"),
@@ -21,8 +23,9 @@ class MyVersionChange(VersionChange):
         .existed_as(type=conbytes(strict=True), info=Field(min_length=3, title="Hewwo")),
         schema(ModelWithWeirdFields)
         .field("taz")
-        .had(default_factory=lambda: 91),  # fmt: skip  # Keep inspect.getsource() starting with `.had`.
+        .had(default_factory=lambda: 91),
     )
+    # fmt: on
 
 
 app = Cadwyn(
