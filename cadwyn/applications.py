@@ -29,7 +29,7 @@ from starlette.types import Lifespan
 from typing_extensions import Self, assert_never, deprecated, override
 
 from cadwyn._utils import DATACLASS_SLOTS, same_method_definition_as_in
-from cadwyn.changelogs import CadwynChangelogResource, _generate_changelog
+from cadwyn.changelogs import _CHANGELOG_DEPRECATION_MESSAGE, CadwynChangelogResource, _generate_changelog
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
     APIVersionFormat,
@@ -94,8 +94,8 @@ class Cadwyn(FastAPI):
         api_version_title: Optional[str] = None,
         api_version_description: Optional[str] = None,
         versioning_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
-        changelog_url: Union[str, None] = "/changelog",
-        include_changelog_url_in_schema: bool = True,
+        changelog_url: Annotated[Union[str, None], deprecated(_CHANGELOG_DEPRECATION_MESSAGE)] = "/changelog",
+        include_changelog_url_in_schema: Annotated[bool, deprecated(_CHANGELOG_DEPRECATION_MESSAGE)] = True,
         debug: bool = False,
         title: str = "FastAPI",
         summary: Union[str, None] = None,
@@ -160,6 +160,12 @@ class Cadwyn(FastAPI):
                 stacklevel=2,
             )
             api_version_parameter_name = api_version_header_name
+        if changelog_url is not None:
+            warnings.warn(
+                _CHANGELOG_DEPRECATION_MESSAGE,
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if api_version_default_value is not None and api_version_location == "path":
             raise CadwynStructureError(
                 "You tried to pass an api_version_default_value while putting the API version in Path. "
@@ -339,6 +345,7 @@ class Cadwyn(FastAPI):
     ) -> None:
         self._dependency_overrides_provider.dependency_overrides = value
 
+    @deprecated(_CHANGELOG_DEPRECATION_MESSAGE)
     def generate_changelog(self) -> CadwynChangelogResource:
         return _generate_changelog(self.versions, self.router)
 
@@ -346,7 +353,7 @@ class Cadwyn(FastAPI):
         if self.changelog_url is not None:
             unversioned_router.add_api_route(
                 path=self.changelog_url,
-                endpoint=self.generate_changelog,
+                endpoint=self.generate_changelog,  # ty: ignore[deprecated]  # Keep serving the legacy endpoint.
                 response_model=CadwynChangelogResource,
                 methods=["GET"],
                 include_in_schema=self.include_changelog_url_in_schema,
