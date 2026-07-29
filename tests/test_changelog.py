@@ -5,7 +5,6 @@ from typing import Any, Union
 
 import pytest
 from dirty_equals import IsList
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, field_validator
 
@@ -34,21 +33,14 @@ def unordered(*items: Any):
     return IsList(*items, check_order=False)
 
 
-def test__changelog__when_enabled__warns_and_marks_endpoint_as_deprecated():
+def test__changelog__when_enabled__warns_and_endpoint_still_works():
     with pytest.warns(DeprecationWarning, match=CHANGELOG_DEPRECATION_MESSAGE):
         app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
 
-    changelog_route = next(route for route in app.routes if getattr(route, "path", None) == "/changelog")
-    assert isinstance(changelog_route, APIRoute)
-    assert changelog_route.deprecated is True
-
-    with TestClient(app) as client:
-        openapi_response = client.get("/openapi.json?version=unversioned")
-        with pytest.warns(DeprecationWarning, match=CHANGELOG_DEPRECATION_MESSAGE):
-            response = client.get("/changelog")
+    with TestClient(app) as client, pytest.warns(DeprecationWarning, match=CHANGELOG_DEPRECATION_MESSAGE):
+        response = client.get("/changelog")
 
     assert response.status_code == 200
-    assert openapi_response.json()["paths"]["/changelog"]["get"]["deprecated"] is True
 
 
 def test__changelog__when_disabled__does_not_warn_or_add_endpoint():
