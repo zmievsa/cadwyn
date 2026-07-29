@@ -13,6 +13,7 @@ from fastapi.openapi.utils import (
 )
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
+from typing_extensions import deprecated
 
 from cadwyn._asts import GenericAliasUnionArgs
 from cadwyn._utils import Sentinel
@@ -45,9 +46,12 @@ else:  # pragma: no cover
 
 _logger = getLogger(__name__)
 
+_CHANGELOG_DEPRECATION_MESSAGE = "Cadwyn's changelog feature is deprecated and will be removed in a future version."
+
 T = TypeVar("T", bound=Union[PossibleInstructions, type[VersionChange]])
 
 
+@deprecated(_CHANGELOG_DEPRECATION_MESSAGE)
 def hidden(instruction_or_version_change: T) -> T:
     if isinstance(instruction_or_version_change, _HiddenAttributeMixin):
         # Weird ty bug, or I am dumb.

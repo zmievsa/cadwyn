@@ -1,8 +1,11 @@
 import uuid
+import warnings
 from enum import IntEnum, auto
 from typing import Any, Union
 
+import pytest
 from dirty_equals import IsList
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, field_validator
 
@@ -15,14 +18,60 @@ from cadwyn import (
     schema,
 )
 from cadwyn.applications import Cadwyn
-from cadwyn.changelogs import ChangelogEntryType, StrEnum, hidden
+from cadwyn.changelogs import (
+    ChangelogEntryType,
+    StrEnum,
+    hidden,  # ty: ignore[deprecated]  # Legacy API exercised throughout this module.
+)
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure.enums import enum
 from tests.conftest import CreateVersionedApp, version_change
 
+CHANGELOG_DEPRECATION_MESSAGE = "Cadwyn's changelog feature is deprecated"
+
 
 def unordered(*items: Any):
     return IsList(*items, check_order=False)
+
+
+def test__changelog__when_enabled__warns_and_marks_endpoint_as_deprecated():
+    with pytest.warns(DeprecationWarning, match=CHANGELOG_DEPRECATION_MESSAGE):
+        app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
+
+    changelog_route = next(route for route in app.routes if getattr(route, "path", None) == "/changelog")
+    assert isinstance(changelog_route, APIRoute)
+    assert changelog_route.deprecated is True
+
+    with TestClient(app) as client:
+        openapi_response = client.get("/openapi.json?version=unversioned")
+        with pytest.warns(DeprecationWarning, match=CHANGELOG_DEPRECATION_MESSAGE):
+            response = client.get("/changelog")
+
+    assert response.status_code == 200
+    assert openapi_response.json()["paths"]["/changelog"]["get"]["deprecated"] is True
+
+
+def test__changelog__when_disabled__does_not_warn_or_add_endpoint():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+
+    assert all(getattr(route, "path", None) != "/changelog" for route in app.routes)
+
+
+def test__generate_changelog__when_called__warns():
+    with pytest.warns(DeprecationWarning, match=CHANGELOG_DEPRECATION_MESSAGE):
+        app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
+
+    with pytest.warns(DeprecationWarning, match=CHANGELOG_DEPRECATION_MESSAGE):
+        app.generate_changelog()  # ty: ignore[deprecated]  # This test verifies the legacy API.
+
+
+def test__hidden__when_called__warns():
+    instruction = schema(BaseModel).field("field").didnt_exist
+
+    with pytest.warns(DeprecationWarning, match=CHANGELOG_DEPRECATION_MESSAGE):
+        assert hidden(instruction) is instruction  # ty: ignore[deprecated]  # This test verifies the legacy API.
 
 
 def test__changelog__with_multiple_versions():
@@ -185,7 +234,7 @@ def test__changelog__enum_interactions(create_versioned_app: CreateVersionedApp)
         ),
     )
 
-    assert app.generate_changelog().model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [
+    assert app.generate_changelog().model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [  # ty: ignore[deprecated]  # Legacy API coverage.
         {
             "type": ChangelogEntryType.enum_members_added,
             "enum": "MyIntEnum",
@@ -238,12 +287,14 @@ def test__changelog__basic_schema_interactions(create_versioned_app: CreateVersi
             schema(SchemaWithSomeField).field("some_field").had(min_length=30, deprecated=True),
             schema(SchemaWithSomeField).field("some_field").had(max_length=50, name="HELLO"),
             schema(SchemaChild).validator(SchemaChild.my_validator).didnt_exist,
-            hidden(schema(SchemaWithSomeField).field("hewwwo").existed_as(type=str, info=Field(min_length=45))),
+            hidden(  # ty: ignore[deprecated]  # Legacy API coverage.
+                schema(SchemaWithSomeField).field("hewwwo").existed_as(type=str, info=Field(min_length=45))
+            ),
         ),
         router=router,
     )
 
-    assert app.generate_changelog().model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [
+    assert app.generate_changelog().model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [  # ty: ignore[deprecated]  # Legacy API coverage.
         {
             "type": ChangelogEntryType.schema_changed,
             "model": "UWU",
@@ -320,7 +371,7 @@ def test__changelog__basic_endpoint_interactions(create_versioned_app: CreateVer
         router=router,
     )
 
-    assert app.generate_changelog().model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [
+    assert app.generate_changelog().model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [  # ty: ignore[deprecated]  # Legacy API coverage.
         {
             "type": ChangelogEntryType.endpoint_changed,
             "path": "/route1",
@@ -400,14 +451,18 @@ def test__changelog__with_hidden_instructions(create_versioned_app: CreateVersio
 
     app = create_versioned_app(
         version_change(
-            hidden(schema(SchemaWithSomeField).had(name="UWU")),
-            hidden(schema(SchemaWithSomeField).validator(SchemaWithSomeField.my_validator).didnt_exist),
+            hidden(schema(SchemaWithSomeField).had(name="UWU")),  # ty: ignore[deprecated]  # Legacy API coverage.
+            hidden(  # ty: ignore[deprecated]  # Legacy API coverage.
+                schema(SchemaWithSomeField).validator(SchemaWithSomeField.my_validator).didnt_exist
+            ),
         ),
-        hidden(version_change(schema(SchemaWithSomeField).had(name="AWAW"))),
+        hidden(  # ty: ignore[deprecated]  # Legacy API coverage.
+            version_change(schema(SchemaWithSomeField).had(name="AWAW"))
+        ),
         router=router,
     )
 
-    assert app.generate_changelog().model_dump(mode="json")["versions"] == [
+    assert app.generate_changelog().model_dump(mode="json")["versions"] == [  # ty: ignore[deprecated]  # Legacy API coverage.
         {"value": "2002-01-01", "changes": []},
         {"value": "2001-01-01", "changes": [{"description": "", "side_effects": False, "instructions": []}]},
     ]
@@ -435,7 +490,7 @@ def test__changelog__with_child_overriding_changed_field_in_parent__unused_model
         router=router,
     )
 
-    assert app.generate_changelog().model_dump(mode="json")["versions"] == [
+    assert app.generate_changelog().model_dump(mode="json")["versions"] == [  # ty: ignore[deprecated]  # Legacy API coverage.
         {
             "value": "2001-01-01",
             "changes": [
