@@ -357,7 +357,6 @@ class Cadwyn(FastAPI):
                 response_model=CadwynChangelogResource,
                 methods=["GET"],
                 include_in_schema=self.include_changelog_url_in_schema,
-                deprecated=True,
             )
 
         if self.openapi_url is not None:
