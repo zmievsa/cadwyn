@@ -5,6 +5,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [7.2.0]
+
 ### Deprecated
 
 - Deprecated changelog generation, including the default `GET /changelog` endpoint, `Cadwyn.generate_changelog()`, `cadwyn.hidden()`, and the `changelog_url` and `include_changelog_url_in_schema` constructor arguments. The feature remains available for backwards compatibility.
