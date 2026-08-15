@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Added native View Transition API animations to documentation navigation, with reduced-motion and unsupported-browser fallbacks.
+
 ## [7.2.0]
 
 ### Deprecated

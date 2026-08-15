@@ -1,3 +1,33 @@
+::view-transition-old(root) {
+  animation: 200ms ease-out both docs-fade-out;
+}
+
+::view-transition-new(root) {
+  animation: 200ms ease-out both docs-fade-in;
+}
+
+@keyframes docs-fade-out {
+  to {
+    opacity: 0;
+    filter: blur(2px);
+  }
+}
+
+@keyframes docs-fade-in {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 1ms;
+    filter: none;
+  }
+}
+
 .md-header__button.md-logo {
   margin-top: 0;
   margin-bottom: 0;
