@@ -300,8 +300,8 @@ Cadwyn can migrate more than just request bodies.
 * `body: Any`
 * `status_code: int`
 * `headers: starlette.datastructures.MutableHeaders`
-* [set_cookie](https://www.starlette.io/responses/#set-cookie)
-* [delete_cookie](https://www.starlette.io/responses/#delete-cookie)
+* [set_cookie](https://starlette.dev/responses/#set-cookie)
+* [delete_cookie](https://starlette.dev/responses/#delete-cookie)
 
 #### Internal representations
 

@@ -9,6 +9,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 - Added native View Transition API animations to documentation navigation, with reduced-motion and unsupported-browser fallbacks.
 
+### Changed
+
+- Updated Starlette documentation links to the project's current official domain.
+
 ## [7.2.0]
 
 ### Deprecated
