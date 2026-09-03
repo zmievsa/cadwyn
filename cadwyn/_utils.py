@@ -1,3 +1,4 @@
+import sys
 from collections.abc import Callable
 from inspect import signature
 from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
@@ -14,6 +15,16 @@ _SourceSelf = TypeVar("_SourceSelf")
 
 _P_T = TypeVar("_P_T")
 _P_R = TypeVar("_P_R")
+
+# Match FastAPI's version-dependent coroutine detection. Before Python 3.13,
+# asyncio also recognizes the legacy _is_coroutine marker. Using inspect instead
+# would make Cadwyn treat some dependencies as synchronous while FastAPI awaits them.
+# Keep this split aligned with FastAPI, even while ty reports asyncio's API as deprecated.
+if sys.version_info >= (3, 13):  # pragma: no cover
+    from inspect import iscoroutinefunction
+else:  # pragma: no cover
+    from asyncio import iscoroutinefunction  # noqa: F401
+
 
 UnionType = type(int | str) | type(Union[int, str])
 DATACLASS_SLOTS: dict[str, Any] = {"slots": True}

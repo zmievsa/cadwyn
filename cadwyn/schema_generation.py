@@ -81,6 +81,8 @@ from cadwyn.structure.schemas import (
 )
 from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionBundle
 
+from ._utils import iscoroutinefunction
+
 if TYPE_CHECKING:
     from cadwyn.structure.versions import HeadVersion, Version
 
@@ -758,12 +760,14 @@ def is_async_gen_callable(call: Callable[..., object]) -> bool:
 
 def is_coroutine_callable(call: Callable[..., object]) -> bool:  # pragma: no cover
     # Copied from fastapi.dependencies.models
+    # ty reports the deprecation only on Python 3.11/3.12. Repeating unused-ignore-comment
+    # handles the other targets: https://github.com/astral-sh/ty/issues/3393.
     if inspect.isroutine(call):
-        return inspect.iscoroutinefunction(call)
+        return iscoroutinefunction(call)  # ty: ignore[deprecated, unused-ignore-comment, unused-ignore-comment]  # Match FastAPI.
     if inspect.isclass(call):
         return False
     dunder_call = getattr(call, "__call__", None)  # noqa: B004
-    return inspect.iscoroutinefunction(dunder_call)
+    return iscoroutinefunction(dunder_call)  # ty: ignore[deprecated, unused-ignore-comment, unused-ignore-comment]  # Match FastAPI.
 
 
 def _add_request_and_response_params(route: APIRoute):
