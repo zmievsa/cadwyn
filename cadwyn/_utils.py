@@ -1,4 +1,3 @@
-import sys
 from collections.abc import Callable
 from inspect import signature
 from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
@@ -15,12 +14,6 @@ _SourceSelf = TypeVar("_SourceSelf")
 
 _P_T = TypeVar("_P_T")
 _P_R = TypeVar("_P_R")
-
-if sys.version_info >= (3, 13):  # pragma: no cover
-    from inspect import iscoroutinefunction
-else:  # pragma: no cover
-    from asyncio import iscoroutinefunction  # noqa: F401
-
 
 UnionType = type(int | str) | type(Union[int, str])
 DATACLASS_SLOTS: dict[str, Any] = {"slots": True}

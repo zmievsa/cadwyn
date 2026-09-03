@@ -13,6 +13,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 - Updated Starlette documentation links to the project's current official domain.
 
+### Fixed
+
+- Replaced deprecated coroutine detection to restore compatibility with ty 0.0.78 on Python 3.10–3.12.
+
 ## [7.2.0]
 
 ### Deprecated
