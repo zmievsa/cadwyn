@@ -13,6 +13,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 - Updated Starlette documentation links to the project's current official domain.
 
+### Fixed
+
+- Restored compatibility with ty 0.0.78 while preserving FastAPI's coroutine detection on every supported Python version.
+
 ## [7.2.0]
 
 ### Deprecated

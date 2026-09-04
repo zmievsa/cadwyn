@@ -16,6 +16,10 @@ _SourceSelf = TypeVar("_SourceSelf")
 _P_T = TypeVar("_P_T")
 _P_R = TypeVar("_P_R")
 
+# Match FastAPI's version-dependent coroutine detection. Before Python 3.13,
+# asyncio also recognizes the legacy _is_coroutine marker. Using inspect instead
+# would make Cadwyn treat some dependencies as synchronous while FastAPI awaits them.
+# Keep this split aligned with FastAPI, even while ty reports asyncio's API as deprecated.
 if sys.version_info >= (3, 13):  # pragma: no cover
     from inspect import iscoroutinefunction
 else:  # pragma: no cover
