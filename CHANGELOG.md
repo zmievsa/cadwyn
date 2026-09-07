@@ -16,6 +16,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Fixed
 
 - Restored compatibility with ty 0.0.78 while preserving FastAPI's coroutine detection on every supported Python version.
+- Preserved the `classmethod` binding of `@field_serializer` decorators during model generation. Previously, such serializers were re-registered as instance methods, shifting their arguments by one and raising `PydanticSerializationError` on every serialization.
 
 ## [7.2.0]
 
