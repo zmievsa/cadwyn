@@ -1,8 +1,10 @@
 import re
+from typing import Any
 
 import pytest
 from pydantic import (
     BaseModel,
+    field_serializer,
     field_validator,
     model_validator,
     root_validator,  # ty: ignore[deprecated]  # Tests intentionally cover Pydantic v1 validators.
@@ -252,3 +254,78 @@ def test__validator_didnt_exist__with_validator_defined_in_parent__should_raise_
         ),
     ):
         create_runtime_schemas(version_change(schema(B).validator(A.validate_foo).didnt_exist))
+
+
+def test__schema_generation__with_classmethod_field_serializer__generated_model_serializes_like_the_original(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithClassmethodFieldSerializer(BaseModel):
+        foo: str
+
+        @field_serializer("foo")
+        @classmethod
+        def serialize_foo(cls, value: str) -> str:
+            return value.upper()
+
+    schemas = create_runtime_schemas(version_change())
+    original_dump = SchemaWithClassmethodFieldSerializer(foo="hello").model_dump()
+
+    assert original_dump == {"foo": "HELLO"}
+    assert schemas["2000-01-01"][SchemaWithClassmethodFieldSerializer](foo="hello").model_dump() == original_dump
+    assert schemas["2001-01-01"][SchemaWithClassmethodFieldSerializer](foo="hello").model_dump() == original_dump
+
+
+def test__schema_generation__with_classmethod_wrap_field_serializer__generated_model_serializes_like_the_original(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithClassmethodWrapFieldSerializer(BaseModel):
+        foo: str
+
+        @field_serializer("foo", mode="wrap")
+        @classmethod
+        def serialize_foo(cls, value: str, handler: Any) -> str:
+            return handler(value) + "_serialized"
+
+    schemas = create_runtime_schemas(version_change())
+    original_dump = SchemaWithClassmethodWrapFieldSerializer(foo="hello").model_dump()
+
+    assert original_dump == {"foo": "hello_serialized"}
+    assert schemas["2000-01-01"][SchemaWithClassmethodWrapFieldSerializer](foo="hello").model_dump() == original_dump
+
+
+def test__schema_generation__with_staticmethod_field_serializer__generated_model_serializes_like_the_original(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithStaticmethodFieldSerializer(BaseModel):
+        foo: str
+
+        @field_serializer("foo")
+        @staticmethod
+        def serialize_foo(value: str) -> str:
+            return value.upper()
+
+    schemas = create_runtime_schemas(version_change())
+    original_dump = SchemaWithStaticmethodFieldSerializer(foo="hello").model_dump()
+
+    assert original_dump == {"foo": "HELLO"}
+    assert schemas["2000-01-01"][SchemaWithStaticmethodFieldSerializer](foo="hello").model_dump() == original_dump
+    assert schemas["2001-01-01"][SchemaWithStaticmethodFieldSerializer](foo="hello").model_dump() == original_dump
+
+
+def test__schema_generation__with_staticmethod_field_validator__generated_model_validates_like_the_original(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithStaticmethodFieldValidator(BaseModel):
+        foo: str
+
+        @field_validator("foo")
+        @staticmethod
+        def validate_foo(value: str) -> str:
+            return value + "_validated"
+
+    schemas = create_runtime_schemas(version_change())
+    original_foo = SchemaWithStaticmethodFieldValidator(foo="hello").foo
+
+    assert original_foo == "hello_validated"
+    assert schemas["2000-01-01"][SchemaWithStaticmethodFieldValidator](foo="hello").foo == original_foo
+    assert schemas["2001-01-01"][SchemaWithStaticmethodFieldValidator](foo="hello").foo == original_foo
