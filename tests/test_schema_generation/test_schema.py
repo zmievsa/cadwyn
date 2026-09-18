@@ -1,4 +1,5 @@
 import re
+from typing import ClassVar
 
 import pytest
 from pydantic import BaseModel
@@ -10,6 +11,27 @@ from tests.conftest import CreateRuntimeSchemas, assert_models_are_equal, versio
 
 class MySchema(BaseModel):
     foo: str
+
+
+def test__generate_versioned_models__table_models__should_preserve_original_classes(
+    create_runtime_schemas: CreateRuntimeSchemas,
+) -> None:
+    class UserFields(BaseModel):
+        name: str
+
+    class User(UserFields):
+        __table__: ClassVar[object] = object()
+
+    class Admin(User):
+        role: str
+
+    schemas = create_runtime_schemas(version_change(schema(UserFields).field("name").had(name="username")))
+
+    for generator in schemas.values():
+        assert generator[User] is User
+        assert generator[Admin] is Admin
+    assert set(schemas["2000-01-01"][UserFields].model_fields) == {"username"}
+    assert set(schemas["2001-01-01"][UserFields].model_fields) == {"name"}
 
 
 def test__schema_had_name(create_runtime_schemas: CreateRuntimeSchemas):

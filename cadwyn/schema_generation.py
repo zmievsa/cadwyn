@@ -805,6 +805,9 @@ class SchemaGenerator:
             or model in _DEFAULT_PYDANTIC_CLASSES
         ):
             return model
+        # Mapped table classes carry ORM state that cannot be copied into versioned schemas.
+        if hasattr(model, "__table__"):
+            return model
         model = _unwrap_model(model)
 
         if model in self.concrete_models:

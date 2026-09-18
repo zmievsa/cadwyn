@@ -5,6 +5,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [7.3.1]
+
+### Fixed
+
+- Fixed route generation crashes when dependencies are annotated with SQLModel table classes (#410).
+
 ## [7.3.0]
 
 ### Added
