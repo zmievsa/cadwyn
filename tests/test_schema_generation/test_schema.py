@@ -1,8 +1,11 @@
 import re
-from typing import ClassVar
+import typing
+from enum import Enum
+from typing import ClassVar, get_args, get_type_hints
 
 import pytest
 from pydantic import BaseModel
+from typing_extensions import TypeAliasType
 
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure.schemas import schema
@@ -13,25 +16,53 @@ class MySchema(BaseModel):
     foo: str
 
 
-def test__generate_versioned_models__table_models__should_preserve_original_classes(
+def test__generate_versioned_models__unaffected_models_and_enums__should_preserve_original_classes(
     create_runtime_schemas: CreateRuntimeSchemas,
 ) -> None:
-    class UserFields(BaseModel):
-        name: str
+    class Role(Enum):
+        admin = "admin"
 
-    class User(UserFields):
-        __table__: ClassVar[object] = object()
+    role_list = TypeAliasType("role_list", list[Role])
+
+    class User(BaseModel):
+        roles: role_list
+        callbacks: ClassVar[typing.Dict[str, typing.Callable[[str], str]]] = {}  # noqa: UP006  # Preserve legacy annotations.
 
     class Admin(User):
-        role: str
+        name: str
 
-    schemas = create_runtime_schemas(version_change(schema(UserFields).field("name").had(name="username")))
+    schemas = create_runtime_schemas(version_change(schema(MySchema).field("foo").had(name="bar")))
 
     for generator in schemas.values():
+        assert generator[Role] is Role
         assert generator[User] is User
         assert generator[Admin] is Admin
-    assert set(schemas["2000-01-01"][UserFields].model_fields) == {"username"}
-    assert set(schemas["2001-01-01"][UserFields].model_fields) == {"name"}
+
+
+def test__generate_versioned_models__dependent_models__should_migrate_bases_and_nested_schemas(
+    create_runtime_schemas: CreateRuntimeSchemas,
+) -> None:
+    class Child(MySchema):
+        pass
+
+    item_list = TypeAliasType("item_list", list[MySchema])
+
+    class Container(BaseModel):
+        items: item_list
+        example: ClassVar[MySchema] = MySchema(foo="value")
+
+    schemas = create_runtime_schemas(version_change(schema(MySchema).field("foo").had(name="bar")))
+
+    for generator in schemas.values():
+        assert get_args(get_type_hints(generator[Container])["example"]) == (generator[MySchema],)
+    assert schemas["2000-01-01"][Child].model_validate({"bar": "value"}).model_dump() == {"bar": "value"}
+    assert schemas["2001-01-01"][Child].model_validate({"foo": "value"}).model_dump() == {"foo": "value"}
+    assert schemas["2000-01-01"][Container].model_validate({"items": [{"bar": "value"}]}).model_dump() == {
+        "items": [{"bar": "value"}]
+    }
+    assert schemas["2001-01-01"][Container].model_validate({"items": [{"foo": "value"}]}).model_dump() == {
+        "items": [{"foo": "value"}]
+    }
 
 
 def test__schema_had_name(create_runtime_schemas: CreateRuntimeSchemas):

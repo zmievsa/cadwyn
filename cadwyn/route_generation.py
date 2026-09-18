@@ -379,7 +379,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 for method in _route_methods(route):
                     path_to_route_methods_mapping[route.path][method].add(index)
 
-        head_response_models = {model.__cadwyn_original_model__ for model in response_models}
+        head_response_models = {getattr(model, "__cadwyn_original_model__", model) for model in response_models}
         head_request_bodies = {getattr(body, "__cadwyn_original_model__", body) for body in request_bodies}
 
         return path_to_route_methods_mapping, head_response_models, head_request_bodies

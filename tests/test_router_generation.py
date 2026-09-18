@@ -21,7 +21,7 @@ from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse
 from starlette.routing import Route
-from typing_extensions import Any, TypeAliasType
+from typing_extensions import Any, TypeAliasType, override
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn._utils import _callable_name
@@ -1332,6 +1332,69 @@ def test__router_generation__updating_request_depends(
 
     assert client_2001.post("/test2", json={}).json() == {}
     assert client_2001.post("/test2", json={"my_schema": {"foo": "bar"}}).json() == {}
+
+
+def test__router_generation__unversioned_model_with_custom_metaclass__should_serve_all_versions(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+) -> None:
+    class RegisteredModelMeta(type(BaseModel)):
+        @override
+        def __new__(
+            mcls,
+            name: str,
+            bases: tuple[type, ...],
+            namespace: dict[str, object],
+            *,
+            registration_key: str,
+        ) -> type:
+            return super().__new__(mcls, name, bases, namespace)
+
+    class User(BaseModel, metaclass=RegisteredModelMeta, registration_key="user"):
+        name: str
+
+    class Envelope(BaseModel):
+        user: User
+
+    class VersionedEnvelope(BaseModel):
+        user: User
+
+    def get_user() -> User:
+        return User(name="alice")
+
+    @router.get("/dependency")
+    def dependency(user: User = Depends(get_user)) -> dict[str, str]:
+        return {"name": user.name}
+
+    @router.get("/annotated-dependency")
+    def annotated_dependency(user: Annotated[User, Depends(get_user)]) -> dict[str, str]:
+        return {"name": user.name}
+
+    @router.get("/response", response_model=User)
+    def response():
+        return get_user()
+
+    @router.post("/body")
+    def body(user: User) -> dict[str, str]:
+        return {"name": user.name}
+
+    @router.get("/nested", response_model=Envelope)
+    @router.get("/versioned-nested", response_model=VersionedEnvelope)
+    def nested():
+        return {"user": get_user()}
+
+    clients = create_versioned_clients(version_change(schema(VersionedEnvelope).had(name="PreviousEnvelope")))
+    for versioned_client in clients.values():
+        for path in ("/dependency", "/annotated-dependency", "/response"):
+            result = versioned_client.get(path)
+            assert result.status_code == 200
+            assert result.json() == {"name": "alice"}
+        result = versioned_client.post("/body", json={"name": "bob"})
+        assert result.status_code == 200
+        assert result.json() == {"name": "bob"}
+        for path in ("/nested", "/versioned-nested"):
+            result = versioned_client.get(path)
+            assert result.status_code == 200
+            assert result.json() == {"user": {"name": "alice"}}
 
 
 def test__router_generation__enum_member_dependency_default_works_only_in_versions_where_member_exists(

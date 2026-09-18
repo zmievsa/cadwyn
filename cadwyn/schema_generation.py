@@ -149,11 +149,6 @@ class PydanticFieldWrapper:
     def delete_attribute(self, *, name: str) -> None:
         self.passed_field_attributes.pop(name)
 
-    def generate_field_copy(self, generator: "SchemaGenerator") -> pydantic.fields.FieldInfo:
-        return pydantic.Field(
-            **generator.annotation_transformer.change_version_of_annotation(self.passed_field_attributes)
-        )
-
 
 def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]:
     return {
@@ -424,6 +419,19 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         return annotations | self.annotations
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
+        original_bases = tuple(cast("type[BaseModel]", base) for base in self.cls.__bases__ if base is not Generic)
+        bases = tuple(generator[base] for base in original_bases)
+        annotations = generator.annotation_transformer.change_version_of_annotation(self.annotations)
+        original_field_attributes = {name: field.passed_field_attributes for name, field in self.fields.items()}
+        field_attributes = generator.annotation_transformer.change_version_of_annotation(original_field_attributes)
+        if (
+            self.cls not in generator.versioned_models
+            and bases == original_bases
+            and annotations == self.annotations
+            and field_attributes == original_field_attributes
+        ):
+            return self.cls
+
         per_field_validators = {}
         root_validators = {}
         for name, validator in self.validators.items():
@@ -434,19 +442,17 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 per_field_validators[name] = validator.decorator(*validator.fields, **validator.kwargs)(func)
             else:
                 root_validators[name] = validator.decorator(**validator.kwargs)(func)
-        fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
+        fields = {name: pydantic.Field(**attributes) for name, attributes in field_attributes.items()}
 
         model_copy = type(self.cls)(
             self.name,
-            tuple(generator[cast("type[BaseModel]", base)] for base in self.cls.__bases__ if base is not Generic),
+            bases,
             self.other_attributes
             | per_field_validators
             | root_validators
             | fields
             | {
-                "__annotations__": generator.annotation_transformer.change_version_of_annotation(
-                    self.annotations,
-                ),
+                "__annotations__": annotations,
                 "__doc__": self.doc,
                 "__qualname__": self.cls.__qualname__.removesuffix(self.cls.__name__) + self.name,
             },
@@ -552,7 +558,8 @@ class _AnnotationTransformer:
             }
 
         elif isinstance(annotation, list | tuple):
-            return type(annotation)(self.change_version_of_annotation(v) for v in annotation)
+            values = type(annotation)(self.change_version_of_annotation(v) for v in annotation)
+            return annotation if all(new is old for new, old in zip(values, annotation, strict=True)) else values
         else:
             return self.change_versions_of_a_non_container_annotation(annotation)
 
@@ -584,20 +591,27 @@ class _AnnotationTransformer:
         if isinstance(annotation, GenericAliasUnionArgs):
             origin = get_origin(annotation)
             args = get_args(annotation)
+            changed_args = self.change_version_of_annotation(args)
+            if changed_args is args:
+                return annotation
             # Classvar does not support generic tuple arguments
             if origin is ClassVar:
-                return ClassVar[self.change_version_of_annotation(args[0])]
-            return origin[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
+                return ClassVar[changed_args[0]]
+            return origin[changed_args]
         elif is_typealiastype(annotation):
             if (
                 annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
             ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES:
                 return annotation
             else:
+                value = self.change_version_of_annotation(annotation.__value__)
+                type_params = self.change_version_of_annotation(annotation.__type_params__)
+                if value == annotation.__value__ and type_params == annotation.__type_params__:
+                    return annotation
                 return type(annotation)(
                     name=annotation.__name__,
-                    value=self.change_version_of_annotation(annotation.__value__),
-                    type_params=self.change_version_of_annotation(annotation.__type_params__),
+                    value=value,
+                    type_params=type_params,
                 )
         elif isinstance(annotation, fastapi.params.Security):
             return fastapi.params.Security(
@@ -787,11 +801,12 @@ def _add_request_and_response_params(route: APIRoute):
 
 @final
 class SchemaGenerator:
-    __slots__ = "annotation_transformer", "concrete_models", "model_bundle"
+    __slots__ = "annotation_transformer", "concrete_models", "model_bundle", "versioned_models"
 
     def __init__(self, model_bundle: _ModelBundle) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
+        self.versioned_models = frozenset(model_bundle.schemas) | frozenset(model_bundle.enums)
         self.concrete_models = {}
         self.concrete_models = {
             k: wrapper.generate_model_copy(self)
@@ -805,10 +820,10 @@ class SchemaGenerator:
             or model in _DEFAULT_PYDANTIC_CLASSES
         ):
             return model
-        # Mapped table classes carry ORM state that cannot be copied into versioned schemas.
-        if hasattr(model, "__table__"):
-            return model
         model = _unwrap_model(model)
+
+        if issubclass(model, Enum) and model not in self.versioned_models:
+            return model
 
         if model in self.concrete_models:
             model_copy = self.concrete_models[model]

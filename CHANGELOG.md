@@ -9,7 +9,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-- Fixed route generation crashes when dependencies are annotated with SQLModel table classes (#410).
+- Preserve models and enums unaffected by version changes instead of recreating their classes. This fixes crashes with custom metaclasses, including SQLModel table classes used in dependencies, request bodies, and responses (#410).
 
 ## [7.3.0]
 
