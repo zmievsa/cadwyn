@@ -5,6 +5,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [7.4.0]
+
 ### Fixed
 
 - Preserve SQLAlchemy and SQLModel classes during API version generation, fixing startup failures for annotated ORM dependencies. Reject migrations targeting these classes with guidance to use separate Pydantic models, and document this restriction in the schema migrations guide (#410).
