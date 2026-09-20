@@ -62,6 +62,7 @@ from cadwyn._utils import (
     UnionType,
     fully_unwrap_decorator,
     get_name_of_function_wrapped_in_pydantic_validator,
+    is_sqlalchemy_model,
     lenient_issubclass,
 )
 from cadwyn.exceptions import CadwynError, InvalidGenerationInstructionError
@@ -803,6 +804,7 @@ class SchemaGenerator:
             not isinstance(model, type)
             or not lenient_issubclass(model, (BaseModel, Enum))
             or model in _DEFAULT_PYDANTIC_CLASSES
+            or is_sqlalchemy_model(model)
         ):
             return model
         model = _unwrap_model(model)

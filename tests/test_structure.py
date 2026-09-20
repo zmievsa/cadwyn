@@ -19,6 +19,7 @@ from cadwyn.structure import (
 )
 from cadwyn.structure.schemas import FieldChanges, PossibleFieldAttributes
 from cadwyn.structure.versions import HeadVersion
+from tests._data.sqlalchemy_models import ImperativelyMappedModel, MappedChild, MappedModel, ModelFields
 
 
 class DummySubClass2000_001(VersionChangeWithSideEffects):  # noqa: N801
@@ -447,3 +448,13 @@ def test__schema_validator_existed__non_function_was_passed__should_raise_error(
 def test__function_as_validator__should_raise_error():
     with pytest.raises(CadwynStructureError, match=re.escape("The passed function must be a pydantic validator")):
         schema(BaseModel).validator(CadwynStructureError).existed
+
+
+@pytest.mark.parametrize("converter", [convert_request_to_next_version_for, convert_response_to_previous_version_for])
+@pytest.mark.parametrize(
+    "schemas",
+    [(MappedModel,), (BaseModel, ImperativelyMappedModel), (BaseModel, BaseModel, MappedChild), (ModelFields,)],
+)
+def test__data_converter__sqlalchemy_model__should_reject_migrations(converter, schemas):
+    with pytest.raises(CadwynStructureError, match=r"SQLAlchemy.*separate Pydantic model"):
+        converter(*schemas)

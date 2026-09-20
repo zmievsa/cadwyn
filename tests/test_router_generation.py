@@ -34,6 +34,7 @@ from cadwyn.structure import Version, convert_request_to_next_version_for, endpo
 from cadwyn.structure.data import RequestInfo, ResponseInfo, convert_response_to_previous_version_for
 from cadwyn.structure.enums import enum
 from cadwyn.structure.versions import HeadVersion, VersionChange
+from tests._data.sqlalchemy_models import ImperativelyMappedModel, MappedChild, MappedModel, ModelFields
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
@@ -1838,3 +1839,68 @@ def test__copy_route__when_route_has_flat_dependant__then_copies_flat_dependant(
     copied_flat_dependant = getattr(copied, flat_dependant_attr)
     assert copied_flat_dependant is not flat_dependant
     assert copied_flat_dependant.call is flat_dependant.call
+
+
+def test__router_generation__sqlalchemy_models__should_preserve_classes_and_serve_all_versions(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+):
+    user = MappedModel(name="alice")
+
+    def get_user() -> MappedModel:
+        return user
+
+    @router.get("/user", response_model=MappedModel)
+    def get_user_route(value: MappedModel = Depends(get_user)):
+        assert value is user
+        return value
+
+    @router.get("/users", response_model=list[MappedModel])
+    def get_users_route(value: Annotated[MappedModel, Depends(get_user)]):
+        assert value is user
+        return [value]
+
+    child = MappedChild(name="alice")
+    orm_user = ImperativelyMappedModel()
+    orm_user.id = 1
+    orm_user.name = "alice"
+
+    def get_child() -> MappedChild:
+        return child
+
+    def get_orm_user() -> ImperativelyMappedModel:
+        return orm_user
+
+    @router.get("/child", response_model=MappedChild)
+    def get_child_route(value: MappedChild = Depends(get_child)):
+        assert value is child
+        return value
+
+    @router.get("/orm-user")
+    def get_orm_user_route(value: ImperativelyMappedModel = Depends(get_orm_user)):
+        assert value is orm_user
+        return {"id": value.id, "name": value.name}
+
+    @router.post("/unmapped", response_model=ModelFields)
+    def unmapped_route(value: ModelFields):
+        return value
+
+    clients = create_versioned_clients(version_change())
+    assert len(clients) == 2
+    for version_client in clients.values():
+        response = version_client.get("/user")
+        assert response.status_code == 200
+        assert response.json() == {"id": 1, "name": "alice"}
+        response = version_client.get("/users")
+        assert response.status_code == 200
+        assert response.json() == [{"id": 1, "name": "alice"}]
+        assert version_client.get("/child").json() == {"id": 1, "name": "alice"}
+        assert version_client.get("/orm-user").json() == {"id": 1, "name": "alice"}
+        response = version_client.post("/unmapped", json={"name": "alice"})
+        assert response.status_code == 200
+        assert response.json() == {"name": "alice"}
+
+    generators = generate_versioned_models(VersionBundle(Version("2001-01-01"), Version("2000-01-01")))
+    for generator in generators.values():
+        assert generator[MappedModel] is MappedModel
+        assert generator[MappedChild] is MappedChild
+        assert generator[ModelFields] is ModelFields

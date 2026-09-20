@@ -9,6 +9,7 @@ from starlette.datastructures import FormData, MutableHeaders, UploadFile
 from typing_extensions import Any, overload
 
 from cadwyn._utils import _callable_name, same_method_definition_as_in
+from cadwyn.structure.common import _validate_schema_is_versionable
 from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
 
 
@@ -281,3 +282,10 @@ def _validate_decorator_args(
 
     elif methods_or_second_schema is not None and not isinstance(methods_or_second_schema, type):
         raise TypeError("If schema was provided as a first argument, all other arguments must also be schemas")
+
+    else:
+        _validate_schema_is_versionable(schema_or_path)
+        if methods_or_second_schema is not None:
+            _validate_schema_is_versionable(methods_or_second_schema)
+        for model in additional_schemas:
+            _validate_schema_is_versionable(model)
