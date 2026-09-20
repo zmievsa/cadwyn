@@ -3,8 +3,9 @@ import re
 import pytest
 from pydantic import BaseModel
 
-from cadwyn.exceptions import InvalidGenerationInstructionError
+from cadwyn.exceptions import CadwynStructureError, InvalidGenerationInstructionError
 from cadwyn.structure.schemas import schema
+from tests._data.sqlalchemy_models import MappedChild, MappedModel, ModelFields
 from tests.conftest import CreateRuntimeSchemas, assert_models_are_equal, version_change
 
 
@@ -29,3 +30,9 @@ def test__schema_had_name__with_the_same_name__should_raise_error(create_runtime
         ),
     ):
         create_runtime_schemas(version_change(schema(MySchema).had(name="MySchema")))
+
+
+@pytest.mark.parametrize("model", [MappedModel, MappedChild, ModelFields])
+def test__schema__sqlalchemy_model__should_reject_migrations(model: type[BaseModel]):
+    with pytest.raises(CadwynStructureError, match=r"SQLAlchemy.*separate Pydantic model"):
+        schema(model)

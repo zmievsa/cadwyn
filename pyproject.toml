@@ -95,6 +95,8 @@ dev = [
     "tox-uv>=1.35.2",
     "prek>=0.4.7",
     "pytest-xdist>=3.8.0",
+    "sqlalchemy>=2.0",
+    "sqlmodel>=0.0.24",
 ]
 
 [tool.uv]

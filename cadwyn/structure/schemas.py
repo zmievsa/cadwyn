@@ -14,7 +14,7 @@ from cadwyn._utils import (
 )
 from cadwyn.exceptions import CadwynStructureError
 
-from .common import _HiddenAttributeMixin
+from .common import _HiddenAttributeMixin, _validate_schema_is_versionable
 
 if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
@@ -316,6 +316,9 @@ class SchemaHadInstruction(_HiddenAttributeMixin):
 @dataclass(**DATACLASS_SLOTS)
 class AlterSchemaInstructionFactory:
     schema: type[BaseModel]
+
+    def __post_init__(self) -> None:
+        _validate_schema_is_versionable(self.schema)
 
     def field(self, name: str, /) -> AlterFieldInstructionFactory:
         return AlterFieldInstructionFactory(self.schema, name)

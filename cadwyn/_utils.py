@@ -95,3 +95,9 @@ else:
 def _callable_name(call: Callable[..., object]) -> str:
     name = getattr(call, "__name__", None)
     return name if isinstance(name, str) else type(call).__name__
+
+
+def is_sqlalchemy_model(model: type) -> bool:
+    # __mapper__ covers imperative mappings; _sa_registry also covers declarative
+    # bases and SQLModel classes without table=True. Avoid importing optional dependencies.
+    return hasattr(model, "__mapper__") or hasattr(model, "_sa_registry")

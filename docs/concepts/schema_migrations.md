@@ -4,6 +4,12 @@ The following instructions affect only OpenAPI schemas and their initial validat
 
 Please note that you only need a migration if it is a breaking change for your users. The scenarios below only describe "what you can do" but not "what you should do". For the "should" part, please refer to the [how-to docs](../how_to/change_openapi_schemas/add_field.md).
 
+## SQLAlchemy and SQLModel classes
+
+Cadwyn leaves SQLAlchemy and SQLModel classes unchanged when generating API versions. This includes SQLModel classes with or without `table=True`. You can use these classes in dependencies, request bodies, and response models where FastAPI supports them, but their schemas remain the same across API versions.
+
+`schema(...)` and the schema-based forms of `convert_request_to_next_version_for(...)` and `convert_response_to_previous_version_for(...)` reject these classes with a `CadwynStructureError`. To version their API representation, define a separate Pydantic `BaseModel`.
+
 ## Add a field to the older version
 
 ```python
