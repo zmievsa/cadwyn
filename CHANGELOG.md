@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed older API versions using current request models when endpoints use postponed annotations, a regression introduced in 6.0.1.
+
 ## [7.4.0]
 
 ### Fixed

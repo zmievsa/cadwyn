@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Annotated
 
+import pytest
 from fastapi import Depends, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, WithJsonSchema
 
 from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
+from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import Version, VersionBundle, VersionChange
+from tests.conftest import version_change
 
 
 class OuterSchema(BaseModel):
@@ -101,3 +105,41 @@ def test__router_generation__using_callable_class_dependency_with_forwardref():
     response = client.get("/run")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+class TaskOutcome(str, Enum):
+    failed = "failed"
+    stopped = "stopped"
+
+
+class TaskOutcomePayload(BaseModel):
+    state: TaskOutcome
+    hostname: str | None = None
+    pid: int | None = None
+
+
+@pytest.mark.parametrize("version", ["2001-01-01", "2000-01-01"])
+def test__router_generation__forwardref_body_matches_version(router, create_versioned_clients, version):
+    @router.post("/outcome")
+    def report_outcome(payload: TaskOutcomePayload):
+        return payload
+
+    client = create_versioned_clients(
+        version_change(
+            enum(TaskOutcome).didnt_have("stopped"),
+            schema(TaskOutcomePayload).field("hostname").didnt_exist,
+            schema(TaskOutcomePayload).field("pid").didnt_exist,
+        )
+    )[version]
+    response = client.get(f"/openapi.json?version={version}")
+
+    assert response.status_code == 200
+    schemas = response.json()["components"]["schemas"]
+    expected_fields = {"state", "hostname", "pid"} if version == "2001-01-01" else {"state"}
+    assert set(schemas["TaskOutcomePayload"]["properties"]) == expected_fields
+    expected_outcomes = ["failed", "stopped"] if version == "2001-01-01" else ["failed"]
+    assert schemas["TaskOutcome"]["enum"] == expected_outcomes
+
+    response = client.post("/outcome", json={"state": "stopped"})
+
+    assert response.status_code == (200 if version == "2001-01-01" else 422)

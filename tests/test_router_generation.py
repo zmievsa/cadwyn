@@ -1729,8 +1729,8 @@ def test__router_generation__with_generator_dependencies(
     assert client.get("/test", params={"my_enum": "1"}, headers={"x-api-version": "2000-01-01"}).status_code == 200
     assert dependency_cache == snapshot(
         [
-            "route sync a start",
-            "route async a start",
+            "route sync b start",
+            "route async b start",
             "fastapi async dependency start",
             "fastapi sync dependency start",
             "route sync a start",
@@ -1743,8 +1743,8 @@ def test__router_generation__with_generator_dependencies(
             "route sync a end",
             "fastapi sync dependency end",
             "fastapi async dependency end",
-            "route async a end",
-            "route sync a end",
+            "route async b end",
+            "route sync b end",
         ]
     )
     dependency_cache.clear()
