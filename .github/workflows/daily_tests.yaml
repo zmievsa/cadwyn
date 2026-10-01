@@ -10,6 +10,10 @@ jobs:
   update-dependencies-and-test:
     name: Update dependencies and run tests
     runs-on: ubuntu-latest
+    env:
+      # Give transient PyPI stalls more time to recover before failing the run
+      UV_HTTP_RETRIES: 6
+      UV_HTTP_TIMEOUT: 60
     strategy:
       fail-fast: true
       matrix:
