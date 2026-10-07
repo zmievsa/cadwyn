@@ -464,7 +464,9 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             # so they must point to this version's classes too
             __pydantic_generic_metadata__={
                 "origin": generator[origin] if origin is not None else None,
-                "args": generator.annotation_transformer.change_version_of_annotation(generic_metadata["args"]),
+                "args": generator.annotation_transformer.change_version_of_annotation(
+                    tuple(_resolve_forward_refs(arg, self.cls) for arg in generic_metadata["args"])
+                ),
                 "parameters": generic_metadata["parameters"],
             },
         )
@@ -1203,6 +1205,14 @@ class _EnumWrapper(Generic[_T_ENUM]):
             and k not in _DummyEnum.__dict__
             and (k not in mro_dict or mro_dict[k] is not v)
         }
+
+
+def _resolve_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
+    # Generic arguments such as "Item" in Page["Item"] stay strings in pydantic's generic metadata
+    new_annotation, _ = pydantic_try_eval_type(
+        annotation, sys.modules[model.__module__].__dict__, model.__pydantic_parent_namespace__
+    )
+    return new_annotation
 
 
 def _try_eval_type(value: Any, globals: dict[str, Any]) -> Any:
