@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed older API versions using current models inside parametrized generic models such as `Page[Item]` in requests, responses, and OpenAPI (#416).
+
 ## [7.4.1]
 
 ### Fixed
