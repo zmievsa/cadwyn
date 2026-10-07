@@ -40,6 +40,7 @@ from pydantic._internal._decorators import (
     ValidatorDecoratorInfo,
 )
 from pydantic._internal._known_annotated_metadata import collect_known_metadata
+from pydantic._internal._model_construction import unpack_lenient_weakvaluedict
 from pydantic._internal._typing_extra import try_eval_type as pydantic_try_eval_type
 from pydantic.fields import ComputedFieldInfo, FieldInfo
 from pydantic_core import PydanticUndefined
@@ -436,11 +437,20 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             else:
                 root_validators[name] = validator.decorator(**validator.kwargs)(func)
         fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
+        # __orig_bases__ keeps bases such as Generic[T] that __bases__ loses so that the copy stays generic
+        orig_bases = tuple(
+            generator[base] if isinstance(base, type) else base
+            for base in self.cls.__dict__.get("__orig_bases__", self.cls.__bases__)
+        )
+        orig_bases_attribute = {"__orig_bases__": orig_bases} if "__orig_bases__" in self.cls.__dict__ else {}
+        generic_metadata = self.cls.__pydantic_generic_metadata__
+        origin = generic_metadata["origin"]
 
         model_copy = type(self.cls)(
             self.name,
-            tuple(generator[cast("type[BaseModel]", base)] for base in self.cls.__bases__ if base is not Generic),
+            types.resolve_bases(orig_bases),
             self.other_attributes
+            | orig_bases_attribute
             | per_field_validators
             | root_validators
             | fields
@@ -451,7 +461,15 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 "__doc__": self.doc,
                 "__qualname__": self.cls.__qualname__.removesuffix(self.cls.__name__) + self.name,
             },
-            __pydantic_generic_metadata__=self.cls.__pydantic_generic_metadata__,
+            # Pydantic resolves the fields of a parametrized generic (such as Page[Item]) through its origin and args
+            # so they must point to this version's classes too
+            __pydantic_generic_metadata__={
+                "origin": generator[origin] if origin is not None else None,
+                "args": generator.annotation_transformer.change_version_of_annotation(
+                    tuple(_resolve_forward_refs(arg, self.cls) for arg in generic_metadata["args"])
+                ),
+                "parameters": generic_metadata["parameters"],
+            },
         )
 
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
@@ -1188,6 +1206,16 @@ class _EnumWrapper(Generic[_T_ENUM]):
             and k not in _DummyEnum.__dict__
             and (k not in mro_dict or mro_dict[k] is not v)
         }
+
+
+def _resolve_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
+    # Generic arguments such as "Item" in Page["Item"] stay strings in pydantic's generic metadata
+    new_annotation, _ = pydantic_try_eval_type(
+        annotation,
+        sys.modules[model.__module__].__dict__,
+        unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__),
+    )
+    return new_annotation
 
 
 def _try_eval_type(value: Any, globals: dict[str, Any]) -> Any:
