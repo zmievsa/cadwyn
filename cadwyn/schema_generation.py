@@ -40,6 +40,7 @@ from pydantic._internal._decorators import (
     ValidatorDecoratorInfo,
 )
 from pydantic._internal._known_annotated_metadata import collect_known_metadata
+from pydantic._internal._model_construction import unpack_lenient_weakvaluedict
 from pydantic._internal._typing_extra import try_eval_type as pydantic_try_eval_type
 from pydantic.fields import ComputedFieldInfo, FieldInfo
 from pydantic_core import PydanticUndefined
@@ -1210,7 +1211,9 @@ class _EnumWrapper(Generic[_T_ENUM]):
 def _resolve_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
     # Generic arguments such as "Item" in Page["Item"] stay strings in pydantic's generic metadata
     new_annotation, _ = pydantic_try_eval_type(
-        annotation, sys.modules[model.__module__].__dict__, model.__pydantic_parent_namespace__
+        annotation,
+        sys.modules[model.__module__].__dict__,
+        unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__),
     )
     return new_annotation
 

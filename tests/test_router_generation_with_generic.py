@@ -191,3 +191,37 @@ def test__router_generation__generic_request_body_with_versioned_arg__should_use
 
     assert client_2000.post("/items", json={"items": [{"oldName": "Ada"}]}).json() == ["Ada"]
     assert client_2001.post("/items", json={"items": [{"fullName": "Ada"}]}).json() == ["Ada"]
+
+
+def test__router_generation__local_generic_with_quoted_arg__should_use_arg_from_requested_version(
+    create_versioned_app: CreateVersionedApp,
+):
+    class LocalItem(BaseModel):
+        name: str = Field(alias="fullName")
+
+    class LocalPage(BaseModel, Generic[ItemT]):
+        items: list[ItemT]
+
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=LocalPage["LocalItem"])
+    async def list_items() -> dict[str, Any]:
+        return {"items": [{"fullName": "Ada"}]}
+
+    app = create_versioned_app(
+        version_change(
+            schema(LocalItem)
+            .field("name")
+            .had(
+                alias="oldName",
+                validation_alias=AliasChoices("oldName", "fullName"),
+                serialization_alias="oldName",
+            )
+        ),
+        router=router,
+    )
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+
+    assert client_2000.get("/items").json() == {"items": [{"oldName": "Ada"}]}
+    assert client_2001.get("/items").json() == {"items": [{"fullName": "Ada"}]}
