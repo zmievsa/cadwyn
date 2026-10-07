@@ -140,3 +140,6 @@ local.py
 coverage
 
 node_modules
+
+# Beads issue tracker (local only)
+.beads*
