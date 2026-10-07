@@ -14,6 +14,7 @@ from typing import (
 
 import fastapi.routing
 from fastapi import APIRouter
+from fastapi.datastructures import _Unset
 from fastapi.routing import APIRoute, _EffectiveRouteContext, _iter_routes_with_context
 from pydantic import BaseModel
 from starlette.routing import BaseRoute
@@ -138,7 +139,9 @@ def copy_route(route: _RouteT, effective_route_context: _EffectiveRouteContext |
     # containing ModelField/TypeAdapter instances instead of recursing into them.
     # These can hold TypeAdapters for recursive types (e.g. JsonValue) that cause
     # infinite recursion during deepcopy.
-    memo: dict[int, Any] = {}
+    # FastAPI checks `example is not _Unset` by identity when building OpenAPI, so a copied sentinel
+    # inside our endpoint wrappers' param defaults would be rendered as `"example": {}`.
+    memo: dict[int, Any] = {id(_Unset): _Unset}
     for attr in ("dependant", _FLAT_DEPENDANT_ATTR, "body_field", "response_model", "dependency_overrides_provider"):
         obj = getattr(route, attr, None)
         if obj is not None:
