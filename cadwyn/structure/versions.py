@@ -50,6 +50,9 @@ from .endpoints import AlterEndpointSubInstruction
 from .enums import AlterEnumSubInstruction
 from .schemas import AlterSchemaSubInstruction, SchemaHadInstruction
 
+if TYPE_CHECKING:
+    from typing_extensions import TypeForm
+
 _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
 _CADWYN_RESPONSE_PARAM_NAME = "cadwyn_response_param"
 _P = ParamSpec("_P")
@@ -417,7 +420,7 @@ class VersionBundle:
 
     async def _migrate_request(
         self,
-        body_type: Union[type[BaseModel], None],
+        body_type: "Union[TypeForm[object], None]",
         head_dependant: Dependant,
         request: FastapiRequest,
         response: FastapiResponse,
@@ -433,7 +436,11 @@ class VersionBundle:
         head_route_id = id(head_route)
         for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
-                if body_type is not None and body_type in version_change.alter_request_by_schema_instructions:
+                if (
+                    isinstance(body_type, type)
+                    and issubclass(body_type, BaseModel)
+                    and body_type in version_change.alter_request_by_schema_instructions
+                ):
                     for instruction in version_change.alter_request_by_schema_instructions[body_type]:
                         instruction(request_info)
                 if head_route_id in version_change._route_to_request_migration_mapping:
@@ -494,7 +501,7 @@ class VersionBundle:
     # TODO (https://github.com/zmievsa/cadwyn/issues/113): Refactor this function and all functions it calls.
     def _versioned(
         self,
-        head_body_field: Union[type[BaseModel], None],
+        head_body_field: "Union[TypeForm[object], None]",
         module_body_field_name: Union[str, None],
         route: APIRoute,
         head_route: APIRoute,
@@ -691,7 +698,7 @@ class VersionBundle:
 
     async def _convert_endpoint_kwargs_to_version(
         self,
-        head_body_field: Union[type[BaseModel], None],
+        head_body_field: "Union[TypeForm[object], None]",
         body_field_alias: Union[str, None],
         head_dependant: Dependant,
         request_param_name: str,

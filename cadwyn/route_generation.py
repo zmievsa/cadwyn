@@ -31,6 +31,7 @@ from cadwyn.exceptions import (
 )
 from cadwyn.schema_generation import (
     _add_request_and_response_params,
+    _unwrap_model,
     generate_versioned_models,
 )
 from cadwyn.structure import Version, VersionBundle
@@ -45,6 +46,7 @@ from cadwyn.structure.versions import VersionChange
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
+    from typing_extensions import TypeForm
 
     from cadwyn.middleware import APIVersionLocation
 
@@ -248,8 +250,8 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 # Wait.. Why do we need this code again?
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
                     annotation = older_route.body_field.field_info.annotation
-                    if hasattr(annotation, "__cadwyn_original_model__"):
-                        template_older_body_model = annotation.__cadwyn_original_model__
+                    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+                        template_older_body_model = _unwrap_model(annotation)
                     else:
                         template_older_body_model = annotation
                 else:
@@ -374,7 +376,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     # Not sure if it can ever be None when it's a simple schema. Eh, I would rather be safe than sorry
                 if _route_has_a_simple_body_schema(route) and route.body_field is not None:
                     annotation = route.body_field.field_info.annotation
-                    if annotation is not None and lenient_issubclass(annotation, BaseModel):
+                    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
                         request_bodies.add(annotation)
                 for method in _route_methods(route):
                     path_to_route_methods_mapping[route.path][method].add(index)
@@ -528,7 +530,7 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
 def _add_data_migrations_to_route(
     route: APIRoute,
     head_route: Any,
-    template_body_field: Union[type[BaseModel], None],
+    template_body_field: "Union[TypeForm[object], None]",
     template_body_field_name: Union[str, None],
     dependant_for_request_migrations: "Dependant",
     versions: VersionBundle,
