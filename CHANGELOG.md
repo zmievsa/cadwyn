@@ -7,7 +7,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-- Restored type checking compatibility with Pydantic 2.14 while preserving request migrations for model and container annotations.
+- Fixed internal type checking with Pydantic 2.14.
 
 ## [7.4.1]
 

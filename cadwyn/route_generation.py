@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from starlette.routing import BaseRoute
 from typing_extensions import TypeVar, assert_never
 
-from cadwyn._utils import DATACLASS_SLOTS, Sentinel, _callable_name, lenient_issubclass
+from cadwyn._utils import DATACLASS_SLOTS, Sentinel, _callable_name
 from cadwyn.exceptions import (
     CadwynError,
     RouteAlreadyExistsError,
@@ -46,7 +46,6 @@ from cadwyn.structure.versions import VersionChange
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
-    from typing_extensions import TypeForm
 
     from cadwyn.middleware import APIVersionLocation
 
@@ -247,15 +246,11 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 # We know they are APIRoutes because of the check at the very beginning of the top loop.
                 # I.e. Because head_route is an APIRoute, both routes are  APIRoutes too
                 older_route = cast("APIRoute", older_route)
-                # Wait.. Why do we need this code again?
+                template_older_body_model: Union[type[BaseModel], None] = None
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
                     annotation = older_route.body_field.field_info.annotation
                     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
                         template_older_body_model = _unwrap_model(annotation)
-                    else:
-                        template_older_body_model = annotation
-                else:
-                    template_older_body_model = None
                 _add_data_migrations_to_route(
                     older_route,
                     # NOTE: The fact that we use latest here assumes that the route can never change its response schema
@@ -358,33 +353,29 @@ class _EndpointTransformer(Generic[_R, _WR]):
 
     def _extract_all_routes_identifiers_for_route_to_converter_matching(
         self, router: APIRouter
-    ) -> tuple[dict[_RoutePath, dict[_RouteMethod, set[_RouteId]]], set[Any], set[Any]]:
+    ) -> tuple[dict[_RoutePath, dict[_RouteMethod, set[_RouteId]]], set[type[BaseModel]], set[type[BaseModel]]]:
         # int is the index of the route in the router.routes list.
         # So we essentially keep track of which routes have which response models and request bodies.
         # and their indices in the router.routes list. The indices will allow us to match them to the same
         # routes in the head version. This gives us the ability to later apply changes to these routes
         # without thinking about any renamings or response model changes.
 
-        response_models = set()
-        request_bodies = set()
+        response_models: set[type[BaseModel]] = set()
+        request_bodies: set[type[BaseModel]] = set()
         path_to_route_methods_mapping: dict[str, dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
 
         for index, route in enumerate(router.routes):
             if isinstance(route, APIRoute):
-                if route.response_model is not None and lenient_issubclass(route.response_model, BaseModel):
-                    response_models.add(route.response_model)
-                    # Not sure if it can ever be None when it's a simple schema. Eh, I would rather be safe than sorry
+                if isinstance(route.response_model, type) and issubclass(route.response_model, BaseModel):
+                    response_models.add(_unwrap_model(route.response_model))
                 if _route_has_a_simple_body_schema(route) and route.body_field is not None:
                     annotation = route.body_field.field_info.annotation
                     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-                        request_bodies.add(annotation)
+                        request_bodies.add(_unwrap_model(annotation))
                 for method in _route_methods(route):
                     path_to_route_methods_mapping[route.path][method].add(index)
 
-        head_response_models = {getattr(model, "__cadwyn_original_model__", model) for model in response_models}
-        head_request_bodies = {getattr(body, "__cadwyn_original_model__", body) for body in request_bodies}
-
-        return path_to_route_methods_mapping, head_response_models, head_request_bodies
+        return path_to_route_methods_mapping, response_models, request_bodies
 
     # TODO (https://github.com/zmievsa/cadwyn/issues/28): Simplify
     def _apply_endpoint_changes_to_router(  # noqa: C901
@@ -530,7 +521,7 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
 def _add_data_migrations_to_route(
     route: APIRoute,
     head_route: Any,
-    template_body_field: "Union[TypeForm[object], None]",
+    template_body_field: Union[type[BaseModel], None],
     template_body_field_name: Union[str, None],
     dependant_for_request_migrations: "Dependant",
     versions: VersionBundle,

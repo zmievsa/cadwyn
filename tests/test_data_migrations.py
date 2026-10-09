@@ -373,13 +373,18 @@ class TestRequestMigrations:
         router: VersionedAPIRouter,
     ):
         @router.post(test_path)
-        async def route(payload: dict = Body(None)):
+        async def route(payload: dict[str, int] = Body(None)):
             return payload
 
-        payload = {"foo": "bar"}
-        clients = create_versioned_clients(version_change())
-        assert clients["2000-01-01"].post(url=test_path, json=payload).json() == payload
-        assert clients["2001-01-01"].post(url=test_path, json=payload).json() == payload
+        @convert_request_to_next_version_for(test_path, ["POST"])
+        def migrator(request: RequestInfo):
+            assert request.body == {"foo": 1}
+            request.body["foo"] += 1
+
+        payload = {"foo": "1"}
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        assert clients["2000-01-01"].post(url=test_path, json=payload).json() == {"foo": 2}
+        assert clients["2001-01-01"].post(url=test_path, json=payload).json() == {"foo": 1}
 
 
 class TestResponseMigrations:
