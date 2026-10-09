@@ -358,9 +358,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     )
 
     def __post_init__(self) -> None:
-        # This isn't actually supposed to run, it's just a precaution
-        while hasattr(self.cls, "__cadwyn_original_model__"):  # pragma: no cover
-            self.cls = cast("type[_T_PYDANTIC_MODEL]", self.cls.__cadwyn_original_model__)
+        self.cls = _unwrap_model(self.cls)
 
         for k, annotation in self.annotations.items():
             if get_origin(annotation) == Annotated:

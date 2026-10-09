@@ -714,8 +714,8 @@ class VersionBundle:
 
         # Reuse the validated value for a single body parameter, including non-model annotations.
         if len(route.dependant.body_params) == 1 and body_field_alias is not None and body_field_alias in kwargs:
-            raw_body: Union[BaseModel, None] = kwargs.get(body_field_alias)
-            if raw_body is None:  # pragma: no cover # This is likely an impossible case but we would like to be safe
+            raw_body: object = kwargs.get(body_field_alias)
+            if raw_body is None:
                 body = None
             # It means we have a dict or a list instead of a full model.
             # This covers the following use case in the endpoint definition: "payload: dict = Body(None)"

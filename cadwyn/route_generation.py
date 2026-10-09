@@ -248,9 +248,9 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 older_route = cast("APIRoute", older_route)
                 template_older_body_model: Union[type[BaseModel], None] = None
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
-                    annotation = older_route.body_field.field_info.annotation
-                    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-                        template_older_body_model = _unwrap_model(annotation)
+                    template_older_body_model = _get_original_pydantic_model(
+                        older_route.body_field.field_info.annotation
+                    )
                 _add_data_migrations_to_route(
                     older_route,
                     # NOTE: The fact that we use latest here assumes that the route can never change its response schema
@@ -366,12 +366,13 @@ class _EndpointTransformer(Generic[_R, _WR]):
 
         for index, route in enumerate(router.routes):
             if isinstance(route, APIRoute):
-                if isinstance(route.response_model, type) and issubclass(route.response_model, BaseModel):
-                    response_models.add(_unwrap_model(route.response_model))
+                response_model = _get_original_pydantic_model(route.response_model)
+                if response_model is not None:
+                    response_models.add(response_model)
                 if _route_has_a_simple_body_schema(route) and route.body_field is not None:
-                    annotation = route.body_field.field_info.annotation
-                    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-                        request_bodies.add(_unwrap_model(annotation))
+                    request_body = _get_original_pydantic_model(route.body_field.field_info.annotation)
+                    if request_body is not None:
+                        request_bodies.add(request_body)
                 for method in _route_methods(route):
                     path_to_route_methods_mapping[route.path][method].add(index)
 
@@ -611,6 +612,12 @@ def _get_route_from_func(
     for route, _effective_route_context in _iter_routes_with_context(routes):
         if isinstance(route, fastapi.routing.APIRoute) and (route.endpoint == endpoint):
             return route
+    return None
+
+
+def _get_original_pydantic_model(annotation: object) -> Union[type[BaseModel], None]:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return _unwrap_model(annotation)
     return None
 
 

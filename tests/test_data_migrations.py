@@ -385,6 +385,9 @@ class TestRequestMigrations:
         clients = create_versioned_clients(version_change(migrator=migrator))
         assert clients["2000-01-01"].post(url=test_path, json=payload).json() == {"foo": 2}
         assert clients["2001-01-01"].post(url=test_path, json=payload).json() == {"foo": 1}
+        empty_response = clients["2001-01-01"].post(url=test_path)
+        assert empty_response.status_code == 200
+        assert empty_response.json() is None
 
 
 class TestResponseMigrations:
