@@ -528,7 +528,8 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
 def _add_data_migrations_to_route(
     route: APIRoute,
     head_route: Any,
-    template_body_field: Union[type[BaseModel], None],
+    # A single body parameter can also use a primitive, union, or generic annotation.
+    template_body_field: object,
     template_body_field_name: Union[str, None],
     dependant_for_request_migrations: "Dependant",
     versions: VersionBundle,

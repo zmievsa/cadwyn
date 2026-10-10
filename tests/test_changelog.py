@@ -467,7 +467,7 @@ def test__changelog__with_child_overriding_changed_field_in_parent__unused_model
         some_field: str = Field(pattern="sasdasd")
 
     class SchemaChild(SchemaWithSomeField):
-        some_field: int = Field(default=83)
+        some_field: int = Field(default=83)  # ty: ignore[invalid-attribute-override]  # Test a deliberate field type override.
 
     router = VersionedAPIRouter()
 

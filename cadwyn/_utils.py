@@ -81,7 +81,14 @@ def fully_unwrap_decorator(
 T = TypeVar("T", bound=type[object])
 
 if TYPE_CHECKING:
-    lenient_issubclass = issubclass
+    from typing_extensions import TypeIs
+
+    _SubclassT = TypeVar("_SubclassT")
+
+    # Unlike issubclass, the runtime helper accepts non-class annotations and returns False.
+    def lenient_issubclass(
+        cls: object, other: Union[type[_SubclassT], tuple[type[_SubclassT], ...]]
+    ) -> TypeIs[type[_SubclassT]]: ...
 
 else:
 
