@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Restored type checking compatibility with Pydantic 2.14 and ty 0.0.86, including request bodies with non-model annotations.
+
 ## [7.4.1]
 
 ### Fixed

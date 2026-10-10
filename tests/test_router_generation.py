@@ -1145,8 +1145,10 @@ def test__router_generation__updating_request_models_with_inheritance(
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
     body_param_2001 = routes_2001[1].dependant.body_params[0]
-    assert body_param_2000.field_info.annotation is not None
-    assert body_param_2001.field_info.annotation is not None
+    assert isinstance(body_param_2000.field_info.annotation, type)
+    assert issubclass(body_param_2000.field_info.annotation, BaseModel)
+    assert isinstance(body_param_2001.field_info.annotation, type)
+    assert issubclass(body_param_2001.field_info.annotation, BaseModel)
     assert set(body_param_2000.field_info.annotation.model_fields) == {"bar"}
     assert set(body_param_2001.field_info.annotation.model_fields) == {"foo", "bar"}
 
@@ -1456,16 +1458,20 @@ def test__router_generation__updating_callbacks(
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
-    assert generated_callback.dependant.body_params[0].field_info.annotation is not None
-    assert generated_callback.dependant.body_params[0].field_info.annotation.model_fields["bar"].annotation is str
+    body_model = generated_callback.dependant.body_params[0].field_info.annotation
+    assert isinstance(body_model, type)
+    assert issubclass(body_model, BaseModel)
+    assert body_model.model_fields["bar"].annotation is str
 
     route = app.router.versioned_routers["2001-01-01"].routes[1]
     assert isinstance(route, APIRoute)
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
-    assert generated_callback.dependant.body_params[0].field_info.annotation is not None
-    assert "bar" not in generated_callback.dependant.body_params[0].field_info.annotation.model_fields
+    body_model = generated_callback.dependant.body_params[0].field_info.annotation
+    assert isinstance(body_model, type)
+    assert issubclass(body_model, BaseModel)
+    assert "bar" not in body_model.model_fields
 
 
 def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: ContextVar[Union[str, None]]):

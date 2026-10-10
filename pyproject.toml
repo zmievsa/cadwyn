@@ -80,7 +80,7 @@ dev = [
     "dirty-equals >=0.6.0",
     "uvicorn ~=0.23.0",
     # type checking
-    "ty>=0.0.56",
+    "ty>=0.0.86",
     # docs
     "mkdocs >=1.5.2",
     "mkdocs-material >=9.3.1",
