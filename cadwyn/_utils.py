@@ -1,10 +1,10 @@
 import sys
 from collections.abc import Callable
 from inspect import signature
-from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
+from typing import Any, Concatenate, Generic, TypeVar, Union
 
 from pydantic._internal._decorators import DecoratedType, unwrap_wrapped_function
-from typing_extensions import ParamSpec, override
+from typing_extensions import ParamSpec, TypeIs, override
 
 Sentinel: Any = object()
 
@@ -80,16 +80,15 @@ def fully_unwrap_decorator(
 
 T = TypeVar("T", bound=type[object])
 
-if TYPE_CHECKING:
-    lenient_issubclass = issubclass
 
-else:
-
-    def lenient_issubclass(cls: type, other: Union[T, tuple[T, ...]]) -> bool:
-        try:
-            return issubclass(cls, other)
-        except TypeError:  # pragma: no cover
-            return False
+def lenient_issubclass(cls: object, other: Union[T, tuple[T, ...]]) -> TypeIs[T]:
+    """Accept arbitrary annotations and narrow successful checks to subclass types."""
+    if not isinstance(cls, type):
+        return False
+    try:
+        return issubclass(cls, other)
+    except TypeError:  # pragma: no cover
+        return False
 
 
 def _callable_name(call: Callable[..., object]) -> str:

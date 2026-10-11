@@ -28,7 +28,7 @@ from starlette.datastructures import FormData
 from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated, override
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
-from cadwyn._utils import classproperty
+from cadwyn._utils import classproperty, lenient_issubclass
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -417,7 +417,7 @@ class VersionBundle:
 
     async def _migrate_request(
         self,
-        body_type: Union[type[BaseModel], None],
+        body_type: object,
         head_dependant: Dependant,
         request: FastapiRequest,
         response: FastapiResponse,
@@ -433,7 +433,10 @@ class VersionBundle:
         head_route_id = id(head_route)
         for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
-                if body_type is not None and body_type in version_change.alter_request_by_schema_instructions:
+                if (
+                    lenient_issubclass(body_type, BaseModel)
+                    and body_type in version_change.alter_request_by_schema_instructions
+                ):
                     for instruction in version_change.alter_request_by_schema_instructions[body_type]:
                         instruction(request_info)
                 if head_route_id in version_change._route_to_request_migration_mapping:
@@ -494,7 +497,7 @@ class VersionBundle:
     # TODO (https://github.com/zmievsa/cadwyn/issues/113): Refactor this function and all functions it calls.
     def _versioned(
         self,
-        head_body_field: Union[type[BaseModel], None],
+        head_body_field: object,
         module_body_field_name: Union[str, None],
         route: APIRoute,
         head_route: APIRoute,
@@ -691,7 +694,7 @@ class VersionBundle:
 
     async def _convert_endpoint_kwargs_to_version(
         self,
-        head_body_field: Union[type[BaseModel], None],
+        head_body_field: object,
         body_field_alias: Union[str, None],
         head_dependant: Dependant,
         request_param_name: str,

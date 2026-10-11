@@ -246,6 +246,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 # I.e. Because head_route is an APIRoute, both routes are  APIRoutes too
                 older_route = cast("APIRoute", older_route)
                 # Wait.. Why do we need this code again?
+                # A single body parameter may be a model class or another annotation, such as list[int].
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
                     annotation = older_route.body_field.field_info.annotation
                     if hasattr(annotation, "__cadwyn_original_model__"):
@@ -528,7 +529,7 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
 def _add_data_migrations_to_route(
     route: APIRoute,
     head_route: Any,
-    template_body_field: Union[type[BaseModel], None],
+    template_body_field: object,
     template_body_field_name: Union[str, None],
     dependant_for_request_migrations: "Dependant",
     versions: VersionBundle,
