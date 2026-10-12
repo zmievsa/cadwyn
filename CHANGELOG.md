@@ -5,9 +5,14 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- `migrate_response_body` now raises a `ValidationError` when `latest_body` is an instance of a parametrized generic model such as `Page[Item]`, as it already did for other models. Pass a dict instead.
+
 ### Fixed
 
 - Fixed older API versions using current models inside parametrized generic models such as `Page[Item]` in requests, responses, and OpenAPI (#416).
+- Fixed a `RecursionError` (reported as an `ImportError`) in older API versions when models refer to themselves or to each other, such as `children: "list[Category]"` or `subcategories: Page["Category"]` (#419).
 
 ## [7.4.1]
 

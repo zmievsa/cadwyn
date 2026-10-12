@@ -13,6 +13,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     ClassVar,
+    ForwardRef,
     Generic,
     TypeAlias,
     TypeGuard,
@@ -466,7 +467,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             __pydantic_generic_metadata__={
                 "origin": generator[origin] if origin is not None else None,
                 "args": generator.annotation_transformer.change_version_of_annotation(
-                    tuple(_resolve_forward_refs(arg, self.cls) for arg in generic_metadata["args"])
+                    tuple(_eval_generic_arg(arg, self.cls) for arg in generic_metadata["args"])
                 ),
                 "parameters": generic_metadata["parameters"],
             },
@@ -807,16 +808,16 @@ def _add_request_and_response_params(route: APIRoute):
 
 @final
 class SchemaGenerator:
-    __slots__ = "annotation_transformer", "concrete_models", "model_bundle"
+    __slots__ = "_forward_refs", "_models_in_progress", "annotation_transformer", "concrete_models", "model_bundle"
 
     def __init__(self, model_bundle: _ModelBundle) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
-        self.concrete_models = {}
-        self.concrete_models = {
-            k: wrapper.generate_model_copy(self)
-            for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
-        }
+        self.concrete_models: dict[type[Union[BaseModel, Enum]], type[Union[BaseModel, Enum]]] = {}
+        self._models_in_progress: set[type[Union[BaseModel, Enum]]] = set()
+        self._forward_refs: dict[type[Union[BaseModel, Enum]], str] = {}
+        for model in [*self.model_bundle.schemas, *self.model_bundle.enums]:
+            self[model]
 
     def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
         if (
@@ -829,17 +830,54 @@ class SchemaGenerator:
         model = _unwrap_model(model)
 
         if model in self.concrete_models:
-            model_copy = self.concrete_models[model]
-        else:
-            wrapper = self._get_wrapper_for_model(model)
-            model_copy = wrapper.generate_model_copy(self)
-            self.concrete_models[model] = model_copy
+            return cast("type[_T_ANY_MODEL]", self.concrete_models[model])
+        if not self._models_in_progress:
+            number_of_existing_models = len(self.concrete_models)
+            model_copy = self._generate_model_copy(model)
+            if self._forward_refs:
+                self._resolve_forward_refs(number_of_existing_models)
+            return model_copy
+        # The model refers to itself, either directly or through other models, so its copy
+        # (or the copy of its parent) cannot be created yet. We refer to it by a forward ref instead
+        # and resolve the forward ref once all copies are created.
+        if any(base in self._models_in_progress for base in model.__mro__):
+            forward_ref = self._forward_refs.setdefault(model, f"_CadwynForwardRef{id(model)}")
+            return cast("type[_T_ANY_MODEL]", forward_ref)
+        return self._generate_model_copy(model)
+
+    def _generate_model_copy(self, model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
+        self._models_in_progress.add(model)
+        model_copy = self._get_wrapper_for_model(model).generate_model_copy(self)
+        self._models_in_progress.remove(model)
+        self.concrete_models[model] = model_copy
         return cast("type[_T_ANY_MODEL]", model_copy)
+
+    def _resolve_forward_refs(self, number_of_existing_models: int) -> None:
+        # Models that were only referenced through forward refs have not been created yet
+        while models_to_create := [model for model in self._forward_refs if model not in self.concrete_models]:
+            for model in models_to_create:
+                self._generate_model_copy(model)
+        namespace = {forward_ref: self.concrete_models[model] for model, forward_ref in self._forward_refs.items()}
+        self._forward_refs.clear()
+        # Models are rebuilt in the order of their creation so that the models that use them get their latest schemas
+        new_model_copies = list(self.concrete_models.values())[number_of_existing_models:]
+        for model_copy in [model_copy for model_copy in new_model_copies if issubclass(model_copy, BaseModel)]:
+            # Generic args are a part of the model's name in OpenAPI so they must not stay forward refs
+            generic_metadata = model_copy.__pydantic_generic_metadata__
+            model_copy.__pydantic_generic_metadata__ = {
+                **generic_metadata,
+                "args": tuple(_eval_forward_refs(arg, namespace) for arg in generic_metadata["args"]),
+            }
+            model_copy.model_rebuild(force=True, raise_errors=False, _types_namespace=namespace)
 
     @overload
     def _get_wrapper_for_model(self, model: type[BaseModel]) -> "_PydanticModelWrapper[BaseModel]": ...
     @overload
     def _get_wrapper_for_model(self, model: type[Enum]) -> "_EnumWrapper[Enum]": ...
+    @overload
+    def _get_wrapper_for_model(
+        self, model: type[Union[BaseModel, Enum]]
+    ) -> "Union[_PydanticModelWrapper[BaseModel], _EnumWrapper[Enum]]": ...
 
     def _get_wrapper_for_model(
         self, model: type[Union[BaseModel, Enum]]
@@ -1208,14 +1246,27 @@ class _EnumWrapper(Generic[_T_ENUM]):
         }
 
 
-def _resolve_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
+def _eval_generic_arg(arg: Any, model: type[BaseModel]) -> Any:
     # Generic arguments such as "Item" in Page["Item"] stay strings in pydantic's generic metadata
-    new_annotation, _ = pydantic_try_eval_type(
-        annotation,
-        sys.modules[model.__module__].__dict__,
+    if not _contains_forward_refs(arg):
+        return arg
+    new_arg, _ = pydantic_try_eval_type(
+        arg,
+        getattr(sys.modules.get(model.__module__), "__dict__", None),
         unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__),
     )
+    return new_arg
+
+
+def _eval_forward_refs(annotation: Any, namespace: dict[str, Any]) -> Any:
+    if not _contains_forward_refs(annotation):
+        return annotation
+    new_annotation, _ = pydantic_try_eval_type(annotation, None, namespace)
     return new_annotation
+
+
+def _contains_forward_refs(annotation: Any) -> bool:
+    return isinstance(annotation, str | ForwardRef) or any(_contains_forward_refs(arg) for arg in get_args(annotation))
 
 
 def _try_eval_type(value: Any, globals: dict[str, Any]) -> Any:

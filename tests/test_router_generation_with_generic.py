@@ -1,8 +1,8 @@
-from typing import Annotated, Any, Generic, TypeVar, Union
+from typing import Annotated, Any, Generic, Optional, TypeVar, Union
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, create_model
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
 
 from cadwyn import RequestInfo, convert_request_to_next_version_for
@@ -117,17 +117,59 @@ class ItemPage(Page[Item]):
     total: int
 
 
-def item_alias_version_change(**body_items: Any) -> type[VersionChange]:
-    return version_change(
-        schema(Item)
+class Category(BaseModel):
+    name: str = Field(alias="fullName")
+    subcategories: Optional[Page["Category"]] = None
+
+
+class Ref(BaseModel, Generic[ItemT]):
+    id: int
+
+
+class User(BaseModel):
+    name: str = Field(alias="fullName")
+    parent: Optional[Ref["User"]] = None
+    friends: "list[User]" = []
+
+
+class Node(BaseModel):
+    name: str = Field(alias="fullName")
+    children: "Page[Node]"
+
+
+class A(BaseModel):
+    name: str = Field(alias="fullName")
+    b: "Optional[Page[B]]" = None
+
+
+class B(BaseModel):
+    name: str = Field(alias="fullName")
+    a: "Optional[A]" = None
+
+
+class TreeNode(BaseModel):
+    name: str = Field(alias="fullName")
+    leaves: "list[Leaf]" = []
+
+
+class Leaf(TreeNode):
+    weight: int = 0
+
+
+def old_name_alias(model: type[BaseModel]):
+    return (
+        schema(model)
         .field("name")
         .had(
             alias="oldName",
             validation_alias=AliasChoices("oldName", "fullName"),
             serialization_alias="oldName",
-        ),
-        **body_items,
+        )
     )
+
+
+def item_alias_version_change(**body_items: Any) -> type[VersionChange]:
+    return version_change(old_name_alias(Item), **body_items)
 
 
 def get_response_schema(openapi: dict[str, Any], path: str) -> dict[str, Any]:
@@ -208,20 +250,105 @@ def test__router_generation__local_generic_with_quoted_arg__should_use_arg_from_
     async def list_items() -> dict[str, Any]:
         return {"items": [{"fullName": "Ada"}]}
 
-    app = create_versioned_app(
-        version_change(
-            schema(LocalItem)
-            .field("name")
-            .had(
-                alias="oldName",
-                validation_alias=AliasChoices("oldName", "fullName"),
-                serialization_alias="oldName",
-            )
-        ),
-        router=router,
-    )
+    app = create_versioned_app(version_change(old_name_alias(LocalItem)), router=router)
     client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
     client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
 
     assert client_2000.get("/items").json() == {"items": [{"oldName": "Ada"}]}
     assert client_2001.get("/items").json() == {"items": [{"fullName": "Ada"}]}
+
+
+def test__router_generation__generic_from_unimportable_module__should_use_arg_from_requested_version(
+    create_versioned_app: CreateVersionedApp,
+):
+    class LocalItem(BaseModel):
+        name: str = Field(alias="fullName")
+
+    local_page = create_model(  # ty: ignore[no-matching-overload]
+        "LocalPage",
+        __base__=(BaseModel, Generic[ItemT]),
+        __module__="unimportable_module",
+        items=(list[ItemT], ...),
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=local_page[LocalItem])
+    async def list_items() -> dict[str, Any]:
+        return {"items": [{"fullName": "Ada"}]}
+
+    app = create_versioned_app(version_change(old_name_alias(LocalItem)), router=router)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+
+    assert client_2000.get("/items").json() == {"items": [{"oldName": "Ada"}]}
+    assert client_2001.get("/items").json() == {"items": [{"fullName": "Ada"}]}
+
+
+@pytest.mark.parametrize(
+    ("response_model", "versioned_models", "latest_body", "old_body", "old_schema_names"),
+    [
+        pytest.param(
+            Category,
+            [Category],
+            {"fullName": "a", "subcategories": {"items": [{"fullName": "b"}]}},
+            {"oldName": "a", "subcategories": {"items": [{"oldName": "b", "subcategories": None}]}},
+            {"Category", "Page_Category_"},
+            id="quoted_generic_arg",
+        ),
+        pytest.param(
+            User,
+            [User],
+            {"fullName": "a", "parent": {"id": 1}, "friends": [{"fullName": "b"}]},
+            {"oldName": "a", "parent": {"id": 1}, "friends": [{"oldName": "b", "parent": None, "friends": []}]},
+            {"User", "Ref_User_"},
+            id="generic_arg_unused_in_fields",
+        ),
+        pytest.param(
+            Node,
+            [Node],
+            {"fullName": "a", "children": {"items": [{"fullName": "b", "children": {"items": []}}]}},
+            {"oldName": "a", "children": {"items": [{"oldName": "b", "children": {"items": []}}]}},
+            {"Node", "Page_Node_"},
+            id="quoted_generic",
+        ),
+        pytest.param(
+            A,
+            [A, B],
+            {"fullName": "a", "b": {"items": [{"fullName": "b", "a": {"fullName": "c"}}]}},
+            {"oldName": "a", "b": {"items": [{"oldName": "b", "a": {"oldName": "c", "b": None}}]}},
+            {"A", "B", "Page_B_"},
+            id="mutual_reference_through_generic",
+        ),
+        pytest.param(
+            TreeNode,
+            [TreeNode],
+            {"fullName": "a", "leaves": [{"fullName": "b", "weight": 1}]},
+            {"oldName": "a", "leaves": [{"oldName": "b", "leaves": [], "weight": 1}]},
+            {"TreeNode", "Leaf"},
+            id="reference_to_subclass",
+        ),
+    ],
+)
+def test__router_generation__self_referencing_models__should_use_models_from_requested_version(
+    response_model: type[BaseModel],
+    versioned_models: list[type[BaseModel]],
+    latest_body: dict[str, Any],
+    old_body: dict[str, Any],
+    old_schema_names: set[str],
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/models", response_model=response_model)
+    async def get_model() -> dict[str, Any]:
+        return latest_body
+
+    app = create_versioned_app(version_change(*(old_name_alias(model) for model in versioned_models)), router=router)
+    unversioned_client = TestClient(app)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+
+    assert client_2000.get("/models").json() == old_body
+    assert client_2001.get("/models").status_code == HTTP_200_OK
+    old_openapi = unversioned_client.get("/openapi.json?version=2000-01-01").json()
+    assert set(old_openapi["components"]["schemas"]) == old_schema_names | {"HTTPValidationError", "ValidationError"}
