@@ -1,8 +1,11 @@
+import collections.abc
 import copy
 import dataclasses
 import functools
 import inspect
+import operator
 import sys
+import threading
 import types
 import typing
 from collections.abc import Callable, Sequence
@@ -13,7 +16,9 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     ClassVar,
+    ForwardRef,
     Generic,
+    NamedTuple,
     TypeAlias,
     TypeGuard,
     Union,
@@ -32,6 +37,7 @@ from fastapi import Response
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
+from pydantic._internal._config import ConfigWrapper
 from pydantic._internal._decorators import (
     FieldSerializerDecoratorInfo,
     FieldValidatorDecoratorInfo,
@@ -40,7 +46,11 @@ from pydantic._internal._decorators import (
     RootValidatorDecoratorInfo,
     ValidatorDecoratorInfo,
 )
+from pydantic._internal._fields import rebuild_model_fields
+from pydantic._internal._generics import PydanticGenericMetadata, get_model_typevars_map
 from pydantic._internal._known_annotated_metadata import collect_known_metadata
+from pydantic._internal._model_construction import unpack_lenient_weakvaluedict
+from pydantic._internal._namespace_utils import NsResolver
 from pydantic._internal._typing_extra import try_eval_type as pydantic_try_eval_type
 from pydantic.fields import ComputedFieldInfo, FieldInfo
 from pydantic_core import PydanticUndefined
@@ -150,11 +160,6 @@ class PydanticFieldWrapper:
 
     def delete_attribute(self, *, name: str) -> None:
         self.passed_field_attributes.pop(name)
-
-    def generate_field_copy(self, generator: "SchemaGenerator") -> pydantic.fields.FieldInfo:
-        return pydantic.Field(
-            **generator.annotation_transformer.change_version_of_annotation(self.passed_field_attributes)
-        )
 
 
 def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]:
@@ -276,11 +281,209 @@ def _is_dunder(attr_name: str):
     return attr_name.startswith("__") and attr_name.endswith("__")
 
 
-def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
+def _rebuild_model(model: type[BaseModel]) -> None:
     # In case we have a forwardref within one of the fields
     # For example, when "from __future__ import annotations" is used in the file with the schema
     if model is not BaseModel:
-        model.model_rebuild(raise_errors=False)
+        # An empty namespace makes sure that our local variables cannot be used to resolve the forward refs
+        model.model_rebuild(raise_errors=False, _types_namespace={})
+
+
+def _get_annotations_without_evaluating(obj: Any) -> dict[str, Any]:
+    """Return the annotations of a class or a function, keeping the ones that cannot be evaluated as forward refs"""
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        from annotationlib import Format, get_annotations
+
+        # Annotations are evaluated lazily since Python 3.14 so the names that are only imported for type checking
+        # would raise a NameError
+        return get_annotations(obj, format=Format.FORWARDREF)
+    return obj.__annotations__
+
+
+_UNRESOLVED: Any = object()
+_T_EVALUATED = TypeVar("_T_EVALUATED")
+
+
+def _evaluate_user_annotations(evaluate: Callable[[], _T_EVALUATED]) -> _T_EVALUATED:
+    """Evaluate the annotations of the user's code for reference discovery, returning _UNRESOLVED if they fail.
+
+    Discovery evaluates the annotations of models that main may never copy, e.g. the ones in untouched generic args.
+    Any exception from evaluating them, such as a NameError for a name that is not defined yet, a TypeError for
+    a generic that only exists in stubs (`pandas.Series[int]`, Django's `QuerySet[Model]`) or an AttributeError,
+    means that discovery cannot know which models copying would request. The generic args that lead to them then
+    keep their head models, which is exactly main's behavior, so catching every exception here is safe. Only the
+    evaluation of the user's annotations goes through here so the bugs in Cadwyn's own logic still surface.
+    """
+    try:
+        return evaluate()
+    except RecursionError:
+        # This is more likely a bug in Cadwyn than in the user's annotations
+        raise
+    except Exception:  # noqa: BLE001
+        return _UNRESOLVED
+
+
+def _has_undefined_names_in_lazy_annotations(obj: Any) -> bool:
+    """Whether the annotations of a class or a function refer to names that are not defined yet.
+
+    Since Python 3.14, annotations are evaluated lazily and _get_annotations_without_evaluating keeps such names
+    as forward refs, which would resolve to other objects once the names get defined. Earlier versions evaluate
+    annotations when they are defined unless they are strings, which stay strings.
+    """
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        from annotationlib import Format, get_annotations
+
+        return _evaluate_user_annotations(lambda: get_annotations(obj, format=Format.VALUE)) is _UNRESOLVED
+    return False
+
+
+def _get_model_annotations(model: type[BaseModel], fields: Union[dict[str, FieldInfo], None] = None) -> dict[str, Any]:
+    fields = model.model_fields if fields is None else fields
+
+    def _rebuild_annotated(name: str, value: Any):
+        if field_info := fields.get(name):
+            if not field_info.metadata:
+                return field_info.annotation
+
+            return _AnnotatedAlias(field_info.annotation, tuple(field_info.metadata))
+        return value  # pragma: no cover
+
+    # Pydantic has already resolved the annotations of the fields so we prefer them over unresolved annotations
+    return {
+        name: _rebuild_annotated(name, value) if _is_unresolved_annotation(value) else value
+        for name, value in _get_annotations_without_evaluating(model).items()
+    }
+
+
+def _is_unresolved_annotation(annotation: Any) -> bool:
+    """Whether the annotation is a string or a forward ref that annotationlib created for undefined names.
+
+    Forward refs that the user wrote (e.g. `ForwardRef("Model")` in create_model) stay as they are, as on main.
+    """
+    if isinstance(annotation, str):
+        return True
+    return isinstance(annotation, ForwardRef) and getattr(annotation, "__owner__", None) is not None
+
+
+def _get_model_field_names(model: type[BaseModel], fields: Union[dict[str, FieldInfo], None] = None) -> list[str]:
+    fields = model.model_fields if fields is None else fields
+    return [name for name in _get_annotations_without_evaluating(model) if name in fields]
+
+
+# The signature of this private function differs between pydantic versions
+_REBUILD_MODEL_FIELDS_TAKES_CONFIG = "config_wrapper" in inspect.signature(rebuild_model_fields).parameters
+
+
+def _get_rebuilt_model_fields(model: type[BaseModel]) -> Union[dict[str, FieldInfo], None]:
+    """Return the fields that _rebuild_model would give the model without rebuilding it, if they can be resolved.
+
+    model_rebuild first resolves the fields with the same pydantic function and namespaces. Unlike model_rebuild,
+    it does not change the model, build its schema, or call its hooks.
+    """
+    if model.__pydantic_fields_complete__:
+        return model.model_fields
+    ns_resolver = NsResolver(parent_namespace=unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
+    typevars_map = get_model_typevars_map(model)
+    if _REBUILD_MODEL_FIELDS_TAKES_CONFIG:
+        config_wrapper = ConfigWrapper(model.model_config, check=False)
+        # Pydantic evaluates the annotations of the fields in there
+        rebuilt_fields = _evaluate_user_annotations(
+            lambda: rebuild_model_fields(
+                model, config_wrapper=config_wrapper, ns_resolver=ns_resolver, typevars_map=typevars_map
+            )
+        )
+    else:  # pragma: no cover # Pydantic 2.11
+        rebuilt_fields = _rebuild_model_fields_without_changing_them(model, ns_resolver, typevars_map)
+    if rebuilt_fields is _UNRESOLVED:
+        # E.g. some names in the annotations are not defined yet
+        return None
+    # Pydantic >= 2.13 also returns the info about the extra fields
+    return rebuilt_fields[0] if isinstance(rebuilt_fields, tuple) else rebuilt_fields
+
+
+def _rebuild_model_fields_without_changing_them(  # pragma: no cover # Pydantic 2.11
+    model: type[BaseModel], ns_resolver: NsResolver, typevars_map: Any
+) -> Any:
+    """Do what rebuild_model_fields of pydantic 2.11 does without changing the fields of the model.
+
+    Pydantic 2.11 merges the `Annotated` metadata of a field into the FieldInfo assigned to the field in place,
+    so every call would add that metadata (e.g. validators) to the field of the model once more.
+    """
+    from pydantic._internal._generics import replace_types
+    from pydantic._internal._typing_extra import eval_type
+    from pydantic_core import PydanticUndefined
+    from typing_inspection.introspection import AnnotationSource
+
+    rebuilt_fields: dict[str, FieldInfo] = {}
+    with ns_resolver.push(model):
+        for name, field_info in model.__pydantic_fields__.items():
+            if field_info._complete:
+                rebuilt_fields[name] = field_info
+                continue
+            types_namespace = ns_resolver.types_namespace
+            evaluated_annotation = _evaluate_user_annotations(
+                lambda field_info=field_info, types_namespace=types_namespace: eval_type(
+                    field_info._original_annotation, *types_namespace
+                )
+            )
+            if evaluated_annotation is _UNRESOLVED:
+                return _UNRESOLVED
+            annotation = replace_types(evaluated_annotation, typevars_map)
+            assignment = field_info._original_assignment
+            if assignment is PydanticUndefined:
+                rebuilt_fields[name] = FieldInfo.from_annotation(annotation, _source=AnnotationSource.CLASS)
+                continue
+            if isinstance(assignment, FieldInfo):
+                assignment = copy.copy(assignment)
+                assignment.metadata = list(assignment.metadata)
+            rebuilt_fields[name] = FieldInfo.from_annotated_attribute(
+                annotation, assignment, _source=AnnotationSource.CLASS
+            )
+    return rebuilt_fields
+
+
+def _get_head_model_references(model: type[BaseModel]) -> "_ModelReferences":
+    """Return the models that the copy of a model without instructions would request from the generator.
+
+    Unlike _wrap_pydantic_model, it does not copy anything from the model because the model may never be copied.
+    """
+    fields = _get_rebuilt_model_fields(model)
+    if fields is None or _has_undefined_names_in_lazy_annotations(model):
+        # The models that it refers to are unknown until the missing names get defined
+        return _ModelReferences(frozenset(), frozenset(), is_complete=False)
+    collector = _ReferencedModelCollector()
+    _change_version_of_model_references(
+        collector,
+        model,
+        {name: _extract_passed_field_attributes(fields[name]) for name in _get_model_field_names(model, fields)},
+        _get_model_annotations(model, fields),
+    )
+    return collector.get_references()
+
+
+def _change_version_of_model_references(
+    generator: "Union[SchemaGenerator, _ReferencedModelCollector]",
+    model: type[BaseModel],
+    field_attributes: dict[str, dict[str, Any]],
+    annotations: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
+    """Version everything in the model that can refer to other models: field attributes, bases, and annotations"""
+    versioned_field_attributes = {
+        name: generator.annotation_transformer.change_version_of_annotation(attributes)
+        for name, attributes in field_attributes.items()
+    }
+    # __orig_bases__ keeps bases such as Generic[T] that __bases__ loses so that the copy stays generic
+    orig_bases = tuple(
+        generator[base] if isinstance(base, type) else base
+        for base in model.__dict__.get("__orig_bases__", model.__bases__)
+    )
+    versioned_annotations = generator.annotation_transformer.change_version_of_annotation(annotations)
+    generic_metadata = generator.change_version_of_generic_metadata(model)
+    return versioned_field_attributes, orig_bases, versioned_annotations, generic_metadata
+
+
+def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
+    _rebuild_model(model)
     decorators = _get_model_decorators(model)
     validators = {}
     for decorator_wrapper in decorators:
@@ -290,28 +493,14 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
         wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
         validators[decorator_wrapper.cls_var_name] = wrapped_validator
 
-    def _rebuild_annotated(name: str):
-        if field_info := model.model_fields.get(name):
-            if not field_info.metadata:
-                return field_info.annotation
-
-            return _AnnotatedAlias(field_info.annotation, tuple(field_info.metadata))
-        return model.__annotations__[name]  # pragma: no cover
-
-    annotations = {
-        name: value if not isinstance(value, str) else _rebuild_annotated(name)
-        for name, value in model.__annotations__.items()
-    }
-
-    defined_fields = model.__annotations__
+    annotations = _get_model_annotations(model)
     fields = {
         field_name: PydanticFieldWrapper(
             model.model_fields[field_name],
             annotations[field_name],
             field_name,
         )
-        for field_name in model.__annotations__
-        if field_name in defined_fields and field_name in model.model_fields
+        for field_name in _get_model_field_names(model)
     }
 
     main_attributes = fields | validators
@@ -425,6 +614,22 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return annotations | self.annotations
 
+    def get_references(self) -> "_ModelReferences":
+        """Return the models that generate_model_copy requests from the generator"""
+        collector = _ReferencedModelCollector()
+        self._change_version_of_references(collector)
+        return collector.get_references()
+
+    def _change_version_of_references(
+        self, generator: "Union[SchemaGenerator, _ReferencedModelCollector]"
+    ) -> tuple[dict[str, dict[str, Any]], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
+        return _change_version_of_model_references(
+            generator,
+            self.cls,
+            {name: field.passed_field_attributes for name, field in self.fields.items()},
+            self.annotations,
+        )
+
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {}
         root_validators = {}
@@ -436,27 +641,48 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 per_field_validators[name] = validator.decorator(*validator.fields, **validator.kwargs)(func)
             else:
                 root_validators[name] = validator.decorator(**validator.kwargs)(func)
-        fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
+        field_attributes, orig_bases, annotations, generic_metadata = self._change_version_of_references(generator)
+        fields = {name: pydantic.Field(**attributes) for name, attributes in field_attributes.items()}
+        orig_bases_attribute = {"__orig_bases__": orig_bases} if "__orig_bases__" in self.cls.__dict__ else {}
 
         model_copy = type(self.cls)(
             self.name,
-            tuple(generator[cast("type[BaseModel]", base)] for base in self.cls.__bases__ if base is not Generic),
+            types.resolve_bases(orig_bases),
             self.other_attributes
+            | orig_bases_attribute
             | per_field_validators
             | root_validators
             | fields
             | {
-                "__annotations__": generator.annotation_transformer.change_version_of_annotation(
-                    self.annotations,
-                ),
+                "__annotations__": annotations,
                 "__doc__": self.doc,
                 "__qualname__": self.cls.__qualname__.removesuffix(self.cls.__name__) + self.name,
             },
-            __pydantic_generic_metadata__=self.cls.__pydantic_generic_metadata__,
+            __pydantic_generic_metadata__=generic_metadata,
         )
 
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         return cast("type[_T_PYDANTIC_MODEL]", model_copy)
+
+
+def _get_signature_parameters(call: Any) -> types.MappingProxyType[str, inspect.Parameter]:
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        from annotationlib import Format
+
+        # The annotations of the signature are evaluated lazily since Python 3.14 so the names that are only
+        # imported for type checking would raise a NameError. We only need the names and the defaults anyway.
+        return inspect.signature(call, annotation_format=Format.FORWARDREF).parameters
+    return inspect.signature(call).parameters
+
+
+def _get_type_alias_value(alias: Any) -> Any:
+    # The values of typing.TypeAliasType (but not of typing_extensions.TypeAliasType) are evaluated lazily so they
+    # can contain names that are only imported for type checking
+    if sys.version_info >= (3, 14) and hasattr(alias, "evaluate_value"):  # pragma: no cover
+        from annotationlib import Format, call_evaluate_function
+
+        return call_evaluate_function(alias.evaluate_value, Format.FORWARDREF)
+    return alias.__value__
 
 
 def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, types.MethodType]]:
@@ -672,8 +898,16 @@ class _AsyncGeneratorCallableWrapper(_CallableWrapper):
 
 @final
 class _AnnotationTransformer:
-    def __init__(self, generator: "SchemaGenerator") -> None:
+    def __init__(
+        self, generator: "Union[SchemaGenerator, _ReferencedModelCollector]", *, record_only: bool = False
+    ) -> None:
         self.generator = generator
+        # Only request the models from the generator without rebuilding the annotations. This way, we can find
+        # the models that an annotation refers to without failing on annotations that we cannot rebuild
+        self.record_only = record_only
+        # The ids of the type aliases, callables and containers that we are recording, to detect the ones that
+        # lead back to themselves (e.g. a default factory whose default argument is a registry that contains it)
+        self._ids_being_recorded: set[int] = set()
         self.change_versions_of_a_non_container_annotation = self._change_version_of_a_non_container_annotation
         # This cache cannot be used until something is done regarding https://github.com/fastapi/fastapi/pull/14320
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
@@ -691,12 +925,18 @@ class _AnnotationTransformer:
 
         """
         if isinstance(annotation, dict):
+            if self.record_only:
+                self._record_without_cycles(annotation, lambda: [*annotation.keys(), *annotation.values()])
+                return annotation
             return {
                 self.change_version_of_annotation(key): self.change_version_of_annotation(value)
                 for key, value in annotation.items()
             }
 
         elif isinstance(annotation, list | tuple):
+            if self.record_only:
+                self._record_without_cycles(annotation, lambda: annotation)
+                return annotation
             return type(annotation)(self.change_version_of_annotation(v) for v in annotation)
         else:
             return self.change_versions_of_a_non_container_annotation(annotation)
@@ -732,31 +972,24 @@ class _AnnotationTransformer:
         from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
 
         if isinstance(annotation, GenericAliasUnionArgs):
-            origin = get_origin(annotation)
-            args = get_args(annotation)
-            # Classvar does not support generic tuple arguments
-            if origin is ClassVar:
-                return ClassVar[self.change_version_of_annotation(args[0])]
-            if origin is Annotated:
-                # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the
-                # originals so it could return the alias that holds the dependency of another version
-                return _AnnotatedAlias(
-                    self.change_version_of_annotation(args[0]),
-                    tuple(self.change_version_of_annotation(arg) for arg in args[1:]),
-                )
-            return origin[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
+            return self._change_version_of_generic_alias(annotation)
         elif is_typealiastype(annotation):
             if (
                 annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
             ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES:
                 return annotation
-            else:
-                return type(annotation)(
-                    name=annotation.__name__,
-                    value=self.change_version_of_annotation(annotation.__value__),
-                    type_params=self.change_version_of_annotation(annotation.__type_params__),
-                )
+            if self.record_only:
+                self._record_type_alias(annotation)
+                return annotation
+            value = self.change_version_of_annotation(_get_type_alias_value(annotation))
+            type_params = self.change_version_of_annotation(annotation.__type_params__)
+            return type(annotation)(name=annotation.__name__, value=value, type_params=type_params)
         elif isinstance(annotation, fastapi.params.Depends):
+            if self.record_only:
+                self.change_versions_of_a_non_container_annotation(
+                    annotation.dependency, callable_kind=_CallableKind.DEPENDENCY
+                )
+                return annotation
             # This also covers Security. Copying keeps all of their other fields (e.g. use_cache, scope, and scopes)
             # without calling __init__ which subclasses could have overridden with a different signature
             annotation_copy = copy.copy(annotation)
@@ -766,32 +999,134 @@ class _AnnotationTransformer:
             object.__setattr__(annotation_copy, "dependency", dependency)
             return annotation_copy
         elif isinstance(annotation, UnionType):  # pragma: no cover
-            return typing.Union[tuple(self.change_version_of_annotation(a) for a in get_args(annotation))]
+            args = tuple(self.change_version_of_annotation(a) for a in get_args(annotation))
+            return annotation if self.record_only else typing.Union[args]
         elif is_any(annotation) or is_newtype(annotation):
             return annotation
         elif isinstance(annotation, type):
             return self._change_version_of_type(annotation)
         elif callable(annotation):
-            if type(annotation).__module__.startswith(
-                ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
-            ) or isinstance(annotation, fastapi.security.base.SecurityBase):
-                return annotation
-
-            def modifier(annotation: Any):
-                return self.change_version_of_annotation(annotation)
-
-            return self._modify_callable_annotations(
-                annotation,
-                modifier,
-                modifier,
-                annotation_modifying_wrapper_factory=functools.partial(
-                    self._copy_function_through_class_based_wrapper,
-                    is_called_by_fastapi=callable_kind is not _CallableKind.OTHER,
-                ),
-                callable_kind=callable_kind,
-            )
+            return self._change_version_of_callable(annotation, callable_kind=callable_kind)
         else:
             return annotation
+
+    def _change_version_of_callable(self, annotation: Callable[..., Any], *, callable_kind: _CallableKind) -> Any:
+        if type(annotation).__module__.startswith(
+            ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
+        ) or isinstance(annotation, fastapi.security.base.SecurityBase):
+            return annotation
+        # Special forms such as typing.Self are callable but they are not functions
+        if type(annotation).__module__ in {"typing", "typing_extensions"}:
+            return annotation
+        if callable_kind is _CallableKind.OTHER:
+            try:
+                _get_signature_parameters(annotation)
+            except (ValueError, TypeError):
+                # Callables without an inspectable signature such as `functools.partial(dict, count=1)`
+                # have no annotations or defaults to version
+                return annotation
+
+        def modifier(annotation: Any):
+            return self.change_version_of_annotation(annotation)
+
+        if self.record_only:
+            self._record_without_cycles(
+                annotation, lambda: self._get_annotations_and_defaults_to_record(annotation, callable_kind)
+            )
+            return annotation
+        return self._modify_callable_annotations(
+            annotation,
+            modifier,
+            modifier,
+            annotation_modifying_wrapper_factory=functools.partial(
+                self._copy_function_through_class_based_wrapper,
+                is_called_by_fastapi=callable_kind is not _CallableKind.OTHER,
+            ),
+            callable_kind=callable_kind,
+        )
+
+    def _record_without_cycles(self, obj: Any, get_values_to_record: Callable[[], Any]) -> None:
+        """Record the values within the object unless we are already recording it.
+
+        Copying an object that leads back to itself (e.g. `type Json = dict[str, Json] | int`, or a default
+        factory whose default argument is a registry that contains the factory) would recurse forever, as it does
+        on main, so its references are unknown.
+        """
+        if id(obj) in self._ids_being_recorded:
+            self._record_unknown_references()
+            return
+        self._ids_being_recorded.add(id(obj))
+        try:
+            values = get_values_to_record()
+            if values is not _UNRESOLVED:
+                for value in values:
+                    self.change_version_of_annotation(value)
+        finally:
+            self._ids_being_recorded.discard(id(obj))
+
+    def _get_annotations_and_defaults_to_record(self, call: Callable[..., Any], callable_kind: _CallableKind) -> Any:
+        """Return the annotations and the defaults that _modify_callable_annotations versions, or _UNRESOLVED"""
+        if callable_kind is _CallableKind.OTHER:
+            # The annotations are read from the same wrapper as in _modify_callable_annotations
+            wrapper = self._copy_function_through_class_based_wrapper(call, is_called_by_fastapi=False)
+            if _has_undefined_names_in_lazy_annotations(wrapper):
+                # Copying it fails on Python 3.14, as on main
+                self._record_unknown_references()
+                return _UNRESOLVED
+            callable_annotations, defaults = self._get_callable_annotations_and_defaults(
+                call, _get_annotations_without_evaluating(wrapper), _get_signature_parameters(call)
+            )
+        else:
+            signature = _evaluate_user_annotations(lambda: inspect.signature(call, eval_str=True))
+            if signature is _UNRESOLVED:
+                # E.g. some names are not defined yet so copying could request other models once they get defined
+                self._record_unknown_references()
+                return _UNRESOLVED
+            callable_annotations = self._get_annotations_of_callable_called_by_fastapi(
+                call, signature, callable_kind, evaluate=_try_eval_type_for_discovery
+            )
+            defaults = tuple(
+                param.default for param in signature.parameters.values() if param.default is not inspect.Signature.empty
+            )
+        # The string annotations that cannot be evaluated yet stay strings
+        if any(type(value) is str for value in callable_annotations.values()):
+            self._record_unknown_references()
+        return [callable_annotations, defaults]
+
+    def _record_type_alias(self, alias: Any) -> None:
+        # The values of native type aliases are evaluated lazily since Python 3.12
+        if _evaluate_user_annotations(lambda: alias.__value__) is _UNRESOLVED:
+            self._record_unknown_references()
+            return
+        self._record_without_cycles(alias, lambda: [_get_type_alias_value(alias), alias.__type_params__])
+
+    def _record_unknown_references(self) -> None:
+        """Record that we cannot know every model that copying the annotation would request.
+
+        E.g. because the annotation refers to names that are not defined yet, which could refer to any model
+        once they get defined, or because copying it would never finish.
+        """
+        cast("_ReferencedModelCollector", self.generator).is_complete = False
+
+    def _change_version_of_generic_alias(self, annotation: Any) -> Any:
+        from typing_inspection.typing_objects import is_unpack
+
+        origin = get_origin(annotation)
+        args = get_args(annotation)
+        new_args = tuple(self.change_version_of_annotation(arg) for arg in args)
+        if self.record_only:
+            return annotation
+        # A bare `typing.Callable` has nothing to version and cannot be rebuilt as `Callable[()]`
+        if origin is collections.abc.Callable and not args:
+            return annotation
+        # Classvar and Unpack do not support generic tuple arguments
+        if origin is ClassVar or is_unpack(origin):
+            return origin[new_args[0]]
+        if origin is Annotated:
+            # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the
+            # originals so it could return the alias that holds the dependency of another version
+            return _AnnotatedAlias(new_args[0], new_args[1:])
+        return origin[new_args]
 
     def _change_version_of_type(self, annotation: type) -> type:
         if lenient_issubclass(annotation, (BaseModel, Enum)):
@@ -850,31 +1185,10 @@ class _AnnotationTransformer:
             # FastAPI would not. Unlike __annotations__, the signature also follows functools.partial and __signature__
             old_signature = _get_signature(call)
             old_params = old_signature.parameters
-            callable_annotations = {
-                name: param.annotation
-                for name, param in old_params.items()
-                if param.annotation is not inspect.Parameter.empty
-            }
             return_annotation = old_signature.return_annotation
-            if callable_kind is _CallableKind.ENDPOINT and return_annotation is not inspect.Signature.empty:
-                # FastAPI infers the response model of endpoints from their return annotations
-                callable_annotations["return"] = return_annotation
-            # Cadwyn always evaluated the annotations that were written as strings (e.g. postponed ones) recursively
-            # before versioning them. inspect.signature() evaluates them only once so forward references can be left
-            # within them (e.g. `body: "Model"` or `list["Model"]` with postponed annotations) or they can stay strings
-            # (e.g. if they could not be evaluated or if they come from __signature__). FastAPI would evaluate some of
-            # them itself but in the globals that lead to the head models so we finish evaluating them here
-            unevaluated_signature = _get_unevaluated_signature(call)
-            annotations_written_as_strings = {
-                name for name, param in unevaluated_signature.parameters.items() if type(param.annotation) is str
-            }
-            if type(unevaluated_signature.return_annotation) is str:
-                annotations_written_as_strings.add("return")
-            call_globals = _get_best_effort_globals(cls._unwrap_callable(call))
-            callable_annotations = {
-                k: _try_eval_type(v, call_globals) if k in annotations_written_as_strings else v
-                for k, v in callable_annotations.items()
-            }
+            callable_annotations = cls._get_annotations_of_callable_called_by_fastapi(
+                call, old_signature, callable_kind
+            )
             annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
             if callable_kind is _CallableKind.DEPENDENCY and return_annotation is not inspect.Signature.empty:
                 # FastAPI never looks at the return annotations of dependencies so we neither evaluate nor version them.
@@ -897,6 +1211,64 @@ class _AnnotationTransformer:
         )
 
         return cast("_Call", annotation_modifying_wrapper)
+
+    @classmethod
+    def _get_annotations_of_callable_called_by_fastapi(
+        cls,
+        call: Any,
+        old_signature: inspect.Signature,
+        callable_kind: _CallableKind,
+        *,
+        evaluate: Union[Callable[[Any, dict[str, Any]], Any], None] = None,
+    ) -> dict[str, Any]:
+        """Return the annotations of an endpoint or a dependency that its versioned copy versions"""
+        callable_annotations = {
+            name: param.annotation
+            for name, param in old_signature.parameters.items()
+            if param.annotation is not inspect.Parameter.empty
+        }
+        return_annotation = old_signature.return_annotation
+        if callable_kind is _CallableKind.ENDPOINT and return_annotation is not inspect.Signature.empty:
+            # FastAPI infers the response model of endpoints from their return annotations
+            callable_annotations["return"] = return_annotation
+        # Cadwyn always evaluated the annotations that were written as strings (e.g. postponed ones) recursively
+        # before versioning them. inspect.signature() evaluates them only once so forward references can be left
+        # within them (e.g. `body: "Model"` or `list["Model"]` with postponed annotations) or they can stay strings
+        # (e.g. if they could not be evaluated or if they come from __signature__). FastAPI would evaluate some of
+        # them itself but in the globals that lead to the head models so we finish evaluating them here
+        unevaluated_signature = _get_unevaluated_signature(call)
+        annotations_written_as_strings = {
+            name for name, param in unevaluated_signature.parameters.items() if type(param.annotation) is str
+        }
+        if type(unevaluated_signature.return_annotation) is str:
+            annotations_written_as_strings.add("return")
+        call_globals = _get_best_effort_globals(cls._unwrap_callable(call))
+        evaluate = evaluate or _try_eval_type
+        return {
+            k: evaluate(v, call_globals) if k in annotations_written_as_strings else v
+            for k, v in callable_annotations.items()
+        }
+
+    @classmethod
+    def _get_callable_annotations_and_defaults(
+        cls,
+        call: Any,
+        callable_annotations: dict[str, Any],
+        parameters: types.MappingProxyType[str, inspect.Parameter],
+    ) -> tuple[dict[str, Any], tuple[Any, ...]]:
+        original_call = cls._unwrap_callable(call)
+        # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
+        if is_regular_function(original_call):
+            call_globals = _function_globals(original_call)
+        else:
+            dunder_call = inspect.getattr_static(original_call, "__call__", None)
+            call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
+        callable_annotations = {
+            k: v if type(v) is not str else _try_eval_type_for_discovery(v, call_globals)
+            for k, v in callable_annotations.items()
+        }
+        defaults = tuple(p.default for p in parameters.values() if p.default is not inspect.Signature.empty)
+        return callable_annotations, defaults
 
     @staticmethod
     def _generate_signature(
@@ -1000,41 +1372,233 @@ def _add_request_and_response_params(route: APIRoute):
         route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
 
 
-@final
-class SchemaGenerator:
-    __slots__ = "annotation_transformer", "concrete_models", "model_bundle"
+def _is_versionable_model(model: Any) -> bool:
+    return (
+        isinstance(model, type)
+        and lenient_issubclass(model, (BaseModel, Enum))
+        and model not in _DEFAULT_PYDANTIC_CLASSES
+        and not is_sqlalchemy_model(model)
+    )
 
-    def __init__(self, model_bundle: _ModelBundle) -> None:
-        self.annotation_transformer = _AnnotationTransformer(self)
-        self.model_bundle = model_bundle
-        self.concrete_models = {}
-        self.concrete_models = {
-            k: wrapper.generate_model_copy(self)
-            for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
-        }
+
+@final
+class _ReferencedModelCollector:
+    """A generator that records the models requested from it instead of generating their copies"""
+
+    __slots__ = "annotation_transformer", "arg_models", "is_complete", "models"
+
+    def __init__(self) -> None:
+        self.annotation_transformer = _AnnotationTransformer(self, record_only=True)
+        self.models: set[type[Union[BaseModel, Enum]]] = set()
+        self.arg_models: set[type[Union[BaseModel, Enum]]] = set()
+        # Whether the annotations that we looked at only refer to names that are already defined
+        self.is_complete = True
 
     def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
-        if (
-            not isinstance(model, type)
-            or not lenient_issubclass(model, (BaseModel, Enum))
-            or model in _DEFAULT_PYDANTIC_CLASSES
-            or is_sqlalchemy_model(model)
-        ):
+        if _is_versionable_model(model):
+            self.models.add(_unwrap_model(model))
+        return model
+
+    def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
+        generic_metadata = model.__pydantic_generic_metadata__
+        arg_collector = _ReferencedModelCollector()
+        args = _eval_generic_args(model)
+        arg_collector.annotation_transformer.change_version_of_annotation(args)
+        self.arg_models |= arg_collector.models
+        # The quoted args that cannot be evaluated yet stay forward refs
+        if not arg_collector.is_complete or any(_contains_forward_refs(arg) for arg in args):
+            self.is_complete = False
+        if generic_metadata["origin"] is not None:
+            self[generic_metadata["origin"]]
+        return generic_metadata
+
+    def get_references(self) -> "_ModelReferences":
+        return _ModelReferences(frozenset(self.models), frozenset(self.arg_models), self.is_complete)
+
+
+class _ModelReferences(NamedTuple):
+    # The models that are always versioned along with the model: in its fields, annotations, and bases
+    models: frozenset[type[Union[BaseModel, Enum]]]
+    # The models in the type args of a parametrized generic (e.g. Item in Page[Item])
+    arg_models: frozenset[type[Union[BaseModel, Enum]]]
+    # Whether we know all of the models that copying the model would request. We do not when some names in its
+    # annotations (fields, class variables, quoted generic args, annotations of default factories, values of type
+    # aliases, etc.) are not defined yet: once they get defined, copying the model can request any model. We do not
+    # either when copying it would recurse forever through a type alias that refers to itself. So we never version
+    # the generic args that lead to such a model, even after the names get defined, which keeps their head args
+    # exactly as on main.
+    is_complete: bool = True
+
+
+class _GenerationAnalysis(NamedTuple):
+    # Whether generating the copy of the model will not recurse forever
+    terminates: bool
+    # Whether the model or the models that it refers to have schema or enum instructions
+    refers_to_changed_models: bool
+
+
+@final
+class SchemaGenerator:
+    __slots__ = (
+        "_changed_models",
+        "_generation_analyses",
+        "_lock",
+        "_model_references",
+        "_versions_of_generic_args",
+        "annotation_transformer",
+        "concrete_models",
+        "model_bundle",
+    )
+
+    def __init__(
+        self,
+        model_bundle: _ModelBundle,
+        changed_models: "frozenset[type[Union[BaseModel, Enum]]]" = frozenset(),
+    ) -> None:
+        self.annotation_transformer = _AnnotationTransformer(self)
+        self.model_bundle = model_bundle
+        self._changed_models = changed_models
+        self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
+        self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
+        self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
+        # Models are generated lazily (e.g. in migrate_response_body) so several threads can generate them at once
+        self._lock = threading.RLock()
+        self.concrete_models: dict[type[Union[BaseModel, Enum]], type[Union[BaseModel, Enum]]] = {}
+        # Models are generated through __getitem__ so that the copies created along the way are reused
+        # instead of being created again
+        for model in [*self.model_bundle.schemas, *self.model_bundle.enums]:
+            self[model]
+
+    def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
+        if not _is_versionable_model(model):
             return model
         model = _unwrap_model(model)
 
-        if model in self.concrete_models:
-            model_copy = self.concrete_models[model]
-        else:
-            wrapper = self._get_wrapper_for_model(model)
-            model_copy = wrapper.generate_model_copy(self)
-            self.concrete_models[model] = model_copy
-        return cast("type[_T_ANY_MODEL]", model_copy)
+        if self._is_enum_without_instructions(model):
+            return model
+        with self._lock:
+            if model not in self.concrete_models:
+                wrapper = self._get_wrapper_for_model(model)
+                self.concrete_models[model] = wrapper.generate_model_copy(self)
+            return cast("type[_T_ANY_MODEL]", self.concrete_models[model])
+
+    def _is_enum_without_instructions(self, model: type[Union[BaseModel, Enum]]) -> bool:
+        # Such an enum is the same in every version so we do not copy it. Its members must stay the same objects
+        # too: e.g. strict models reject the members of a copy of their enum.
+        return lenient_issubclass(model, Enum) and model not in self._changed_models
+
+    def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
+        generic_metadata = model.__pydantic_generic_metadata__
+        if not self._should_version_generic_args(model, generation_stack=[]):
+            return generic_metadata
+        # Pydantic resolves the fields of a parametrized generic (such as Page[Item]) through its origin and args
+        # so they must point to this version's classes too
+        origin = generic_metadata["origin"]
+        return {
+            "origin": self[origin] if origin is not None else None,
+            "args": self.annotation_transformer.change_version_of_annotation(_eval_generic_args(model)),
+            "parameters": generic_metadata["parameters"],
+        }
+
+    def _should_version_generic_args(
+        self, generic: type[BaseModel], generation_stack: list[type[Union[BaseModel, Enum]]]
+    ) -> bool:
+        """Whether the copy of the generic should use the copies of its type args instead of the head ones.
+
+        We only version the args when they refer to models with schema or enum instructions so that all other
+        generics stay exactly as they are. We also keep the head args when their copies could not be generated:
+        when the args refer back to the generic (e.g. `children: Page["Category"]` within `Category`) or when
+        generating their copies would recurse forever (e.g. `children: "list[Tree]"` within `Tree`).
+        The decision only depends on the references between the models, not on the order of generation.
+        """
+        if not self._changed_models:
+            # Nothing has instructions so no generic args need versioning and we do not need to look into them
+            return False
+        if generic not in self._versions_of_generic_args:
+            references = self._get_references(generic)
+            arg_models = references.arg_models
+            # Versioning the args of a generic whose references are incomplete could request any model
+            if not arg_models or not references.is_complete or self._is_referenced_through_args(generic):
+                should_version = False
+            else:
+                analyses = [self._analyze_generation(model, generation_stack) for model in arg_models]
+                should_version = all(analysis.terminates for analysis in analyses) and any(
+                    analysis.refers_to_changed_models for analysis in analyses
+                )
+            self._versions_of_generic_args[generic] = should_version
+        return self._versions_of_generic_args[generic]
+
+    def _analyze_generation(
+        self, model: type[Union[BaseModel, Enum]], generation_stack: list[type[Union[BaseModel, Enum]]]
+    ) -> _GenerationAnalysis:
+        if model in self._generation_analyses:
+            return self._generation_analyses[model]
+        if model in generation_stack:
+            # The models that generating this model requests lead back to it so its generation would never finish
+            return _GenerationAnalysis(terminates=False, refers_to_changed_models=False)
+        generation_stack.append(model)
+        references = self._get_references(model)
+        requested_models = set(references.models)
+        if references.arg_models and self._should_version_generic_args(
+            cast("type[BaseModel]", model), generation_stack
+        ):
+            requested_models |= references.arg_models
+        analyses = [self._analyze_generation(requested_model, generation_stack) for requested_model in requested_models]
+        generation_stack.pop()
+        analysis = _GenerationAnalysis(
+            terminates=references.is_complete and all(analysis.terminates for analysis in analyses),
+            refers_to_changed_models=model in self._changed_models
+            or any(analysis.refers_to_changed_models for analysis in analyses),
+        )
+        self._generation_analyses[model] = analysis
+        return analysis
+
+    def _is_referenced_through_args(self, generic: type[BaseModel]) -> bool:
+        models_to_visit = list(self._get_references(generic).arg_models)
+        visited_models = set()
+        while models_to_visit:
+            referenced_model = models_to_visit.pop()
+            if _is_same_parametrization(referenced_model, generic):
+                return True
+            if referenced_model not in visited_models:
+                visited_models.add(referenced_model)
+                references = self._get_references(referenced_model)
+                models_to_visit.extend(references.models | references.arg_models)
+        return False
+
+    def _get_references(self, model: type[Union[BaseModel, Enum]]) -> _ModelReferences:
+        """Return the models that copying the model requests from this generator (reference discovery).
+
+        INVARIANT: discovery must find a superset of the models that copying the model actually requests.
+        The decision to version generic args (the cycle rule) relies on these references to rule out the cycles
+        that would make copying recurse forever, so any model that copying requests and discovery misses can lead
+        to infinite recursion. This is why discovery runs the same function as copying
+        (_change_version_of_model_references) and why tests/conftest.py checks the invariant for every model
+        copied in the test suite. If discovery cannot know all of the references because some names are not defined
+        yet (see _ModelReferences.is_complete), it must say so instead of returning a subset.
+        Discovery must not change the model either because the model may never be copied.
+        The references and the decisions based on them are cached for the lifetime of the generator, just like
+        the copies, so a generic keeps the args that it got when the generator first needed it.
+        """
+        if model not in self._model_references:
+            if lenient_issubclass(model, Enum):
+                references = _ModelReferences(frozenset(), frozenset())
+            elif model in self.model_bundle.schemas:
+                references = self.model_bundle.schemas[model].get_references()
+            else:
+                # We do not wrap the model because wrapping copies parts of it and we may never need its copy
+                references = _get_head_model_references(cast("type[BaseModel]", model))
+            self._model_references[model] = references
+        return self._model_references[model]
 
     @overload
     def _get_wrapper_for_model(self, model: type[BaseModel]) -> "_PydanticModelWrapper[BaseModel]": ...
     @overload
     def _get_wrapper_for_model(self, model: type[Enum]) -> "_EnumWrapper[Enum]": ...
+    @overload
+    def _get_wrapper_for_model(
+        self, model: type[Union[BaseModel, Enum]]
+    ) -> "Union[_PydanticModelWrapper[BaseModel], _EnumWrapper[Enum]]": ...
 
     def _get_wrapper_for_model(
         self, model: type[Union[BaseModel, Enum]]
@@ -1061,6 +1625,17 @@ class SchemaGenerator:
 @cache
 def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGenerator]":
     models = _create_model_bundle(versions)
+    changed_models = frozenset(
+        instruction.schema
+        for version in versions._all_versions
+        for version_change in version.changes
+        for instruction in version_change.alter_schema_instructions
+    ) | frozenset(
+        instruction.enum
+        for version in versions._all_versions
+        for version_change in version.changes
+        for instruction in version_change.alter_enum_instructions
+    )
 
     version_to_context_map = {}
     context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
@@ -1068,7 +1643,7 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
 
     for version in versions.versions:
         context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
-        version_to_context_map[str(version.value)] = SchemaGenerator(copy.deepcopy(models))
+        version_to_context_map[str(version.value)] = SchemaGenerator(copy.deepcopy(models), changed_models)
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
 
@@ -1528,9 +2103,96 @@ class _EnumWrapper(Generic[_T_ENUM]):
         }
 
 
+def _is_same_parametrization(model: type[Union[BaseModel, Enum]], generic: type[BaseModel]) -> bool:
+    """Whether the model is the generic or a parametrization of the same origin with the same args.
+
+    E.g. Page[Category] and Page["Category"] are different classes but they mean the same thing
+    """
+    if model is generic:
+        return True
+    origin = generic.__pydantic_generic_metadata__["origin"]
+    return (
+        lenient_issubclass(model, BaseModel)
+        and model.__pydantic_generic_metadata__["origin"] is origin
+        and _eval_generic_args(model) == _eval_generic_args(generic)
+    )
+
+
+def _eval_generic_args(model: type[BaseModel]) -> tuple[Any, ...]:
+    # Generic arguments such as "Item" in Page["Item"] stay strings in pydantic's generic metadata
+    return tuple(_eval_forward_refs(arg, model) for arg in model.__pydantic_generic_metadata__["args"])
+
+
+def _eval_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
+    """Resolve the forward refs in the annotation of a model the way pydantic does, keeping the unresolvable ones"""
+    if not _contains_forward_refs(annotation):
+        return annotation
+    if sys.version_info < (3, 11):
+        annotation = _convert_strings_in_builtin_generics_to_forward_refs(annotation)
+    globalns = getattr(sys.modules.get(model.__module__), "__dict__", None)
+    localns = {model.__name__: model} | (unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
+    evaluated_annotation = _evaluate_user_annotations(lambda: pydantic_try_eval_type(annotation, globalns, localns)[0])
+    # The forward refs that are left make discovery keep the head args, like main
+    return annotation if evaluated_annotation is _UNRESOLVED else evaluated_annotation
+
+
+def _contains_forward_refs(annotation: Any) -> bool:
+    """Whether the annotation has strings or forward refs where typing evaluates them as types.
+
+    So the strings in the args of Literal and in the metadata of Annotated do not count.
+    """
+    from typing_inspection.typing_objects import is_annotated, is_literal
+
+    if isinstance(annotation, str | ForwardRef):
+        return True
+    origin = get_origin(annotation)
+    if is_literal(origin):
+        return False
+    args = get_args(annotation)
+    if is_annotated(origin):
+        args = args[:1]
+    return any(_contains_forward_refs(arg) for arg in args)
+
+
+def _convert_strings_in_builtin_generics_to_forward_refs(annotation: Any) -> Any:
+    """Python 3.10 does not evaluate the strings in the args of builtin generics such as list["Item"].
+
+    Python 3.11+ converts them to forward refs while evaluating, which we do ourselves here.
+    """
+    from typing_inspection.typing_objects import is_annotated, is_literal
+
+    if isinstance(annotation, types.UnionType):
+        # Unlike typing.Union, `X | Y` cannot be rebuilt with copy_with
+        return functools.reduce(
+            operator.or_, (_convert_strings_in_builtin_generics_to_forward_refs(arg) for arg in annotation.__args__)
+        )
+    if isinstance(annotation, types.GenericAlias):
+        args = tuple(
+            ForwardRef(arg) if isinstance(arg, str) else _convert_strings_in_builtin_generics_to_forward_refs(arg)
+            for arg in annotation.__args__
+        )
+        return types.GenericAlias(annotation.__origin__, args)
+    origin = get_origin(annotation)
+    # Bare aliases such as typing.List have no args to convert
+    args = getattr(annotation, "__args__", ())
+    if is_literal(origin) or not args or not hasattr(annotation, "copy_with"):
+        return annotation
+    if is_annotated(origin):
+        return _AnnotatedAlias(
+            _convert_strings_in_builtin_generics_to_forward_refs(annotation.__origin__), annotation.__metadata__
+        )
+    return annotation.copy_with(tuple(_convert_strings_in_builtin_generics_to_forward_refs(arg) for arg in args))
+
+
+def _try_eval_type_for_discovery(value: Any, globals: dict[str, Any]) -> Any:
+    """Like _try_eval_type but keeps the string if evaluating it fails in any way"""
+    evaluated_value = _evaluate_user_annotations(lambda: _try_eval_type(value, globals))
+    return value if evaluated_value is _UNRESOLVED else evaluated_value
+
+
 def _try_eval_type(value: Any, globals: dict[str, Any]) -> Any:
     new_value, success = pydantic_try_eval_type(value, globals)
     if success:
         return new_value
-    else:  # pragma: no cover # Can't imagine when this would happen
+    else:
         return value
