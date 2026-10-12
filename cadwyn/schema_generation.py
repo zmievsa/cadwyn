@@ -1372,19 +1372,29 @@ def _add_request_and_response_params(route: APIRoute):
         route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
 
 
-def _get_versionable_subclasses(model: type[Union[BaseModel, Enum]]) -> list[type[BaseModel]]:
-    if not lenient_issubclass(model, BaseModel):
-        return []
-    return [subclass for subclass in model.__subclasses__() if _is_versionable_model(subclass)]
+def _get_subclasses_that_can_be_versioned(model: type[Union[BaseModel, Enum]]) -> tuple[list[type[BaseModel]], bool]:
+    """Return the subclasses of the model that make it versioned if they are, and whether we know all of them.
 
-
-def _is_created(model: type[BaseModel]) -> bool:
-    """Whether pydantic has finished collecting the fields (and generic metadata) of the model.
-
-    A class becomes a subclass of its bases before its metaclass sets them, e.g. while another thread
-    parametrizes a generic.
+    The parametrizations of a generic (e.g. Page[Item] for Page) do not count because whether they use versioned
+    args is decided on its own (see SchemaGenerator._should_version_generic_args) but their subclasses
+    (e.g. `class ItemPage(Page[Item])`) do. A class becomes a subclass of its bases before pydantic sets its fields
+    and generic metadata (e.g. while another thread parametrizes a generic) so we do not know yet whether it counts.
     """
-    return "__pydantic_fields__" in vars(model)
+    if not lenient_issubclass(model, BaseModel):
+        return [], True
+    subclasses = []
+    are_all_known = True
+    classes_to_visit = model.__subclasses__()
+    while classes_to_visit:
+        subclass = classes_to_visit.pop()
+        if "__pydantic_fields__" not in vars(subclass):
+            are_all_known = False
+        elif subclass.__pydantic_generic_metadata__["origin"] is not None:
+            classes_to_visit.extend(subclass.__subclasses__())
+        else:
+            subclasses.append(subclass)
+    # E.g. SQLAlchemy models are never versioned
+    return [subclass for subclass in subclasses if _is_versionable_model(subclass)], are_all_known
 
 
 def _is_versionable_model(model: Any) -> bool:
@@ -1556,8 +1566,10 @@ class SchemaGenerator:
         differ, not if they only have subclasses that differ.
         If we do not know all of the models that the model refers to (see _ModelReferences.is_complete),
         we assume that it is versioned.
+        The parametrizations of generics are not subclasses here (see _get_subclasses_that_can_be_versioned).
         The decision only depends on the references between the models and on the subclasses that exist when
-        the generator first needs the decision, not on the order of generation.
+        the generator first needs the decision, not on the order of generation. We do not keep a decision that
+        depended on the subclasses that were still being created.
         """
         if not self._changed_models:
             # Nothing has instructions so we do not need to look into the models
@@ -1565,43 +1577,45 @@ class SchemaGenerator:
         return self._reaches_changed_models(_VersioningQuestion(model, includes_subclasses=True))
 
     def _reaches_changed_models(self, question: "_VersioningQuestion") -> bool:
-        if question not in self._versioning_answers:
-            visited_questions: set[_VersioningQuestion] = set()
-            questions_to_visit = [question]
-            answer = False
-            while questions_to_visit:
-                current_question = questions_to_visit.pop()
-                if current_question in visited_questions or self._versioning_answers.get(current_question) is False:
-                    continue
-                visited_questions.add(current_question)
-                if self._versioning_answers.get(current_question) or self._is_changed(current_question):
-                    answer = True
-                    break
-                questions_to_visit.extend(self._get_dependent_questions(current_question))
-            if answer:
-                self._versioning_answers[question] = True
-            else:
-                # None of the visited questions lead to changed models either
-                self._versioning_answers.update(dict.fromkeys(visited_questions, False))
-        return self._versioning_answers[question]
+        if question in self._versioning_answers:
+            return self._versioning_answers[question]
+        visited_questions: set[_VersioningQuestion] = set()
+        questions_to_visit = [question]
+        answer = False
+        depends_on_unknown_subclasses = False
+        while questions_to_visit:
+            current_question = questions_to_visit.pop()
+            if current_question in visited_questions or self._versioning_answers.get(current_question) is False:
+                continue
+            visited_questions.add(current_question)
+            if self._versioning_answers.get(current_question) or self._is_changed(current_question):
+                answer = True
+                break
+            dependent_questions, are_all_known = self._get_dependent_questions(current_question)
+            depends_on_unknown_subclasses |= not are_all_known
+            questions_to_visit.extend(dependent_questions)
+        if answer:
+            self._versioning_answers[question] = True
+        elif not depends_on_unknown_subclasses:
+            # None of the visited questions lead to changed models either
+            self._versioning_answers.update(dict.fromkeys(visited_questions, False))
+        # Otherwise, we ask again next time because the subclasses that are still being created could change it
+        return answer
 
     def _is_changed(self, question: "_VersioningQuestion") -> bool:
         if question.includes_subclasses:
-            # We cannot look into a subclass that is still being created (e.g. a parametrized generic created by
-            # another thread) so it could need a copy
-            return any(not _is_created(subclass) for subclass in _get_versionable_subclasses(question.model))
+            return False
         return question.model in self._changed_models or not self._get_references(question.model).is_complete
 
-    def _get_dependent_questions(self, question: "_VersioningQuestion") -> "list[_VersioningQuestion]":
+    def _get_dependent_questions(self, question: "_VersioningQuestion") -> "tuple[list[_VersioningQuestion], bool]":
+        """Return the questions that the answer depends on, and whether we know all of them"""
         model = question.model
         if question.includes_subclasses:
+            subclasses, are_all_known = _get_subclasses_that_can_be_versioned(model)
             return [
                 _VersioningQuestion(model, includes_subclasses=False),
-                *(
-                    _VersioningQuestion(_unwrap_model(subclass), includes_subclasses=True)
-                    for subclass in _get_versionable_subclasses(model)
-                ),
-            ]
+                *(_VersioningQuestion(_unwrap_model(subclass), includes_subclasses=True) for subclass in subclasses),
+            ], are_all_known
         references = self._get_references(model)
         return [
             *(
@@ -1609,7 +1623,7 @@ class SchemaGenerator:
                 for referenced_model in references.models | references.arg_models
             ),
             *(_VersioningQuestion(base, includes_subclasses=False) for base in references.base_models),
-        ]
+        ], True
 
     def _is_in_reference_cycle(self, model: type[Union[BaseModel, Enum]]) -> bool:
         """Whether copying the model would request the model itself again, directly or through other models.

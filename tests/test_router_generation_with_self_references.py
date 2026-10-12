@@ -71,6 +71,24 @@ class TreeNode(BaseModel, Generic[ValueT]):
     children: "list[TreeNode[ValueT]]" = []
 
 
+class IntTreeNode(TreeNode[int]):
+    pass
+
+
+# The generators that HookedTree asks about itself while pydantic creates its subclasses, with their answers
+HOOKED_TREE_GENERATORS: list[tuple[Any, list[Any]]] = []
+
+
+class HookedTree(BaseModel, Generic[ValueT]):
+    value: Optional[ValueT] = None
+    children: "list[HookedTree[ValueT]]" = []
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        for generator, answers in HOOKED_TREE_GENERATORS:
+            answers.append(generator[HookedTree])
+
+
 class Color(str, Enum):
     red = "red"
     green = "green"
@@ -260,7 +278,7 @@ def test__generate_versioned_models__unchanged_models_outside_of_reference_cycle
     )
 
     for generator in generate_versioned_models(versions).values():
-        for model in (ItemWithCategory, CategoryChild, TreeNode[int], AnyModelEnvelope, OuterOfItem, Item):
+        for model in (ItemWithCategory, CategoryChild, TreeNode[int], IntTreeNode, AnyModelEnvelope, OuterOfItem, Item):
             assert generator[model] is not model
         # Their copies refer to the head models in reference cycles
         assert generator[ItemWithCategory].model_fields["category"].annotation == Optional[Category]
@@ -479,19 +497,24 @@ def test__router_generation__unchanged_self_referencing_sibling_of_changed_model
         assert generator[SiblingCategory] is SiblingCategory
 
 
-def test__generate_versioned_models__generic_parametrized_while_deciding_about_its_origin__should_version_args():
+def test__generate_versioned_models__self_referencing_generic_parametrized_while_deciding__should_stay_reused():
     versions = VersionBundle(Version("2001-01-01", unrelated_version_change()), Version("2000-01-01"))
     generator = generate_versioned_models(versions)["2000-01-01"]
+    answers_during_parametrization: list[Any] = []
+    HOOKED_TREE_GENERATORS.append((generator, answers_during_parametrization))
+    try:
+        # Like when another thread parametrizes the generic, the parametrization is a subclass of HookedTree
+        # before pydantic sets its fields and its generic args
+        old_tree = generator[HookedTree[float]]
+    finally:
+        HOOKED_TREE_GENERATORS.clear()
 
-    class HookedPage(BaseModel, Generic[ValueT]):
-        items: list[ValueT]
-
-        def __init_subclass__(cls, **kwargs: Any) -> None:
-            super().__init_subclass__(**kwargs)
-            # Like when another thread parametrizes the generic, the parametrization exists before pydantic sets
-            # its fields and its generic args so we cannot look into it yet
-            generator[HookedPage]
-
-    old_page = generator[HookedPage[Item]]
-
-    assert get_args(old_page.model_fields["items"].annotation) == (generator[Item],)
+    # The parametrizations do not make their origin versioned and the answer that did not know about the
+    # parametrization yet is not kept either
+    assert answers_during_parametrization
+    assert all(answer is HookedTree for answer in answers_during_parametrization)
+    assert generator[HookedTree] is HookedTree
+    assert old_tree.model_validate({"value": 1, "children": [{"value": 2}]}).model_dump() == {
+        "value": 1.0,
+        "children": [{"value": 2.0, "children": []}],
+    }
