@@ -138,6 +138,14 @@ class Leaf(BaseModel):
     name: str
 
 
+class VersionedParent(BaseModel):
+    name: str
+
+
+class SelfReferencingChild(VersionedParent):
+    children: "list[SelfReferencingChild]" = []
+
+
 class DefaultChild(BaseModel):
     name: str = "child"
     parent: "Optional[DefaultParent]" = None
@@ -305,6 +313,13 @@ CHANGED_CYCLE_CASES = [
         {"name": "abc", "value": 1, "children": [{"name": "abc", "value": 2, "children": []}]},
         {"name": "abc", "value": 1, "children": [{"name": "toolong", "value": 2, "children": []}]},
         id="generic",
+    ),
+    pytest.param(
+        SelfReferencingChild,
+        VersionedParent,
+        {"name": "abc", "children": [{"name": "abc", "children": []}]},
+        {"name": "abc", "children": [{"name": "toolong", "children": []}]},
+        id="self_referencing_child_of_changed_parent",
     ),
     pytest.param(
         Node[str],
