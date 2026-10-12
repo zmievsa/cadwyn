@@ -679,3 +679,56 @@ def test__router_generation__dependency_with_type_checking_only_annotations__sho
             assert response.status_code == 200, (path, response.json())
             assert response.json() == 5
             assert version_client.get(path, params={"limit": "five"}).status_code == 422
+
+
+class VersionedItem(BaseModel):
+    foo: str
+
+
+def get_item_with_type_checking_only_return(item: VersionedItem) -> Decimal:
+    raise NotImplementedError
+
+
+def test__router_generation__partial_dependency_with_type_checking_only_annotations__should_use_versioned_models(
+    router, create_versioned_clients
+):
+    # FastAPI itself cannot resolve "VersionedItem" for such partials at request time (it looks for the globals on
+    # the partial) so we only compare the schemas that each version documents
+    @router.post("/test")
+    async def route(item: Annotated[Any, Depends(functools.partial(get_item_with_type_checking_only_return))]):
+        raise NotImplementedError
+
+    clients = create_versioned_clients(version_change(schema(VersionedItem).field("bar").existed_as(type=str)))
+    required_fields = {}
+    for version, version_client in clients.items():
+        openapi = version_client.get(f"/openapi.json?version={version}").json()
+        required_fields[version] = openapi["components"]["schemas"]["VersionedItem"]["required"]
+    assert required_fields == {"2001-01-01": ["foo"], "2000-01-01": ["foo", "bar"]}
+
+
+class NotSubscriptableAtRuntime:
+    """Like pandas.Series: its stubs make it generic for type checkers but subscripting it fails at runtime"""
+
+    def __class_getitem__(cls, item: Any) -> Any:  # pragma: no cover # Only runs if something evaluates the annotation
+        raise TypeError(f"type {cls.__name__!r} is not subscriptable")
+
+
+def make_values(size: int) -> NotSubscriptableAtRuntime[int]:  # ty: ignore[invalid-type-form]  # Like pandas.
+    return list(range(size))
+
+
+class ModelWithCallables(BaseModel):
+    values: Any = Field(default_factory=functools.partial(make_values, 3))
+    size: Annotated[int, functools.partial(make_values, 2)] = 1
+
+
+def test__router_generation__non_dependency_callables_with_unevaluable_annotations__should_work(
+    router, create_versioned_clients
+):
+    # FastAPI never evaluates the annotations of callables other than endpoints and dependencies so neither does Cadwyn
+    @router.post("/test")
+    async def route(body: ModelWithCallables):
+        return body
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.post("/test", json={}).json() == {"values": [0, 1, 2], "size": 1}

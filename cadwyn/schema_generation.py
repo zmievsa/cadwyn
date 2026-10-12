@@ -507,13 +507,17 @@ def _get_signature(call: Callable[..., Any]) -> inspect.Signature:
 def _get_best_effort_globals(call: Any) -> dict[str, Any]:
     """Return the globals of the callable for the annotations that _get_signature() could not evaluate.
 
-    Like FastAPI, we take them from the unwrapped callable. For callable class instances, __globals__ is on
-    the __call__ method, not on the instance itself
+    Like FastAPI, we take them from the unwrapped callable. Unlike FastAPI, we also unwrap partials that do not
+    carry globals themselves. For callable class instances, __globals__ is on the __call__ method instead
     """
     unwrapped_call = inspect.unwrap(call)
-    unwrapped_call_globals = getattr(unwrapped_call, "__globals__", None)
-    if isinstance(unwrapped_call_globals, dict):
-        return unwrapped_call_globals
+    while True:
+        unwrapped_call_globals = getattr(unwrapped_call, "__globals__", None)
+        if isinstance(unwrapped_call_globals, dict):
+            return unwrapped_call_globals
+        if not isinstance(unwrapped_call, functools.partial):
+            break
+        unwrapped_call = inspect.unwrap(unwrapped_call.func)
     dunder_call = inspect.getattr_static(unwrapped_call, "__call__", None)
     return _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
 
@@ -657,14 +661,19 @@ class _AnnotationTransformer:
                 mode="serialization",
             )
         route.dependencies = self.change_version_of_annotation(route.dependencies)
-        route.endpoint = self.change_version_of_annotation(route.endpoint)
+        route.endpoint = self.change_versions_of_a_non_container_annotation(
+            route.endpoint, evaluate_postponed_annotations=True
+        )
         for callback in route.callbacks or []:
             if not isinstance(callback, fastapi.routing.APIRoute):
                 continue
             self.migrate_route_to_version(callback, ignore_response_model=ignore_response_model)
         self._remake_endpoint_dependencies(route)
 
-    def _change_version_of_a_non_container_annotation(self, annotation: Any) -> Any:
+    def _change_version_of_a_non_container_annotation(
+        self, annotation: Any, *, evaluate_postponed_annotations: bool = False
+    ) -> Any:
+        """evaluate_postponed_annotations is only for the callables that FastAPI evaluates itself"""
         from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
 
         if isinstance(annotation, GenericAliasUnionArgs):
@@ -696,7 +705,10 @@ class _AnnotationTransformer:
             # This also covers Security. Copying keeps all of their other fields (e.g. use_cache, scope, and scopes)
             # without calling __init__ which subclasses could have overridden with a different signature
             annotation_copy = copy.copy(annotation)
-            object.__setattr__(annotation_copy, "dependency", self.change_version_of_annotation(annotation.dependency))
+            dependency = self.change_versions_of_a_non_container_annotation(
+                annotation.dependency, evaluate_postponed_annotations=True
+            )
+            object.__setattr__(annotation_copy, "dependency", dependency)
             return annotation_copy
         elif isinstance(annotation, UnionType):  # pragma: no cover
             return typing.Union[tuple(self.change_version_of_annotation(a) for a in get_args(annotation))]
@@ -718,6 +730,7 @@ class _AnnotationTransformer:
                 modifier,
                 modifier,
                 annotation_modifying_wrapper_factory=self._copy_function_through_class_based_wrapper,
+                evaluate_postponed_annotations=evaluate_postponed_annotations,
             )
         else:
             return annotation
@@ -747,19 +760,31 @@ class _AnnotationTransformer:
         modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,
         *,
         annotation_modifying_wrapper_factory: Callable[[_Call], _CallableWrapper],
+        evaluate_postponed_annotations: bool,
     ) -> _Call:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
-        # Unlike __annotations__, the signature also follows functools.partial and __signature__
-        old_signature = _get_signature(call)
+        original_call = cls._unwrap_callable(call)
+        if evaluate_postponed_annotations:
+            # FastAPI evaluates the annotations of endpoints and dependencies the same way so we cannot fail where
+            # FastAPI would not. Unlike __annotations__, the signature also follows functools.partial and __signature__
+            old_signature = _get_signature(call)
+            callable_annotations = {
+                name: param.annotation
+                for name, param in old_signature.parameters.items()
+                if param.annotation is not inspect.Parameter.empty
+            }
+            if old_signature.return_annotation is not inspect.Signature.empty:
+                callable_annotations["return"] = old_signature.return_annotation
+            call_globals = _get_best_effort_globals(original_call)
+        else:
+            # FastAPI never evaluates the annotations of other callables (e.g. pydantic's default factories) and they
+            # may not even be evaluable at runtime (e.g. pandas.Series[int]) so we keep evaluating only the ones
+            # that Cadwyn always did
+            old_signature = inspect.signature(call)
+            annotated_call = original_call if is_regular_function(original_call) else original_call.__call__
+            callable_annotations = dict(getattr(annotated_call, "__annotations__", {}))
+            call_globals = _function_globals(annotated_call) if is_regular_function(annotated_call) else {}
         old_params = old_signature.parameters
-        callable_annotations = {
-            name: param.annotation
-            for name, param in old_params.items()
-            if param.annotation is not inspect.Parameter.empty
-        }
-        if old_signature.return_annotation is not inspect.Signature.empty:
-            callable_annotations["return"] = old_signature.return_annotation
-        call_globals = _get_best_effort_globals(cls._unwrap_callable(call))
         callable_annotations = {
             k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
         }
