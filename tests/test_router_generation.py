@@ -4,6 +4,7 @@ import importlib
 import inspect
 import json
 import re
+import sys
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
@@ -2277,6 +2278,32 @@ def test__router_generation__partial_dependency__should_keep_annotations_of_wrap
             assert operation["requestBody"]["content"]["application/json"]["schema"] == {
                 "$ref": "#/components/schemas/SchemaWithOneIntField"
             }
+
+
+def test__router_generation__dependency_with_lazy_type_checking_only_annotations__should_resolve_the_other_ones(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    paths = []
+    # Python 3.10-3.13 evaluate annotations when a function gets defined so such dependencies cannot exist there
+    if sys.version_info >= (3, 14):
+        lazy_dependencies = importlib.import_module("tests._data.lazy_type_checking_dependencies")
+
+        @router.get("/return")
+        async def return_route(limit: Annotated[int, Depends(lazy_dependencies.get_limit)]):
+            return limit
+
+        @router.get("/parameter")
+        async def parameter_route(limit: Annotated[int, Depends(lazy_dependencies.get_limit_with_price)]):
+            return limit
+
+        paths += ["/return", "/parameter"]
+    for version_client in create_versioned_clients(version_change()).values():
+        for path in paths:
+            response = version_client.get(path, params={"limit": "5"})
+            assert response.status_code == 200, (path, response.json())
+            assert response.json() == 5
+            assert version_client.get(path, params={"limit": "five"}).status_code == 422
 
 
 def test__router_generation__dependency_with_parameters_only_in_signature__should_keep_their_types(

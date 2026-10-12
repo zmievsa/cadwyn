@@ -4,7 +4,7 @@ import functools
 import sys
 import types
 from enum import Enum
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import pytest
 from fastapi import Depends, Query, Request
@@ -19,6 +19,9 @@ from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import Version, VersionBundle, VersionChange
 from tests._data import postponed_annotations_dependencies as other_module
 from tests.conftest import version_change
+
+if TYPE_CHECKING:
+    from decimal import Decimal
 
 
 class OuterSchema(BaseModel):
@@ -577,6 +580,11 @@ instance_call_provider = ProviderWithInstanceCall()
 class_call_provider = ProviderWithClassCall()
 function_like = FunctionLike(other_module.get_body)
 
+# A partial that also carries the metadata of a function
+function_like_partial = functools.partial(_invoke, other_module.get_body)
+for _attribute_name in ("__name__", "__code__", "__defaults__", "__kwdefaults__", "__annotations__", "__globals__"):
+    setattr(function_like_partial, _attribute_name, getattr(other_module.get_body, _attribute_name))
+
 
 def test__router_generation__callable_instances_with_descriptor_call__should_resolve_annotations_like_signature(
     router, create_versioned_clients
@@ -625,11 +633,49 @@ def test__router_generation__callable_instances_with_descriptor_call__should_res
 def test__router_generation__function_like_dependency__should_resolve_annotations_in_its_globals(
     router, create_versioned_clients
 ):
-    @router.post("/test")
-    async def route(body: Annotated[Any, Depends(function_like)]):
+    @router.post("/function_like")
+    async def function_like_route(body: Annotated[Any, Depends(function_like)]):
         return body
 
+    paths = ["/function_like"]
+    # Python 3.10-3.12's inspect.signature() reads a function-like partial directly. Python 3.13+ unwraps partials
+    # first so it gets the signature of _invoke which has no "body" and even FastAPI itself cannot use it there
+    if sys.version_info < (3, 13):
+
+        @router.post("/function_like_partial")
+        async def function_like_partial_route(body: Annotated[Any, Depends(function_like_partial)]):
+            return body
+
+        paths.append("/function_like_partial")
     for version_client in create_versioned_clients(version_change()).values():
-        response = version_client.post("/test", json={"foo": "bar"})
-        assert response.status_code == 200, response.json()
-        assert response.json() == {"foo": "bar"}
+        for path in paths:
+            response = version_client.post(path, json={"foo": "bar"})
+            assert response.status_code == 200, (path, response.json())
+            assert response.json() == {"foo": "bar"}
+
+
+def get_limit_with_type_checking_only_return(limit: int) -> Decimal:
+    return limit  # ty: ignore[invalid-return-type]  # The annotation is only for type checkers.
+
+
+def get_limit_with_type_checking_only_parameter(limit: int, price: Decimal | None = None) -> int:
+    return limit
+
+
+def test__router_generation__dependency_with_type_checking_only_annotations__should_resolve_the_other_ones(
+    router, create_versioned_clients
+):
+    @router.get("/return")
+    async def return_route(limit: Annotated[int, Depends(get_limit_with_type_checking_only_return)]):
+        return limit
+
+    @router.get("/parameter")
+    async def parameter_route(limit: Annotated[int, Depends(get_limit_with_type_checking_only_parameter)]):
+        return limit
+
+    for version_client in create_versioned_clients(version_change()).values():
+        for path in ("/return", "/parameter"):
+            response = version_client.get(path, params={"limit": "5"})
+            assert response.status_code == 200, (path, response.json())
+            assert response.json() == 5
+            assert version_client.get(path, params={"limit": "five"}).status_code == 422

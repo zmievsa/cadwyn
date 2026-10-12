@@ -17,6 +17,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Fixed `app.dependency_overrides` getting ignored in older API versions for dependencies that are class instances, bound methods, or partials. Older versions used copies of such dependencies, which also hid changes to their state.
 - Fixed parameter defaults such as `filters: Filters = Query()` in endpoints and dependencies being shared between API versions and between apps built from the same router. FastAPI changes them while building routes, so their OpenAPI and validation could use the models of another version or app.
 - Fixed decorated dependencies, such as `functools.lru_cache` ones, failing in older API versions when their annotations are postponed (`from __future__ import annotations`).
+- Fixed a `NameError` at startup on Python 3.14 when a dependency's annotations use a name that only exists for type checkers (e.g. one imported under `if TYPE_CHECKING:`).
 - Fixed `Annotated` dependencies whose type is not versioned, such as `Annotated[list[int], Depends(get_values)]`, using the dependency of the head or another API version. This made versioned request constraints, such as a `min_length` or a removed enum member, get ignored in both validation and OpenAPI.
 
 ## [7.4.1]
