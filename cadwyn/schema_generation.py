@@ -462,10 +462,6 @@ def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, typ
     return isinstance(call, types.FunctionType | types.MethodType)
 
 
-def _function_globals(call: Union[types.FunctionType, types.MethodType]) -> dict[str, Any]:
-    return call.__globals__  # ty: ignore[unresolved-attribute]  # MethodType forwards function attributes at runtime.
-
-
 def _unwrap_partial(call: Any) -> Any:
     while isinstance(call, functools.partial):
         call = call.func
@@ -484,28 +480,28 @@ def _get_function_behind_callable(call: Any) -> Any:
     return call.__call__
 
 
-def _unwrap_partials_and_decorators(call: Any) -> Any:
+def _unwrap_to_innermost_callable(call: Any) -> Any:
+    """Unwrap everything that inspect.signature() sees through to get to the callable that defines the annotations"""
     while True:
-        unwrapped_call = inspect.unwrap(_unwrap_partial(call))
+        if isinstance(call, staticmethod | classmethod | types.MethodType):
+            unwrapped_call = call.__func__
+        elif isinstance(call, functools.partial | functools.partialmethod):
+            unwrapped_call = call.func
+        else:
+            unwrapped_call = inspect.unwrap(call)
         if unwrapped_call is call:
             return call
         call = unwrapped_call
 
 
-def _unwrap_method(method: Any) -> Any:
-    if isinstance(method, staticmethod | classmethod):
-        method = method.__func__
-    return _unwrap_partials_and_decorators(method)
-
-
-def _get_constructor_of_class(cls: type) -> Any:
+def _get_constructor_of_class(cls: type) -> Union[types.FunctionType, None]:
     """Return the function that inspect.signature() takes the signature of the class from"""
     candidates = [inspect.getattr_static(type(cls), "__call__")]
     for base in cls.__mro__:
         candidates.extend((base.__dict__.get("__new__"), base.__dict__.get("__init__")))
     for candidate in candidates:
-        function = _unwrap_method(candidate)
-        if is_regular_function(function):
+        function = _unwrap_to_innermost_callable(candidate)
+        if inspect.isfunction(function):
             return function
     return None
 
@@ -515,16 +511,16 @@ def _get_callable_globals(call: Any) -> dict[str, Any]:
 
     Unlike the function that runs, the annotations belong to the innermost function (decorators keep it in __wrapped__)
     """
-    function = _unwrap_partials_and_decorators(call)
+    function = _unwrap_to_innermost_callable(call)
     if inspect.isclass(function):
         constructor = _get_constructor_of_class(function)
         if constructor is None:
             # The constructor comes from a builtin so we use the module that defined the class
             return getattr(sys.modules.get(function.__module__), "__dict__", {})
-        return _function_globals(constructor)
-    if not is_regular_function(function):
-        function = _unwrap_partials_and_decorators(function.__call__)
-    return _function_globals(function) if is_regular_function(function) else {}
+        function = constructor
+    elif not inspect.isfunction(function):
+        function = _unwrap_to_innermost_callable(function.__call__)
+    return function.__globals__ if inspect.isfunction(function) else {}
 
 
 def _copy_field_info(field_info: FieldInfo) -> FieldInfo:

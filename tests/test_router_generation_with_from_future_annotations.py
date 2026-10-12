@@ -17,6 +17,7 @@ from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import Version, VersionBundle, VersionChange
+from tests._data import postponed_annotations_dependencies as other_module
 from tests.conftest import version_change
 
 
@@ -318,3 +319,74 @@ def test__router_generation__partial_of_class_with_forwardrefs__should_resolve_a
             assert response.status_code == 200, (path, response.json())
             assert response.json() == {"foo": "bar"}
         assert version_client.get("/no_constructor").json() == {"foo": "default"}
+
+
+def _decorator_from_this_module(func: Any) -> Any:
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+class ResourceWithPartialmethodInit:
+    __init__ = functools.partialmethod(other_module.initialize_with_label, label="fixed")
+
+
+class ResourceWithStaticmethodNew:
+    __new__ = staticmethod(other_module.create)
+
+
+class ClassmethodCallMeta(type):
+    __call__ = classmethod(other_module.metaclass_call)
+
+
+class ResourceWithClassmethodMetaclassCall(metaclass=ClassmethodCallMeta):
+    pass
+
+
+class ResourceWithDecoratedInit:
+    __init__ = _decorator_from_this_module(other_module.initialize)
+
+
+def test__router_generation__dependencies_with_annotations_from_another_module__should_resolve_them(
+    router, create_versioned_clients
+):
+    @router.post("/partialmethod")
+    async def partialmethod_route(resource: Annotated[Any, Depends(functools.partial(ResourceWithPartialmethodInit))]):
+        return resource.body
+
+    @router.post("/staticmethod")
+    async def staticmethod_route(resource: Annotated[Any, Depends(functools.partial(ResourceWithStaticmethodNew))]):
+        return resource.body
+
+    @router.post("/classmethod")
+    async def classmethod_route(
+        resource: Annotated[Any, Depends(functools.partial(ResourceWithClassmethodMetaclassCall))],
+    ):
+        return resource.body
+
+    @router.post("/wrapped")
+    async def wrapped_route(resource: Annotated[Any, Depends(functools.partial(ResourceWithDecoratedInit))]):
+        return resource.body
+
+    @router.post("/partial")
+    async def partial_route(
+        body: Annotated[Any, Depends(functools.partial(other_module.get_body_with_label, label="fixed"))],
+    ):
+        return body
+
+    @router.post("/bound_method")
+    async def bound_method_route(body: Annotated[Any, Depends(other_module.provider.provide)]):
+        return body
+
+    paths = ["/partialmethod", "/staticmethod", "/wrapped", "/partial", "/bound_method"]
+    # Python 3.10's inspect.signature() drops the first parameter of a classmethod __call__ of a metaclass
+    # so even FastAPI itself cannot use such dependencies there
+    if sys.version_info >= (3, 11):
+        paths.append("/classmethod")
+    for version_client in create_versioned_clients(version_change()).values():
+        for path in paths:
+            response = version_client.post(path, json={"foo": "bar"})
+            assert response.status_code == 200, (path, response.json())
+            assert response.json() == {"foo": "bar"}
