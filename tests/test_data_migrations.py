@@ -14,7 +14,21 @@ from fastapi import APIRouter, Body, Cookie, File, Form, Header, HTTPException, 
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from pydantic import AfterValidator, AliasChoices, AliasGenerator, AliasPath, BaseModel, ConfigDict, Field, RootModel
+from pydantic import (
+    AfterValidator,
+    AliasChoices,
+    AliasGenerator,
+    AliasPath,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    RootModel,
+    WrapSerializer,
+    field_serializer,
+    model_serializer,
+    model_validator,
+)
 from starlette.responses import StreamingResponse
 from typing_extensions import TypedDict
 
@@ -1571,6 +1585,205 @@ def test__request_body_migration__with_extra_allow__should_not_move_client_extra
     for version_client in clients.values():
         for payload in [{"v": 1, "s": 9}, {"s": 9}]:
             assert version_client.post(test_path, json=payload).json() == {"value": None, "s": 9}
+
+
+class MoneyWithFieldSerializerAndBeforeValidator(BaseModel):
+    amount: float = Field(validation_alias="cents", serialization_alias="dollars")
+
+    @field_serializer("amount")
+    def to_dollars(self, value: float) -> float:
+        return value / 100
+
+    @model_validator(mode="before")
+    @classmethod
+    def from_dollars(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "dollars" in value:
+            return {**value, "cents": value["dollars"] * 100}
+        return value
+
+
+class MoneyWithPlainSerializer(BaseModel):
+    amount: Annotated[float, PlainSerializer(lambda value: f"${value / 100}")] = Field(
+        default=0, validation_alias="cents", serialization_alias="dollars"
+    )
+
+
+class MoneyWithWrapSerializer(BaseModel):
+    amount: Annotated[float, WrapSerializer(lambda value, handler: f"${handler(value) / 100}")] = Field(
+        default=0, validation_alias="cents", serialization_alias="dollars"
+    )
+
+
+class MoneyWithModelSerializer(BaseModel):
+    amount: float = Field(default=0, validation_alias="cents", serialization_alias="dollars")
+
+    @model_serializer
+    def to_dollars(self) -> dict[str, Any]:
+        return {"dollars": f"${self.amount / 100}"}
+
+
+class MoneyWithWrapValidator(BaseModel):
+    amount: float = Field(default=0, validation_alias="cents", serialization_alias="dollars")
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def from_dollars(cls, value: Any, handler: Callable[[Any], Any]) -> Any:
+        if isinstance(value, dict) and "dollars" in value:
+            value = {**value, "cents": value["dollars"] * 1000}
+        return handler(value)
+
+
+class MoneyWithSerializerInNestedModel(BaseModel):
+    money: MoneyWithModelSerializer = Field(
+        default_factory=MoneyWithModelSerializer, validation_alias="m", serialization_alias="n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "payload", "expected"),
+    [
+        pytest.param(MoneyWithFieldSerializerAndBeforeValidator, {"cents": 100}, 100, id="field_serializer"),
+        pytest.param(MoneyWithPlainSerializer, {"cents": 100}, 0, id="plain_serializer"),
+        pytest.param(MoneyWithWrapSerializer, {"cents": 100}, 0, id="wrap_serializer"),
+        pytest.param(MoneyWithModelSerializer, {"cents": 100}, 0, id="model_serializer"),
+        pytest.param(MoneyWithWrapValidator, {"cents": 100}, 100_000, id="wrap_model_validator"),
+    ],
+)
+def test__request_body_migration__with_custom_serialization_or_model_validators__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    model: type[BaseModel],
+    payload: dict[str, Any],
+    expected: float,
+):
+    @router.post(test_path)
+    async def endpoint(body: model):  # ty: ignore[invalid-type-form]
+        return body.amount
+
+    clients = create_versioned_clients(version_change())
+
+    # Known limitation: a serialized value might not be valid validation input, so we leave it as before
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == expected
+
+
+def test__request_body_migration__with_custom_serialization_in_nested_model__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: MoneyWithSerializerInNestedModel):
+        return body.money.amount
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"m": {"cents": 100}}).json() == 0
+
+
+@pytest.mark.parametrize(
+    ("config", "serialization_alias"),
+    [
+        pytest.param(ConfigDict(), "s", id="serialization_alias"),
+        pytest.param(
+            ConfigDict(alias_generator=AliasGenerator(serialization_alias=lambda _: "s")), None, id="generator"
+        ),
+    ],
+)
+def test__request_body_migration__with_fields_sharing_a_dumped_key__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    config: ConfigDict,
+    serialization_alias: Optional[str],
+):
+    class SchemaWithSharedDumpedKey(BaseModel):
+        model_config = config
+        a: int = Field(default=0, validation_alias="v", serialization_alias=serialization_alias)
+        b: int = Field(default=0, validation_alias="w", serialization_alias=serialization_alias)
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithSharedDumpedKey):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+
+    # Known limitation: we can't know which field a shared dumped key belongs to, so we leave it as before
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"v": 1, "w": 2}).json() == {"a": 0, "b": 0}
+
+
+def test__request_body_migration__with_chained_validation_aliases__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class SchemaWithChainedValidationAliases(BaseModel):
+        a: Optional[int] = Field(default=None, validation_alias="b")
+        b: Optional[int] = Field(default=None, validation_alias="c")
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithChainedValidationAliases):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+
+    # Known limitation: a dumped key that another field validates is ambiguous, so we leave it as before
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"b": 1, "c": 2}).json() == {"a": 2, "b": None}
+
+
+def test__request_body_migration__that_sets_an_alias_path_to_none__should_keep_it(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class SchemaWithNullableAliasPath(BaseModel):
+        value: Optional[int] = Field(default=None, validation_alias=AliasPath("nested", "v"))
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithNullableAliasPath):
+        return body.value
+
+    @convert_request_to_next_version_for(SchemaWithNullableAliasPath)
+    def migrator(request: RequestInfo):
+        request.body["nested"] = {"v": None}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, json={"nested": {"v": 7}}).json() is None
+
+
+@pytest.mark.parametrize(
+    ("alias", "payload"),
+    [
+        pytest.param(AliasChoices(AliasPath("nested", "v"), AliasPath("other", "v")), {"nested": {"v": 7}}, id="paths"),
+        pytest.param(AliasChoices("w", AliasPath("other", "v")), {"w": 7}, id="key_and_path"),
+    ],
+)
+def test__request_body_migration__that_sets_a_later_alias_choice__head_should_get_its_value_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    alias: AliasChoices,
+    payload: dict[str, Any],
+):
+    class SchemaWithAliasChoices(BaseModel):
+        value: int = Field(default=0, validation_alias=alias)
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithAliasChoices):
+        return body.value
+
+    @convert_request_to_next_version_for(SchemaWithAliasChoices)
+    def migrator(request: RequestInfo):
+        request.body["other"] = {"v": 99}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, json=payload).json() == 99
 
 
 class SchemaWithAliasPathsIntoAnotherField(BaseModel):

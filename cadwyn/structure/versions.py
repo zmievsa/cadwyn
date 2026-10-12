@@ -21,7 +21,7 @@ from fastapi.dependencies.utils import solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
-from pydantic import AliasPath, BaseModel, RootModel
+from pydantic import AliasPath, BaseModel, PlainSerializer, RootModel, WrapSerializer
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
@@ -861,38 +861,94 @@ def _restore_validation_aliases(annotation: object, data: Any) -> Any:
     for dumped_key, field_annotation in nested:
         if dumped_key in restored:
             restored[dumped_key] = _restore_validation_aliases(field_annotation, restored[dumped_key])
-    for dumped_key, target_key, validated_keys in renames:
-        # We leave the field as on main if the data already has a key that the head validates for it, e.g. one that
-        # a migration set. This includes another field's dumped key so in chains like `a <- "b"`, `b <- "c"`,
-        # `a` doesn't get renamed and the head doesn't find it.
-        if dumped_key in data and target_key not in restored and not any(key in data for key in validated_keys):
+    for dumped_key, target_key, validation_paths in renames:
+        # The head already finds a value for the field if a migration has set one of its validation paths
+        if dumped_key in data and all(
+            path.search_dict_for_path(data) is PydanticUndefined for path in validation_paths
+        ):
             restored[target_key] = restored.pop(dumped_key)
     return restored
 
 
-@functools.cache
-def _get_renames(model: type[BaseModel]) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
-    """Return `(dumped_key, target_key, validated_keys)` for the fields whose dumped key the model doesn't validate.
+_RenamePlan: TypeAlias = tuple[tuple[str, str, tuple[AliasPath, ...]], ...]
 
-    We only rename to plain keys. Fields that can only be validated through an `AliasPath` are left as on main.
+
+@functools.cache
+def _get_renames(model: type[BaseModel]) -> _RenamePlan:
+    """Return `(dumped_key, target_key, validation_paths)` for the fields whose dumped key the model doesn't validate.
+
+    We only rename to plain keys, and only when the dumped value is unambiguously the field's valid input.
+    Everything else, such as fields that can only be validated through an `AliasPath`, is left as on main.
     """
-    # A client's extra key can't be told apart from a dumped key so we leave such models as on main
-    if model.model_config.get("extra") == "allow":
+    decorators = model.__pydantic_decorators__
+    # A client's extra key can't be told apart from a dumped key, and a "before" or "wrap" model validator
+    # might already handle the dumped keys
+    if model.model_config.get("extra") == "allow" or any(
+        validator.info.mode in ("before", "wrap") for validator in decorators.model_validators.values()
+    ):
         return ()
+    fields = {
+        name: (field.serialization_alias or name, _get_validation_paths(model, name, field))
+        for name, field in model.model_fields.items()
+    }
+    dumped_keys = [dumped_key for dumped_key, _ in fields.values()]
     renames = []
-    for name, field in model.model_fields.items():
-        dumped_key = field.serialization_alias or name
-        paths = _get_validation_paths(model, name, field)
-        keys = tuple(path[0] for path in paths if len(path) == 1 and isinstance(path[0], str))
-        if [dumped_key] not in paths and keys:
-            renames.append((dumped_key, keys[0], keys))
+    for name, (dumped_key, paths) in fields.items():
+        keys = [path[0] for path in paths if len(path) == 1]
+        keys_of_other_fields = {
+            path[0] for other, (_, other_paths) in fields.items() if other != name for path in other_paths
+        }
+        if (
+            [dumped_key] in paths
+            or not keys
+            # A key that belongs to several fields is ambiguous
+            or dumped_keys.count(dumped_key) > 1
+            or keys[0] in dumped_keys
+            or dumped_key in keys_of_other_fields
+            or keys[0] in keys_of_other_fields
+            # The dumped value might not be valid input
+            or _dumps_custom_values(model, name, model.model_fields[name])
+        ):
+            continue
+        renames.append(
+            (dumped_key, cast("str", keys[0]), tuple(AliasPath(cast("str", path[0]), *path[1:]) for path in paths))
+        )
     return tuple(renames)
 
 
+def _dumps_custom_values(model: type[BaseModel], name: str, field: FieldInfo) -> bool:
+    """Whether a custom serializer might turn the field's dumped value into invalid input"""
+    nested_models = _collect_models(field.annotation, set())
+    return (
+        _has_custom_field_serialization(model, name, field)
+        or any(nested_model.__pydantic_decorators__.model_serializers for nested_model in {model, *nested_models})
+        or any(
+            _has_custom_field_serialization(nested_model, nested_name, nested_field)
+            for nested_model in nested_models
+            for nested_name, nested_field in nested_model.model_fields.items()
+        )
+    )
+
+
+def _has_custom_field_serialization(model: type[BaseModel], name: str, field: FieldInfo) -> bool:
+    return (
+        any(
+            {name, "*"} & set(serializer.info.fields)
+            for serializer in model.__pydantic_decorators__.field_serializers.values()
+        )
+        or any(_annotation_has_serializer(metadata) for metadata in field.metadata)
+        or _annotation_has_serializer(field.annotation)
+    )
+
+
+def _annotation_has_serializer(annotation: object) -> bool:
+    return isinstance(annotation, (PlainSerializer, WrapSerializer)) or any(
+        _annotation_has_serializer(arg) for arg in get_args(annotation)
+    )
+
+
 @functools.cache
-def _get_restore_plan(
-    model: type[BaseModel],
-) -> tuple[tuple[tuple[str, str, tuple[str, ...]], ...], tuple[tuple[str, object], ...]]:
+def _get_restore_plan(model: type[BaseModel]) -> tuple[_RenamePlan, tuple[tuple[str, object], ...]]:
     """Return the renames of the model and the fields that contain models with renames, which we need to walk into"""
     renames = _get_renames(model)
     renamed_keys = {dumped_key for dumped_key, _, _ in renames}
