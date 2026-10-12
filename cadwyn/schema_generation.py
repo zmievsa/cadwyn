@@ -2,7 +2,6 @@ import copy
 import dataclasses
 import functools
 import inspect
-import sys
 import types
 import typing
 from collections.abc import Callable, Sequence
@@ -466,6 +465,25 @@ def _function_globals(call: Union[types.FunctionType, types.MethodType]) -> dict
     return call.__globals__  # ty: ignore[unresolved-attribute]  # MethodType forwards function attributes at runtime.
 
 
+def _unwrap_partial(call: Any) -> Any:
+    while isinstance(call, functools.partial):
+        call = call.func
+    return call
+
+
+def _get_function_behind_callable(call: Any) -> Any:
+    """Return the function that actually runs when the callable is called: partials and class instances are unwrapped"""
+    call = _unwrap_partial(call)
+    if is_regular_function(call):
+        return call
+    return call.__call__
+
+
+def _get_callable_globals(call: Any) -> dict[str, Any]:
+    function = _get_function_behind_callable(call)
+    return _function_globals(function) if is_regular_function(function) else {}
+
+
 class _CallableWrapper:
     __annotations__: dict[str, Any]
     __defaults__: Union[tuple[Any, ...], None]
@@ -478,22 +496,14 @@ class _CallableWrapper:
     def __init__(self, original_callable: Callable[..., Any]) -> None:
         super().__init__()
         self._original_callable = original_callable
-        if not is_regular_function(original_callable):
-            original_callable = original_callable.__call__
-
-        functools.update_wrapper(self, original_callable)
+        functools.update_wrapper(self, _get_function_behind_callable(original_callable))
 
     @property
     def __globals__(self) -> dict[str, Any]:  # pragma: no cover
         # FastAPI uses __globals__ to resolve forward references in type hints
         # It's supposed to be an attribute on the function but we use it as property to prevent python
         # from trying to pickle globals when we deepcopy this wrapper
-        if is_regular_function(self._original_callable):
-            return _function_globals(self._original_callable)
-        dunder_call = self._original_callable.__call__
-        if is_regular_function(dunder_call):
-            return _function_globals(dunder_call)
-        return {}
+        return _get_callable_globals(self._original_callable)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self._original_callable(*args, **kwargs)
@@ -515,15 +525,30 @@ class _AsyncCallableWrapper(_CallableWrapper):
 
 class _GeneratorCallableWrapper(_CallableWrapper):
     @override
-    def __call__(self, *args: Any, **kwargs: Any) -> typing.Iterator[Any]:  # pragma: no cover
+    def __call__(self, *args: Any, **kwargs: Any) -> typing.Iterator[Any]:
+        # "yield from" forwards send(), throw(), and close() so the wrapped generator handles exceptions itself
         yield from self._original_callable(*args, **kwargs)
 
 
 class _AsyncGeneratorCallableWrapper(_CallableWrapper):
     @override
-    async def __call__(self, *args: Any, **kwargs: Any) -> typing.AsyncIterator[Any]:  # pragma: no cover
-        async for value in self._original_callable(*args, **kwargs):
-            yield value
+    async def __call__(self, *args: Any, **kwargs: Any) -> typing.AsyncGenerator[Any, Any]:
+        # There is no "yield from" for async generators so we forward asend() and athrow() by hand.
+        # Otherwise, exceptions (e.g. the ones raised in the endpoint) would never reach the wrapped generator
+        # so its "except" and "finally" blocks would get skipped until it gets garbage collected.
+        # aclose() is forwarded too because it throws GeneratorExit into us.
+        generator = self._original_callable(*args, **kwargs)
+        try:
+            value = await generator.__anext__()
+            while True:
+                try:
+                    sent_value = yield value
+                except BaseException as e:  # noqa: BLE001, PERF203
+                    value = await generator.athrow(e)
+                else:
+                    value = await generator.asend(sent_value)
+        except StopAsyncIteration:
+            return
 
 
 @final
@@ -588,6 +613,13 @@ class _AnnotationTransformer:
             # Classvar does not support generic tuple arguments
             if origin is ClassVar:
                 return ClassVar[self.change_version_of_annotation(args[0])]
+            if origin is Annotated:
+                # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the
+                # originals so it could return the alias that holds the dependency of another version
+                return _AnnotatedAlias(
+                    self.change_version_of_annotation(args[0]),
+                    tuple(self.change_version_of_annotation(arg) for arg in args[1:]),
+                )
             return origin[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
         elif is_typealiastype(annotation):
             if (
@@ -600,16 +632,11 @@ class _AnnotationTransformer:
                     value=self.change_version_of_annotation(annotation.__value__),
                     type_params=self.change_version_of_annotation(annotation.__type_params__),
                 )
-        elif isinstance(annotation, fastapi.params.Security):
-            return fastapi.params.Security(
-                self.change_version_of_annotation(annotation.dependency),
-                scopes=annotation.scopes,
-                use_cache=annotation.use_cache,
-            )
         elif isinstance(annotation, fastapi.params.Depends):
-            return fastapi.params.Depends(
-                self.change_version_of_annotation(annotation.dependency),
-                use_cache=annotation.use_cache,
+            # This also covers Security. replace() keeps all of their other fields such as use_cache, scope, and scopes
+            return dataclasses.replace(
+                annotation,
+                dependency=self.change_version_of_annotation(annotation.dependency),
             )
         elif isinstance(annotation, UnionType):  # pragma: no cover
             return typing.Union[tuple(self.change_version_of_annotation(a) for a in get_args(annotation))]
@@ -662,20 +689,17 @@ class _AnnotationTransformer:
         annotation_modifying_wrapper_factory: Callable[[_Call], _CallableWrapper],
     ) -> _Call:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
-        old_params = inspect.signature(call).parameters
-        if sys.version_info >= (3, 14):  # pragma: no cover
-            from annotationlib import get_annotations
-
-            callable_annotations = get_annotations(annotation_modifying_wrapper)
-        else:
-            callable_annotations = annotation_modifying_wrapper.__annotations__
-        original_call = cls._unwrap_callable(call)
-        # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
-        if is_regular_function(original_call):
-            call_globals = _function_globals(original_call)
-        else:
-            dunder_call = inspect.getattr_static(original_call, "__call__", None)
-            call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
+        # Unlike __annotations__, the signature also follows functools.partial and __signature__
+        old_signature = inspect.signature(call)
+        old_params = old_signature.parameters
+        callable_annotations = {
+            name: param.annotation
+            for name, param in old_params.items()
+            if param.annotation is not inspect.Parameter.empty
+        }
+        if old_signature.return_annotation is not inspect.Signature.empty:
+            callable_annotations["return"] = old_signature.return_annotation
+        call_globals = _get_callable_globals(cls._unwrap_callable(call))
         callable_annotations = {
             k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
         }
@@ -730,11 +754,7 @@ class _AnnotationTransformer:
     def _copy_function_through_class_based_wrapper(cls, call: _Call) -> _CallableWrapper:
         """Separate from copy_endpoint because endpoints MUST be functions in FastAPI, they cannot be cls instances"""
         call = cls._unwrap_callable(call)
-        if not is_regular_function(call):
-            # This means that the callable is actually an instance of a regular class
-            actual_call = call.__call__
-        else:
-            actual_call = call
+        actual_call = _get_function_behind_callable(call)
         if is_async_gen_callable(actual_call):
             return _AsyncGeneratorCallableWrapper(call)
         elif is_coroutine_callable(actual_call):

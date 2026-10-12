@@ -10,6 +10,11 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Fixed older API versions adding `"example": {}` to the OpenAPI of path, query, header, cookie, and body parameters declared through default values such as `= Query()` (#417).
 - Restored type checking compatibility with Pydantic 2.14 and ty 0.0.86.
 - Fixed `TypeError: unhashable type` on older API versions when an endpoint's request body or response model is an unhashable annotation such as `list[Annotated[int, {"description": "item"}]]`.
+- Fixed `functools.partial` dependencies losing the annotations of their remaining parameters, which turned their sub-dependencies and request bodies into required query parameters. Partials of async functions also returned unawaited coroutines.
+- Fixed dependencies whose parameters are only described by `__signature__` losing their parameter types, which skipped type conversion, crashed constraints such as `ge` with a 500, and removed the types from OpenAPI.
+- Fixed async generator dependencies not receiving exceptions raised after their `yield`, which skipped their `except` blocks (e.g. a database rollback) and delayed their cleanup until garbage collection.
+- Fixed versioned dependencies losing the `scope` of `Depends` and `Security`.
+- Fixed `Annotated` dependencies whose type is not versioned, such as `Annotated[list[int], Depends(get_values)]`, using the dependency of the head or another API version. This made versioned request constraints, such as a `min_length` or a removed enum member, get ignored in both validation and OpenAPI.
 
 ## [7.4.1]
 
