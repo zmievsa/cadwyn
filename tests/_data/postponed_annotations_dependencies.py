@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import functools
 import types
 from typing import Any, Optional
 
 from pydantic import BaseModel
-from typing_extensions import override
 
 
 class Payload(BaseModel):
@@ -42,47 +40,7 @@ def get_body(body: Payload) -> Payload:
 
 
 def get_body_with_optional_quoted_body(body: Payload, other: Optional["Payload"] = None) -> Payload:  # noqa: UP037
-    raise NotImplementedError
-
-
-def initialize_with_optional_quoted_body(self: Any, body: Payload, other: Optional["Payload"] = None) -> None:  # noqa: UP037
-    raise NotImplementedError
-
-
-class ResourceWithOptionalQuotedBodyInInit:
-    __init__ = initialize_with_optional_quoted_body
-
-
-class ResourceWithOptionalQuotedBody:
-    def __init__(self, body: Payload, other: Optional["Payload"] = None) -> None:  # noqa: UP037
-        self.body = body
-
-
-class ResourceWithOptionalQuotedBodyInNew:
-    def __new__(cls, body: Payload, other: Optional["Payload"] = None) -> Any:  # noqa: UP037
-        raise NotImplementedError
-
-
-class OptionalQuotedBodyCallMeta(type):
-    @override
-    def __call__(cls, body: Payload, other: Optional["Payload"] = None) -> Any:  # noqa: UP037
-        raise NotImplementedError
-
-
-class ResourceWithOptionalQuotedBodyInMetaclassCall(metaclass=OptionalQuotedBodyCallMeta):
-    pass
-
-
-class ResourceWithOptionalQuotedBodyInPartialmethodInit:
-    __init__ = functools.partialmethod(initialize_with_optional_quoted_body)
-
-
-# A namesake of a type alias from another module
-Number = str
-
-
-def get_number(number: Number) -> Number:
-    raise NotImplementedError
+    return body
 
 
 def provide(self: Any, body: Payload) -> Payload:

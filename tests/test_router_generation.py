@@ -2409,30 +2409,6 @@ def test__router_generation__partial_subclass_dependency_with_overridden_call__s
         assert version_client.get("/annotated").json() == 107
 
 
-class _PartialWithOverriddenCallDescribingResult(functools.partial):
-    @override
-    def __call__(self, *args: Any, **kwargs: Any) -> str:
-        return type(super().__call__(*args, **kwargs)).__name__
-
-
-class _ResourceWithoutConstructor:
-    pass
-
-
-def test__router_generation__partial_subclass_of_class_without_constructor__should_call_the_override(
-    router: VersionedAPIRouter,
-    create_versioned_clients: CreateVersionedClients,
-):
-    dependency = _PartialWithOverriddenCallDescribingResult(_ResourceWithoutConstructor)
-
-    @router.get("/test")
-    def route(name: Annotated[str, Depends(dependency)]):
-        return name
-
-    for version_client in create_versioned_clients(version_change()).values():
-        assert version_client.get("/test").json() == "_ResourceWithoutConstructor"
-
-
 def test__router_generation__dependency_with_lazy_type_checking_only_annotations__should_resolve_the_other_ones(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,

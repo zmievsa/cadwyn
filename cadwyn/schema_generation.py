@@ -1,4 +1,3 @@
-import builtins
 import copy
 import dataclasses
 import functools
@@ -521,6 +520,7 @@ def _get_best_effort_globals(call: Any) -> dict[str, Any]:
 
     Like FastAPI, we take them from the unwrapped callable. Unlike FastAPI, we also unwrap partials that do not
     carry globals themselves. For callable class instances, __globals__ is on the __call__ method instead.
+    Partial subclasses that override __call__ are treated like other callable instances, just like Cadwyn always did.
     """
     unwrapped_call = inspect.unwrap(call)
     while True:
@@ -540,77 +540,11 @@ def _get_best_effort_globals(call: Any) -> dict[str, Any]:
         unwrapped_call_globals = getattr(unwrapped_call, "__globals__", None)
         if isinstance(unwrapped_call_globals, dict):
             return unwrapped_call_globals
-        if is_partial_with_overridden_call:
-            # Cadwyn always resolved the annotations of such partials like the ones of other callable instances:
-            # in the globals of their __call__. Those keep priority and the globals of what inspect.signature()
-            # reads the signature from only resolve the names that they cannot (e.g. when the partial subclass
-            # is defined in another module than its .func). We deliberately do not do this for other callables
-            # (e.g. plain partials of classes): FastAPI cannot resolve such names in the head route either, so
-            # resolving them would only make the versioned routes disagree with it about the request body
-            return _with_fallback_globals(
-                _get_dunder_call_globals(unwrapped_call), _get_signature_source_globals(unwrapped_call)
-            )
-        if not isinstance(unwrapped_call, functools.partial):
+        if not isinstance(unwrapped_call, functools.partial) or is_partial_with_overridden_call:
             break
         unwrapped_call = inspect.unwrap(unwrapped_call.func)
-    return _get_dunder_call_globals(unwrapped_call)
-
-
-def _with_fallback_globals(main_globals: dict[str, Any], fallback_globals: dict[str, Any]) -> dict[str, Any]:
-    """Return globals that resolve every name that main_globals can resolve exactly like main_globals would.
-
-    fallback_globals are only used for the other names. Builtins count as resolvable by main_globals too.
-    """
-    # eval() takes the builtins from __builtins__ of the globals, or the current ones if there are none
-    # (__builtins__ is the builtins module instead of its dict in __main__)
-    main_builtins = main_globals.get("__builtins__", builtins)
-    main_builtins = vars(main_builtins) if isinstance(main_builtins, types.ModuleType) else main_builtins
-    # Dunder names such as __name__ are left out because they describe the module of the globals, not builtins
-    builtin_names = {name: value for name, value in main_builtins.items() if not name.startswith("__")}
-    return {**fallback_globals, **builtin_names, **main_globals}
-
-
-def _get_dunder_call_globals(call: Any) -> dict[str, Any]:
-    # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
-    dunder_call = inspect.getattr_static(call, "__call__", None)
+    dunder_call = inspect.getattr_static(unwrapped_call, "__call__", None)
     return _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
-
-
-def _get_signature_source_globals(call: Any) -> dict[str, Any]:
-    """Return the globals of whatever inspect.signature() reads the signature of the callable from"""
-    call = inspect.unwrap(call, stop=lambda f: hasattr(f, "__signature__"))
-    if getattr(call, "__signature__", None) is not None:
-        # Its annotations could have come from anywhere
-        return {}
-    if isinstance(call, functools.partial):
-        return _get_signature_source_globals(call.func)
-    if inspect.isclass(call):
-        constructor = _get_user_defined_constructor(call)
-        if isinstance(constructor, functools.partialmethod):
-            constructor = constructor.func
-        # Staticmethods and classmethods lead to their functions through __wrapped__
-        return {} if constructor is None else _get_best_effort_globals(constructor)
-    return _get_best_effort_globals(call)
-
-
-def _get_user_defined_constructor(cls: type) -> Any:
-    """Return the method that inspect.signature() reads the signature of the class from, if it is user-defined.
-
-    Like inspect.signature(), we take a metaclass __call__ first and then the first __new__ or __init__ in the MRO.
-    Python 3.10's inspect.signature() differs for classes that inherit both without defining either: it takes the
-    inherited __new__ even if an __init__ comes earlier in the MRO. We only use this for fallback globals, so we
-    keep the selection of newer Pythons everywhere
-    """
-    builtin_method_types = (types.WrapperDescriptorType, types.BuiltinFunctionType)
-    metaclass_call = inspect.getattr_static(type(cls), "__call__")
-    if not isinstance(metaclass_call, builtin_method_types):
-        return metaclass_call
-    for base in cls.__mro__:
-        for method_name in ("__new__", "__init__"):
-            method = vars(base).get(method_name)
-            if method is not None and not isinstance(method, builtin_method_types):
-                return method
-    return None
 
 
 def _copy_field_info(field_info: FieldInfo) -> FieldInfo:
@@ -896,10 +830,12 @@ class _AnnotationTransformer:
             else:
                 callable_annotations = annotation_modifying_wrapper.__annotations__
             original_call = cls._unwrap_callable(call)
+            # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
             if is_regular_function(original_call):
                 call_globals = _function_globals(original_call)
             else:
-                call_globals = _get_dunder_call_globals(original_call)
+                dunder_call = inspect.getattr_static(original_call, "__call__", None)
+                call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
             callable_annotations = {
                 k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
             }
