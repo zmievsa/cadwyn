@@ -1,16 +1,27 @@
 import functools
+import sys
+import threading
 import typing
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated, Any, Generic, Optional, TypeVar, Union
 
 import pytest
-from fastapi import Depends
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from pydantic import AliasChoices, BaseModel, Field, JsonValue, create_model
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
 from typing_extensions import Self, TypeAliasType, TypeVarTuple, Unpack
 
-from cadwyn import RequestInfo, convert_request_to_next_version_for
+from cadwyn import (
+    HeadVersion,
+    RequestInfo,
+    Version,
+    VersionBundle,
+    convert_request_to_next_version_for,
+    migrate_response_body,
+)
 from cadwyn.route_generation import VersionedAPIRouter
+from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import VersionChange
 from tests.conftest import CreateVersionedApp, version_change
@@ -252,6 +263,44 @@ class PartialDictNode(BaseModel):
     metadata: dict[str, int] = Field(default_factory=functools.partial(dict, count=1))
 
 
+class UnchangedItem(BaseModel):
+    name: str = "a"
+
+
+class UnchangedPair(BaseModel, Generic[ItemT, BoolT]):
+    left: Optional[ItemT] = None
+    right: Optional[BoolT] = None
+
+
+class KindBase(BaseModel):
+    def __init_subclass__(cls, *, kind: str, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        cls.kind = kind
+
+
+class KindItem(KindBase, kind="item"):
+    name: str = "a"
+
+
+class UnchangedArgsHolder(BaseModel):
+    quoted: Optional[Page["UnchangedItem"]] = None
+    quoted_in_list: Optional[Page[list["UnchangedItem"]]] = None
+    quoted_in_dict: Optional[Page[dict[str, "UnchangedItem"]]] = None
+    quoted_pair: Optional[UnchangedPair["UnchangedItem", int]] = None
+    quoted_optional: Optional[Page["Optional[UnchangedItem]"]] = None
+    optional_quoted: Optional[Page[Optional["UnchangedItem"]]] = None
+    union_quoted: Optional[Page[Union["UnchangedItem", int]]] = None
+    kind_items: Optional[Page[KindItem]] = None
+
+
+class ItemWithUnusualAnnotations(BaseModel):
+    item: Optional[Item] = None
+    # typing.Callable cannot be rebuilt from its origin and args unlike collections.abc.Callable
+    callback: typing.Callable = Field(default=lambda: None, exclude=True)
+    values: tuple[int, ...] = Field(default_factory=make_values)
+    metadata: dict[str, int] = Field(default_factory=functools.partial(dict, count=1))
+
+
 class Author(BaseModel):
     name: str = Field(alias="fullName")
     books: Optional[Page["Book"]] = None
@@ -280,6 +329,10 @@ def old_name_alias(model: type[BaseModel]):
             serialization_alias="oldName",
         )
     )
+
+
+def old_name_description(model: type[BaseModel]):
+    return schema(model).field("name").had(description="Old name")
 
 
 def item_alias_version_change(**body_items: Any) -> type[VersionChange]:
@@ -741,3 +794,87 @@ def test__router_generation__unquoted_parametrization_of_cyclic_generic__should_
         "Page_Category_-Output",
         "ValidationError",
     ]
+
+
+def test__router_generation__generic_args_without_versioned_models__should_be_left_as_they_are(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+    body = {"quoted": {"items": [{"name": "a"}]}, "kind_items": {"items": [{"name": "b"}]}}
+
+    @router.post("/holders", response_model=UnchangedArgsHolder)
+    async def create_holder(holder: UnchangedArgsHolder) -> UnchangedArgsHolder:
+        return holder
+
+    fastapi_app = FastAPI()
+    fastapi_app.post("/holders", response_model=UnchangedArgsHolder)(create_holder)
+    expected_schema_names = sorted(TestClient(fastapi_app).get("/openapi.json").json()["components"]["schemas"])
+    app = create_versioned_app(item_alias_version_change(), router=router)
+    unversioned_client = TestClient(app)
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.post("/holders", json=body).json()["kind_items"] == {"items": [{"name": "b"}]}
+        # The same names as without Cadwyn because none of the args refer to versioned models
+        assert sorted(unversioned_client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]) == (
+            expected_schema_names
+        )
+
+    versions = VersionBundle(Version("2001-01-01", item_alias_version_change()), Version("2000-01-01"))
+    assert migrate_response_body(
+        versions, Page[UnchangedItem], latest_body={"items": [UnchangedItem()]}, version="2000-01-01"
+    ).model_dump() == {"items": [{"name": "a"}]}
+
+
+def test__migrate_response_body__concurrently_for_generics__should_generate_models_without_errors():
+    switch_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for _ in range(5):
+            leaves: list[Any] = [create_model(f"Leaf{i}", name=(str, "a")) for i in range(40)]
+            middles: list[Any] = [
+                create_model(f"Middle{i}", leaf=(Optional[leaf], None), page=(Optional[Page[next_leaf]], None))
+                for i, (leaf, next_leaf) in enumerate(zip(leaves, [*leaves[1:], leaves[0]], strict=True))
+            ]
+            versions = VersionBundle(
+                HeadVersion(),
+                Version("2001-01-01", version_change(*(old_name_description(leaf) for leaf in leaves))),
+                Version("2000-01-01"),
+            )
+            # Like in an app that has already started and generates the rest of the models lazily
+            generate_versioned_models(versions)
+            barrier = threading.Barrier(len(middles))
+
+            def migrate(middle: Any, versions: VersionBundle = versions, barrier=barrier) -> None:
+                barrier.wait()
+                migrate_response_body(
+                    versions,
+                    Page[middle],
+                    latest_body={"items": [{"leaf": {}, "page": {"items": [{}]}}]},
+                    version="2000-01-01",
+                )
+
+            with ThreadPoolExecutor(max_workers=len(middles)) as executor:
+                futures = [executor.submit(migrate, middle) for middle in middles]
+            for future in futures:
+                future.result()
+    finally:
+        sys.setswitchinterval(switch_interval)
+
+
+def test__router_generation__generic_arg_with_annotations_that_cannot_be_rebuilt__should_use_arg_from_version(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=Page[ItemWithUnusualAnnotations])
+    async def get_items() -> dict[str, Any]:
+        return {"items": [{"item": {"fullName": "Ada"}}]}
+
+    app = create_versioned_app(item_alias_version_change(), router=router)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+
+    expected_item = {"values": [], "metadata": {"count": 1}}
+    assert client_2000.get("/items").json() == {"items": [{"item": {"oldName": "Ada"}, **expected_item}]}
+    assert client_2001.get("/items").json() == {"items": [{"item": {"fullName": "Ada"}, **expected_item}]}
+    assert TestClient(app).get("/openapi.json?version=2000-01-01").status_code == HTTP_200_OK

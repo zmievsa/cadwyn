@@ -1,8 +1,10 @@
+import collections.abc
 import copy
 import dataclasses
 import functools
 import inspect
 import sys
+import threading
 import types
 import typing
 from collections.abc import Callable, Sequence
@@ -15,6 +17,7 @@ from typing import (
     ClassVar,
     ForwardRef,
     Generic,
+    NamedTuple,
     TypeAlias,
     TypeGuard,
     Union,
@@ -422,11 +425,11 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return annotations | self.annotations
 
-    def get_referenced_models(self) -> "set[type[Union[BaseModel, Enum]]]":
+    def get_references(self) -> "_ModelReferences":
         """Return the models that generate_model_copy requests from the generator"""
         collector = _ReferencedModelCollector()
         self._change_version_of_references(collector)
-        return collector.models
+        return _ModelReferences(frozenset(collector.models), frozenset(collector.arg_models))
 
     def _change_version_of_references(
         self, generator: "Union[SchemaGenerator, _ReferencedModelCollector]"
@@ -481,7 +484,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
 
 def _get_raw_callable_annotations(call: Any) -> dict[str, Any]:
-    """Return the annotations that _CallableWrapper copies from the callable without creating the wrapper"""
+    """Return the annotations of the function that _CallableWrapper wraps"""
     call = _AnnotationTransformer._unwrap_callable(call)
     if not is_regular_function(call):
         call = call.__call__
@@ -690,14 +693,20 @@ class _AnnotationTransformer:
         )
 
     def _change_version_of_generic_alias(self, annotation: Any) -> Any:
+        from typing_inspection.typing_objects import is_unpack
+
         origin = get_origin(annotation)
         args = get_args(annotation)
         new_args = tuple(self.change_version_of_annotation(arg) for arg in args)
-        # Aliases without args (e.g. a bare `typing.Callable`) have nothing to version and some cannot be rebuilt
-        if self.record_only or not args:
+        if self.record_only:
             return annotation
-        # Annotations such as ClassVar or Unpack do not support tuple arguments
-        return origin[new_args[0] if len(new_args) == 1 else new_args]
+        # A bare `typing.Callable` has nothing to version and cannot be rebuilt as `Callable[()]`
+        if origin is collections.abc.Callable and not args:
+            return annotation
+        # Classvar and Unpack do not support generic tuple arguments
+        if origin is ClassVar or is_unpack(origin):
+            return origin[new_args[0]]
+        return origin[new_args]
 
     def _change_version_of_type(self, annotation: type) -> type:
         if lenient_issubclass(annotation, (BaseModel, Enum)):
@@ -727,14 +736,8 @@ class _AnnotationTransformer:
     ) -> _Call:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
         old_params = inspect.signature(call).parameters
-        if sys.version_info >= (3, 14):  # pragma: no cover
-            from annotationlib import get_annotations
-
-            callable_annotations = get_annotations(annotation_modifying_wrapper)
-        else:
-            callable_annotations = annotation_modifying_wrapper.__annotations__
         callable_annotations, defaults = cls._get_callable_annotations_and_defaults(
-            call, callable_annotations, old_params
+            call, _get_raw_callable_annotations(call), old_params
         )
         annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
         annotation_modifying_wrapper.__defaults__ = modify_defaults(defaults)
@@ -862,10 +865,6 @@ def _add_request_and_response_params(route: APIRoute):
         route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
 
 
-class _GenericArgCycleError(Exception):
-    """Versioning the type args of a generic led back to a model whose copy is still being generated"""
-
-
 def _is_versionable_model(model: Any) -> bool:
     return (
         isinstance(model, type)
@@ -879,11 +878,12 @@ def _is_versionable_model(model: Any) -> bool:
 class _ReferencedModelCollector:
     """A generator that records the models requested from it instead of generating their copies"""
 
-    __slots__ = "annotation_transformer", "models"
+    __slots__ = "annotation_transformer", "arg_models", "models"
 
     def __init__(self) -> None:
         self.annotation_transformer = _AnnotationTransformer(self, record_only=True)
         self.models: set[type[Union[BaseModel, Enum]]] = set()
+        self.arg_models: set[type[Union[BaseModel, Enum]]] = set()
 
     def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
         if _is_versionable_model(model):
@@ -892,29 +892,54 @@ class _ReferencedModelCollector:
 
     def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
         generic_metadata = model.__pydantic_generic_metadata__
-        self.annotation_transformer.change_version_of_annotation(_eval_generic_args(model))
+        arg_collector = _ReferencedModelCollector()
+        arg_collector.annotation_transformer.change_version_of_annotation(_eval_generic_args(model))
+        self.arg_models |= arg_collector.models
         if generic_metadata["origin"] is not None:
             self[generic_metadata["origin"]]
         return generic_metadata
 
 
+class _ModelReferences(NamedTuple):
+    # The models that are always versioned along with the model: in its fields, annotations, and bases
+    models: frozenset[type[Union[BaseModel, Enum]]]
+    # The models in the type args of a parametrized generic (e.g. Item in Page[Item])
+    arg_models: frozenset[type[Union[BaseModel, Enum]]]
+
+
+class _GenerationAnalysis(NamedTuple):
+    # Whether generating the copy of the model will not recurse forever
+    terminates: bool
+    # Whether the model or the models that it refers to have schema or enum instructions
+    refers_to_changed_models: bool
+
+
 @final
 class SchemaGenerator:
     __slots__ = (
-        "_generic_arg_depth",
-        "_models_in_progress",
-        "_referenced_models",
+        "_changed_models",
+        "_generation_analyses",
+        "_lock",
+        "_model_references",
+        "_versions_of_generic_args",
         "annotation_transformer",
         "concrete_models",
         "model_bundle",
     )
 
-    def __init__(self, model_bundle: _ModelBundle) -> None:
+    def __init__(
+        self,
+        model_bundle: _ModelBundle,
+        changed_models: "frozenset[type[Union[BaseModel, Enum]]]" = frozenset(),
+    ) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
-        self._models_in_progress: list[type[Union[BaseModel, Enum]]] = []
-        self._generic_arg_depth = 0
-        self._referenced_models: dict[type[Union[BaseModel, Enum]], set[type[Union[BaseModel, Enum]]]] = {}
+        self._changed_models = changed_models
+        self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
+        self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
+        self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
+        # Models are generated lazily (e.g. in migrate_response_body) so several threads can generate them at once
+        self._lock = threading.RLock()
         self.concrete_models: dict[type[Union[BaseModel, Enum]], type[Union[BaseModel, Enum]]] = {}
         # Models are generated through __getitem__ so that the copies created along the way are reused
         # instead of being created again
@@ -926,68 +951,95 @@ class SchemaGenerator:
             return model
         model = _unwrap_model(model)
 
-        if model in self.concrete_models:
-            model_copy = self.concrete_models[model]
-        else:
-            if model in self._models_in_progress and self._generic_arg_depth:
-                raise _GenericArgCycleError
-            wrapper = self._get_wrapper_for_model(model)
-            self._models_in_progress.append(model)
-            try:
-                model_copy = wrapper.generate_model_copy(self)
-            finally:
-                self._models_in_progress.pop()
-            self.concrete_models[model] = model_copy
-        return cast("type[_T_ANY_MODEL]", model_copy)
+        with self._lock:
+            if model not in self.concrete_models:
+                wrapper = self._get_wrapper_for_model(model)
+                self.concrete_models[model] = wrapper.generate_model_copy(self)
+            return cast("type[_T_ANY_MODEL]", self.concrete_models[model])
 
     def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
-        # Pydantic resolves the fields of a parametrized generic (such as Page[Item]) through its origin and args
-        # so they must point to this version's classes too.
-        # However, the copies of the args cannot be created before the copy of the generic if the args refer back
-        # to it (e.g. `children: Page["Category"]` within `Category`). Such generics keep their head generic
-        # metadata, as they did before type args were versioned. We decide it based on the references between
-        # the models instead of the order of generation so that every generic in a cycle keeps its head metadata.
         generic_metadata = model.__pydantic_generic_metadata__
-        args = _eval_generic_args(model)
-        if self._is_referenced_through(args, model):
+        if not self._should_version_generic_args(model, generation_stack=[]):
             return generic_metadata
-        self._generic_arg_depth += 1
-        try:
-            args = self.annotation_transformer.change_version_of_annotation(args)
-        except _GenericArgCycleError:
-            # The args lead to models that refer to themselves without any generics in between
-            # (e.g. `children: "list[Category]"` within `Category`) which we cannot generate at all yet
-            return generic_metadata
-        finally:
-            self._generic_arg_depth -= 1
+        # Pydantic resolves the fields of a parametrized generic (such as Page[Item]) through its origin and args
+        # so they must point to this version's classes too
         origin = generic_metadata["origin"]
         return {
             "origin": self[origin] if origin is not None else None,
-            "args": args,
+            "args": self.annotation_transformer.change_version_of_annotation(_eval_generic_args(model)),
             "parameters": generic_metadata["parameters"],
         }
 
-    def _is_referenced_through(self, annotation: Any, model: type[BaseModel]) -> bool:
-        collector = _ReferencedModelCollector()
-        collector.annotation_transformer.change_version_of_annotation(annotation)
-        models_to_visit = list(collector.models)
+    def _should_version_generic_args(
+        self, generic: type[BaseModel], generation_stack: list[type[Union[BaseModel, Enum]]]
+    ) -> bool:
+        """Whether the copy of the generic should use the copies of its type args instead of the head ones.
+
+        We only version the args when they refer to models with schema or enum instructions so that all other
+        generics stay exactly as they are. We also keep the head args when their copies could not be generated:
+        when the args refer back to the generic (e.g. `children: Page["Category"]` within `Category`) or when
+        generating their copies would recurse forever (e.g. `children: "list[Tree]"` within `Tree`).
+        The decision only depends on the references between the models, not on the order of generation.
+        """
+        if generic not in self._versions_of_generic_args:
+            arg_models = self._get_references(generic).arg_models
+            if not arg_models or self._is_referenced_through_args(generic):
+                should_version = False
+            else:
+                analyses = [self._analyze_generation(model, generation_stack) for model in arg_models]
+                should_version = all(analysis.terminates for analysis in analyses) and any(
+                    analysis.refers_to_changed_models for analysis in analyses
+                )
+            self._versions_of_generic_args[generic] = should_version
+        return self._versions_of_generic_args[generic]
+
+    def _analyze_generation(
+        self, model: type[Union[BaseModel, Enum]], generation_stack: list[type[Union[BaseModel, Enum]]]
+    ) -> _GenerationAnalysis:
+        if model in self._generation_analyses:
+            return self._generation_analyses[model]
+        if model in generation_stack:
+            # The models that generating this model requests lead back to it so its generation would never finish
+            return _GenerationAnalysis(terminates=False, refers_to_changed_models=False)
+        generation_stack.append(model)
+        references = self._get_references(model)
+        requested_models = set(references.models)
+        if references.arg_models and self._should_version_generic_args(
+            cast("type[BaseModel]", model), generation_stack
+        ):
+            requested_models |= references.arg_models
+        analyses = [self._analyze_generation(requested_model, generation_stack) for requested_model in requested_models]
+        generation_stack.pop()
+        analysis = _GenerationAnalysis(
+            terminates=all(analysis.terminates for analysis in analyses),
+            refers_to_changed_models=model in self._changed_models
+            or any(analysis.refers_to_changed_models for analysis in analyses),
+        )
+        self._generation_analyses[model] = analysis
+        return analysis
+
+    def _is_referenced_through_args(self, generic: type[BaseModel]) -> bool:
+        models_to_visit = list(self._get_references(generic).arg_models)
         visited_models = set()
         while models_to_visit:
             referenced_model = models_to_visit.pop()
-            if _is_same_parametrization(referenced_model, model):
+            if _is_same_parametrization(referenced_model, generic):
                 return True
             if referenced_model not in visited_models:
                 visited_models.add(referenced_model)
-                models_to_visit.extend(self._get_referenced_models(referenced_model))
+                references = self._get_references(referenced_model)
+                models_to_visit.extend(references.models | references.arg_models)
         return False
 
-    def _get_referenced_models(self, model: type[Union[BaseModel, Enum]]) -> set[type[Union[BaseModel, Enum]]]:
-        if model not in self._referenced_models:
+    def _get_references(self, model: type[Union[BaseModel, Enum]]) -> _ModelReferences:
+        if model not in self._model_references:
             wrapper = self._get_wrapper_for_model(model)
-            self._referenced_models[model] = (
-                wrapper.get_referenced_models() if isinstance(wrapper, _PydanticModelWrapper) else set()
+            self._model_references[model] = (
+                wrapper.get_references()
+                if isinstance(wrapper, _PydanticModelWrapper)
+                else _ModelReferences(frozenset(), frozenset())
             )
-        return self._referenced_models[model]
+        return self._model_references[model]
 
     @overload
     def _get_wrapper_for_model(self, model: type[BaseModel]) -> "_PydanticModelWrapper[BaseModel]": ...
@@ -1023,6 +1075,17 @@ class SchemaGenerator:
 @cache
 def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGenerator]":
     models = _create_model_bundle(versions)
+    changed_models = frozenset(
+        instruction.schema
+        for version in versions._all_versions
+        for version_change in version.changes
+        for instruction in version_change.alter_schema_instructions
+    ) | frozenset(
+        instruction.enum
+        for version in versions._all_versions
+        for version_change in version.changes
+        for instruction in version_change.alter_enum_instructions
+    )
 
     version_to_context_map = {}
     context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
@@ -1030,7 +1093,7 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
 
     for version in versions.versions:
         context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
-        version_to_context_map[str(version.value)] = SchemaGenerator(copy.deepcopy(models))
+        version_to_context_map[str(version.value)] = SchemaGenerator(copy.deepcopy(models), changed_models)
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
 

@@ -2,6 +2,7 @@ import functools
 import importlib
 import inspect
 import re
+import typing
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
@@ -2019,3 +2020,64 @@ def test__router_generation__annotated_dependencies_of_various_kinds__should_wor
         parameters = client.get(f"/openapi.json?version={version}").json()["paths"]["/kwargs"]["get"]["parameters"]
         parameter_types = {parameter["name"]: parameter["schema"]["type"] for parameter in parameters}
         assert parameter_types == {"limit": "integer", app.router.api_version_parameter_name: "string"}
+
+
+class ConstrainedItemState(str, Enum):
+    old = "old"
+    new = "new"
+
+
+class ConstrainedItem(BaseModel):
+    name: str
+    state: ConstrainedItemState = ConstrainedItemState.old
+
+
+def get_name_lengths(body: ConstrainedItem) -> list[int]:
+    return [len(body.name)]
+
+
+def test__router_generation__annotated_bare_alias_with_dependency_on_versioned_body__should_use_body_from_version(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/items")
+    def create_items(lengths: Annotated[typing.List, Depends(get_name_lengths)]) -> list[int]:  # noqa: UP006
+        return lengths
+
+    app = create_versioned_app(
+        head_version_changes=[
+            version_change(
+                schema(ConstrainedItem).field("name").had(min_length=5),
+                enum(ConstrainedItemState).didnt_have("new"),
+            )
+        ],
+        router=router,
+    )
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+    assert client_2000.post("/items", json={"name": "abcde"}).json() == [5]
+    assert client_2000.post("/items", json={"name": "x"}).status_code == 422
+    assert client_2000.post("/items", json={"name": "abcde", "state": "new"}).status_code == 422
+    old_schemas = TestClient(app).get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert old_schemas["ConstrainedItem"]["properties"]["name"]["minLength"] == 5
+    assert old_schemas["ConstrainedItemState"]["enum"] == ["old"]
+
+
+def test__router_generation__bare_tuple_body__should_keep_its_current_behavior(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/tuples", response_model=typing.Tuple)  # noqa: UP006
+    def create_tuple(data: Annotated[typing.Tuple, Body()]):  # noqa: UP006
+        return data
+
+    app = create_versioned_app(version_change(schema(EmptySchema).had(name="OldEmptySchema")), router=router)
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        # Bare aliases are rebuilt as `tuple[()]` in every version
+        assert client.post("/tuples", json=[]).json() == []
+        assert client.post("/tuples", json=[1]).status_code == 422
+        request_body = client.get(f"/openapi.json?version={version}").json()["paths"]["/tuples"]["post"]["requestBody"]
+        assert request_body["content"]["application/json"]["schema"]["maxItems"] == 0

@@ -7,8 +7,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Changed
 
-- Older API versions now validate and serialize the type args of parametrized generic models such as `Page[Item]` with the older versions of those models instead of the latest ones. If clients of older versions relied on latest-shaped models inside generics, add converters for these requests and responses.
-- `migrate_response_body` now raises a `ValidationError` when `latest_body` is an instance of a parametrized generic model such as `Page[Item]`, as it already did for other models. Pass a dict instead.
+- Parametrized generic models such as `Page[Item]` now use the versioned copies of their type args when the args refer to models or enums that have schema or enum instructions, including the ones in `HeadVersion`. So older versions validate and serialize these args with their own models instead of the latest ones, and clients that relied on latest-shaped models inside generics may need converters. Changes from `HeadVersion` now also apply to these args in every version, including the latest one. The OpenAPI names of these generics can change in every version because their quoted type args are now evaluated, e.g. `Page[list["Item"]]` is named `Page_list_Item__` instead of `Page_list_str__`. Generics whose type args do not refer to such models are not affected.
+- `migrate_response_body` now raises a `ValidationError` when `latest_body` contains instances of the latest models in such type args, e.g. `Page[Item](...)` or `{"items": [Item(...)]}` for `Page[Item]`, as it already did for other models. Pass plain data such as the result of `model_dump()` instead.
 
 ### Fixed
 
