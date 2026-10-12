@@ -671,8 +671,8 @@ def test__schema_that_overrides_fields_from_mro(create_runtime_schemas: CreateRu
         bar: int = Field(default=83)
 
     class SchemaThatOverridesField(ParentSchema):
-        foo: str = Field(description="What?")
-        bar: str = Field(description="What?")
+        foo: str = Field(description="What?")  # ty: ignore[invalid-attribute-override]  # Test a deliberate field type override.
+        bar: str = Field(description="What?")  # ty: ignore[invalid-attribute-override]  # Test a deliberate field type override.
 
     schemas = create_runtime_schemas(
         version_change(

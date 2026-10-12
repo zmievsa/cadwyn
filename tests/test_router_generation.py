@@ -9,7 +9,7 @@ from uuid import UUID
 
 import pytest
 import svcs
-from fastapi import APIRouter, Body, Depends, Response, UploadFile
+from fastapi import APIRouter, Body, Cookie, Depends, Header, Path, Query, Response, UploadFile
 from fastapi.routing import APIRoute, _EffectiveRouteContext
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.security.http import HTTPBasic
@@ -438,6 +438,51 @@ def test__versioned_router_generation__preserves_included_route_openapi_metadata
     assert operation["responses"]["400"]["description"] == "Bad API"
     assert operation["responses"]["401"]["description"] == "Unauthorized"
     assert operation["responses"]["404"]["description"] == "Missing widget"
+
+
+def test__get_openapi__older_version_with_params_without_examples__should_not_add_examples(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+):
+    def get_page(page: int = Query()) -> int:
+        raise NotImplementedError
+
+    @router.post("/items/{item_id}")
+    async def create_item(
+        item_id: int = Path(),
+        name: str = Query(),
+        token: str = Header(),
+        session: str = Cookie(),
+        quantity: int = Body(),
+        page: int = Depends(get_page),
+    ) -> None:
+        raise NotImplementedError
+
+    app = create_versioned_app(version_change())
+
+    with TestClient(app) as client:
+        response = client.get("/openapi.json?version=2000-01-01")
+
+    assert response.status_code == 200, response.json()
+    operation = response.json()["paths"]["/items/{item_id}"]["post"]
+    assert operation["parameters"] == [
+        {"name": "item_id", "in": "path", "required": True, "schema": {"type": "integer", "title": "Item Id"}},
+        {"name": "name", "in": "query", "required": True, "schema": {"type": "string", "title": "Name"}},
+        {"name": "page", "in": "query", "required": True, "schema": {"type": "integer", "title": "Page"}},
+        {"name": "token", "in": "header", "required": True, "schema": {"type": "string", "title": "Token"}},
+        {
+            "name": "x-api-version",
+            "in": "header",
+            "required": False,
+            "schema": {"type": "string", "format": "date", "default": "2000-01-01", "title": "X-Api-Version"},
+            "examples": {"default": {"value": "2000-01-01"}},
+        },
+        {"name": "session", "in": "cookie", "required": True, "schema": {"type": "string", "title": "Session"}},
+    ]
+    assert operation["requestBody"] == {
+        "required": True,
+        "content": {"application/json": {"schema": {"type": "integer", "title": "Quantity"}}},
+    }
 
 
 def test__versioned_router_generation__hidden_included_route_still_routes_but_is_removed_from_openapi():
@@ -1145,8 +1190,10 @@ def test__router_generation__updating_request_models_with_inheritance(
 
     body_param_2000 = routes_2000[1].dependant.body_params[0]
     body_param_2001 = routes_2001[1].dependant.body_params[0]
-    assert body_param_2000.field_info.annotation is not None
-    assert body_param_2001.field_info.annotation is not None
+    assert isinstance(body_param_2000.field_info.annotation, type)
+    assert issubclass(body_param_2000.field_info.annotation, BaseModel)
+    assert isinstance(body_param_2001.field_info.annotation, type)
+    assert issubclass(body_param_2001.field_info.annotation, BaseModel)
     assert set(body_param_2000.field_info.annotation.model_fields) == {"bar"}
     assert set(body_param_2001.field_info.annotation.model_fields) == {"foo", "bar"}
 
@@ -1456,16 +1503,20 @@ def test__router_generation__updating_callbacks(
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
-    assert generated_callback.dependant.body_params[0].field_info.annotation is not None
-    assert generated_callback.dependant.body_params[0].field_info.annotation.model_fields["bar"].annotation is str
+    body_model = generated_callback.dependant.body_params[0].field_info.annotation
+    assert isinstance(body_model, type)
+    assert issubclass(body_model, BaseModel)
+    assert body_model.model_fields["bar"].annotation is str
 
     route = app.router.versioned_routers["2001-01-01"].routes[1]
     assert isinstance(route, APIRoute)
     assert route.callbacks is not None
     generated_callback = route.callbacks[1]
     assert isinstance(generated_callback, APIRoute)
-    assert generated_callback.dependant.body_params[0].field_info.annotation is not None
-    assert "bar" not in generated_callback.dependant.body_params[0].field_info.annotation.model_fields
+    body_model = generated_callback.dependant.body_params[0].field_info.annotation
+    assert isinstance(body_model, type)
+    assert issubclass(body_model, BaseModel)
+    assert "bar" not in body_model.model_fields
 
 
 def test__cascading_router_exists(router: VersionedAPIRouter, api_version_var: ContextVar[Union[str, None]]):
