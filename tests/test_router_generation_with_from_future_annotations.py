@@ -938,6 +938,35 @@ def test__router_generation__dependencies_with_annotations_from_another_module__
             assert response.json() == {"foo": "bar"}
 
 
+class _PartialWithOverriddenCall(functools.partial):
+    @override
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return super().__call__(*args, **kwargs)
+
+
+# Postponed annotations of routes can only refer to the dependency through the globals
+partial_subclass_of_dependency_from_another_module = _PartialWithOverriddenCall(
+    other_module.get_body_with_optional_quoted_body
+)
+
+
+def test__router_generation__partial_subclass_of_dependency_from_another_module__should_accept_bodies_like_head(
+    router, create_versioned_clients
+):
+    # FastAPI cannot resolve "Payload" for such partials in the head route (it uses the unwrapped partial's globals,
+    # which are empty) and Cadwyn resolves them in the globals of their __call__, where "Payload" does not exist
+    # either. Resolving it anywhere else would make the versioned routes expect a different request body than
+    # the head route that Cadwyn validates requests against after migrating them
+    @router.post("/test")
+    async def route(body: Annotated[Any, Depends(partial_subclass_of_dependency_from_another_module)]):
+        return body
+
+    for version_client in create_versioned_clients(version_change()).values():
+        response = version_client.post("/test", json={"foo": "bar"})
+        assert response.status_code == 200, response.json()
+        assert response.json() == {"foo": "bar"}
+
+
 def test__router_generation__wrapped_dependencies_from_another_module__should_resolve_annotations_like_signature(
     router, create_versioned_clients
 ):
