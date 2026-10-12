@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
 from types import GenericAlias
-from typing import Annotated, NewType, TypeAlias, Union, cast, get_args
+from typing import Annotated, ClassVar, NewType, TypeAlias, Union, cast, get_args
 from uuid import UUID
 
 import pytest
@@ -16,7 +16,7 @@ from fastapi.security.http import HTTPBasic
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from inline_snapshot import snapshot
-from pydantic import AfterValidator, BaseModel, Field, JsonValue, conint
+from pydantic import AfterValidator, BaseModel, Field, JsonValue, StringConstraints, ValidationError, conint
 from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse
@@ -1658,6 +1658,119 @@ def test__router_generation__field_didnt_have_attribute_that_annotation_metadata
         assert versioned_client.post("/test", json={"conint_field": 6, "min_length_field": "a"}).status_code == 200
         assert versioned_client.post("/test", json={"conint_field": 7, "min_length_field": "a"}).status_code == 422
         assert versioned_client.post("/test", json={"conint_field": 6, "min_length_field": ""}).status_code == 422
+
+
+class ParentWithClassVar(BaseModel):
+    value: ClassVar[str] = "inherited"
+
+
+with pytest.warns(UserWarning, match='Field name "value" .* shadows an attribute in parent'):
+
+    class ChildRedeclaringClassVarAsField(ParentWithClassVar):
+        value: Annotated[str, Field(min_length=2)] = Field()  # ty: ignore[invalid-attribute-override]
+
+
+@pytest.mark.filterwarnings('ignore:Field name "value" .* shadows an attribute in parent:UserWarning')
+def test__router_generation__field_redeclaring_parent_class_var__should_stay_required(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/test")
+    async def route(payload: ChildRedeclaringClassVarAsField):
+        return payload.model_dump()
+
+    clients = create_versioned_clients(version_change())
+
+    for version, versioned_client in clients.items():
+        openapi = versioned_client.get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["ChildRedeclaringClassVarAsField"]["required"] == ["value"]
+        assert versioned_client.post("/test", json={}).status_code == 422
+        assert versioned_client.post("/test", json={"value": "ab"}).json() == {"value": "ab"}
+
+
+class Trimmed(StringConstraints):
+    def __init__(self, min_length: int = 2) -> None:
+        super().__init__(min_length=min_length, strip_whitespace=True)
+
+
+class SchemaWithConstraintsSubclass(BaseModel):
+    foo: Annotated[str, Trimmed()]
+
+
+def test__router_generation__field_didnt_have_constraint_of_constraints_subclass_with_custom_init__should_remove_it(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/test")
+    async def route(payload: SchemaWithConstraintsSubclass):
+        return payload.model_dump()
+
+    @convert_request_to_next_version_for(SchemaWithConstraintsSubclass)
+    def pad_foo(request: RequestInfo):
+        request.body["foo"] = request.body["foo"].ljust(2, "_")
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithConstraintsSubclass).field("foo").didnt_have("min_length"), pad_foo=pad_foo),
+    )
+
+    assert clients["2001-01-01"].post("/test", json={"foo": " a "}).status_code == 422
+    assert clients["2001-01-01"].post("/test", json={"foo": " ab "}).json() == {"foo": "ab"}
+    assert clients["2000-01-01"].post("/test", json={"foo": " a "}).json() == {"foo": "a_"}
+
+
+class FieldsWithConstraintAfterValidatorAndDefault(BaseModel):
+    plain_default: Annotated[str, AfterValidator(lambda v: v * 3), Field(min_length=3)] = "fallback"
+    field_default: Annotated[str, AfterValidator(lambda v: v * 3), Field(min_length=3)] = Field(default="fallback")
+    field_default_factory: Annotated[str, AfterValidator(lambda v: v * 3), Field(min_length=3)] = Field(
+        default_factory=lambda: "fallback"
+    )
+
+
+@pytest.mark.parametrize("field_name", ["plain_default", "field_default", "field_default_factory"])
+def test__router_generation__defaulted_field_with_constraint_after_validator__should_validate_like_original_model(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    field_name: str,
+):
+    @router.post("/test")
+    async def route(payload: FieldsWithConstraintAfterValidatorAndDefault):
+        return payload.model_dump()
+
+    clients = create_versioned_clients(version_change())
+    try:
+        FieldsWithConstraintAfterValidatorAndDefault.model_validate({field_name: "a"})
+        expected_status_code = 200
+    except ValidationError:  # pragma: no cover # Only pydantic<2.12 applies these constraints before validators
+        expected_status_code = 422
+
+    for versioned_client in clients.values():
+        assert versioned_client.post("/test", json={field_name: "a"}).status_code == expected_status_code
+        assert versioned_client.post("/test", json={field_name: "aaaa"}).status_code == 200
+        assert versioned_client.post("/test", json={}).json()[field_name] == "fallback"
+
+
+class SchemaWithConstrainedAnnotatedField(BaseModel):
+    foo: Annotated[str, Field(min_length=2)]
+
+
+def test__router_generation__field_didnt_have_default_that_annotation_metadata_leaves_unset__should_stay_required(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/test")
+    async def route(payload: SchemaWithConstrainedAnnotatedField):
+        return payload.model_dump()
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithConstrainedAnnotatedField).field("foo").didnt_have("default")),
+    )
+
+    for version, versioned_client in clients.items():
+        openapi = versioned_client.get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["SchemaWithConstrainedAnnotatedField"]["required"] == ["foo"]
+        assert versioned_client.post("/test", json={}).status_code == 422
+        assert versioned_client.post("/test", json={"foo": "a"}).status_code == 422
+        assert versioned_client.post("/test", json={"foo": "ab"}).json() == {"foo": "ab"}
 
 
 def test__router_generation__updating_request_depends(
