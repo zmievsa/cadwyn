@@ -1257,7 +1257,8 @@ _CHILD_SCHEMA_KEYS: dict[str, tuple[tuple[str, bool, bool], ...]] = {
 _CoreSchemaUnit: TypeAlias = tuple[str, object]
 _CORE_SCHEMA_DEFINITIONS: dict[str, dict[str, Any]] = {}
 _CORE_SCHEMA_MODELS: dict[object, dict[str, Any]] = {}
-_CORE_SCHEMA_UNIT_SUMMARIES: dict[_CoreSchemaUnit, tuple[bool, frozenset[_CoreSchemaUnit]]] = {}
+# Units are kept in the order the schema refers to them, so that the exploration order doesn't depend on hashing
+_CORE_SCHEMA_UNIT_SUMMARIES: dict[_CoreSchemaUnit, tuple[bool, tuple[_CoreSchemaUnit, ...]]] = {}
 _IS_CORE_SCHEMA_UNIT_SAFE: dict[_CoreSchemaUnit, bool] = {}
 
 
@@ -1366,7 +1367,7 @@ def _is_core_schema_unit_safe(root: _CoreSchemaUnit) -> bool:
         is_safe = _IS_CORE_SCHEMA_UNIT_SAFE.get(unit)
         if unit in explored or is_safe:
             continue
-        is_unsafe, units = (True, frozenset()) if is_safe is False else _summarize_core_schema_unit(unit)
+        is_unsafe, units = (True, ()) if is_safe is False else _summarize_core_schema_unit(unit)
         if is_unsafe:
             # Everything on the way from the root reaches it too
             while True:
@@ -1383,7 +1384,7 @@ def _is_core_schema_unit_safe(root: _CoreSchemaUnit) -> bool:
     return True
 
 
-def _summarize_core_schema_unit(unit: _CoreSchemaUnit) -> tuple[bool, frozenset[_CoreSchemaUnit]]:
+def _summarize_core_schema_unit(unit: _CoreSchemaUnit) -> tuple[bool, tuple[_CoreSchemaUnit, ...]]:
     if unit not in _CORE_SCHEMA_UNIT_SUMMARIES:
         kind, key = unit
         body = (_CORE_SCHEMA_DEFINITIONS if kind == "ref" else _CORE_SCHEMA_MODELS).get(key)
@@ -1393,7 +1394,7 @@ def _summarize_core_schema_unit(unit: _CoreSchemaUnit) -> tuple[bool, frozenset[
             is_unsafe = body is None or _has_unsafe_core_schema(body, units, is_unit_body=True)
         except _CORE_SCHEMA_ERRORS:
             is_unsafe = True
-        _CORE_SCHEMA_UNIT_SUMMARIES[unit] = (is_unsafe, frozenset(units))
+        _CORE_SCHEMA_UNIT_SUMMARIES[unit] = (is_unsafe, tuple(units))
     return _CORE_SCHEMA_UNIT_SUMMARIES[unit]
 
 
