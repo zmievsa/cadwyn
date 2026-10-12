@@ -507,3 +507,129 @@ def test__router_generation__wrapped_dependencies_from_another_module__should_re
             response = version_client.post(path, json={"foo": "bar"})
             assert response.status_code == 200, (path, response.json())
             assert response.json() == {"foo": "bar"}
+
+
+class ProviderWithPropertyCall:
+    def __init__(self, function: Any) -> None:
+        self.function = function
+
+    @property
+    def __call__(self) -> Any:
+        return self.function
+
+
+class _InstanceFunctionDescriptor:
+    def __get__(self, instance: Any, owner: type) -> Any:
+        return instance.function
+
+
+class ProviderWithDescriptorCall:
+    __call__ = _InstanceFunctionDescriptor()
+
+    def __init__(self, function: Any) -> None:
+        self.function = function
+
+
+class ProviderWithStaticmethodCall:
+    __call__ = staticmethod(other_module.get_body)
+
+
+class ProviderWithClassmethodCall:
+    __call__ = classmethod(other_module.provide_with_class)
+
+
+class ProviderWithPartialmethodCall:
+    __call__ = functools.partialmethod(other_module.provide_with_label, label="fixed")
+
+
+class ProviderWithInstanceCall:
+    # A callable instance without __get__ gets called as is
+    __call__ = other_module.callable_provider
+
+
+class ProviderWithClassCall:
+    # Calling the instance constructs the class
+    __call__ = other_module.Resource
+
+
+class FunctionLike:
+    """A duck type of a function (e.g. a function compiled with Cython) that inspect.signature() reads directly"""
+
+    def __init__(self, function: Any) -> None:
+        self.function = function
+        self.__name__ = function.__name__
+        self.__code__ = function.__code__
+        self.__defaults__ = function.__defaults__
+        self.__kwdefaults__ = function.__kwdefaults__
+        self.__annotations__ = function.__annotations__
+        self.__globals__ = function.__globals__
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.function(*args, **kwargs)
+
+
+property_provider = ProviderWithPropertyCall(other_module.get_body)
+descriptor_provider = ProviderWithDescriptorCall(other_module.get_body)
+staticmethod_provider = ProviderWithStaticmethodCall()
+classmethod_provider = ProviderWithClassmethodCall()
+partialmethod_provider = ProviderWithPartialmethodCall()
+instance_call_provider = ProviderWithInstanceCall()
+class_call_provider = ProviderWithClassCall()
+function_like = FunctionLike(other_module.get_body)
+
+
+def test__router_generation__callable_instances_with_descriptor_call__should_resolve_annotations_like_signature(
+    router, create_versioned_clients
+):
+    @router.post("/partialmethod")
+    async def partialmethod_route(body: Annotated[Any, Depends(partialmethod_provider)]):
+        return body
+
+    paths = ["/partialmethod"]
+    # Python 3.10's inspect.signature() looks up __call__ on the class instead of the instance
+    # so it fails or drops the first parameter for these dependencies and even FastAPI itself cannot use them there
+    if sys.version_info >= (3, 11):
+
+        @router.post("/staticmethod")
+        async def staticmethod_route(body: Annotated[Any, Depends(staticmethod_provider)]):
+            return body
+
+        @router.post("/classmethod")
+        async def classmethod_route(body: Annotated[Any, Depends(classmethod_provider)]):
+            return body
+
+        @router.post("/instance")
+        async def instance_route(body: Annotated[Any, Depends(instance_call_provider)]):
+            return body
+
+        @router.post("/class")
+        async def class_route(resource: Annotated[Any, Depends(class_call_provider)]):
+            return resource.body
+
+        @router.post("/property")
+        async def property_route(body: Annotated[Any, Depends(property_provider)]):
+            return body
+
+        @router.post("/descriptor")
+        async def descriptor_route(body: Annotated[Any, Depends(descriptor_provider)]):
+            return body
+
+        paths += ["/staticmethod", "/classmethod", "/instance", "/class", "/property", "/descriptor"]
+    for version_client in create_versioned_clients(version_change()).values():
+        for path in paths:
+            response = version_client.post(path, json={"foo": "bar"})
+            assert response.status_code == 200, (path, response.json())
+            assert response.json() == {"foo": "bar"}
+
+
+def test__router_generation__function_like_dependency__should_resolve_annotations_in_its_globals(
+    router, create_versioned_clients
+):
+    @router.post("/test")
+    async def route(body: Annotated[Any, Depends(function_like)]):
+        return body
+
+    for version_client in create_versioned_clients(version_change()).values():
+        response = version_client.post("/test", json={"foo": "bar"})
+        assert response.status_code == 200, response.json()
+        assert response.json() == {"foo": "bar"}

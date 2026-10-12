@@ -43,6 +43,27 @@ def provide(self: Any, body: Payload) -> Payload:
     return body
 
 
+def provide_with_label(self: Any, body: Payload, label: str) -> Payload:
+    return body
+
+
+def provide_with_class(cls: type, body: Payload) -> Payload:
+    return body
+
+
+class Resource:
+    def __init__(self, body: Payload) -> None:
+        self.body = body
+
+
+class CallableProvider:
+    def __call__(self, body: Payload) -> Payload:
+        return body
+
+
+callable_provider = CallableProvider()
+
+
 class Provider:
     def provide(self, body: Payload) -> Payload:
         return body
