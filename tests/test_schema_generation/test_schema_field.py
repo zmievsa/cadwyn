@@ -19,6 +19,7 @@ from tests.conftest import (
 )
 
 _T = TypeVar("_T")
+_U = TypeVar("_U")
 
 
 class MyEnum(Enum):
@@ -497,11 +498,112 @@ def test__schema_field_had__generic_field_of_other_parent_of_diamond__should_kee
 
     diamond_field = schemas["2000-01-01"][GenericDiamondWithInheritedField].model_fields["kind"]
     assert diamond_field.annotation == Literal["a"]
-    assert diamond_field.description == "Kind"
     envelope = schemas["2000-01-01"][EnvelopeWithGenericDiamond]
     assert envelope.model_validate({"item": {"kind": "a"}}).item.kind == "a"
     with pytest.raises(ValidationError):
         envelope.model_validate({"item": {"kind": "c"}})
+
+
+class InheritedItem(BaseModel):
+    name: str
+
+
+class ModelGenericParentWithInheritedField(BaseModel, Generic[_T]):
+    value: _T
+    bar: int = 0
+
+
+class ModelGenericChildWithInheritedField(ModelGenericParentWithInheritedField[InheritedItem]):
+    pass
+
+
+class ModelGenericOtherParentWithInheritedField(ModelGenericParentWithInheritedField[InheritedItem]):
+    pass
+
+
+class ModelGenericDiamondWithInheritedField(
+    ModelGenericChildWithInheritedField, ModelGenericOtherParentWithInheritedField
+):
+    pass
+
+
+class QuotedGenericChildWithInheritedField(ModelGenericParentWithInheritedField["InheritedItem"]):
+    pass
+
+
+class QuotedGenericOtherParentWithInheritedField(ModelGenericParentWithInheritedField["InheritedItem"]):
+    pass
+
+
+class QuotedGenericDiamondWithInheritedField(
+    QuotedGenericChildWithInheritedField, QuotedGenericOtherParentWithInheritedField
+):
+    pass
+
+
+def test__schema_field_had__model_type_arg_field_of_other_parent_of_diamond__should_keep_using_unchanged_model(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ModelGenericParentWithInheritedField).field("bar").had(description="Bar"),
+            schema(ModelGenericOtherParentWithInheritedField).field("value").had(description="Value"),
+        )
+    )
+
+    diamond = schemas["2000-01-01"][ModelGenericDiamondWithInheritedField]
+    assert diamond.model_validate({"value": InheritedItem(name="ok")}).value.name == "ok"
+
+
+def test__schema_field_had__quoted_type_arg_field_of_other_parent_of_diamond__should_use_versioned_type_arg(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ModelGenericParentWithInheritedField).field("bar").had(description="Bar"),
+            schema(QuotedGenericOtherParentWithInheritedField).field("value").had(description="Value"),
+            schema(InheritedItem).field("name").had(name="old_name"),
+        )
+    )
+
+    diamond = schemas["2000-01-01"][QuotedGenericDiamondWithInheritedField]
+    assert diamond.model_validate({"value": {"old_name": "ok"}}).model_dump() == {
+        "value": {"old_name": "ok"},
+        "bar": 0,
+    }
+
+
+class GenericSubclassParent(BaseModel, Generic[_T]):
+    value: _T
+    bar: int = 0
+
+
+class GenericSubclassChild(GenericSubclassParent[_T], Generic[_T]):
+    pass
+
+
+class GenericSubclassOtherChild(GenericSubclassParent[_T], Generic[_T]):
+    pass
+
+
+class GenericSubclassDiamond(GenericSubclassChild[_U], GenericSubclassOtherChild[_U], Generic[_U]):
+    pass
+
+
+def test__schema_field_had__field_of_other_parent_of_generic_diamond__should_keep_its_type_arg(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(GenericSubclassParent).field("bar").had(description="Bar"),
+            schema(GenericSubclassOtherChild).field("value").had(description="Value"),
+        )
+    )
+
+    diamond = schemas["2000-01-01"][GenericSubclassDiamond[int]]
+    assert diamond.model_fields["value"].annotation is int
+    with pytest.raises(ValidationError):
+        diamond.model_validate({"value": "abc"})
 
 
 class ParentWithoutField(BaseModel):

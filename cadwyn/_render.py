@@ -114,9 +114,8 @@ def _render_pydantic_model(
     original_cls_node.name = wrapper.name
 
     # The same fields as in the copies of the model
-    field_attributes, annotations = wrapper.get_field_attributes_and_annotations(
-        generator.get_inherited_fields_changed_by_other_bases(wrapper.cls, wrapper.fields)
-    )
+    inherited_fields = generator.get_inherited_fields_changed_by_other_bases(wrapper.cls, wrapper.fields)
+    field_attributes, annotations = wrapper.get_field_attributes_and_annotations(inherited_fields)
     field_definitions = [
         ast.AnnAssign(
             target=ast.Name(name),
@@ -125,6 +124,9 @@ def _render_pydantic_model(
             simple=1,
         )
         for name, attributes in field_attributes.items()
+        # The model inherits the field in its source code so we cannot always render its annotation, e.g. when it has
+        # functional validators. Then we render the model as if it did not define the field like its parents do.
+        if name not in inherited_fields or _is_valid_python(get_fancy_repr(annotations[name]))
     ]
     validator_definitions = [
         ast.parse(textwrap.dedent(inspect.getsource(validator.func))).body[0]
@@ -145,6 +147,14 @@ def _render_pydantic_model(
     if not original_cls_node.body:
         original_cls_node.body = [ast.Pass()]
     return original_cls_node
+
+
+def _is_valid_python(expression: str) -> bool:
+    try:
+        ast.parse(expression, mode="eval")
+    except SyntaxError:
+        return False
+    return True
 
 
 def _generate_field_ast(field_attributes: dict[str, Any]) -> ast.Call:

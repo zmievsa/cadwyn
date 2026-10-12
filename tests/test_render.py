@@ -1,10 +1,10 @@
 import re
 import sys
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 from cadwyn import VersionChange, schema
 from cadwyn._render import render_model, render_model_by_path, render_module_by_path
@@ -185,3 +185,43 @@ class RenderedRightChild(RenderedParent):
     foo: str = Field(max_length=10, description='Right')
 """
     )
+
+
+def normalize(value: str) -> str:
+    return value.strip()
+
+
+class RenderedValidatedParent(BaseModel):
+    foo: Annotated[str, AfterValidator(normalize)]
+    bar: int = 0
+
+
+class RenderedValidatedLeftChild(RenderedValidatedParent):
+    pass
+
+
+class RenderedValidatedRightChild(RenderedValidatedParent):
+    pass
+
+
+class RenderedValidatedDiamond(RenderedValidatedLeftChild, RenderedValidatedRightChild):
+    pass
+
+
+class DescribeValidatedRightChild(VersionChange):
+    description = "Describe the field of the right child"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedValidatedParent).field("bar").had(description="Bar"),
+        schema(RenderedValidatedRightChild).field("foo").had(description="Right"),
+    )
+
+
+def test__render_model__diamond_with_functional_validator_in_inherited_field__should_render_valid_python():
+    versions = VersionBundle(Version("2001-01-01", DescribeValidatedRightChild), Version("2000-01-01"))
+
+    rendered = render_model(RenderedValidatedDiamond, versions, "2000-01-01")
+
+    compile(rendered, "<rendered>", "exec")
+    generated_diamond = generate_versioned_models(versions)["2000-01-01"][RenderedValidatedDiamond]
+    assert generated_diamond.model_validate({"foo": " value "}).foo == "value"
+    assert generated_diamond.model_fields["foo"].description == "Right"

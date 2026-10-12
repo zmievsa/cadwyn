@@ -47,7 +47,7 @@ from pydantic._internal._decorators import (
     ValidatorDecoratorInfo,
 )
 from pydantic._internal._fields import rebuild_model_fields
-from pydantic._internal._generics import PydanticGenericMetadata, get_model_typevars_map, replace_types
+from pydantic._internal._generics import PydanticGenericMetadata, get_model_typevars_map
 from pydantic._internal._known_annotated_metadata import collect_known_metadata
 from pydantic._internal._model_construction import unpack_lenient_weakvaluedict
 from pydantic._internal._namespace_utils import NsResolver
@@ -209,10 +209,9 @@ class PydanticFieldWrapper:
 
 
 class _FieldSource(NamedTuple):
-    # None if a base without instructions defines the field because then the field never changes
+    # None if we leave the field to pydantic: a base without instructions defines it so it never changes,
+    # or it comes from a generic whose type args pydantic substitutes
     model: Union[type[BaseModel], None]
-    # The type args of the parametrized generics (e.g. Parent[int]) between the model and the source, innermost first
-    typevars_maps: tuple[dict[Any, Any], ...]
 
 
 def _find_field_source(
@@ -228,16 +227,20 @@ def _find_field_source(
         if not issubclass(base, BaseModel):
             continue
         if base in schemas and field_name in schemas[base].fields:
-            return _FieldSource(base, ())
+            return _FieldSource(None if _is_generic_model(base) else base)
         if base not in schemas and field_name in _get_annotations_without_evaluating(base):
-            return _FieldSource(None, ())
+            return _FieldSource(None)
         source = _find_field_source(base, field_name, schemas)
         if source is None:
             continue
-        if base.__pydantic_generic_metadata__["origin"] is not None:
-            return _FieldSource(source.model, (*source.typevars_maps, get_model_typevars_map(base)))
-        return source
+        return _FieldSource(None) if _is_generic_model(base) else source
     return None
+
+
+def _is_generic_model(model: type[BaseModel]) -> bool:
+    """Whether the model is generic (e.g. `Parent[T]`) or parametrized (e.g. `Parent[int]`)"""
+    generic_metadata = model.__pydantic_generic_metadata__
+    return generic_metadata["origin"] is not None or bool(generic_metadata["parameters"])
 
 
 def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]:
@@ -556,8 +559,13 @@ def _get_inherited_fields_changed_by_other_bases(
 
     Pydantic takes an inherited field from the first base that has it, e.g. `class D(C, B)` takes it from C,
     so D would not get the changes that B made to the field. So D has to define such fields itself.
+    We do not do it for the fields of generics because pydantic substitutes their type args, so in `class D(C, B)`
+    with `class C(Parent[int])`, D does not get the changes that only B made to such fields.
     """
     fields = {}
+    if _is_generic_model(model):
+        # The fields of generics depend on their type args so we leave them to pydantic
+        return fields
     parents = set(model.__mro__)
     for base in model.__mro__[1:]:
         if not issubclass(base, BaseModel) or base not in schemas:
@@ -571,11 +579,7 @@ def _get_inherited_fields_changed_by_other_bases(
             source_field = schemas[source.model].fields[name]
             # Whether a parent of the model that is not a parent of the source changed the field
             if not source_field.models_that_changed_it.isdisjoint(parents.difference(source.model.__mro__)):
-                # The field of a generic (e.g. `value: T`) gets the type args of the parametrized generic bases
-                annotation = schemas[source.model].annotations[name]
-                for typevars_map in source.typevars_maps:
-                    annotation = replace_types(annotation, typevars_map)
-                fields[name] = (source_field, annotation)
+                fields[name] = (source_field, schemas[source.model].annotations[name])
     return fields
 
 
