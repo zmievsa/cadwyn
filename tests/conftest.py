@@ -50,9 +50,9 @@ def _check_that_reference_discovery_finds_every_model_that_copying_requests(monk
     the references that the generator cached and the references that discovery finds in the model right now.
     We check it on every request so that a missed reference fails the test before it can lead to infinite recursion.
 
-    The models whose references lead to no models with instructions are not copied at all, so we also check
-    that copying them would only request the models that discovery found in them. Otherwise, they could refer
-    to the head versions of the models that have instructions.
+    The models in reference cycles that do not need versioning are not copied at all, so we also check that
+    copying them would only request the models that discovery found in them. Otherwise, they could refer to
+    the head versions of the models that have instructions.
     """
     state = threading.local()
     original_getitem = SchemaGenerator.__getitem__
@@ -63,7 +63,7 @@ def _check_that_reference_discovery_finds_every_model_that_copying_requests(monk
         if models_being_copied and _is_versionable_model(model):
             model_being_copied, discovered_references = models_being_copied[-1]
             for references in discovered_references:
-                assert _unwrap_model(model) in references.models | references.arg_models, (
+                assert _unwrap_model(model) in references.models | references.arg_models | references.base_models, (
                     f"Reference discovery missed {model} in {model_being_copied}"
                 )
         versioned_model = original_getitem(self, model)
@@ -78,8 +78,8 @@ def _check_that_reference_discovery_finds_every_model_that_copying_requests(monk
             # The models with instructions are always discovered through their wrappers, the others are
             # discovered in place
             self.get_references() if self.cls in generator._changed_models else _get_head_model_references(self.cls),
-            # The generator always looks at the references of a model before deciding to copy it
-            generator._model_references[self.cls],
+            # The references that the generator caches for its decisions
+            generator._get_references(self.cls),
         ]
         # Discovery does not know the references of a model whose annotations refer to names that are not
         # defined yet so the generic args that lead to it are never versioned
@@ -97,12 +97,8 @@ def _check_that_reference_discovery_finds_every_model_that_copying_requests(monk
 def check_that_discovery_finds_every_model_that_copying_would_request(
     generator: SchemaGenerator, model: type[BaseModel]
 ) -> None:
-    if not generator._changed_models:
-        # Without instructions, no model is versioned so discovery does not look into the models at all
-        return
+    # Only the models in reference cycles are reused and the generator looks at their references to find cycles
     references = generator._model_references[model]
-    if not model.__pydantic_complete__ or not references.is_complete:
-        return
     # A collector that requests the models the same way as copying does instead of only recording them
     collector = _ReferencedModelCollector()
     collector.annotation_transformer = _AnnotationTransformer(collector)
@@ -113,9 +109,10 @@ def check_that_discovery_finds_every_model_that_copying_would_request(
         {name: _extract_passed_field_attributes(fields[name]) for name in _get_model_field_names(model, fields)},
         _get_model_annotations(model, fields),
     )
-    requested_models = collector.models | collector.arg_models
-    assert requested_models <= references.models | references.arg_models, (
-        f"Reference discovery missed {requested_models - references.models - references.arg_models} in {model}"
+    requested_models = collector.models | collector.arg_models | collector.base_models
+    discovered_models = references.models | references.arg_models | references.base_models
+    assert requested_models <= discovered_models, (
+        f"Reference discovery missed {requested_models - discovered_models} in {model}"
     )
 
 

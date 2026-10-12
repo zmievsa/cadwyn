@@ -1,9 +1,9 @@
 from enum import Enum
-from typing import Any, Generic, Optional, TypeVar, Union
+from typing import Any, Generic, Optional, TypeVar, Union, get_args
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, Field, SerializeAsAny, ValidationError
 from starlette.status import HTTP_200_OK, HTTP_422_UNPROCESSABLE_CONTENT
 
 from cadwyn import (
@@ -58,6 +58,14 @@ class Book(BaseModel):
     author: Optional[Author] = None
 
 
+class BackReferencingBase(BaseModel):
+    sub: "Optional[BackReferencingSub]" = None
+
+
+class BackReferencingSub(BackReferencingBase):
+    pass
+
+
 class TreeNode(BaseModel, Generic[ValueT]):
     value: ValueT
     children: "list[TreeNode[ValueT]]" = []
@@ -93,6 +101,57 @@ class CategoryChild(CategoryParent):
 
 class OuterOfItem(BaseModel):
     item: Item
+
+
+class TaggedParent(BaseModel):
+    def __init_subclass__(cls, *, tag: str, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+
+
+class TaggedChild(TaggedParent, tag="child"):
+    x: int
+
+
+class StrippingParent(BaseModel):
+    x: str
+
+    def __init__(self, **data: Any) -> None:
+        super().__init__(**data)
+        self.x = self.x.strip()
+
+
+class StrippingChild(StrippingParent):
+    x: str
+
+
+class Animal(BaseModel):
+    name: str
+
+
+class Dog(Animal):
+    is_good: bool
+
+
+class AnimalEnvelope(BaseModel):
+    value: SerializeAsAny[Animal]
+
+
+class AnyModelEnvelope(BaseModel):
+    # Like on main, the fields that accept any model are never versioned
+    value: SerializeAsAny[BaseModel]
+
+
+class SharedBase(BaseModel):
+    pass
+
+
+class ChangedSibling(SharedBase):
+    name: str
+
+
+class SiblingCategory(SharedBase):
+    name: str
+    children: "list[SiblingCategory]" = []
 
 
 def old_name_alias(model: type[BaseModel]):
@@ -169,27 +228,44 @@ def test__issue_419_reproduction__should_serve_self_referencing_model():
     assert client.get("/openapi.json?version=2000-01-01").status_code == HTTP_200_OK
 
 
-@pytest.mark.parametrize("model", [Category, Author, Book, TreeNode[int], TreeNode, ColoredCategory, Color])
-def test__generate_versioned_models__unchanged_models__should_be_the_head_classes(
-    model: type[Union[BaseModel, Enum]],
+@pytest.mark.parametrize("has_instructions", [False, True])
+def test__generate_versioned_models__unchanged_models_in_reference_cycles__should_be_the_head_classes(
+    has_instructions: bool,
 ):
-    versions = VersionBundle(Version("2001-01-01", unrelated_version_change()), Version("2000-01-01"))
+    versions = VersionBundle(
+        Version("2001-01-01", *([unrelated_version_change()] if has_instructions else [])), Version("2000-01-01")
+    )
 
     for generator in generate_versioned_models(versions).values():
-        assert generator[model] is model
-        assert not hasattr(generator[model], "__cadwyn_original_model__")
-        # The model that refers to a model with instructions is still versioned
-        assert generator[OuterOfItem] is not OuterOfItem
-        assert generator[OuterOfItem].model_fields["item"].annotation is generator[Item]
-        assert generator[Item] is not Item
-
-
-def test__generate_versioned_models__without_any_instructions__should_reuse_every_model():
-    versions = VersionBundle(HeadVersion(), Version("2001-01-01"), Version("2000-01-01"))
-
-    for generator in generate_versioned_models(versions).values():
-        for model in (Item, Category, Author, TreeNode[int], ItemWithCategory, CategoryChild):
+        for model in (
+            Category,
+            Author,
+            Book,
+            TreeNode,
+            ColoredCategory,
+            BackReferencingBase,
+            BackReferencingSub,
+            Color,
+        ):
             assert generator[model] is model
+            assert not hasattr(generator[model], "__cadwyn_original_model__")
+
+
+@pytest.mark.parametrize("has_instructions", [False, True])
+def test__generate_versioned_models__unchanged_models_outside_of_reference_cycles__should_be_copied_as_before(
+    has_instructions: bool,
+):
+    versions = VersionBundle(
+        Version("2001-01-01", *([unrelated_version_change()] if has_instructions else [])), Version("2000-01-01")
+    )
+
+    for generator in generate_versioned_models(versions).values():
+        for model in (ItemWithCategory, CategoryChild, TreeNode[int], AnyModelEnvelope, OuterOfItem, Item):
+            assert generator[model] is not model
+        # Their copies refer to the head models in reference cycles
+        assert generator[ItemWithCategory].model_fields["category"].annotation == Optional[Category]
+        assert generator[TreeNode[int]].__bases__ == (TreeNode,)
+        assert generator[OuterOfItem].model_fields["item"].annotation is generator[Item]
 
 
 def test__generate_versioned_models__models_referring_to_changed_models__should_still_be_versioned():
@@ -302,3 +378,120 @@ def test__migrate_response_body__unchanged_self_referencing_model__should_be_val
 
     assert type(migrated_body) is Category
     assert migrated_body.model_dump() == {"name": "root", "children": [{"name": "leaf", "children": []}]}
+
+
+class Wrapper(BaseModel, Generic[ValueT]):
+    items: list[ValueT]
+
+
+def test__generate_versioned_models__generic_arg_referring_to_self_referencing_model__should_be_versioned():
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(old_name_alias(ItemWithCategory))), Version("2000-01-01")
+    )
+    generator = generate_versioned_models(versions)["2000-01-01"]
+
+    # The self-referencing Category no longer stops the args from being versioned because it is not copied
+    assert get_args(generator[Wrapper[ItemWithCategory]].model_fields["items"].annotation) == (
+        generator[ItemWithCategory],
+    )
+    assert generator[ItemWithCategory].model_fields["category"].annotation == Optional[Category]
+
+
+def test__router_generation__changed_child_of_parent_with_init_subclass_arguments__should_work(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/children", response_model=TaggedChild)
+    async def get_child() -> dict[str, Any]:
+        return {"x": 1}
+
+    app = create_versioned_app(
+        version_change(schema(TaggedChild).field("x").had(description="Old description")), router=router
+    )
+    unversioned_client = TestClient(app)
+
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.get("/children").json() == {"x": 1}
+        assert unversioned_client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
+
+
+def test__generate_versioned_models__changed_child_of_parent_with_custom_init__should_not_use_head_parent():
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(StrippingChild).field("x").had(type=int))),
+        Version("2000-01-01"),
+    )
+
+    old_child = generate_versioned_models(versions)["2000-01-01"][StrippingChild]
+
+    assert StrippingChild(x=" a ").x == "a"
+    # The __init__ of the head parent would fail to strip the integer
+    assert old_child.model_validate({"x": 1}).model_dump() == {"x": 1}
+
+
+@pytest.mark.parametrize(
+    ("response_model", "latest_body"),
+    [
+        pytest.param(Animal, Dog(name="a", is_good=True), id="parent"),
+        pytest.param(AnimalEnvelope, {"value": Dog(name="a", is_good=True)}, id="serialize_as_any"),
+    ],
+)
+def test__migrate_response_body__head_instance_of_changed_subclass__should_be_rejected(
+    response_model: type[BaseModel], latest_body: Any
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(Dog).field("is_good").didnt_exist)), Version("2000-01-01")
+    )
+
+    # The head parent would accept the head instance and serialize it with the field that did not exist
+    with pytest.raises(ValidationError):
+        migrate_response_body(versions, response_model, latest_body=latest_body, version="2000-01-01")
+
+
+def test__router_generation__unchanged_self_referencing_sibling_of_changed_model__should_work(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+    body = {"name": "a", "children": [{"name": "b", "children": []}]}
+
+    @router.post("/categories", response_model=SiblingCategory)
+    async def create_category(category: SiblingCategory) -> SiblingCategory:
+        return category
+
+    @router.post("/siblings", response_model=ChangedSibling)
+    async def create_sibling(sibling: ChangedSibling) -> ChangedSibling:
+        return sibling
+
+    app = create_versioned_app(
+        version_change(schema(ChangedSibling).field("name").had(description="Old name")), router=router
+    )
+    unversioned_client = TestClient(app)
+
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.post("/categories", json=body).json() == body
+        assert client.post("/siblings", json={"name": "a"}).json() == {"name": "a"}
+        assert unversioned_client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
+    for generator in generate_versioned_models(app.versions).values():
+        # The common base is copied for its changed subclass but its other subclasses do not need copies
+        assert generator[SharedBase] is not SharedBase
+        assert generator[SiblingCategory] is SiblingCategory
+
+
+def test__generate_versioned_models__generic_parametrized_while_deciding_about_its_origin__should_version_args():
+    versions = VersionBundle(Version("2001-01-01", unrelated_version_change()), Version("2000-01-01"))
+    generator = generate_versioned_models(versions)["2000-01-01"]
+
+    class HookedPage(BaseModel, Generic[ValueT]):
+        items: list[ValueT]
+
+        def __init_subclass__(cls, **kwargs: Any) -> None:
+            super().__init_subclass__(**kwargs)
+            # Like when another thread parametrizes the generic, the parametrization exists before pydantic sets
+            # its fields and its generic args so we cannot look into it yet
+            generator[HookedPage]
+
+    old_page = generator[HookedPage[Item]]
+
+    assert get_args(old_page.model_fields["items"].annotation) == (generator[Item],)

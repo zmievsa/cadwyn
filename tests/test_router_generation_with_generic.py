@@ -1603,12 +1603,12 @@ def test__router_generation__generic_arg_with_annotations_failing_at_runtime__sh
         assert client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
 
 
-def test__generate_versioned_models__without_changed_models__should_not_look_into_generic_args():
+def test__generate_versioned_models__without_changed_models__should_keep_head_generic_args():
     versions = VersionBundle(HeadVersion(), Version("2001-01-01"), Version("2000-01-01"))
 
     for generator in generate_versioned_models(versions).values():
-        generator[Page[Item]]
-        assert generator._model_references == {}
+        assert generator[Page[Item]].__pydantic_generic_metadata__["args"] == (Item,)
+        assert generator[Page[Item]].model_fields["items"].annotation == list[Item]
 
 
 class NodeWithExplicitForwardRef(BaseModel):

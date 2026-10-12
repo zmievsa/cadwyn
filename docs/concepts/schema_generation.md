@@ -41,4 +41,4 @@ schema_generators = generate_versioned_models(version_bundle)
 MyVersionedSchemaFrom2025 = schema_generators["2025-11-16"][MyVersionedSchema]
 ```
 
-Cadwyn only generates versioned copies of the models and enums that have instructions in any version (including `HeadVersion`) or that refer to such models or enums, e.g. through their fields, parents, or generic type arguments. All other models and enums are the same in every version, so Cadwyn uses them as they are: `schema_generators["2025-11-16"][MyUnchangedSchema] is MyUnchangedSchema`.
+Cadwyn generates a copy of every model for every version, except for the enums without enum instructions and the models that refer to themselves (directly or through other models, e.g. `children: "list[Category]"`) when neither they nor the models they refer to have instructions in any version (including `HeadVersion`) and they are not parents of models with versioned copies. Cadwyn uses such enums and models as they are: `schema_generators["2025-11-16"][Category] is Category`.
