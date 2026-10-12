@@ -457,9 +457,9 @@ class VersionBundle:
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
         if request_info._form is not None:
-            body_for_solving = FormData(request_info._form)
             if uploads_read_by_fastapi:
-                await _rewind_uploads_read_by_fastapi(request_info._form, body_for_solving, uploads_read_by_fastapi)
+                await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
+            body_for_solving = FormData(request_info._form)
         elif body_is_model_dump:
             body_for_solving = _restore_validation_aliases(head_dependant.body_params[0], request_info.body)
         else:
@@ -840,22 +840,34 @@ def _get_form_values(form: FormData, key: str, *, is_sequence: bool) -> list[Uni
 
 
 async def _rewind_uploads_read_by_fastapi(
-    form: list[tuple[str, Union[UploadFile, str]]], form_data: FormData, uploads: _UploadPositions
+    form: list[tuple[str, Union[UploadFile, str]]], uploads: _UploadPositions
 ) -> None:
     """Undo FastAPI's reading of the uploaded files that the head will get exactly where FastAPI left them.
 
-    We only rewind a file if the head's param will pick it from the same key again, if it appears in the form
-    only once, and if it still has the same stream at the same position. Files that migrations replaced,
-    shadowed, reused, moved under other keys, closed, seeked, or swapped for other streams are passed on
-    exactly as the migrations left them.
+    We only rewind a file if the head's param will pick it from the same key again, if its stream belongs to
+    this one upload in the form and appears there only once, and if the stream is still at the same position.
+    Files that migrations replaced, shadowed, reused, moved under other keys, closed, seeked, swapped for other
+    streams, or whose streams they shared with other uploads are passed on exactly as the migrations left them.
     """
-    occurrences = Counter(id(value) for _, value in form)
+    # A single pass over the form, so that forms with many files take linear time
+    uploads_per_stream: Counter[int] = Counter()
+    last_value_ids: dict[str, int] = {}
+    value_ids: defaultdict[str, set[int]] = defaultdict(set)
+    for key, value in form:
+        if isinstance(value, UploadFile):
+            uploads_per_stream[id(value.file)] += 1
+        last_value_ids[key] = id(value)
+        value_ids[key].add(id(value))
     for read in uploads.values():
-        picked_values = _get_form_values(form_data, read.form_key, is_sequence=read.is_sequence)
+        if read.is_sequence:
+            is_picked = id(read.upload) in value_ids[read.form_key]
+        else:
+            # Like FastAPI, the head takes the last value of the key
+            is_picked = last_value_ids.get(read.form_key) == id(read.upload)
         if (
-            occurrences[id(read.upload)] == 1
-            and any(value is read.upload for value in picked_values)
+            is_picked
             and read.upload.file is read.file
+            and uploads_per_stream[id(read.file)] == 1
             and not read.file.closed
             and read.file.tell() == read.position
         ):

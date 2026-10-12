@@ -2043,6 +2043,30 @@ def test__form_migration__with_bytes_upload_moved_to_another_field__should_stay_
     assert clients["2000-01-01"].post(test_path, files={"upload": b"legacy"}).json() == expected
 
 
+def test__form_migration__with_bytes_upload_stream_shared_with_another_upload__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(attachment: bytes = File(), upload: bytes = File()):
+        return [attachment.decode(), upload.decode()]
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        assert request.form is not None
+        fields = dict(request.form)
+        assert isinstance(fields["attachment"], StarletteUploadFile)
+        assert isinstance(fields["upload"], StarletteUploadFile)
+        fields["attachment"].file.close()
+        fields["attachment"].file = fields["upload"].file
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    files = [("attachment", b"old"), ("upload", b"legacy")]
+
+    assert clients["2000-01-01"].post(test_path, files=files).json() == ["", ""]
+
+
 def test__form_migration__with_bytes_upload_closed_by_migration__should_stay_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
