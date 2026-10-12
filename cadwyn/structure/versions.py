@@ -26,7 +26,7 @@ from pydantic import AliasChoices, AliasPath, BaseModel, RootModel
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
-from starlette.datastructures import FormData
+from starlette.datastructures import FormData, UploadFile
 from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated, override
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
@@ -434,6 +434,8 @@ class VersionBundle:
     ) -> dict[str, Any]:
         start = self.reversed_version_values.index(current_version)
         head_route_id = id(head_route)
+        if request_info._form is not None:
+            await _rewind_uploaded_files(request_info._form)
         body_schema_key = _get_schema_migration_key(body_type)
         for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
@@ -455,6 +457,7 @@ class VersionBundle:
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
         if request_info._form is not None:
+            await _rewind_uploaded_files(request_info._form)
             body_for_solving = FormData(request_info._form)
         elif body_is_model_dump:
             body_for_solving = _restore_validation_aliases(head_dependant.body_params[0], request_info.body)
@@ -778,14 +781,23 @@ def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body
     is another param when the body is embedded (wrapped into a separate field with the "body" alias),
     or when the alias isn't the name of the body param, unless the kwarg is a dependency that returns the body.
     """
-    # FastAPI has already read the uploaded files, so they would come out empty if we read them again
-    if route.body_field is not None and isinstance(route.body_field.field_info, params.File):
-        return True
     if embed_body_fields:
         return False
     return body_field_alias == route.dependant.body_params[0].name or any(
         dependency.name == body_field_alias for dependency in route.dependant.dependencies
     )
+
+
+async def _rewind_uploaded_files(form: list[tuple[str, Union[UploadFile, str]]]) -> None:
+    """Move every uploaded file of the form back to its start.
+
+    FastAPI has already read the files that the versioned route takes as `bytes`, and migrations or dependencies
+    might have read others. Without rewinding, the head route would get those files empty.
+    """
+    for _, value in form:
+        # A closed file can't be read anyway, so we pass it on as is
+        if isinstance(value, UploadFile) and not value.file.closed:
+            await value.seek(0)
 
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
