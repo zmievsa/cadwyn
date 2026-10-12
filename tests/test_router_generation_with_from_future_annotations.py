@@ -478,22 +478,14 @@ _DEPENDENCIES_WITH_NESTED_QUOTED_ANNOTATIONS_FROM_ANOTHER_MODULE = {
 }
 # Postponed annotations of routes can only refer to the dependency through the globals
 dependency_in_globals: Any = None
+plain_partial_of_class_from_another_module = functools.partial(other_module.ResourceWithOptionalQuotedBody)
 
 
-_WRAPPERS_OF_DEPENDENCIES_FROM_ANOTHER_MODULE = {
-    "partial": functools.partial,
-    "partial_subclass": _PartialWithOverriddenCall,
-}
-
-
-@pytest.mark.parametrize("wrapper", list(_WRAPPERS_OF_DEPENDENCIES_FROM_ANOTHER_MODULE))
 @pytest.mark.parametrize("shape", list(_DEPENDENCIES_WITH_NESTED_QUOTED_ANNOTATIONS_FROM_ANOTHER_MODULE))
-def test__router_generation__dependency_from_another_module_with_nested_quoted_annotations__should_resolve_them(
-    router, create_versioned_clients, monkeypatch, shape, wrapper
+def test__router_generation__partial_subclass_of_dependency_from_another_module__should_resolve_its_annotations(
+    router, create_versioned_clients, monkeypatch, shape
 ):
-    dependency = _WRAPPERS_OF_DEPENDENCIES_FROM_ANOTHER_MODULE[wrapper](
-        _DEPENDENCIES_WITH_NESTED_QUOTED_ANNOTATIONS_FROM_ANOTHER_MODULE[shape]
-    )
+    dependency = _PartialWithOverriddenCall(_DEPENDENCIES_WITH_NESTED_QUOTED_ANNOTATIONS_FROM_ANOTHER_MODULE[shape])
     monkeypatch.setitem(globals(), "dependency_in_globals", dependency)
 
     @router.post("/default")
@@ -518,6 +510,29 @@ def test__router_generation__dependency_from_another_module_with_nested_quoted_a
         openapi = version_client.get(f"/openapi.json?version={version}").json()
         foo_types[version] = openapi["components"]["schemas"]["Payload"]["properties"]["foo"]["type"]
     assert foo_types == {"2001-01-01": "string", "2000-01-01": "integer"}
+
+
+def test__router_generation__partial_of_class_from_another_module_with_nested_quoted_annotations__should_not_change(
+    router, create_versioned_app
+):
+    # Neither FastAPI nor Cadwyn resolve such annotations of plain partials. Resolving them in the versioned routes
+    # alone would make them expect a different request body than the head route that Cadwyn validates requests against
+    @router.post("/test")
+    async def route(resource: Annotated[Any, Depends(plain_partial_of_class_from_another_module)]):
+        return resource.body
+
+    app = create_versioned_app(version_change(schema(other_module.Payload).field("legacy").existed_as(type=str)))
+    client = TestClient(app, raise_server_exceptions=False)
+    statuses = {}
+    for version in ("2001-01-01", "2000-01-01"):
+        headers = {app.router.api_version_parameter_name: version}
+        statuses[version] = (
+            client.post("/test", json={"foo": "bar"}, headers=headers).status_code,
+            client.post("/test", json={"foo": "bar", "legacy": "baz"}, headers=headers).status_code,
+            client.get(f"/openapi.json?version={version}").status_code,
+        )
+    # Even OpenAPI fails because pydantic cannot build the schema of the unresolved forward reference
+    assert statuses == {"2001-01-01": (200, 200, 500), "2000-01-01": (422, 200, 500)}
 
 
 class PartialSubclassPayload(BaseModel):

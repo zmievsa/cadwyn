@@ -53,6 +53,11 @@ class ResourceWithOptionalQuotedBodyInInit:
     __init__ = initialize_with_optional_quoted_body
 
 
+class ResourceWithOptionalQuotedBody:
+    def __init__(self, body: Payload, other: Optional["Payload"] = None) -> None:  # noqa: UP037
+        self.body = body
+
+
 class ResourceWithOptionalQuotedBodyInNew:
     def __new__(cls, body: Payload, other: Optional["Payload"] = None) -> Any:  # noqa: UP037
         raise NotImplementedError

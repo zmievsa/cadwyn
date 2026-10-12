@@ -543,14 +543,13 @@ def _get_best_effort_globals(call: Any) -> dict[str, Any]:
             # Cadwyn always resolved the annotations of such partials like the ones of other callable instances:
             # in the globals of their __call__. Those keep priority and the globals of what inspect.signature()
             # reads the signature from only resolve the names that they cannot (e.g. when the partial subclass
-            # is defined in another module than its .func)
+            # is defined in another module than its .func). We deliberately do not do this for other callables
+            # (e.g. plain partials of classes): FastAPI cannot resolve such names in the head route either, so
+            # resolving them would only make the versioned routes disagree with it about the request body
             return {**_get_signature_source_globals(unwrapped_call), **_get_dunder_call_globals(unwrapped_call)}
         if not isinstance(unwrapped_call, functools.partial):
             break
         unwrapped_call = inspect.unwrap(unwrapped_call.func)
-    if inspect.isclass(unwrapped_call):
-        # The same priority as above: Cadwyn always used the globals of __call__ for classes too
-        return {**_get_signature_source_globals(unwrapped_call), **_get_dunder_call_globals(unwrapped_call)}
     return _get_dunder_call_globals(unwrapped_call)
 
 
