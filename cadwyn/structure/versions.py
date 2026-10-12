@@ -4,21 +4,22 @@ import functools
 import http
 import inspect
 import json
-from collections import defaultdict
+import tempfile
+from collections import Counter, defaultdict
 from collections.abc import Callable, Coroutine, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, ClassVar, TypeAlias, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, BinaryIO, ClassVar, TypeAlias, Union, cast, get_args, get_origin
 
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
-from fastapi._compat import ModelField
+from fastapi._compat import ModelField, is_bytes_or_nonable_bytes_annotation, is_bytes_sequence_annotation
 from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
-from fastapi.dependencies.utils import solve_dependencies
+from fastapi.dependencies.utils import get_validation_alias, solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
@@ -26,7 +27,7 @@ from pydantic import AliasChoices, AliasPath, BaseModel, RootModel
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
-from starlette.datastructures import FormData
+from starlette.datastructures import FormData, UploadFile
 from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated, override
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
@@ -431,6 +432,7 @@ class VersionBundle:
         embed_body_fields: bool,
         background_tasks: Union[BackgroundTasks, None],
         body_is_model_dump: bool,
+        uploads_read_by_fastapi: "Union[_UploadPositions, None]",
     ) -> dict[str, Any]:
         start = self.reversed_version_values.index(current_version)
         head_route_id = id(head_route)
@@ -455,6 +457,8 @@ class VersionBundle:
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
         if request_info._form is not None:
+            if uploads_read_by_fastapi:
+                await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
             body_for_solving = FormData(request_info._form)
         elif body_is_model_dump:
             body_for_solving = _restore_validation_aliases(head_dependant.body_params[0], request_info.body)
@@ -728,6 +732,7 @@ class VersionBundle:
             return kwargs
 
         body_is_model_dump = False
+        uploads_read_by_fastapi: Union[_UploadPositions, None] = None
         # This is a kind of body param you get when you define a single pydantic schema in your route's body
         if (
             len(route.dependant.body_params) == 1
@@ -749,6 +754,8 @@ class VersionBundle:
         else:
             # This is for requests without body or with complex body such as form or file
             body = await _get_body(request, route.body_field, exit_stack)
+            if isinstance(body, FormData):
+                uploads_read_by_fastapi = _get_uploads_read_by_fastapi(route, body)
 
         request_info = RequestInfo(request, body)
         new_kwargs = await self._migrate_request(
@@ -763,6 +770,7 @@ class VersionBundle:
             embed_body_fields=embed_body_fields,
             background_tasks=background_tasks,
             body_is_model_dump=body_is_model_dump,
+            uploads_read_by_fastapi=uploads_read_by_fastapi,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:
@@ -786,6 +794,84 @@ def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body
     return body_field_alias == route.dependant.body_params[0].name or any(
         dependency.name == body_field_alias for dependency in route.dependant.dependencies
     )
+
+
+@dataclasses.dataclass(frozen=True)
+class _UploadReadByFastapi:
+    form_key: str
+    is_sequence: bool
+    upload: UploadFile  # Keeps `id(upload)` valid
+    file: BinaryIO
+    position: int
+
+
+# Maps `id(upload)` to the upload with its form key, the kind of the param that read it, its file,
+# and its position right after FastAPI has read it
+_UploadPositions: TypeAlias = dict[int, _UploadReadByFastapi]
+
+
+def _get_uploads_read_by_fastapi(route: APIRoute, form: FormData) -> _UploadPositions:
+    """Return the uploaded files that FastAPI has read for the `bytes` file params of the versioned route.
+
+    FastAPI reads these files to the end, so the head route would get them empty if we passed them on as is.
+    We look them up the same way FastAPI does and only consider the spooled files that starlette creates.
+    """
+    uploads: _UploadPositions = {}
+    for field in route.dependant.body_params:
+        if not isinstance(field.field_info, params.File):
+            continue
+        annotation = field.field_info.annotation
+        alias = get_validation_alias(field)
+        if is_bytes_or_nonable_bytes_annotation(annotation):
+            is_sequence = False
+        elif is_bytes_sequence_annotation(annotation):
+            is_sequence = True
+        else:
+            continue
+        for value in _get_form_values(form, alias, is_sequence=is_sequence):
+            if isinstance(value, UploadFile) and isinstance(value.file, tempfile.SpooledTemporaryFile):
+                uploads[id(value)] = _UploadReadByFastapi(alias, is_sequence, value, value.file, value.file.tell())
+    return uploads
+
+
+def _get_form_values(form: FormData, key: str, *, is_sequence: bool) -> list[Union[UploadFile, str, None]]:
+    """Return the values that FastAPI picks from the form for a `bytes` (or a sequence of `bytes`) file param."""
+    return list(form.getlist(key)) if is_sequence else [form.get(key)]
+
+
+async def _rewind_uploads_read_by_fastapi(
+    form: list[tuple[str, Union[UploadFile, str]]], uploads: _UploadPositions
+) -> None:
+    """Undo FastAPI's reading of the uploaded files that the head will get exactly where FastAPI left them.
+
+    We only rewind a file if the head's param will pick it from the same key again, if its stream belongs to
+    this one upload in the form and appears there only once, and if the stream is still at the same position.
+    Files that migrations replaced, shadowed, reused, moved under other keys, closed, seeked, swapped for other
+    streams, or whose streams they shared with other uploads are passed on exactly as the migrations left them.
+    """
+    # A single pass over the form, so that forms with many files take linear time
+    uploads_per_stream: Counter[int] = Counter()
+    last_value_ids: dict[str, int] = {}
+    value_ids: defaultdict[str, set[int]] = defaultdict(set)
+    for key, value in form:
+        if isinstance(value, UploadFile):
+            uploads_per_stream[id(value.file)] += 1
+        last_value_ids[key] = id(value)
+        value_ids[key].add(id(value))
+    for read in uploads.values():
+        if read.is_sequence:
+            is_picked = id(read.upload) in value_ids[read.form_key]
+        else:
+            # Like FastAPI, the head takes the last value of the key
+            is_picked = last_value_ids.get(read.form_key) == id(read.upload)
+        if (
+            is_picked
+            and read.upload.file is read.file
+            and uploads_per_stream[id(read.file)] == 1
+            and not read.file.closed
+            and read.file.tell() == read.position
+        ):
+            await read.upload.seek(0)
 
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form

@@ -7,8 +7,8 @@ from contextvars import ContextVar
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from io import StringIO
-from typing import Annotated, Any, Literal, Optional, Union
+from io import BytesIO, RawIOBase, StringIO
+from typing import Annotated, Any, Literal, Optional, Union, cast
 from uuid import UUID
 
 import fastapi
@@ -16,6 +16,7 @@ import pytest
 from dirty_equals import IsPartialDict, IsStr
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Body,
     Cookie,
     Depends,
@@ -59,6 +60,8 @@ from pydantic import (
 )
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import core_schema
+from starlette.datastructures import UploadFile as StarletteUploadFile
+from starlette.formparsers import MultiPartParser
 from starlette.responses import StreamingResponse
 from typing_extensions import Self, TypeAliasType, TypedDict, override
 
@@ -77,6 +80,7 @@ from cadwyn.structure import (
     convert_response_to_previous_version_for,
 )
 from cadwyn.structure.data import RequestInfo, ResponseInfo
+from cadwyn.structure.endpoints import endpoint as cadwyn_endpoint
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import Version, VersionBundle
 from tests.conftest import (
@@ -1737,6 +1741,461 @@ def test__request_body_migration__with_file_named_body__should_stay_as_before(
     for version_client in clients.values():
         with pytest.raises(CadwynHeadRequestValidationError):
             version_client.post(test_path, files={"body": ("file.txt", b"content")})
+
+
+async def _bytes_upload_endpoint(upload: bytes = File()):
+    return [upload.decode()]
+
+
+async def _annotated_bytes_upload_endpoint(upload: Annotated[bytes, File()]):
+    return [upload.decode()]
+
+
+async def _optional_bytes_upload_endpoint(upload: Optional[bytes] = File(None)):
+    return [upload.decode() if upload is not None else None]
+
+
+async def _bytes_list_upload_endpoint(upload: list[bytes] = File()):
+    return [file.decode() for file in upload]
+
+
+async def _bytes_upload_with_form_endpoint(upload: bytes = File(), name: str = Form()):
+    return [upload.decode(), name]
+
+
+async def _bytes_upload_with_form_named_body_endpoint(upload: bytes = File(), body: str = Form()):
+    return [upload.decode(), body]
+
+
+async def _bytes_and_upload_file_endpoint(upload: bytes = File(), other: UploadFile = File()):
+    return [upload.decode(), (await other.read()).decode()]
+
+
+def _sync_bytes_and_upload_file_endpoint(upload: bytes = File(), other: UploadFile = File()):
+    return [upload.decode(), other.file.read().decode()]
+
+
+async def _upload_file_endpoint(upload: UploadFile = File()):
+    return [(await upload.read()).decode()]
+
+
+async def _upload_file_list_endpoint(upload: list[UploadFile] = File()):
+    return [(await file.read()).decode() for file in upload]
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "request_kwargs", "expected"),
+    [
+        pytest.param(_bytes_upload_endpoint, {"files": {"upload": b"first"}}, ["first"], id="bytes"),
+        pytest.param(_bytes_upload_endpoint, {"data": {"upload": "text"}}, ["text"], id="bytes_sent_as_text"),
+        pytest.param(_annotated_bytes_upload_endpoint, {"files": {"upload": b"first"}}, ["first"], id="annotated"),
+        pytest.param(_optional_bytes_upload_endpoint, {"files": {"upload": b"first"}}, ["first"], id="optional"),
+        pytest.param(_optional_bytes_upload_endpoint, {"data": {"other": "text"}}, [None], id="optional_missing"),
+        pytest.param(
+            _bytes_list_upload_endpoint,
+            {"files": [("upload", b"first"), ("upload", b"second")]},
+            ["first", "second"],
+            id="list_of_bytes",
+        ),
+        pytest.param(
+            _bytes_upload_with_form_endpoint,
+            {"files": {"upload": b"first"}, "data": {"name": "my_name"}},
+            ["first", "my_name"],
+            id="bytes_with_form",
+        ),
+        pytest.param(
+            _bytes_upload_with_form_named_body_endpoint,
+            {"files": {"upload": b"first"}, "data": {"body": "form"}},
+            ["first", "form"],
+            id="bytes_with_form_named_body",
+        ),
+        pytest.param(
+            _bytes_and_upload_file_endpoint,
+            {"files": [("upload", b"first"), ("other", b"second")]},
+            ["first", "second"],
+            id="bytes_with_upload_file",
+        ),
+        pytest.param(
+            _sync_bytes_and_upload_file_endpoint,
+            {"files": [("upload", b"first"), ("other", b"second")]},
+            ["first", "second"],
+            id="sync_bytes_with_upload_file",
+        ),
+        pytest.param(_upload_file_endpoint, {"files": {"upload": b"first"}}, ["first"], id="upload_file"),
+        pytest.param(
+            _upload_file_list_endpoint,
+            {"files": [("upload", b"first"), ("upload", b"second")]},
+            ["first", "second"],
+            id="list_of_upload_files",
+        ),
+    ],
+)
+def test__request_body_migration__with_file_uploads__head_should_get_the_uploaded_contents(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Any],
+    request_kwargs: dict[str, Any],
+    expected: list[Optional[str]],
+):
+    router.post(test_path)(endpoint)
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, **request_kwargs).json() == expected
+
+
+def test__form_migration__can_modify_form_with_bytes_uploads(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(upload: bytes = File(), replaced: bytes = File(), name: str = Form()):
+        return [upload.decode(), replaced.decode(), name]
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        assert request.form is not None
+        replaced_file = UploadFile(BytesIO(b"migrated"), filename="replaced")
+        request.form[:] = [
+            (key, "migrated_name" if key == "name" else replaced_file if key == "replaced" else value)
+            for key, value in request.form
+        ]
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    files = [("upload", b"first"), ("replaced", b"second")]
+
+    assert clients["2000-01-01"].post(test_path, files=files, data={"name": "my_name"}).json() == [
+        "first",
+        "migrated",
+        "migrated_name",
+    ]
+    assert clients["2001-01-01"].post(test_path, files=files, data={"name": "my_name"}).json() == [
+        "first",
+        "second",
+        "my_name",
+    ]
+
+
+@pytest.mark.parametrize("annotation", [bytes, UploadFile])
+def test__request_body_migration__with_file_uploads_rolled_to_disk__head_should_get_the_uploaded_contents(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+):
+    # Bigger than what starlette keeps in memory so that the uploaded file gets rolled to disk
+    sent_contents = bytes(range(256)) * (MultiPartParser.spool_max_size // 256 + 1)
+    assert len(sent_contents) > MultiPartParser.spool_max_size
+
+    @router.post(test_path)
+    async def endpoint(upload: annotation = File()):
+        contents = upload if isinstance(upload, bytes) else await upload.read()
+        return {"size": len(contents), "is_same": contents == sent_contents}
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, files={"upload": sent_contents}).json() == {
+            "size": len(sent_contents),
+            "is_same": True,
+        }
+
+
+async def _read_upload_as_bytes(upload: Union[bytes, UploadFile]) -> str:
+    return (upload if isinstance(upload, bytes) else await upload.read()).decode()
+
+
+class _ReadOnlyStream(RawIOBase):
+    def __init__(self, contents: bytes) -> None:
+        self.remaining = contents
+
+    @override
+    def read(self, size: int = -1) -> bytes:
+        count = len(self.remaining) if size < 0 else size
+        result, self.remaining = self.remaining[:count], self.remaining[count:]
+        return result
+
+
+def _skip_legacy_header(request: RequestInfo):
+    assert request.form is not None
+    for _, value in request.form:
+        assert isinstance(value, StarletteUploadFile)
+        value.file.seek(len(b"HDR:"))
+
+
+def _replace_with_skipped_header(request: RequestInfo):
+    assert request.form is not None
+    replacement = UploadFile(BytesIO(b"HDR:payload"), filename="replacement")
+    replacement.file.seek(len(b"HDR:"))
+    request.form[:] = [("upload", replacement)]
+
+
+def _replace_with_non_seekable_stream(request: RequestInfo):
+    assert request.form is not None
+    request.form[:] = [("upload", UploadFile(cast("Any", _ReadOnlyStream(b"payload")), filename="replacement"))]
+
+
+@pytest.mark.parametrize("annotation", [bytes, UploadFile])
+@pytest.mark.parametrize(
+    "migration", [_skip_legacy_header, _replace_with_skipped_header, _replace_with_non_seekable_stream]
+)
+def test__form_migration__with_file_positions_set_by_migration__head_should_keep_them(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+    migration: Callable[[RequestInfo], None],
+):
+    @router.post(test_path)
+    async def endpoint(upload: annotation = File()):
+        return await _read_upload_as_bytes(upload)
+
+    clients = create_versioned_clients(
+        version_change(migrator=convert_request_to_next_version_for(test_path, ["POST"])(migration))
+    )
+
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"HDR:payload"}).json() == "payload"
+    assert clients["2001-01-01"].post(test_path, files={"upload": b"HDR:payload"}).json() == "HDR:payload"
+
+
+def _swap_stream_for_non_seekable_one(request: RequestInfo):
+    assert request.form is not None
+    for _, value in request.form:
+        assert isinstance(value, StarletteUploadFile)
+        value.file.close()
+        value.file = cast("Any", _ReadOnlyStream(b"decoded"))
+
+
+def _swap_stream_for_one_at_the_same_position(request: RequestInfo):
+    assert request.form is not None
+    for _, value in request.form:
+        assert isinstance(value, StarletteUploadFile)
+        value.file.close()
+        # The position where FastAPI left the original file
+        value.file = BytesIO(b"NEWDATA")
+        value.file.seek(len(b"12345"))
+
+
+@pytest.mark.parametrize(
+    ("migration", "expected"),
+    [(_swap_stream_for_non_seekable_one, "decoded"), (_swap_stream_for_one_at_the_same_position, "TA")],
+)
+def test__form_migration__with_bytes_upload_stream_swapped_by_migration__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    migration: Callable[[RequestInfo], None],
+    expected: str,
+):
+    @router.post(test_path)
+    async def endpoint(upload: bytes = File()):
+        return upload.decode()
+
+    clients = create_versioned_clients(
+        version_change(migrator=convert_request_to_next_version_for(test_path, ["POST"])(migration))
+    )
+
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"12345"}).json() == expected
+
+
+def _move_upload_to_attachment(request: RequestInfo):
+    assert request.form is not None
+    request.form[:] = [("upload", "converted"), ("attachment", dict(request.form)["upload"])]
+
+
+def _shadow_upload_and_reuse_it_as_attachment(request: RequestInfo):
+    assert request.form is not None
+    original = dict(request.form)["upload"]
+    request.form.extend([("upload", "converted"), ("attachment", original)])
+
+
+def _reuse_upload_as_attachment(request: RequestInfo):
+    assert request.form is not None
+    request.form.append(("attachment", dict(request.form)["upload"]))
+
+
+@pytest.mark.parametrize(
+    ("migration", "expected"),
+    [
+        (_move_upload_to_attachment, ["converted", ""]),
+        (_shadow_upload_and_reuse_it_as_attachment, ["converted", ""]),
+        (_reuse_upload_as_attachment, ["", ""]),
+    ],
+)
+def test__form_migration__with_bytes_upload_moved_to_another_field__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    migration: Callable[[RequestInfo], None],
+    expected: list[str],
+):
+    @router.post(test_path)
+    async def endpoint(upload: bytes = File(), attachment: Optional[UploadFile] = File(None)):
+        assert attachment is not None
+        return [upload.decode(), (await attachment.read()).decode()]
+
+    clients = create_versioned_clients(
+        version_change(migrator=convert_request_to_next_version_for(test_path, ["POST"])(migration))
+    )
+
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"legacy"}).json() == expected
+
+
+def test__form_migration__with_bytes_upload_stream_shared_with_another_upload__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(attachment: bytes = File(), upload: bytes = File()):
+        return [attachment.decode(), upload.decode()]
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        assert request.form is not None
+        fields = dict(request.form)
+        assert isinstance(fields["attachment"], StarletteUploadFile)
+        assert isinstance(fields["upload"], StarletteUploadFile)
+        fields["attachment"].file.close()
+        fields["attachment"].file = fields["upload"].file
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    files = [("attachment", b"old"), ("upload", b"legacy")]
+
+    assert clients["2000-01-01"].post(test_path, files=files).json() == ["", ""]
+
+
+def test__form_migration__with_bytes_upload_closed_by_migration__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(upload: bytes = File()):
+        raise NotImplementedError
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        assert request.form is not None
+        for _, value in request.form:
+            assert isinstance(value, StarletteUploadFile)
+            value.file.close()
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    with pytest.raises(ValueError, match="closed file"):
+        clients["2000-01-01"].post(test_path, files={"upload": b"payload"})
+
+
+async def _skip_legacy_header_in_dependency(upload: UploadFile = File()) -> None:
+    await upload.read(len(b"HDR:"))
+
+
+def test__request_body_migration__with_upload_file_read_by_old_version_dependency__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(upload: UploadFile = File()):
+        return (await upload.read()).decode()
+
+    clients = create_versioned_clients(
+        version_change(
+            cadwyn_endpoint(test_path, ["POST"]).had(dependencies=[Depends(_skip_legacy_header_in_dependency)])
+        )
+    )
+
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"HDR:payload"}).json() == "payload"
+    assert clients["2001-01-01"].post(test_path, files={"upload": b"HDR:payload"}).json() == "HDR:payload"
+
+
+async def _read_header_once(request: Request, upload: UploadFile = File()) -> str:
+    if not hasattr(request.state, "header"):
+        request.state.header = (await upload.read(2)).decode()
+    return request.state.header
+
+
+def test__request_body_migration__with_upload_file_read_by_cached_dependency__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(upload: UploadFile = File(), header: str = Depends(_read_header_once)):
+        return [header, (await upload.read()).decode()]
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, files={"upload": b"HEADERdata"}).json() == ["HE", "ADERdata"]
+
+
+async def _replace_upload(upload: UploadFile = File()) -> dict[str, UploadFile]:
+    return {"upload": UploadFile(BytesIO(b"normalized"), filename=upload.filename)}
+
+
+def test__request_body_migration__with_upload_replaced_by_dependency_named_body__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(upload: UploadFile = File(), body: Any = Depends(_replace_upload)):
+        return (await upload.read()).decode()
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, files={"upload": b"original"}).json() == "normalized"
+
+
+async def _parse_form(request: Request) -> dict[str, Any]:
+    return dict(await request.form())
+
+
+def test__request_body_migration__with_upload_file_read_by_background_task__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    read_by_background_task = []
+
+    async def read_upload(upload: UploadFile):
+        read_by_background_task.append(await upload.read())
+
+    @router.post(test_path)
+    async def endpoint(
+        background_tasks: BackgroundTasks, upload: UploadFile = File(), body: Any = Depends(_parse_form)
+    ):
+        background_tasks.add_task(read_upload, upload)
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, files={"upload": b"payload"}).status_code == 200
+    assert read_by_background_task == [b"payload", b"payload"]
+
+
+async def _close_upload(upload: UploadFile = File()) -> None:
+    await upload.close()
+
+
+def test__request_body_migration__with_upload_file_closed_by_dependency__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, dependencies=[Depends(_close_upload)])
+    async def endpoint(upload: UploadFile = File()):
+        return upload.file.closed
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, files={"upload": b"first"}).json() is True
 
 
 def test__request_by_schema_migration__with_embedded_body__should_raise_error(
