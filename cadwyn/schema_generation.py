@@ -2670,7 +2670,7 @@ class _CycleCopier:
                     name,
                     field,
                     self._is_latest_versioned_model,
-                    f"the versioned copies of {_get_cycle_name(self.copies)}, which refer to each other",
+                    f"the versioned copies of {_get_cycle_name(self.copies)}, which refer to each other,",
                 )
             for referenced_model in self.schema_generator._get_models_that_copying_requests(model):
                 if referenced_model not in visited_models:
