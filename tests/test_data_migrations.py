@@ -15,6 +15,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, RootModel
 from starlette.responses import StreamingResponse
+from typing_extensions import TypedDict
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.exceptions import (
@@ -71,6 +72,10 @@ class SchemaWithInternalRepresentation(BaseModel):
 
 class InternalSchema(SchemaWithInternalRepresentation):
     bar: Union[str, None] = Field(default=None)
+
+
+class TypedDictResponse(TypedDict):
+    foo: int
 
 
 @pytest.fixture(params=["is_async", "is_sync"])
@@ -688,6 +693,40 @@ class TestResponseMigrations:
         clients = create_versioned_clients(version_change(migrator=migrator))
         assert clients["2000-01-01"].get(test_path).json() == [1, 2, 3]
         assert clients["2001-01-01"].get(test_path).json() == [1, 2]
+
+    @pytest.mark.parametrize(
+        ("response_model", "head_body", "migrated_body"),
+        [
+            pytest.param(int, 2, 1, id="int"),
+            pytest.param(dict[str, int], {"a": 2}, {"a": 1}, id="dict"),
+            pytest.param(TypedDictResponse, {"foo": 2}, {"foo": 1}, id="TypedDict"),
+            pytest.param(list[SchemaWithInternalRepresentation], [{"foo": 2}], [{"foo": 1}], id="list[Model]"),
+            pytest.param(Optional[SchemaWithInternalRepresentation], {"foo": 2}, {"foo": 1}, id="Optional[Model]"),
+            pytest.param(
+                Annotated[SchemaWithInternalRepresentation, "metadata"], {"foo": 2}, {"foo": 1}, id="Annotated[Model]"
+            ),
+        ],
+    )
+    def test__response_migration__by_non_model_hashable_schema__should_migrate(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+        response_model: Any,
+        head_body: Any,
+        migrated_body: Any,
+    ):
+        @router.get(test_path, response_model=response_model)
+        async def route():
+            return head_body
+
+        @convert_response_to_previous_version_for(response_model, check_usage=False)
+        def migrator(response: ResponseInfo):
+            response.body = migrated_body
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        assert clients["2000-01-01"].get(test_path).json() == migrated_body
+        assert clients["2001-01-01"].get(test_path).json() == head_body
 
 
 class TestHowAndWhenMigrationsApply:
