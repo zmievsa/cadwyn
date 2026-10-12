@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import types
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel
 
@@ -37,6 +37,10 @@ def get_body_with_label(body: Payload, label: str) -> Payload:
 
 def get_body(body: Payload) -> Payload:
     return body
+
+
+def get_body_with_optional_quoted_body(body: Payload, other: Optional["Payload"] = None) -> Payload:  # noqa: UP037
+    raise NotImplementedError
 
 
 def provide(self: Any, body: Payload) -> Payload:

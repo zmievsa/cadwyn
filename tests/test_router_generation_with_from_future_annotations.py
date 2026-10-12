@@ -463,6 +463,45 @@ def test__router_generation__dependencies_with_annotations_from_another_module__
             assert response.json() == {"foo": "bar"}
 
 
+class _PartialWithOverriddenCall(functools.partial):
+    @override
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+
+# Postponed annotations of routes can only refer to the dependency through the globals
+partial_subclass_of_other_module_dependency = _PartialWithOverriddenCall(
+    other_module.get_body_with_optional_quoted_body
+)
+
+
+def test__router_generation__partial_subclass_of_dependency_from_another_module__should_resolve_its_annotations(
+    router, create_versioned_clients
+):
+    @router.post("/default")
+    async def default_route(body: Any = Depends(partial_subclass_of_other_module_dependency)):
+        raise NotImplementedError
+
+    @router.post("/annotated")
+    async def annotated_route(body: Annotated[Any, Depends(partial_subclass_of_other_module_dependency)]):
+        raise NotImplementedError
+
+    clients = create_versioned_clients(version_change(schema(other_module.Payload).field("foo").had(type=int)))
+    # FastAPI itself cannot evaluate the forward references within the annotations of partials in the head route
+    # that Cadwyn validates requests against after migrating them so we only check what each version validates
+    # and documents on its own
+    for path in ("/default", "/annotated"):
+        response = clients["2000-01-01"].post(path, json={"body": {"foo": "bar"}, "other": None})
+        assert [(error["loc"], error["type"]) for error in response.json()["detail"]] == [
+            (["body", "body", "foo"], "int_parsing")
+        ]
+    foo_types = {}
+    for version, version_client in clients.items():
+        openapi = version_client.get(f"/openapi.json?version={version}").json()
+        foo_types[version] = openapi["components"]["schemas"]["Payload"]["properties"]["foo"]["type"]
+    assert foo_types == {"2001-01-01": "string", "2000-01-01": "integer"}
+
+
 def test__router_generation__wrapped_dependencies_from_another_module__should_resolve_annotations_like_signature(
     router, create_versioned_clients
 ):

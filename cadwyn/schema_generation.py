@@ -517,19 +517,23 @@ def _get_best_effort_globals(call: Any) -> dict[str, Any]:
 
     Like FastAPI, we take them from the unwrapped callable. Unlike FastAPI, we also unwrap partials that do not
     carry globals themselves. For callable class instances, __globals__ is on the __call__ method instead.
-    Partial subclasses that override __call__ are treated like other callable instances, just like Cadwyn always did.
-    This also matters at runtime: looking up their __call__ statically creates their instance __dict__ and Python
-    3.13+ flattens partials of partial subclasses without one, which skips the overridden __call__
     """
     unwrapped_call = inspect.unwrap(call)
     while True:
         unwrapped_call_globals = getattr(unwrapped_call, "__globals__", None)
         if isinstance(unwrapped_call_globals, dict):
             return unwrapped_call_globals
-        if not isinstance(unwrapped_call, functools.partial) or (
-            type(unwrapped_call).__call__ is not functools.partial.__call__
-        ):
+        if not isinstance(unwrapped_call, functools.partial):
             break
+        if type(unwrapped_call).__call__ is not functools.partial.__call__:
+            # This has nothing to do with globals but it must stay: accessing the instance __dict__ of a partial
+            # creates it. Python 3.13+ flattens a partial of a partial (e.g. the one Starlette's run_in_threadpool
+            # makes) into a single partial of the inner .func if the inner partial has no __dict__, which would
+            # silently skip the overridden __call__ of a partial subclass. Cadwyn used to create the __dict__ as
+            # a side effect of inspect.getattr_static(partial, "__call__") so we keep doing it explicitly
+            vars(unwrapped_call)
+        # The annotations come from the signature of .func so they must be resolved in its globals,
+        # not in the globals of the module where the partial subclass was defined
         unwrapped_call = inspect.unwrap(unwrapped_call.func)
     dunder_call = inspect.getattr_static(unwrapped_call, "__call__", None)
     return _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
