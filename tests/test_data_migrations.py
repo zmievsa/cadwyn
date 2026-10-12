@@ -1,3 +1,4 @@
+import dataclasses
 import http.cookies
 import re
 import sys
@@ -2023,6 +2024,36 @@ def test__request_body_migration__with_bytes_dependency_overridden__should_keep_
     # don't arrive empty anymore
     for version_client in clients.values():
         assert version_client.post(test_path, files={"data": b"DATA", "other": b"second"}).json() == ["TA", "second"]
+
+
+async def _get_user() -> str:
+    raise NotImplementedError
+
+
+@dataclasses.dataclass
+class _UnhashableUserOverride:
+    name: str
+
+    async def __call__(self) -> str:
+        return self.name
+
+
+def test__request_body_migration__with_bytes_dependency_and_unhashable_override__head_should_get_the_contents(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(user: str = Depends(_get_user), data: str = Depends(_get_data_from_bytes)):
+        return [user, data]
+
+    clients = create_versioned_clients(version_change())
+    app = cast("Cadwyn", clients["2000-01-01"].app)
+    # Dataclasses that compare by value aren't hashable
+    app.dependency_overrides[_get_user] = _UnhashableUserOverride("alice")
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, files={"data": b"first"}).json() == ["alice", "first"]
 
 
 async def _read_upload_as_bytes_in_old_version(upload: bytes = File()) -> None:

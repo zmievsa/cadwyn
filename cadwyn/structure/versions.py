@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 from collections import Counter, defaultdict
-from collections.abc import Callable, Coroutine, Iterator, Sequence
+from collections.abc import Callable, Coroutine, Hashable, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
@@ -884,31 +884,38 @@ def _get_bytes_file_params_of_dependencies(
         if dependant is not None
         for param in _get_bytes_file_params_of_fields(dependant.body_params)
     }
-    head_calls = {call for call, _ in head_dependencies}
+    head_call_keys = {call_key for call_key, _ in head_dependencies}
     # A dependency that only the versioned route has won't run again for the head, so a rewind would undo what it
     # did with a file. It can reach any file, e.g. through `Request.form()` or a sub-dependency that the head also
     # has, so we leave the files of all dependencies as they are
-    if any(call not in head_calls for call, _ in dependencies):
+    if any(call_key not in head_call_keys for call_key, _ in dependencies):
         return set()
     return bytes_file_params
 
 
 def _iter_dependencies(
     dependant: Dependant, dependency_overrides: dict[Any, Any]
-) -> Iterator[tuple[Any, Union[Dependant, None]]]:
-    """Yield the callable that FastAPI calls for every dependency in the tree, with the dependency's dependant.
+) -> Iterator[tuple[Hashable, Union[Dependant, None]]]:
+    """Yield a key of the callable that FastAPI calls for every dependency in the tree, with the dependency's dependant.
 
-    FastAPI solves the dependant of an override instead of the overridden dependency, so for an overridden
-    dependency we yield the override without a dependant and skip its sub-dependencies.
+    The keys of the same callable are equal in the trees of all versions. Versioned routes use copies of
+    dependencies that compare equal to the originals, and FastAPI already hashes these callables. Overrides come
+    from the same dict for every route but can be unhashable, so we key them by identity. FastAPI solves the
+    dependant of an override instead of the overridden dependency, so for an overridden dependency we yield no
+    dependant and skip its sub-dependencies.
     """
     for sub_dependant in dependant.dependencies:
         call = sub_dependant.call
         # Same lookup as in FastAPI, which only looks up overrides when there are any
         if dependency_overrides and (override := dependency_overrides.get(call, call)) is not call:
-            yield override, None
+            yield (_OVERRIDE_KEY, id(override)), None
         else:
             yield call, sub_dependant
             yield from _iter_dependencies(sub_dependant, dependency_overrides)
+
+
+# Overrides stay alive in the overrides dict, so their ids identify them while we compare the trees
+_OVERRIDE_KEY = object()
 
 
 def _get_bytes_file_params_of_fields(fields: Sequence[ModelField]) -> list[tuple[str, bool]]:
