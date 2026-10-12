@@ -6,7 +6,7 @@ from typing import Annotated, Any
 import pytest
 from fastapi import Depends, Request
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic import AfterValidator, BaseModel, Field, WithJsonSchema
 
 from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
@@ -269,3 +269,25 @@ def test__router_generation__field_had_alias_and_description__should_be_applied(
         properties = openapi["components"]["schemas"][schema_name]["properties"]
         assert alias in properties
         assert properties["description_field"]["description"] == description
+
+
+class FieldWithConstraintAfterValidator(BaseModel):
+    foo: Annotated[str, AfterValidator(str.strip), Field(min_length=1)]
+
+
+def test__router_generation__field_had_constraint_declared_after_validator__should_still_apply_after_it(
+    router: VersionedAPIRouter,
+    create_versioned_clients,
+):
+    @router.post("/test")
+    async def route(payload: FieldWithConstraintAfterValidator):
+        return payload.model_dump()
+
+    clients = create_versioned_clients(
+        version_change(schema(FieldWithConstraintAfterValidator).field("foo").had(min_length=3)),
+    )
+
+    assert clients["2001-01-01"].post("/test", json={"foo": "  ab  "}).json() == {"foo": "ab"}
+    assert clients["2001-01-01"].post("/test", json={"foo": "   "}).status_code == 422
+    assert clients["2000-01-01"].post("/test", json={"foo": "  abc  "}).json() == {"foo": "abc"}
+    assert clients["2000-01-01"].post("/test", json={"foo": "  ab  "}).status_code == 422

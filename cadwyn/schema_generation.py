@@ -150,10 +150,26 @@ class PydanticFieldWrapper:
     def delete_attribute(self, *, name: str) -> None:
         self.passed_field_attributes.pop(name)
 
-    def generate_field_copy(self, generator: "SchemaGenerator") -> pydantic.fields.FieldInfo:
-        return pydantic.Field(
-            **generator.annotation_transformer.change_version_of_annotation(self.passed_field_attributes)
+    def generate_field_copy(
+        self, generator: "SchemaGenerator", annotation: Any
+    ) -> Union[pydantic.fields.FieldInfo, None]:
+        """Return None if the field can be built from its annotation alone
+
+        Constraints that the annotation already has are not duplicated in Field() and Field() is not assigned
+        at all when it would be empty: pydantic<2.12 moves the constraints of the annotation in front of
+        its validators whenever the field also has a Field() default.
+        """
+        annotation_constraints = (
+            collect_known_metadata(get_args(annotation)[1:])[0] if get_origin(annotation) == Annotated else {}
         )
+        passed_field_attributes = {
+            k: v
+            for k, v in self.passed_field_attributes.items()
+            if k not in annotation_constraints or annotation_constraints[k] != v
+        }
+        if not passed_field_attributes:
+            return None
+        return pydantic.Field(**generator.annotation_transformer.change_version_of_annotation(passed_field_attributes))
 
 
 def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]:
@@ -435,7 +451,11 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 per_field_validators[name] = validator.decorator(*validator.fields, **validator.kwargs)(func)
             else:
                 root_validators[name] = validator.decorator(**validator.kwargs)(func)
-        fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
+        fields = {
+            name: field_copy
+            for name, field in self.fields.items()
+            if (field_copy := field.generate_field_copy(generator, self.annotations[name])) is not None
+        }
 
         model_copy = type(self.cls)(
             self.name,
@@ -1093,9 +1113,9 @@ def _change_field(
 def _change_annotated_constraint(annotation: Any, attr_name: str, attr_value: Any) -> Any:
     """Make the constraints stored in the annotation's metadata match the new value of the field's attribute.
 
-    Otherwise, they would override it. For example, with "from __future__ import annotations",
-    `x: str = Field(min_length=1)` is rebuilt from FieldInfo.metadata as
-    `x: Annotated[str, MinLen(1)] = Field(min_length=1)`.
+    Otherwise, they would override it. For example, both `x: Annotated[str, Field(min_length=1)]` and
+    `x: str = Field(min_length=1)` with "from __future__ import annotations" (where the annotation is rebuilt
+    from FieldInfo.metadata as `Annotated[str, MinLen(1)]`) keep `min_length=1` in the annotation.
     We replace the values instead of removing the metadata to preserve its order relative to validators.
     """
     if get_origin(annotation) != Annotated:
@@ -1105,8 +1125,8 @@ def _change_annotated_constraint(annotation: Any, attr_name: str, attr_value: An
         sub_annotations[0],
         tuple(
             _replace_metadata_attribute(sub_ann, attr_name, attr_value)
-            # FieldInfo has no constraint attributes so we skip it here
-            if hasattr(sub_ann, attr_name) and attr_name in collect_known_metadata([sub_ann])[0]
+            if (isinstance(sub_ann, FieldInfo) or hasattr(sub_ann, attr_name))
+            and attr_name in collect_known_metadata([sub_ann])[0]
             else sub_ann
             for sub_ann in sub_annotations[1:]
         ),
@@ -1114,6 +1134,10 @@ def _change_annotated_constraint(annotation: Any, attr_name: str, attr_value: An
 
 
 def _replace_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> Any:
+    if isinstance(metadata, FieldInfo):
+        # FieldInfo stores constraints in its own metadata instead of attributes so we recreate it
+        field_attributes: dict[str, Any] = _extract_passed_field_attributes(metadata) | {attr_name: attr_value}
+        return pydantic.Field(**field_attributes)
     if dataclasses.is_dataclass(metadata):
         return dataclasses.replace(metadata, **{attr_name: attr_value})
     metadata = copy.copy(metadata)
