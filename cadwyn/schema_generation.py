@@ -1424,26 +1424,20 @@ class _ModelReferences(NamedTuple):
     # Whether we know all of the models that copying the model would request. We do not when some names in its
     # annotations (fields, class variables, quoted generic args, annotations of default factories, values of type
     # aliases, etc.) are not defined yet: once they get defined, copying the model can request any model. We do not
-    # either when copying it would recurse forever through a type alias that refers to itself. So we never version
-    # the generic args that lead to such a model, even after the names get defined, which keeps their head args
-    # exactly as on main.
+    # either when copying it would recurse forever through a type alias that refers to itself. So we always copy
+    # such a model and never version the generic args that lead to it, even after the names get defined, which
+    # keeps them exactly as on main.
     is_complete: bool = True
-
-
-class _GenerationAnalysis(NamedTuple):
-    # Whether generating the copy of the model will not recurse forever
-    terminates: bool
-    # Whether the model or the models that it refers to have schema or enum instructions
-    refers_to_changed_models: bool
 
 
 @final
 class SchemaGenerator:
     __slots__ = (
         "_changed_models",
-        "_generation_analyses",
+        "_generation_terminations",
         "_lock",
         "_model_references",
+        "_versioned_models",
         "_versions_of_generic_args",
         "annotation_transformer",
         "concrete_models",
@@ -1459,7 +1453,8 @@ class SchemaGenerator:
         self.model_bundle = model_bundle
         self._changed_models = changed_models
         self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
-        self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
+        self._versioned_models: dict[type[Union[BaseModel, Enum]], bool] = {}
+        self._generation_terminations: dict[type[Union[BaseModel, Enum]], bool] = {}
         self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
         # Models are generated lazily (e.g. in migrate_response_body) so several threads can generate them at once
         self._lock = threading.RLock()
@@ -1474,18 +1469,54 @@ class SchemaGenerator:
             return model
         model = _unwrap_model(model)
 
-        if self._is_enum_without_instructions(model):
-            return model
         with self._lock:
+            if not self._is_versioned(model):
+                return model
             if model not in self.concrete_models:
                 wrapper = self._get_wrapper_for_model(model)
                 self.concrete_models[model] = wrapper.generate_model_copy(self)
             return cast("type[_T_ANY_MODEL]", self.concrete_models[model])
 
-    def _is_enum_without_instructions(self, model: type[Union[BaseModel, Enum]]) -> bool:
-        # Such an enum is the same in every version so we do not copy it. Its members must stay the same objects
-        # too: e.g. strict models reject the members of a copy of their enum.
-        return lenient_issubclass(model, Enum) and model not in self._changed_models
+    def _is_versioned(self, model: type[Union[BaseModel, Enum]]) -> bool:
+        """Whether the model needs its own copy in this version instead of the head model.
+
+        A model only needs a copy if it or any of the models that it refers to (directly or through other models,
+        e.g. in its fields, bases, or generic args) has schema or enum instructions in any version. Otherwise,
+        its copy would be the same as the head model in every version so we use the head model itself.
+        This way, the models that refer to themselves (e.g. `children: "list[Category]"`) never get copied
+        unless something within them changes, the members of unchanged enums stay the same objects (e.g. strict
+        models reject the members of a copy of their enum), and the unchanged models never get duplicated in
+        OpenAPI. If we do not know all of the models that the model refers to (see _ModelReferences.is_complete),
+        we copy it, just like Cadwyn always did.
+        The decision only depends on the references between the models, not on the order of generation.
+        """
+        if not self._changed_models:
+            # Nothing has instructions so we do not need to look into the models
+            return False
+        if model not in self._versioned_models:
+            visited_models: set[type[Union[BaseModel, Enum]]] = set()
+            models_to_visit = [model]
+            is_versioned = False
+            while models_to_visit:
+                referenced_model = models_to_visit.pop()
+                if referenced_model in visited_models or self._versioned_models.get(referenced_model) is False:
+                    continue
+                visited_models.add(referenced_model)
+                references = self._get_references(referenced_model)
+                if (
+                    self._versioned_models.get(referenced_model)
+                    or referenced_model in self._changed_models
+                    or not references.is_complete
+                ):
+                    is_versioned = True
+                    break
+                models_to_visit.extend(references.models | references.arg_models)
+            if is_versioned:
+                self._versioned_models[model] = True
+            else:
+                # None of the models that the visited models refer to are versioned either
+                self._versioned_models.update(dict.fromkeys(visited_models, False))
+        return self._versioned_models[model]
 
     def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
         generic_metadata = model.__pydantic_generic_metadata__
@@ -1508,12 +1539,9 @@ class SchemaGenerator:
         We only version the args when they refer to models with schema or enum instructions so that all other
         generics stay exactly as they are. We also keep the head args when their copies could not be generated:
         when the args refer back to the generic (e.g. `children: Page["Category"]` within `Category`) or when
-        generating their copies would recurse forever (e.g. `children: "list[Tree]"` within `Tree`).
+        generating their copies would recurse forever (e.g. `children: "list[Tree]"` within a versioned `Tree`).
         The decision only depends on the references between the models, not on the order of generation.
         """
-        if not self._changed_models:
-            # Nothing has instructions so no generic args need versioning and we do not need to look into them
-            return False
         if generic not in self._versions_of_generic_args:
             references = self._get_references(generic)
             arg_models = references.arg_models
@@ -1521,21 +1549,24 @@ class SchemaGenerator:
             if not arg_models or not references.is_complete or self._is_referenced_through_args(generic):
                 should_version = False
             else:
-                analyses = [self._analyze_generation(model, generation_stack) for model in arg_models]
-                should_version = all(analysis.terminates for analysis in analyses) and any(
-                    analysis.refers_to_changed_models for analysis in analyses
+                should_version = any(self._is_versioned(model) for model in arg_models) and all(
+                    self._generation_terminates(model, generation_stack) for model in arg_models
                 )
             self._versions_of_generic_args[generic] = should_version
         return self._versions_of_generic_args[generic]
 
-    def _analyze_generation(
+    def _generation_terminates(
         self, model: type[Union[BaseModel, Enum]], generation_stack: list[type[Union[BaseModel, Enum]]]
-    ) -> _GenerationAnalysis:
-        if model in self._generation_analyses:
-            return self._generation_analyses[model]
+    ) -> bool:
+        """Whether generating the copy of the model will not recurse forever"""
+        if not self._is_versioned(model):
+            # We use the head model so nothing gets generated
+            return True
+        if model in self._generation_terminations:
+            return self._generation_terminations[model]
         if model in generation_stack:
             # The models that generating this model requests lead back to it so its generation would never finish
-            return _GenerationAnalysis(terminates=False, refers_to_changed_models=False)
+            return False
         generation_stack.append(model)
         references = self._get_references(model)
         requested_models = set(references.models)
@@ -1543,15 +1574,12 @@ class SchemaGenerator:
             cast("type[BaseModel]", model), generation_stack
         ):
             requested_models |= references.arg_models
-        analyses = [self._analyze_generation(requested_model, generation_stack) for requested_model in requested_models]
-        generation_stack.pop()
-        analysis = _GenerationAnalysis(
-            terminates=references.is_complete and all(analysis.terminates for analysis in analyses),
-            refers_to_changed_models=model in self._changed_models
-            or any(analysis.refers_to_changed_models for analysis in analyses),
+        terminates = references.is_complete and all(
+            self._generation_terminates(requested_model, generation_stack) for requested_model in requested_models
         )
-        self._generation_analyses[model] = analysis
-        return analysis
+        generation_stack.pop()
+        self._generation_terminations[model] = terminates
+        return terminates
 
     def _is_referenced_through_args(self, generic: type[BaseModel]) -> bool:
         models_to_visit = list(self._get_references(generic).arg_models)
