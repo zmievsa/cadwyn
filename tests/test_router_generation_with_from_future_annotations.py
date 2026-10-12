@@ -349,6 +349,52 @@ class ResourceWithDecoratedInit:
     __init__ = _decorator_from_this_module(other_module.initialize)
 
 
+class InheritedPartialmethodInit(ResourceWithPartialmethodInit):
+    pass
+
+
+class InheritedStaticmethodNew(ResourceWithStaticmethodNew):
+    pass
+
+
+# Each of the following wrappers leads to a function from this module through one attribute and to a function from
+# the other module through another one. Only the order of inspect.signature() leads to the annotations it returns.
+
+
+def _invoke(func: Any, *args: Any, **kwargs: Any) -> Any:
+    return func(*args, **kwargs)
+
+
+# A partial's explicit __wrapped__ comes before its .func
+partial_with_wrapped = functools.update_wrapper(
+    functools.partial(_invoke, other_module.get_body), other_module.get_body
+)
+
+
+class ResourceWithPartialmethodOfDecoratedInit:
+    __init__ = functools.partialmethod(_decorator_from_this_module(other_module.initialize_with_label), label="fixed")
+
+
+class ResourceWithStaticmethodOfDecoratedNew:
+    __new__ = staticmethod(_decorator_from_this_module(other_module.create))
+
+
+class ClassmethodOfDecoratedCallMeta(type):
+    __call__ = classmethod(_decorator_from_this_module(other_module.metaclass_call))
+
+
+class ResourceWithClassmethodOfDecoratedMetaclassCall(metaclass=ClassmethodOfDecoratedCallMeta):
+    pass
+
+
+class ProviderWithDecoratedMethod:
+    provide = _decorator_from_this_module(other_module.provide)
+
+
+# The decorator's __wrapped__ leads to a bound method whose function comes from the other module
+decorated_bound_method = _decorator_from_this_module(other_module.provider.provide)
+
+
 def test__router_generation__dependencies_with_annotations_from_another_module__should_resolve_them(
     router, create_versioned_clients
 ):
@@ -380,11 +426,82 @@ def test__router_generation__dependencies_with_annotations_from_another_module__
     async def bound_method_route(body: Annotated[Any, Depends(other_module.provider.provide)]):
         return body
 
-    paths = ["/partialmethod", "/staticmethod", "/wrapped", "/partial", "/bound_method"]
+    @router.post("/inherited_partialmethod")
+    async def inherited_partialmethod_route(
+        resource: Annotated[Any, Depends(functools.partial(InheritedPartialmethodInit))],
+    ):
+        return resource.body
+
+    @router.post("/inherited_staticmethod")
+    async def inherited_staticmethod_route(
+        resource: Annotated[Any, Depends(functools.partial(InheritedStaticmethodNew))],
+    ):
+        return resource.body
+
+    paths = [
+        "/partialmethod",
+        "/staticmethod",
+        "/wrapped",
+        "/partial",
+        "/bound_method",
+        "/inherited_partialmethod",
+        "/inherited_staticmethod",
+    ]
     # Python 3.10's inspect.signature() drops the first parameter of a classmethod __call__ of a metaclass
     # so even FastAPI itself cannot use such dependencies there
     if sys.version_info >= (3, 11):
         paths.append("/classmethod")
+    for version_client in create_versioned_clients(version_change()).values():
+        for path in paths:
+            response = version_client.post(path, json={"foo": "bar"})
+            assert response.status_code == 200, (path, response.json())
+            assert response.json() == {"foo": "bar"}
+
+
+def test__router_generation__wrapped_dependencies_from_another_module__should_resolve_annotations_like_signature(
+    router, create_versioned_clients
+):
+    @router.post("/partial_with_wrapped")
+    async def partial_with_wrapped_route(body: Annotated[Any, Depends(partial_with_wrapped)]):
+        return body
+
+    @router.post("/partialmethod_of_decorated")
+    async def partialmethod_of_decorated_route(
+        resource: Annotated[Any, Depends(functools.partial(ResourceWithPartialmethodOfDecoratedInit))],
+    ):
+        return resource.body
+
+    @router.post("/staticmethod_of_decorated")
+    async def staticmethod_of_decorated_route(
+        resource: Annotated[Any, Depends(functools.partial(ResourceWithStaticmethodOfDecoratedNew))],
+    ):
+        return resource.body
+
+    @router.post("/classmethod_of_decorated")
+    async def classmethod_of_decorated_route(
+        resource: Annotated[Any, Depends(functools.partial(ResourceWithClassmethodOfDecoratedMetaclassCall))],
+    ):
+        return resource.body
+
+    @router.post("/bound_method_of_decorated")
+    async def bound_method_of_decorated_route(body: Annotated[Any, Depends(ProviderWithDecoratedMethod().provide)]):
+        return body
+
+    @router.post("/decorated_bound_method")
+    async def decorated_bound_method_route(body: Annotated[Any, Depends(decorated_bound_method)]):
+        return body
+
+    paths = [
+        "/partial_with_wrapped",
+        "/partialmethod_of_decorated",
+        "/staticmethod_of_decorated",
+        "/bound_method_of_decorated",
+        "/decorated_bound_method",
+    ]
+    # Python 3.10's inspect.signature() drops the first parameter of a classmethod __call__ of a metaclass
+    # so even FastAPI itself cannot use such dependencies there
+    if sys.version_info >= (3, 11):
+        paths.append("/classmethod_of_decorated")
     for version_client in create_versioned_clients(version_change()).values():
         for path in paths:
             response = version_client.post(path, json={"foo": "bar"})

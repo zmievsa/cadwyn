@@ -480,47 +480,73 @@ def _get_function_behind_callable(call: Any) -> Any:
     return call.__call__
 
 
-def _unwrap_to_innermost_callable(call: Any) -> Any:
-    """Unwrap everything that inspect.signature() sees through to get to the callable that defines the annotations"""
+# Its behavior differs between Python versions so we reuse it to pick the same constructor as inspect.signature()
+_get_user_defined_method: Callable[[type, str], Any] = inspect._signature_get_user_defined_method  # ty: ignore[unresolved-attribute]  # Private but present in all supported Python versions.
+
+
+def _get_user_defined_constructor(cls: type) -> Any:
+    """Return the method that inspect.signature() takes the signature of the class from (None for builtin ones)"""
+    metaclass_call = _get_user_defined_method(type(cls), "__call__")
+    if metaclass_call is not None:
+        return metaclass_call
+    new = _get_user_defined_method(cls, "__new__")
+    init = _get_user_defined_method(cls, "__init__")
+    if sys.version_info >= (3, 11):
+        for base in cls.__mro__:
+            if new is not None and "__new__" in base.__dict__:
+                return new
+            if init is not None and "__init__" in base.__dict__:
+                return init
+        return None
+    if "__new__" in cls.__dict__:
+        return new
+    if "__init__" in cls.__dict__:
+        return init
+    return new if new is not None else init
+
+
+def _get_signature_source(call: Any) -> Any:
+    """Return the object that inspect.signature(call) takes the parameters and their annotations from.
+
+    We must evaluate postponed annotations in the globals of the exact function that inspect.signature() read them from.
+    Following the same wrappers in any other order (e.g. a partial's .func before its explicit __wrapped__) can lead
+    to another function from another module so this mirrors the steps of inspect._signature_from_callable()
+    (Python 3.10-3.14) one by one.
+    """
     while True:
-        if isinstance(call, staticmethod | classmethod | types.MethodType):
-            unwrapped_call = call.__func__
-        elif isinstance(call, functools.partial | functools.partialmethod):
-            unwrapped_call = call.func
-        else:
-            unwrapped_call = inspect.unwrap(call)
-        if unwrapped_call is call:
+        if isinstance(call, types.MethodType):
+            call = call.__func__
+            continue
+        call = inspect.unwrap(call, stop=lambda f: hasattr(f, "__signature__") or isinstance(f, types.MethodType))
+        if isinstance(call, types.MethodType):
+            continue
+        if getattr(call, "__signature__", None) is not None:
             return call
-        call = unwrapped_call
-
-
-def _get_constructor_of_class(cls: type) -> Union[types.FunctionType, None]:
-    """Return the function that inspect.signature() takes the signature of the class from"""
-    candidates = [inspect.getattr_static(type(cls), "__call__")]
-    for base in cls.__mro__:
-        candidates.extend((base.__dict__.get("__new__"), base.__dict__.get("__init__")))
-    for candidate in candidates:
-        function = _unwrap_to_innermost_callable(candidate)
-        if inspect.isfunction(function):
-            return function
-    return None
+        # Python 3.13 renamed "_partialmethod" to "__partialmethod__"
+        partialmethod = getattr(call, "__partialmethod__", None) or getattr(call, "_partialmethod", None)
+        if isinstance(partialmethod, functools.partialmethod):
+            call = partialmethod.func
+        elif isinstance(call, functools.partial):
+            call = call.func
+        elif inspect.isfunction(call):
+            return call
+        else:
+            if inspect.isclass(call):
+                next_call = _get_user_defined_constructor(call)
+            else:
+                next_call = _get_user_defined_method(type(call), "__call__")
+            if next_call is None:
+                return call
+            call = next_call
 
 
 def _get_callable_globals(call: Any) -> dict[str, Any]:
-    """Return the globals that the annotations of the callable have to be evaluated in.
-
-    Unlike the function that runs, the annotations belong to the innermost function (decorators keep it in __wrapped__)
-    """
-    function = _unwrap_to_innermost_callable(call)
-    if inspect.isclass(function):
-        constructor = _get_constructor_of_class(function)
-        if constructor is None:
-            # The constructor comes from a builtin so we use the module that defined the class
-            return getattr(sys.modules.get(function.__module__), "__dict__", {})
-        function = constructor
-    elif not inspect.isfunction(function):
-        function = _unwrap_to_innermost_callable(function.__call__)
-    return function.__globals__ if inspect.isfunction(function) else {}
+    """Return the globals that the postponed annotations of the callable's signature have to be evaluated in"""
+    source = _get_signature_source(call)
+    if inspect.isfunction(source):
+        return source.__globals__
+    # E.g. a class without a user-defined constructor
+    return getattr(sys.modules.get(getattr(source, "__module__", "")), "__dict__", {})
 
 
 def _copy_field_info(field_info: FieldInfo) -> FieldInfo:

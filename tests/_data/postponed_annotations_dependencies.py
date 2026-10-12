@@ -35,6 +35,14 @@ def get_body_with_label(body: Payload, label: str) -> Payload:
     return body
 
 
+def get_body(body: Payload) -> Payload:
+    return body
+
+
+def provide(self: Any, body: Payload) -> Payload:
+    return body
+
+
 class Provider:
     def provide(self, body: Payload) -> Payload:
         return body
