@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import AliasChoices, BaseModel, Field, create_model
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
+from typing_extensions import Self
 
 from cadwyn import RequestInfo, convert_request_to_next_version_for
 from cadwyn.route_generation import VersionedAPIRouter
@@ -117,6 +118,14 @@ class ItemPage(Page[Item]):
     total: int
 
 
+class Wrapper(BaseModel, Generic[ItemT]):
+    value: ItemT
+
+
+class WrapperPage(BaseModel, Generic[ItemT]):
+    items: list[Wrapper[ItemT]]
+
+
 class LinkedPage(BaseModel, Generic[ItemT]):
     items: list[ItemT]
     next: Optional["LinkedPage[ItemT]"] = None
@@ -163,6 +172,29 @@ class Parent(BaseModel):
 
 class Child(BaseModel):
     parent: Parent = Field(default_factory=Parent)
+
+
+class Tree(BaseModel):
+    name: str
+    children: "list[Tree]" = []
+
+
+class Author(BaseModel):
+    name: str = Field(alias="fullName")
+    books: Optional[Page["Book"]] = None
+
+
+class Book(BaseModel):
+    name: str = Field(alias="fullName")
+    authors: Optional[Page[Author]] = None
+
+
+Author.model_rebuild()
+
+
+class SelfReferencingNode(BaseModel):
+    value: int
+    children: list[Self] = []
 
 
 def old_name_alias(model: type[BaseModel]):
@@ -216,6 +248,25 @@ def test__router_generation__generic_response_model_with_versioned_arg__should_u
     assert old_openapi["components"]["schemas"]["Item"]["properties"] == {
         "oldName": {"type": "string", "title": "Oldname"}
     }
+
+
+def test__router_generation__generic_using_other_generic_with_its_type_param__should_use_arg_from_requested_version(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=WrapperPage[Item])
+    async def list_items() -> dict[str, Any]:
+        return {"items": [{"value": {"fullName": "Ada"}}]}
+
+    app = create_versioned_app(item_alias_version_change(), router=router)
+    unversioned_client = TestClient(app)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+
+    assert client_2000.get("/items").json() == {"items": [{"value": {"oldName": "Ada"}}]}
+    assert client_2001.get("/items").json() == {"items": [{"value": {"fullName": "Ada"}}]}
+    assert unversioned_client.get("/openapi.json?version=2000-01-01").status_code == HTTP_200_OK
 
 
 @pytest.mark.parametrize("page_model", [Page[Item], Page["Item"]], ids=["generic", "generic_with_quoted_arg"])
@@ -345,6 +396,13 @@ def test__router_generation__generic_from_unimportable_module__should_use_arg_fr
             {"oldName": "a", "children": {"items": [{"parent": {"fullName": "parent", "children": None}}]}},
             id="default_factory",
         ),
+        pytest.param(
+            Page[Tree],
+            [Item],
+            {"items": [{"name": "a", "children": [{"name": "b"}]}]},
+            {"items": [{"name": "a", "children": [{"name": "b", "children": []}]}]},
+            id="arg_referring_to_itself_without_generics",
+        ),
     ],
 )
 def test__router_generation__generic_with_arg_referring_to_model_in_generation__should_fall_back_to_head_arg(
@@ -369,3 +427,123 @@ def test__router_generation__generic_with_arg_referring_to_model_in_generation__
     assert client_2001.get("/models").status_code == HTTP_200_OK
     assert unversioned_client.get("/openapi.json?version=2000-01-01").status_code == HTTP_200_OK
     assert unversioned_client.get("/openapi.json?version=2001-01-01").status_code == HTTP_200_OK
+
+
+def get_old_version_behavior_of_cycle_through_two_generics(
+    create_versioned_app: CreateVersionedApp, *, routes_order: list[str], versioned_models: list[type[BaseModel]]
+) -> tuple[Any, ...]:
+    router = VersionedAPIRouter()
+
+    def get_author() -> dict[str, Any]:
+        return {"fullName": "a", "books": {"items": [{"fullName": "b", "authors": {"items": [{"fullName": "c"}]}}]}}
+
+    def get_book() -> dict[str, Any]:
+        return {"fullName": "b", "authors": {"items": [{"fullName": "a", "books": {"items": [{"fullName": "c"}]}}]}}
+
+    def create_author(author: Author) -> list[str]:
+        return [author.name, *(book.name for book in (author.books.items if author.books else []))]
+
+    routes = {
+        "get_author": lambda: router.add_api_route("/authors", get_author, response_model=Author),
+        "get_book": lambda: router.add_api_route("/books", get_book, response_model=Book),
+        "create_author": lambda: router.add_api_route("/authors", create_author, methods=["POST"]),
+    }
+    for route in routes_order:
+        routes[route]()
+
+    @convert_request_to_next_version_for(Author)
+    def rename_old_name_to_full_name(request: RequestInfo) -> None:
+        request.body["fullName"] = request.body.pop("oldName")
+
+    app = create_versioned_app(
+        version_change(
+            *(old_name_alias(model) for model in versioned_models),
+            rename_old_name_to_full_name=rename_old_name_to_full_name,
+        ),
+        router=router,
+    )
+    unversioned_client = TestClient(app)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    post_response = client_2000.post("/authors", json={"oldName": "a", "books": {"items": [{"fullName": "b"}]}})
+    old_openapi = unversioned_client.get("/openapi.json?version=2000-01-01").json()
+    return (
+        client_2000.get("/authors").json(),
+        client_2000.get("/books").json(),
+        (post_response.status_code, post_response.json()),
+        sorted(old_openapi["components"]["schemas"]),
+    )
+
+
+def test__router_generation__cycle_through_two_generics__should_not_depend_on_route_or_instruction_order(
+    create_versioned_app: CreateVersionedApp,
+):
+    route_orders = (["get_author", "get_book", "create_author"], ["create_author", "get_book", "get_author"])
+    instruction_orders: tuple[list[type[BaseModel]], ...] = ([Author, Book], [Book, Author])
+    behaviors = [
+        get_old_version_behavior_of_cycle_through_two_generics(
+            create_versioned_app, routes_order=routes_order, versioned_models=versioned_models
+        )
+        for routes_order in route_orders
+        for versioned_models in instruction_orders
+    ]
+
+    old_author, old_book, post_result, old_schema_names = behaviors[0]
+    assert all(behavior == behaviors[0] for behavior in behaviors)
+    # Both generics in the cycle keep their head args
+    assert old_author == {
+        "oldName": "a",
+        "books": {"items": [{"fullName": "b", "authors": {"items": [{"fullName": "c", "books": None}]}}]},
+    }
+    assert old_book == {
+        "oldName": "b",
+        "authors": {"items": [{"fullName": "a", "books": {"items": [{"fullName": "c", "authors": None}]}}]},
+    }
+    assert post_result == (HTTP_200_OK, ["a", "b"])
+    # Same as without versioned type args: one schema per generic and both versions of Author and Book
+    module_prefix = "tests__test_router_generation_with_generic__"
+    assert old_schema_names == [
+        "Book-Input",
+        "HTTPValidationError",
+        "Page_Author_-Input",
+        "Page_Author_-Output",
+        "Page_Book_-Input",
+        "Page_Book_-Output",
+        "ValidationError",
+        f"{module_prefix}Author-Input__1",
+        f"{module_prefix}Author-Input__2",
+        f"{module_prefix}Author-Output__1",
+        f"{module_prefix}Author-Output__2",
+        f"{module_prefix}Book-Output__1",
+        f"{module_prefix}Book__2",
+    ]
+
+
+def test__router_generation__generic_with_arg_using_self__should_generate_versions(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/refs", response_model=Ref[SelfReferencingNode])
+    async def get_ref() -> dict[str, Any]:
+        return {"id": 1}
+
+    app = create_versioned_app(item_alias_version_change(), router=router)
+    unversioned_client = TestClient(app)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+    assert client_2000.get("/refs").json() == {"id": 1}
+    assert unversioned_client.get("/openapi.json?version=2000-01-01").status_code == HTTP_200_OK
+
+
+def test__router_generation__model_using_self__should_generate_versions(create_versioned_app: CreateVersionedApp):
+    router = VersionedAPIRouter()
+
+    @router.get("/nodes", response_model=SelfReferencingNode)
+    async def get_node() -> dict[str, Any]:
+        return {"value": 1, "children": [{"value": 2}]}
+
+    app = create_versioned_app(item_alias_version_change(), router=router)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+    # FastAPI itself cannot render OpenAPI for models that use Self so we only check the response
+    assert client_2000.get("/nodes").json() == {"value": 1, "children": [{"value": 2, "children": []}]}

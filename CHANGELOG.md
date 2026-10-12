@@ -14,6 +14,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Fixed older API versions adding `"example": {}` to the OpenAPI of path, query, header, cookie, and body parameters declared through default values such as `= Query()` (#417).
 - Restored type checking compatibility with Pydantic 2.14 and ty 0.0.86.
 - Fixed older API versions using current models inside parametrized generic models such as `Page[Item]` in requests, responses, and OpenAPI (#416).
+- Fixed a `TypeError` ("cannot be parametrized because it does not inherit from typing.Generic") in older API versions for generic models whose fields parametrize generic models with their own type parameters, such as `items: list[Wrapper[T]]` or `next: Optional["LinkedPage[T]"]`.
+- Fixed older API versions failing to start when a model uses `typing.Self` in its annotations.
 - Fixed `TypeError: unhashable type` on older API versions when an endpoint's request body or response model is an unhashable annotation such as `list[Annotated[int, {"description": "item"}]]`.
 
 ## [7.4.1]

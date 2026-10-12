@@ -427,6 +427,20 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return annotations | self.annotations
 
+    def get_referenced_models(self) -> "set[type[Union[BaseModel, Enum]]]":
+        """Return the models that generate_model_copy requests from the generator"""
+        collector = _ReferencedModelCollector()
+        for field in self.fields.values():
+            collector.annotation_transformer.change_version_of_annotation(field.passed_field_attributes)
+        collector.annotation_transformer.change_version_of_annotation(self.annotations)
+        for base in self.cls.__dict__.get("__orig_bases__", self.cls.__bases__):
+            collector[base]
+        generic_metadata = self.cls.__pydantic_generic_metadata__
+        if generic_metadata["origin"] is not None:
+            collector[generic_metadata["origin"]]
+        collector.annotation_transformer.change_version_of_annotation(_eval_generic_args(self.cls))
+        return collector.models
+
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {}
         root_validators = {}
@@ -538,7 +552,7 @@ class _AsyncGeneratorCallableWrapper(_CallableWrapper):
 
 @final
 class _AnnotationTransformer:
-    def __init__(self, generator: "SchemaGenerator") -> None:
+    def __init__(self, generator: "Union[SchemaGenerator, _ReferencedModelCollector]") -> None:
         self.generator = generator
         self.change_versions_of_a_non_container_annotation = self._change_version_of_a_non_container_annotation
         # This cache cannot be used until something is done regarding https://github.com/fastapi/fastapi/pull/14320
@@ -628,9 +642,12 @@ class _AnnotationTransformer:
         elif isinstance(annotation, type):
             return self._change_version_of_type(annotation)
         elif callable(annotation):
-            if type(annotation).__module__.startswith(
-                ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
-            ) or isinstance(annotation, fastapi.security.base.SecurityBase):
+            # Special forms such as typing.Self are callable but they are not functions
+            if (
+                type(annotation).__module__ in {"typing", "typing_extensions"}
+                or type(annotation).__module__.startswith(("fastapi.", "pydantic.", "pydantic_core.", "starlette."))
+                or isinstance(annotation, fastapi.security.base.SecurityBase)
+            ):
                 return annotation
 
             def modifier(annotation: Any):
@@ -798,18 +815,51 @@ def _add_request_and_response_params(route: APIRoute):
 
 
 class _GenericArgCycleError(Exception):
-    """Versioning the type arg of a generic led back to a model whose copy is still being generated"""
+    """Versioning the type args of a generic led back to a model whose copy is still being generated"""
+
+
+def _is_versionable_model(model: Any) -> bool:
+    return (
+        isinstance(model, type)
+        and lenient_issubclass(model, (BaseModel, Enum))
+        and model not in _DEFAULT_PYDANTIC_CLASSES
+        and not is_sqlalchemy_model(model)
+    )
+
+
+@final
+class _ReferencedModelCollector:
+    """Collects the models that the annotation transformer requests without generating their copies"""
+
+    __slots__ = "annotation_transformer", "models"
+
+    def __init__(self) -> None:
+        self.annotation_transformer = _AnnotationTransformer(self)
+        self.models: set[type[Union[BaseModel, Enum]]] = set()
+
+    def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
+        if _is_versionable_model(model):
+            self.models.add(_unwrap_model(model))
+        return model
 
 
 @final
 class SchemaGenerator:
-    __slots__ = "_generic_arg_depth", "_models_in_progress", "annotation_transformer", "concrete_models", "model_bundle"
+    __slots__ = (
+        "_generic_arg_depth",
+        "_models_in_progress",
+        "_referenced_models",
+        "annotation_transformer",
+        "concrete_models",
+        "model_bundle",
+    )
 
     def __init__(self, model_bundle: _ModelBundle) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
         self._models_in_progress: list[type[Union[BaseModel, Enum]]] = []
         self._generic_arg_depth = 0
+        self._referenced_models: dict[type[Union[BaseModel, Enum]], set[type[Union[BaseModel, Enum]]]] = {}
         self.concrete_models: dict[type[Union[BaseModel, Enum]], type[Union[BaseModel, Enum]]] = {}
         # Models are generated through __getitem__ so that the copies created along the way are reused
         # instead of being created again
@@ -817,12 +867,7 @@ class SchemaGenerator:
             self[model]
 
     def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
-        if (
-            not isinstance(model, type)
-            or not lenient_issubclass(model, (BaseModel, Enum))
-            or model in _DEFAULT_PYDANTIC_CLASSES
-            or is_sqlalchemy_model(model)
-        ):
+        if not _is_versionable_model(model):
             return model
         model = _unwrap_model(model)
 
@@ -842,17 +887,21 @@ class SchemaGenerator:
 
     def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
         # Pydantic resolves the fields of a parametrized generic (such as Page[Item]) through its origin and args
-        # so they must point to this version's classes too
+        # so they must point to this version's classes too.
+        # However, the copies of the args cannot be created before the copy of the generic if the args refer back
+        # to it (e.g. `children: Page["Category"]` within `Category`). Such generics keep their head generic
+        # metadata, as they did before type args were versioned. We decide it based on the references between
+        # the models instead of the order of generation so that every generic in a cycle keeps its head metadata.
         generic_metadata = model.__pydantic_generic_metadata__
+        args = _eval_generic_args(model)
+        if self._is_referenced_through(args, model):
+            return generic_metadata
         self._generic_arg_depth += 1
         try:
-            args = self.annotation_transformer.change_version_of_annotation(
-                tuple(_eval_generic_arg(arg, model) for arg in generic_metadata["args"])
-            )
+            args = self.annotation_transformer.change_version_of_annotation(args)
         except _GenericArgCycleError:
-            # The args refer back to a model that is still being generated (e.g. `children: Page["Category"]`
-            # within `Category`) so their versioned copies cannot exist yet. We keep the head generic metadata
-            # in such cases instead of recursing forever.
+            # The args lead to models that refer to themselves without any generics in between
+            # (e.g. `children: "list[Category]"` within `Category`) which we cannot generate at all yet
             return generic_metadata
         finally:
             self._generic_arg_depth -= 1
@@ -863,10 +912,36 @@ class SchemaGenerator:
             "parameters": generic_metadata["parameters"],
         }
 
+    def _is_referenced_through(self, annotation: Any, model: type[BaseModel]) -> bool:
+        collector = _ReferencedModelCollector()
+        collector.annotation_transformer.change_version_of_annotation(annotation)
+        models_to_visit = list(collector.models)
+        visited_models = set()
+        while models_to_visit:
+            referenced_model = models_to_visit.pop()
+            if referenced_model is model:
+                return True
+            if referenced_model not in visited_models:
+                visited_models.add(referenced_model)
+                models_to_visit.extend(self._get_referenced_models(referenced_model))
+        return False
+
+    def _get_referenced_models(self, model: type[Union[BaseModel, Enum]]) -> set[type[Union[BaseModel, Enum]]]:
+        if model not in self._referenced_models:
+            wrapper = self._get_wrapper_for_model(model)
+            self._referenced_models[model] = (
+                wrapper.get_referenced_models() if isinstance(wrapper, _PydanticModelWrapper) else set()
+            )
+        return self._referenced_models[model]
+
     @overload
     def _get_wrapper_for_model(self, model: type[BaseModel]) -> "_PydanticModelWrapper[BaseModel]": ...
     @overload
     def _get_wrapper_for_model(self, model: type[Enum]) -> "_EnumWrapper[Enum]": ...
+    @overload
+    def _get_wrapper_for_model(
+        self, model: type[Union[BaseModel, Enum]]
+    ) -> "Union[_PydanticModelWrapper[BaseModel], _EnumWrapper[Enum]]": ...
 
     def _get_wrapper_for_model(
         self, model: type[Union[BaseModel, Enum]]
@@ -1233,6 +1308,10 @@ class _EnumWrapper(Generic[_T_ENUM]):
             and k not in _DummyEnum.__dict__
             and (k not in mro_dict or mro_dict[k] is not v)
         }
+
+
+def _eval_generic_args(model: type[BaseModel]) -> tuple[Any, ...]:
+    return tuple(_eval_generic_arg(arg, model) for arg in model.__pydantic_generic_metadata__["args"])
 
 
 def _eval_generic_arg(arg: Any, model: type[BaseModel]) -> Any:
