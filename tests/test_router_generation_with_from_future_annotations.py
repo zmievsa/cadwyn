@@ -15,6 +15,7 @@ from fastapi import Body, Depends, Query, Request
 from fastapi.testclient import TestClient
 from pydantic import (
     AfterValidator,
+    AliasChoices,
     AllowInfNan,
     BaseModel,
     ConfigDict,
@@ -732,6 +733,41 @@ def test__router_generation__field_didnt_have_title__with_string_in_annotated__s
         openapi = clients[version].get(f"/openapi.json?version={version}").json()
         assert openapi["components"]["schemas"]["SchemaWithDocStringInAnnotated"]["properties"]["foo"]["title"] == title
         assert clients[version].post("/test", json={"foo": "bar"}).json() == {"foo": "bar"}
+
+
+class OuterSchemaWithValidationAliases(BaseModel):
+    inner: InnerSchemaWithValidationAliases = Field(alias="i", validation_alias="j")
+    inners: Annotated[list[InnerSchemaWithValidationAliases], Field(alias="l", validation_alias="m")]
+
+
+class InnerSchemaWithValidationAliases(BaseModel):
+    value: int = Field(alias="x", validation_alias="v")
+    other: Annotated[int, Field(validation_alias=AliasChoices("o", "p"), serialization_alias="s")]
+
+
+def test__router_generation__body_fields_with_validation_aliases__should_reach_head_in_every_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients,
+):
+    @router.post("/test")
+    async def route(payload: OuterSchemaWithValidationAliases):
+        return payload.model_dump()
+
+    @convert_request_to_next_version_for(OuterSchemaWithValidationAliases)
+    def migrator(request: RequestInfo):
+        request.body["l"].append({"x": 5, "s": 6})
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    payload = {"j": {"v": 1, "o": 2}, "m": [{"v": 3, "p": 4}]}
+
+    assert clients["2001-01-01"].post("/test", json=payload).json() == {
+        "inner": {"value": 1, "other": 2},
+        "inners": [{"value": 3, "other": 4}],
+    }
+    assert clients["2000-01-01"].post("/test", json=payload).json() == {
+        "inner": {"value": 1, "other": 2},
+        "inners": [{"value": 3, "other": 4}, {"value": 5, "other": 6}],
+    }
 
 
 @functools.lru_cache
@@ -1570,11 +1606,37 @@ def test__router_generation__default_factory_with_annotations_set_by_hand__shoul
     async def route(body: ModelWithFactoryWithAnnotationsSetByHand):
         return body.values
 
+    # Only the copies of the models read the annotations of their default factories
+    model_change = version_change(schema(ModelWithFactoryWithAnnotationsSetByHand).field("values").had(description="A"))
     # Cadwyn reads the annotations of such callables through annotationlib on Python 3.14+ which ignores the ones
     # set by hand. Before 3.14, it reads __annotations__ and evaluates them
     if sys.version_info >= (3, 14):
-        for version_client in create_versioned_clients(version_change()).values():
+        for version_client in create_versioned_clients(model_change).values():
             assert version_client.post("/test", json={}).json() == [0, 1, 2]
     else:
         with pytest.raises(TypeError, match="NotSubscriptableAtRuntime"):
-            create_versioned_clients(version_change())
+            create_versioned_clients(model_change)
+
+
+class FutureCategory(BaseModel):
+    name: str
+    children: list[FutureCategory] = []
+    parent: Optional[FutureCategory] = None
+
+
+@pytest.mark.parametrize("has_older_version", [False, True], ids=["single_version", "with_unrelated_change"])
+def test__router_generation__unchanged_self_referencing_model__should_work_in_every_version(
+    router, create_versioned_clients, has_older_version
+):
+    version_changes = (
+        [version_change(schema(MySchema).field("foo").had(description="Old"))] if has_older_version else []
+    )
+    body = {"name": "a", "children": [{"name": "b", "children": [], "parent": None}], "parent": None}
+
+    @router.post("/categories", response_model=FutureCategory)
+    async def create_category(category: FutureCategory) -> FutureCategory:
+        return category
+
+    for version, version_client in create_versioned_clients(*version_changes).items():
+        assert version_client.post("/categories", json=body).json() == body
+        assert version_client.get(f"/openapi.json?version={version}").status_code == 200
