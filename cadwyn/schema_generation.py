@@ -22,6 +22,7 @@ from typing import (
     get_origin,
 )
 
+import annotated_types
 import fastapi.params
 import fastapi.security.base
 import fastapi.utils
@@ -1281,6 +1282,11 @@ def _change_field(
             defined_annotations[alter_schema_instruction.name],
         )
 
+    field_name = (
+        alter_schema_instruction.name
+        if alter_schema_instruction.new_name is Sentinel
+        else alter_schema_instruction.new_name
+    )
     for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
         attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
         if attr_value is not Sentinel:
@@ -1292,6 +1298,122 @@ def _change_field(
                     "but it already has that value.",
                 )
             field.update_attribute(name=attr_name, value=attr_value)
+            model.annotations[field_name] = _change_annotated_metadata(
+                model.annotations[field_name],
+                functools.partial(_metadata_sets_constraint, attr_name=attr_name),
+                functools.partial(_set_metadata_attribute, attr_name=attr_name, attr_value=attr_value),
+            )
+
+
+def _change_annotated_metadata(
+    annotation: Any, should_change: Callable[[Any], bool], change: Callable[[Any], Any]
+) -> Any:
+    """Change the attribute in the annotation's metadata in the same way it is changed in the field.
+
+    Otherwise, the metadata would override the field. For example, both `x: Annotated[str, Field(min_length=1)]`
+    and `x: str = Field(min_length=1)` with "from __future__ import annotations" (where the annotation is rebuilt
+    from FieldInfo.metadata as `Annotated[str, MinLen(1)]`) keep `min_length=1` in the annotation.
+    We change the metadata instead of removing it to preserve its order relative to validators.
+    """
+    if get_origin(annotation) != Annotated:
+        return annotation
+    sub_annotations = get_args(annotation)
+    return _AnnotatedAlias(
+        sub_annotations[0],
+        tuple(change(sub_ann) if should_change(sub_ann) else sub_ann for sub_ann in sub_annotations[1:]),
+    )
+
+
+def _metadata_sets_constraint(metadata: Any, attr_name: str) -> bool:
+    """Whether the metadata sets the constraint, e.g. annotated_types.MinLen, pydantic.Strict, or Field(min_length=1).
+
+    Only constraints need to be changed in FieldInfo: its other attributes, such as description, are overridden by
+    the Field() of the field, and json_schema_extra gets merged with it.
+    """
+    if isinstance(metadata, FieldInfo):
+        return attr_name in collect_known_metadata(metadata.metadata)[0]
+    # pydantic also allows constraint classes such as `Annotated[int, Strict]`
+    return attr_name in collect_known_metadata([metadata])[0] and (
+        inspect.isclass(metadata) or hasattr(metadata, attr_name)
+    )
+
+
+def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
+    """Whether field().didnt_have() deletes the attribute from the metadata"""
+    if isinstance(metadata, FieldInfo):
+        return hasattr(metadata, attr_name) or attr_name in _extract_passed_field_attributes(metadata)
+    if inspect.isclass(metadata):
+        return _metadata_sets_constraint(metadata, attr_name)
+    # Only attributes that can be set on the object itself, so not str.title from `Annotated[str, "Some doc"]`
+    return hasattr(metadata, attr_name) and (
+        hasattr(metadata, "__dict__")
+        or any(attr_name in getattr(cls, "__slots__", ()) for cls in type(metadata).__mro__)
+    )
+
+
+def _set_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> Any:
+    if isinstance(metadata, FieldInfo):
+        field_info = _copy_field_info(metadata)
+        field_info.metadata = [
+            _set_metadata_attribute(sub_metadata, attr_name, attr_value)
+            if _metadata_sets_constraint(sub_metadata, attr_name)
+            else sub_metadata
+            for sub_metadata in field_info.metadata
+        ]
+        # pydantic<2.12 also keeps constraints in _attributes_set which it uses to build fields
+        if attr_name in field_info._attributes_set:  # pragma: no cover
+            field_info._attributes_set[attr_name] = attr_value
+        return field_info
+    if inspect.isclass(metadata):
+        # We never change the class itself and use its instance with the same constraints instead
+        constraint = metadata.__new__(metadata)
+        for name, value in collect_known_metadata([metadata])[0].items():
+            object.__setattr__(constraint, name, value)
+    else:
+        # We don't use dataclasses.replace because it would call __init__ that subclasses can override
+        constraint = copy.copy(metadata)
+    object.__setattr__(constraint, attr_name, attr_value)
+    return constraint
+
+
+def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
+    if isinstance(metadata, FieldInfo):
+        # FieldInfo's attributes get the values of an empty Field()
+        field_info = _copy_field_info(metadata)
+        field_info.metadata = [
+            _delete_metadata_attribute(sub_metadata, attr_name)
+            if _metadata_sets_constraint(sub_metadata, attr_name)
+            else sub_metadata
+            for sub_metadata in field_info.metadata
+        ]
+        field_info._attributes_set.pop(attr_name, None)
+        if attr_name in FieldInfo.__slots__:
+            setattr(field_info, attr_name, dict_of_empty_field_info[attr_name])
+        return field_info
+    return _set_metadata_attribute(metadata, attr_name, _get_unset_metadata_attribute_value(metadata, attr_name))
+
+
+def _get_unset_metadata_attribute_value(metadata: Any, attr_name: str) -> Any:
+    # Grouped metadata can become invalid with None (e.g. annotated_types.Len(min_length=None) fails to iterate)
+    # so we use the default value of its attribute from the library class that defines it because
+    # the default of a user's subclass can be a constraint itself (e.g. `min_length: int = 2`)
+    if isinstance(metadata, annotated_types.GroupedMetadata):
+        library_dataclasses = (
+            cls
+            for cls in type(metadata).__mro__
+            if dataclasses.is_dataclass(cls) and cls.__module__.partition(".")[0] in {"annotated_types", "pydantic"}
+        )
+        return next(
+            (
+                field.default
+                for cls in library_dataclasses
+                for field in dataclasses.fields(cls)
+                if field.name == attr_name and field.default is not dataclasses.MISSING
+            ),
+            None,
+        )
+    # pydantic ignores other constraints that are None
+    return None
 
 
 def _delete_field_attributes(
@@ -1307,13 +1429,17 @@ def _delete_field_attributes(
         if attr_name in field.passed_field_attributes:
             field.delete_attribute(name=attr_name)
             deleted = True
-        if get_origin(annotation) == Annotated and any(  # pragma: no branch
-            hasattr(sub_ann, attr_name) for sub_ann in get_args(annotation)
+        # Any metadata with such an attribute counts (even if it is None) to keep accepting the same instructions
+        if get_origin(annotation) == Annotated and any(
+            _metadata_has_attribute(sub_ann, attr_name) for sub_ann in get_args(annotation)[1:]
         ):
-            for sub_ann in get_args(annotation):
-                if hasattr(sub_ann, attr_name):
-                    object.__setattr__(sub_ann, attr_name, None)
-                    deleted = True
+            annotation = _change_annotated_metadata(
+                annotation,
+                functools.partial(_metadata_has_attribute, attr_name=attr_name),
+                functools.partial(_delete_metadata_attribute, attr_name=attr_name),
+            )
+            model.annotations[alter_schema_instruction.name] = annotation
+            deleted = True
         if not deleted:
             raise InvalidGenerationInstructionError(
                 f'You tried to delete the attribute "{attr_name}" of field "{alter_schema_instruction.name}" '
