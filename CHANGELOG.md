@@ -18,6 +18,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Fixed a `TypeError` ("cannot be parametrized because it does not inherit from typing.Generic") in older API versions for generic models whose fields parametrize generic models with their own type parameters, such as `items: list[Wrapper[T]]` or `next: Optional["LinkedPage[T]"]`.
 - Fixed older API versions failing to start when a model uses `typing.Self` in its annotations.
 - Fixed older API versions failing to start when a model uses annotations that cannot be rebuilt from their arguments, such as a bare `typing.Callable` or `Unpack[Ts]`, or a default factory without an inspectable signature, such as `functools.partial(dict, count=1)`.
+- Fixed older API versions failing on Python 3.14 when versioned models, their default factories, or their type aliases use names that are only imported under `TYPE_CHECKING`, e.g. in `ClassVar` annotations.
 - Fixed endpoints and dependencies whose `__annotations__` were assigned by hand (e.g. in route factories) losing their annotations on Python 3.14, which turned their body parameters into missing query parameters in every version.
 - Fixed `TypeError: unhashable type` on older API versions when an endpoint's request body or response model is an unhashable annotation such as `list[Annotated[int, {"description": "item"}]]`.
 

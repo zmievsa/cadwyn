@@ -4,16 +4,17 @@ import threading
 import typing
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
-from typing import Annotated, Any, Generic, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Optional, TypeVar, Union
 
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from pydantic import AliasChoices, BaseModel, BeforeValidator, Field, JsonValue, create_model
+from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, create_model
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
-from typing_extensions import Self, TypeAliasType, TypeVarTuple, Unpack
+from typing_extensions import Self, TypeAliasType, TypeVarTuple, Unpack, override
 
 from cadwyn import (
+    Cadwyn,
     HeadVersion,
     RequestInfo,
     Version,
@@ -114,6 +115,11 @@ def test__router_generation__using_parametrized_schema_in_body(
     assert unversioned_client.get("/openapi.json?version=2000-01-01").status_code == HTTP_200_OK
     assert unversioned_client.get("/openapi.json?version=2001-01-01").status_code == HTTP_200_OK
 
+
+if TYPE_CHECKING:
+    # They are only used in annotations that Python 3.14 evaluates lazily
+    from asyncio import Lock as TypeCheckingOnlyLock  # noqa: TC004
+    from builtins import list as type_checking_only_list  # noqa: TC004
 
 ItemT = TypeVar("ItemT")
 ItemsT = TypeVarTuple("ItemsT")
@@ -325,6 +331,26 @@ class TaskStatus(str, Enum):
 
 class Task(BaseModel):
     status: TaskStatus
+
+
+class Unsupported:
+    pass
+
+
+class DeferredItem(BaseModel):
+    """Pydantic cannot build its schema but it never has to because Ref does not use its type arg"""
+
+    model_config = ConfigDict(defer_build=True)
+    value: Unsupported
+
+
+class ItemWithForwardRef(BaseModel):
+    # Its fields are only resolved when it is rebuilt because DefinedLater does not exist yet
+    other: "Optional[DefinedLater]" = None
+
+
+class DefinedLater(BaseModel):
+    name: str = Field(alias="fullName")
 
 
 class Author(BaseModel):
@@ -939,3 +965,137 @@ def test__router_generation__generic_arg_referring_to_versioned_enum__should_use
     body = {"items": [{"status": "archived"}]}
     assert client_2000.post("/tasks", json=body).status_code == HTTP_422_UNPROCESSABLE_CONTENT
     assert client_2001.post("/tasks", json=body).json() == body
+
+
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="Annotations are only evaluated lazily since Python 3.14")
+@pytest.mark.parametrize(
+    "version_changes",
+    [[], [version_change(old_name_description(Item))]],
+    ids=["no_instructions", "unrelated_instructions"],
+)
+def test__router_generation__generic_args_with_annotations_only_defined_for_type_checking__should_work(
+    version_changes: list[type[VersionChange]],
+):
+    # These annotations would fail before Python 3.14 because they are evaluated when the class is created
+    class ItemWithLock(BaseModel):
+        name: str = "a"
+        _lock: ClassVar[TypeCheckingOnlyLock | None] = None
+
+    def get_default_values() -> type_checking_only_list[int]:
+        return []
+
+    class ItemWithValues(BaseModel):
+        values: list[int] = Field(default_factory=get_default_values)
+
+    router = VersionedAPIRouter()
+
+    @router.get("/items_with_lock", response_model=Page[ItemWithLock])
+    async def get_items_with_lock() -> dict[str, Any]:
+        return {"items": [{"name": "a"}]}
+
+    @router.get("/items_with_values", response_model=Page[ItemWithValues])
+    async def get_items_with_values() -> dict[str, Any]:
+        return {"items": [{}]}
+
+    versions = VersionBundle(HeadVersion(), Version("2001-01-01", *version_changes), Version("2000-01-01"))
+    app = Cadwyn(versions=versions)
+    app.generate_and_include_versioned_routers(router)
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.get("/items_with_lock").json() == {"items": [{"name": "a"}]}
+        assert client.get("/items_with_values").json() == {"items": [{"values": []}]}
+        assert client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
+
+    migrated_body = migrate_response_body(
+        versions, Page[ItemWithLock], latest_body={"items": [{"name": "a"}]}, version="2000-01-01"
+    )
+    assert migrated_body.model_dump() == {"items": [{"name": "a"}]}
+    migrated_body = migrate_response_body(
+        versions, Page[ItemWithValues], latest_body={"items": [{}]}, version="2000-01-01"
+    )
+    assert migrated_body.model_dump() == {"items": [{"values": []}]}
+
+
+@pytest.mark.parametrize(
+    "version_changes",
+    [[], [version_change(old_name_description(Item))]],
+    ids=["no_instructions", "unrelated_instructions"],
+)
+def test__router_generation__generic_arg_whose_schema_cannot_be_built__should_not_be_built(
+    version_changes: list[type[VersionChange]],
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/refs", response_model=Ref[DeferredItem])
+    async def get_ref() -> dict[str, Any]:
+        return {"id": 1}
+
+    versions = VersionBundle(HeadVersion(), Version("2001-01-01", *version_changes), Version("2000-01-01"))
+    app = Cadwyn(versions=versions)
+    app.generate_and_include_versioned_routers(router)
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.get("/refs").json() == {"id": 1}
+        assert client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
+
+    migrated_body = migrate_response_body(versions, Ref[DeferredItem], latest_body={"id": 1}, version="2000-01-01")
+    assert migrated_body.model_dump() == {"id": 1}
+
+
+def test__router_generation__generic_arg_with_unresolved_forward_ref__should_use_arg_from_requested_version(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=Page[ItemWithForwardRef])
+    async def get_items() -> dict[str, Any]:
+        return {"items": [{"other": {"fullName": "Ada"}}]}
+
+    app = create_versioned_app(version_change(old_name_alias(DefinedLater)), router=router)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+
+    assert client_2000.get("/items").json() == {"items": [{"other": {"oldName": "Ada"}}]}
+    assert client_2001.get("/items").json() == {"items": [{"other": {"fullName": "Ada"}}]}
+
+
+def test__router_generation__untouched_generic_arg_referring_to_deferred_model__should_not_build_it(
+    create_versioned_app: CreateVersionedApp,
+):
+    class DeferredKind(BaseModel):
+        model_config = ConfigDict(defer_build=True)
+        x: int = 1
+
+        @classmethod
+        @override
+        def __pydantic_on_complete__(cls) -> None:
+            raise AssertionError(f"{cls.__name__} must stay deferred")
+
+    class ItemWithKinds(BaseModel):
+        kinds: ClassVar[dict[str, type[DeferredKind]]] = {}
+        name: str = "a"
+
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=Page[ItemWithKinds])
+    async def get_items() -> dict[str, Any]:
+        return {"items": [{}]}
+
+    app = create_versioned_app(item_alias_version_change(), router=router)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+    assert client_2000.get("/items").json() == {"items": [{"name": "a"}]}
+    assert not DeferredKind.__pydantic_complete__
+
+
+def test__generate_versioned_models__untouched_generic_arg_with_unresolvable_forward_ref__should_stay_unresolved():
+    class ItemWithUnresolvableRef(BaseModel):
+        name: str = "a"
+        # Cadwyn's own local variables must not be used to resolve forward refs
+        unresolvable: "Optional[model]" = None  # noqa: F821  # ty: ignore[unresolved-reference]
+
+    versions = VersionBundle(Version("2001-01-01", item_alias_version_change()), Version("2000-01-01"))
+
+    generate_versioned_models(versions)["2000-01-01"][Page[ItemWithUnresolvableRef]]
+
+    assert not ItemWithUnresolvableRef.__pydantic_complete__

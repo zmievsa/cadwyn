@@ -280,26 +280,39 @@ def _rebuild_model(model: type[BaseModel]) -> None:
     # In case we have a forwardref within one of the fields
     # For example, when "from __future__ import annotations" is used in the file with the schema
     if model is not BaseModel:
-        model.model_rebuild(raise_errors=False)
+        # An empty namespace makes sure that our local variables cannot be used to resolve the forward refs
+        model.model_rebuild(raise_errors=False, _types_namespace={})
+
+
+def _get_annotations_without_evaluating(obj: Any) -> dict[str, Any]:
+    """Return the annotations of a class or a function, keeping the ones that cannot be evaluated as forward refs"""
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        from annotationlib import Format, get_annotations
+
+        # Annotations are evaluated lazily since Python 3.14 so the names that are only imported for type checking
+        # would raise a NameError
+        return get_annotations(obj, format=Format.FORWARDREF)
+    return obj.__annotations__
 
 
 def _get_model_annotations(model: type[BaseModel]) -> dict[str, Any]:
-    def _rebuild_annotated(name: str):
+    def _rebuild_annotated(name: str, value: Any):
         if field_info := model.model_fields.get(name):
             if not field_info.metadata:
                 return field_info.annotation
 
             return _AnnotatedAlias(field_info.annotation, tuple(field_info.metadata))
-        return model.__annotations__[name]  # pragma: no cover
+        return value  # pragma: no cover
 
+    # Pydantic has already resolved the annotations of the fields so we prefer them over unresolved annotations
     return {
-        name: value if not isinstance(value, str) else _rebuild_annotated(name)
-        for name, value in model.__annotations__.items()
+        name: value if not isinstance(value, str | ForwardRef) else _rebuild_annotated(name, value)
+        for name, value in _get_annotations_without_evaluating(model).items()
     }
 
 
 def _get_model_field_names(model: type[BaseModel]) -> list[str]:
-    return [field_name for field_name in model.__annotations__ if field_name in model.model_fields]
+    return [name for name in _get_annotations_without_evaluating(model) if name in model.model_fields]
 
 
 def _get_head_model_references(model: type[BaseModel]) -> "_ModelReferences":
@@ -307,13 +320,18 @@ def _get_head_model_references(model: type[BaseModel]) -> "_ModelReferences":
 
     Unlike _wrap_pydantic_model, it does not copy anything from the model because the model may never be copied.
     """
-    _rebuild_model(model)
+    annotations = _get_model_annotations(model)
+    if not model.__pydantic_fields_complete__:
+        # Pydantic could not resolve some of its annotations yet. We resolve them the way _rebuild_model would but
+        # without rebuilding the model because that could build its schema and call its hooks before pydantic does.
+        # The names that cannot be resolved do not refer to any model.
+        annotations = {name: _eval_forward_refs(annotation, model) for name, annotation in annotations.items()}
     collector = _ReferencedModelCollector()
     _change_version_of_model_references(
         collector,
         model,
         {name: _extract_passed_field_attributes(model.model_fields[name]) for name in _get_model_field_names(model)},
-        _get_model_annotations(model),
+        annotations,
     )
     return collector.get_references()
 
@@ -529,11 +547,27 @@ def _get_raw_callable_annotations(call: Any) -> dict[str, Any]:
         call = call.__call__
     if not is_regular_function(call):
         return {}
-    if sys.version_info >= (3, 14):  # pragma: no cover
-        from annotationlib import Format, get_annotations
+    return _get_annotations_without_evaluating(call)
 
-        return get_annotations(call, format=Format.FORWARDREF)
-    return call.__annotations__
+
+def _get_signature_parameters(call: Any) -> types.MappingProxyType[str, inspect.Parameter]:
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        from annotationlib import Format
+
+        # The annotations of the signature are evaluated lazily since Python 3.14 so the names that are only
+        # imported for type checking would raise a NameError. We only need the names and the defaults anyway.
+        return inspect.signature(call, annotation_format=Format.FORWARDREF).parameters
+    return inspect.signature(call).parameters
+
+
+def _get_type_alias_value(alias: Any) -> Any:
+    # The values of typing.TypeAliasType (but not of typing_extensions.TypeAliasType) are evaluated lazily so they
+    # can contain names that are only imported for type checking
+    if sys.version_info >= (3, 14) and hasattr(alias, "evaluate_value"):  # pragma: no cover
+        from annotationlib import Format, call_evaluate_function
+
+        return call_evaluate_function(alias.evaluate_value, Format.FORWARDREF)
+    return alias.__value__
 
 
 def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, types.MethodType]]:
@@ -674,7 +708,7 @@ class _AnnotationTransformer:
                 annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
             ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES:
                 return annotation
-            value = self.change_version_of_annotation(annotation.__value__)
+            value = self.change_version_of_annotation(_get_type_alias_value(annotation))
             type_params = self.change_version_of_annotation(annotation.__type_params__)
             if self.record_only:
                 return annotation
@@ -708,7 +742,7 @@ class _AnnotationTransformer:
             return annotation
 
         try:
-            parameters = inspect.signature(annotation).parameters
+            parameters = _get_signature_parameters(annotation)
         except (ValueError, TypeError):
             # Callables without an inspectable signature such as `functools.partial(dict, count=1)`
             # have no annotations or defaults to version
@@ -774,7 +808,7 @@ class _AnnotationTransformer:
         annotation_modifying_wrapper_factory: Callable[[_Call], _CallableWrapper],
     ) -> _Call:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
-        old_params = inspect.signature(call).parameters
+        old_params = _get_signature_parameters(call)
         callable_annotations, defaults = cls._get_callable_annotations_and_defaults(
             call, _get_raw_callable_annotations(call), old_params
         )
@@ -1488,19 +1522,20 @@ def _is_same_parametrization(model: type[Union[BaseModel, Enum]], generic: type[
 
 
 def _eval_generic_args(model: type[BaseModel]) -> tuple[Any, ...]:
-    return tuple(_eval_generic_arg(arg, model) for arg in model.__pydantic_generic_metadata__["args"])
-
-
-def _eval_generic_arg(arg: Any, model: type[BaseModel]) -> Any:
     # Generic arguments such as "Item" in Page["Item"] stay strings in pydantic's generic metadata
-    if not _contains_forward_refs(arg):
-        return arg
-    new_arg, _ = pydantic_try_eval_type(
-        arg,
+    return tuple(_eval_forward_refs(arg, model) for arg in model.__pydantic_generic_metadata__["args"])
+
+
+def _eval_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
+    """Resolve the forward refs in the annotation of a model the way pydantic does, keeping the unresolvable ones"""
+    if not _contains_forward_refs(annotation):
+        return annotation
+    new_annotation, _ = pydantic_try_eval_type(
+        annotation,
         getattr(sys.modules.get(model.__module__), "__dict__", None),
-        unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__),
+        {model.__name__: model} | (unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {}),
     )
-    return new_arg
+    return new_annotation
 
 
 def _contains_forward_refs(annotation: Any) -> bool:
