@@ -22,8 +22,9 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Fixed `Annotated` dependencies whose type is not versioned, such as `Annotated[list[int], Depends(get_values)]`, using the dependency of the head or another API version. This made versioned request constraints, such as a `min_length` or a removed enum member, get ignored in both validation and OpenAPI.
 - Fixed `schema(...).field(...).had(...)` being silently ignored in older API versions when it changed a constraint the field already had, such as `min_length`, `max_length`, `ge`, `le`, or `pattern`, declared through `Annotated[..., Field(...)]`, or through `Field(...)` under `from __future__ import annotations`.
 - Fixed `schema(...).field(...).didnt_have(...)` having no effect in older API versions on attributes declared through `Annotated[..., Field(...)]`, such as `min_length` or `description`.
-- Fixed `schema(...).field(...).didnt_have("title")` failing with `TypeError` when the field's type is `Annotated`, for example because it has an `AfterValidator`.
+- Fixed `schema(...).field(...).didnt_have("title")` failing with `TypeError` when the field's type is `Annotated`, for example because it has an `AfterValidator` or a documentation string.
 - Fixed `schema(...).field(...).didnt_have("min_length")` failing with `TypeError` when the field's type has `annotated_types.Len`.
+- Fixed `schema(...).field(...).had(strict=...)` and `.had(allow_inf_nan=...)` being silently ignored in older API versions, and `.didnt_have(...)` failing with `TypeError`, when the field's type uses the `Strict` or `AllowInfNan` class itself, such as `Annotated[int, Strict]`.
 
 ## [7.4.1]
 

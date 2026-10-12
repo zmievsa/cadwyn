@@ -37,7 +37,7 @@ from fastapi.security.http import HTTPBasic
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from inline_snapshot import snapshot
-from pydantic import AfterValidator, BaseModel, Field, JsonValue, StringConstraints, conint
+from pydantic import AfterValidator, AllowInfNan, BaseModel, Field, JsonValue, Strict, StringConstraints, conint
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
@@ -49,7 +49,12 @@ from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn._utils import _callable_name
 from cadwyn.applications import Cadwyn
 from cadwyn.dependencies import current_dependency_solver
-from cadwyn.exceptions import CadwynError, RouterGenerationError, RouterPathParamsModifiedError
+from cadwyn.exceptions import (
+    CadwynError,
+    InvalidGenerationInstructionError,
+    RouterGenerationError,
+    RouterPathParamsModifiedError,
+)
 from cadwyn.route_generation import copy_route, generate_versioned_routers
 from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
@@ -1747,6 +1752,109 @@ def test__router_generation__same_constraint_before_and_after_validator__should_
     for versioned_client in clients.values():
         assert versioned_client.post("/test", json={"value": "a"}).status_code == 422
         assert versioned_client.post("/test", json={"value": "abc"}).status_code == 200
+
+
+class SchemaWithConstraintClasses(BaseModel):
+    strict_field: Annotated[int, Strict]
+    allow_inf_nan_field: Annotated[float, AllowInfNan]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "instruction", "value", "head_status_code", "old_status_code"),
+    [
+        ("strict_field", lambda field: field.had(strict=False), "1", 422, 200),
+        ("strict_field", lambda field: field.didnt_have("strict"), "1", 422, 200),
+        ("allow_inf_nan_field", lambda field: field.had(allow_inf_nan=False), "inf", 200, 422),
+        ("allow_inf_nan_field", lambda field: field.didnt_have("allow_inf_nan"), "inf", 200, 200),
+    ],
+)
+def test__router_generation__field_had_and_didnt_have__constraint_class_used_as_metadata(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    field_name: str,
+    instruction: Callable[[Any], Any],
+    value: object,
+    head_status_code: int,
+    old_status_code: int,
+):
+    @router.post("/test")
+    async def route(payload: SchemaWithConstraintClasses):
+        return {"ok": True}
+
+    clients = create_versioned_clients(
+        version_change(instruction(schema(SchemaWithConstraintClasses).field(field_name)))
+    )
+    payload = {"strict_field": 1, "allow_inf_nan_field": 1.0, field_name: value}
+
+    assert clients["2001-01-01"].post("/test", json=payload).status_code == head_status_code
+    assert clients["2000-01-01"].post("/test", json=payload).status_code == old_status_code
+
+
+class SchemaWithDocStringInAnnotated(BaseModel):
+    foo: Annotated[str, "Some documentation", Field(title="Custom title")]
+
+
+def test__router_generation__field_didnt_have_title__with_string_in_annotated__should_remove_it(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/test")
+    async def route(payload: SchemaWithDocStringInAnnotated):
+        return payload.model_dump()
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithDocStringInAnnotated).field("foo").didnt_have("title")),
+    )
+
+    for version, title in [("2001-01-01", "Custom title"), ("2000-01-01", "Foo")]:
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["SchemaWithDocStringInAnnotated"]["properties"]["foo"]["title"] == title
+        assert clients[version].post("/test", json={"foo": "bar"}).json() == {"foo": "bar"}
+
+
+class SchemaWithJsonSchemaExtraInAnnotated(BaseModel):
+    foo: Annotated[str, Field(json_schema_extra={"a": 1, "b": 2})]
+
+
+def test__router_generation__field_had_json_schema_extra__with_field_info_in_annotated__should_merge_them(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/test")
+    async def route(payload: SchemaWithJsonSchemaExtraInAnnotated):
+        return payload.model_dump()
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithJsonSchemaExtraInAnnotated).field("foo").had(json_schema_extra={"a": 0})),
+    )
+
+    for version, expected_extra in [("2001-01-01", {"a": 1, "b": 2}), ("2000-01-01", {"a": 0, "b": 2})]:
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        field_schema = openapi["components"]["schemas"]["SchemaWithJsonSchemaExtraInAnnotated"]["properties"]["foo"]
+        assert {key: field_schema[key] for key in ("a", "b") if key in field_schema} == expected_extra
+        assert clients[version].post("/test", json={"foo": "bar"}).json() == {"foo": "bar"}
+
+
+class SchemaWithOnlyDocStringInAnnotated(BaseModel):
+    foo: Annotated[str, "Some documentation"]
+
+
+def test__router_generation__field_didnt_have_unset_title__with_string_in_annotated__should_raise_error(
+    create_versioned_clients: CreateVersionedClients,
+):
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match='You tried to delete the attribute "title" of field "foo" from "SchemaWithOnlyDocStringInAnnotated"',
+    ):
+        generate_versioned_models(
+            VersionBundle(
+                Version(
+                    "2001-01-01",
+                    version_change(schema(SchemaWithOnlyDocStringInAnnotated).field("foo").didnt_have("title")),
+                ),
+                Version("2000-01-01"),
+            )
+        )
 
 
 class SchemaWithConstrainedAnnotatedField(BaseModel):

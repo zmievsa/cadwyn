@@ -12,7 +12,17 @@ import pytest
 from annotated_types import Len, MinLen
 from fastapi import Body, Depends, Query, Request
 from fastapi.testclient import TestClient
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, WithJsonSchema, conint
+from pydantic import (
+    AfterValidator,
+    AllowInfNan,
+    BaseModel,
+    ConfigDict,
+    Field,
+    Strict,
+    StringConstraints,
+    WithJsonSchema,
+    conint,
+)
 from pydantic.fields import FieldInfo
 from typing_extensions import Self, override
 
@@ -26,6 +36,7 @@ from tests._data import postponed_annotations_dependencies as other_module
 from tests.conftest import version_change
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from decimal import Decimal
 
 
@@ -559,6 +570,64 @@ def test__router_generation__same_constraint_before_and_after_validator__should_
     for versioned_client in clients.values():
         assert versioned_client.post("/test", json={"value": "a"}).status_code == 422
         assert versioned_client.post("/test", json={"value": "abc"}).status_code == 200
+
+
+class SchemaWithConstraintClasses(BaseModel):
+    strict_field: Annotated[int, Strict]
+    allow_inf_nan_field: Annotated[float, AllowInfNan]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "instruction", "value", "head_status_code", "old_status_code"),
+    [
+        ("strict_field", lambda field: field.had(strict=False), "1", 422, 200),
+        ("strict_field", lambda field: field.didnt_have("strict"), "1", 422, 200),
+        ("allow_inf_nan_field", lambda field: field.had(allow_inf_nan=False), "inf", 200, 422),
+        ("allow_inf_nan_field", lambda field: field.didnt_have("allow_inf_nan"), "inf", 200, 200),
+    ],
+)
+def test__router_generation__field_had_and_didnt_have__constraint_class_used_as_metadata(
+    router: VersionedAPIRouter,
+    create_versioned_clients,
+    field_name: str,
+    instruction: Callable[[Any], Any],
+    value: object,
+    head_status_code: int,
+    old_status_code: int,
+):
+    @router.post("/test")
+    async def route(payload: SchemaWithConstraintClasses):
+        return {"ok": True}
+
+    clients = create_versioned_clients(
+        version_change(instruction(schema(SchemaWithConstraintClasses).field(field_name)))
+    )
+    payload = {"strict_field": 1, "allow_inf_nan_field": 1.0, field_name: value}
+
+    assert clients["2001-01-01"].post("/test", json=payload).status_code == head_status_code
+    assert clients["2000-01-01"].post("/test", json=payload).status_code == old_status_code
+
+
+class SchemaWithDocStringInAnnotated(BaseModel):
+    foo: Annotated[str, "Some documentation", Field(title="Custom title")]
+
+
+def test__router_generation__field_didnt_have_title__with_string_in_annotated__should_remove_it(
+    router: VersionedAPIRouter,
+    create_versioned_clients,
+):
+    @router.post("/test")
+    async def route(payload: SchemaWithDocStringInAnnotated):
+        return payload.model_dump()
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithDocStringInAnnotated).field("foo").didnt_have("title")),
+    )
+
+    for version, title in [("2001-01-01", "Custom title"), ("2000-01-01", "Foo")]:
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["SchemaWithDocStringInAnnotated"]["properties"]["foo"]["title"] == title
+        assert clients[version].post("/test", json={"foo": "bar"}).json() == {"foo": "bar"}
 
 
 @functools.lru_cache

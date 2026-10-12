@@ -1287,7 +1287,7 @@ def _change_field(
             field.update_attribute(name=attr_name, value=attr_value)
             model.annotations[field_name] = _change_annotated_metadata(
                 model.annotations[field_name],
-                functools.partial(_metadata_sets_attribute, attr_name=attr_name),
+                functools.partial(_metadata_sets_constraint, attr_name=attr_name),
                 functools.partial(_set_metadata_attribute, attr_name=attr_name, attr_value=attr_value),
             )
 
@@ -1311,35 +1311,56 @@ def _change_annotated_metadata(
     )
 
 
-def _metadata_sets_attribute(metadata: Any, attr_name: str) -> bool:
+def _metadata_sets_constraint(metadata: Any, attr_name: str) -> bool:
+    """Whether the metadata sets the constraint, e.g. annotated_types.MinLen, pydantic.Strict, or Field(min_length=1).
+
+    Only constraints need to be changed in FieldInfo: its other attributes, such as description, are overridden by
+    the Field() of the field, and json_schema_extra gets merged with it.
+    """
     if isinstance(metadata, FieldInfo):
-        return attr_name in _extract_passed_field_attributes(metadata)
-    return hasattr(metadata, attr_name) and attr_name in collect_known_metadata([metadata])[0]
+        return attr_name in collect_known_metadata(metadata.metadata)[0]
+    # pydantic also allows constraint classes such as `Annotated[int, Strict]`
+    return attr_name in collect_known_metadata([metadata])[0] and (
+        inspect.isclass(metadata) or hasattr(metadata, attr_name)
+    )
 
 
 def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
-    return hasattr(metadata, attr_name) or _metadata_sets_attribute(metadata, attr_name)
+    """Whether field().didnt_have() deletes the attribute from the metadata"""
+    if isinstance(metadata, FieldInfo):
+        return hasattr(metadata, attr_name) or attr_name in _extract_passed_field_attributes(metadata)
+    if inspect.isclass(metadata):
+        return _metadata_sets_constraint(metadata, attr_name)
+    # Only attributes that can be set on the object itself, so not str.title from `Annotated[str, "Some doc"]`
+    return hasattr(metadata, attr_name) and (
+        hasattr(metadata, "__dict__")
+        or any(attr_name in getattr(cls, "__slots__", ()) for cls in type(metadata).__mro__)
+    )
 
 
 def _set_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> Any:
     if isinstance(metadata, FieldInfo):
-        # Pydantic builds fields from FieldInfo's _attributes_set and metadata so we have to change them too
         field_info = _copy_field_info(metadata)
         field_info.metadata = [
             _set_metadata_attribute(sub_metadata, attr_name, attr_value)
-            if _metadata_sets_attribute(sub_metadata, attr_name)
+            if _metadata_sets_constraint(sub_metadata, attr_name)
             else sub_metadata
             for sub_metadata in field_info.metadata
         ]
-        if attr_name in field_info._attributes_set:
+        # pydantic<2.12 also keeps constraints in _attributes_set which it uses to build fields
+        if attr_name in field_info._attributes_set:  # pragma: no cover
             field_info._attributes_set[attr_name] = attr_value
-        if attr_name in FieldInfo.__slots__:
-            setattr(field_info, attr_name, attr_value)
         return field_info
-    # We don't use dataclasses.replace because it would call __init__ that subclasses can override
-    metadata = copy.copy(metadata)
-    object.__setattr__(metadata, attr_name, attr_value)
-    return metadata
+    if inspect.isclass(metadata):
+        # We never change the class itself and use its instance with the same constraints instead
+        constraint = metadata.__new__(metadata)
+        for name, value in collect_known_metadata([metadata])[0].items():
+            object.__setattr__(constraint, name, value)
+    else:
+        # We don't use dataclasses.replace because it would call __init__ that subclasses can override
+        constraint = copy.copy(metadata)
+    object.__setattr__(constraint, attr_name, attr_value)
+    return constraint
 
 
 def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
@@ -1348,7 +1369,7 @@ def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
         field_info = _copy_field_info(metadata)
         field_info.metadata = [
             _delete_metadata_attribute(sub_metadata, attr_name)
-            if _metadata_sets_attribute(sub_metadata, attr_name)
+            if _metadata_sets_constraint(sub_metadata, attr_name)
             else sub_metadata
             for sub_metadata in field_info.metadata
         ]
