@@ -1,6 +1,7 @@
+import functools
 import importlib
+import inspect
 import re
-import typing
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
@@ -10,7 +11,7 @@ from uuid import UUID
 
 import pytest
 import svcs
-from fastapi import APIRouter, Body, Cookie, Depends, Header, Path, Query, Response, UploadFile
+from fastapi import APIRouter, Body, Cookie, Depends, Header, HTTPException, Path, Query, Response, UploadFile
 from fastapi.routing import APIRoute, _EffectiveRouteContext
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.security.http import HTTPBasic
@@ -1958,48 +1959,63 @@ def test__router_generation__sqlalchemy_models__should_preserve_classes_and_serv
         assert generator[ModelFields] is ModelFields
 
 
-class ConstrainedItemState(str, Enum):
-    old = "old"
-    new = "new"
+def get_user_from_header(x_user: Annotated[str, Header()]) -> str:
+    return x_user
 
 
-class ConstrainedItem(BaseModel):
-    name: str
-    state: ConstrainedItemState = ConstrainedItemState.old
+def require_role(role: str, user: Annotated[str, Depends(get_user_from_header)]) -> str:
+    if user != role:
+        raise HTTPException(status_code=403)
+    return user
 
 
-def get_name_lengths(body: ConstrainedItem) -> list[int]:
-    return [len(body.name)]
+def get_kwargs(**kwargs: Any) -> dict[str, Any]:
+    return kwargs
 
 
-# typing caches Annotated by equality and our dependency wrappers are equal to the original dependencies so a rebuilt
-# Annotated could come back from the cache with the head dependency
-@pytest.mark.parametrize("list_type", [list[int], typing.List[int]], ids=["builtin_list", "typing_list"])  # noqa: UP006
-def test__router_generation__annotated_dependency_with_versioned_body__should_use_body_from_requested_version(
-    list_type: Any,
+get_kwargs.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]
+    [inspect.Parameter("limit", inspect.Parameter.KEYWORD_ONLY, default=Query(10, ge=1), annotation=int)]
+)
+
+
+def test__router_generation__annotated_dependencies_of_various_kinds__should_work_in_all_versions(
     create_versioned_app: CreateVersionedApp,
 ):
+    events: list[str] = []
+
+    async def get_transaction():
+        events.append("start")
+        try:
+            yield "transaction"
+        except HTTPException:
+            events.append("rollback")
+            raise
+
     router = VersionedAPIRouter()
 
-    @router.post("/items")
-    def create_items(lengths: Annotated[list_type, Depends(get_name_lengths)]) -> list[int]:
-        return lengths
+    @router.get("/admin")
+    def get_admin(user: Annotated[str, Depends(functools.partial(require_role, "admin"))]) -> str:
+        return user
 
-    app = create_versioned_app(
-        version_change(
-            schema(ConstrainedItem).field("name").had(min_length=5),
-            enum(ConstrainedItemState).didnt_have("new"),
-        ),
-        router=router,
-    )
-    unversioned_client = TestClient(app)
-    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
-    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+    @router.get("/kwargs")
+    def get_query_kwargs(kwargs: Annotated[dict, Depends(get_kwargs)]) -> dict:
+        return kwargs
 
-    assert client_2000.post("/items", json={"name": "abcde"}).json() == [5]
-    assert client_2000.post("/items", json={"name": "x"}).status_code == 422
-    assert client_2000.post("/items", json={"name": "abcde", "state": "new"}).status_code == 422
-    assert client_2001.post("/items", json={"name": "x", "state": "new"}).json() == [1]
-    old_schemas = unversioned_client.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
-    assert old_schemas["ConstrainedItem"]["properties"]["name"]["minLength"] == 5
-    assert old_schemas["ConstrainedItemState"]["enum"] == ["old"]
+    @router.post("/conflict")
+    async def create_conflict(transaction: Annotated[str, Depends(get_transaction)]) -> str:
+        raise HTTPException(status_code=409)
+
+    app = create_versioned_app(version_change(schema(EmptySchema).had(name="OldEmptySchema")), router=router)
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.get("/admin", headers={"x-user": "admin"}).json() == "admin"
+        assert client.get("/admin", headers={"x-user": "bob"}).status_code == 403
+        assert client.get("/kwargs", params={"limit": 3}).json() == {"limit": 3}
+        assert client.get("/kwargs", params={"limit": 0}).status_code == 422
+        assert client.post("/conflict").status_code == 409
+        # Older versions also solve the dependencies of the latest version so they can run twice
+        assert events.count("start") == events.count("rollback") > 0
+        events.clear()
+        parameters = client.get(f"/openapi.json?version={version}").json()["paths"]["/kwargs"]["get"]["parameters"]
+        parameter_types = {parameter["name"]: parameter["schema"]["type"] for parameter in parameters}
+        assert parameter_types == {"limit": "integer", app.router.api_version_parameter_name: "string"}

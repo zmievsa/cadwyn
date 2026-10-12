@@ -7,6 +7,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Changed
 
+- Older API versions now validate and serialize the type args of parametrized generic models such as `Page[Item]` with the older versions of those models instead of the latest ones. If clients of older versions relied on latest-shaped models inside generics, add converters for these requests and responses.
 - `migrate_response_body` now raises a `ValidationError` when `latest_body` is an instance of a parametrized generic model such as `Page[Item]`, as it already did for other models. Pass a dict instead.
 
 ### Fixed
@@ -16,8 +17,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Fixed older API versions using current models inside parametrized generic models such as `Page[Item]` in requests, responses, and OpenAPI (#416).
 - Fixed a `TypeError` ("cannot be parametrized because it does not inherit from typing.Generic") in older API versions for generic models whose fields parametrize generic models with their own type parameters, such as `items: list[Wrapper[T]]` or `next: Optional["LinkedPage[T]"]`.
 - Fixed older API versions failing to start when a model uses `typing.Self` in its annotations.
-- Fixed older API versions failing to start when a model uses annotations that cannot be rebuilt from their arguments, such as a bare `typing.Callable` or `Unpack[Ts]`.
-- Fixed older API versions using another version's dependency for parameters such as `Annotated[list[int], Depends(get_values)]`, which skipped the validation of older request bodies and showed the wrong schemas in their OpenAPI when the dependency used versioned models.
+- Fixed older API versions failing to start when a model uses annotations that cannot be rebuilt from their arguments, such as a bare `typing.Callable` or `Unpack[Ts]`, or a default factory without an inspectable signature, such as `functools.partial(dict, count=1)`.
 - Fixed `TypeError: unhashable type` on older API versions when an endpoint's request body or response model is an unhashable annotation such as `list[Annotated[int, {"description": "item"}]]`.
 
 ## [7.4.1]

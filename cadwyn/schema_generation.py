@@ -480,6 +480,20 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         return cast("type[_T_PYDANTIC_MODEL]", model_copy)
 
 
+def _get_raw_callable_annotations(call: Any) -> dict[str, Any]:
+    """Return the annotations that _CallableWrapper copies from the callable without creating the wrapper"""
+    call = _AnnotationTransformer._unwrap_callable(call)
+    if not is_regular_function(call):
+        call = call.__call__
+    if not is_regular_function(call):
+        return {}
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        from annotationlib import Format, get_annotations
+
+        return get_annotations(call, format=Format.FORWARDREF)
+    return call.__annotations__
+
+
 def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, types.MethodType]]:
     return isinstance(call, types.FunctionType | types.MethodType)
 
@@ -638,40 +652,51 @@ class _AnnotationTransformer:
         elif isinstance(annotation, type):
             return self._change_version_of_type(annotation)
         elif callable(annotation):
-            # Special forms such as typing.Self are callable but they are not functions
-            if (
-                type(annotation).__module__ in {"typing", "typing_extensions"}
-                or type(annotation).__module__.startswith(("fastapi.", "pydantic.", "pydantic_core.", "starlette."))
-                or isinstance(annotation, fastapi.security.base.SecurityBase)
-            ):
-                return annotation
-
-            def modifier(annotation: Any):
-                return self.change_version_of_annotation(annotation)
-
-            modified_callable = self._modify_callable_annotations(
-                annotation,
-                modifier,
-                modifier,
-                annotation_modifying_wrapper_factory=self._copy_function_through_class_based_wrapper,
-            )
-            return annotation if self.record_only else modified_callable
+            return self._change_version_of_callable(annotation)
         else:
             return annotation
+
+    def _change_version_of_callable(self, annotation: Callable[..., Any]) -> Any:
+        # Special forms such as typing.Self are callable but they are not functions
+        if (
+            type(annotation).__module__ in {"typing", "typing_extensions"}
+            or type(annotation).__module__.startswith(("fastapi.", "pydantic.", "pydantic_core.", "starlette."))
+            or isinstance(annotation, fastapi.security.base.SecurityBase)
+        ):
+            return annotation
+
+        try:
+            parameters = inspect.signature(annotation).parameters
+        except (ValueError, TypeError):
+            # Callables without an inspectable signature such as `functools.partial(dict, count=1)`
+            # have no annotations or defaults to version
+            return annotation
+
+        def modifier(annotation: Any):
+            return self.change_version_of_annotation(annotation)
+
+        if self.record_only:
+            callable_annotations, defaults = self._get_callable_annotations_and_defaults(
+                annotation, _get_raw_callable_annotations(annotation), parameters
+            )
+            modifier(callable_annotations)
+            modifier(defaults)
+            return annotation
+        return self._modify_callable_annotations(
+            annotation,
+            modifier,
+            modifier,
+            annotation_modifying_wrapper_factory=self._copy_function_through_class_based_wrapper,
+        )
 
     def _change_version_of_generic_alias(self, annotation: Any) -> Any:
         origin = get_origin(annotation)
         args = get_args(annotation)
         new_args = tuple(self.change_version_of_annotation(arg) for arg in args)
-        # Some annotations cannot be rebuilt from their origin and args (e.g. bare `Callable` or `Unpack[Ts]`)
-        # so we only rebuild the ones whose args have changed
-        if self.record_only or all(new_arg is arg for new_arg, arg in zip(new_args, args, strict=True)):
+        # Aliases without args (e.g. a bare `typing.Callable`) have nothing to version and some cannot be rebuilt
+        if self.record_only or not args:
             return annotation
-        if origin is Annotated:
-            # typing caches Annotated[...] by "==" and our wrappers of dependencies are equal to the original
-            # dependencies so Annotated[...] could return a cached annotation with another version's dependencies
-            return _AnnotatedAlias(new_args[0], new_args[1:])
-        # Annotations such as ClassVar do not support tuple arguments
+        # Annotations such as ClassVar or Unpack do not support tuple arguments
         return origin[new_args[0] if len(new_args) == 1 else new_args]
 
     def _change_version_of_type(self, annotation: type) -> type:
@@ -708,6 +733,25 @@ class _AnnotationTransformer:
             callable_annotations = get_annotations(annotation_modifying_wrapper)
         else:
             callable_annotations = annotation_modifying_wrapper.__annotations__
+        callable_annotations, defaults = cls._get_callable_annotations_and_defaults(
+            call, callable_annotations, old_params
+        )
+        annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
+        annotation_modifying_wrapper.__defaults__ = modify_defaults(defaults)
+        annotation_modifying_wrapper.__signature__ = cls._generate_signature(
+            annotation_modifying_wrapper,
+            old_params,
+        )
+
+        return cast("_Call", annotation_modifying_wrapper)
+
+    @classmethod
+    def _get_callable_annotations_and_defaults(
+        cls,
+        call: Any,
+        callable_annotations: dict[str, Any],
+        parameters: types.MappingProxyType[str, inspect.Parameter],
+    ) -> tuple[dict[str, Any], tuple[Any, ...]]:
         original_call = cls._unwrap_callable(call)
         # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
         if is_regular_function(original_call):
@@ -718,16 +762,8 @@ class _AnnotationTransformer:
         callable_annotations = {
             k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
         }
-        annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
-        annotation_modifying_wrapper.__defaults__ = modify_defaults(
-            tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
-        )
-        annotation_modifying_wrapper.__signature__ = cls._generate_signature(
-            annotation_modifying_wrapper,
-            old_params,
-        )
-
-        return cast("_Call", annotation_modifying_wrapper)
+        defaults = tuple(p.default for p in parameters.values() if p.default is not inspect.Signature.empty)
+        return callable_annotations, defaults
 
     @staticmethod
     def _generate_signature(
@@ -938,7 +974,7 @@ class SchemaGenerator:
         visited_models = set()
         while models_to_visit:
             referenced_model = models_to_visit.pop()
-            if referenced_model is model:
+            if _is_same_parametrization(referenced_model, model):
                 return True
             if referenced_model not in visited_models:
                 visited_models.add(referenced_model)
@@ -1327,6 +1363,21 @@ class _EnumWrapper(Generic[_T_ENUM]):
             and k not in _DummyEnum.__dict__
             and (k not in mro_dict or mro_dict[k] is not v)
         }
+
+
+def _is_same_parametrization(model: type[Union[BaseModel, Enum]], generic: type[BaseModel]) -> bool:
+    """Whether the model is the generic or a parametrization of the same origin with the same args.
+
+    E.g. Page[Category] and Page["Category"] are different classes but they mean the same thing
+    """
+    if model is generic:
+        return True
+    origin = generic.__pydantic_generic_metadata__["origin"]
+    return (
+        lenient_issubclass(model, BaseModel)
+        and model.__pydantic_generic_metadata__["origin"] is origin
+        and _eval_generic_args(model) == _eval_generic_args(generic)
+    )
 
 
 def _eval_generic_args(model: type[BaseModel]) -> tuple[Any, ...]:

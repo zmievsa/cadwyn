@@ -247,6 +247,11 @@ class DependencyB(BaseModel):
     a: Optional[Page[DependencyA]] = None
 
 
+class PartialDictNode(BaseModel):
+    children: Optional[Page["PartialDictNode"]] = None
+    metadata: dict[str, int] = Field(default_factory=functools.partial(dict, count=1))
+
+
 class Author(BaseModel):
     name: str = Field(alias="fullName")
     books: Optional[Page["Book"]] = None
@@ -626,8 +631,19 @@ def test__router_generation__model_using_self__should_generate_versions(create_v
         Page[VariadicNode],
         Page["RichNode"],
         Page[RichNode],
+        Page["PartialDictNode"],
+        Page[PartialDictNode],
     ],
-    ids=["cyclic_callable", "callable", "cyclic_unpack", "unpack", "cyclic_various", "various"],
+    ids=[
+        "cyclic_callable",
+        "callable",
+        "cyclic_unpack",
+        "unpack",
+        "cyclic_various",
+        "various",
+        "cyclic_partial_of_builtin",
+        "partial_of_builtin",
+    ],
 )
 def test__router_generation__generic_arg_with_annotations_that_cannot_be_rebuilt__should_generate_versions(
     page_model: type[BaseModel],
@@ -690,3 +706,38 @@ def test__router_generation__cycle_through_default_factory__should_not_depend_on
     # Both Page[A] and Page[B] are in the cycle so they keep their head args
     assert old_a == {"oldName": "a", "count": 0}
     assert old_b == {"oldName": "b", "a": {"items": [{"fullName": "a", "count": 0}]}}
+
+
+def test__router_generation__unquoted_parametrization_of_cyclic_generic__should_fall_back_like_quoted_one(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/categories", response_model=Page[Category])
+    async def get_categories() -> dict[str, Any]:
+        return {"items": [{"fullName": "a", "subcategories": {"items": [{"fullName": "b"}]}}]}
+
+    @router.post("/categories", response_model=Page[Category])
+    async def create_categories(categories: Page[Category]) -> Page[Category]:
+        return categories
+
+    app = create_versioned_app(version_change(schema(Category).field("name").had(min_length=3)), router=router)
+    unversioned_client = TestClient(app)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+    assert client_2000.get("/categories").status_code == HTTP_200_OK
+    # Page[Category] keeps its head args like Page["Category"] within Category so the outer and the nested
+    # categories are validated the same way
+    body = {"items": [{"fullName": "abc", "subcategories": {"items": [{"fullName": "b"}]}}]}
+    assert client_2000.post("/categories", json=body).status_code == HTTP_200_OK
+    body = {"items": [{"fullName": "a", "subcategories": {"items": [{"fullName": "bcd"}]}}]}
+    assert client_2000.post("/categories", json=body).status_code == HTTP_200_OK
+    # Same schema names as without versioned type args
+    assert sorted(unversioned_client.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]) == [
+        "Category-Input",
+        "Category-Output",
+        "HTTPValidationError",
+        "Page_Category_-Input",
+        "Page_Category_-Output",
+        "ValidationError",
+    ]
