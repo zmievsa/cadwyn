@@ -1,11 +1,16 @@
 import re
 import sys
+from datetime import datetime
 from enum import Enum
+from typing import Annotated, Any
 
 import pytest
+from pydantic import AfterValidator, BaseModel, Field
 
+from cadwyn import VersionChange, schema
 from cadwyn._render import render_model, render_model_by_path, render_module_by_path
 from cadwyn.exceptions import ImportFromStringError
+from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure.versions import Version, VersionBundle
 from tests.test_cli import code
 
@@ -116,3 +121,141 @@ def test__render_model__with_wrong_format():
         ),
     ):
         render_model_by_path("tests._resources.render.complex.classes", "", "")
+
+
+class RenderedParent(BaseModel):
+    foo: str = Field(max_length=10)
+    bar: int = 0
+
+
+class RenderedLeftChild(RenderedParent):
+    pass
+
+
+class RenderedRightChild(RenderedParent):
+    pass
+
+
+class RenderedDiamond(RenderedLeftChild, RenderedRightChild):
+    pass
+
+
+class TightenRightChild(VersionChange):
+    description = "Tighten the right child"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedParent).field("bar").had(description="Bar"),
+        schema(RenderedRightChild).field("foo").had(max_length=3),
+    )
+
+
+def test__render_model__diamond_whose_other_parent_changed_inherited_field__should_inherit_it_from_first_base():
+    versions = VersionBundle(Version("2001-01-01", TightenRightChild), Version("2000-01-01"))
+
+    assert code(render_model(RenderedDiamond, versions, "2000-01-01")) == code(
+        """
+class RenderedDiamond(RenderedLeftChild, RenderedRightChild):
+    pass
+"""
+    )
+    # The rendered models behave like the ones that Cadwyn generates
+    rendered_namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field}
+    generated_models = generate_versioned_models(versions)["2000-01-01"]
+    for model in (RenderedParent, RenderedLeftChild, RenderedRightChild, RenderedDiamond):
+        exec(render_model(model, versions, "2000-01-01"), rendered_namespace)
+        rendered_schema = rendered_namespace[model.__name__].model_json_schema()
+        assert rendered_schema["properties"]["foo"] == generated_models[model].model_json_schema()["properties"]["foo"]
+
+
+class ChangeTypeOfLeftChildAndDescriptionOfRightChild(VersionChange):
+    description = "Change the type of the left child and the description of the right child"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedParent).field("bar").had(description="Bar"),
+        schema(RenderedLeftChild).field("foo").had(type=bytes),
+        schema(RenderedRightChild).field("foo").had(description="Right"),
+    )
+
+
+def test__render_model__sibling_changed_type_of_inherited_field__should_render_the_type_of_the_model():
+    versions = VersionBundle(
+        Version("2001-01-01", ChangeTypeOfLeftChildAndDescriptionOfRightChild), Version("2000-01-01")
+    )
+
+    assert code(render_model(RenderedRightChild, versions, "2000-01-01")) == code(
+        """
+class RenderedRightChild(RenderedParent):
+    foo: str = Field(max_length=10, description='Right')
+"""
+    )
+
+
+def normalize(value: str) -> str:
+    return value.strip()
+
+
+class RenderedValidatedParent(BaseModel):
+    foo: Annotated[str, AfterValidator(normalize)]
+    bar: int = 0
+
+
+class RenderedValidatedLeftChild(RenderedValidatedParent):
+    pass
+
+
+class RenderedValidatedRightChild(RenderedValidatedParent):
+    pass
+
+
+class RenderedValidatedDiamond(RenderedValidatedLeftChild, RenderedValidatedRightChild):
+    pass
+
+
+class DescribeValidatedRightChild(VersionChange):
+    description = "Describe the field of the right child"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedValidatedParent).field("bar").had(description="Bar"),
+        schema(RenderedValidatedRightChild).field("foo").had(description="Right"),
+    )
+
+
+def test__render_model__diamond_with_functional_validator_in_inherited_field__should_render_valid_python():
+    versions = VersionBundle(Version("2001-01-01", DescribeValidatedRightChild), Version("2000-01-01"))
+
+    rendered = render_model(RenderedValidatedDiamond, versions, "2000-01-01")
+
+    compile(rendered, "<rendered>", "exec")
+    generated_diamond = generate_versioned_models(versions)["2000-01-01"][RenderedValidatedDiamond]
+    assert generated_diamond.model_validate({"foo": " value "}).foo == "value"
+    assert generated_diamond.model_fields["foo"].description is None
+
+
+class RenderedParentWithFactory(BaseModel):
+    created_at: datetime = Field(default_factory=datetime.now)
+    bar: int = 0
+
+
+class RenderedLeftChildWithFactory(RenderedParentWithFactory):
+    pass
+
+
+class RenderedRightChildWithFactory(RenderedParentWithFactory):
+    pass
+
+
+class RenderedDiamondWithFactory(RenderedLeftChildWithFactory, RenderedRightChildWithFactory):
+    pass
+
+
+class DescribeRightChildWithFactory(VersionChange):
+    description = "Describe the field of the right child"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedParentWithFactory).field("bar").had(description="Bar"),
+        schema(RenderedRightChildWithFactory).field("created_at").had(description="Right"),
+    )
+
+
+def test__render_model__diamond_whose_other_parent_changed_field_with_default_factory__should_render_valid_python():
+    versions = VersionBundle(Version("2001-01-01", DescribeRightChildWithFactory), Version("2000-01-01"))
+
+    rendered = render_model(RenderedDiamondWithFactory, versions, "2000-01-01")
+
+    compile(rendered, "<rendered>", "exec")
