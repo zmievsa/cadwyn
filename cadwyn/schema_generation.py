@@ -472,19 +472,35 @@ def _unwrap_partial(call: Any) -> Any:
 
 
 def _get_function_behind_callable(call: Any) -> Any:
-    """Return the function that actually runs when the callable is called.
+    """Return the function that runs when the callable is called. It decides how FastAPI must call the callable.
 
-    Just like FastAPI, we unwrap partials and decorators (through __wrapped__). Class instances get unwrapped into their
-    __call__ while classes are returned as is because calling them constructs an instance.
+    Partials only pre-fill arguments so we unwrap them. We do not follow decorators (__wrapped__) because the outer
+    decorator is what runs. Classes are returned as is because calling them constructs an instance.
     """
-    call = inspect.unwrap(_unwrap_partial(call))
+    call = _unwrap_partial(call)
     if is_regular_function(call) or inspect.isclass(call):
         return call
-    return inspect.unwrap(call.__call__)
+    return call.__call__
+
+
+def _unwrap_partials_and_decorators(call: Any) -> Any:
+    while True:
+        unwrapped_call = inspect.unwrap(_unwrap_partial(call))
+        if unwrapped_call is call:
+            return call
+        call = unwrapped_call
 
 
 def _get_callable_globals(call: Any) -> dict[str, Any]:
-    function = _get_function_behind_callable(call)
+    """Return the globals that the annotations of the callable have to be evaluated in.
+
+    Unlike the function that runs, the annotations belong to the innermost function (decorators keep it in __wrapped__)
+    """
+    function = _unwrap_partials_and_decorators(call)
+    if inspect.isclass(function):
+        function = _unwrap_partials_and_decorators(function.__init__)
+    elif not is_regular_function(function):
+        function = _unwrap_partials_and_decorators(function.__call__)
     return _function_globals(function) if is_regular_function(function) else {}
 
 
@@ -492,6 +508,7 @@ class _CallableWrapper:
     __annotations__: dict[str, Any]
     __defaults__: Union[tuple[Any, ...], None]
     __signature__: inspect.Signature
+    __wrapped__: Callable[..., Any]
 
     # __eq__ and __hash__ are needed to make sure that dependency overrides work correctly.
     # They are based on putting dependencies (functions) as keys for the dictionary so if we want to be able to
@@ -500,9 +517,13 @@ class _CallableWrapper:
     def __init__(self, original_callable: Callable[..., Any]) -> None:
         super().__init__()
         self._original_callable = original_callable
-        function = _get_function_behind_callable(original_callable)
-        # Copying the namespace of a class into our instance would make it look like that class to FastAPI
-        functools.update_wrapper(self, function, updated=() if inspect.isclass(function) else functools.WRAPPER_UPDATES)
+        # FastAPI follows __wrapped__ to find out how to call a dependency so it must lead to the same place
+        # as it would for the original. We only copy the attributes of functions because copying the ones of
+        # classes and their instances would make us look like them to FastAPI
+        wrapped = _unwrap_partial(original_callable)
+        functools.update_wrapper(
+            self, wrapped, updated=functools.WRAPPER_UPDATES if is_regular_function(wrapped) else ()
+        )
 
     @property
     def __globals__(self) -> dict[str, Any]:  # pragma: no cover
@@ -512,10 +533,15 @@ class _CallableWrapper:
         return _get_callable_globals(self._original_callable)
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "_CallableWrapper":
-        # Wrappers are never mutated after creation. Copying them would also copy the original dependency
-        # (e.g. a class instance or a partial) so it would stop matching the keys of app.dependency_overrides
-        # and changes to its state would not be visible in the copy
-        return self
+        # The original dependency (e.g. a class instance or a partial) must not get copied. Otherwise, it would
+        # stop matching the keys of app.dependency_overrides and changes to its state would not be visible in the copy.
+        # Our own signature must get copied though because FastAPI mutates the FieldInfo objects in its defaults.
+        for original in (self._original_callable, self.__wrapped__):
+            memo[id(original)] = original
+        wrapper_copy = copy.copy(self)
+        memo[id(self)] = wrapper_copy
+        wrapper_copy.__dict__.update(copy.deepcopy(self.__dict__, memo))
+        return wrapper_copy
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self._original_callable(*args, **kwargs)

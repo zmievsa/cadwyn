@@ -1940,6 +1940,130 @@ def test__router_generation__async_generator_dependency__should_forward_everythi
         assert asyncio.run(run(versioned_dependency, action)) == expected_result, name
 
 
+def test__router_generation__query_model_defaults__should_stay_isolated_between_versions_and_apps(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    class Filters(BaseModel):
+        limit: int = 10
+
+    @router.get("/test")
+    async def route(filters: Filters = Query()):
+        return filters.limit
+
+    def get_limits(app: Cadwyn) -> dict[str, tuple[int, int]]:
+        limits = {}
+        with TestClient(app) as client:
+            for version in app.router.versioned_routers:
+                response = client.get("/test", headers={"x-api-version": version})
+                openapi = client.get(f"/openapi.json?version={version}").json()
+                (parameter,) = [p for p in openapi["paths"]["/test"]["get"]["parameters"] if p["name"] == "limit"]
+                limits[version] = (response.json(), parameter["schema"]["default"])
+        return limits
+
+    app = create_versioned_app(
+        version_change(schema(Filters).field("limit").had(default=30)),
+        version_change(schema(Filters).field("limit").had(default=20)),
+    )
+    expected_limits = {"2002-01-01": (10, 10), "2001-01-01": (10, 20), "2000-01-01": (10, 30)}
+    assert get_limits(app) == expected_limits
+
+    create_versioned_app(version_change(schema(Filters).field("limit").had(default=50)))
+    assert get_limits(app) == expected_limits
+
+
+def _async_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def _async_generator_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        yield await func(*args, **kwargs)
+
+    return wrapper
+
+
+def _sync_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def test__router_generation__decorated_dependencies__should_be_called_the_way_their_outer_decorator_works(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    events = []
+
+    def generator_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            events.append(f"{kwargs['solver']} enter")
+            yield func(*args, **kwargs)
+            events.append(f"{kwargs['solver']} exit")
+
+        return wrapper
+
+    @_async_decorator
+    def check_token(solver: Annotated[str, Depends(current_dependency_solver)], token: str = "") -> str:
+        events.append(f"{solver} token {token}")
+        return token
+
+    @generator_decorator
+    def get_session(solver: Annotated[str, Depends(current_dependency_solver)]) -> str:
+        return "session"
+
+    @_async_generator_decorator
+    async def get_value(solver: Annotated[str, Depends(current_dependency_solver)]) -> str:
+        return f"value from {solver}"
+
+    def generator_dependency(role: str, solver: Annotated[str, Depends(current_dependency_solver)]) -> Any:
+        events.append(f"{solver} {role} enter")
+        yield role
+        events.append(f"{solver} {role} exit")
+
+    # functools.wraps makes __wrapped__ point to the partial
+    decorated_partial = _sync_decorator(functools.partial(generator_dependency, "admin"))
+
+    @router.get("/token")
+    async def token_route(token: Annotated[str, Depends(check_token)]):
+        return token
+
+    @router.get("/session")
+    async def session_route(session: Annotated[str, Depends(get_session)]):
+        return session
+
+    @router.get("/value")
+    async def value_route(value: Annotated[str, Depends(get_value)]):
+        return value
+
+    @router.get("/partial")
+    async def partial_route(role: Annotated[str, Depends(decorated_partial)]):
+        return role
+
+    for version_client in create_versioned_clients(version_change()).values():
+        events.clear()
+        assert version_client.get("/token", params={"token": "secret"}).json() == "secret"
+        assert events == ["fastapi token secret", "cadwyn token secret"]
+
+        events.clear()
+        assert version_client.get("/session").json() == "session"
+        assert events == ["fastapi enter", "cadwyn enter", "cadwyn exit", "fastapi exit"]
+
+        assert version_client.get("/value").json() == "value from cadwyn"
+
+        events.clear()
+        assert version_client.get("/partial").json() == "admin"
+        assert events == ["fastapi admin enter", "cadwyn admin enter", "cadwyn admin exit", "fastapi admin exit"]
+
+
 def test__router_generation__dependency_with_function_scope__should_exit_before_response_is_sent(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,

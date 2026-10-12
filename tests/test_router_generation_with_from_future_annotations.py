@@ -188,3 +188,21 @@ def test__router_generation__decorated_dependencies_with_forwardrefs__should_res
         for path in ("/cached/annotated", "/cached/default", "/decorated/annotated", "/decorated/default"):
             assert version_client.get(path, params={"limit": 5}).json() == 5
             assert version_client.get(path, params={"limit": 0}).status_code == 422
+
+
+class ResourceWithForwardRefs:
+    def __init__(self, body: MySchema) -> None:
+        self.body = body
+
+
+def test__router_generation__partial_of_class_with_forwardrefs__should_resolve_annotations(
+    router, create_versioned_clients
+):
+    @router.post("/test")
+    async def route(resource: Annotated[Any, Depends(functools.partial(ResourceWithForwardRefs))]):
+        return resource.body
+
+    for version_client in create_versioned_clients(version_change()).values():
+        response = version_client.post("/test", json={"foo": "bar"})
+        assert response.status_code == 200, response.json()
+        assert response.json() == {"foo": "bar"}
