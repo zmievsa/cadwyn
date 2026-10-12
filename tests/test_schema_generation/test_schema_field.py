@@ -1180,7 +1180,7 @@ def test__schema_field_had__parent_renamed_field_with_mutable_default__should_no
 
     child = schemas["2000-01-01"][ChildWithMutableDefaultToRename]()
     child.foo.items.append("foo")
-    assert child.old_foo.items == []
+    assert child.old_foo.items == []  # ty: ignore[unresolved-attribute]
 
 
 class ParentWithDefaults(BaseModel):
