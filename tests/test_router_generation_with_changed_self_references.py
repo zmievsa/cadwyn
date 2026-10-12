@@ -3,14 +3,16 @@
 The unchanged ones are reused as they are (see test_router_generation_with_self_references.py).
 """
 
+import functools
 import importlib.metadata
 import re
 import threading
 import typing
 from collections.abc import Callable
-from typing import Annotated, Any, ClassVar, Generic, Literal, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Optional, TypeVar, Union
 
 import pytest
+from fastapi import Depends
 from fastapi.testclient import TestClient
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr, computed_field, field_serializer
 from starlette.status import HTTP_200_OK, HTTP_422_UNPROCESSABLE_CONTENT
@@ -31,6 +33,9 @@ from cadwyn import (
 from cadwyn.exceptions import CadwynError, SchemaGenerationError
 from cadwyn.structure.schemas import schema
 from tests.conftest import CreateVersionedApp, version_change
+
+if TYPE_CHECKING:
+    from decimal import Decimal as OnlyForTypeCheckers
 
 ValueT = TypeVar("ValueT")
 PYDANTIC_VERSION = tuple(int(part) for part in re.findall(r"\d+", importlib.metadata.version("pydantic"))[:3])
@@ -156,6 +161,11 @@ class LazyTree(BaseModel):
 class LazyShelf(BaseModel):
     name: str
     trees: Page[LazyTree]
+
+
+class LazyWebhook(BaseModel):
+    tree: LazyTree
+    related: Page[LazyTree]
 
 
 class VersionedParent(BaseModel):
@@ -747,6 +757,39 @@ def test__router_generation__generic_around_cycle_that_a_route_copies__should_us
     assert_no_duplicate_schemas(list(get_openapi_components(app, "2000-01-01")))
 
 
+def get_one() -> int:
+    return 1
+
+
+def test__router_generation__route_with_unresolvable_dependency_annotation__should_still_copy_cycle_eagerly(
+    create_versioned_app: CreateVersionedApp,
+):
+    """Recording the routes resolves the annotations of endpoints and dependencies one by one, like copying them"""
+    router = VersionedAPIRouter()
+
+    @router.post("/tree")
+    async def create_tree(
+        tree: LazyTree,
+        unresolvable: "OnlyForTypeCheckers" = Depends(get_one),
+    ) -> dict[str, bool]:
+        return {"ok": True}
+
+    @router.post("/pages")
+    async def create_page(page: Page[LazyTree]) -> dict[str, bool]:
+        return {"ok": True}
+
+    # The newest version versions the head routes, whose annotations are the hardest to resolve
+    app = create_versioned_app(head_version_changes=[version_change(short_name(LazyItem))], router=router)
+    client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+    invalid_tree = {"item": {"name": "abc"}, "children": [{"item": {"name": "toolong"}, "children": []}]}
+    assert client.post("/tree", json=invalid_tree).status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    assert client.post("/pages", json={"items": [invalid_tree]}).status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    tree = {"item": {"name": "abc"}, "children": []}
+    assert client.post("/tree", json=tree).json() == {"ok": True}
+    assert client.post("/pages", json={"items": [tree]}).json() == {"ok": True}
+
+
 def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_route_copies__should_raise(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -1011,6 +1054,24 @@ class SettingsFactoryNode(BaseModel):
     children: "list[SettingsFactoryNode]" = []
 
 
+class SettingsPartialNode(BaseModel):
+    settings: Settings = Field(default_factory=functools.partial(functools.partial(Settings, name="partial")))
+    children: "list[SettingsPartialNode]" = []
+
+
+class SettingsConstructNode(BaseModel):
+    settings: Settings = Field(default_factory=Settings.model_construct)
+    children: "list[SettingsConstructNode]" = []
+
+
+class DefaultCategoryHolder(BaseModel):
+    category: Category = Category(name="abc")
+
+
+class PartialCategoryHolder(BaseModel):
+    category: Category = Field(default_factory=functools.partial(Category, name="abc"))
+
+
 class ComputedCategory(BaseModel):
     name: str
     children: "list[ComputedCategory]" = []
@@ -1072,6 +1133,33 @@ def test__generate_versioned_models__cycle_that_cannot_be_copied__should_raise(
             SettingsFactoryNode,
             "default factory of the field 'settings' of SettingsFactoryNode returns",
             id="default_factory",
+        ),
+        pytest.param(
+            Settings,
+            SettingsPartialNode,
+            "default factory of the field 'settings' of SettingsPartialNode returns",
+            id="partial_default_factory",
+        ),
+        pytest.param(
+            Settings,
+            SettingsConstructNode,
+            "default factory of the field 'settings' of SettingsConstructNode returns",
+            id="classmethod_default_factory",
+        ),
+        pytest.param(
+            Category,
+            DefaultCategoryHolder,
+            "default of the field 'category' of DefaultCategoryHolder is an instance",
+            id="default_outside",
+        ),
+        pytest.param(
+            Category,
+            PartialCategoryHolder,
+            "default factory of the field 'category' of PartialCategoryHolder returns",
+            id="partial_default_factory_outside",
+        ),
+        pytest.param(
+            LazyItem, LazyWebhook, "copy of LazyWebhook because it would use the latest LazyTree", id="lazy_cycle"
         ),
     ],
 )

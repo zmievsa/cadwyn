@@ -219,9 +219,9 @@ class _EndpointTransformer(Generic[_R, _WR]):
             schema_generator = self.schema_generators[str(version.value)]
             # All routes of the version must be known before any of them is versioned so that the decisions about
             # the models that refer to each other do not depend on the order of the routes
-            schema_generator.add_route_models(get_models_that_routes_request([router, webhook_router]))
-            schema_generator.annotation_transformer.migrate_router_to_version(router)
-            schema_generator.annotation_transformer.migrate_router_to_version(webhook_router)
+            with schema_generator.versioning_routes(get_models_that_routes_request([router, webhook_router])):
+                schema_generator.annotation_transformer.migrate_router_to_version(router)
+                schema_generator.annotation_transformer.migrate_router_to_version(webhook_router)
 
             self._attach_routes_to_data_converters(router, self.head_router, version)
 

@@ -72,10 +72,8 @@ def _check_that_reference_discovery_finds_every_model_that_copying_requests(monk
         models_being_copied = _get_models_being_copied()
         routes_being_versioned = getattr(_copying_state, "routes_being_versioned", [])
         if not models_being_copied and routes_being_versioned and _is_versionable_model(model):
-            route, recorded_models, is_complete = routes_being_versioned[-1]
-            assert _unwrap_model(model) in recorded_models or not is_complete, (
-                f"Recording the route {route} missed {model}"
-            )
+            route, recorded_models = routes_being_versioned[-1]
+            assert _unwrap_model(model) in recorded_models, f"Recording the route {route} missed {model}"
         if models_being_copied and _is_versionable_model(model):
             model_being_copied, discovered_references = models_being_copied[-1]
             for references in discovered_references:
@@ -125,7 +123,7 @@ def _check_that_recording_routes_finds_every_model_that_versioning_them_requests
         collector.annotation_transformer.record_route(route)
         if not hasattr(_copying_state, "routes_being_versioned"):
             _copying_state.routes_being_versioned = []
-        _copying_state.routes_being_versioned.append((route, collector.models, collector.is_complete))
+        _copying_state.routes_being_versioned.append((route, collector.models))
         try:
             original_migrate_route_to_version(self, route, **kwargs)
         finally:
