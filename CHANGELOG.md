@@ -10,6 +10,16 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Fixed older API versions adding `"example": {}` to the OpenAPI of path, query, header, cookie, and body parameters declared through default values such as `= Query()` (#417).
 - Restored type checking compatibility with Pydantic 2.14 and ty 0.0.86.
 - Fixed `TypeError: unhashable type` on older API versions when an endpoint's request body or response model is an unhashable annotation such as `list[Annotated[int, {"description": "item"}]]`.
+- Fixed `functools.partial` dependencies losing the annotations of their remaining parameters, which turned their sub-dependencies and request bodies into required query parameters. Partials of async functions also returned unawaited coroutines.
+- Fixed dependencies whose parameters are only described by `__signature__` losing their parameter types, which skipped type conversion, crashed constraints such as `ge` with a 500, and removed the types from OpenAPI.
+- Fixed async generator dependencies not receiving exceptions raised after their `yield`, which skipped their `except` blocks (e.g. a database rollback) and delayed their cleanup until garbage collection.
+- Fixed versioned dependencies losing the `scope` of `Depends` and `Security`.
+- Fixed `app.dependency_overrides` getting ignored in older API versions for dependencies that are class instances, bound methods, or partials. Older versions used copies of such dependencies, which also hid changes to their state.
+- Fixed parameter defaults such as `filters: Filters = Query()` in endpoints and dependencies being shared between API versions and between apps built from the same router. FastAPI changes them while building routes, so their OpenAPI and validation could use the models of another version or app.
+- Fixed decorated dependencies, such as `functools.lru_cache` ones, failing in older API versions when their annotations are postponed (`from __future__ import annotations`).
+- Fixed a `NameError` at startup on Python 3.14 when a dependency's annotations use a name that only exists for type checkers (e.g. one imported under `if TYPE_CHECKING:`).
+- Fixed router generation failing for dependencies whose return annotation only type checkers can evaluate, such as `-> "pd.Series[int]"` with postponed annotations, or whose returned model has a default factory without a signature, such as `time.time` before Python 3.13. Like FastAPI, Cadwyn no longer evaluates or versions the return annotations of dependencies.
+- Fixed `Annotated` dependencies whose type is not versioned, such as `Annotated[list[int], Depends(get_values)]`, using the dependency of the head or another API version. This made versioned request constraints, such as a `min_length` or a removed enum member, get ignored in both validation and OpenAPI.
 
 ## [7.4.1]
 

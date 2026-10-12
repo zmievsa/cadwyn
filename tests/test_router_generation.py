@@ -1,5 +1,12 @@
+import asyncio
+import copy
+import functools
 import importlib
+import inspect
+import itertools
+import json
 import re
+import sys
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
@@ -7,11 +14,24 @@ from types import GenericAlias
 from typing import Annotated, NewType, TypeAlias, Union, cast, get_args
 from uuid import UUID
 
+import fastapi.params
 import pytest
 import svcs
-from fastapi import APIRouter, Body, Cookie, Depends, Header, Path, Query, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Body,
+    Cookie,
+    Depends,
+    Header,
+    HTTPException,
+    Path,
+    Query,
+    Response,
+    Security,
+    UploadFile,
+)
 from fastapi.routing import APIRoute, _EffectiveRouteContext
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, SecurityScopes
 from fastapi.security.http import HTTPBasic
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
@@ -19,9 +39,9 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, JsonValue
 from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
-from starlette.responses import FileResponse, JSONResponse, PlainTextResponse
+from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from starlette.routing import Route
-from typing_extensions import Any, TypeAliasType
+from typing_extensions import Any, TypeAliasType, override
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn._utils import _callable_name
@@ -1820,6 +1840,674 @@ def test__router_generation__with_generator_dependencies(
             "route sync a end",
         ]
     )
+
+
+def test__router_generation__generator_dependencies__should_receive_exceptions_raised_in_endpoint(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    events = []
+
+    async def async_session(solver: Annotated[str, Depends(current_dependency_solver)]):
+        try:
+            yield
+        except HTTPException:
+            events.append(f"{solver} async rollback")
+            raise
+        finally:
+            events.append(f"{solver} async close")
+
+    def sync_session(solver: Annotated[str, Depends(current_dependency_solver)]):
+        try:
+            yield
+        except HTTPException:
+            events.append(f"{solver} sync rollback")
+            raise
+        finally:
+            events.append(f"{solver} sync close")
+
+    @router.get("/test")
+    async def route(async_value: None = Depends(async_session), sync_value: None = Depends(sync_session)):
+        raise HTTPException(status_code=409)
+
+    for version_client in create_versioned_clients(version_change()).values():
+        events.clear()
+        assert version_client.get("/test").status_code == 409
+        assert events == [
+            "cadwyn sync rollback",
+            "cadwyn sync close",
+            "cadwyn async rollback",
+            "cadwyn async close",
+            "fastapi sync rollback",
+            "fastapi sync close",
+            "fastapi async rollback",
+            "fastapi async close",
+        ]
+
+
+def test__router_generation__async_generator_dependency__should_forward_everything_to_the_original_generator(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    events = []
+
+    async def dependency():
+        cleanup_failed = False
+        try:
+            yield "value"
+        except ValueError:
+            cleanup_failed = True
+        except BaseException as e:
+            events.append(f"caught {type(e).__name__}")
+            raise
+        finally:
+            events.append("finally")
+        if cleanup_failed:
+            raise RuntimeError("cleanup failed")
+
+    @router.get("/test")
+    async def route(value: Annotated[str, Depends(dependency)]):
+        raise NotImplementedError
+
+    app = create_versioned_app(version_change())
+    versioned_route = cast("APIRoute", app.router.versioned_routers["2000-01-01"].routes[-1])
+    # Versioned dependencies are equal to the originals so that dependency overrides work
+    (versioned_dependency,) = [dep.call for dep in versioned_route.dependant.dependencies if dep.call == dependency]
+    assert versioned_dependency is not dependency
+
+    async def run(call: Callable[[], Any], action: Callable[[Any], Awaitable[Any]]):
+        events.clear()
+        generator = call()
+        assert await generator.__anext__() == "value"
+        try:
+            await action(generator)
+        except BaseException as e:  # noqa: BLE001
+            return events.copy(), type(e), None if e.__context__ is None else type(e.__context__)
+        return events.copy(), None, None
+
+    expected_results = {
+        "aclose": (lambda g: g.aclose(), (["caught GeneratorExit", "finally"], None, None)),
+        "asend": (lambda g: g.asend(None), (["finally"], StopAsyncIteration, None)),
+        "athrow_handled": (lambda g: g.athrow(ValueError()), (["finally"], RuntimeError, None)),
+        "athrow_generator_exit": (
+            lambda g: g.athrow(GeneratorExit()),
+            (["caught GeneratorExit", "finally"], GeneratorExit, None),
+        ),
+        "athrow_cancelled": (
+            lambda g: g.athrow(asyncio.CancelledError()),
+            (["caught CancelledError", "finally"], asyncio.CancelledError, None),
+        ),
+    }
+    for name, (action, expected_result) in expected_results.items():
+        assert asyncio.run(run(dependency, action)) == expected_result, name
+        assert asyncio.run(run(versioned_dependency, action)) == expected_result, name
+
+
+def test__router_generation__query_model_defaults__should_stay_isolated_between_versions_and_apps(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    class Filters(BaseModel):
+        limit: int = 10
+
+    def get_limit(filters: Filters = Query()) -> int:
+        return filters.limit
+
+    class LimitGetter:
+        def __call__(self, filters: Filters = Query()) -> int:
+            return filters.limit
+
+    @router.get("/endpoint")
+    async def endpoint_route(filters: Filters = Query()):
+        return filters.limit
+
+    @router.get("/annotated_dependency")
+    async def annotated_dependency_route(limit: Annotated[int, Depends(get_limit)]):
+        return limit
+
+    @router.get("/default_dependency")
+    async def default_dependency_route(limit: int = Depends(get_limit)):
+        return limit
+
+    @router.get("/instance_dependency")
+    async def instance_dependency_route(limit: Annotated[int, Depends(LimitGetter())]):
+        return limit
+
+    paths = ("/endpoint", "/annotated_dependency", "/default_dependency", "/instance_dependency")
+
+    def get_limits(app: Cadwyn) -> dict[tuple[str, str], tuple[int, int]]:
+        limits = {}
+        with TestClient(app) as client:
+            for version in app.router.versioned_routers:
+                openapi = client.get(f"/openapi.json?version={version}").json()
+                for path in paths:
+                    response = client.get(path, headers={"x-api-version": version})
+                    parameters = openapi["paths"][path]["get"]["parameters"]
+                    (parameter,) = [p for p in parameters if p["name"] == "limit"]
+                    limits[version, path] = (response.json(), parameter["schema"]["default"])
+        return limits
+
+    app = create_versioned_app(
+        version_change(schema(Filters).field("limit").had(default=30)),
+        version_change(schema(Filters).field("limit").had(default=20)),
+    )
+    # The endpoint always gets the head default because Cadwyn migrates requests to head before solving them again
+    expected_limits = {
+        (version, path): (10, openapi_default)
+        for version, openapi_default in {"2002-01-01": 10, "2001-01-01": 20, "2000-01-01": 30}.items()
+        for path in paths
+    }
+    assert get_limits(app) == expected_limits
+
+    create_versioned_app(version_change(schema(Filters).field("limit").had(default=50)))
+    assert get_limits(app) == expected_limits
+
+
+def _async_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def _async_generator_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        yield await func(*args, **kwargs)
+
+    return wrapper
+
+
+def _sync_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def test__router_generation__decorated_dependencies__should_be_called_the_way_their_outer_decorator_works(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    events = []
+
+    def generator_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            events.append(f"{kwargs['solver']} enter")
+            yield func(*args, **kwargs)
+            events.append(f"{kwargs['solver']} exit")
+
+        return wrapper
+
+    @_async_decorator
+    def check_token(solver: Annotated[str, Depends(current_dependency_solver)], token: str = "") -> str:
+        events.append(f"{solver} token {token}")
+        return token
+
+    @generator_decorator
+    def get_session(solver: Annotated[str, Depends(current_dependency_solver)]) -> str:
+        return "session"
+
+    @_async_generator_decorator
+    async def get_value(solver: Annotated[str, Depends(current_dependency_solver)]) -> str:
+        return f"value from {solver}"
+
+    def generator_dependency(role: str, solver: Annotated[str, Depends(current_dependency_solver)]) -> Any:
+        events.append(f"{solver} {role} enter")
+        yield role
+        events.append(f"{solver} {role} exit")
+
+    # functools.wraps makes __wrapped__ point to the partial
+    decorated_partial = _sync_decorator(functools.partial(generator_dependency, "admin"))
+
+    @router.get("/token")
+    async def token_route(token: Annotated[str, Depends(check_token)]):
+        return token
+
+    @router.get("/session")
+    async def session_route(session: Annotated[str, Depends(get_session)]):
+        return session
+
+    @router.get("/value")
+    async def value_route(value: Annotated[str, Depends(get_value)]):
+        return value
+
+    @router.get("/partial")
+    async def partial_route(role: Annotated[str, Depends(decorated_partial)]):
+        return role
+
+    for version_client in create_versioned_clients(version_change()).values():
+        events.clear()
+        assert version_client.get("/token", params={"token": "secret"}).json() == "secret"
+        assert events == ["fastapi token secret", "cadwyn token secret"]
+
+        events.clear()
+        assert version_client.get("/session").json() == "session"
+        assert events == ["fastapi enter", "cadwyn enter", "cadwyn exit", "fastapi exit"]
+
+        assert version_client.get("/value").json() == "value from cadwyn"
+
+        events.clear()
+        assert version_client.get("/partial").json() == "admin"
+        assert events == ["fastapi admin enter", "cadwyn admin enter", "cadwyn admin exit", "fastapi admin exit"]
+
+
+def test__router_generation__dependency_with_function_scope__should_exit_before_response_is_sent(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    events = []
+
+    def dependency(solver: Annotated[str, Depends(current_dependency_solver)]):
+        yield
+        events.append(f"{solver} exit")
+
+    @router.get("/test")
+    async def route(value: None = Depends(dependency, scope="function")):
+        def stream_events():
+            yield json.dumps(events)
+
+        return StreamingResponse(stream_events())
+
+    for version_client in create_versioned_clients(version_change()).values():
+        events.clear()
+        assert version_client.get("/test").json() == ["cadwyn exit", "fastapi exit"]
+
+
+def test__router_generation__security_scopes_and_use_cache__should_be_preserved(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    calls = []
+
+    def uncached_dependency(solver: Annotated[str, Depends(current_dependency_solver)]) -> None:
+        calls.append(f"{solver} uncached")
+
+    def get_scopes(security_scopes: SecurityScopes, solver: Annotated[str, Depends(current_dependency_solver)]) -> None:
+        calls.append(f"{solver} scopes {security_scopes.scopes}")
+
+    @router.get("/test")
+    async def route(
+        scopes: Annotated[None, Security(get_scopes, scopes=["items:read"])],
+        first: Annotated[None, Depends(uncached_dependency, use_cache=False)],
+        second: None = Depends(uncached_dependency, use_cache=False),
+    ):
+        return None
+
+    for version_client in create_versioned_clients(version_change()).values():
+        calls.clear()
+        assert version_client.get("/test").status_code == 200
+        assert calls == [
+            "fastapi scopes ['items:read']",
+            "fastapi uncached",
+            "fastapi uncached",
+            "cadwyn scopes ['items:read']",
+            "cadwyn uncached",
+            "cadwyn uncached",
+        ]
+
+
+def test__router_generation__depends_subclass_with_custom_init__should_be_versioned(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    class TaggedDepends(fastapi.params.Depends):
+        def __init__(self, dependency: Callable[..., Any], *, tag: str) -> None:
+            super().__init__(dependency)
+            object.__setattr__(self, "tag", tag)
+
+    def get_body(body: SchemaWithOneIntField) -> dict[str, Any]:
+        return body.model_dump()
+
+    @router.post("/annotated")
+    async def annotated_route(value: Annotated[Any, TaggedDepends(get_body, tag="body")]):
+        return value
+
+    @router.post("/default")
+    async def default_route(value: Any = TaggedDepends(get_body, tag="body")):
+        return value
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithOneIntField).field("bar").existed_as(type=str)),
+    )
+    for path in ("/annotated", "/default"):
+        assert clients["2000-01-01"].post(path, json={"foo": 1}).status_code == 422
+        assert clients["2000-01-01"].post(path, json={"foo": 1, "bar": "baz"}).json() == {"foo": 1}
+        assert clients["2001-01-01"].post(path, json={"foo": 1}).json() == {"foo": 1}
+
+
+class _ResourceWithAsyncCall:
+    def __init__(self, times: int) -> None:
+        self.times = times
+
+    async def __call__(self) -> None:
+        raise NotImplementedError
+
+
+class _ResourceWithGeneratorCall:
+    def __init__(self, times: int) -> None:
+        self.times = times
+
+    def __call__(self) -> Any:
+        raise NotImplementedError
+        yield
+
+
+class _ResourceWithAsyncGeneratorCall:
+    def __init__(self, times: int) -> None:
+        self.times = times
+
+    async def __call__(self) -> Any:
+        raise NotImplementedError
+        yield
+
+
+@pytest.mark.parametrize(
+    "resource_cls", [_ResourceWithAsyncCall, _ResourceWithGeneratorCall, _ResourceWithAsyncGeneratorCall]
+)
+def test__router_generation__partial_of_class_dependency__should_construct_an_instance(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    resource_cls: type[Any],
+):
+    @router.get("/annotated")
+    async def annotated_route(value: Annotated[Any, Depends(functools.partial(resource_cls, times=3))]):
+        return {"type": type(value).__name__, "times": value.times}
+
+    @router.get("/default")
+    async def default_route(value: Any = Depends(functools.partial(resource_cls, times=3))):
+        return {"type": type(value).__name__, "times": value.times}
+
+    for version_client in create_versioned_clients(version_change()).values():
+        for path in ("/annotated", "/default"):
+            assert version_client.get(path).json() == {"type": resource_cls.__name__, "times": 3}
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+def test__router_generation__partial_dependency__should_keep_annotations_of_wrapped_function(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    is_async: bool,
+):
+    def get_user() -> str:
+        return "alice"
+
+    def require_role(role: str, user: Annotated[str, Depends(get_user)], body: SchemaWithOneIntField):
+        return {"role": role, "user": user, "body": body.model_dump()}
+
+    async def async_require_role(role: str, user: Annotated[str, Depends(get_user)], body: SchemaWithOneIntField):
+        return require_role(role, user, body)
+
+    role_dependency = async_require_role if is_async else require_role
+
+    @router.post("/annotated")
+    async def annotated_route(value: Annotated[Any, Depends(functools.partial(role_dependency, "admin"))]):
+        return value
+
+    @router.post("/default")
+    async def default_route(value: Any = Depends(functools.partial(role_dependency, "admin"))):
+        return value
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithOneIntField).field("bar").existed_as(type=str)),
+    )
+    for path in ("/default", "/annotated"):
+        assert clients["2000-01-01"].post(path, json={"foo": 1}).json() == {
+            "detail": [{"type": "missing", "loc": ["body", "bar"], "msg": "Field required", "input": {"foo": 1}}]
+        }
+        assert clients["2000-01-01"].post(path, json={"foo": 1, "bar": "baz"}).json() == {
+            "role": "admin",
+            "user": "alice",
+            "body": {"foo": 1},
+        }
+        assert clients["2001-01-01"].post(path, json={"foo": 1}).json() == {
+            "role": "admin",
+            "user": "alice",
+            "body": {"foo": 1},
+        }
+
+        clients["2001-01-01"].app.dependency_overrides[get_user] = lambda: "bob"
+        assert clients["2000-01-01"].post(path, json={"foo": 1, "bar": "baz"}).json()["user"] == "bob"
+        assert clients["2001-01-01"].post(path, json={"foo": 1}).json()["user"] == "bob"
+        clients["2001-01-01"].app.dependency_overrides.clear()
+
+        for version, version_client in clients.items():
+            operation = version_client.get(f"/openapi.json?version={version}").json()["paths"][path]["post"]
+            assert [param["name"] for param in operation["parameters"]] == ["x-api-version"]
+            assert operation["requestBody"]["content"]["application/json"]["schema"] == {
+                "$ref": "#/components/schemas/SchemaWithOneIntField"
+            }
+
+
+class _CachedFactory:
+    @functools.lru_cache  # noqa: B019
+    def __call__(self) -> int:
+        return 42
+
+
+def test__router_generation__cached_callable_default_factory__should_work(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    class Payload(BaseModel):
+        value: int = Field(default_factory=_CachedFactory())
+
+    @router.post("/test")
+    async def route(body: Payload):
+        return body.value
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.post("/test", json={}).json() == 42
+
+
+class _ModelWithUnsignaturedDefaultFactory(BaseModel):
+    # inspect.signature() fails for builtins such as next() (and time.time() before Python 3.13)
+    value: Any = Field(default_factory=functools.partial(next, itertools.count(1)))
+
+
+def _get_model_with_unsignatured_default_factory(multiplier: int = 1) -> _ModelWithUnsignaturedDefaultFactory:
+    return _ModelWithUnsignaturedDefaultFactory(value=multiplier)
+
+
+def test__router_generation__dependency_return_annotations__should_not_be_versioned(
+    create_versioned_clients: CreateVersionedClients,
+):
+    # FastAPI never looks at the return annotations of dependencies so Cadwyn must not generate their models either
+    cached_dependency = functools.lru_cache(_get_model_with_unsignatured_default_factory)
+    partial_dependency = functools.partial(_get_model_with_unsignatured_default_factory, 2)
+    router = VersionedAPIRouter(dependencies=[Depends(cached_dependency), Depends(partial_dependency)])
+
+    @router.get("/annotated")
+    async def annotated_route(
+        cached: Annotated[Any, Depends(cached_dependency)], partial: Annotated[Any, Depends(partial_dependency)]
+    ):
+        return [cached.value, partial.value]
+
+    @router.get("/default")
+    async def default_route(cached: Any = Depends(cached_dependency), partial: Any = Depends(partial_dependency)):
+        return [cached.value, partial.value]
+
+    for version_client in create_versioned_clients(version_change(), router=router).values():
+        assert version_client.get("/annotated").json() == [1, 2]
+        assert version_client.get("/default").json() == [1, 2]
+
+
+class _Counter:
+    def __init__(self) -> None:
+        self.count = 0
+
+    def __call__(self) -> int:
+        self.count += 1
+        return self.count
+
+
+def test__schema_generation__deep_copies_of_versioned_default_factories__should_copy_the_factories_too():
+    class ModelWithStatefulDefaultFactory(BaseModel):
+        count: int = Field(default_factory=_Counter())
+
+    generators = generate_versioned_models(VersionBundle(Version("2001-01-01"), Version("2000-01-01")))
+    for generator in generators.values():
+        field = generator[ModelWithStatefulDefaultFactory].model_fields["count"]
+        count_before_copying = field.get_default(call_default_factory=True)
+        copy.deepcopy(field).get_default(call_default_factory=True)
+        assert field.get_default(call_default_factory=True) == count_before_copying + 1
+
+
+class _PartialWithOverriddenCall(functools.partial):
+    @override
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return super().__call__(*args, **kwargs) + 100
+
+
+def _get_seven() -> int:
+    return 7
+
+
+def test__router_generation__partial_subclass_dependency_with_overridden_call__should_call_the_override(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    # The instance must not have any attributes. Otherwise, Python would not flatten it into the partials around it
+    dependency = _PartialWithOverriddenCall(_get_seven)
+
+    @router.get("/default")
+    def default_route(value: int = Depends(dependency)):
+        return value
+
+    @router.get("/annotated")
+    def annotated_route(value: Annotated[int, Depends(dependency)]):
+        return value
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/default").json() == 107
+        assert version_client.get("/annotated").json() == 107
+
+
+def test__router_generation__dependency_with_lazy_type_checking_only_annotations__should_resolve_the_other_ones(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    paths = []
+    # Python 3.10-3.13 evaluate annotations when a function gets defined so such dependencies cannot exist there
+    if sys.version_info >= (3, 14):
+        lazy_dependencies = importlib.import_module("tests._data.lazy_type_checking_dependencies")
+
+        @router.get("/return")
+        async def return_route(limit: Annotated[int, Depends(lazy_dependencies.get_limit)]):
+            return limit
+
+        @router.get("/parameter")
+        async def parameter_route(limit: Annotated[int, Depends(lazy_dependencies.get_limit_with_price)]):
+            return limit
+
+        paths += ["/return", "/parameter"]
+    for version_client in create_versioned_clients(version_change()).values():
+        for path in paths:
+            response = version_client.get(path, params={"limit": "5"})
+            assert response.status_code == 200, (path, response.json())
+            assert response.json() == 5
+            assert version_client.get(path, params={"limit": "five"}).status_code == 422
+
+
+def test__router_generation__dependency_with_parameters_only_in_signature__should_keep_their_types(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    def dynamic_dependency(**kwargs: Any) -> dict[str, Any]:
+        return kwargs
+
+    # Some libraries build dependencies dynamically and only describe their parameters through __signature__
+    dynamic_dependency.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]  # Set dynamically.
+        [
+            inspect.Parameter("limit", inspect.Parameter.KEYWORD_ONLY, default=Query(ge=1), annotation=int),
+            inspect.Parameter("body", inspect.Parameter.KEYWORD_ONLY, annotation=SchemaWithOneIntField),
+        ]
+    )
+
+    @router.post("/test")
+    async def route(value: Any = Depends(dynamic_dependency)):
+        return value
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithOneIntField).field("bar").existed_as(type=str)),
+    )
+    bodies = {"2000-01-01": {"foo": 1, "bar": "baz"}, "2001-01-01": {"foo": 1}}
+    for version, version_client in clients.items():
+        response = version_client.post("/test", params={"limit": 5}, json=bodies[version])
+        assert response.json() == {"limit": 5, "body": {"foo": 1}}
+        response = version_client.post("/test", params={"limit": 0}, json=bodies[version])
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["loc"] == ["query", "limit"]
+
+        operation = version_client.get(f"/openapi.json?version={version}").json()["paths"]["/test"]["post"]
+        assert operation["parameters"][0] == {
+            "name": "limit",
+            "in": "query",
+            "required": True,
+            "schema": {"type": "integer", "minimum": 1, "title": "Limit"},
+        }
+        assert operation["requestBody"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/SchemaWithOneIntField"
+        }
+
+    assert clients["2000-01-01"].post("/test", params={"limit": 5}, json={"foo": 1}).status_code == 422
+
+
+def test__router_generation__annotated_dependency_with_unversioned_type__should_use_dependency_of_its_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    class Color(str, Enum):
+        red = "red"
+        blue = "blue"
+
+    class Item(BaseModel):
+        name: str
+        color: Color
+
+    def get_name_lengths(body: Item) -> list[int]:
+        return [len(body.name)]
+
+    @router.post("/dependency")
+    async def dependency_route(lengths: Annotated[list[int], Depends(get_name_lengths)]):
+        return lengths
+
+    @router.post("/body")
+    async def body_route(body: Item):
+        return [len(body.name)]
+
+    clients = create_versioned_clients(
+        version_change(schema(Item).field("name").had(min_length=10)),
+        version_change(),
+        head_version_changes=[
+            version_change(schema(Item).field("name").had(min_length=5), enum(Color).didnt_have("blue")),
+        ],
+    )
+    min_lengths = {"2002-01-01": 5, "2001-01-01": 5, "2000-01-01": 10}
+    for version, version_client in clients.items():
+        min_length = min_lengths[version]
+        for path in ("/dependency", "/body"):
+            response = version_client.post(path, json={"name": "a" * min_length, "color": "red"})
+            assert response.json() == [min_length]
+            response = version_client.post(path, json={"name": "a" * (min_length - 1), "color": "red"})
+            assert response.status_code == 422
+            response = version_client.post(path, json={"name": "a" * min_length, "color": "blue"})
+            assert response.status_code == 422
+
+        openapi = version_client.get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["Item"]["properties"]["name"] == {
+            "type": "string",
+            "minLength": min_length,
+            "title": "Name",
+        }
+        assert openapi["components"]["schemas"]["Color"]["enum"] == ["red"]
+        for path in ("/dependency", "/body"):
+            assert openapi["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"] == {
+                "$ref": "#/components/schemas/Item"
+            }
 
 
 def test__router_generation__with_pydantic_settings_dependency(
