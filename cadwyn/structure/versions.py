@@ -1309,6 +1309,7 @@ def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any]
             or schema.get("custom_init")
             or _is_custom_serialization(schema.get("serialization"))
             or _overrides_dumping(model)
+            or not _do_compiled_settings_match(model, schema.get("config"))
         ):
             return None
         inner_schema = schema["schema"] if schema["root_model"] else _get_fields_core_schema(schema)
@@ -1448,8 +1449,9 @@ def _is_custom_serialization(serialization: object) -> bool:
 def _get_validation_paths(model: type[BaseModel], name: str, field: FieldInfo) -> list[list[Union[str, int]]]:
     """Return the paths in the input data that the field validates, in the order Pydantic tries them"""
     alias = field.validation_alias
+    validate_by_alias, validate_by_name, _ = _get_validation_settings(model)
     paths: list[list[Union[str, int]]] = []
-    if not model.model_config.get("validate_by_alias", True) or alias is None:
+    if not validate_by_alias or alias is None:
         paths.append([name])
     elif isinstance(alias, str):
         paths.append([alias])
@@ -1457,9 +1459,32 @@ def _get_validation_paths(model: type[BaseModel], name: str, field: FieldInfo) -
         paths.append(alias.convert_to_aliases())
     else:
         paths.extend(alias.convert_to_aliases())
-    if model.model_config.get("validate_by_name", model.model_config.get("populate_by_name", False)):
+    if validate_by_name:
         paths.append([name])
     return paths
+
+
+def _get_validation_settings(model: type[BaseModel]) -> tuple[bool, bool, str]:
+    """Return `(validate_by_alias, validate_by_name, extra)` of the model's config, resolved like pydantic does"""
+    config = model.model_config
+    validate_by_alias = config.get("validate_by_alias", True)
+    validate_by_name = config.get("validate_by_name")
+    if validate_by_name is None:
+        populate_by_name = config.get("populate_by_name")
+        validate_by_name = not validate_by_alias if populate_by_name is None else populate_by_name
+    return validate_by_alias, validate_by_name, config.get("extra") or "ignore"
+
+
+def _do_compiled_settings_match(model: type[BaseModel], compiled_config: object) -> bool:
+    """Whether the compiled schema validates the model's keys with the settings of its config, which we plan with.
+
+    A custom `__get_pydantic_core_schema__` can change them.
+    """
+    return isinstance(compiled_config, dict) and _get_validation_settings(model) == (
+        compiled_config.get("validate_by_alias", True),
+        compiled_config.get("validate_by_name", False),
+        compiled_config.get("extra_fields_behavior", "ignore"),
+    )
 
 
 def _add_keyword_only_parameter(

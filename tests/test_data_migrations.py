@@ -2787,6 +2787,18 @@ class SchemaWithSiblingAliasChangedInCoreSchema(BaseModel):
         return schema
 
 
+class SchemaWithValidationSettingsChangedInCoreSchema(BaseModel):
+    value: int = Field(default=0, validation_alias="v")
+
+    @override
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> core_schema.CoreSchema:
+        schema = handler(source)
+        schema["config"]["validate_by_alias"] = False
+        schema["config"]["validate_by_name"] = True
+        return schema
+
+
 class ParentWithComputedField(BaseModel):
     @computed_field(alias="wire")
     @property
@@ -2811,6 +2823,13 @@ SchemaWithFieldNamedLikeAComputedFieldOwner = create_model(
             lambda b: b.second,
             7,
             id="sibling_alias_in_core_schema",
+        ),
+        pytest.param(
+            SchemaWithValidationSettingsChangedInCoreSchema,
+            {"v": 7, "value": 7},
+            lambda b: b.value,
+            7,
+            id="validation_settings_in_core_schema",
         ),
         pytest.param(
             SchemaWithFieldNamedLikeAComputedFieldOwner,
