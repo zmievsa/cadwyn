@@ -1467,6 +1467,168 @@ def test__router_generation__field_had_constraint_declared_after_validator__shou
     assert clients["2000-01-01"].post("/test", json={"foo": "  ab  "}).status_code == 422
 
 
+class DeletableAttributesInFieldDefaults(BaseModel):
+    min_length_field: str = Field(min_length=3)
+    max_length_field: str = Field(max_length=3)
+    ge_field: int = Field(ge=5)
+    le_field: int = Field(le=5)
+    pattern_field: str = Field(pattern="^a")
+    description_field: str = Field(default="", description="Custom description")
+    title_field: str = Field(default="", title="Custom title")
+    validated_title_field: Annotated[str, AfterValidator(str.strip)] = Field(default="", title="Custom title")
+
+
+class DeletableAttributesInAnnotated(BaseModel):
+    min_length_field: Annotated[str, Field(min_length=3)]
+    max_length_field: Annotated[str, Field(max_length=3)]
+    ge_field: Annotated[int, Field(ge=5)]
+    le_field: Annotated[int, Field(le=5)]
+    pattern_field: Annotated[str, Field(pattern="^a")]
+    description_field: Annotated[str, Field(description="Custom description")] = ""
+    title_field: Annotated[str, Field(title="Custom title")] = ""
+    validated_title_field: Annotated[str, AfterValidator(str.strip), Field(title="Custom title")] = ""
+
+
+PAYLOAD_WITH_DELETABLE_ATTRIBUTES_VALID_IN_ALL_VERSIONS = {
+    "min_length_field": "abc",
+    "max_length_field": "abc",
+    "ge_field": 5,
+    "le_field": 5,
+    "pattern_field": "abc",
+}
+
+
+@pytest.fixture
+def deletable_attributes_router(router: VersionedAPIRouter) -> VersionedAPIRouter:
+    @router.post("/field_defaults")
+    async def field_defaults(payload: DeletableAttributesInFieldDefaults):
+        return payload.model_dump()
+
+    @router.post("/annotated")
+    async def annotated(payload: DeletableAttributesInAnnotated):
+        return payload.model_dump()
+
+    return router
+
+
+@pytest.mark.parametrize(
+    ("path", "schema_name"),
+    [
+        ("/field_defaults", "DeletableAttributesInFieldDefaults"),
+        ("/annotated", "DeletableAttributesInAnnotated"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("field_name", "attribute", "json_schema_key", "value_valid_only_in_old_version"),
+    [
+        ("min_length_field", "min_length", "minLength", "ab"),
+        ("max_length_field", "max_length", "maxLength", "abcdef"),
+        ("ge_field", "ge", "minimum", 1),
+        ("le_field", "le", "maximum", 50),
+        ("pattern_field", "pattern", "pattern", "bc"),
+    ],
+)
+def test__router_generation__field_didnt_have_constraint__should_remove_it(
+    deletable_attributes_router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    path: str,
+    schema_name: str,
+    field_name: str,
+    attribute: Any,
+    json_schema_key: str,
+    value_valid_only_in_old_version: object,
+):
+    @convert_request_to_next_version_for(DeletableAttributesInFieldDefaults, DeletableAttributesInAnnotated)
+    def make_request_valid_in_head_version(request: RequestInfo):
+        request.body.update(PAYLOAD_WITH_DELETABLE_ATTRIBUTES_VALID_IN_ALL_VERSIONS)
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(DeletableAttributesInFieldDefaults).field(field_name).didnt_have(attribute),
+            schema(DeletableAttributesInAnnotated).field(field_name).didnt_have(attribute),
+            make_request_valid_in_head_version=make_request_valid_in_head_version,
+        ),
+        router=deletable_attributes_router,
+    )
+    payload = PAYLOAD_WITH_DELETABLE_ATTRIBUTES_VALID_IN_ALL_VERSIONS | {field_name: value_valid_only_in_old_version}
+
+    for version, expected_status_code in [("2001-01-01", 422), ("2000-01-01", 200)]:
+        client = clients[version]
+        openapi = client.get(f"/openapi.json?version={version}").json()
+        field_schema = openapi["components"]["schemas"][schema_name]["properties"][field_name]
+        assert (json_schema_key in field_schema) == (version == "2001-01-01")
+
+        assert client.post(path, json=PAYLOAD_WITH_DELETABLE_ATTRIBUTES_VALID_IN_ALL_VERSIONS).status_code == 200
+        assert client.post(path, json=payload).status_code == expected_status_code
+
+
+@pytest.mark.parametrize(
+    ("path", "schema_name"),
+    [
+        ("/field_defaults", "DeletableAttributesInFieldDefaults"),
+        ("/annotated", "DeletableAttributesInAnnotated"),
+    ],
+)
+def test__router_generation__field_didnt_have_description_and_title__should_remove_them(
+    deletable_attributes_router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    path: str,
+    schema_name: str,
+):
+    clients = create_versioned_clients(
+        version_change(
+            schema(DeletableAttributesInFieldDefaults).field("description_field").didnt_have("description"),
+            schema(DeletableAttributesInFieldDefaults).field("title_field").didnt_have("title"),
+            schema(DeletableAttributesInFieldDefaults).field("validated_title_field").didnt_have("title"),
+            schema(DeletableAttributesInAnnotated).field("description_field").didnt_have("description"),
+            schema(DeletableAttributesInAnnotated).field("title_field").didnt_have("title"),
+            schema(DeletableAttributesInAnnotated).field("validated_title_field").didnt_have("title"),
+        ),
+        router=deletable_attributes_router,
+    )
+
+    for version, description, title, validated_title in [
+        ("2001-01-01", "Custom description", "Custom title", "Custom title"),
+        ("2000-01-01", None, "Title Field", "Validated Title Field"),
+    ]:
+        client = clients[version]
+        openapi = client.get(f"/openapi.json?version={version}").json()
+        properties = openapi["components"]["schemas"][schema_name]["properties"]
+        assert properties["description_field"].get("description") == description
+        assert properties["title_field"]["title"] == title
+        assert properties["validated_title_field"]["title"] == validated_title
+        assert client.post(path, json=PAYLOAD_WITH_DELETABLE_ATTRIBUTES_VALID_IN_ALL_VERSIONS).status_code == 200
+
+
+class FieldWithTwoConstraintsAfterValidator(BaseModel):
+    foo: Annotated[str, AfterValidator(str.strip), Field(min_length=3, max_length=5)]
+
+
+def test__router_generation__field_didnt_have_constraint_declared_after_validator__should_keep_others_after_it(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/test")
+    async def route(payload: FieldWithTwoConstraintsAfterValidator):
+        return payload.model_dump()
+
+    @convert_request_to_next_version_for(FieldWithTwoConstraintsAfterValidator)
+    def truncate_foo(request: RequestInfo):
+        request.body["foo"] = request.body["foo"][:5]
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(FieldWithTwoConstraintsAfterValidator).field("foo").didnt_have("max_length"),
+            truncate_foo=truncate_foo,
+        ),
+    )
+
+    assert clients["2001-01-01"].post("/test", json={"foo": "  abcdefg  "}).status_code == 422
+    assert clients["2001-01-01"].post("/test", json={"foo": "  ab  "}).status_code == 422
+    assert clients["2000-01-01"].post("/test", json={"foo": "  abcdefg  "}).json() == {"foo": "abcde"}
+    assert clients["2000-01-01"].post("/test", json={"foo": "  ab  "}).status_code == 422
+
+
 def test__router_generation__updating_request_depends(
     router: VersionedAPIRouter, create_versioned_app: CreateVersionedApp
 ):

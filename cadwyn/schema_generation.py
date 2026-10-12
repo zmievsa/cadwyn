@@ -1105,18 +1105,26 @@ def _change_field(
                     "but it already has that value.",
                 )
             field.update_attribute(name=attr_name, value=attr_value)
-            model.annotations[field_name] = _change_annotated_constraint(
-                model.annotations[field_name], attr_name, attr_value
+            model.annotations[field_name] = _change_annotated_metadata(
+                model.annotations[field_name],
+                attr_name,
+                functools.partial(_set_metadata_attribute, attr_name=attr_name, attr_value=attr_value),
             )
 
 
-def _change_annotated_constraint(annotation: Any, attr_name: str, attr_value: Any) -> Any:
-    """Make the constraints stored in the annotation's metadata match the new value of the field's attribute.
+def _annotation_has_attribute(annotation: Any, attr_name: str) -> bool:
+    return get_origin(annotation) == Annotated and any(
+        _metadata_has_attribute(sub_ann, attr_name) for sub_ann in get_args(annotation)[1:]
+    )
 
-    Otherwise, they would override it. For example, both `x: Annotated[str, Field(min_length=1)]` and
-    `x: str = Field(min_length=1)` with "from __future__ import annotations" (where the annotation is rebuilt
+
+def _change_annotated_metadata(annotation: Any, attr_name: str, change: Callable[[Any], Any]) -> Any:
+    """Change the attribute in the annotation's metadata in the same way it is changed in the field.
+
+    Otherwise, the metadata would override the field. For example, both `x: Annotated[str, Field(min_length=1)]`
+    and `x: str = Field(min_length=1)` with "from __future__ import annotations" (where the annotation is rebuilt
     from FieldInfo.metadata as `Annotated[str, MinLen(1)]`) keep `min_length=1` in the annotation.
-    We replace the values instead of removing the metadata to preserve its order relative to validators.
+    We change the metadata instead of removing it to preserve its order relative to validators.
     """
     if get_origin(annotation) != Annotated:
         return annotation
@@ -1124,16 +1132,19 @@ def _change_annotated_constraint(annotation: Any, attr_name: str, attr_value: An
     return _AnnotatedAlias(
         sub_annotations[0],
         tuple(
-            _replace_metadata_attribute(sub_ann, attr_name, attr_value)
-            if (isinstance(sub_ann, FieldInfo) or hasattr(sub_ann, attr_name))
-            and attr_name in collect_known_metadata([sub_ann])[0]
-            else sub_ann
+            change(sub_ann) if _metadata_has_attribute(sub_ann, attr_name) else sub_ann
             for sub_ann in sub_annotations[1:]
         ),
     )
 
 
-def _replace_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> Any:
+def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
+    if isinstance(metadata, FieldInfo):
+        return attr_name in _extract_passed_field_attributes(metadata)
+    return hasattr(metadata, attr_name) and attr_name in collect_known_metadata([metadata])[0]
+
+
+def _set_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> Any:
     if isinstance(metadata, FieldInfo):
         # FieldInfo stores constraints in its own metadata instead of attributes so we recreate it
         field_attributes: dict[str, Any] = _extract_passed_field_attributes(metadata) | {attr_name: attr_value}
@@ -1143,6 +1154,15 @@ def _replace_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) 
     metadata = copy.copy(metadata)
     setattr(metadata, attr_name, attr_value)
     return metadata
+
+
+def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
+    if isinstance(metadata, FieldInfo):
+        field_attributes: dict[str, Any] = _extract_passed_field_attributes(metadata)
+        field_attributes.pop(attr_name)
+        return pydantic.Field(**field_attributes)
+    # pydantic ignores constraints that are None
+    return _set_metadata_attribute(metadata, attr_name, None)
 
 
 def _delete_field_attributes(
@@ -1158,13 +1178,12 @@ def _delete_field_attributes(
         if attr_name in field.passed_field_attributes:
             field.delete_attribute(name=attr_name)
             deleted = True
-        if get_origin(annotation) == Annotated and any(  # pragma: no branch
-            hasattr(sub_ann, attr_name) for sub_ann in get_args(annotation)
-        ):
-            for sub_ann in get_args(annotation):
-                if hasattr(sub_ann, attr_name):
-                    object.__setattr__(sub_ann, attr_name, None)
-                    deleted = True
+        if _annotation_has_attribute(annotation, attr_name):
+            annotation = _change_annotated_metadata(
+                annotation, attr_name, functools.partial(_delete_metadata_attribute, attr_name=attr_name)
+            )
+            model.annotations[alter_schema_instruction.name] = annotation
+            deleted = True
         if not deleted:
             raise InvalidGenerationInstructionError(
                 f'You tried to delete the attribute "{attr_name}" of field "{alter_schema_instruction.name}" '

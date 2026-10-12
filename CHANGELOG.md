@@ -11,6 +11,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Restored type checking compatibility with Pydantic 2.14 and ty 0.0.86.
 - Fixed `TypeError: unhashable type` on older API versions when an endpoint's request body or response model is an unhashable annotation such as `list[Annotated[int, {"description": "item"}]]`.
 - Fixed `schema(...).field(...).had(...)` being silently ignored in older API versions when it changed a constraint the field already had, such as `min_length`, `max_length`, `ge`, `le`, or `pattern`, declared through `Annotated[..., Field(...)]`, or through `Field(...)` under `from __future__ import annotations`.
+- Fixed `schema(...).field(...).didnt_have(...)` having no effect in older API versions on attributes declared through `Annotated[..., Field(...)]`, such as `min_length` or `description`.
+- Fixed `schema(...).field(...).didnt_have("title")` failing with `TypeError` when the field's type is `Annotated`, for example because it has an `AfterValidator`.
 - Fixed versioned copies of fields like `Annotated[str, AfterValidator(str.strip), Field(min_length=1)]` also checking the constraint before the validator, or, on Pydantic 2.11, only before it.
 
 ## [7.4.1]
