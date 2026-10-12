@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import functools
+import sys
+import types
 from enum import Enum
 from typing import Annotated, Any
 
 import pytest
 from fastapi import Depends, Query, Request
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema
 from typing_extensions import Self, override
 
 from cadwyn.applications import Cadwyn
@@ -220,6 +222,50 @@ class ResourceWithoutConstructor:
     body = MySchema(foo="default")
 
 
+class HashableBody(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    foo: str
+
+
+class ResourceWithCachedNew:
+    body: HashableBody
+
+    @functools.lru_cache
+    def __new__(cls, body: HashableBody) -> Self:
+        resource = super().__new__(cls)
+        resource.body = body
+        return resource
+
+
+class ResourceWithCachedInit:
+    @functools.lru_cache  # noqa: B019
+    def __init__(self, body: HashableBody) -> None:
+        self.body = body
+
+
+class StaticCallMeta(type):
+    @override
+    @staticmethod
+    def __call__(body: HashableBody) -> Any:
+        return types.SimpleNamespace(body=body)
+
+
+class ResourceWithStaticMetaclassCall(metaclass=StaticCallMeta):
+    pass
+
+
+class ClassCallMeta(type):
+    @override
+    @classmethod
+    def __call__(cls, body: HashableBody) -> Any:
+        return types.SimpleNamespace(body=body)
+
+
+class ResourceWithClassMetaclassCall(metaclass=ClassCallMeta):
+    pass
+
+
 def test__router_generation__partial_of_class_with_forwardrefs__should_resolve_annotations(
     router, create_versioned_clients
 ):
@@ -237,12 +283,37 @@ def test__router_generation__partial_of_class_with_forwardrefs__should_resolve_a
     ):
         return resource.body
 
+    @router.post("/cached_new")
+    async def cached_new_route(resource: Annotated[Any, Depends(functools.partial(ResourceWithCachedNew))]):
+        return resource.body
+
+    @router.post("/cached_init")
+    async def cached_init_route(resource: Annotated[Any, Depends(functools.partial(ResourceWithCachedInit))]):
+        return resource.body
+
+    @router.post("/static_metaclass")
+    async def static_metaclass_route(
+        resource: Annotated[Any, Depends(functools.partial(ResourceWithStaticMetaclassCall))],
+    ):
+        return resource.body
+
+    @router.post("/class_metaclass")
+    async def class_metaclass_route(
+        resource: Annotated[Any, Depends(functools.partial(ResourceWithClassMetaclassCall))],
+    ):
+        return resource.body
+
     @router.get("/no_constructor")
     async def no_constructor_route(resource: Annotated[Any, Depends(functools.partial(ResourceWithoutConstructor))]):
         return resource.body
 
+    paths = ["/init", "/new", "/metaclass", "/cached_new", "/cached_init"]
+    # Python 3.10's inspect.signature() drops the first parameter of a staticmethod or classmethod __call__ of
+    # a metaclass so even FastAPI itself cannot use such dependencies there
+    if sys.version_info >= (3, 11):
+        paths += ["/static_metaclass", "/class_metaclass"]
     for version_client in create_versioned_clients(version_change()).values():
-        for path in ("/init", "/new", "/metaclass"):
+        for path in paths:
             response = version_client.post(path, json={"foo": "bar"})
             assert response.status_code == 200, (path, response.json())
             assert response.json() == {"foo": "bar"}

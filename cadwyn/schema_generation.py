@@ -2,6 +2,7 @@ import copy
 import dataclasses
 import functools
 import inspect
+import sys
 import types
 import typing
 from collections.abc import Callable, Sequence
@@ -491,18 +492,21 @@ def _unwrap_partials_and_decorators(call: Any) -> Any:
         call = unwrapped_call
 
 
+def _unwrap_method(method: Any) -> Any:
+    if isinstance(method, staticmethod | classmethod):
+        method = method.__func__
+    return _unwrap_partials_and_decorators(method)
+
+
 def _get_constructor_of_class(cls: type) -> Any:
-    """Return the method that inspect.signature() takes the signature of the class from"""
-    metaclass_call = inspect.getattr_static(type(cls), "__call__")
-    if is_regular_function(metaclass_call):
-        return metaclass_call
+    """Return the function that inspect.signature() takes the signature of the class from"""
+    candidates = [inspect.getattr_static(type(cls), "__call__")]
     for base in cls.__mro__:
-        for method_name in ("__new__", "__init__"):
-            method = base.__dict__.get(method_name)
-            if isinstance(method, staticmethod):
-                method = method.__func__
-            if is_regular_function(method):
-                return method
+        candidates.extend((base.__dict__.get("__new__"), base.__dict__.get("__init__")))
+    for candidate in candidates:
+        function = _unwrap_method(candidate)
+        if is_regular_function(function):
+            return function
     return None
 
 
@@ -513,10 +517,23 @@ def _get_callable_globals(call: Any) -> dict[str, Any]:
     """
     function = _unwrap_partials_and_decorators(call)
     if inspect.isclass(function):
-        function = _unwrap_partials_and_decorators(_get_constructor_of_class(function))
-    elif not is_regular_function(function):
+        constructor = _get_constructor_of_class(function)
+        if constructor is None:
+            # The constructor comes from a builtin so we use the module that defined the class
+            return getattr(sys.modules.get(function.__module__), "__dict__", {})
+        return _function_globals(constructor)
+    if not is_regular_function(function):
         function = _unwrap_partials_and_decorators(function.__call__)
     return _function_globals(function) if is_regular_function(function) else {}
+
+
+def _copy_field_info(field_info: FieldInfo) -> FieldInfo:
+    # The same as pydantic's FieldInfo._copy() (which does not exist in older versions of pydantic):
+    # the mutable attributes must not be shared with the original either
+    field_info_copy = copy.copy(field_info)
+    for attr_name in ("metadata", "_attributes_set", "_qualifiers"):
+        setattr(field_info_copy, attr_name, copy.copy(getattr(field_info, attr_name)))
+    return field_info_copy
 
 
 class _CallableWrapper:
@@ -760,7 +777,7 @@ class _AnnotationTransformer:
             tuple(
                 # FastAPI mutates the FieldInfo objects in defaults (e.g. their annotation) so every version (and app)
                 # must have its own copies. Otherwise, all of them would use the models of whichever got built last
-                copy.copy(p.default) if isinstance(p.default, FieldInfo) else p.default
+                _copy_field_info(p.default) if isinstance(p.default, FieldInfo) else p.default
                 for p in old_params.values()
                 if p.default is not inspect.Signature.empty
             ),
