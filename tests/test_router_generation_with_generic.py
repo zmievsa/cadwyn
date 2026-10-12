@@ -3,6 +3,7 @@ import typing
 from typing import Annotated, Any, Generic, Optional, TypeVar, Union
 
 import pytest
+from fastapi import Depends
 from fastapi.testclient import TestClient
 from pydantic import AliasChoices, BaseModel, Field, JsonValue, create_model
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
@@ -212,6 +213,38 @@ class RichNode(BaseModel):
 
 RichNodes = TypeAliasType("RichNodes", list[RichNode])
 RichNode.model_rebuild()
+
+
+def count_models(*, model: Any) -> int:
+    return 0
+
+
+class PartialA(BaseModel):
+    name: str = Field(alias="fullName")
+    count: int = Field(default_factory=functools.partial(count_models, model=Page["PartialB"]))
+
+
+class PartialB(BaseModel):
+    name: str = Field(alias="fullName")
+    a: Optional[Page[PartialA]] = None
+
+
+def get_dependency_page() -> Page["DependencyB"]:
+    raise NotImplementedError("Only its annotations are used")
+
+
+def count_dependencies(page: Any = Depends(get_dependency_page)) -> int:
+    return 0
+
+
+class DependencyA(BaseModel):
+    name: str = Field(alias="fullName")
+    count: int = Field(default_factory=count_dependencies)
+
+
+class DependencyB(BaseModel):
+    name: str = Field(alias="fullName")
+    a: Optional[Page[DependencyA]] = None
 
 
 class Author(BaseModel):
@@ -612,3 +645,48 @@ def test__router_generation__generic_arg_with_annotations_that_cannot_be_rebuilt
         response = TestClient(app, headers={app.router.api_version_parameter_name: version}).get("/nodes")
         assert response.status_code == HTTP_200_OK
         assert unversioned_client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
+
+
+@pytest.mark.parametrize(
+    ("model_a", "model_b"),
+    [(PartialA, PartialB), (DependencyA, DependencyB)],
+    ids=["partial_default_factory", "dependency_of_default_factory"],
+)
+def test__router_generation__cycle_through_default_factory__should_not_depend_on_route_or_instruction_order(
+    model_a: type[BaseModel],
+    model_b: type[BaseModel],
+    create_versioned_app: CreateVersionedApp,
+):
+    def get_behavior(routes_order: list[str], versioned_models: list[type[BaseModel]]) -> tuple[Any, ...]:
+        router = VersionedAPIRouter()
+
+        def get_a() -> dict[str, Any]:
+            return {"fullName": "a"}
+
+        def get_b() -> dict[str, Any]:
+            return {"fullName": "b", "a": {"items": [{"fullName": "a"}]}}
+
+        routes = {
+            "get_a": lambda: router.add_api_route("/a", get_a, response_model=model_a),
+            "get_b": lambda: router.add_api_route("/b", get_b, response_model=model_b),
+        }
+        for route in routes_order:
+            routes[route]()
+        app = create_versioned_app(
+            version_change(*(old_name_alias(model) for model in versioned_models)), router=router
+        )
+        client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+        old_openapi = TestClient(app).get("/openapi.json?version=2000-01-01").json()
+        return client_2000.get("/a").json(), client_2000.get("/b").json(), sorted(old_openapi["components"]["schemas"])
+
+    behaviors = [
+        get_behavior(routes_order, versioned_models)
+        for routes_order in (["get_a", "get_b"], ["get_b", "get_a"])
+        for versioned_models in ([model_a, model_b], [model_b, model_a])
+    ]
+
+    old_a, old_b, _ = behaviors[0]
+    assert all(behavior == behaviors[0] for behavior in behaviors)
+    # Both Page[A] and Page[B] are in the cycle so they keep their head args
+    assert old_a == {"oldName": "a", "count": 0}
+    assert old_b == {"oldName": "b", "a": {"items": [{"fullName": "a", "count": 0}]}}

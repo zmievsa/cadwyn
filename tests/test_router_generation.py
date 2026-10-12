@@ -1,5 +1,6 @@
 import importlib
 import re
+import typing
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
@@ -1955,3 +1956,50 @@ def test__router_generation__sqlalchemy_models__should_preserve_classes_and_serv
         assert generator[MappedModel] is MappedModel
         assert generator[MappedChild] is MappedChild
         assert generator[ModelFields] is ModelFields
+
+
+class ConstrainedItemState(str, Enum):
+    old = "old"
+    new = "new"
+
+
+class ConstrainedItem(BaseModel):
+    name: str
+    state: ConstrainedItemState = ConstrainedItemState.old
+
+
+def get_name_lengths(body: ConstrainedItem) -> list[int]:
+    return [len(body.name)]
+
+
+# typing caches Annotated by equality and our dependency wrappers are equal to the original dependencies so a rebuilt
+# Annotated could come back from the cache with the head dependency
+@pytest.mark.parametrize("list_type", [list[int], typing.List[int]], ids=["builtin_list", "typing_list"])  # noqa: UP006
+def test__router_generation__annotated_dependency_with_versioned_body__should_use_body_from_requested_version(
+    list_type: Any,
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/items")
+    def create_items(lengths: Annotated[list_type, Depends(get_name_lengths)]) -> list[int]:
+        return lengths
+
+    app = create_versioned_app(
+        version_change(
+            schema(ConstrainedItem).field("name").had(min_length=5),
+            enum(ConstrainedItemState).didnt_have("new"),
+        ),
+        router=router,
+    )
+    unversioned_client = TestClient(app)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+
+    assert client_2000.post("/items", json={"name": "abcde"}).json() == [5]
+    assert client_2000.post("/items", json={"name": "x"}).status_code == 422
+    assert client_2000.post("/items", json={"name": "abcde", "state": "new"}).status_code == 422
+    assert client_2001.post("/items", json={"name": "x", "state": "new"}).json() == [1]
+    old_schemas = unversioned_client.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert old_schemas["ConstrainedItem"]["properties"]["name"]["minLength"] == 5
+    assert old_schemas["ConstrainedItemState"]["enum"] == ["old"]
