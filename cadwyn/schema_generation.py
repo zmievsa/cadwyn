@@ -612,19 +612,6 @@ def _get_signature_parameters(call: Any) -> types.MappingProxyType[str, inspect.
     return inspect.signature(call).parameters
 
 
-def _has_undefined_names_in_type_alias_value(alias: Any) -> bool:
-    """Whether the lazily evaluated value of a type alias refers to names that are not defined yet.
-
-    _get_type_alias_value keeps such names as forward refs since Python 3.14.
-    """
-    if sys.version_info >= (3, 14) and hasattr(alias, "evaluate_value"):  # pragma: no cover
-        try:
-            alias.__value__  # noqa: B018
-        except NameError:
-            return True
-    return False
-
-
 def _get_type_alias_value(alias: Any) -> Any:
     # The values of typing.TypeAliasType (but not of typing_extensions.TypeAliasType) are evaluated lazily so they
     # can contain names that are only imported for type checking
@@ -712,6 +699,8 @@ class _AnnotationTransformer:
         # Only request the models from the generator without rebuilding the annotations. This way, we can find
         # the models that an annotation refers to without failing on annotations that we cannot rebuild
         self.record_only = record_only
+        # The type aliases whose values we are recording, to detect the ones that refer to themselves
+        self._type_aliases_being_recorded: list[Any] = []
         self.change_versions_of_a_non_container_annotation = self._change_version_of_a_non_container_annotation
         # This cache cannot be used until something is done regarding https://github.com/fastapi/fastapi/pull/14320
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
@@ -773,12 +762,11 @@ class _AnnotationTransformer:
                 annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
             ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES:
                 return annotation
+            if self.record_only:
+                self._record_type_alias(annotation)
+                return annotation
             value = self.change_version_of_annotation(_get_type_alias_value(annotation))
             type_params = self.change_version_of_annotation(annotation.__type_params__)
-            if self.record_only:
-                if _has_undefined_names_in_type_alias_value(annotation):  # pragma: no cover # Only on Python 3.14
-                    self._record_undefined_names()
-                return annotation
             return type(annotation)(name=annotation.__name__, value=value, type_params=type_params)
         elif isinstance(annotation, fastapi.params.Depends):
             dependency = self.change_version_of_annotation(annotation.dependency)
@@ -827,7 +815,7 @@ class _AnnotationTransformer:
             if any(type(value) is str for value in callable_annotations.values()) or (
                 function is not None and _has_undefined_names_in_lazy_annotations(function)
             ):
-                self._record_undefined_names()
+                self._record_unknown_references()
             modifier(callable_annotations)
             modifier(defaults)
             return annotation
@@ -838,10 +826,30 @@ class _AnnotationTransformer:
             annotation_modifying_wrapper_factory=self._copy_function_through_class_based_wrapper,
         )
 
-    def _record_undefined_names(self) -> None:
-        """Record that the annotation refers to names that are not defined yet.
+    def _record_type_alias(self, alias: Any) -> None:
+        if alias in self._type_aliases_being_recorded:
+            # Copying a type alias that refers to itself (e.g. `type Json = dict[str, Json] | int`) would recurse
+            # forever, as it does on main
+            self._record_unknown_references()
+            return
+        try:
+            # The values of native type aliases are evaluated lazily since Python 3.12
+            alias.__value__  # noqa: B018
+        except NameError:
+            self._record_unknown_references()
+            return
+        self._type_aliases_being_recorded.append(alias)
+        try:
+            self.change_version_of_annotation(_get_type_alias_value(alias))
+            self.change_version_of_annotation(alias.__type_params__)
+        finally:
+            self._type_aliases_being_recorded.pop()
 
-        So the models that it refers to are unknown: they could change once the names get defined.
+    def _record_unknown_references(self) -> None:
+        """Record that we cannot know every model that copying the annotation would request.
+
+        E.g. because the annotation refers to names that are not defined yet, which could refer to any model
+        once they get defined, or because copying it would never finish.
         """
         cast("_ReferencedModelCollector", self.generator).is_complete = False
 
@@ -1067,10 +1075,12 @@ class _ModelReferences(NamedTuple):
     models: frozenset[type[Union[BaseModel, Enum]]]
     # The models in the type args of a parametrized generic (e.g. Item in Page[Item])
     arg_models: frozenset[type[Union[BaseModel, Enum]]]
-    # Whether we know all of the models that the model refers to. We do not when some names in its annotations
-    # (fields, class variables, quoted generic args, annotations of default factories, etc.) are not defined yet:
-    # once they get defined, copying the model can request any model. So we never version the generic args that
-    # lead to such a model, even after the names get defined, which keeps their head args exactly as on main.
+    # Whether we know all of the models that copying the model would request. We do not when some names in its
+    # annotations (fields, class variables, quoted generic args, annotations of default factories, values of type
+    # aliases, etc.) are not defined yet: once they get defined, copying the model can request any model. We do not
+    # either when copying it would recurse forever through a type alias that refers to itself. So we never version
+    # the generic args that lead to such a model, even after the names get defined, which keeps their head args
+    # exactly as on main.
     is_complete: bool = True
 
 
@@ -1149,8 +1159,10 @@ class SchemaGenerator:
         The decision only depends on the references between the models, not on the order of generation.
         """
         if generic not in self._versions_of_generic_args:
-            arg_models = self._get_references(generic).arg_models
-            if not arg_models or self._is_referenced_through_args(generic):
+            references = self._get_references(generic)
+            arg_models = references.arg_models
+            # Versioning the args of a generic whose references are incomplete could request any model
+            if not arg_models or not references.is_complete or self._is_referenced_through_args(generic):
                 should_version = False
             else:
                 analyses = [self._analyze_generation(model, generation_stack) for model in arg_models]

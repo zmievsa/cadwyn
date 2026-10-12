@@ -1176,7 +1176,13 @@ REFERENCE_KINDS_TO_LATER_NAMES = [
         pytest.param(
             kind, marks=pytest.mark.skipif(sys.version_info < (3, 14), reason="Annotations are lazy since Python 3.14")
         )
-        for kind in ["classvar", "lazy_default_factory", "type_alias"]
+        for kind in ["classvar", "lazy_default_factory"]
+    ),
+    *(
+        pytest.param(
+            kind, marks=pytest.mark.skipif(sys.version_info < (3, 12), reason="Type aliases are lazy since Python 3.12")
+        )
+        for kind in ["type_alias", "classvar_type_alias"]
     ),
 ]
 
@@ -1225,3 +1231,64 @@ def test__generate_versioned_models__generic_arg_whose_names_are_defined_before_
 
     page = page_copy.model_validate({"items": [{"other": {"value": 3}}]})
     assert page.model_dump()["items"][0]["other"] == old_other
+
+
+def test__generate_versioned_models__generic_whose_own_args_have_names_defined_later__should_keep_head_args():
+    module = load_fresh_data_module("generic_stale_references", KIND="field")
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(module.Other).field("value").didnt_exist)), Version("2000-01-01")
+    )
+    generator = generate_versioned_models(versions)["2000-01-01"]
+    # Looks at Ref[Union[Other, "Later"]] while Later is not defined yet
+    generator[module.Box[module.W]]
+    module.define_later(refer_back_to_page=False, refer_back_to_ref_of_later=True)
+
+    ref_copy = generator[module.RefOfLater]
+
+    assert ref_copy.__pydantic_generic_metadata__["args"] == module.RefOfLater.__pydantic_generic_metadata__["args"]
+
+
+RECURSIVE_TYPE_ALIAS_KINDS = [
+    pytest.param(
+        "native",
+        marks=pytest.mark.skipif(sys.version_info < (3, 12), reason="Native type aliases exist since Python 3.12"),
+    ),
+    "typing_extensions",
+]
+
+
+@pytest.mark.parametrize("alias_kind", RECURSIVE_TYPE_ALIAS_KINDS)
+@pytest.mark.parametrize("changed_model_name", [None, "Other", "Leaf"], ids=["no_changes", "unrelated", "reachable"])
+@pytest.mark.parametrize("generic_arg_name", ["Item", "JsonData"])
+def test__router_generation__generic_arg_with_recursive_type_alias__should_work_as_on_main(
+    create_versioned_app: CreateVersionedApp,
+    alias_kind: str,
+    changed_model_name: Union[str, None],
+    generic_arg_name: str,
+):
+    module = load_fresh_data_module("generic_recursive_type_aliases", KIND=alias_kind)
+    page = module.Page[getattr(module, generic_arg_name)]
+    item = {"data": {"nested": [1, {"value": 5}]}}
+    body = {"items": [item if generic_arg_name == "Item" else item["data"]]}
+    version_changes = (
+        [version_change(schema(getattr(module, changed_model_name)).field("value").didnt_exist)]
+        if changed_model_name
+        else []
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=page)
+    async def get_items() -> dict[str, Any]:
+        return body
+
+    app = create_versioned_app(*version_changes, router=router)
+    versions = app.versions
+    clients = {
+        version: TestClient(app, headers={app.router.api_version_parameter_name: version})
+        for version in app.router.versioned_routers
+    }
+
+    for version, client in clients.items():
+        assert client.get("/items").json() == body
+        assert client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
+        assert migrate_response_body(versions, page, latest_body=body, version=version).model_dump() == body

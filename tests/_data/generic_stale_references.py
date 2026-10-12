@@ -4,7 +4,7 @@
 copy of this module for every case because defining `Later` changes these models.
 """
 
-from typing import TYPE_CHECKING, ClassVar, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Generic, Optional, TypeVar, Union
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,10 @@ class Other(BaseModel):
     value: int = 1
 
 
+# Its fields do not use its type param so pydantic can resolve them while its own arg refers to an undefined name
+RefOfLater = Ref[Union[Other, "Later"]]
+
+
 if KIND == "lazy_default_factory":
     # Only evaluated lazily since Python 3.14
     def make_later_id() -> Later:
@@ -58,24 +62,32 @@ class X(BaseModel):
     elif KIND == "classvar":
         # Only evaluated lazily since Python 3.14
         later: ClassVar[Later]
-    else:
-        # The value of a type alias is evaluated lazily. Python 3.12 can define one but before Python 3.14
-        # Cadwyn fails on its undefined names as on main
+    elif KIND == "type_alias":
+        # The values of type aliases are evaluated lazily since Python 3.12
         exec("type LaterAlias = Optional[Later]")
         later: Optional[LaterAlias] = None
+    else:
+        exec("type LaterAlias = Later")
+        adapter: ClassVar[LaterAlias]
 
 
 class W(BaseModel):
     x: Optional[X] = None
     page: Optional[Page[X]] = None
+    ref_of_later: Optional[RefOfLater] = None
     # A plain self reference makes Box[W] keep its head args after looking at X and Page[X]
     w: "Optional[W]" = None
 
 
-def define_later(*, refer_back_to_page: bool) -> None:
+def define_later(*, refer_back_to_page: bool, refer_back_to_ref_of_later: bool = False) -> None:
     global Later
 
-    if refer_back_to_page:
+    if refer_back_to_ref_of_later:
+
+        class Later(BaseModel):
+            back: Optional[RefOfLater] = None
+
+    elif refer_back_to_page:
 
         class Later(BaseModel):
             back: Optional[Page[X]] = None
