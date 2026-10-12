@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed older API versions adding `"example": {}` to the OpenAPI of path, query, header, cookie, and body parameters declared through default values such as `= Query()` (#417).
+
 ## [7.4.1]
 
 ### Fixed
