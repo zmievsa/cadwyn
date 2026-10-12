@@ -316,6 +316,9 @@ def _evaluate_user_annotations(evaluate: Callable[[], _T_EVALUATED]) -> _T_EVALU
     """
     try:
         return evaluate()
+    except RecursionError:
+        # This is more likely a bug in Cadwyn than in the user's annotations
+        raise
     except Exception:  # noqa: BLE001
         return _UNRESOLVED
 
@@ -380,19 +383,17 @@ def _get_rebuilt_model_fields(model: type[BaseModel]) -> Union[dict[str, FieldIn
     if model.__pydantic_fields_complete__:
         return model.model_fields
     ns_resolver = NsResolver(parent_namespace=unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
+    typevars_map = get_model_typevars_map(model)
     if _REBUILD_MODEL_FIELDS_TAKES_CONFIG:
+        config_wrapper = ConfigWrapper(model.model_config, check=False)
+        # Pydantic evaluates the annotations of the fields in there
         rebuilt_fields = _evaluate_user_annotations(
             lambda: rebuild_model_fields(
-                model,
-                config_wrapper=ConfigWrapper(model.model_config, check=False),
-                ns_resolver=ns_resolver,
-                typevars_map=get_model_typevars_map(model),
+                model, config_wrapper=config_wrapper, ns_resolver=ns_resolver, typevars_map=typevars_map
             )
         )
     else:  # pragma: no cover # Pydantic 2.11
-        rebuilt_fields = _evaluate_user_annotations(
-            lambda: _rebuild_model_fields_without_changing_them(model, ns_resolver)
-        )
+        rebuilt_fields = _rebuild_model_fields_without_changing_them(model, ns_resolver, typevars_map)
     if rebuilt_fields is _UNRESOLVED:
         # E.g. some names in the annotations are not defined yet
         return None
@@ -401,8 +402,8 @@ def _get_rebuilt_model_fields(model: type[BaseModel]) -> Union[dict[str, FieldIn
 
 
 def _rebuild_model_fields_without_changing_them(  # pragma: no cover # Pydantic 2.11
-    model: type[BaseModel], ns_resolver: NsResolver
-) -> dict[str, FieldInfo]:
+    model: type[BaseModel], ns_resolver: NsResolver, typevars_map: Any
+) -> Any:
     """Do what rebuild_model_fields of pydantic 2.11 does without changing the fields of the model.
 
     Pydantic 2.11 merges the `Annotated` metadata of a field into the FieldInfo assigned to the field in place,
@@ -413,16 +414,21 @@ def _rebuild_model_fields_without_changing_them(  # pragma: no cover # Pydantic 
     from pydantic_core import PydanticUndefined
     from typing_inspection.introspection import AnnotationSource
 
-    typevars_map = get_model_typevars_map(model)
     rebuilt_fields: dict[str, FieldInfo] = {}
     with ns_resolver.push(model):
         for name, field_info in model.__pydantic_fields__.items():
             if field_info._complete:
                 rebuilt_fields[name] = field_info
                 continue
-            annotation = replace_types(
-                eval_type(field_info._original_annotation, *ns_resolver.types_namespace), typevars_map
+            types_namespace = ns_resolver.types_namespace
+            evaluated_annotation = _evaluate_user_annotations(
+                lambda field_info=field_info, types_namespace=types_namespace: eval_type(
+                    field_info._original_annotation, *types_namespace
+                )
             )
+            if evaluated_annotation is _UNRESOLVED:
+                return _UNRESOLVED
+            annotation = replace_types(evaluated_annotation, typevars_map)
             assignment = field_info._original_assignment
             if assignment is PydanticUndefined:
                 rebuilt_fields[name] = FieldInfo.from_annotation(annotation, _source=AnnotationSource.CLASS)
@@ -899,8 +905,9 @@ class _AnnotationTransformer:
         # Only request the models from the generator without rebuilding the annotations. This way, we can find
         # the models that an annotation refers to without failing on annotations that we cannot rebuild
         self.record_only = record_only
-        # The type aliases whose values we are recording, to detect the ones that refer to themselves
-        self._type_aliases_being_recorded: list[Any] = []
+        # The ids of the type aliases, callables and containers that we are recording, to detect the ones that
+        # lead back to themselves (e.g. a default factory whose default argument is a registry that contains it)
+        self._ids_being_recorded: set[int] = set()
         self.change_versions_of_a_non_container_annotation = self._change_version_of_a_non_container_annotation
         # This cache cannot be used until something is done regarding https://github.com/fastapi/fastapi/pull/14320
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
@@ -918,15 +925,19 @@ class _AnnotationTransformer:
 
         """
         if isinstance(annotation, dict):
-            items = [
-                (self.change_version_of_annotation(key), self.change_version_of_annotation(value))
+            if self.record_only:
+                self._record_without_cycles(annotation, lambda: [*annotation.keys(), *annotation.values()])
+                return annotation
+            return {
+                self.change_version_of_annotation(key): self.change_version_of_annotation(value)
                 for key, value in annotation.items()
-            ]
-            return annotation if self.record_only else dict(items)
+            }
 
         elif isinstance(annotation, list | tuple):
-            values = [self.change_version_of_annotation(v) for v in annotation]
-            return annotation if self.record_only else type(annotation)(values)
+            if self.record_only:
+                self._record_without_cycles(annotation, lambda: annotation)
+                return annotation
+            return type(annotation)(self.change_version_of_annotation(v) for v in annotation)
         else:
             return self.change_versions_of_a_non_container_annotation(annotation)
 
@@ -1019,7 +1030,9 @@ class _AnnotationTransformer:
             return self.change_version_of_annotation(annotation)
 
         if self.record_only:
-            self._record_callable(annotation, callable_kind)
+            self._record_without_cycles(
+                annotation, lambda: self._get_annotations_and_defaults_to_record(annotation, callable_kind)
+            )
             return annotation
         return self._modify_callable_annotations(
             annotation,
@@ -1032,27 +1045,34 @@ class _AnnotationTransformer:
             callable_kind=callable_kind,
         )
 
-    def _record_callable(self, call: Callable[..., Any], callable_kind: _CallableKind) -> None:
-        """Request the models that _modify_callable_annotations requests for the callable without copying it"""
-        callable_annotations, defaults, is_complete = self._get_annotations_and_defaults_to_record(call, callable_kind)
-        if not is_complete:
-            self._record_unknown_references()
-        self.change_version_of_annotation(callable_annotations)
-        self.change_version_of_annotation(defaults)
+    def _record_without_cycles(self, obj: Any, get_values_to_record: Callable[[], Any]) -> None:
+        """Record the values within the object unless we are already recording it.
 
-    def _get_annotations_and_defaults_to_record(
-        self, call: Callable[..., Any], callable_kind: _CallableKind
-    ) -> tuple[dict[str, Any], tuple[Any, ...], bool]:
-        """Return what _modify_callable_annotations versions and whether it is final.
-
-        It is not final when it can change once undefined names get defined.
+        Copying an object that leads back to itself (e.g. `type Json = dict[str, Json] | int`, or a default
+        factory whose default argument is a registry that contains the factory) would recurse forever, as it does
+        on main, so its references are unknown.
         """
+        if id(obj) in self._ids_being_recorded:
+            self._record_unknown_references()
+            return
+        self._ids_being_recorded.add(id(obj))
+        try:
+            values = get_values_to_record()
+            if values is not _UNRESOLVED:
+                for value in values:
+                    self.change_version_of_annotation(value)
+        finally:
+            self._ids_being_recorded.discard(id(obj))
+
+    def _get_annotations_and_defaults_to_record(self, call: Callable[..., Any], callable_kind: _CallableKind) -> Any:
+        """Return the annotations and the defaults that _modify_callable_annotations versions, or _UNRESOLVED"""
         if callable_kind is _CallableKind.OTHER:
             # The annotations are read from the same wrapper as in _modify_callable_annotations
             wrapper = self._copy_function_through_class_based_wrapper(call, is_called_by_fastapi=False)
             if _has_undefined_names_in_lazy_annotations(wrapper):
                 # Copying it fails on Python 3.14, as on main
-                return {}, (), False
+                self._record_unknown_references()
+                return _UNRESOLVED
             callable_annotations, defaults = self._get_callable_annotations_and_defaults(
                 call, _get_annotations_without_evaluating(wrapper), _get_signature_parameters(call)
             )
@@ -1060,7 +1080,8 @@ class _AnnotationTransformer:
             signature = _evaluate_user_annotations(lambda: inspect.signature(call, eval_str=True))
             if signature is _UNRESOLVED:
                 # E.g. some names are not defined yet so copying could request other models once they get defined
-                return {}, (), False
+                self._record_unknown_references()
+                return _UNRESOLVED
             callable_annotations = self._get_annotations_of_callable_called_by_fastapi(
                 call, signature, callable_kind, evaluate=_try_eval_type_for_discovery
             )
@@ -1068,24 +1089,16 @@ class _AnnotationTransformer:
                 param.default for param in signature.parameters.values() if param.default is not inspect.Signature.empty
             )
         # The string annotations that cannot be evaluated yet stay strings
-        return callable_annotations, defaults, not any(type(value) is str for value in callable_annotations.values())
+        if any(type(value) is str for value in callable_annotations.values()):
+            self._record_unknown_references()
+        return [callable_annotations, defaults]
 
     def _record_type_alias(self, alias: Any) -> None:
-        if alias in self._type_aliases_being_recorded:
-            # Copying a type alias that refers to itself (e.g. `type Json = dict[str, Json] | int`) would recurse
-            # forever, as it does on main
-            self._record_unknown_references()
-            return
         # The values of native type aliases are evaluated lazily since Python 3.12
         if _evaluate_user_annotations(lambda: alias.__value__) is _UNRESOLVED:
             self._record_unknown_references()
             return
-        self._type_aliases_being_recorded.append(alias)
-        try:
-            self.change_version_of_annotation(_get_type_alias_value(alias))
-            self.change_version_of_annotation(alias.__type_params__)
-        finally:
-            self._type_aliases_being_recorded.pop()
+        self._record_without_cycles(alias, lambda: [_get_type_alias_value(alias), alias.__type_params__])
 
     def _record_unknown_references(self) -> None:
         """Record that we cannot know every model that copying the annotation would request.
@@ -2116,13 +2129,9 @@ def _eval_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
         return annotation
     if sys.version_info < (3, 11):
         annotation = _convert_strings_in_builtin_generics_to_forward_refs(annotation)
-    evaluated_annotation = _evaluate_user_annotations(
-        lambda: pydantic_try_eval_type(
-            annotation,
-            getattr(sys.modules.get(model.__module__), "__dict__", None),
-            {model.__name__: model} | (unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {}),
-        )[0]
-    )
+    globalns = getattr(sys.modules.get(model.__module__), "__dict__", None)
+    localns = {model.__name__: model} | (unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
+    evaluated_annotation = _evaluate_user_annotations(lambda: pydantic_try_eval_type(annotation, globalns, localns)[0])
     # The forward refs that are left make discovery keep the head args, like main
     return annotation if evaluated_annotation is _UNRESOLVED else evaluated_annotation
 

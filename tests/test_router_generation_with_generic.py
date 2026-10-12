@@ -35,7 +35,14 @@ from cadwyn import (
     migrate_response_body,
 )
 from cadwyn.route_generation import VersionedAPIRouter
-from cadwyn.schema_generation import _contains_forward_refs, _get_head_model_references, generate_versioned_models
+from cadwyn.schema_generation import (
+    _contains_forward_refs,
+    _eval_forward_refs,
+    _evaluate_user_annotations,
+    _get_head_model_references,
+    _get_rebuilt_model_fields,
+    generate_versioned_models,
+)
 from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import VersionChange
@@ -1642,3 +1649,118 @@ def test__router_generation__explicit_forward_refs__should_work_as_on_main(
         client = TestClient(app, headers={app.router.api_version_parameter_name: version})
         assert client.get("/items").json() == body
         assert client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
+
+
+def make_tags_from_registry(registry: Optional[dict[str, Any]] = None) -> list[str]:
+    return []
+
+
+TAG_FACTORIES: dict[str, Any] = {"tags": make_tags_from_registry}
+make_tags_from_registry.__defaults__ = (TAG_FACTORIES,)
+
+
+def make_tags_with_callback(callback: Any = None) -> list[str]:
+    return []
+
+
+def make_more_tags_with_callback(callback: Any = make_tags_with_callback) -> list[str]:  # pragma: no cover
+    return []  # Only its default is used
+
+
+make_tags_with_callback.__defaults__ = (make_more_tags_with_callback,)
+SELF_CONTAINING_LIST: list[Any] = []
+SELF_CONTAINING_LIST.append(SELF_CONTAINING_LIST)
+
+
+def make_tags_with_self_containing_default(values: Any = SELF_CONTAINING_LIST) -> list[str]:
+    return []
+
+
+@pytest.mark.parametrize(
+    "default_factory",
+    [make_tags_from_registry, make_tags_with_callback, make_tags_with_self_containing_default],
+    ids=["registry_with_the_factory", "factories_referring_to_each_other", "self_containing_default"],
+)
+def test__router_generation__generic_arg_with_default_factory_whose_defaults_refer_back__should_work_as_on_main(
+    create_versioned_app: CreateVersionedApp,
+    default_factory: Any,
+):
+    class ItemWithCyclicFactory(BaseModel):
+        name: str = "a"
+        tags: list[str] = Field(default_factory=default_factory)
+
+    class Unrelated(BaseModel):
+        value: int = 1
+
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=Page[ItemWithCyclicFactory])
+    async def get_items() -> dict[str, Any]:
+        return {"items": [{"name": "b"}]}
+
+    app = create_versioned_app(version_change(schema(Unrelated).field("value").had(description="Old")), router=router)
+
+    for version in app.router.versioned_routers:
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.get("/items").json() == {"items": [{"name": "b", "tags": []}]}
+
+
+def test__evaluate_user_annotations__recursion_error__should_not_be_treated_as_unresolved():
+    def recurse() -> Any:
+        raise RecursionError
+
+    with pytest.raises(RecursionError):
+        _evaluate_user_annotations(recurse)
+
+
+class ModelWithUnresolvedFieldForPlumbing(BaseModel):
+    value: "Optional[DefinedForPlumbingLater]" = None  # noqa: F821  # ty: ignore[unresolved-reference]
+
+
+def test__get_rebuilt_model_fields__failure_outside_of_user_annotations__should_not_be_treated_as_unresolved(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise TypeError("Cadwyn's own bug")
+
+    assert not ModelWithUnresolvedFieldForPlumbing.__pydantic_fields_complete__
+    monkeypatch.setattr("cadwyn.schema_generation.get_model_typevars_map", fail)
+
+    with pytest.raises(TypeError, match="Cadwyn's own bug"):
+        _get_rebuilt_model_fields(ModelWithUnresolvedFieldForPlumbing)
+
+
+def test__eval_forward_refs__failure_outside_of_user_annotations__should_not_be_treated_as_unresolved(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise TypeError("Cadwyn's own bug")
+
+    monkeypatch.setattr("cadwyn.schema_generation.unpack_lenient_weakvaluedict", fail)
+
+    with pytest.raises(TypeError, match="Cadwyn's own bug"):
+        _eval_forward_refs("Item", Page[Item])
+
+
+class BodyWithState(BaseModel):
+    state: ItemState
+
+
+def test__router_generation__request_body_with_unchanged_enum__should_validate_in_every_version(
+    create_versioned_app: CreateVersionedApp,
+):
+    class Unrelated(BaseModel):
+        value: int = 1
+
+    router = VersionedAPIRouter()
+
+    @router.post("/items")
+    async def post_item(body: BodyWithState) -> dict[str, Any]:
+        return {"is_head_member": body.state is ItemState.active}
+
+    app = create_versioned_app(version_change(schema(Unrelated).field("value").had(description="Old")), router=router)
+
+    # This raised CadwynHeadRequestValidationError on main because the head body rejected the copy's enum member
+    for version in app.router.versioned_routers:
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.post("/items", json={"state": "active"}).json() == {"is_head_member": True}
