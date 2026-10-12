@@ -297,6 +297,62 @@ def test__router_generation__field_had_alias_and_description__should_be_applied(
         assert properties["description_field"]["description"] == description
 
 
+class ParentWithInheritedField(BaseModel):
+    foo: str = Field(default="", description="Head description", max_length=10)
+    bar: int = 0
+
+
+class ChildWithInheritedField(ParentWithInheritedField):
+    pass
+
+
+class SiblingWithInheritedField(ParentWithInheritedField):
+    pass
+
+
+def test__router_generation__child_had_inherited_field__should_not_change_parent_and_siblings(
+    router: VersionedAPIRouter,
+    create_versioned_clients,
+):
+    @router.post("/parent", response_model=ParentWithInheritedField)
+    async def parent(payload: ParentWithInheritedField):
+        return payload
+
+    @router.post("/child", response_model=ChildWithInheritedField)
+    async def child(payload: ChildWithInheritedField):
+        return payload
+
+    @router.post("/sibling", response_model=SiblingWithInheritedField)
+    async def sibling(payload: SiblingWithInheritedField):
+        return payload
+
+    clients = create_versioned_clients(
+        version_change(schema(ParentWithInheritedField).field("foo").had(description="Older description")),
+        version_change(
+            schema(ParentWithInheritedField).field("bar").had(description="Bar"),
+            schema(ChildWithInheritedField).field("foo").had(description="Child description", max_length=3),
+        ),
+        router=router,
+    )
+
+    # The changes of the parent's field in even older versions still apply to the child
+    for version, path, schema_name, description, max_length in [
+        ("2001-01-01", "/parent", "ParentWithInheritedField", "Head description", 10),
+        ("2001-01-01", "/child", "ChildWithInheritedField", "Child description", 3),
+        ("2001-01-01", "/sibling", "SiblingWithInheritedField", "Head description", 10),
+        ("2000-01-01", "/parent", "ParentWithInheritedField", "Older description", 10),
+        ("2000-01-01", "/child", "ChildWithInheritedField", "Older description", 3),
+        ("2000-01-01", "/sibling", "SiblingWithInheritedField", "Older description", 10),
+    ]:
+        client = clients[version]
+        assert client.post(path, json={"foo": "a" * 3}).status_code == 200
+        assert client.post(path, json={"foo": "a" * 4}).status_code == (200 if max_length == 10 else 422)
+        openapi = client.get(f"/openapi.json?version={version}").json()
+        field_schema = openapi["components"]["schemas"][schema_name]["properties"]["foo"]
+        assert field_schema["description"] == description
+        assert field_schema["maxLength"] == max_length
+
+
 class DeletableAttributesInFieldDefaults(BaseModel):
     min_length_field: str = Field(min_length=3)
     max_length_field: str = Field(max_length=3)
