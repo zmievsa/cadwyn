@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import inspect
 import sys
 import types
 from enum import Enum
@@ -813,6 +814,54 @@ def test__router_generation__quoted_parameter_annotations__should_use_versioned_
 
         @router.post("/test")
         async def annotated_dependency_route(current: Annotated[str, Depends(get_current_from_quoted_body)]):
+            return current
+
+    clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
+    assert clients["2001-01-01"].post("/test", json={"current": "ok"}).json() == "ok"
+    assert clients["2000-01-01"].post("/test", json={"current": "ok"}).status_code == 422
+    assert clients["2000-01-01"].post("/test", json={"current": "ok", "legacy": "ok"}).json() == "ok"
+    required_fields = {}
+    for version, version_client in clients.items():
+        openapi = version_client.get(f"/openapi.json?version={version}").json()
+        required_fields[version] = openapi["components"]["schemas"]["QuotedPayload"]["required"]
+    assert required_fields == {"2001-01-01": ["current"], "2000-01-01": ["current", "legacy"]}
+
+
+def _with_signature_of_unevaluated_annotations(function: Any) -> Any:
+    # Like decorators that rebuild the signature to inject parameters or defaults (e.g. fastapi-utils' @cbv).
+    # inspect.signature() leaves postponed annotations as strings and eval_str does not evaluate __signature__
+    function.__signature__ = inspect.signature(function)
+    return function
+
+
+@_with_signature_of_unevaluated_annotations
+def get_current_from_body_with_unevaluated_signature(body: QuotedPayload) -> str:
+    return body.current
+
+
+@pytest.mark.parametrize("style", ["endpoint", "default_dependency", "annotated_dependency"])
+def test__router_generation__signatures_with_unevaluated_annotations__should_use_versioned_models(
+    router, create_versioned_clients, style
+):
+    if style == "endpoint":
+
+        @router.post("/test")
+        @_with_signature_of_unevaluated_annotations
+        async def endpoint_route(body: QuotedPayload):
+            return body.current
+
+    elif style == "default_dependency":
+
+        @router.post("/test")
+        async def default_dependency_route(current: str = Depends(get_current_from_body_with_unevaluated_signature)):
+            return current
+
+    else:
+
+        @router.post("/test")
+        async def annotated_dependency_route(
+            current: Annotated[str, Depends(get_current_from_body_with_unevaluated_signature)],
+        ):
             return current
 
     clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
