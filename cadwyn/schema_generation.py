@@ -467,6 +467,7 @@ def _function_globals(call: Union[types.FunctionType, types.MethodType]) -> dict
 
 
 def _unwrap_partial(call: Any) -> Any:
+    # The same as FastAPI's _impartial(), which decides how FastAPI calls the original dependency
     while isinstance(call, functools.partial):
         call = call.func
     return call
@@ -515,14 +516,19 @@ def _get_best_effort_globals(call: Any) -> dict[str, Any]:
     """Return the globals of the callable for the string annotations that _get_signature() left.
 
     Like FastAPI, we take them from the unwrapped callable. Unlike FastAPI, we also unwrap partials that do not
-    carry globals themselves. For callable class instances, __globals__ is on the __call__ method instead
+    carry globals themselves. For callable class instances, __globals__ is on the __call__ method instead.
+    Partial subclasses that override __call__ are treated like other callable instances, just like Cadwyn always did.
+    This also matters at runtime: looking up their __call__ statically creates their instance __dict__ and Python
+    3.13+ flattens partials of partial subclasses without one, which skips the overridden __call__
     """
     unwrapped_call = inspect.unwrap(call)
     while True:
         unwrapped_call_globals = getattr(unwrapped_call, "__globals__", None)
         if isinstance(unwrapped_call_globals, dict):
             return unwrapped_call_globals
-        if not isinstance(unwrapped_call, functools.partial):
+        if not isinstance(unwrapped_call, functools.partial) or (
+            type(unwrapped_call).__call__ is not functools.partial.__call__
+        ):
             break
         unwrapped_call = inspect.unwrap(unwrapped_call.func)
     dunder_call = inspect.getattr_static(unwrapped_call, "__call__", None)

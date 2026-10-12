@@ -41,7 +41,7 @@ from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from starlette.routing import Route
-from typing_extensions import Any, TypeAliasType
+from typing_extensions import Any, TypeAliasType, override
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn._utils import _callable_name
@@ -2354,6 +2354,36 @@ def test__schema_generation__deep_copies_of_versioned_default_factories__should_
         count_before_copying = field.get_default(call_default_factory=True)
         copy.deepcopy(field).get_default(call_default_factory=True)
         assert field.get_default(call_default_factory=True) == count_before_copying + 1
+
+
+class _PartialWithOverriddenCall(functools.partial):
+    @override
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return super().__call__(*args, **kwargs) + 100
+
+
+def _get_seven() -> int:
+    return 7
+
+
+def test__router_generation__partial_subclass_dependency_with_overridden_call__should_call_the_override(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    # The instance must not have any attributes. Otherwise, Python would not flatten it into the partials around it
+    dependency = _PartialWithOverriddenCall(_get_seven)
+
+    @router.get("/default")
+    def default_route(value: int = Depends(dependency)):
+        return value
+
+    @router.get("/annotated")
+    def annotated_route(value: Annotated[int, Depends(dependency)]):
+        return value
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/default").json() == 107
+        assert version_client.get("/annotated").json() == 107
 
 
 def test__router_generation__dependency_with_lazy_type_checking_only_annotations__should_resolve_the_other_ones(
