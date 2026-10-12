@@ -7,7 +7,7 @@ import types
 import typing
 from collections.abc import Callable, Sequence
 from datetime import date
-from enum import Enum
+from enum import Enum, auto
 from functools import cache
 from typing import (
     TYPE_CHECKING,
@@ -467,22 +467,120 @@ def _function_globals(call: Union[types.FunctionType, types.MethodType]) -> dict
     return call.__globals__  # ty: ignore[unresolved-attribute]  # MethodType forwards function attributes at runtime.
 
 
+def _unwrap_partial(call: Any) -> Any:
+    # The same as FastAPI's _impartial(), which decides how FastAPI calls the original dependency
+    while isinstance(call, functools.partial):
+        call = call.func
+    return call
+
+
+def _get_function_behind_callable(call: Any) -> Any:
+    """Return the function that runs when the callable is called. It decides how FastAPI must call the callable.
+
+    Partials only pre-fill arguments so we unwrap them. We do not follow decorators (__wrapped__) because the outer
+    decorator is what runs. Classes are returned as is because calling them constructs an instance.
+    """
+    call = _unwrap_partial(call)
+    if is_regular_function(call) or inspect.isclass(call):
+        return call
+    return call.__call__
+
+
+def _get_signature(call: Callable[..., Any]) -> inspect.Signature:
+    """Return the signature of the callable with its postponed (string) annotations evaluated, like FastAPI does.
+
+    inspect.signature() itself evaluates them in the globals of whichever function it reads the signature from,
+    which is the only reliable way to pick the right globals for every kind of wrapper (partials, decorators, etc).
+    It evaluates them only once so the forward references within them (e.g. `body: "Model"` or `list["Model"]`
+    with postponed annotations) are left.
+    """
+    try:
+        return inspect.signature(call, eval_str=True)
+    # This is deliberately narrow: an annotation may use a name that only exists for type checkers
+    # (e.g. one imported under "if TYPE_CHECKING:"). FastAPI handles this the same way. The parameter annotations
+    # that can be resolved individually are resolved later in _modify_callable_annotations
+    except NameError:
+        return _get_unevaluated_signature(call)
+
+
+def _get_unevaluated_signature(call: Callable[..., Any]) -> inspect.Signature:
+    """Return the signature of the callable with its annotations as written, e.g. strings for postponed ones"""
+    if sys.version_info >= (3, 14):
+        from annotationlib import Format
+
+        # Unresolvable names in lazily evaluated annotations become ForwardRefs instead of raising
+        return inspect.signature(call, annotation_format=Format.FORWARDREF)
+    return inspect.signature(call)
+
+
+def _get_best_effort_globals(call: Any) -> dict[str, Any]:
+    """Return the globals of the callable for the string annotations that _get_signature() left.
+
+    Like FastAPI, we take them from the unwrapped callable. Unlike FastAPI, we also unwrap partials that do not
+    carry globals themselves. For callable class instances, __globals__ is on the __call__ method instead.
+    Partial subclasses that override __call__ are treated like other callable instances, just like Cadwyn always did.
+    This also matters at runtime: looking up their __call__ statically creates their instance __dict__ and Python
+    3.13+ flattens partials of partial subclasses without one, which skips the overridden __call__
+    """
+    unwrapped_call = inspect.unwrap(call)
+    while True:
+        unwrapped_call_globals = getattr(unwrapped_call, "__globals__", None)
+        if isinstance(unwrapped_call_globals, dict):
+            return unwrapped_call_globals
+        if not isinstance(unwrapped_call, functools.partial) or (
+            type(unwrapped_call).__call__ is not functools.partial.__call__
+        ):
+            break
+        unwrapped_call = inspect.unwrap(unwrapped_call.func)
+    dunder_call = inspect.getattr_static(unwrapped_call, "__call__", None)
+    return _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
+
+
+def _copy_field_info(field_info: FieldInfo) -> FieldInfo:
+    # The same as pydantic's FieldInfo._copy() (which does not exist in older versions of pydantic):
+    # the mutable attributes must not be shared with the original either
+    field_info_copy = copy.copy(field_info)
+    for attr_name in ("metadata", "_attributes_set", "_qualifiers"):
+        setattr(field_info_copy, attr_name, copy.copy(getattr(field_info, attr_name)))
+    return field_info_copy
+
+
+class _CallableKind(Enum):
+    ENDPOINT = auto()
+    DEPENDENCY = auto()
+    # Callables that FastAPI never calls itself, e.g. pydantic's default factories or callables in Annotated metadata
+    OTHER = auto()
+
+
 class _CallableWrapper:
     __annotations__: dict[str, Any]
     __defaults__: Union[tuple[Any, ...], None]
     __signature__: inspect.Signature
+    # Whether it wraps an endpoint or a dependency rather than a callable that FastAPI never calls itself
+    # (e.g. pydantic's default factories). The latter are wrapped exactly the way Cadwyn always did
+    _is_called_by_fastapi = False
 
     # __eq__ and __hash__ are needed to make sure that dependency overrides work correctly.
     # They are based on putting dependencies (functions) as keys for the dictionary so if we want to be able to
     # override the wrapper, we need to make sure that it is equivalent to the original in __hash__ and __eq__
 
-    def __init__(self, original_callable: Callable[..., Any]) -> None:
+    def __init__(self, original_callable: Callable[..., Any], *, is_called_by_fastapi: bool) -> None:
         super().__init__()
         self._original_callable = original_callable
-        if not is_regular_function(original_callable):
-            original_callable = original_callable.__call__
+        if is_called_by_fastapi:
+            self._is_called_by_fastapi = True
+            # FastAPI follows __wrapped__ to find out how to call a dependency so it must lead to the same place
+            # as it would for the original. We only copy the attributes of functions because copying the ones of
+            # classes and their instances would make us look like them to FastAPI
+            wrapped = _unwrap_partial(original_callable)
+            functools.update_wrapper(
+                self, wrapped, updated=functools.WRAPPER_UPDATES if is_regular_function(wrapped) else ()
+            )
+        else:
+            if not is_regular_function(original_callable):
+                original_callable = original_callable.__call__
 
-        functools.update_wrapper(self, original_callable)
+            functools.update_wrapper(self, original_callable)
 
     @property
     def __globals__(self) -> dict[str, Any]:  # pragma: no cover
@@ -495,6 +593,18 @@ class _CallableWrapper:
         if is_regular_function(dunder_call):
             return _function_globals(dunder_call)
         return {}
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "_CallableWrapper":
+        if not self._is_called_by_fastapi:
+            # The same as the default deepcopy, which is what Cadwyn always did for the other callables
+            wrapper_copy = object.__new__(type(self))
+            memo[id(self)] = wrapper_copy
+            wrapper_copy.__dict__.update(copy.deepcopy(self.__dict__, memo))
+            return wrapper_copy
+        # Copying would also copy the original dependency (e.g. a class instance or a partial) so it would stop
+        # matching the keys of app.dependency_overrides and changes to its state would not be visible in the copy.
+        # Wrappers are never mutated after creation and every version creates its own wrappers anyway.
+        return self
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self._original_callable(*args, **kwargs)
@@ -516,15 +626,35 @@ class _AsyncCallableWrapper(_CallableWrapper):
 
 class _GeneratorCallableWrapper(_CallableWrapper):
     @override
-    def __call__(self, *args: Any, **kwargs: Any) -> typing.Iterator[Any]:  # pragma: no cover
+    def __call__(self, *args: Any, **kwargs: Any) -> typing.Iterator[Any]:
+        # "yield from" forwards send(), throw(), and close() so the wrapped generator handles exceptions itself
         yield from self._original_callable(*args, **kwargs)
 
 
 class _AsyncGeneratorCallableWrapper(_CallableWrapper):
     @override
-    async def __call__(self, *args: Any, **kwargs: Any) -> typing.AsyncIterator[Any]:  # pragma: no cover
-        async for value in self._original_callable(*args, **kwargs):
-            yield value
+    async def __call__(self, *args: Any, **kwargs: Any) -> typing.AsyncGenerator[Any, Any]:
+        # There is no "yield from" for async generators so we forward asend() and athrow() by hand.
+        # Otherwise, exceptions (e.g. the ones raised in the endpoint) would never reach the wrapped generator
+        # so its "except" and "finally" blocks would get skipped until it gets garbage collected.
+        # aclose() is forwarded too because it throws GeneratorExit into us.
+        # The exception is forwarded outside of the "except" block. Otherwise, it would still be the one being handled
+        # while the wrapped generator runs which would change sys.exc_info() and the __context__ of its exceptions.
+        generator = self._original_callable(*args, **kwargs)
+        try:
+            value = await generator.__anext__()
+            while True:
+                sent_value = thrown_exception = None
+                try:
+                    sent_value = yield value
+                except BaseException as e:  # noqa: BLE001
+                    thrown_exception = e
+                if thrown_exception is None:
+                    value = await generator.asend(sent_value)
+                else:
+                    value = await generator.athrow(thrown_exception)
+        except StopAsyncIteration:
+            return
 
 
 @final
@@ -573,14 +703,19 @@ class _AnnotationTransformer:
                 mode="serialization",
             )
         route.dependencies = self.change_version_of_annotation(route.dependencies)
-        route.endpoint = self.change_version_of_annotation(route.endpoint)
+        route.endpoint = self.change_versions_of_a_non_container_annotation(
+            route.endpoint, callable_kind=_CallableKind.ENDPOINT
+        )
         for callback in route.callbacks or []:
             if not isinstance(callback, fastapi.routing.APIRoute):
                 continue
             self.migrate_route_to_version(callback, ignore_response_model=ignore_response_model)
         self._remake_endpoint_dependencies(route)
 
-    def _change_version_of_a_non_container_annotation(self, annotation: Any) -> Any:
+    def _change_version_of_a_non_container_annotation(
+        self, annotation: Any, *, callable_kind: _CallableKind = _CallableKind.OTHER
+    ) -> Any:
+        """callable_kind tells how FastAPI uses the annotation if it is a callable"""
         from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
 
         if isinstance(annotation, GenericAliasUnionArgs):
@@ -589,6 +724,13 @@ class _AnnotationTransformer:
             # Classvar does not support generic tuple arguments
             if origin is ClassVar:
                 return ClassVar[self.change_version_of_annotation(args[0])]
+            if origin is Annotated:
+                # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the
+                # originals so it could return the alias that holds the dependency of another version
+                return _AnnotatedAlias(
+                    self.change_version_of_annotation(args[0]),
+                    tuple(self.change_version_of_annotation(arg) for arg in args[1:]),
+                )
             return origin[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
         elif is_typealiastype(annotation):
             if (
@@ -601,17 +743,15 @@ class _AnnotationTransformer:
                     value=self.change_version_of_annotation(annotation.__value__),
                     type_params=self.change_version_of_annotation(annotation.__type_params__),
                 )
-        elif isinstance(annotation, fastapi.params.Security):
-            return fastapi.params.Security(
-                self.change_version_of_annotation(annotation.dependency),
-                scopes=annotation.scopes,
-                use_cache=annotation.use_cache,
-            )
         elif isinstance(annotation, fastapi.params.Depends):
-            return fastapi.params.Depends(
-                self.change_version_of_annotation(annotation.dependency),
-                use_cache=annotation.use_cache,
+            # This also covers Security. Copying keeps all of their other fields (e.g. use_cache, scope, and scopes)
+            # without calling __init__ which subclasses could have overridden with a different signature
+            annotation_copy = copy.copy(annotation)
+            dependency = self.change_versions_of_a_non_container_annotation(
+                annotation.dependency, callable_kind=_CallableKind.DEPENDENCY
             )
+            object.__setattr__(annotation_copy, "dependency", dependency)
+            return annotation_copy
         elif isinstance(annotation, UnionType):  # pragma: no cover
             return typing.Union[tuple(self.change_version_of_annotation(a) for a in get_args(annotation))]
         elif is_any(annotation) or is_newtype(annotation):
@@ -631,7 +771,11 @@ class _AnnotationTransformer:
                 annotation,
                 modifier,
                 modifier,
-                annotation_modifying_wrapper_factory=self._copy_function_through_class_based_wrapper,
+                annotation_modifying_wrapper_factory=functools.partial(
+                    self._copy_function_through_class_based_wrapper,
+                    is_called_by_fastapi=callable_kind is not _CallableKind.OTHER,
+                ),
+                callable_kind=callable_kind,
             )
         else:
             return annotation
@@ -661,29 +805,79 @@ class _AnnotationTransformer:
         modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,
         *,
         annotation_modifying_wrapper_factory: Callable[[_Call], _CallableWrapper],
+        callable_kind: _CallableKind,
     ) -> _Call:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
-        old_params = inspect.signature(call).parameters
-        if sys.version_info >= (3, 14):  # pragma: no cover
-            from annotationlib import get_annotations
+        if callable_kind is _CallableKind.OTHER:
+            # FastAPI never evaluates the annotations of such callables (e.g. pydantic's default factories) and they
+            # may not even be evaluable at runtime (e.g. pandas.Series[int]) so this is exactly what Cadwyn always did
+            old_params = inspect.signature(call).parameters
+            if sys.version_info >= (3, 14):  # pragma: no cover
+                from annotationlib import get_annotations
 
-            callable_annotations = get_annotations(annotation_modifying_wrapper)
+                callable_annotations = get_annotations(annotation_modifying_wrapper)
+            else:
+                callable_annotations = annotation_modifying_wrapper.__annotations__
+            original_call = cls._unwrap_callable(call)
+            # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
+            if is_regular_function(original_call):
+                call_globals = _function_globals(original_call)
+            else:
+                dunder_call = inspect.getattr_static(original_call, "__call__", None)
+                call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
+            callable_annotations = {
+                k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
+            }
+            annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
+            annotation_modifying_wrapper.__defaults__ = modify_defaults(
+                tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
+            )
         else:
-            callable_annotations = annotation_modifying_wrapper.__annotations__
-        original_call = cls._unwrap_callable(call)
-        # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
-        if is_regular_function(original_call):
-            call_globals = _function_globals(original_call)
-        else:
-            dunder_call = inspect.getattr_static(original_call, "__call__", None)
-            call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
-        callable_annotations = {
-            k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
-        }
-        annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
-        annotation_modifying_wrapper.__defaults__ = modify_defaults(
-            tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
-        )
+            # FastAPI evaluates the annotations of endpoints and dependencies the same way so we cannot fail where
+            # FastAPI would not. Unlike __annotations__, the signature also follows functools.partial and __signature__
+            old_signature = _get_signature(call)
+            old_params = old_signature.parameters
+            callable_annotations = {
+                name: param.annotation
+                for name, param in old_params.items()
+                if param.annotation is not inspect.Parameter.empty
+            }
+            return_annotation = old_signature.return_annotation
+            if callable_kind is _CallableKind.ENDPOINT and return_annotation is not inspect.Signature.empty:
+                # FastAPI infers the response model of endpoints from their return annotations
+                callable_annotations["return"] = return_annotation
+            # Cadwyn always evaluated the annotations that were written as strings (e.g. postponed ones) recursively
+            # before versioning them. inspect.signature() evaluates them only once so forward references can be left
+            # within them (e.g. `body: "Model"` or `list["Model"]` with postponed annotations) or they can stay strings
+            # (e.g. if they could not be evaluated or if they come from __signature__). FastAPI would evaluate some of
+            # them itself but in the globals that lead to the head models so we finish evaluating them here
+            unevaluated_signature = _get_unevaluated_signature(call)
+            annotations_written_as_strings = {
+                name for name, param in unevaluated_signature.parameters.items() if type(param.annotation) is str
+            }
+            if type(unevaluated_signature.return_annotation) is str:
+                annotations_written_as_strings.add("return")
+            call_globals = _get_best_effort_globals(cls._unwrap_callable(call))
+            callable_annotations = {
+                k: _try_eval_type(v, call_globals) if k in annotations_written_as_strings else v
+                for k, v in callable_annotations.items()
+            }
+            annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
+            if callable_kind is _CallableKind.DEPENDENCY and return_annotation is not inspect.Signature.empty:
+                # FastAPI never looks at the return annotations of dependencies so we neither evaluate nor version them.
+                # Versioning them would generate their models for nothing, which can even fail
+                # (e.g. for default factories without a signature such as time.time before Python 3.13)
+                annotation_modifying_wrapper.__annotations__["return"] = return_annotation
+            annotation_modifying_wrapper.__defaults__ = modify_defaults(
+                tuple(
+                    # FastAPI mutates the FieldInfo objects in defaults (e.g. their annotation) so every version
+                    # (and app) must have its own copies. Otherwise, all of them would use the models of whichever
+                    # got built last
+                    _copy_field_info(p.default) if isinstance(p.default, FieldInfo) else p.default
+                    for p in old_params.values()
+                    if p.default is not inspect.Signature.empty
+                ),
+            )
         annotation_modifying_wrapper.__signature__ = cls._generate_signature(
             annotation_modifying_wrapper,
             old_params,
@@ -728,22 +922,27 @@ class _AnnotationTransformer:
         )
 
     @classmethod
-    def _copy_function_through_class_based_wrapper(cls, call: _Call) -> _CallableWrapper:
+    def _copy_function_through_class_based_wrapper(cls, call: _Call, *, is_called_by_fastapi: bool) -> _CallableWrapper:
         """Separate from copy_endpoint because endpoints MUST be functions in FastAPI, they cannot be cls instances"""
         call = cls._unwrap_callable(call)
-        if not is_regular_function(call):
+        if is_called_by_fastapi:
+            actual_call = _get_function_behind_callable(call)
+            if inspect.isclass(actual_call):
+                # Like FastAPI, we call classes synchronously because calling them constructs an instance
+                return _CallableWrapper(call, is_called_by_fastapi=True)
+        elif not is_regular_function(call):
             # This means that the callable is actually an instance of a regular class
             actual_call = call.__call__
         else:
             actual_call = call
         if is_async_gen_callable(actual_call):
-            return _AsyncGeneratorCallableWrapper(call)
+            return _AsyncGeneratorCallableWrapper(call, is_called_by_fastapi=is_called_by_fastapi)
         elif is_coroutine_callable(actual_call):
-            return _AsyncCallableWrapper(call)
+            return _AsyncCallableWrapper(call, is_called_by_fastapi=is_called_by_fastapi)
         elif is_gen_callable(actual_call):
-            return _GeneratorCallableWrapper(call)
+            return _GeneratorCallableWrapper(call, is_called_by_fastapi=is_called_by_fastapi)
         else:
-            return _CallableWrapper(call)
+            return _CallableWrapper(call, is_called_by_fastapi=is_called_by_fastapi)
 
     @staticmethod
     def _unwrap_callable(call: Any) -> Any:
@@ -1120,14 +1319,6 @@ def _metadata_sets_attribute(metadata: Any, attr_name: str) -> bool:
 
 def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
     return hasattr(metadata, attr_name) or _metadata_sets_attribute(metadata, attr_name)
-
-
-def _copy_field_info(field_info: FieldInfo) -> FieldInfo:
-    # Works like FieldInfo._copy() from newer pydantic versions: keeps the type and attributes of FieldInfo subclasses
-    copied = copy.copy(field_info)
-    copied.metadata = field_info.metadata.copy()
-    copied._attributes_set = field_info._attributes_set.copy()
-    return copied
 
 
 def _set_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> Any:
