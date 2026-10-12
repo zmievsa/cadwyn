@@ -1136,6 +1136,61 @@ def test__schema_field_had__inherited_field_with_mutable_default__should_not_sha
     assert child.foo.items == []
 
 
+class ParentWithDefaults(BaseModel):
+    with_factory: str = Field(default_factory=str)
+    with_default: str = "default"
+    bar: int = 0
+
+
+class ChildWithDefaults(ParentWithDefaults):
+    pass
+
+
+class SiblingWithDefaults(ParentWithDefaults):
+    pass
+
+
+def test__schema_field_had__default_of_child_after_sibling_deleted_default_factory__should_replace_factory(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ParentWithDefaults).field("bar").had(description="Bar"),
+            schema(SiblingWithDefaults).field("with_factory").didnt_have("default_factory"),
+            schema(ChildWithDefaults).field("with_factory").had(default="old"),
+        )
+    )
+
+    assert schemas["2000-01-01"][ChildWithDefaults]().with_factory == "old"
+    assert schemas["2000-01-01"][ParentWithDefaults]().with_factory == ""
+    assert schemas["2000-01-01"][SiblingWithDefaults].model_fields["with_factory"].is_required()
+
+
+@pytest.mark.parametrize(
+    ("field_name", "attributes"),
+    [
+        ("with_factory", {"default": "old"}),
+        ("with_default", {"default_factory": str}),
+    ],
+)
+def test__schema_field_had__both_default_and_default_factory__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas, field_name: str, attributes: dict[str, Any]
+):
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            f'The field "{field_name}" of "ChildWithDefaults" has both a default and a default_factory '
+            "in an older version."
+        ),
+    ):
+        create_runtime_schemas(
+            version_change(
+                schema(ParentWithDefaults).field("bar").had(description="Bar"),
+                schema(ChildWithDefaults).field(field_name).had(**attributes),
+            )
+        )
+
+
 class ParentWithoutField(BaseModel):
     pass
 

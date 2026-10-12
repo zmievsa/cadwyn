@@ -179,11 +179,20 @@ class PydanticFieldWrapper:
         self.models_that_changed_it = set()
         self._field_attributes_by_model = {}
 
-    def copy_for_model(self, model: type[BaseModel], memo: dict[int, Any]) -> "PydanticFieldWrapper":
+    def copy_for_model(self, model: type[BaseModel], name: str, memo: dict[int, Any]) -> "PydanticFieldWrapper":
         """Return a deep copy of the field with the attributes that it has in the model and no changes to apply.
 
         Each model gets its own copy of the field (and of its default values) in every version, as before.
         """
+        if "default" in self.passed_field_attributes and "default_factory" in self.passed_field_attributes:
+            # pydantic would fail to create the field
+            changed_by = next(
+                change.changed_by for change in reversed(self.changes) if change.name in {"default", "default_factory"}
+            )
+            raise InvalidGenerationInstructionError(
+                f'The field "{name}" of "{changed_by.__name__}" has both a default and a default_factory '
+                "in an older version."
+            )
         field_copy = copy.copy(self)
         field_copy.annotation = copy.deepcopy(self.annotation, memo)
         field_copy.passed_field_attributes = copy.deepcopy(self.get_field_attributes(model), memo)
@@ -226,7 +235,13 @@ class PydanticFieldWrapper:
                 attributes.pop(change.name, None)
             else:
                 attributes[change.name] = change.value
+                # Field() accepts only one of them
+                if change.name in _MUTUALLY_EXCLUSIVE_FIELD_ATTRIBUTES:
+                    attributes.pop(_MUTUALLY_EXCLUSIVE_FIELD_ATTRIBUTES[change.name], None)
         return attributes
+
+
+_MUTUALLY_EXCLUSIVE_FIELD_ATTRIBUTES = {"default": "default_factory", "default_factory": "default"}
 
 
 def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]:
@@ -642,12 +657,12 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             self.cls,
             name=self.name,
             doc=self.doc,
-            fields={name: field.copy_for_model(self.cls, memo_of_model) for name, field in self.fields.items()},
+            fields={name: field.copy_for_model(self.cls, name, memo_of_model) for name, field in self.fields.items()},
             validators=copy.deepcopy(self.validators),
             other_attributes=copy.deepcopy(self.other_attributes),
             annotations=copy.deepcopy(self.annotations),
             fields_renamed_by_parents={
-                name: field.copy_for_model(self.cls, memo_of_model)
+                name: field.copy_for_model(self.cls, name, memo_of_model)
                 for name, field in self.fields_renamed_by_parents.items()
             },
         )
