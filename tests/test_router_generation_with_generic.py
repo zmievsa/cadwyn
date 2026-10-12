@@ -1,10 +1,12 @@
+import functools
+import typing
 from typing import Annotated, Any, Generic, Optional, TypeVar, Union
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import AliasChoices, BaseModel, Field, create_model
+from pydantic import AliasChoices, BaseModel, Field, JsonValue, create_model
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
-from typing_extensions import Self
+from typing_extensions import Self, TypeAliasType, TypeVarTuple, Unpack
 
 from cadwyn import RequestInfo, convert_request_to_next_version_for
 from cadwyn.route_generation import VersionedAPIRouter
@@ -100,6 +102,7 @@ def test__router_generation__using_parametrized_schema_in_body(
 
 
 ItemT = TypeVar("ItemT")
+ItemsT = TypeVarTuple("ItemsT")
 
 
 class Item(BaseModel):
@@ -177,6 +180,38 @@ class Child(BaseModel):
 class Tree(BaseModel):
     name: str
     children: "list[Tree]" = []
+
+
+class CallbackNode(BaseModel):
+    children: Optional[Page["CallbackNode"]] = None
+    # typing.Callable cannot be rebuilt from its origin and args unlike collections.abc.Callable
+    callback: typing.Callable = Field(default=lambda: None, exclude=True)
+
+
+def make_values(*values: Unpack[ItemsT]) -> tuple[Unpack[ItemsT]]:
+    return values
+
+
+class VariadicNode(BaseModel):
+    children: Optional[Page["VariadicNode"]] = None
+    values: tuple[int, ...] = Field(default_factory=make_values)
+
+
+class CallableDefault:
+    def __call__(self, value: Optional["RichNode"] = None) -> list[str]:
+        return []
+
+
+class RichNode(BaseModel):
+    children: Optional[Page["RichNode"]] = None
+    siblings: "RichNodes" = []
+    extra: JsonValue = None
+    tags: list[str] = Field(default_factory=functools.partial(list))
+    labels: list[str] = Field(default_factory=CallableDefault())
+
+
+RichNodes = TypeAliasType("RichNodes", list[RichNode])
+RichNode.model_rebuild()
 
 
 class Author(BaseModel):
@@ -547,3 +582,33 @@ def test__router_generation__model_using_self__should_generate_versions(create_v
 
     # FastAPI itself cannot render OpenAPI for models that use Self so we only check the response
     assert client_2000.get("/nodes").json() == {"value": 1, "children": [{"value": 2, "children": []}]}
+
+
+@pytest.mark.parametrize(
+    "page_model",
+    [
+        Page["CallbackNode"],
+        Page[CallbackNode],
+        Page["VariadicNode"],
+        Page[VariadicNode],
+        Page["RichNode"],
+        Page[RichNode],
+    ],
+    ids=["cyclic_callable", "callable", "cyclic_unpack", "unpack", "cyclic_various", "various"],
+)
+def test__router_generation__generic_arg_with_annotations_that_cannot_be_rebuilt__should_generate_versions(
+    page_model: type[BaseModel],
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/nodes", response_model=page_model)
+    async def get_nodes() -> dict[str, Any]:
+        return {"items": [{"children": {"items": [{}]}}]}
+
+    app = create_versioned_app(item_alias_version_change(), router=router)
+    unversioned_client = TestClient(app)
+    for version in ("2000-01-01", "2001-01-01"):
+        response = TestClient(app, headers={app.router.api_version_parameter_name: version}).get("/nodes")
+        assert response.status_code == HTTP_200_OK
+        assert unversioned_client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK

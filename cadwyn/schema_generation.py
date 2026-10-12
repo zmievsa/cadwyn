@@ -429,17 +429,14 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
     def get_referenced_models(self) -> "set[type[Union[BaseModel, Enum]]]":
         """Return the models that generate_model_copy requests from the generator"""
-        collector = _ReferencedModelCollector()
+        models: set[type[Union[BaseModel, Enum]]] = set()
         for field in self.fields.values():
-            collector.annotation_transformer.change_version_of_annotation(field.passed_field_attributes)
-        collector.annotation_transformer.change_version_of_annotation(self.annotations)
-        for base in self.cls.__dict__.get("__orig_bases__", self.cls.__bases__):
-            collector[base]
-        generic_metadata = self.cls.__pydantic_generic_metadata__
-        if generic_metadata["origin"] is not None:
-            collector[generic_metadata["origin"]]
-        collector.annotation_transformer.change_version_of_annotation(_eval_generic_args(self.cls))
-        return collector.models
+            _collect_referenced_models(field.passed_field_attributes, models)
+        _collect_referenced_models(self.annotations, models)
+        _collect_referenced_models(self.cls.__dict__.get("__orig_bases__", self.cls.__bases__), models)
+        _collect_referenced_models(self.cls.__pydantic_generic_metadata__["origin"], models)
+        _collect_referenced_models(_eval_generic_args(self.cls), models)
+        return models
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {}
@@ -452,6 +449,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 per_field_validators[name] = validator.decorator(*validator.fields, **validator.kwargs)(func)
             else:
                 root_validators[name] = validator.decorator(**validator.kwargs)(func)
+        # Keep get_referenced_models in sync with the models that this method requests from the generator
         fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
         # __orig_bases__ keeps bases such as Generic[T] that __bases__ loses so that the copy stays generic
         orig_bases = tuple(
@@ -552,7 +550,7 @@ class _AsyncGeneratorCallableWrapper(_CallableWrapper):
 
 @final
 class _AnnotationTransformer:
-    def __init__(self, generator: "Union[SchemaGenerator, _ReferencedModelCollector]") -> None:
+    def __init__(self, generator: "SchemaGenerator") -> None:
         self.generator = generator
         self.change_versions_of_a_non_container_annotation = self._change_version_of_a_non_container_annotation
         # This cache cannot be used until something is done regarding https://github.com/fastapi/fastapi/pull/14320
@@ -609,14 +607,15 @@ class _AnnotationTransformer:
         if isinstance(annotation, GenericAliasUnionArgs):
             origin = get_origin(annotation)
             args = get_args(annotation)
-            # Classvar does not support generic tuple arguments
-            if origin is ClassVar:
-                return ClassVar[self.change_version_of_annotation(args[0])]
-            return origin[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
+            new_args = tuple(self.change_version_of_annotation(arg) for arg in args)
+            # Some annotations cannot be rebuilt from their origin and args (e.g. bare `Callable` or `Unpack[Ts]`)
+            # so we only rebuild the ones whose args have changed
+            if all(new_arg is arg for new_arg, arg in zip(new_args, args, strict=True)):
+                return annotation
+            # Annotations such as ClassVar do not support tuple arguments
+            return origin[new_args[0] if len(new_args) == 1 else new_args]
         elif is_typealiastype(annotation):
-            if (
-                annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
-            ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES:
+            if _is_pydantic_type_alias(annotation):
                 return annotation
             else:
                 return type(annotation)(
@@ -642,12 +641,7 @@ class _AnnotationTransformer:
         elif isinstance(annotation, type):
             return self._change_version_of_type(annotation)
         elif callable(annotation):
-            # Special forms such as typing.Self are callable but they are not functions
-            if (
-                type(annotation).__module__ in {"typing", "typing_extensions"}
-                or type(annotation).__module__.startswith(("fastapi.", "pydantic.", "pydantic_core.", "starlette."))
-                or isinstance(annotation, fastapi.security.base.SecurityBase)
-            ):
+            if _is_unversioned_callable(annotation):
                 return annotation
 
             def modifier(annotation: Any):
@@ -827,20 +821,65 @@ def _is_versionable_model(model: Any) -> bool:
     )
 
 
-@final
-class _ReferencedModelCollector:
-    """Collects the models that the annotation transformer requests without generating their copies"""
+def _is_pydantic_type_alias(annotation: Any) -> bool:
+    return (
+        annotation.__module__ is not None and annotation.__module__.startswith("pydantic.")
+    ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES
 
-    __slots__ = "annotation_transformer", "models"
 
-    def __init__(self) -> None:
-        self.annotation_transformer = _AnnotationTransformer(self)
-        self.models: set[type[Union[BaseModel, Enum]]] = set()
+def _is_unversioned_callable(annotation: Any) -> bool:
+    # Special forms such as typing.Self are callable but they are not functions
+    return (
+        type(annotation).__module__ in {"typing", "typing_extensions"}
+        or type(annotation).__module__.startswith(("fastapi.", "pydantic.", "pydantic_core.", "starlette."))
+        or isinstance(annotation, fastapi.security.base.SecurityBase)
+    )
 
-    def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
-        if _is_versionable_model(model):
-            self.models.add(_unwrap_model(model))
-        return model
+
+def _collect_referenced_models(annotation: Any, models: "set[type[Union[BaseModel, Enum]]]") -> None:
+    """Add the models that _AnnotationTransformer.change_version_of_annotation would version to `models`.
+
+    Unlike the transformer, it only walks the annotation without rebuilding it so it works with any annotation.
+    """
+    from typing_inspection.typing_objects import is_typealiastype
+
+    if isinstance(annotation, dict):
+        for key, value in annotation.items():
+            _collect_referenced_models(key, models)
+            _collect_referenced_models(value, models)
+    elif isinstance(annotation, list | tuple):
+        for value in annotation:
+            _collect_referenced_models(value, models)
+    elif isinstance(annotation, (*GenericAliasUnionArgs, UnionType)):
+        _collect_referenced_models(get_args(annotation), models)
+    elif is_typealiastype(annotation):
+        if not _is_pydantic_type_alias(annotation):
+            _collect_referenced_models(annotation.__value__, models)
+    elif isinstance(annotation, type):
+        if _is_versionable_model(annotation):
+            models.add(_unwrap_model(annotation))
+    elif callable(annotation) and not _is_unversioned_callable(annotation):
+        _collect_models_referenced_by_callable(annotation, models)
+
+
+def _collect_models_referenced_by_callable(call: Any, models: "set[type[Union[BaseModel, Enum]]]") -> None:
+    call = _AnnotationTransformer._unwrap_callable(call)
+    function = call if is_regular_function(call) else inspect.getattr_static(call, "__call__", None)
+    if not is_regular_function(function):
+        return
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        from annotationlib import Format, get_annotations
+
+        annotations = get_annotations(function, format=Format.FORWARDREF)
+    else:
+        annotations = function.__annotations__
+    function_globals = _function_globals(function)
+    for annotation in annotations.values():
+        _collect_referenced_models(
+            _try_eval_type(annotation, function_globals) if type(annotation) is str else annotation, models
+        )
+    _collect_referenced_models(function.__defaults__ or (), models)
+    _collect_referenced_models(getattr(function, "__kwdefaults__", None) or {}, models)
 
 
 @final
@@ -913,9 +952,9 @@ class SchemaGenerator:
         }
 
     def _is_referenced_through(self, annotation: Any, model: type[BaseModel]) -> bool:
-        collector = _ReferencedModelCollector()
-        collector.annotation_transformer.change_version_of_annotation(annotation)
-        models_to_visit = list(collector.models)
+        referenced_models: set[type[Union[BaseModel, Enum]]] = set()
+        _collect_referenced_models(annotation, referenced_models)
+        models_to_visit = list(referenced_models)
         visited_models = set()
         while models_to_visit:
             referenced_model = models_to_visit.pop()
