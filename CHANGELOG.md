@@ -14,6 +14,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Fixed dependencies whose parameters are only described by `__signature__` losing their parameter types, which skipped type conversion, crashed constraints such as `ge` with a 500, and removed the types from OpenAPI.
 - Fixed async generator dependencies not receiving exceptions raised after their `yield`, which skipped their `except` blocks (e.g. a database rollback) and delayed their cleanup until garbage collection.
 - Fixed versioned dependencies losing the `scope` of `Depends` and `Security`.
+- Fixed `app.dependency_overrides` getting ignored in older API versions for dependencies that are class instances, bound methods, or partials. Older versions used copies of such dependencies, which also hid changes to their state.
+- Fixed decorated dependencies, such as `functools.lru_cache` ones, failing in older API versions when their annotations are postponed (`from __future__ import annotations`).
 - Fixed `Annotated` dependencies whose type is not versioned, such as `Annotated[list[int], Depends(get_values)]`, using the dependency of the head or another API version. This made versioned request constraints, such as a `min_length` or a removed enum member, get ignored in both validation and OpenAPI.
 
 ## [7.4.1]

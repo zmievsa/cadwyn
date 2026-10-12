@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import functools
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any
 
 import pytest
-from fastapi import Depends, Request
+from fastapi import Depends, Query, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, WithJsonSchema
 
@@ -143,3 +144,47 @@ def test__router_generation__forwardref_body_matches_version(router, create_vers
     response = client.post("/outcome", json={"state": "stopped"})
 
     assert response.status_code == (200 if version == "2001-01-01" else 422)
+
+
+@functools.lru_cache
+def cached_limit(limit: Annotated[int, Query(ge=1)] = 3) -> int:
+    return limit
+
+
+class DecoratorThatKeepsWrapped:
+    def __init__(self, func: Any) -> None:
+        functools.update_wrapper(self, func)
+        self.func = func
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.func(*args, **kwargs)
+
+
+@DecoratorThatKeepsWrapped
+def decorated_limit(request: Request, limit: Annotated[int, Query(ge=1)] = 3) -> int:
+    return limit
+
+
+def test__router_generation__decorated_dependencies_with_forwardrefs__should_resolve_annotations(
+    router, create_versioned_clients
+):
+    @router.get("/cached/annotated")
+    async def cached_annotated(limit: Annotated[int, Depends(cached_limit)]):
+        return limit
+
+    @router.get("/cached/default")
+    async def cached_default(limit: int = Depends(cached_limit)):
+        return limit
+
+    @router.get("/decorated/annotated")
+    async def decorated_annotated(limit: Annotated[int, Depends(decorated_limit)]):
+        return limit
+
+    @router.get("/decorated/default")
+    async def decorated_default(limit: int = Depends(decorated_limit)):
+        return limit
+
+    for version_client in create_versioned_clients(version_change()).values():
+        for path in ("/cached/annotated", "/cached/default", "/decorated/annotated", "/decorated/default"):
+            assert version_client.get(path, params={"limit": 5}).json() == 5
+            assert version_client.get(path, params={"limit": 0}).status_code == 422

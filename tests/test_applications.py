@@ -1,4 +1,6 @@
+import functools
 import re
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, cast
 
@@ -21,6 +23,7 @@ from tests._resources.versioned_app.app import (
     v2021_01_01_router,
     v2022_01_02_router,
 )
+from tests.conftest import version_change, versions
 
 if TYPE_CHECKING:
     from fastapi.routing import APIRoute
@@ -168,6 +171,61 @@ def test__cadwyn__with_dependency_overrides__overrides_should_be_applied():
         assert client.post("/hello").json() == "new"
         assert client.post("/darkness", headers={"x-api-version": "2022-11-16"}).json() == "new"
         assert client.post("/my_old_friend", headers={"x-api-version": "2022-11-16"}).json() == "new"
+
+
+class _Auth:
+    """Every test overrides these dependencies so they must never get called"""
+
+    def __call__(self) -> str:
+        raise NotImplementedError
+
+    def method(self) -> str:
+        raise NotImplementedError
+
+
+def _deny(role: str) -> str:
+    raise NotImplementedError
+
+
+_auth = _Auth()
+
+
+@pytest.mark.parametrize(
+    "dependency",
+    [_auth, _auth.method, functools.partial(_deny, "admin"), functools.partial(_auth)],
+    ids=["instance", "bound_method", "partial", "partial_of_instance"],
+)
+@pytest.mark.parametrize("override_before_generation", [True, False])
+def test__cadwyn__with_dependency_overrides_of_non_function_dependencies__should_be_applied_in_all_versions(
+    dependency: Callable[[], str],
+    override_before_generation: bool,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/annotated")
+    async def annotated(value: Annotated[str, Depends(dependency)]):
+        return value
+
+    @router.get("/default")
+    async def default(value: str = Depends(dependency)):
+        return value
+
+    @router.get("/route", dependencies=[Depends(dependency)])
+    async def route_level():
+        return "overridden"
+
+    app = Cadwyn(versions=VersionBundle(HeadVersion(), *versions(version_change(), version_change())))
+    if override_before_generation:
+        app.dependency_overrides[dependency] = lambda: "overridden"
+    app.generate_and_include_versioned_routers(router)
+    if not override_before_generation:
+        app.dependency_overrides[dependency] = lambda: "overridden"
+
+    with TestClient(app) as client:
+        for version in ("2002-01-01", "2001-01-01", "2000-01-01"):
+            for path in ("/annotated", "/default", "/route"):
+                response = client.get(path, headers={"x-api-version": version})
+                assert response.json() == "overridden"
 
 
 def test__unversioned_include_router__route_added_after_inclusion_is_available():

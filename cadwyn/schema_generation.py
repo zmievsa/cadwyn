@@ -472,11 +472,15 @@ def _unwrap_partial(call: Any) -> Any:
 
 
 def _get_function_behind_callable(call: Any) -> Any:
-    """Return the function that actually runs when the callable is called: partials and class instances are unwrapped"""
-    call = _unwrap_partial(call)
-    if is_regular_function(call):
+    """Return the function that actually runs when the callable is called.
+
+    Just like FastAPI, we unwrap partials and decorators (through __wrapped__). Class instances get unwrapped into their
+    __call__ while classes are returned as is because calling them constructs an instance.
+    """
+    call = inspect.unwrap(_unwrap_partial(call))
+    if is_regular_function(call) or inspect.isclass(call):
         return call
-    return call.__call__
+    return inspect.unwrap(call.__call__)
 
 
 def _get_callable_globals(call: Any) -> dict[str, Any]:
@@ -496,7 +500,9 @@ class _CallableWrapper:
     def __init__(self, original_callable: Callable[..., Any]) -> None:
         super().__init__()
         self._original_callable = original_callable
-        functools.update_wrapper(self, _get_function_behind_callable(original_callable))
+        function = _get_function_behind_callable(original_callable)
+        # Copying the namespace of a class into our instance would make it look like that class to FastAPI
+        functools.update_wrapper(self, function, updated=() if inspect.isclass(function) else functools.WRAPPER_UPDATES)
 
     @property
     def __globals__(self) -> dict[str, Any]:  # pragma: no cover
@@ -504,6 +510,12 @@ class _CallableWrapper:
         # It's supposed to be an attribute on the function but we use it as property to prevent python
         # from trying to pickle globals when we deepcopy this wrapper
         return _get_callable_globals(self._original_callable)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "_CallableWrapper":
+        # Wrappers are never mutated after creation. Copying them would also copy the original dependency
+        # (e.g. a class instance or a partial) so it would stop matching the keys of app.dependency_overrides
+        # and changes to its state would not be visible in the copy
+        return self
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self._original_callable(*args, **kwargs)
@@ -537,16 +549,21 @@ class _AsyncGeneratorCallableWrapper(_CallableWrapper):
         # Otherwise, exceptions (e.g. the ones raised in the endpoint) would never reach the wrapped generator
         # so its "except" and "finally" blocks would get skipped until it gets garbage collected.
         # aclose() is forwarded too because it throws GeneratorExit into us.
+        # The exception is forwarded outside of the "except" block. Otherwise, it would still be the one being handled
+        # while the wrapped generator runs which would change sys.exc_info() and the __context__ of its exceptions.
         generator = self._original_callable(*args, **kwargs)
         try:
             value = await generator.__anext__()
             while True:
+                sent_value = thrown_exception = None
                 try:
                     sent_value = yield value
-                except BaseException as e:  # noqa: BLE001, PERF203
-                    value = await generator.athrow(e)
-                else:
+                except BaseException as e:  # noqa: BLE001
+                    thrown_exception = e
+                if thrown_exception is None:
                     value = await generator.asend(sent_value)
+                else:
+                    value = await generator.athrow(thrown_exception)
         except StopAsyncIteration:
             return
 
@@ -633,11 +650,11 @@ class _AnnotationTransformer:
                     type_params=self.change_version_of_annotation(annotation.__type_params__),
                 )
         elif isinstance(annotation, fastapi.params.Depends):
-            # This also covers Security. replace() keeps all of their other fields such as use_cache, scope, and scopes
-            return dataclasses.replace(
-                annotation,
-                dependency=self.change_version_of_annotation(annotation.dependency),
-            )
+            # This also covers Security. Copying keeps all of their other fields (e.g. use_cache, scope, and scopes)
+            # without calling __init__ which subclasses could have overridden with a different signature
+            annotation_copy = copy.copy(annotation)
+            object.__setattr__(annotation_copy, "dependency", self.change_version_of_annotation(annotation.dependency))
+            return annotation_copy
         elif isinstance(annotation, UnionType):  # pragma: no cover
             return typing.Union[tuple(self.change_version_of_annotation(a) for a in get_args(annotation))]
         elif is_any(annotation) or is_newtype(annotation):
@@ -776,6 +793,8 @@ def is_gen_callable(call: Callable[..., object]) -> bool:
     # Copied from fastapi.dependencies.models
     if inspect.isgeneratorfunction(call):
         return True
+    if inspect.isclass(call):
+        return False
     dunder_call = getattr(call, "__call__", None)  # noqa: B004
     return inspect.isgeneratorfunction(dunder_call)
 
@@ -784,6 +803,8 @@ def is_async_gen_callable(call: Callable[..., object]) -> bool:
     # Copied from fastapi.dependencies.models
     if inspect.isasyncgenfunction(call):
         return True
+    if inspect.isclass(call):
+        return False
     dunder_call = getattr(call, "__call__", None)  # noqa: B004
     return inspect.isasyncgenfunction(dunder_call)
 
