@@ -325,8 +325,8 @@ def _get_model_field_names(model: type[BaseModel], fields: Union[dict[str, Field
 _REBUILD_MODEL_FIELDS_TAKES_CONFIG = "config_wrapper" in inspect.signature(rebuild_model_fields).parameters
 
 
-def _get_rebuilt_model_fields(model: type[BaseModel]) -> dict[str, FieldInfo]:
-    """Return the fields that _rebuild_model would give the model without rebuilding it.
+def _get_rebuilt_model_fields(model: type[BaseModel]) -> Union[dict[str, FieldInfo], None]:
+    """Return the fields that _rebuild_model would give the model without rebuilding it, if they can be resolved.
 
     model_rebuild first resolves the fields with the same pydantic function and namespaces. Unlike model_rebuild,
     it does not change the model, build its schema, or call its hooks.
@@ -342,8 +342,8 @@ def _get_rebuilt_model_fields(model: type[BaseModel]) -> dict[str, FieldInfo]:
             model, ns_resolver=ns_resolver, typevars_map=get_model_typevars_map(model), **config_kwargs
         )
     except NameError:
-        # model_rebuild cannot resolve some of the annotations either so it keeps the current fields
-        return model.model_fields
+        # Some names in the annotations are not defined yet
+        return None
     # Pydantic >= 2.13 also returns the info about the extra fields
     return rebuilt_fields[0] if isinstance(rebuilt_fields, tuple) else rebuilt_fields
 
@@ -354,6 +354,9 @@ def _get_head_model_references(model: type[BaseModel]) -> "_ModelReferences":
     Unlike _wrap_pydantic_model, it does not copy anything from the model because the model may never be copied.
     """
     fields = _get_rebuilt_model_fields(model)
+    if fields is None:
+        # The models that it refers to are unknown until the missing names get defined
+        return _ModelReferences(frozenset(), frozenset(), is_complete=False)
     collector = _ReferencedModelCollector()
     _change_version_of_model_references(
         collector,
@@ -1009,6 +1012,11 @@ class _ModelReferences(NamedTuple):
     models: frozenset[type[Union[BaseModel, Enum]]]
     # The models in the type args of a parametrized generic (e.g. Item in Page[Item])
     arg_models: frozenset[type[Union[BaseModel, Enum]]]
+    # Whether we know all of the models that the model refers to. If we do not (e.g. its annotations refer to
+    # names that are not defined yet), copying it could refer to any model so we must not version the generic args
+    # that lead to it. Such references are not cached because the model can refer to anything once the names
+    # get defined.
+    is_complete: bool = True
 
 
 class _GenerationAnalysis(NamedTuple):
@@ -1023,6 +1031,7 @@ class SchemaGenerator:
     __slots__ = (
         "_changed_models",
         "_generation_analyses",
+        "_incomplete_reference_lookups",
         "_lock",
         "_model_references",
         "_versions_of_generic_args",
@@ -1042,6 +1051,8 @@ class SchemaGenerator:
         self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
         self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
         self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
+        # Counts the lookups of incomplete references so that we do not cache the decisions that relied on them
+        self._incomplete_reference_lookups = 0
         # Models are generated lazily (e.g. in migrate_response_body) so several threads can generate them at once
         self._lock = threading.RLock()
         self.concrete_models: dict[type[Union[BaseModel, Enum]], type[Union[BaseModel, Enum]]] = {}
@@ -1085,17 +1096,20 @@ class SchemaGenerator:
         generating their copies would recurse forever (e.g. `children: "list[Tree]"` within `Tree`).
         The decision only depends on the references between the models, not on the order of generation.
         """
-        if generic not in self._versions_of_generic_args:
-            arg_models = self._get_references(generic).arg_models
-            if not arg_models or self._is_referenced_through_args(generic):
-                should_version = False
-            else:
-                analyses = [self._analyze_generation(model, generation_stack) for model in arg_models]
-                should_version = all(analysis.terminates for analysis in analyses) and any(
-                    analysis.refers_to_changed_models for analysis in analyses
-                )
+        if generic in self._versions_of_generic_args:
+            return self._versions_of_generic_args[generic]
+        incomplete_reference_lookups = self._incomplete_reference_lookups
+        arg_models = self._get_references(generic).arg_models
+        if not arg_models or self._is_referenced_through_args(generic):
+            should_version = False
+        else:
+            analyses = [self._analyze_generation(model, generation_stack) for model in arg_models]
+            should_version = all(analysis.terminates for analysis in analyses) and any(
+                analysis.refers_to_changed_models for analysis in analyses
+            )
+        if incomplete_reference_lookups == self._incomplete_reference_lookups:
             self._versions_of_generic_args[generic] = should_version
-        return self._versions_of_generic_args[generic]
+        return should_version
 
     def _analyze_generation(
         self, model: type[Union[BaseModel, Enum]], generation_stack: list[type[Union[BaseModel, Enum]]]
@@ -1105,6 +1119,7 @@ class SchemaGenerator:
         if model in generation_stack:
             # The models that generating this model requests lead back to it so its generation would never finish
             return _GenerationAnalysis(terminates=False, refers_to_changed_models=False)
+        incomplete_reference_lookups = self._incomplete_reference_lookups
         generation_stack.append(model)
         references = self._get_references(model)
         requested_models = set(references.models)
@@ -1115,11 +1130,12 @@ class SchemaGenerator:
         analyses = [self._analyze_generation(requested_model, generation_stack) for requested_model in requested_models]
         generation_stack.pop()
         analysis = _GenerationAnalysis(
-            terminates=all(analysis.terminates for analysis in analyses),
+            terminates=references.is_complete and all(analysis.terminates for analysis in analyses),
             refers_to_changed_models=model in self._changed_models
             or any(analysis.refers_to_changed_models for analysis in analyses),
         )
-        self._generation_analyses[model] = analysis
+        if incomplete_reference_lookups == self._incomplete_reference_lookups:
+            self._generation_analyses[model] = analysis
         return analysis
 
     def _is_referenced_through_args(self, generic: type[BaseModel]) -> bool:
@@ -1136,16 +1152,31 @@ class SchemaGenerator:
         return False
 
     def _get_references(self, model: type[Union[BaseModel, Enum]]) -> _ModelReferences:
-        if model not in self._model_references:
-            if lenient_issubclass(model, Enum):
-                references = _ModelReferences(frozenset(), frozenset())
-            elif model in self.model_bundle.schemas:
-                references = self.model_bundle.schemas[model].get_references()
-            else:
-                # We do not wrap the model because wrapping copies parts of it and we may never need its copy
-                references = _get_head_model_references(cast("type[BaseModel]", model))
+        """Return the models that copying the model requests from this generator (reference discovery).
+
+        INVARIANT: discovery must find a superset of the models that copying the model actually requests.
+        The decision to version generic args (the cycle rule) relies on these references to rule out the cycles
+        that would make copying recurse forever, so any model that copying requests and discovery misses can lead
+        to infinite recursion. This is why discovery runs the same function as copying
+        (_change_version_of_model_references) and why tests/conftest.py checks the invariant for every model
+        copied in the test suite. If discovery cannot know all of the references (see _ModelReferences.is_complete),
+        it must say so instead of returning a subset.
+        Discovery must not change the model either because the model may never be copied.
+        """
+        if model in self._model_references:
+            return self._model_references[model]
+        if lenient_issubclass(model, Enum):
+            references = _ModelReferences(frozenset(), frozenset())
+        elif model in self.model_bundle.schemas:
+            references = self.model_bundle.schemas[model].get_references()
+        else:
+            # We do not wrap the model because wrapping copies parts of it and we may never need its copy
+            references = _get_head_model_references(cast("type[BaseModel]", model))
+        if references.is_complete:
             self._model_references[model] = references
-        return self._model_references[model]
+        else:
+            self._incomplete_reference_lookups += 1
+        return references
 
     @overload
     def _get_wrapper_for_model(self, model: type[BaseModel]) -> "_PydanticModelWrapper[BaseModel]": ...

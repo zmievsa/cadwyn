@@ -1104,11 +1104,9 @@ def test__generate_versioned_models__untouched_generic_arg_with_unresolvable_for
     assert not ItemWithUnresolvableRef.__pydantic_complete__
 
 
-def load_fresh_forward_ref_cycles_module() -> Any:
-    module_name = f"tests._data.generic_forward_ref_cycles_{uuid.uuid4().hex}"
-    spec = importlib.util.spec_from_file_location(
-        module_name, Path(__file__).parent / "_data" / "generic_forward_ref_cycles.py"
-    )
+def load_fresh_data_module(name: str) -> Any:
+    module_name = f"tests._data.{name}_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(module_name, Path(__file__).parent / "_data" / f"{name}.py")
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -1141,7 +1139,7 @@ def test__migrate_response_body__generic_arg_with_forward_refs_resolved_by_pydan
     old_body: dict[str, Any],
     migrate_arg_first: bool,
 ):
-    module = load_fresh_forward_ref_cycles_module()
+    module = load_fresh_data_module("generic_forward_ref_cycles")
     model = getattr(module, model_name)
     versions = VersionBundle(
         Version(
@@ -1167,3 +1165,31 @@ def test__migrate_response_body__generic_arg_with_forward_refs_resolved_by_pydan
     )
 
     assert migrated_body.model_dump(by_alias=True) == {"items": [old_body]}
+
+
+@pytest.mark.parametrize(
+    ("refer_back_to_page", "old_other"),
+    [
+        # The cycle through Later keeps the head X in Page[X] as on main instead of recursing forever
+        pytest.param(True, {"value": 3}, id="cycle"),
+        # Discovery did not cache what it saw before Later was defined so Page[X] is versioned
+        pytest.param(False, {}, id="no_cycle"),
+    ],
+)
+def test__generate_versioned_models__forward_ref_defined_after_looking_at_the_model__should_use_its_new_references(
+    refer_back_to_page: bool,
+    old_other: dict[str, Any],
+):
+    module = load_fresh_data_module("generic_stale_references")
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(module.Other).field("value").didnt_exist)), Version("2000-01-01")
+    )
+    generator = generate_versioned_models(versions)["2000-01-01"]
+    # Looks at X while Later is not defined yet
+    generator[module.Box[module.W]]
+    module.define_later(refer_back_to_page=refer_back_to_page)
+
+    page_copy = generator[module.Page[module.X]]
+
+    body = {"items": [{"other": {"value": 3}, "later": {"back": None}}]}
+    assert page_copy.model_validate(body).model_dump() == {"items": [{"other": old_other, "later": {"back": None}}]}
