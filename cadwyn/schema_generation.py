@@ -661,9 +661,9 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             validators=copy.deepcopy(self.validators),
             other_attributes=copy.deepcopy(self.other_attributes),
             annotations=copy.deepcopy(self.annotations),
+            # The model would inherit them from its parent so they do not share anything with its own fields
             fields_renamed_by_parents={
-                name: field.copy_for_model(self.cls, name, memo_of_model)
-                for name, field in self.fields_renamed_by_parents.items()
+                name: field.copy_for_model(self.cls, name, {}) for name, field in self.fields_renamed_by_parents.items()
             },
         )
         memo[id(self)] = result

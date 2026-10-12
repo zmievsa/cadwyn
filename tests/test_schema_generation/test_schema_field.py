@@ -1136,6 +1136,53 @@ def test__schema_field_had__inherited_field_with_mutable_default__should_not_sha
     assert child.foo.items == []
 
 
+class ParentWithDefaultFactoryToRename(BaseModel):
+    foo: int = Field(default_factory=CountingFactory())
+
+
+class ChildWithDefaultFactoryToRename(ParentWithDefaultFactoryToRename):
+    pass
+
+
+def test__schema_field_had__parent_renamed_field_with_default_factory__should_not_share_it_between_child_fields(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ChildWithDefaultFactoryToRename).field("foo").had(type=float),
+            schema(ParentWithDefaultFactoryToRename).field("foo").had(name="old_foo"),
+        )
+    )
+
+    assert schemas["2000-01-01"][ChildWithDefaultFactoryToRename]().model_dump() == {"old_foo": 1, "foo": 1}
+
+
+class ParentWithMutableDefaultToRename(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    foo: MutableDefault = MutableDefault()
+    bar: int = 0
+
+
+class ChildWithMutableDefaultToRename(ParentWithMutableDefaultToRename):
+    pass
+
+
+def test__schema_field_had__parent_renamed_field_with_mutable_default__should_not_share_it_between_child_fields(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ParentWithMutableDefaultToRename).field("bar").had(description="Bar"),
+            schema(ChildWithMutableDefaultToRename).field("foo").had(type=object),
+            schema(ParentWithMutableDefaultToRename).field("foo").had(name="old_foo"),
+        )
+    )
+
+    child = schemas["2000-01-01"][ChildWithMutableDefaultToRename]()
+    child.foo.items.append("foo")
+    assert child.old_foo.items == []
+
+
 class ParentWithDefaults(BaseModel):
     with_factory: str = Field(default_factory=str)
     with_default: str = "default"
