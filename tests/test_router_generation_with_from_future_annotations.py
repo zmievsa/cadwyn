@@ -535,6 +535,39 @@ def test__router_generation__partial_of_class_from_another_module_with_nested_qu
     assert statuses == {"2001-01-01": (200, 200, 500), "2000-01-01": (422, 200, 500)}
 
 
+# The globals of a module that shadows a builtin
+_globals_shadowing_int: dict[str, Any] = {}
+exec(
+    "from __future__ import annotations\n"
+    "from typing import Optional\n"
+    "int = str\n"
+    "def get_number(number: Optional['int'] = None) -> None:\n"
+    "    raise NotImplementedError\n",
+    _globals_shadowing_int,
+)
+
+
+def test__router_generation__partial_subclass_of_function_shadowing_builtins__should_resolve_them_like_before(
+    router, create_versioned_clients, monkeypatch
+):
+    # Cadwyn always resolved the annotations of such partials in the globals of their __call__, which resolve "int"
+    # to the builtin. The globals of the wrapped function must not take precedence over the builtins
+    dependency = _PartialWithOverriddenCall(_globals_shadowing_int["get_number"])
+    monkeypatch.setitem(globals(), "dependency_in_globals", dependency)
+
+    @router.get("/test")
+    async def route(number: Annotated[Any, Depends(dependency_in_globals)]):
+        raise NotImplementedError
+
+    for version, version_client in create_versioned_clients(version_change()).items():
+        response = version_client.get("/test", params={"number": "five"})
+        assert [(error["loc"], error["type"]) for error in response.json()["detail"]] == [
+            (["query", "number"], "int_parsing")
+        ]
+        openapi = version_client.get(f"/openapi.json?version={version}").json()
+        assert openapi["paths"]["/test"]["get"]["parameters"][0]["schema"]["anyOf"][0] == {"type": "integer"}
+
+
 class PartialSubclassPayload(BaseModel):
     foo: str
 

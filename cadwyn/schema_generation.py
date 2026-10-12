@@ -1,3 +1,4 @@
+import builtins
 import copy
 import dataclasses
 import functools
@@ -546,11 +547,27 @@ def _get_best_effort_globals(call: Any) -> dict[str, Any]:
             # is defined in another module than its .func). We deliberately do not do this for other callables
             # (e.g. plain partials of classes): FastAPI cannot resolve such names in the head route either, so
             # resolving them would only make the versioned routes disagree with it about the request body
-            return {**_get_signature_source_globals(unwrapped_call), **_get_dunder_call_globals(unwrapped_call)}
+            return _with_fallback_globals(
+                _get_dunder_call_globals(unwrapped_call), _get_signature_source_globals(unwrapped_call)
+            )
         if not isinstance(unwrapped_call, functools.partial):
             break
         unwrapped_call = inspect.unwrap(unwrapped_call.func)
     return _get_dunder_call_globals(unwrapped_call)
+
+
+def _with_fallback_globals(main_globals: dict[str, Any], fallback_globals: dict[str, Any]) -> dict[str, Any]:
+    """Return globals that resolve every name that main_globals can resolve exactly like main_globals would.
+
+    fallback_globals are only used for the other names. Builtins count as resolvable by main_globals too.
+    """
+    # eval() takes the builtins from __builtins__ of the globals, or the current ones if there are none
+    # (__builtins__ is the builtins module instead of its dict in __main__)
+    main_builtins = main_globals.get("__builtins__", builtins)
+    main_builtins = vars(main_builtins) if isinstance(main_builtins, types.ModuleType) else main_builtins
+    # Dunder names such as __name__ are left out because they describe the module of the globals, not builtins
+    builtin_names = {name: value for name, value in main_builtins.items() if not name.startswith("__")}
+    return {**fallback_globals, **builtin_names, **main_globals}
 
 
 def _get_dunder_call_globals(call: Any) -> dict[str, Any]:
@@ -579,7 +596,10 @@ def _get_signature_source_globals(call: Any) -> dict[str, Any]:
 def _get_user_defined_constructor(cls: type) -> Any:
     """Return the method that inspect.signature() reads the signature of the class from, if it is user-defined.
 
-    Like inspect.signature(), we take a metaclass __call__ first and then the first __new__ or __init__ in the MRO
+    Like inspect.signature(), we take a metaclass __call__ first and then the first __new__ or __init__ in the MRO.
+    Python 3.10's inspect.signature() differs for classes that inherit both without defining either: it takes the
+    inherited __new__ even if an __init__ comes earlier in the MRO. We only use this for fallback globals, so we
+    keep the selection of newer Pythons everywhere
     """
     builtin_method_types = (types.WrapperDescriptorType, types.BuiltinFunctionType)
     metaclass_call = inspect.getattr_static(type(cls), "__call__")
