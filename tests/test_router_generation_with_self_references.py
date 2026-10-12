@@ -1,3 +1,5 @@
+import importlib.metadata
+import re
 from enum import Enum
 from typing import Any, Generic, Optional, TypeVar, Union, get_args
 
@@ -17,6 +19,7 @@ from cadwyn import (
     generate_versioned_models,
     migrate_response_body,
 )
+from cadwyn.exceptions import SchemaGenerationError
 from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
 from tests.conftest import CreateVersionedApp, version_change
@@ -518,3 +521,17 @@ def test__generate_versioned_models__self_referencing_generic_parametrized_while
         "value": 1.0,
         "children": [{"value": 2.0, "children": []}],
     }
+
+
+@pytest.mark.skipif(
+    tuple(int(part) for part in re.findall(r"\d+", importlib.metadata.version("pydantic"))[:3]) >= (2, 11, 5),
+    reason="Pydantic 2.11.5+ can copy self-referencing models that need versioning",
+)
+def test__generate_versioned_models__changed_cycle_with_old_pydantic__should_raise():  # pragma: no cover
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(Category).field("name").had(description="Old"))),
+        Version("2000-01-01"),
+    )
+
+    with pytest.raises(SchemaGenerationError, match=r"upgrade pydantic to 2\.11\.5"):
+        generate_versioned_models(versions)

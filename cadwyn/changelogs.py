@@ -175,13 +175,16 @@ def _get_openapi_representation_of_a_field(model: type[BaseModel], field_name: s
         )
     )
 
-    _, definitions = get_definitions(
+    field_mapping, definitions = get_definitions(
         fields=fields,
         model_name_map=model_name_map,
         separate_input_output_schemas=False,
     )
-
-    return definitions[model.__name__]["properties"][field_name]
+    # The name of the model's definition is not always its class name: e.g. a versioned copy of a self-referencing
+    # model refers to the copy of the version, which is another class with the same name
+    model_reference = next(iter(field_mapping.values())).get("$ref")
+    model_name = model.__name__ if model_reference is None else model_reference.rsplit("/", 1)[-1]
+    return definitions[model_name]["properties"][field_name]
 
 
 class ChangelogEntryType(StrEnum):
