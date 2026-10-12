@@ -734,6 +734,7 @@ class VersionBundle:
             and head_body_field is not None
             and body_field_alias is not None
             and body_field_alias in kwargs
+            and _kwarg_can_be_the_body(route, body_field_alias, embed_body_fields=embed_body_fields)
         ):
             raw_body: Union[BaseModel, None] = kwargs.get(body_field_alias)
             if raw_body is None:  # pragma: no cover # This is likely an impossible case but we would like to be safe
@@ -768,6 +769,23 @@ class VersionBundle:
             new_kwargs.pop(_CADWYN_REQUEST_PARAM_NAME)
 
         return new_kwargs
+
+
+def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body_fields: bool) -> bool:
+    """Return False if the endpoint kwarg named after the body's alias is surely not the body.
+
+    FastAPI keys the endpoint kwargs by param names, while the body is looked up by its alias. So the kwarg
+    is another param when the body is embedded (wrapped into a separate field with the "body" alias),
+    or when the alias isn't the name of the body param, unless the kwarg is a dependency that returns the body.
+    """
+    # FastAPI has already read the uploaded files, so they would come out empty if we read them again
+    if route.body_field is not None and isinstance(route.body_field.field_info, params.File):
+        return True
+    if embed_body_fields:
+        return False
+    return body_field_alias == route.dependant.body_params[0].name or any(
+        dependency.name == body_field_alias for dependency in route.dependant.dependencies
+    )
 
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
