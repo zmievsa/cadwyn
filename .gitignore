@@ -140,3 +140,7 @@ local.py
 coverage
 
 node_modules
+
+# Claude Code
+.claude/worktrees/
+.claude/settings.local.json
