@@ -190,11 +190,15 @@ class Note(BaseModel):
     text: str
 
 
+def make_aliases():  # Cadwyn cannot know what default factories without annotations return
+    return []
+
+
 class ItemTree(BaseModel):
     item: ChangedItem
     note: Optional[Note] = None
     tags: tuple[str, ...] = ("tag", "tag")
-    aliases: list[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=make_aliases)
     children: "list[ItemTree]" = []
 
     @computed_field
