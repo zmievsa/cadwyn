@@ -153,15 +153,17 @@ class PydanticFieldWrapper:
     def generate_field_copy(
         self, generator: "SchemaGenerator", annotation: Any
     ) -> Union[pydantic.fields.FieldInfo, None]:
-        """Return None if the field can be built from its annotation alone
+        """Return None if the field can be built from its Annotated annotation alone
 
-        Constraints that the annotation already has are not duplicated in Field() and Field() is not assigned
-        at all when it would be empty: pydantic<2.12 moves the constraints of the annotation in front of
+        Constraints that the Annotated annotation already has are not duplicated in Field() and Field() is not
+        assigned at all when it would be empty: pydantic<2.12 moves the constraints of the annotation in front of
         its validators whenever the field also has a Field() default.
         """
-        annotation_constraints = (
-            collect_known_metadata(get_args(annotation)[1:])[0] if get_origin(annotation) == Annotated else {}
-        )
+        if get_origin(annotation) != Annotated:
+            return pydantic.Field(
+                **generator.annotation_transformer.change_version_of_annotation(self.passed_field_attributes)
+            )
+        annotation_constraints = collect_known_metadata(get_args(annotation)[1:])[0]
         passed_field_attributes = {
             k: v
             for k, v in self.passed_field_attributes.items()
@@ -1107,18 +1109,14 @@ def _change_field(
             field.update_attribute(name=attr_name, value=attr_value)
             model.annotations[field_name] = _change_annotated_metadata(
                 model.annotations[field_name],
-                attr_name,
+                functools.partial(_metadata_sets_attribute, attr_name=attr_name),
                 functools.partial(_set_metadata_attribute, attr_name=attr_name, attr_value=attr_value),
             )
 
 
-def _annotation_has_attribute(annotation: Any, attr_name: str) -> bool:
-    return get_origin(annotation) == Annotated and any(
-        _metadata_has_attribute(sub_ann, attr_name) for sub_ann in get_args(annotation)[1:]
-    )
-
-
-def _change_annotated_metadata(annotation: Any, attr_name: str, change: Callable[[Any], Any]) -> Any:
+def _change_annotated_metadata(
+    annotation: Any, should_change: Callable[[Any], bool], change: Callable[[Any], Any]
+) -> Any:
     """Change the attribute in the annotation's metadata in the same way it is changed in the field.
 
     Otherwise, the metadata would override the field. For example, both `x: Annotated[str, Field(min_length=1)]`
@@ -1131,38 +1129,58 @@ def _change_annotated_metadata(annotation: Any, attr_name: str, change: Callable
     sub_annotations = get_args(annotation)
     return _AnnotatedAlias(
         sub_annotations[0],
-        tuple(
-            change(sub_ann) if _metadata_has_attribute(sub_ann, attr_name) else sub_ann
-            for sub_ann in sub_annotations[1:]
-        ),
+        tuple(change(sub_ann) if should_change(sub_ann) else sub_ann for sub_ann in sub_annotations[1:]),
     )
 
 
-def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
+def _metadata_sets_attribute(metadata: Any, attr_name: str) -> bool:
     if isinstance(metadata, FieldInfo):
         return attr_name in _extract_passed_field_attributes(metadata)
     return hasattr(metadata, attr_name) and attr_name in collect_known_metadata([metadata])[0]
 
 
+def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
+    return hasattr(metadata, attr_name) or _metadata_sets_attribute(metadata, attr_name)
+
+
+def _copy_field_info(field_info: FieldInfo) -> FieldInfo:
+    # Works like FieldInfo._copy() from newer pydantic versions: keeps the type and attributes of FieldInfo subclasses
+    copied = copy.copy(field_info)
+    copied.metadata = field_info.metadata.copy()
+    copied._attributes_set = field_info._attributes_set.copy()
+    return copied
+
+
 def _set_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> Any:
     if isinstance(metadata, FieldInfo):
-        # FieldInfo stores constraints in its own metadata instead of attributes so we recreate it
-        field_attributes: dict[str, Any] = _extract_passed_field_attributes(metadata) | {attr_name: attr_value}
-        return pydantic.Field(**field_attributes)
-    if dataclasses.is_dataclass(metadata):
+        # Pydantic builds fields from FieldInfo's _attributes_set and metadata so we have to change them too
+        field_info = _copy_field_info(metadata)
+        field_info.metadata = [
+            _set_metadata_attribute(sub_metadata, attr_name, attr_value)
+            if _metadata_sets_attribute(sub_metadata, attr_name)
+            else sub_metadata
+            for sub_metadata in field_info.metadata
+        ]
+        if attr_name in field_info._attributes_set:
+            field_info._attributes_set[attr_name] = attr_value
+        if attr_name in FieldInfo.__slots__:
+            setattr(field_info, attr_name, attr_value)
+        return field_info
+    if dataclasses.is_dataclass(metadata) and any(
+        field.name == attr_name and field.init for field in dataclasses.fields(metadata)
+    ):
         return dataclasses.replace(metadata, **{attr_name: attr_value})
     metadata = copy.copy(metadata)
-    setattr(metadata, attr_name, attr_value)
+    object.__setattr__(metadata, attr_name, attr_value)
     return metadata
 
 
 def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
-    if isinstance(metadata, FieldInfo):
-        field_attributes: dict[str, Any] = _extract_passed_field_attributes(metadata)
-        field_attributes.pop(attr_name)
-        return pydantic.Field(**field_attributes)
-    # pydantic ignores constraints that are None
-    return _set_metadata_attribute(metadata, attr_name, None)
+    # pydantic ignores constraints and attributes that are None
+    field_info_or_metadata = _set_metadata_attribute(metadata, attr_name, None)
+    if isinstance(field_info_or_metadata, FieldInfo):
+        field_info_or_metadata._attributes_set.pop(attr_name, None)
+    return field_info_or_metadata
 
 
 def _delete_field_attributes(
@@ -1178,9 +1196,14 @@ def _delete_field_attributes(
         if attr_name in field.passed_field_attributes:
             field.delete_attribute(name=attr_name)
             deleted = True
-        if _annotation_has_attribute(annotation, attr_name):
+        # Any metadata with such an attribute counts (even if it is None) to keep accepting the same instructions
+        if get_origin(annotation) == Annotated and any(
+            _metadata_has_attribute(sub_ann, attr_name) for sub_ann in get_args(annotation)[1:]
+        ):
             annotation = _change_annotated_metadata(
-                annotation, attr_name, functools.partial(_delete_metadata_attribute, attr_name=attr_name)
+                annotation,
+                functools.partial(_metadata_has_attribute, attr_name=attr_name),
+                functools.partial(_delete_metadata_attribute, attr_name=attr_name),
             )
             model.annotations[alter_schema_instruction.name] = annotation
             deleted = True

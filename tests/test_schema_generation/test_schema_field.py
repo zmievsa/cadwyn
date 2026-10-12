@@ -1,6 +1,6 @@
 import re
 from enum import Enum, auto
-from typing import Annotated, Any, ClassVar, Literal, Union, get_origin
+from typing import Annotated, Any, ClassVar, Literal, Union, get_origin, get_type_hints
 
 import pytest
 from pydantic import BaseModel, Field, StringConstraints, ValidationError, computed_field, conint, constr
@@ -491,6 +491,41 @@ def test__schema_field_didnt_have_annotated_constrained_field(create_runtime_sch
         foo: Annotated[conint(), Field(description="awaw")]  # ty: ignore[invalid-type-form]
 
     assert_models_are_equal(schemas["2000-01-01"][SchemaWithAnnotatedConstraints], ExpectedSchema)
+
+
+class FieldInfoWithExtraAttribute(FieldInfo):  # ty: ignore[subclass-of-final-class]
+    __slots__ = ("extra",)
+
+    def __init__(self, *, extra: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.extra = extra
+
+
+class SchemaWithFieldInfoSubclassInAnnotated(BaseModel):
+    foo: Annotated[str, FieldInfoWithExtraAttribute(extra="hello", min_length=1, description="New description")]
+    bar: Annotated[str, FieldInfoWithExtraAttribute(extra="hello", min_length=1, description="New description")]
+
+
+def test__schema_field_had_and_didnt_have__field_info_subclass_in_annotated__should_keep_its_type_and_attributes(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithFieldInfoSubclassInAnnotated).field("foo").had(min_length=5, description="Old"),
+            schema(SchemaWithFieldInfoSubclassInAnnotated).field("bar").didnt_have("min_length", "description"),
+        )
+    )
+    old_schema = schemas["2000-01-01"][SchemaWithFieldInfoSubclassInAnnotated]
+
+    for field_name in ("foo", "bar"):
+        field_infos = get_type_hints(old_schema, include_extras=True)[field_name].__metadata__
+        assert [(type(field_info), field_info.extra) for field_info in field_infos] == [
+            (FieldInfoWithExtraAttribute, "hello")
+        ]
+    assert old_schema.model_json_schema()["properties"] == {
+        "foo": {"description": "Old", "minLength": 5, "title": "Foo", "type": "string"},
+        "bar": {"title": "Bar", "type": "string"},
+    }
 
 
 def test__schema_field_had_annotated_constrained_field(create_runtime_schemas: CreateRuntimeSchemas):

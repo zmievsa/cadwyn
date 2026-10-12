@@ -6,7 +6,7 @@ from typing import Annotated, Any
 import pytest
 from fastapi import Depends, Request
 from fastapi.testclient import TestClient
-from pydantic import AfterValidator, BaseModel, Field, WithJsonSchema
+from pydantic import AfterValidator, BaseModel, Field, WithJsonSchema, conint
 
 from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
@@ -454,3 +454,29 @@ def test__router_generation__field_didnt_have_constraint_declared_after_validato
     assert clients["2001-01-01"].post("/test", json={"foo": "  ab  "}).status_code == 422
     assert clients["2000-01-01"].post("/test", json={"foo": "  abcdefg  "}).json() == {"foo": "abcde"}
     assert clients["2000-01-01"].post("/test", json={"foo": "  ab  "}).status_code == 422
+
+
+class SchemaWithUnsetAttributesInAnnotated(BaseModel):
+    conint_field: conint(lt=7)  # ty: ignore[invalid-type-form]
+
+
+def test__router_generation__field_didnt_have_attribute_that_annotation_metadata_leaves_unset__should_change_nothing(
+    router: VersionedAPIRouter,
+    create_versioned_clients,
+):
+    @router.post("/test")
+    async def route(payload: SchemaWithUnsetAttributesInAnnotated):
+        return payload.model_dump()
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithUnsetAttributesInAnnotated).field("conint_field").didnt_have("gt")),
+    )
+
+    openapi_schemas = [
+        client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
+        for version, client in clients.items()
+    ]
+    assert openapi_schemas[0] == openapi_schemas[1]
+    for client in clients.values():
+        assert client.post("/test", json={"conint_field": 6}).status_code == 200
+        assert client.post("/test", json={"conint_field": 7}).status_code == 422

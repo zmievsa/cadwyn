@@ -16,7 +16,7 @@ from fastapi.security.http import HTTPBasic
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from inline_snapshot import snapshot
-from pydantic import AfterValidator, BaseModel, Field, JsonValue
+from pydantic import AfterValidator, BaseModel, Field, JsonValue, conint
 from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse
@@ -1627,6 +1627,37 @@ def test__router_generation__field_didnt_have_constraint_declared_after_validato
     assert clients["2001-01-01"].post("/test", json={"foo": "  ab  "}).status_code == 422
     assert clients["2000-01-01"].post("/test", json={"foo": "  abcdefg  "}).json() == {"foo": "abcde"}
     assert clients["2000-01-01"].post("/test", json={"foo": "  ab  "}).status_code == 422
+
+
+class SchemaWithUnsetAttributesInAnnotated(BaseModel):
+    conint_field: Annotated[conint(lt=7), Field(description="Description")]  # ty: ignore[invalid-type-form]
+    min_length_field: Annotated[str, Field(min_length=1)]
+
+
+@pytest.mark.parametrize(("field_name", "attribute"), [("conint_field", "gt"), ("min_length_field", "description")])
+def test__router_generation__field_didnt_have_attribute_that_annotation_metadata_leaves_unset__should_change_nothing(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    field_name: str,
+    attribute: Any,
+):
+    @router.post("/test")
+    async def route(payload: SchemaWithUnsetAttributesInAnnotated):
+        return payload.model_dump()
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithUnsetAttributesInAnnotated).field(field_name).didnt_have(attribute)),
+    )
+
+    openapi_schemas = [
+        versioned_client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
+        for version, versioned_client in clients.items()
+    ]
+    assert openapi_schemas[0] == openapi_schemas[1]
+    for versioned_client in clients.values():
+        assert versioned_client.post("/test", json={"conint_field": 6, "min_length_field": "a"}).status_code == 200
+        assert versioned_client.post("/test", json={"conint_field": 7, "min_length_field": "a"}).status_code == 422
+        assert versioned_client.post("/test", json={"conint_field": 6, "min_length_field": ""}).status_code == 422
 
 
 def test__router_generation__updating_request_depends(
