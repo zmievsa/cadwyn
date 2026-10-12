@@ -32,6 +32,7 @@ from pydantic import (
     PlainValidator,
     RootModel,
     Strict,
+    ValidationError,
     WrapSerializer,
     WrapValidator,
     computed_field,
@@ -2741,6 +2742,27 @@ class DeepNodeWithValidationAlias(BaseModel):
     kids: dict[str, list["DeepNodeWithValidationAlias"]] = {}
 
 
+def _make_deep_node_payload(depth: int) -> dict[str, Any]:
+    payload: dict[str, Any] = {"vv": 1}
+    for _ in range(depth):
+        payload = {"vv": 1, "kids": {"k": [payload]}}
+    return payload
+
+
+def _get_max_depth_that_pydantic_accepts() -> int:
+    """Pydantic's recursion guard depends on the platform and the thread's stack, so we find its limit by bisection"""
+    accepted, rejected = 0, 1000
+    while rejected - accepted > 1:
+        depth = (accepted + rejected) // 2
+        try:
+            DeepNodeWithValidationAlias.model_validate(_make_deep_node_payload(depth))
+        except ValidationError:
+            rejected = depth
+        else:
+            accepted = depth
+    return accepted
+
+
 def test__request_body_migration__with_body_as_deep_as_pydantic_accepts__head_should_get_it(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
@@ -2754,14 +2776,19 @@ def test__request_body_migration__with_body_as_deep_as_pydantic_accepts__head_sh
             depth += 1
         return depth
 
+    # Requests run in another thread, which can have a smaller stack, so we measure pydantic's limit there
+    @router.get("/max_depth")
+    async def get_max_depth() -> int:
+        return _get_max_depth_that_pydantic_accepts()
+
     clients = create_versioned_clients(version_change())
-    # Restoring it recursively would take several Python frames per level and exceed the recursion limit
-    payload: dict[str, Any] = {"vv": 1}
-    for _ in range(250):
-        payload = {"vv": 1, "kids": {"k": [payload]}}
+    # Restoring it recursively would take several Python frames per level, which exceeded the recursion limit
+    # at about 245 levels where pydantic accepts 254. The margin covers the extra stack of the body's validation.
+    depth = clients["2000-01-01"].get("/max_depth").json() - 5
+    payload = _make_deep_node_payload(depth)
 
     for version_client in clients.values():
-        assert version_client.post(test_path, json=payload).json() == 250
+        assert version_client.post(test_path, json=payload).json() == depth
 
 
 class SchemaWithAliasChangedInCoreSchema(BaseModel):
