@@ -822,14 +822,13 @@ def _get_uploads_read_by_fastapi(
     files that starlette creates.
     """
     uploads: _UploadPositions = {}
-    # The endpoint's own params come first and in their order, so the files they read are recorded as before
+    # The endpoint's own params come first and in their order, and the files they read are recorded as before
     own_params = _get_bytes_file_params_of_fields(route.dependant.body_params)
     for alias, is_sequence in own_params:
-        for upload, position in _iter_uploads_read_to_the_end(form, alias, is_sequence=is_sequence):
-            uploads[id(upload)] = _UploadReadByFastapi(alias, is_sequence, upload, upload.file, position)
-    dependency_params = _get_bytes_file_params(route.dependant, _get_dependency_overrides(route)) - set(own_params)
-    if dependency_params:
-        dependency_params &= _get_bytes_file_params(head_dependant, _get_dependency_overrides(head_route))
+        for value in _get_form_values(form, alias, is_sequence=is_sequence):
+            if isinstance(value, UploadFile) and isinstance(value.file, tempfile.SpooledTemporaryFile):
+                uploads[id(value)] = _UploadReadByFastapi(alias, is_sequence, value, value.file, value.file.tell())
+    dependency_params = _get_bytes_file_params_of_dependencies(route, head_route, head_dependant) - set(own_params)
     # If a scalar and a sequence param read the same file, the head must pick it as the scalar to get it rewound
     for alias, is_sequence in sorted(dependency_params, key=lambda param: param[1]):
         for upload, position in _iter_uploads_read_to_the_end(form, alias, is_sequence=is_sequence):
@@ -860,20 +859,63 @@ def _get_dependency_overrides(route: APIRoute) -> dict[Any, Any]:
     return getattr(route.dependency_overrides_provider, "dependency_overrides", None) or {}
 
 
-def _get_bytes_file_params(dependant: Dependant, dependency_overrides: dict[Any, Any]) -> set[tuple[str, bool]]:
-    """Return `(alias, is_sequence)` of every `bytes` file param of the dependant and its dependencies.
+def _get_bytes_file_params_of_dependencies(
+    route: APIRoute, head_route: APIRoute, head_dependant: Dependant
+) -> set[tuple[str, bool]]:
+    """Return `(alias, is_sequence)` of the `bytes` file params of dependencies whose files the head can get again.
 
-    FastAPI reads the body params of every dependency, including the cached ones, so we walk the whole tree.
-    FastAPI solves the dependant of an override instead of the overridden dependency, so we skip overridden
-    dependencies to keep their files as before.
+    FastAPI reads the body params of every dependency, including the cached ones, so we walk the whole trees.
+    We only take the params that the head's tree also has. A dependency that only the versioned route has
+    won't run again for the head, so rewinding a file that it declares would undo what it did with the file,
+    e.g. skipping a header. So we leave the files of such dependencies as they are.
     """
-    bytes_file_params = set(_get_bytes_file_params_of_fields(dependant.body_params))
+    dependencies = list(_iter_dependencies(route.dependant, _get_dependency_overrides(route)))
+    bytes_file_params = {
+        param
+        for _, dependant in dependencies
+        if dependant is not None
+        for param in _get_bytes_file_params_of_fields(dependant.body_params)
+    }
+    if not bytes_file_params:
+        return bytes_file_params
+    head_dependencies = list(_iter_dependencies(head_dependant, _get_dependency_overrides(head_route)))
+    bytes_file_params &= {
+        param
+        for dependant in [head_dependant, *(dependant for _, dependant in head_dependencies)]
+        if dependant is not None
+        for param in _get_bytes_file_params_of_fields(dependant.body_params)
+    }
+    head_calls = [call for call, _ in head_dependencies]
+    for call, dependant in dependencies:
+        if call not in head_calls:
+            if dependant is None:
+                # We can't see which files the override of a dependency that only the versioned route has takes
+                return set()
+            file_aliases = {
+                get_validation_alias(field)
+                for field in dependant.body_params
+                if isinstance(field.field_info, params.File)
+            }
+            bytes_file_params = {param for param in bytes_file_params if param[0] not in file_aliases}
+    return bytes_file_params
+
+
+def _iter_dependencies(
+    dependant: Dependant, dependency_overrides: dict[Any, Any]
+) -> Iterator[tuple[Any, Union[Dependant, None]]]:
+    """Yield the callable that FastAPI calls for every dependency in the tree, with the dependency's dependant.
+
+    FastAPI solves the dependant of an override instead of the overridden dependency, so for an overridden
+    dependency we yield the override without a dependant and skip its sub-dependencies.
+    """
     for sub_dependant in dependant.dependencies:
         call = sub_dependant.call
         # Same lookup as in FastAPI, which only looks up overrides when there are any
-        if not dependency_overrides or dependency_overrides.get(call, call) is call:
-            bytes_file_params |= _get_bytes_file_params(sub_dependant, dependency_overrides)
-    return bytes_file_params
+        if dependency_overrides and (override := dependency_overrides.get(call, call)) is not call:
+            yield override, None
+        else:
+            yield call, sub_dependant
+            yield from _iter_dependencies(sub_dependant, dependency_overrides)
 
 
 def _get_bytes_file_params_of_fields(fields: Sequence[ModelField]) -> list[tuple[str, bool]]:
