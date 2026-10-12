@@ -694,9 +694,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         renamed_fields = {}
         renamed_field_annotations = {}
         for name, field in self.fields_renamed_by_parents.items():
-            if name in self.annotations:
-                # The model defines the name itself
-                continue
             parent = _get_parent_that_renamed_field(self.cls, name, field, schemas)
             if parent is not None:
                 renamed_fields[name] = field
@@ -1949,20 +1946,31 @@ def _get_parent_that_renamed_field(
     """Return the parent that the model inherits the renamed field from, if the model can define it instead.
 
     The model can only define it if it would inherit it through single inheritance from that parent without any
-    generics on the way (pydantic substitutes their type args) and no other class defines the name. Otherwise,
-    we leave the name to pydantic. The parent could also have reused or deleted the name since it renamed the field.
+    generics on the way (pydantic substitutes their type args) and no other class on the way declares the name
+    in any way. Otherwise, we leave the name to pydantic. The parent could also have reused or deleted the name
+    since it renamed the field.
     """
     cls = model
-    while len(cls.__bases__) == 1 and not _is_generic_model(cls):
+    while len(cls.__bases__) == 1 and not _is_generic_model(cls) and not _declares_name(cls, field_name, schemas):
         base = cls.__bases__[0]
         if not issubclass(base, BaseModel) or base is BaseModel or _is_generic_model(base):
             return None
         if base in schemas and field_name in schemas[base].fields:
             return base if schemas[base].fields[field_name] is field else None
-        if field_name in _get_annotations_without_evaluating(base):
-            return None
         cls = base
     return None
+
+
+def _declares_name(
+    model: type[BaseModel], name: str, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]"
+) -> bool:
+    """Whether the model or its versioned copy declares the name as anything: a field, a class var, a property..."""
+    wrapper = schemas.get(model)
+    if wrapper is not None and (
+        name in wrapper.annotations or name in wrapper.other_attributes or name in wrapper.validators
+    ):
+        return True
+    return name in _get_annotations_without_evaluating(model) or name in vars(model)
 
 
 def _is_generic_model(model: type[BaseModel]) -> bool:

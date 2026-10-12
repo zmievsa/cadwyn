@@ -1007,6 +1007,63 @@ def test__schema_field_had__parent_renamed_field_of_diamond_and_other_parent_cha
     assert diamond.model_validate({"foo": "abc", "old": "abc"}).model_dump() == {"foo": "abc", "old": "abc"}
 
 
+class ParentRenamedIntoMiddleClassVar(BaseModel):
+    foo: str = Field(max_length=10)
+
+
+class MiddleWithVersionedClassVar(ParentRenamedIntoMiddleClassVar):
+    pass
+
+
+class ChildOfMiddleWithVersionedClassVar(MiddleWithVersionedClassVar):
+    pass
+
+
+def test__schema_field_had__parent_renamed_field_to_name_of_classvar_that_existed_in_middle__should_keep_classvar(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ChildOfMiddleWithVersionedClassVar).field("foo").had(max_length=3),
+            schema(MiddleWithVersionedClassVar).field("old").existed_as(type=ClassVar[int], info=Field(default=7)),
+            schema(ParentRenamedIntoMiddleClassVar).field("foo").had(name="old"),
+        )
+    )
+
+    child = schemas["2000-01-01"][ChildOfMiddleWithVersionedClassVar]
+    assert set(child.model_fields) == {"foo"}
+    assert child.model_validate({"foo": "abc"}).model_dump() == {"foo": "abc"}
+
+
+class ParentRenamedIntoMiddleProperty(BaseModel):
+    foo: str = Field(max_length=10)
+
+
+class MiddleWithProperty(ParentRenamedIntoMiddleProperty):
+    @property
+    def old(self) -> str:
+        return self.foo  # pragma: no cover
+
+
+class ChildOfMiddleWithProperty(MiddleWithProperty):
+    pass
+
+
+def test__schema_field_had__parent_renamed_field_to_name_of_property_of_middle__should_not_change_renamed_field(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ChildOfMiddleWithProperty).field("foo").had(max_length=3),
+            schema(ParentRenamedIntoMiddleProperty).field("foo").had(name="old"),
+        )
+    )
+
+    child = schemas["2000-01-01"][ChildOfMiddleWithProperty]
+    assert not child.model_fields["old"].is_required()
+    assert child.model_validate({"foo": "abc", "old": "abcd"}).model_dump() == {"foo": "abc", "old": "abcd"}
+
+
 class ParentWithoutField(BaseModel):
     pass
 
