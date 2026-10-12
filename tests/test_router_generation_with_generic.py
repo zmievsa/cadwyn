@@ -4,7 +4,6 @@ import sys
 import threading
 import typing
 import uuid
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from pathlib import Path
@@ -21,10 +20,7 @@ from pydantic import (
     Field,
     JsonValue,
     ValidationError,
-    computed_field,
     create_model,
-    field_serializer,
-    field_validator,
 )
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
 from typing_extensions import Self, TypeAliasType, TypeVarTuple, Unpack, override
@@ -1455,65 +1451,17 @@ def test__router_generation__strings_nested_in_builtin_generic_args__should_be_v
     assert not [name for name in schema_names if name.endswith(("__1", "__2"))]
 
 
-class ItemPageHolder(BaseModel):
-    page: Optional[Page[Item]] = None
-
-
-@pytest.mark.parametrize(
-    ("response_model", "make_latest_body", "expected_body"),
-    [
-        pytest.param(
-            Page[Item],
-            lambda: Page[Item](items=[Item(fullName="a")]),
-            {"items": [{"name": "a"}]},
-            id="instance_of_generic",
-        ),
-        pytest.param(
-            Page[Item],
-            lambda: {"items": [Item(fullName="a")]},
-            {"items": [{"name": "a"}]},
-            id="data_with_instances_of_arg",
-        ),
-        pytest.param(
-            Page[Item],
-            lambda: {"items": (Item(fullName="a"),)},
-            {"items": [{"name": "a"}]},
-            id="data_with_tuple_of_instances_of_arg",
-        ),
-        pytest.param(
-            ItemPageHolder,
-            lambda: {"page": Page[Item](items=[Item(fullName="a")])},
-            {"page": {"items": [{"name": "a"}]}},
-            id="data_with_instance_of_generic",
-        ),
-    ],
-)
 @pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
-def test__migrate_response_body__head_instances_in_versioned_generic_args__should_be_migrated_as_on_main(
-    response_model: type[BaseModel],
-    make_latest_body: Any,
-    expected_body: dict[str, Any],
-    version: str,
-):
+def test__migrate_response_body__head_instances_in_versioned_generic_args__should_be_rejected(version: str):
     versions = VersionBundle(Version("2001-01-01", version_change(old_name_description(Item))), Version("2000-01-01"))
 
-    migrated_body = migrate_response_body(versions, response_model, latest_body=make_latest_body(), version=version)
-
-    assert migrated_body.model_dump() == expected_body
-
-
-@pytest.mark.parametrize(
-    "latest_body",
-    [
-        pytest.param({"items": [{"fullName": 1}]}, id="data"),
-        pytest.param({"items": [Item(fullName="a"), {"fullName": 1}]}, id="data_with_instances"),
-    ],
-)
-def test__migrate_response_body__invalid_body_in_versioned_generic_args__should_raise(latest_body: Any):
-    versions = VersionBundle(Version("2001-01-01", version_change(old_name_description(Item))), Version("2000-01-01"))
-
+    # Like in versioned models that are not generic, the versioned args only accept data
     with pytest.raises(ValidationError):
-        migrate_response_body(versions, Page[Item], latest_body=latest_body, version="2000-01-01")
+        migrate_response_body(versions, Page[Item], latest_body={"items": [Item(fullName="a")]}, version=version)
+    migrated_body = migrate_response_body(
+        versions, Page[Item], latest_body={"items": [Item(fullName="a").model_dump(by_alias=True)]}, version=version
+    )
+    assert migrated_body.model_dump() == {"items": [{"name": "a"}]}
 
 
 def test__get_head_model_references__model_with_unresolved_annotated_field__should_not_change_its_fields():
@@ -1532,72 +1480,6 @@ def test__get_head_model_references__model_with_unresolved_annotated_field__shou
 
 class OneItemBox(BaseModel, Generic[ItemT]):
     item: ItemT
-
-
-class SerializedItem(BaseModel):
-    amount: int
-    secret: str = Field(exclude=True)
-    label: str = Field(serialization_alias="Label")
-
-    @field_serializer("amount")
-    def serialize_amount(self, value: int) -> int:
-        return value * 100
-
-    @computed_field
-    @property
-    def double_amount(self) -> int:
-        return self.amount * 2
-
-
-class FrozenItem(BaseModel):
-    model_config = ConfigDict(frozen=True)
-    value: int
-
-
-class ContainersBox(BaseModel, Generic[ItemT]):
-    unique: set[ItemT]
-    frozen: frozenset[ItemT]
-    queue: deque[ItemT]
-
-
-@pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
-def test__migrate_response_body__head_instance_with_serializers_in_versioned_generic_args__should_not_serialize_it(
-    version: str,
-):
-    versions = VersionBundle(
-        Version("2001-01-01", version_change(schema(SerializedItem).field("amount").had(description="Old"))),
-        Version("2000-01-01"),
-    )
-    head_box = OneItemBox[SerializedItem](item=SerializedItem(amount=3, secret="s", label="l"))
-
-    migrated_body = migrate_response_body(
-        versions, OneItemBox[SerializedItem], latest_body={"item": head_box.item}, version=version
-    )
-
-    assert (migrated_body.item.amount, migrated_body.item.secret, migrated_body.item.label) == (3, "s", "l")
-    assert migrated_body.model_dump() == head_box.model_dump()
-    assert migrated_body.model_dump(by_alias=True) == head_box.model_dump(by_alias=True)
-
-
-@pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
-def test__migrate_response_body__head_instances_in_containers_in_versioned_generic_args__should_be_migrated(
-    version: str,
-):
-    versions = VersionBundle(
-        Version("2001-01-01", version_change(schema(FrozenItem).field("value").had(description="Old"))),
-        Version("2000-01-01"),
-    )
-    latest_body = {
-        "unique": {FrozenItem(value=1)},
-        "frozen": frozenset({FrozenItem(value=2)}),
-        "queue": deque([FrozenItem(value=3)]),
-    }
-
-    migrated_body = migrate_response_body(versions, ContainersBox[FrozenItem], latest_body=latest_body, version=version)
-
-    assert [item.value for item in migrated_body.unique] == [1]
-    assert [item.value for item in migrated_body.frozen] == [2]
-    assert [item.value for item in migrated_body.queue] == [3]
 
 
 class ItemState(str, Enum):
@@ -1668,33 +1550,6 @@ def test__migrate_response_body__head_enum_members_in_strict_generic_args__shoul
     )
 
     assert migrated_body.model_dump() == {"item": {"state": ItemState.active}}
-
-
-class ItemWithCountedValidator(BaseModel):
-    value: int
-
-    @field_validator("value")
-    @classmethod
-    def count_validation(cls, value: int) -> int:
-        VALIDATED_VALUES.append(value)
-        return value
-
-
-VALIDATED_VALUES: list[int] = []
-
-
-def test__migrate_response_body__data_in_versioned_generic_args__should_run_validators_once():
-    versions = VersionBundle(
-        Version("2001-01-01", version_change(schema(ItemWithCountedValidator).field("value").had(description="Old"))),
-        Version("2000-01-01"),
-    )
-    VALIDATED_VALUES.clear()
-
-    migrate_response_body(
-        versions, Page[ItemWithCountedValidator], latest_body={"items": [{"value": 1}]}, version="2000-01-01"
-    )
-
-    assert VALIDATED_VALUES == [1]
 
 
 @pytest.mark.parametrize(

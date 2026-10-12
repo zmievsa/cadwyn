@@ -8,6 +8,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Changed
 
 - Parametrized generic models such as `Page[Item]` now use the versioned copies of their type args when the args refer to models or enums that have schema or enum instructions, including the ones in `HeadVersion`. So older versions validate and serialize these args with their own models instead of the latest ones, and clients that relied on latest-shaped models inside generics may need converters. Changes from `HeadVersion` now also apply to these args in every version, including the latest one. The OpenAPI names of these generics can change in every version because their quoted type args are now evaluated, e.g. `Page[list["Item"]]` is named `Page_list_Item__` instead of `Page_list_str__`. Generics whose type args do not refer to such models are not affected.
+- `migrate_response_body` no longer accepts instances of the latest models inside generic models whose type args are versioned, e.g. `Page[Item](...)` or `{"items": [Item(...)]}` for `Page[Item]`, and raises a `ValidationError` for them, as it already did for other versioned models nested in the response model. Pass plain data such as the result of `model_dump()` instead.
 
 ### Fixed
 
@@ -18,7 +19,6 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Fixed older API versions failing to start when a model uses `typing.Self` in its annotations.
 - Fixed older API versions failing to start when a model uses annotations that cannot be rebuilt from their arguments, such as a bare `typing.Callable` or `Unpack[Ts]`, or a default factory without an inspectable signature, such as `functools.partial(dict, count=1)`.
 - Fixed older API versions failing on Python 3.14 when versioned models or their type aliases use names that are only imported under `TYPE_CHECKING`, e.g. in `ClassVar` annotations.
-- Fixed `migrate_response_body` raising a `ValidationError` when `latest_body` contains instances of the latest models where the older version uses its own models, e.g. `{"item": Item(...)}`. When the body does not validate as is, these instances are now read by their attributes and field names.
 - Fixed strict models rejecting the members of their enums in older API versions (e.g. a 500 for a response with a strict model that uses an enum) by no longer copying enums that have no enum instructions in any version.
 - Fixed `TypeError: unhashable type` on older API versions when an endpoint's request body or response model is an unhashable annotation such as `list[Annotated[int, {"description": "item"}]]`.
 - Fixed `functools.partial` dependencies losing the annotations of their remaining parameters, which turned their sub-dependencies and request bodies into required query parameters. Partials of async functions also returned unawaited coroutines.

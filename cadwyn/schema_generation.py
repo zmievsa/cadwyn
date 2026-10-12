@@ -214,17 +214,7 @@ def migrate_response_body(
     versioned_response_model: type[pydantic.BaseModel] = generate_versioned_models(versions)[str(version)][
         latest_response_model
     ]
-    try:
-        return versioned_response_model.model_validate(migrated_response.body)
-    except pydantic.ValidationError as error:
-        validation_error = error
-    # The versioned generic args use the copies of their models, which reject the instances of the head models
-    # that main accepted there. So we read these instances by their attributes instead, which neither serializes
-    # them nor depends on aliases. We only do it when needed so that every body that main accepted stays the same.
-    try:
-        return versioned_response_model.model_validate(migrated_response.body, from_attributes=True, by_name=True)
-    except pydantic.ValidationError:
-        raise validation_error from None
+    return versioned_response_model.model_validate(migrated_response.body)
 
 
 def _unwrap_model(model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
