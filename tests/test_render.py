@@ -1,5 +1,6 @@
 import re
 import sys
+from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any
 
@@ -147,13 +148,13 @@ class TightenRightChild(VersionChange):
     )
 
 
-def test__render_model__diamond_whose_other_parent_changed_inherited_field__should_render_the_field():
+def test__render_model__diamond_whose_other_parent_changed_inherited_field__should_inherit_it_from_first_base():
     versions = VersionBundle(Version("2001-01-01", TightenRightChild), Version("2000-01-01"))
 
     assert code(render_model(RenderedDiamond, versions, "2000-01-01")) == code(
         """
 class RenderedDiamond(RenderedLeftChild, RenderedRightChild):
-    foo: str = Field(max_length=3)
+    pass
 """
     )
     # The rendered models behave like the ones that Cadwyn generates
@@ -224,4 +225,37 @@ def test__render_model__diamond_with_functional_validator_in_inherited_field__sh
     compile(rendered, "<rendered>", "exec")
     generated_diamond = generate_versioned_models(versions)["2000-01-01"][RenderedValidatedDiamond]
     assert generated_diamond.model_validate({"foo": " value "}).foo == "value"
-    assert generated_diamond.model_fields["foo"].description == "Right"
+    assert generated_diamond.model_fields["foo"].description is None
+
+
+class RenderedParentWithFactory(BaseModel):
+    created_at: datetime = Field(default_factory=datetime.now)
+    bar: int = 0
+
+
+class RenderedLeftChildWithFactory(RenderedParentWithFactory):
+    pass
+
+
+class RenderedRightChildWithFactory(RenderedParentWithFactory):
+    pass
+
+
+class RenderedDiamondWithFactory(RenderedLeftChildWithFactory, RenderedRightChildWithFactory):
+    pass
+
+
+class DescribeRightChildWithFactory(VersionChange):
+    description = "Describe the field of the right child"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedParentWithFactory).field("bar").had(description="Bar"),
+        schema(RenderedRightChildWithFactory).field("created_at").had(description="Right"),
+    )
+
+
+def test__render_model__diamond_whose_other_parent_changed_field_with_default_factory__should_render_valid_python():
+    versions = VersionBundle(Version("2001-01-01", DescribeRightChildWithFactory), Version("2000-01-01"))
+
+    rendered = render_model(RenderedDiamondWithFactory, versions, "2000-01-01")
+
+    compile(rendered, "<rendered>", "exec")

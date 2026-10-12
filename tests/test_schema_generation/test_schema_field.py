@@ -312,13 +312,13 @@ PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="
             id="diamond_then_other_parent",
         ),
         pytest.param(
-            # Pydantic takes the field of the diamond from its first base that does not have the change
+            # Pydantic takes the field of the diamond from its first base which does not have the change
             [[schema(InheritedFieldOtherParent).field("foo").had(max_length=3)]],
             {
                 InheritedFieldChild: ("Head", 10),
                 InheritedFieldOtherParent: ("Head", 3),
-                InheritedFieldDiamond: ("Head", 3),
-                InheritedFieldDiamondWithMixin: ("Head", 3),
+                InheritedFieldDiamond: ("Head", 10),
+                InheritedFieldDiamondWithMixin: ("Head", 10),
             },
             id="other_parent_of_diamond",
         ),
@@ -330,7 +330,7 @@ PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="
             {
                 InheritedFieldChild: ("Child", 10),
                 InheritedFieldOtherParent: ("Head", 3),
-                InheritedFieldDiamond: ("Child", 3),
+                InheritedFieldDiamond: ("Child", 10),
             },
             id="both_parents_of_diamond",
         ),
@@ -606,6 +606,117 @@ def test__schema_field_had__field_of_other_parent_of_generic_diamond__should_kee
         diamond.model_validate({"value": "abc"})
 
 
+class ParentOfDiamondWithMixin(BaseModel):
+    foo: str
+    bar: int = 0
+
+
+class MixinWithField:
+    foo: int = 0
+
+
+class LeftChildWithMixin(MixinWithField, ParentOfDiamondWithMixin):
+    pass
+
+
+class RightChildOfDiamondWithMixin(ParentOfDiamondWithMixin):
+    pass
+
+
+class DiamondWithMixinField(LeftChildWithMixin, RightChildOfDiamondWithMixin):
+    pass
+
+
+class ParentOfDiamondWithClassVar(BaseModel):
+    foo: str
+    bar: int = 0
+
+
+class LeftChildWithClassVar(ParentOfDiamondWithClassVar):
+    foo: ClassVar[str] = "hidden"  # ty: ignore[invalid-attribute-override]
+
+
+class RightChildOfDiamondWithClassVar(ParentOfDiamondWithClassVar):
+    pass
+
+
+class DiamondWithClassVar(LeftChildWithClassVar, RightChildOfDiamondWithClassVar):
+    pass
+
+
+def test__schema_field_had__field_of_other_parent_of_diamond_whose_first_base_has_mixin__should_keep_mixin_field(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ParentOfDiamondWithMixin).field("bar").had(description="Bar"),
+            schema(RightChildOfDiamondWithMixin).field("foo").had(description="Right"),
+        )
+    )
+
+    diamond = schemas["2000-01-01"][DiamondWithMixinField]
+    assert diamond.model_validate({}).model_dump() == {"foo": 0, "bar": 0}
+    assert diamond.model_validate({"foo": 123}).model_dump() == {"foo": 123, "bar": 0}
+
+
+def test__schema_field_had__field_of_other_parent_of_diamond_whose_first_base_hides_it__should_stay_hidden(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ParentOfDiamondWithClassVar).field("bar").had(description="Bar"),
+            schema(LeftChildWithClassVar).field("bar").had(description="Left"),
+            schema(RightChildOfDiamondWithClassVar).field("foo").had(description="Right"),
+        )
+    )
+
+    diamond = schemas["2000-01-01"][DiamondWithClassVar]
+    assert set(diamond.model_fields) == {"bar"}
+    assert diamond.model_validate({}).model_dump() == {"bar": 0}
+
+
+class ParentOfConstrainedDiamond(BaseModel):
+    foo: int = 0
+    bar: int = 0
+
+
+class LeftChildOfConstrainedDiamond(ParentOfConstrainedDiamond):
+    pass
+
+
+class RightChildOfConstrainedDiamond(ParentOfConstrainedDiamond):
+    pass
+
+
+class ConstrainedDiamond(LeftChildOfConstrainedDiamond, RightChildOfConstrainedDiamond):
+    pass
+
+
+def test__schema_field_had__constraint_of_other_parent_of_diamond__should_apply_only_if_diamond_changes_field(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    right_instructions = (
+        schema(ParentOfConstrainedDiamond).field("bar").had(description="Bar"),
+        schema(RightChildOfConstrainedDiamond).field("foo").had(ge=0),
+    )
+    schemas = create_runtime_schemas(version_change(*right_instructions))
+
+    # Pydantic takes the field of the diamond from its first base which does not have the constraint
+    assert schemas["2000-01-01"][ConstrainedDiamond].model_validate({"foo": -1}).foo == -1
+    with pytest.raises(ValidationError):
+        schemas["2000-01-01"][RightChildOfConstrainedDiamond].model_validate({"foo": -1})
+    assert schemas["2000-01-01"][LeftChildOfConstrainedDiamond].model_validate({"foo": -1}).foo == -1
+
+    # Once the diamond changes the field itself, it gets the changes of all of its parents
+    schemas = create_runtime_schemas(
+        version_change(*right_instructions, schema(ConstrainedDiamond).field("foo").had(description="Foo"))
+    )
+
+    with pytest.raises(ValidationError):
+        schemas["2000-01-01"][ConstrainedDiamond].model_validate({"foo": -1})
+    assert schemas["2000-01-01"][LeftChildOfConstrainedDiamond].model_validate({"foo": -1}).foo == -1
+
+
 class ParentWithoutField(BaseModel):
     pass
 
@@ -657,7 +768,7 @@ class DiamondWithFieldToRename(LeftChildWithFieldToRename, RightChildWithFieldTo
         ),
     ],
 )
-def test__schema_field_had__field_of_other_parent_of_diamond_that_only_older_versions_have__should_change_diamond(
+def test__schema_field_had__field_of_other_parent_of_diamond_that_only_older_versions_have__should_keep_first(
     create_runtime_schemas: CreateRuntimeSchemas,
     newer_instruction: Any,
     older_instruction: Any,
@@ -667,7 +778,8 @@ def test__schema_field_had__field_of_other_parent_of_diamond_that_only_older_ver
     schemas = create_runtime_schemas(version_change(older_instruction), version_change(newer_instruction))
 
     field = schemas["2000-01-01"][diamond].model_fields[field_name]
-    assert [m.max_length for m in field.metadata if hasattr(m, "max_length")] == [3]
+    # Pydantic takes the field of the diamond from its first base which does not have the change
+    assert [m.max_length for m in field.metadata if hasattr(m, "max_length")] == [10]
 
 
 #######

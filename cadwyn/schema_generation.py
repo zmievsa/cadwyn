@@ -8,7 +8,7 @@ import sys
 import threading
 import types
 import typing
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Sequence
 from datetime import date
 from enum import Enum, auto
 from functools import cache
@@ -206,41 +206,6 @@ class PydanticFieldWrapper:
             else:
                 attributes[change.name] = change.value
         return attributes
-
-
-class _FieldSource(NamedTuple):
-    # None if we leave the field to pydantic: a base without instructions defines it so it never changes,
-    # or it comes from a generic whose type args pydantic substitutes
-    model: Union[type[BaseModel], None]
-
-
-def _find_field_source(
-    model: type[BaseModel], field_name: str, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]"
-) -> Union[_FieldSource, None]:
-    """Return the base whose field pydantic uses in a model that does not define it, or None if it has no such field.
-
-    Pydantic takes an inherited field from the first base that has it, e.g. `class D(C, B)` takes it from C even if
-    only B defines it. The fields of the versioned models come from their wrappers because instructions can add
-    and rename fields.
-    """
-    for base in model.__bases__:
-        if not issubclass(base, BaseModel):
-            continue
-        if base in schemas and field_name in schemas[base].fields:
-            return _FieldSource(None if _is_generic_model(base) else base)
-        if base not in schemas and field_name in _get_annotations_without_evaluating(base):
-            return _FieldSource(None)
-        source = _find_field_source(base, field_name, schemas)
-        if source is None:
-            continue
-        return _FieldSource(None) if _is_generic_model(base) else source
-    return None
-
-
-def _is_generic_model(model: type[BaseModel]) -> bool:
-    """Whether the model is generic (e.g. `Parent[T]`) or parametrized (e.g. `Parent[int]`)"""
-    generic_metadata = model.__pydantic_generic_metadata__
-    return generic_metadata["origin"] is not None or bool(generic_metadata["parameters"])
 
 
 def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]:
@@ -523,9 +488,7 @@ def _rebuild_model_fields_without_changing_them(  # pragma: no cover # Pydantic 
     return rebuilt_fields
 
 
-def _get_head_model_references(
-    model: type[BaseModel], generator: "Union[SchemaGenerator, None]" = None
-) -> "_ModelReferences":
+def _get_head_model_references(model: type[BaseModel]) -> "_ModelReferences":
     """Return the models that the copy of a model without instructions would request from the generator.
 
     Unlike _wrap_pydantic_model, it does not copy anything from the model because the model may never be copied.
@@ -534,53 +497,14 @@ def _get_head_model_references(
     if fields is None or _has_undefined_names_in_lazy_annotations(model):
         # The models that it refers to are unknown until the missing names get defined
         return _ModelReferences(frozenset(), frozenset(), is_complete=False)
-    field_names = _get_model_field_names(model, fields)
-    inherited_fields = (
-        generator.get_inherited_fields_changed_by_other_bases(model, field_names) if generator is not None else {}
-    )
     collector = _ReferencedModelCollector()
     _change_version_of_model_references(
         collector,
         model,
-        {name: field.get_field_attributes(model) for name, (field, _) in inherited_fields.items()}
-        | {name: _extract_passed_field_attributes(fields[name]) for name in field_names},
-        {name: annotation for name, (_, annotation) in inherited_fields.items()}
-        | _get_model_annotations(model, fields),
+        {name: _extract_passed_field_attributes(fields[name]) for name in _get_model_field_names(model, fields)},
+        _get_model_annotations(model, fields),
     )
     return collector.get_references()
-
-
-def _get_inherited_fields_changed_by_other_bases(
-    model: type[BaseModel],
-    own_field_names: Collection[str],
-    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
-) -> "dict[str, tuple[PydanticFieldWrapper, Any]]":
-    """Return the inherited fields (and their annotations) that miss changes when the model inherits them.
-
-    Pydantic takes an inherited field from the first base that has it, e.g. `class D(C, B)` takes it from C,
-    so D would not get the changes that B made to the field. So D has to define such fields itself.
-    We do not do it for the fields of generics because pydantic substitutes their type args, so in `class D(C, B)`
-    with `class C(Parent[int])`, D does not get the changes that only B made to such fields.
-    """
-    fields = {}
-    if _is_generic_model(model):
-        # The fields of generics depend on their type args so we leave them to pydantic
-        return fields
-    parents = set(model.__mro__)
-    for base in model.__mro__[1:]:
-        if not issubclass(base, BaseModel) or base not in schemas:
-            continue
-        for name, field in schemas[base].fields.items():
-            if name in own_field_names or name in fields or field.models_that_changed_it.isdisjoint(parents):
-                continue
-            source = _find_field_source(model, name, schemas)
-            if source is None or source.model is None:
-                continue
-            source_field = schemas[source.model].fields[name]
-            # Whether a parent of the model that is not a parent of the source changed the field
-            if not source_field.models_that_changed_it.isdisjoint(parents.difference(source.model.__mro__)):
-                fields[name] = (source_field, schemas[source.model].annotations[name])
-    return fields
 
 
 def _change_version_of_model_references(
@@ -737,35 +661,20 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return annotations | self.annotations
 
-    def get_references(self, generator: "SchemaGenerator") -> "_ModelReferences":
+    def get_references(self) -> "_ModelReferences":
         """Return the models that generate_model_copy requests from the generator"""
         collector = _ReferencedModelCollector()
-        self._change_version_of_references(
-            collector, generator.get_inherited_fields_changed_by_other_bases(self.cls, self.fields)
-        )
+        self._change_version_of_references(collector)
         return collector.get_references()
 
     def _change_version_of_references(
-        self,
-        generator: "Union[SchemaGenerator, _ReferencedModelCollector]",
-        inherited_fields: "dict[str, tuple[PydanticFieldWrapper, Any]]",
+        self, generator: "Union[SchemaGenerator, _ReferencedModelCollector]"
     ) -> tuple[dict[str, dict[str, Any]], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
-        return _change_version_of_model_references(
-            generator, self.cls, *self.get_field_attributes_and_annotations(inherited_fields)
-        )
+        return _change_version_of_model_references(generator, self.cls, self.get_field_attributes(), self.annotations)
 
-    def get_field_attributes_and_annotations(
-        self, inherited_fields: "dict[str, tuple[PydanticFieldWrapper, Any]]"
-    ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-        """Return the attributes of the fields that the copy of the model defines and its annotations.
-
-        Both the copies of the model and `cadwyn render` use them.
-        """
-        fields = {name: field for name, (field, _) in inherited_fields.items()} | self.fields
-        return (
-            {name: field.get_field_attributes(self.cls) for name, field in fields.items()},
-            {name: annotation for name, (_, annotation) in inherited_fields.items()} | self.annotations,
-        )
+    def get_field_attributes(self) -> dict[str, dict[str, Any]]:
+        """Return the attributes of the fields that the copy of the model defines (`cadwyn render` uses them too)"""
+        return {name: field.get_field_attributes(self.cls) for name, field in self.fields.items()}
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {}
@@ -778,9 +687,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 per_field_validators[name] = validator.decorator(*validator.fields, **validator.kwargs)(func)
             else:
                 root_validators[name] = validator.decorator(**validator.kwargs)(func)
-        field_attributes, orig_bases, annotations, generic_metadata = self._change_version_of_references(
-            generator, generator.get_inherited_fields_changed_by_other_bases(self.cls, self.fields)
-        )
+        field_attributes, orig_bases, annotations, generic_metadata = self._change_version_of_references(generator)
         fields = {name: pydantic.Field(**attributes) for name, attributes in field_attributes.items()}
         orig_bases_attribute = {"__orig_bases__": orig_bases} if "__orig_bases__" in self.cls.__dict__ else {}
 
@@ -1581,7 +1488,6 @@ class SchemaGenerator:
     __slots__ = (
         "_changed_models",
         "_generation_analyses",
-        "_inherited_fields",
         "_lock",
         "_model_references",
         "_versions_of_generic_args",
@@ -1600,7 +1506,6 @@ class SchemaGenerator:
         self._changed_models = changed_models
         self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
         self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
-        self._inherited_fields: dict[type[BaseModel], dict[str, tuple[PydanticFieldWrapper, Any]]] = {}
         self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
         # Models are generated lazily (e.g. in migrate_response_body) so several threads can generate them at once
         self._lock = threading.RLock()
@@ -1622,15 +1527,6 @@ class SchemaGenerator:
                 wrapper = self._get_wrapper_for_model(model)
                 self.concrete_models[model] = wrapper.generate_model_copy(self)
             return cast("type[_T_ANY_MODEL]", self.concrete_models[model])
-
-    def get_inherited_fields_changed_by_other_bases(
-        self, model: type[BaseModel], own_field_names: Collection[str]
-    ) -> "dict[str, tuple[PydanticFieldWrapper, Any]]":
-        if model not in self._inherited_fields:
-            self._inherited_fields[model] = _get_inherited_fields_changed_by_other_bases(
-                model, own_field_names, self.model_bundle.schemas
-            )
-        return self._inherited_fields[model]
 
     def _is_enum_without_instructions(self, model: type[Union[BaseModel, Enum]]) -> bool:
         # Such an enum is the same in every version so we do not copy it. Its members must stay the same objects
@@ -1734,10 +1630,10 @@ class SchemaGenerator:
             if lenient_issubclass(model, Enum):
                 references = _ModelReferences(frozenset(), frozenset())
             elif model in self.model_bundle.schemas:
-                references = self.model_bundle.schemas[model].get_references(self)
+                references = self.model_bundle.schemas[model].get_references()
             else:
                 # We do not wrap the model because wrapping copies parts of it and we may never need its copy
-                references = _get_head_model_references(cast("type[BaseModel]", model), self)
+                references = _get_head_model_references(cast("type[BaseModel]", model))
             self._model_references[model] = references
         return self._model_references[model]
 
