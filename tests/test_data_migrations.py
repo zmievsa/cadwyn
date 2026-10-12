@@ -4,7 +4,7 @@ import sys
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from io import StringIO
-from typing import Any, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 import fastapi
 import pytest
@@ -15,6 +15,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, RootModel
 from starlette.responses import StreamingResponse
+from typing_extensions import TypedDict
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.exceptions import (
@@ -71,6 +72,10 @@ class SchemaWithInternalRepresentation(BaseModel):
 
 class InternalSchema(SchemaWithInternalRepresentation):
     bar: Union[str, None] = Field(default=None)
+
+
+class TypedDictResponse(TypedDict):
+    foo: int
 
 
 @pytest.fixture(params=["is_async", "is_sync"])
@@ -389,6 +394,25 @@ class TestRequestMigrations:
         assert empty_response.status_code == 200
         assert empty_response.json() is None
 
+    def test__request_migration__when_body_annotation_is_unhashable__should_migrate_by_path(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        # Dict metadata inside Annotated makes the whole annotation unhashable
+        @router.post(test_path)
+        async def route(payload: list[Annotated[int, {"description": "item"}]]):
+            return payload
+
+        @convert_request_to_next_version_for(test_path, ["POST"])
+        def migrator(request: RequestInfo):
+            request.body.append(3)
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        assert clients["2000-01-01"].post(url=test_path, json=[1, 2]).json() == [1, 2, 3]
+        assert clients["2001-01-01"].post(url=test_path, json=[1, 2]).json() == [1, 2]
+
 
 class TestResponseMigrations:
     def test__all_response_components_migration__post_endpoint__migration_filled_results_up(
@@ -650,6 +674,59 @@ class TestResponseMigrations:
         resp = client_2001.post(test_path, json={})
         assert resp.content == b"Hello, world"
         assert resp.status_code == 200
+
+    def test__response_migration__when_response_model_is_unhashable__should_migrate_by_path(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        # Dict metadata inside Annotated makes the whole annotation unhashable
+        @router.get(test_path)
+        async def route() -> list[Annotated[int, {"description": "item"}]]:
+            return [1, 2]
+
+        @convert_response_to_previous_version_for(test_path, ["GET"])
+        def migrator(response: ResponseInfo):
+            response.body.append(3)
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        assert clients["2000-01-01"].get(test_path).json() == [1, 2, 3]
+        assert clients["2001-01-01"].get(test_path).json() == [1, 2]
+
+    @pytest.mark.parametrize(
+        ("response_model", "head_body", "migrated_body"),
+        [
+            pytest.param(int, 2, 1, id="int"),
+            pytest.param(dict[str, int], {"a": 2}, {"a": 1}, id="dict"),
+            pytest.param(TypedDictResponse, {"foo": 2}, {"foo": 1}, id="TypedDict"),
+            pytest.param(list[SchemaWithInternalRepresentation], [{"foo": 2}], [{"foo": 1}], id="list[Model]"),
+            pytest.param(Optional[SchemaWithInternalRepresentation], {"foo": 2}, {"foo": 1}, id="Optional[Model]"),
+            pytest.param(
+                Annotated[SchemaWithInternalRepresentation, "metadata"], {"foo": 2}, {"foo": 1}, id="Annotated[Model]"
+            ),
+        ],
+    )
+    def test__response_migration__by_non_model_hashable_schema__should_migrate(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+        response_model: Any,
+        head_body: Any,
+        migrated_body: Any,
+    ):
+        @router.get(test_path, response_model=response_model)
+        async def route():
+            return head_body
+
+        @convert_response_to_previous_version_for(response_model, check_usage=False)
+        def migrator(response: ResponseInfo):
+            response.body = migrated_body
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        assert clients["2000-01-01"].get(test_path).json() == migrated_body
+        assert clients["2001-01-01"].get(test_path).json() == head_body
 
 
 class TestHowAndWhenMigrationsApply:
