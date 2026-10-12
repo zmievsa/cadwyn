@@ -1,6 +1,6 @@
 import re
 from enum import Enum, auto
-from typing import Annotated, Any, ClassVar, Literal, Union, get_origin, get_type_hints
+from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, Union, get_origin, get_type_hints
 
 import pytest
 from pydantic import BaseModel, Field, StringConstraints, ValidationError, computed_field, conint, constr
@@ -17,6 +17,8 @@ from tests.conftest import (
     assert_models_are_equal,
     version_change,
 )
+
+_T = TypeVar("_T")
 
 
 class MyEnum(Enum):
@@ -197,6 +199,14 @@ class InheritedFieldDiamond(InheritedFieldChild, InheritedFieldOtherParent):
     pass
 
 
+class InheritedFieldMixin(BaseModel):
+    pass
+
+
+class InheritedFieldDiamondWithMixin(InheritedFieldMixin, InheritedFieldChild, InheritedFieldOtherParent):
+    pass
+
+
 class InheritedFieldRedeclaringChild(InheritedFieldParent):
     foo: str = Field(default="", description="Redeclared")
 
@@ -307,6 +317,7 @@ PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="
                 InheritedFieldChild: ("Head", 10),
                 InheritedFieldOtherParent: ("Head", 3),
                 InheritedFieldDiamond: ("Head", 3),
+                InheritedFieldDiamondWithMixin: ("Head", 3),
             },
             id="other_parent_of_diamond",
         ),
@@ -417,6 +428,144 @@ def test__schema_field_had__inherited_field_that_a_sibling_changed__should_accep
     assert _get_description_and_max_length(schemas["2000-01-01"][InheritedFieldChild]) == expected_child
     assert _get_description_and_max_length(schemas["2000-01-01"][InheritedFieldSibling]) == expected_sibling
     assert _get_description_and_max_length(schemas["2000-01-01"][InheritedFieldParent]) == ("Head", 10)
+
+
+class AnnotatedInheritedFieldParent(BaseModel):
+    foo: Annotated[str, Field(description="Head")] = ""
+    bar: int = 0
+
+
+class AnnotatedInheritedFieldChild(AnnotatedInheritedFieldParent):
+    pass
+
+
+class AnnotatedInheritedFieldOtherChild(AnnotatedInheritedFieldParent):
+    pass
+
+
+def test__schema_field_didnt_have__parent_deleted_attribute_again_after_its_subclasses_changed_it__should_delete_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(AnnotatedInheritedFieldParent).field("foo").didnt_have("description")),
+        version_change(schema(AnnotatedInheritedFieldOtherChild).field("foo").didnt_have("description")),
+        version_change(
+            schema(AnnotatedInheritedFieldParent).field("bar").had(description="Bar"),
+            schema(AnnotatedInheritedFieldParent).field("foo").didnt_have("description"),
+            schema(AnnotatedInheritedFieldChild).field("foo").had(description="Child"),
+        ),
+    )
+
+    assert schemas["2002-01-01"][AnnotatedInheritedFieldChild].model_fields["foo"].description == "Child"
+    assert schemas["2000-01-01"][AnnotatedInheritedFieldChild].model_fields["foo"].description is None
+
+
+class GenericParentWithInheritedField(BaseModel, Generic[_T]):
+    kind: _T
+    bar: int = 0
+
+
+class GenericChildWithInheritedField(GenericParentWithInheritedField[Literal["a"]]):
+    pass
+
+
+class GenericOtherParentWithInheritedField(GenericParentWithInheritedField[Literal["a"]]):
+    pass
+
+
+class GenericDiamondWithInheritedField(GenericChildWithInheritedField, GenericOtherParentWithInheritedField):
+    pass
+
+
+class OtherKind(BaseModel):
+    kind: Literal["b"]
+
+
+class EnvelopeWithGenericDiamond(BaseModel):
+    item: Annotated[Union[GenericDiamondWithInheritedField, OtherKind], Field(discriminator="kind")]
+
+
+def test__schema_field_had__generic_field_of_other_parent_of_diamond__should_keep_its_concrete_type(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(GenericParentWithInheritedField).field("bar").had(description="Bar"),
+            schema(GenericOtherParentWithInheritedField).field("kind").had(description="Kind"),
+        )
+    )
+
+    diamond_field = schemas["2000-01-01"][GenericDiamondWithInheritedField].model_fields["kind"]
+    assert diamond_field.annotation == Literal["a"]
+    assert diamond_field.description == "Kind"
+    envelope = schemas["2000-01-01"][EnvelopeWithGenericDiamond]
+    assert envelope.model_validate({"item": {"kind": "a"}}).item.kind == "a"
+    with pytest.raises(ValidationError):
+        envelope.model_validate({"item": {"kind": "c"}})
+
+
+class ParentWithoutField(BaseModel):
+    pass
+
+
+class LeftChildWithoutField(ParentWithoutField):
+    pass
+
+
+class RightChildWithoutField(ParentWithoutField):
+    pass
+
+
+class DiamondWithoutField(LeftChildWithoutField, RightChildWithoutField):
+    pass
+
+
+class ParentWithFieldToRename(BaseModel):
+    foo: str = Field(default="", max_length=10)
+
+
+class LeftChildWithFieldToRename(ParentWithFieldToRename):
+    pass
+
+
+class RightChildWithFieldToRename(ParentWithFieldToRename):
+    pass
+
+
+class DiamondWithFieldToRename(LeftChildWithFieldToRename, RightChildWithFieldToRename):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("newer_instruction", "older_instruction", "diamond", "field_name"),
+    [
+        pytest.param(
+            schema(ParentWithoutField).field("foo").existed_as(type=str, info=Field(default="", max_length=10)),
+            schema(RightChildWithoutField).field("foo").had(max_length=3),
+            DiamondWithoutField,
+            "foo",
+            id="field_that_existed_as",
+        ),
+        pytest.param(
+            schema(ParentWithFieldToRename).field("foo").had(name="old_foo"),
+            schema(RightChildWithFieldToRename).field("old_foo").had(max_length=3),
+            DiamondWithFieldToRename,
+            "old_foo",
+            id="renamed_field",
+        ),
+    ],
+)
+def test__schema_field_had__field_of_other_parent_of_diamond_that_only_older_versions_have__should_change_diamond(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    newer_instruction: Any,
+    older_instruction: Any,
+    diamond: type[BaseModel],
+    field_name: str,
+):
+    schemas = create_runtime_schemas(version_change(older_instruction), version_change(newer_instruction))
+
+    field = schemas["2000-01-01"][diamond].model_fields[field_name]
+    assert [m.max_length for m in field.metadata if hasattr(m, "max_length")] == [3]
 
 
 #######

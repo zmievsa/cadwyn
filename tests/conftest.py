@@ -65,9 +65,9 @@ def _check_that_reference_discovery_finds_every_model_that_copying_requests(monk
         discovered_references = [
             # The models with instructions are always discovered through their wrappers, the others are
             # discovered in place
-            self.get_references(generator.model_bundle.schemas)
+            self.get_references(generator)
             if self.cls in generator._changed_models
-            else _get_head_model_references(self.cls, generator.model_bundle.schemas),
+            else _get_head_model_references(self.cls, generator),
         ]
         if (cached_references := generator._model_references.get(self.cls)) is not None:
             discovered_references.append(cached_references)
