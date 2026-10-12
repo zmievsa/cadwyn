@@ -1,3 +1,4 @@
+import dataclasses
 import email.message
 import functools
 import http
@@ -9,7 +10,7 @@ from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar, TypeAlias, Union, cast, get_args
+from typing import TYPE_CHECKING, Annotated, ClassVar, TypeAlias, Union, cast, get_args, get_origin
 
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -21,14 +22,15 @@ from fastapi.dependencies.utils import solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
+from pydantic import AliasChoices, AliasPath, BaseModel, RootModel
+from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
 from starlette.datastructures import FormData
 from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated, override
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
-from cadwyn._utils import classproperty
+from cadwyn._utils import UnionType, classproperty, lenient_issubclass
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -428,6 +430,7 @@ class VersionBundle:
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
         background_tasks: Union[BackgroundTasks, None],
+        body_is_model_dump: bool,
     ) -> dict[str, Any]:
         start = self.reversed_version_values.index(current_version)
         head_route_id = id(head_route)
@@ -453,6 +456,8 @@ class VersionBundle:
 
         if request_info._form is not None:
             body_for_solving = FormData(request_info._form)
+        elif body_is_model_dump:
+            body_for_solving = _restore_validation_aliases(head_dependant.body_params[0], request_info.body)
         else:
             body_for_solving = request_info.body
 
@@ -722,6 +727,7 @@ class VersionBundle:
         if api_version is None:
             return kwargs
 
+        body_is_model_dump = False
         # This is a kind of body param you get when you define a single pydantic schema in your route's body
         if (
             len(route.dependant.body_params) == 1
@@ -738,6 +744,7 @@ class VersionBundle:
                 body = raw_body
             else:
                 body = raw_body.model_dump(by_alias=True, exclude_unset=True)
+                body_is_model_dump = True
         else:
             # This is for requests without body or with complex body such as form or file
             body = await _get_body(request, route.body_field, exit_stack)
@@ -754,6 +761,7 @@ class VersionBundle:
             exit_stack=exit_stack,
             embed_body_fields=embed_body_fields,
             background_tasks=background_tasks,
+            body_is_model_dump=body_is_model_dump,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:
@@ -822,6 +830,662 @@ def _get_schema_migration_key(annotation: object) -> object:
     except TypeError:
         return None
     return annotation
+
+
+def _restore_validation_aliases(body_field: ModelField, data: Any) -> Any:
+    """Rename the keys of `model_dump(by_alias=True)` data to the keys that the models of the body validate.
+
+    The dump uses serialization aliases, which can differ from what a field validates
+    (e.g. `Field(alias="x", validation_alias="v")`), so the head model would silently ignore such values.
+    Anything that the restoration plans of the models don't cover is left as is.
+    """
+    if not _is_body_field_safe(body_field):
+        return data
+    spec = _get_restorer_spec(body_field.field_info.annotation)
+    return data if spec is None else _restore_data(spec, data)
+
+
+_IS_BODY_FIELD_SAFE: dict[int, tuple[ModelField, bool]] = {}
+
+
+def _is_body_field_safe(body_field: ModelField) -> bool:
+    """Whether the validators of the body parameter itself leave the dumped data as valid input.
+
+    They come from the parameter's annotation, such as `Annotated[Model, BeforeValidator(...)]`, and wrap the model
+    in the core schema that FastAPI validates the body with. Its serializers don't matter because we dump the model.
+    """
+    cached = _IS_BODY_FIELD_SAFE.get(id(body_field))
+    if cached is not None and cached[0] is body_field:
+        return cached[1]
+    try:
+        schema = cast("dict[str, Any]", body_field._type_adapter.core_schema)
+        if schema["type"] == "definitions":
+            for definition in schema["definitions"]:
+                _CORE_SCHEMA_DEFINITIONS.setdefault(definition["ref"], definition)
+            schema = schema["schema"]
+        while schema["type"] in ("definition-ref", "nullable", "default", "function-after"):
+            schema = (
+                _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
+                if schema["type"] == "definition-ref"
+                else schema["schema"]
+            )
+        # The model's own validators and serializers are covered by its restoration plan
+        is_safe = schema["type"] == "model"
+    except _CORE_SCHEMA_ERRORS:  # pragma: no cover # FastAPI and Pydantic don't build such schemas
+        is_safe = False
+    _IS_BODY_FIELD_SAFE[id(body_field)] = (body_field, is_safe)
+    return is_safe
+
+
+# What the restoration does with a value: `("list", item_spec)`, `("dict", value_spec)`, or `("model", model)`
+_RestorerSpec: TypeAlias = tuple[str, Any]
+# Marks the root of a root model, which replaces the model's data instead of a key in it
+_ROOT_KEY = object()
+
+
+def _get_restorer_spec(annotation: object) -> Union[_RestorerSpec, None]:
+    """Return what to restore in the data of `annotation`, or None if there's nothing to restore"""
+    node = _get_restorable_node(annotation)
+    if node is None:
+        return None
+    kind, inner = node
+    if kind == "model":
+        return node
+    item_spec = _get_restorer_spec(inner)
+    return None if item_spec is None else (kind, item_spec)
+
+
+def _needs_restoring(spec: _RestorerSpec, data: Any, *, look_ahead: bool = True) -> bool:
+    kind, inner = spec
+    if kind == "list":
+        return isinstance(data, list) and bool(data)
+    if kind == "dict":
+        return isinstance(data, dict) and bool(data)
+    plan = _get_restore_plan(inner)
+    if plan.root_spec is not None:
+        return _needs_restoring(plan.root_spec, data, look_ahead=look_ahead)
+    # Most bulk items have none of the keys, so they only cost this check
+    return (
+        isinstance(data, dict)
+        and not data.keys().isdisjoint(plan.keys)
+        and _model_needs_restoring(plan, data, look_ahead=look_ahead)
+    )
+
+
+def _model_needs_restoring(plan: "_RestorePlan", data: dict[str, Any], *, look_ahead: bool) -> bool:
+    """Whether a rename applies to the data of the model, or one of its nested values might need restoring.
+
+    We look at most one level deep, so that checking deep bodies stays cheap and never recurses deeply.
+    """
+    # Plain loops instead of `any()` because this runs for every bulk item that has one of the plan's keys
+    for rename in plan.renames:
+        if _does_rename_apply(rename, data):
+            return True
+    for key, child_spec in plan.nested:
+        if key in data and (not look_ahead or _needs_restoring(child_spec, data[key], look_ahead=False)):
+            return True
+    return False
+
+
+def _does_rename_apply(rename: "_Rename", data: dict[str, Any]) -> bool:
+    dumped_key, _, validation_paths, validation_keys = rename
+    if dumped_key not in data:
+        return False
+    # The head already finds a value for the field if a migration has set one of its validation paths
+    if validation_keys is not None:
+        return data.keys().isdisjoint(validation_keys)
+    return all(path.search_dict_for_path(data) is PydanticUndefined for path in validation_paths)
+
+
+def _iter_children_to_restore(spec: _RestorerSpec, data: Any) -> Iterator[tuple[Any, _RestorerSpec, Any]]:
+    kind, inner = spec
+    if kind == "model":
+        plan = _get_restore_plan(inner)
+        if plan.root_spec is not None:
+            return iter([(_ROOT_KEY, plan.root_spec, data)])
+        return (
+            (key, child_spec, data[key])
+            for key, child_spec in plan.nested
+            if key in data and _needs_restoring(child_spec, data[key])
+        )
+    items = enumerate(data) if kind == "list" else data.items()
+    if inner[0] == "model" and (item_plan := _get_restore_plan(inner[1])).root_spec is None:
+        # Most bulk items have none of the keys, so they only cost this check
+        keys = item_plan.keys
+        return (
+            (key, inner, item)
+            for key, item in items
+            if isinstance(item, dict)
+            and not item.keys().isdisjoint(keys)
+            and _model_needs_restoring(item_plan, item, look_ahead=True)
+        )
+    return ((key, inner, item) for key, item in items if _needs_restoring(inner, item))
+
+
+def _restore_data(spec: _RestorerSpec, data: Any) -> Any:
+    """Restore the data without recursion, so that bodies as deep as pydantic accepts never hit the recursion limit.
+
+    We only copy the containers in which something changes.
+    """
+    if not _needs_restoring(spec, data):
+        return data
+    # Each frame is [spec, data, children to restore, restored copy of data or None, key of the child being restored]
+    stack: list[list[Any]] = [[spec, data, _iter_children_to_restore(spec, data), None, None]]
+    restored_data = data
+    while stack:
+        frame = stack[-1]
+        child = next(frame[2], None)
+        if child is not None:
+            key, child_spec, child_data = child
+            frame[4] = key
+            stack.append([child_spec, child_data, _iter_children_to_restore(child_spec, child_data), None, None])
+            continue
+        stack.pop()
+        restored_data = _finish_restoring(frame)
+        if stack and restored_data is not frame[1]:
+            parent = stack[-1]
+            if parent[4] is _ROOT_KEY:
+                parent[3] = restored_data
+            else:
+                if parent[3] is None:
+                    parent[3] = list(parent[1]) if isinstance(parent[1], list) else dict(parent[1])
+                parent[3][parent[4]] = restored_data
+    return restored_data
+
+
+def _finish_restoring(frame: list[Any]) -> Any:
+    (kind, inner), data, _, restored, _ = frame
+    if kind == "model" and (plan := _get_restore_plan(inner)).root_spec is None:
+        for rename in plan.renames:
+            if _does_rename_apply(rename, data):
+                if restored is None:
+                    restored = dict(data)
+                dumped_key, target_key, *_ = rename
+                restored[target_key] = restored.pop(dumped_key)
+    return data if restored is None else restored
+
+
+def _get_restorable_node(annotation: object) -> Union[tuple[str, Any], None]:
+    """Return what the restoration does with the data of `annotation`: walk into a list, a dict, or a model.
+
+    It's the only place that decides it, so planning and restoration can't disagree.
+    """
+    if get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    origin, args = get_origin(annotation), get_args(annotation)
+    if isinstance(annotation, UnionType):
+        options = [arg for arg in args if arg is not type(None)]
+        # With several options, we can't know which one is going to validate the data so we leave it as is
+        return _get_restorable_node(options[0]) if len(options) == 1 else None
+    if origin is list and len(args) == 1:
+        return "list", args[0]
+    if origin is dict and len(args) == 2:
+        return "dict", args[1]
+    if lenient_issubclass(annotation, BaseModel):
+        return "model", annotation
+    return None
+
+
+# Marks computed fields among the owners of dumped keys, apart from the regular fields
+_COMPUTED_FIELD = object()
+# (dumped_key, target_key, validation_paths, validation_keys): the keys are None unless all paths are plain keys
+_Rename: TypeAlias = tuple[str, str, tuple[AliasPath, ...], Union[frozenset[str], None]]
+
+
+@dataclasses.dataclass(frozen=True)
+class _RestorePlan:
+    # The fields to rename
+    renames: tuple["_Rename", ...] = ()
+    # (dumped_key, spec) of the fields to walk into
+    nested: tuple[tuple[str, _RestorerSpec], ...] = ()
+    # What to restore in the root of root models
+    root_spec: Union[_RestorerSpec, None] = None
+    # The dumped keys of `renames` and `nested`
+    keys: frozenset[str] = frozenset()
+
+
+@functools.cache
+def _get_restore_plan(model: type[BaseModel]) -> _RestorePlan:
+    # Most apps have no fields to rename, so they don't need to pay for reading core schemas at all
+    if not _reaches_models_with(model, _get_rename_candidates, all_fields=True):
+        return _RestorePlan()
+    renames, traversable = _get_renames_and_traversable_fields(model)
+    nested = tuple(
+        (key, spec)
+        for key, annotation in traversable
+        if (spec := _get_restorer_spec(annotation)) is not None and _annotation_reaches_renames(annotation)
+    )
+    if issubclass(model, RootModel):
+        return _RestorePlan(root_spec=nested[0][1] if nested else None)
+    keys = frozenset(key for key, *_ in (*renames, *nested))
+    return _RestorePlan(renames=renames, nested=nested, keys=keys)
+
+
+_RESTORABLE_MODELS: dict[object, tuple[type[BaseModel], ...]] = {}
+
+
+def _get_restorable_models(annotation: object) -> tuple[type[BaseModel], ...]:
+    # Unhashable annotations (e.g. with dicts in `Annotated`) are rare, so we don't cache them
+    cache_key = _get_schema_migration_key(annotation)
+    if cache_key is None:
+        return tuple(_iter_restorable_models(annotation))
+    if cache_key not in _RESTORABLE_MODELS:
+        _RESTORABLE_MODELS[cache_key] = tuple(_iter_restorable_models(annotation))
+    return _RESTORABLE_MODELS[cache_key]
+
+
+def _iter_restorable_models(annotation: object) -> Iterator[type[BaseModel]]:
+    """Yield the models that the restoration walks into when walking into the data of `annotation`"""
+    node = _get_restorable_node(annotation)
+    while node is not None and node[0] != "model":
+        node = _get_restorable_node(node[1])
+    if node is not None:
+        yield node[1]
+
+
+def _annotation_reaches_renames(annotation: object) -> bool:
+    return any(
+        _reaches_models_with(model, _get_renames, all_fields=False) for model in _get_restorable_models(annotation)
+    )
+
+
+def _get_renames(model: type[BaseModel]) -> tuple[object, ...]:
+    # Models without rename candidates don't need their core schemas read
+    return _get_renames_and_traversable_fields(model)[0] if _get_rename_candidates(model) else ()
+
+
+_REACHES_MODELS_WITH: dict[tuple[Callable[..., object], bool, type[BaseModel]], bool] = {}
+
+
+def _reaches_models_with(
+    root: type[BaseModel], get_items: Callable[[type[BaseModel]], tuple[object, ...]], *, all_fields: bool
+) -> bool:
+    """Whether walking into the data of `root` reaches a model for which `get_items` returns anything.
+
+    We walk into all the fields of the models if `all_fields`, and into their traversable fields otherwise.
+    Each model is explored once: if nothing is found, nothing is reachable from any of the explored models either.
+    """
+    cache_key = (get_items, all_fields, root)
+    if cache_key in _REACHES_MODELS_WITH:
+        return _REACHES_MODELS_WITH[cache_key]
+    explored: set[type[BaseModel]] = set()
+    parents: dict[type[BaseModel], type[BaseModel]] = {}
+    to_explore = [root]
+    while to_explore:
+        model = to_explore.pop()
+        if model in explored or _REACHES_MODELS_WITH.get((get_items, all_fields, model)) is False:
+            continue
+        if _REACHES_MODELS_WITH.get((get_items, all_fields, model)) or get_items(model):
+            # Everything on the way from the root reaches it too
+            while True:
+                _REACHES_MODELS_WITH[get_items, all_fields, model] = True
+                if model is root:
+                    return True
+                model = parents[model]
+        explored.add(model)
+        if all_fields:
+            annotations = [field.annotation for field in model.model_fields.values()]
+        elif _reaches_models_with(model, _get_rename_candidates, all_fields=True):
+            annotations = [annotation for _, annotation in _get_renames_and_traversable_fields(model)[1]]
+        else:
+            # Nothing below this model has rename candidates, so there's no need to read its core schema
+            annotations = []
+        for nested in (nested for annotation in annotations for nested in _get_restorable_models(annotation)):
+            parents.setdefault(nested, model)
+            to_explore.append(nested)
+    for model in explored:
+        _REACHES_MODELS_WITH[get_items, all_fields, model] = False
+    return False
+
+
+@functools.cache
+def _get_rename_candidates(model: type[BaseModel]) -> tuple[str, ...]:
+    """Return the fields whose dumped key the model doesn't validate, judging by their field info only"""
+    return tuple(
+        name
+        for name, field in model.model_fields.items()
+        for paths in [_get_validation_paths(model, name, field)]
+        if [field.serialization_alias or name] not in paths and any(len(path) == 1 for path in paths)
+    )
+
+
+@functools.cache
+def _get_renames_and_traversable_fields(
+    model: type[BaseModel],
+) -> tuple[tuple[_Rename, ...], tuple[tuple[str, object], ...]]:
+    """Return the fields of the model to rename, and the fields whose values we can walk into.
+
+    We only touch a field when the dumped value is unambiguously its valid input. Everything else, such as fields
+    that can only be validated through an `AliasPath`, is left as on main.
+    """
+    inner_schema = _get_model_inner_core_schema(model)
+    # A client's extra key can't be told apart from a dumped key
+    if inner_schema is None or model.model_config.get("extra") == "allow":
+        return (), ()
+    if issubclass(model, RootModel):
+        if not _is_field_schema_safe({"root": inner_schema}, "root"):
+            return (), ()
+        return (), (("root", model.model_fields["root"].annotation),)
+    field_schemas = inner_schema["fields"]
+    # The keys of every field decide which renames are unambiguous, so we only trust the field infos if the compiled
+    # schema validates and dumps all fields by the same aliases. `__get_pydantic_core_schema__` can change them.
+    if set(field_schemas) != set(model.model_fields) or not all(
+        _do_compiled_aliases_match(field, field_schemas[name]) for name, field in model.model_fields.items()
+    ):
+        return (), ()
+    fields = {
+        name: (field.serialization_alias or name, _get_validation_paths(model, name, field))
+        for name, field in model.model_fields.items()
+    }
+    dumped_key_owners: dict[str, set[object]] = defaultdict(set)
+    validated_key_owners: dict[Union[str, int], set[str]] = defaultdict(set)
+    for name, (dumped_key, paths) in fields.items():
+        dumped_key_owners[dumped_key].add(name)
+        for path in paths:
+            validated_key_owners[path[0]].add(name)
+    # Computed fields are dumped too, so their keys are ambiguous as well
+    for name, computed_field_info in model.model_computed_fields.items():
+        dumped_key_owners[computed_field_info.alias or name].add((_COMPUTED_FIELD, name))
+    renames = []
+    traversable = []
+    for name, (dumped_key, paths) in fields.items():
+        annotation = model.model_fields[name].annotation
+        keys = [path[0] for path in paths if len(path) == 1]
+        is_validated = [dumped_key] in paths
+        # A key that belongs to several fields is ambiguous, e.g. another field might read into it via `AliasPath`
+        if (
+            dumped_key_owners[dumped_key] != {name}
+            or not validated_key_owners.get(dumped_key, set()) <= {name}
+            # Fields that neither need a rename nor lead to one don't need their core schemas read
+            or (
+                is_validated
+                and not any(
+                    _reaches_models_with(m, _get_rename_candidates, all_fields=True)
+                    for m in _get_restorable_models(annotation)
+                )
+            )
+            or not _is_field_schema_safe(field_schemas, name)
+        ):
+            continue
+        if is_validated:
+            traversable.append((dumped_key, annotation))
+        elif keys and keys[0] not in dumped_key_owners and validated_key_owners[keys[0]] == {name}:
+            target_key = cast("str", keys[0])
+            validation_keys = frozenset(cast("str", p[0]) for p in paths) if all(len(p) == 1 for p in paths) else None
+            validation_paths = tuple(AliasPath(cast("str", p[0]), *p[1:]) for p in paths)
+            renames.append((dumped_key, target_key, validation_paths, validation_keys))
+            traversable.append((dumped_key, annotation))
+    return tuple(renames), tuple(traversable)
+
+
+# Reading a core schema of an unexpected shape fails with one of these. We leave such models and fields as on main.
+_CORE_SCHEMA_ERRORS = (LookupError, TypeError, AttributeError)
+# The core schema types whose dumped values are their valid input, and their keys that hold child schemas as
+# `(key, holds_several_schemas, is_optional)`. Any other type, such as "json" or the validators that get the raw input
+# ("function-before", "function-wrap", "function-plain"), is unsafe.
+# Data-valued keys such as defaults, literal values, metadata, or serializers are never walked.
+_CHILD_SCHEMA_KEYS: dict[str, tuple[tuple[str, bool, bool], ...]] = {
+    **dict.fromkeys(
+        (
+            *("any", "none", "bool", "int", "float", "decimal", "complex", "str", "bytes", "literal", "enum"),
+            *("date", "time", "datetime", "timedelta", "uuid", "url", "multi-host-url", "missing-sentinel"),
+            *("is-instance", "is-subclass", "callable"),
+        ),
+        (),
+    ),
+    **dict.fromkeys(("list", "set", "frozenset", "generator"), (("items_schema", False, True),)),
+    **dict.fromkeys(
+        (
+            *("nullable", "default", "function-after", "custom-error", "model", "dataclass"),
+            *("model-field", "dataclass-field", "typed-dict-field"),
+        ),
+        (("schema", False, False),),
+    ),
+    "tuple": (("items_schema", True, False),),
+    "dict": (("keys_schema", False, True), ("values_schema", False, True)),
+    "lax-or-strict": (("lax_schema", False, False), ("strict_schema", False, False)),
+    "json-or-python": (("json_schema", False, False), ("python_schema", False, False)),
+    "chain": (("steps", True, False),),
+    "union": (("choices", True, False),),
+    "tagged-union": (("choices", True, False),),
+    "model-fields": (("fields", True, False), ("extras_schema", False, True)),
+    "typed-dict": (("fields", True, False), ("extras_schema", False, True)),
+    "dataclass-args": (("fields", True, False),),
+}
+# Parts of core schemas that are summarized separately because many schemas share them: definitions by their ref
+# and models by their class. This keeps the reading of core schemas linear in their size.
+_CoreSchemaUnit: TypeAlias = tuple[str, object]
+_CORE_SCHEMA_DEFINITIONS: dict[str, dict[str, Any]] = {}
+_CORE_SCHEMA_MODELS: dict[object, dict[str, Any]] = {}
+# Units are kept in the order the schema refers to them, so that the exploration order doesn't depend on hashing
+_CORE_SCHEMA_UNIT_SUMMARIES: dict[_CoreSchemaUnit, tuple[bool, tuple[_CoreSchemaUnit, ...]]] = {}
+_IS_CORE_SCHEMA_UNIT_SAFE: dict[_CoreSchemaUnit, bool] = {}
+
+
+def _do_compiled_aliases_match(field: FieldInfo, field_schema: object) -> bool:
+    """Whether the compiled schema validates and dumps the field by the aliases of its field info.
+
+    A custom `__get_pydantic_core_schema__` can change them, and then we don't know which keys the head reads.
+    """
+    return (
+        isinstance(field_schema, dict)
+        and _normalize_validation_alias(field_schema.get("validation_alias"))
+        == _normalize_validation_alias(field.validation_alias)
+        and field_schema.get("serialization_alias") == field.serialization_alias
+    )
+
+
+def _normalize_validation_alias(alias: object) -> object:
+    if isinstance(alias, str):
+        return [[alias]]
+    if isinstance(alias, (AliasPath, AliasChoices)):
+        alias = alias.convert_to_aliases()
+    # Compiled `AliasChoices` are lists of paths, while a compiled `AliasPath` is a single path
+    if isinstance(alias, list) and alias and not all(isinstance(path, list) for path in alias):
+        alias = [alias]
+    return alias
+
+
+def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any], None]:
+    """Return the fields core schema of the model (or the root core schema of a root model).
+
+    Return None instead if a validator of the model gets the raw input, if the model has a model serializer,
+    or if its core schema isn't shaped like the one of a plain model.
+    """
+    try:
+        schema = cast("dict[str, Any]", model.__pydantic_core_schema__)
+        if schema["type"] == "definitions":
+            for definition in schema["definitions"]:
+                _CORE_SCHEMA_DEFINITIONS.setdefault(definition["ref"], definition)
+            schema = schema["schema"]
+        if schema["type"] == "definition-ref":
+            schema = _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
+        # "after" model validators wrap the model schema and only get the validated model
+        while schema["type"] == "function-after":
+            schema = schema["schema"]
+        # A custom `__init__` might expect the input that the dump doesn't have
+        if (
+            schema["type"] != "model"
+            or schema["cls"] is not model
+            or schema.get("custom_init")
+            or _is_custom_serialization(schema.get("serialization"))
+            or _overrides_dumping(model)
+            or not _do_compiled_settings_match(model, schema.get("config"))
+        ):
+            return None
+        inner_schema = schema["schema"] if schema["root_model"] else _get_fields_core_schema(schema)
+        # "wrap" and "plain" model validators wrap the model schema, while "before" ones wrap its fields schema
+        if not schema["root_model"] and inner_schema["type"] != "model-fields":
+            return None
+    except _CORE_SCHEMA_ERRORS:
+        return None
+    return inner_schema
+
+
+def _get_fields_core_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return the fields core schema of a model or dataclass core schema"""
+    fields_schema = schema["schema"]
+    # "after" validators (including `root_validator(skip_on_failure=True)`) wrap the fields schema
+    while fields_schema["type"] == "function-after":
+        fields_schema = fields_schema["schema"]
+    return fields_schema
+
+
+def _overrides_dumping(cls: object) -> bool:
+    """Whether a class overrides how pydantic dumps it, which its core schema doesn't describe"""
+    return any(
+        name in vars(base)
+        for base in getattr(cls, "__mro__", ())
+        if base not in (BaseModel, RootModel, object)
+        for name in ("model_dump", "model_dump_json")
+    )
+
+
+def _is_field_schema_safe(schemas: dict[str, Any], key: str) -> bool:
+    """Whether the dumped value of the field with the core schema at `schemas[key]` is its valid input"""
+    units: dict[_CoreSchemaUnit, None] = {}
+    try:
+        if _has_unsafe_core_schema(schemas[key], units):
+            return False
+    except _CORE_SCHEMA_ERRORS:
+        return False
+    return all(_is_core_schema_unit_safe(unit) for unit in units)
+
+
+def _is_core_schema_unit_safe(root: _CoreSchemaUnit) -> bool:
+    """Whether nothing reachable from the core schema unit makes its dumped values invalid input.
+
+    Each unit is explored once: if nothing unsafe is found, nothing is reachable from any of the explored units either.
+    """
+    if root in _IS_CORE_SCHEMA_UNIT_SAFE:
+        return _IS_CORE_SCHEMA_UNIT_SAFE[root]
+    explored: set[_CoreSchemaUnit] = set()
+    parents: dict[_CoreSchemaUnit, _CoreSchemaUnit] = {}
+    to_explore = [root]
+    while to_explore:
+        unit = to_explore.pop()
+        is_safe = _IS_CORE_SCHEMA_UNIT_SAFE.get(unit)
+        if unit in explored or is_safe:
+            continue
+        is_unsafe, units = (True, ()) if is_safe is False else _summarize_core_schema_unit(unit)
+        if is_unsafe:
+            # Everything on the way from the root reaches it too
+            while True:
+                _IS_CORE_SCHEMA_UNIT_SAFE[unit] = False
+                if unit == root:
+                    return False
+                unit = parents[unit]
+        explored.add(unit)
+        for child in units:
+            parents.setdefault(child, unit)
+            to_explore.append(child)
+    for unit in explored:
+        _IS_CORE_SCHEMA_UNIT_SAFE[unit] = True
+    return True
+
+
+def _summarize_core_schema_unit(unit: _CoreSchemaUnit) -> tuple[bool, tuple[_CoreSchemaUnit, ...]]:
+    if unit not in _CORE_SCHEMA_UNIT_SUMMARIES:
+        kind, key = unit
+        body = (_CORE_SCHEMA_DEFINITIONS if kind == "ref" else _CORE_SCHEMA_MODELS).get(key)
+        units: dict[_CoreSchemaUnit, None] = {}
+        try:
+            # A definition that we haven't seen is unsafe
+            is_unsafe = body is None or _has_unsafe_core_schema(body, units, is_unit_body=True)
+        except _CORE_SCHEMA_ERRORS:
+            is_unsafe = True
+        _CORE_SCHEMA_UNIT_SUMMARIES[unit] = (is_unsafe, tuple(units))
+    return _CORE_SCHEMA_UNIT_SUMMARIES[unit]
+
+
+def _has_unsafe_core_schema(
+    schema: dict[str, Any], units: dict[_CoreSchemaUnit, None], *, is_unit_body: bool = False
+) -> bool:
+    """Whether the core schema itself makes its dumped values invalid input. Collect the units it refers to.
+
+    That's the case for custom serializers, `Json`, models that forbid extra keys but dump computed fields,
+    models with a custom `__init__`, validators that get the raw input, and core schema types that we don't know.
+    """
+    schema_type = schema["type"]
+    if schema_type == "definition-ref":
+        units["ref", schema["schema_ref"]] = None
+        return False
+    if schema_type == "model" and not is_unit_body:
+        _CORE_SCHEMA_MODELS.setdefault(schema["cls"], schema)
+        units["model", schema["cls"]] = None
+        return False
+    if (
+        schema_type not in _CHILD_SCHEMA_KEYS
+        or _is_custom_serialization(schema.get("serialization"))
+        or schema.get("custom_init")
+        or (schema_type == "model" and _overrides_dumping(schema["cls"]))
+        or (
+            schema_type in ("model", "dataclass")
+            and schema.get("config", {}).get("extra_fields_behavior") == "forbid"
+            and _get_fields_core_schema(schema).get("computed_fields")
+        )
+    ):
+        return True
+    return any(_has_unsafe_core_schema(child, units) for child in _get_child_core_schemas(schema))
+
+
+def _get_child_core_schemas(schema: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    for key, holds_several, is_optional in _CHILD_SCHEMA_KEYS[schema["type"]]:
+        if is_optional and key not in schema:
+            continue
+        child = schema[key]
+        if holds_several:
+            for item in child.values() if isinstance(child, dict) else child:
+                # Union choices can be `(schema, label)` tuples
+                yield item[0] if isinstance(item, tuple) else item
+        else:
+            yield child
+
+
+def _is_custom_serialization(serialization: object) -> bool:
+    # Serializers that only run in JSON mode don't affect `model_dump()`
+    return isinstance(serialization, dict) and serialization.get("when_used") not in ("json", "json-unless-none")
+
+
+def _get_validation_paths(model: type[BaseModel], name: str, field: FieldInfo) -> list[list[Union[str, int]]]:
+    """Return the paths in the input data that the field validates, in the order Pydantic tries them"""
+    alias = field.validation_alias
+    validate_by_alias, validate_by_name, _ = _get_validation_settings(model)
+    paths: list[list[Union[str, int]]] = []
+    if not validate_by_alias or alias is None:
+        paths.append([name])
+    elif isinstance(alias, str):
+        paths.append([alias])
+    elif isinstance(alias, AliasPath):
+        paths.append(alias.convert_to_aliases())
+    else:
+        paths.extend(alias.convert_to_aliases())
+    if validate_by_name:
+        paths.append([name])
+    return paths
+
+
+def _get_validation_settings(model: type[BaseModel]) -> tuple[bool, bool, str]:
+    """Return `(validate_by_alias, validate_by_name, extra)` of the model's config, resolved like pydantic does"""
+    config = model.model_config
+    validate_by_alias = config.get("validate_by_alias", True)
+    validate_by_name = config.get("validate_by_name")
+    if validate_by_name is None:
+        populate_by_name = config.get("populate_by_name")
+        validate_by_name = not validate_by_alias if populate_by_name is None else populate_by_name
+    return validate_by_alias, validate_by_name, config.get("extra") or "ignore"
+
+
+def _do_compiled_settings_match(model: type[BaseModel], compiled_config: object) -> bool:
+    """Whether the compiled schema validates the model's keys with the settings of its config, which we plan with.
+
+    A custom `__get_pydantic_core_schema__` can change them.
+    """
+    return isinstance(compiled_config, dict) and _get_validation_settings(model) == (
+        compiled_config.get("validate_by_alias", True),
+        compiled_config.get("validate_by_name", False),
+        compiled_config.get("extra_fields_behavior", "ignore"),
+    )
 
 
 def _add_keyword_only_parameter(
