@@ -35,6 +35,7 @@ from fastapi import Response
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
+from pydantic._internal._config import ConfigWrapper
 from pydantic._internal._decorators import (
     FieldSerializerDecoratorInfo,
     FieldValidatorDecoratorInfo,
@@ -43,9 +44,11 @@ from pydantic._internal._decorators import (
     RootValidatorDecoratorInfo,
     ValidatorDecoratorInfo,
 )
-from pydantic._internal._generics import PydanticGenericMetadata
+from pydantic._internal._fields import rebuild_model_fields
+from pydantic._internal._generics import PydanticGenericMetadata, get_model_typevars_map
 from pydantic._internal._known_annotated_metadata import collect_known_metadata
 from pydantic._internal._model_construction import unpack_lenient_weakvaluedict
+from pydantic._internal._namespace_utils import NsResolver
 from pydantic._internal._typing_extra import try_eval_type as pydantic_try_eval_type
 from pydantic.fields import ComputedFieldInfo, FieldInfo
 from pydantic_core import PydanticUndefined
@@ -295,9 +298,11 @@ def _get_annotations_without_evaluating(obj: Any) -> dict[str, Any]:
     return obj.__annotations__
 
 
-def _get_model_annotations(model: type[BaseModel]) -> dict[str, Any]:
+def _get_model_annotations(model: type[BaseModel], fields: Union[dict[str, FieldInfo], None] = None) -> dict[str, Any]:
+    fields = model.model_fields if fields is None else fields
+
     def _rebuild_annotated(name: str, value: Any):
-        if field_info := model.model_fields.get(name):
+        if field_info := fields.get(name):
             if not field_info.metadata:
                 return field_info.annotation
 
@@ -311,8 +316,36 @@ def _get_model_annotations(model: type[BaseModel]) -> dict[str, Any]:
     }
 
 
-def _get_model_field_names(model: type[BaseModel]) -> list[str]:
-    return [name for name in _get_annotations_without_evaluating(model) if name in model.model_fields]
+def _get_model_field_names(model: type[BaseModel], fields: Union[dict[str, FieldInfo], None] = None) -> list[str]:
+    fields = model.model_fields if fields is None else fields
+    return [name for name in _get_annotations_without_evaluating(model) if name in fields]
+
+
+# The signature of this private function differs between pydantic versions
+_REBUILD_MODEL_FIELDS_TAKES_CONFIG = "config_wrapper" in inspect.signature(rebuild_model_fields).parameters
+
+
+def _get_rebuilt_model_fields(model: type[BaseModel]) -> dict[str, FieldInfo]:
+    """Return the fields that _rebuild_model would give the model without rebuilding it.
+
+    model_rebuild first resolves the fields with the same pydantic function and namespaces. Unlike model_rebuild,
+    it does not change the model, build its schema, or call its hooks.
+    """
+    if model.__pydantic_fields_complete__:
+        return model.model_fields
+    ns_resolver = NsResolver(parent_namespace=unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
+    config_kwargs = (
+        {"config_wrapper": ConfigWrapper(model.model_config, check=False)} if _REBUILD_MODEL_FIELDS_TAKES_CONFIG else {}
+    )
+    try:
+        rebuilt_fields = rebuild_model_fields(
+            model, ns_resolver=ns_resolver, typevars_map=get_model_typevars_map(model), **config_kwargs
+        )
+    except NameError:
+        # model_rebuild cannot resolve some of the annotations either so it keeps the current fields
+        return model.model_fields
+    # Pydantic >= 2.13 also returns the info about the extra fields
+    return rebuilt_fields[0] if isinstance(rebuilt_fields, tuple) else rebuilt_fields
 
 
 def _get_head_model_references(model: type[BaseModel]) -> "_ModelReferences":
@@ -320,18 +353,13 @@ def _get_head_model_references(model: type[BaseModel]) -> "_ModelReferences":
 
     Unlike _wrap_pydantic_model, it does not copy anything from the model because the model may never be copied.
     """
-    annotations = _get_model_annotations(model)
-    if not model.__pydantic_fields_complete__:
-        # Pydantic could not resolve some of its annotations yet. We resolve them the way _rebuild_model would but
-        # without rebuilding the model because that could build its schema and call its hooks before pydantic does.
-        # The names that cannot be resolved do not refer to any model.
-        annotations = {name: _eval_forward_refs(annotation, model) for name, annotation in annotations.items()}
+    fields = _get_rebuilt_model_fields(model)
     collector = _ReferencedModelCollector()
     _change_version_of_model_references(
         collector,
         model,
-        {name: _extract_passed_field_attributes(model.model_fields[name]) for name in _get_model_field_names(model)},
-        annotations,
+        {name: _extract_passed_field_attributes(fields[name]) for name in _get_model_field_names(model, fields)},
+        _get_model_annotations(model, fields),
     )
     return collector.get_references()
 

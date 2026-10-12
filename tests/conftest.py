@@ -1,3 +1,4 @@
+import threading
 import uuid
 from collections.abc import Sequence
 from contextvars import ContextVar
@@ -15,7 +16,13 @@ from typing_extensions import override
 
 from cadwyn import Cadwyn, VersionBundle, VersionedAPIRouter
 from cadwyn._utils import same_method_definition_as_in
-from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
+from cadwyn.schema_generation import (
+    SchemaGenerator,
+    _is_versionable_model,
+    _PydanticModelWrapper,
+    _unwrap_model,
+    generate_versioned_models,
+)
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction
@@ -24,6 +31,42 @@ from cadwyn.structure.versions import HeadVersion
 
 CURRENT_DIR = Path(__file__).parent
 Undefined = object()
+
+
+@pytest.fixture(autouse=True)
+def _check_that_reference_discovery_finds_every_model_that_copying_requests(monkeypatch: pytest.MonkeyPatch):
+    """Check that copying a model only requests the models that reference discovery found in it.
+
+    Generic args are only versioned when reference discovery shows that copying them is safe. So whenever
+    a model is copied after discovery has looked at it, every model that copying requests must have been
+    found by discovery. We check it on every request so that a missed reference fails the test before it
+    can lead to infinite recursion.
+    """
+    state = threading.local()
+    original_getitem = SchemaGenerator.__getitem__
+    original_generate_model_copy = _PydanticModelWrapper.generate_model_copy
+
+    def getitem(self: SchemaGenerator, model: Any, /) -> Any:
+        models_being_copied = getattr(state, "models_being_copied", [])
+        if models_being_copied and _is_versionable_model(model):
+            model_being_copied, generator = models_being_copied[-1]
+            references = generator._model_references.get(model_being_copied)
+            assert references is None or _unwrap_model(model) in references.models | references.arg_models, (
+                f"Reference discovery missed {model} in {model_being_copied}"
+            )
+        return original_getitem(self, model)
+
+    def generate_model_copy(self: _PydanticModelWrapper, generator: SchemaGenerator) -> Any:
+        if not hasattr(state, "models_being_copied"):
+            state.models_being_copied = []
+        state.models_being_copied.append((self.cls, generator))
+        try:
+            return original_generate_model_copy(self, generator)
+        finally:
+            state.models_being_copied.pop()
+
+    monkeypatch.setattr(SchemaGenerator, "__getitem__", getitem)
+    monkeypatch.setattr(_PydanticModelWrapper, "generate_model_copy", generate_model_copy)
 
 
 @pytest.fixture

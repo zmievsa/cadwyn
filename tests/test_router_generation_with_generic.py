@@ -1,9 +1,12 @@
 import functools
+import importlib.util
 import sys
 import threading
 import typing
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Optional, TypeVar, Union
 
 import pytest
@@ -1099,3 +1102,68 @@ def test__generate_versioned_models__untouched_generic_arg_with_unresolvable_for
     generate_versioned_models(versions)["2000-01-01"][Page[ItemWithUnresolvableRef]]
 
     assert not ItemWithUnresolvableRef.__pydantic_complete__
+
+
+def load_fresh_forward_ref_cycles_module() -> Any:
+    module_name = f"tests._data.generic_forward_ref_cycles_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(
+        module_name, Path(__file__).parent / "_data" / "generic_forward_ref_cycles.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("model_name", "body", "old_body"),
+    [
+        pytest.param(
+            "NestedUnionA",
+            {"changed": {"fullName": "x"}, "peer": {"id": 1}},
+            {"changed": {"oldName": "x"}, "peer": {"id": 1}},
+            id="forward_ref_to_class_namespace",
+        ),
+        pytest.param(
+            "MetadataA",
+            {"changed": {"fullName": "x"}},
+            {"changed": {"oldName": "x"}, "detail": {"label": "1"}},
+            id="cycle_through_unresolved_metadata",
+        ),
+    ],
+)
+@pytest.mark.parametrize("migrate_arg_first", [False, True], ids=["generic_first", "arg_first"])
+def test__migrate_response_body__generic_arg_with_forward_refs_resolved_by_pydantic__should_find_their_cycles(
+    model_name: str,
+    body: dict[str, Any],
+    old_body: dict[str, Any],
+    migrate_arg_first: bool,
+):
+    module = load_fresh_forward_ref_cycles_module()
+    model = getattr(module, model_name)
+    versions = VersionBundle(
+        Version(
+            "2001-01-01",
+            version_change(
+                schema(module.Changed)
+                .field("name")
+                .had(
+                    alias="oldName", validation_alias=AliasChoices("oldName", "fullName"), serialization_alias="oldName"
+                )
+            ),
+        ),
+        Version("2000-01-01"),
+    )
+    if migrate_arg_first:
+        assert (
+            migrate_response_body(versions, model, latest_body=body, version="2000-01-01").model_dump(by_alias=True)
+            == old_body
+        )
+
+    migrated_body = migrate_response_body(
+        versions, module.Page[model], latest_body={"items": [body]}, version="2000-01-01"
+    )
+
+    assert migrated_body.model_dump(by_alias=True) == {"items": [old_body]}
