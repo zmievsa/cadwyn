@@ -29,9 +29,11 @@ from pydantic import (
     Field,
     Json,
     PlainSerializer,
+    PlainValidator,
     RootModel,
     Strict,
     WrapSerializer,
+    WrapValidator,
     computed_field,
     field_serializer,
     field_validator,
@@ -1375,7 +1377,13 @@ class OtherInnerSchema(BaseModel):
             [{"value": 1}],
             id="list_of_annotated",
         ),
-        pytest.param(dict[str, InnerSchemaWithValidationAlias], {"a": {"v": 1}}, {"a": {"value": 1}}, id="dict"),
+        pytest.param(
+            dict[str, InnerSchemaWithValidationAlias],
+            {"a": {"v": 1}, "b": {"v": 2}},
+            {"a": {"value": 1}, "b": {"value": 2}},
+            id="dict",
+        ),
+        pytest.param(Optional[dict[str, InnerSchemaWithValidationAlias]], None, None, id="optional_dict_with_none"),
         pytest.param(Optional[list[InnerSchemaWithValidationAlias]], [{"v": 1}], [{"value": 1}], id="optional_list"),
         pytest.param(Optional[list[InnerSchemaWithValidationAlias]], None, None, id="optional_list_with_none"),
         pytest.param(typing.List, [{"v": 1}], [{"v": 1}], id="bare_list"),  # noqa: UP006
@@ -1916,6 +1924,34 @@ class SchemaWithJsonOrPythonCoreSchema(BaseModel):
         return core_schema.json_or_python_schema(json_schema=schema, python_schema=schema)
 
 
+class SchemaWithLaxOrStrictCoreSchema(BaseModel):
+    value: Optional[int] = Field(default=None, validation_alias="v")
+
+    @override
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> core_schema.CoreSchema:
+        schema = handler(source)
+        return core_schema.lax_or_strict_schema(lax_schema=schema, strict_schema=schema)
+
+
+class SchemaWithNullableCoreSchema(BaseModel):
+    value: Optional[int] = Field(default=None, validation_alias="v")
+
+    @override
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> core_schema.CoreSchema:
+        return core_schema.nullable_schema(handler(source))
+
+
+class SchemaWithUnionCoreSchema(BaseModel):
+    value: Optional[int] = Field(default=None, validation_alias="v")
+
+    @override
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> core_schema.CoreSchema:
+        return core_schema.union_schema([handler(source), core_schema.none_schema()])
+
+
 class SchemaWithJson(BaseModel):
     value: Json[list[int]] = Field(default_factory=list, validation_alias="v", serialization_alias="s")
 
@@ -2104,6 +2140,9 @@ class SchemaWithNestedModelsSharingAnAlias(BaseModel):
         ),
         pytest.param(SchemaWithChainCoreSchema, {"v": 1}, lambda b: b.value, None, id="chain_core_schema"),
         pytest.param(SchemaWithJsonOrPythonCoreSchema, {"v": 1}, lambda b: b.value, None, id="json_or_python"),
+        pytest.param(SchemaWithLaxOrStrictCoreSchema, {"v": 1}, lambda b: b.value, None, id="lax_or_strict"),
+        pytest.param(SchemaWithNullableCoreSchema, {"v": 1}, lambda b: b.value, None, id="nullable_core_schema"),
+        pytest.param(SchemaWithUnionCoreSchema, {"v": 1}, lambda b: b.value, None, id="union_core_schema"),
         pytest.param(
             RootWithBeforeValidator, [{"v": 1}], lambda b: [i.a for i in b.root], [None], id="root_before_validator"
         ),
@@ -2328,6 +2367,7 @@ def test__request_body_migration__with_model_core_schema_of_unexpected_shape__sh
         pytest.param({"type": "tuple", "items_schema": 1}, id="garbage_children"),
         pytest.param({"type": "definition-ref", "schema_ref": "missing"}, id="missing_ref"),
         pytest.param({"type": "model", "schema": None}, id="model_without_fields"),
+        pytest.param({"type": "model", "cls": object(), "schema": "garbage"}, id="garbage_nested_model"),
         pytest.param({"type": "unknown"}, id="unknown_type"),
     ],
 )
@@ -2354,6 +2394,230 @@ def test__request_body_migration__with_field_core_schema_of_unexpected_shape__sh
 
     for version_client in clients.values():
         assert version_client.post(test_path, json={"v": 1, "o": 2}).json() == {"value": None, "other": 2}
+
+
+def test__request_body_migration__with_nested_model_of_unexpected_core_schema__should_restore_its_siblings(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class SchemaWithNestedChainCoreSchema(BaseModel):
+        inner: SchemaWithChainCoreSchema
+        other: int = Field(default=0, validation_alias="o")
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithNestedChainCoreSchema):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"inner": {"v": 1}, "o": 2}).json() == {
+            "inner": {"value": None},
+            "other": 2,
+        }
+
+
+class InnerWithV1PostRootValidator(BaseModel):
+    q: Optional[int] = Field(default=None, validation_alias="qq")
+
+    @root_validator(skip_on_failure=True)  # ty: ignore[deprecated]  # V1 validators are still supported.
+    def check(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return values
+
+
+class SchemaWithV1PostRootValidator(BaseModel):
+    inner: Optional[InnerWithV1PostRootValidator] = None
+    value: Optional[int] = Field(default=None, validation_alias="v")
+
+    @root_validator(skip_on_failure=True)  # ty: ignore[deprecated]  # V1 validators are still supported.
+    def check(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return values
+
+
+def test__request_body_migration__with_v1_post_root_validators__head_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithV1PostRootValidator):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"inner": {"qq": 1}, "v": 2}).json() == {
+            "inner": {"q": 1},
+            "value": 2,
+        }
+
+
+def test__request_body_migration__with_renamed_field_of_model_without_aliases__head_should_get_it(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class SchemaWithRenamedModelField(BaseModel):
+        inner: OtherInnerWithY = Field(alias="i", validation_alias="j")
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithRenamedModelField):
+        return body.inner.y
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"j": {"y": 1}}).json() == 1
+
+
+def test__request_body_migration__with_recursive_model__head_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    # Python 3.10 keeps forward references inside builtin generics such as `list["Node"]` unevaluated
+    # in the field info, so only references that typing evaluates, such as `Optional["Node"]`, are walked into there
+    class Node(BaseModel):
+        value: Optional[int] = Field(default=None, validation_alias="vv")
+        child: Optional["Node"] = Field(default=None, validation_alias="kid")
+
+    @router.post(test_path)
+    async def endpoint(body: Node):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+    payload = {"vv": 1, "kid": {"vv": 2, "kid": {"vv": 3}}}
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == {
+            "value": 1,
+            "child": {"value": 2, "child": {"value": 3, "child": None}},
+        }
+
+
+def test__request_body_migration__with_custom_serialization_shared_by_nested_models__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class FirstWrapper(BaseModel):
+        money: MoneyWithModelSerializer = Field(default_factory=MoneyWithModelSerializer)
+
+    class SecondWrapper(BaseModel):
+        money: MoneyWithModelSerializer = Field(default_factory=MoneyWithModelSerializer)
+
+    class SchemaWithWrappers(BaseModel):
+        first: FirstWrapper = Field(default_factory=FirstWrapper, validation_alias="f")
+        second: SecondWrapper = Field(default_factory=SecondWrapper, validation_alias="s")
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithWrappers):
+        return [body.first.money.amount, body.second.money.amount]
+
+    clients = create_versioned_clients(version_change())
+    payload = {"f": {"money": {"cents": 100}}, "s": {"money": {"cents": 200}}}
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == [0, 0]
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        pytest.param(Annotated[ItemWithWireSerialization, BeforeValidator(_decode_wire)], id="before"),
+        pytest.param(
+            Annotated[ItemWithWireSerialization, WrapValidator(lambda value, handler: handler(_decode_wire(value)))],
+            id="wrap",
+        ),
+        pytest.param(
+            Annotated[
+                ItemWithWireSerialization,
+                PlainValidator(lambda value: ItemWithWireSerialization.model_validate(_decode_wire(value))),
+            ],
+            id="plain",
+        ),
+        pytest.param(Optional[Annotated[ItemWithWireSerialization, BeforeValidator(_decode_wire)]], id="optional"),
+    ],
+)
+def test__request_body_migration__with_validators_on_the_body_parameter__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: annotation):
+        return body.value
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"wire": 7}).json() == 7
+
+
+class ItemWithCustomInit(BaseModel):
+    value: int = Field(serialization_alias="wire")
+
+    def __init__(self, **data: Any) -> None:
+        super().__init__(value=data["wire"])
+
+
+class SchemaWithNestedCustomInit(BaseModel):
+    item: ItemWithCustomInit
+
+
+@pytest.mark.parametrize(
+    ("model", "payload", "read"),
+    [
+        pytest.param(ItemWithCustomInit, {"value": 7}, lambda body: body.value, id="body"),
+        pytest.param(SchemaWithNestedCustomInit, {"item": {"value": 7}}, lambda body: body.item.value, id="nested"),
+    ],
+)
+def test__request_body_migration__with_custom_init__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    model: type[BaseModel],
+    payload: dict[str, Any],
+    read: Callable[[Any], Any],
+):
+    @router.post(test_path)
+    async def endpoint(body: model):  # ty: ignore[invalid-type-form]
+        return read(body)
+
+    clients = create_versioned_clients(version_change())
+
+    # The versioned copies validate the field name, while the head's `__init__` expects the dumped key
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == 7
+
+
+def test__request_body_migration__with_bulk_items_without_the_renamed_keys__head_should_get_them_unchanged(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class Item(BaseModel):
+        id: int
+        optional: int = Field(default=0, validation_alias="wire")
+
+    class SchemaWithItems(BaseModel):
+        items: list[Item]
+        by_name: dict[str, Item] = Field(default_factory=dict)
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithItems):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+    payload = {"items": [{"id": 1}, {"id": 2, "wire": 3}, {"id": 4}], "by_name": {"a": {"id": 5}}}
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == {
+            "items": [{"id": 1, "optional": 0}, {"id": 2, "optional": 3}, {"id": 4, "optional": 0}],
+            "by_name": {"a": {"id": 5, "optional": 0}},
+        }
 
 
 def test__request_body_migration__with_json_form_field__should_stay_as_before(
