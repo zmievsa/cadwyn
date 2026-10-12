@@ -7,12 +7,21 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, ForwardRef, Generic, Literal, Optional, TypeVar, Union
 
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, create_model
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    JsonValue,
+    ValidationError,
+    create_model,
+)
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
 from typing_extensions import Self, TypeAliasType, TypeVarTuple, Unpack, override
 
@@ -26,7 +35,7 @@ from cadwyn import (
     migrate_response_body,
 )
 from cadwyn.route_generation import VersionedAPIRouter
-from cadwyn.schema_generation import generate_versioned_models
+from cadwyn.schema_generation import _contains_forward_refs, _get_head_model_references, generate_versioned_models
 from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import VersionChange
@@ -1292,3 +1301,222 @@ def test__router_generation__generic_arg_with_recursive_type_alias__should_work_
         assert client.get("/items").json() == body
         assert client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
         assert migrate_response_body(versions, page, latest_body=body, version=version).model_dump() == body
+
+
+EventTypeT = TypeVar("EventTypeT")
+
+
+class Event(BaseModel, Generic[EventTypeT, ItemT]):
+    type: EventTypeT
+    data: ItemT
+
+
+@pytest.mark.parametrize(
+    ("annotation", "contains_forward_refs"),
+    [
+        (int, False),
+        ("Item", True),
+        (ForwardRef("Item"), True),
+        (list["Item"], True),
+        (dict[str, "Item"], True),
+        (Union[int, "Item"], True),
+        (Optional[list["Item"]], True),
+        (Annotated["Item", "doc"], True),
+        (Literal["user.created"], False),
+        (Optional[Literal["user.created"]], False),
+        (dict[str, Literal["x", "y"]], False),
+        (Annotated[int, "doc"], False),
+        (Annotated[list[int], "doc", Field(description="doc")], False),
+        (Event[Literal["user.created"], Item], False),
+    ],
+)
+def test__contains_forward_refs__should_only_find_strings_that_typing_evaluates(
+    annotation: Any, contains_forward_refs: bool
+):
+    assert _contains_forward_refs(annotation) is contains_forward_refs
+
+
+class EventHolder(BaseModel):
+    event: Event[Literal["item.created"], Item]
+
+
+class AnnotatedItemsHolder(BaseModel):
+    items: Page[Annotated[Item, "An item"]]
+
+
+@pytest.mark.parametrize(
+    ("response_model", "body", "old_body"),
+    [
+        pytest.param(
+            Event[Literal["item.created"], Item],
+            {"type": "item.created", "data": {"fullName": "a"}},
+            {"type": "item.created", "data": {"oldName": "a"}},
+            id="literal_arg",
+        ),
+        pytest.param(
+            Page[Annotated[Item, "An item"]],
+            {"items": [{"fullName": "a"}]},
+            {"items": [{"oldName": "a"}]},
+            id="annotated_arg_with_string_metadata",
+        ),
+        pytest.param(
+            Page[Event[Literal["item.created"], Item]],
+            {"items": [{"type": "item.created", "data": {"fullName": "a"}}]},
+            {"items": [{"type": "item.created", "data": {"oldName": "a"}}]},
+            id="page_of_literal_arg",
+        ),
+        pytest.param(
+            Page[EventHolder],
+            {"items": [{"event": {"type": "item.created", "data": {"fullName": "a"}}}]},
+            {"items": [{"event": {"type": "item.created", "data": {"oldName": "a"}}}]},
+            id="page_of_model_with_literal_arg",
+        ),
+        pytest.param(
+            Page[AnnotatedItemsHolder],
+            {"items": [{"items": {"items": [{"fullName": "a"}]}}]},
+            {"items": [{"items": {"items": [{"oldName": "a"}]}}]},
+            id="page_of_model_with_annotated_arg",
+        ),
+    ],
+)
+def test__router_generation__generic_args_with_strings_that_are_not_types__should_be_versioned(
+    create_versioned_app: CreateVersionedApp,
+    response_model: Any,
+    body: dict[str, Any],
+    old_body: dict[str, Any],
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/events", response_model=response_model)
+    async def get_events() -> dict[str, Any]:
+        return body
+
+    @router.get("/items", response_model=Page[Item])
+    async def get_items() -> dict[str, Any]:
+        return {"items": [{"fullName": "b"}]}
+
+    app = create_versioned_app(item_alias_version_change(), router=router)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+    assert client_2000.get("/events").json() == old_body
+    assert client_2000.get("/items").json() == {"items": [{"oldName": "b"}]}
+    # Both routes use the same old Item instead of the head one and the old one side by side
+    schema_names = client_2000.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert "Item" in schema_names
+    assert not [name for name in schema_names if name.endswith(("__1", "__2"))]
+
+
+class QuotedItemsHolder(BaseModel):
+    quoted: Optional[Page["Item"]] = None
+    quoted_in_list: Optional[Page[list["Item"]]] = None
+    quoted_in_dict: Optional[Page[dict[str, "Item"]]] = None
+    quoted_in_optional_list: Optional[Page[Optional[list["Item"]]]] = None
+    quoted_in_annotated_list: Optional[Page[Annotated[list["Item"], "Items"]]] = None
+    quoted_next_to_literal: Optional[Page[Union[Literal["none"], list["Item"]]]] = None
+
+
+def test__router_generation__strings_nested_in_builtin_generic_args__should_be_versioned(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=QuotedItemsHolder)
+    async def get_items() -> dict[str, Any]:
+        return {
+            "quoted": {"items": [{"fullName": "a"}]},
+            "quoted_in_list": {"items": [[{"fullName": "b"}]]},
+            "quoted_in_dict": {"items": [{"key": {"fullName": "c"}}]},
+            "quoted_in_optional_list": {"items": [[{"fullName": "d"}]]},
+            "quoted_in_annotated_list": {"items": [[{"fullName": "e"}]]},
+            "quoted_next_to_literal": {"items": ["none", [{"fullName": "f"}]]},
+        }
+
+    app = create_versioned_app(item_alias_version_change(), router=router)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+    assert client_2000.get("/items").json() == {
+        "quoted": {"items": [{"oldName": "a"}]},
+        "quoted_in_list": {"items": [[{"oldName": "b"}]]},
+        "quoted_in_dict": {"items": [{"key": {"oldName": "c"}}]},
+        "quoted_in_optional_list": {"items": [[{"oldName": "d"}]]},
+        "quoted_in_annotated_list": {"items": [[{"oldName": "e"}]]},
+        "quoted_next_to_literal": {"items": ["none", [{"oldName": "f"}]]},
+    }
+    schema_names = client_2000.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert {"Page_Item_", "Page_list_Item__", "Page_dict_str__Item__", "Item"} <= set(schema_names)
+    assert not [name for name in schema_names if name.endswith(("__1", "__2"))]
+
+
+class ItemPageHolder(BaseModel):
+    page: Optional[Page[Item]] = None
+
+
+@pytest.mark.parametrize(
+    ("response_model", "make_latest_body", "expected_body"),
+    [
+        pytest.param(
+            Page[Item],
+            lambda: Page[Item](items=[Item(fullName="a")]),
+            {"items": [{"name": "a"}]},
+            id="instance_of_generic",
+        ),
+        pytest.param(
+            Page[Item],
+            lambda: {"items": [Item(fullName="a")]},
+            {"items": [{"name": "a"}]},
+            id="data_with_instances_of_arg",
+        ),
+        pytest.param(
+            Page[Item],
+            lambda: {"items": (Item(fullName="a"),)},
+            {"items": [{"name": "a"}]},
+            id="data_with_tuple_of_instances_of_arg",
+        ),
+        pytest.param(
+            ItemPageHolder,
+            lambda: {"page": Page[Item](items=[Item(fullName="a")])},
+            {"page": {"items": [{"name": "a"}]}},
+            id="data_with_instance_of_generic",
+        ),
+    ],
+)
+@pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
+def test__migrate_response_body__head_instances_in_versioned_generic_args__should_be_migrated_as_on_main(
+    response_model: type[BaseModel],
+    make_latest_body: Any,
+    expected_body: dict[str, Any],
+    version: str,
+):
+    versions = VersionBundle(Version("2001-01-01", version_change(old_name_description(Item))), Version("2000-01-01"))
+
+    migrated_body = migrate_response_body(versions, response_model, latest_body=make_latest_body(), version=version)
+
+    assert migrated_body.model_dump() == expected_body
+
+
+@pytest.mark.parametrize(
+    "latest_body",
+    [
+        pytest.param({"items": [{"fullName": 1}]}, id="data"),
+        pytest.param({"items": [Item(fullName="a"), {"fullName": 1}]}, id="data_with_instances"),
+    ],
+)
+def test__migrate_response_body__invalid_body_in_versioned_generic_args__should_raise(latest_body: Any):
+    versions = VersionBundle(Version("2001-01-01", version_change(old_name_description(Item))), Version("2000-01-01"))
+
+    with pytest.raises(ValidationError):
+        migrate_response_body(versions, Page[Item], latest_body=latest_body, version="2000-01-01")
+
+
+def test__get_head_model_references__model_with_unresolved_annotated_field__should_not_change_its_fields():
+    module = load_fresh_data_module("generic_incomplete_annotated_fields")
+    assert not module.Parent.__pydantic_fields_complete__
+    assignment = module.Parent.__pydantic_fields__["child"]._original_assignment
+    metadata = list(assignment.metadata)
+
+    # Once per version, which pydantic 2.11 would turn into one more validator each time
+    for _ in range(3):
+        assert _get_head_model_references(module.Parent).is_complete
+
+    assert assignment.metadata == metadata
+    assert module.Parent().child is None

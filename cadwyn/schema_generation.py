@@ -213,7 +213,37 @@ def migrate_response_body(
     versioned_response_model: type[pydantic.BaseModel] = generate_versioned_models(versions)[str(version)][
         latest_response_model
     ]
-    return versioned_response_model.model_validate(migrated_response.body)
+    try:
+        return versioned_response_model.model_validate(migrated_response.body)
+    except pydantic.ValidationError:
+        if not _contains_model_instances(migrated_response.body):
+            raise
+        # The versioned generic args use the copies of their models, which reject the instances of the head models
+        # that main accepted there. So we validate the data of these instances instead, like routes do.
+        return versioned_response_model.model_validate(_dump_model_instances(migrated_response.body))
+
+
+def _contains_model_instances(body: Any) -> bool:
+    if isinstance(body, pydantic.BaseModel):
+        return True
+    if isinstance(body, dict):
+        return any(_contains_model_instances(value) for value in body.values())
+    if isinstance(body, list | tuple):
+        return any(_contains_model_instances(value) for value in body)
+    return False
+
+
+def _dump_model_instances(body: Any) -> Any:
+    if isinstance(body, pydantic.BaseModel):
+        # round_trip leaves out computed fields so that the data is valid input for the model
+        return body.model_dump(by_alias=True, round_trip=True)
+    if isinstance(body, dict):
+        return {key: _dump_model_instances(value) for key, value in body.items()}
+    if isinstance(body, list):
+        return [_dump_model_instances(value) for value in body]
+    if isinstance(body, tuple):
+        return tuple(_dump_model_instances(value) for value in body)
+    return body
 
 
 def _unwrap_model(model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
@@ -351,18 +381,57 @@ def _get_rebuilt_model_fields(model: type[BaseModel]) -> Union[dict[str, FieldIn
     if model.__pydantic_fields_complete__:
         return model.model_fields
     ns_resolver = NsResolver(parent_namespace=unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
-    config_kwargs = (
-        {"config_wrapper": ConfigWrapper(model.model_config, check=False)} if _REBUILD_MODEL_FIELDS_TAKES_CONFIG else {}
-    )
     try:
-        rebuilt_fields = rebuild_model_fields(
-            model, ns_resolver=ns_resolver, typevars_map=get_model_typevars_map(model), **config_kwargs
-        )
+        if _REBUILD_MODEL_FIELDS_TAKES_CONFIG:
+            rebuilt_fields = rebuild_model_fields(
+                model,
+                config_wrapper=ConfigWrapper(model.model_config, check=False),
+                ns_resolver=ns_resolver,
+                typevars_map=get_model_typevars_map(model),
+            )
+        else:  # pragma: no cover # Pydantic 2.11
+            rebuilt_fields = _rebuild_model_fields_without_changing_them(model, ns_resolver)
     except NameError:
         # Some names in the annotations are not defined yet
         return None
     # Pydantic >= 2.13 also returns the info about the extra fields
     return rebuilt_fields[0] if isinstance(rebuilt_fields, tuple) else rebuilt_fields
+
+
+def _rebuild_model_fields_without_changing_them(  # pragma: no cover # Pydantic 2.11
+    model: type[BaseModel], ns_resolver: NsResolver
+) -> dict[str, FieldInfo]:
+    """Do what rebuild_model_fields of pydantic 2.11 does without changing the fields of the model.
+
+    Pydantic 2.11 merges the `Annotated` metadata of a field into the FieldInfo assigned to the field in place,
+    so every call would add that metadata (e.g. validators) to the field of the model once more.
+    """
+    from pydantic._internal._generics import replace_types
+    from pydantic._internal._typing_extra import eval_type
+    from pydantic_core import PydanticUndefined
+    from typing_inspection.introspection import AnnotationSource
+
+    typevars_map = get_model_typevars_map(model)
+    rebuilt_fields: dict[str, FieldInfo] = {}
+    with ns_resolver.push(model):
+        for name, field_info in model.__pydantic_fields__.items():
+            if field_info._complete:
+                rebuilt_fields[name] = field_info
+                continue
+            annotation = replace_types(
+                eval_type(field_info._original_annotation, *ns_resolver.types_namespace), typevars_map
+            )
+            assignment = field_info._original_assignment
+            if assignment is PydanticUndefined:
+                rebuilt_fields[name] = FieldInfo.from_annotation(annotation, _source=AnnotationSource.CLASS)
+                continue
+            if isinstance(assignment, FieldInfo):
+                assignment = copy.copy(assignment)
+                assignment.metadata = list(assignment.metadata)
+            rebuilt_fields[name] = FieldInfo.from_annotated_attribute(
+                annotation, assignment, _source=AnnotationSource.CLASS
+            )
+    return rebuilt_fields
 
 
 def _get_head_model_references(model: type[BaseModel]) -> "_ModelReferences":
@@ -1646,6 +1715,8 @@ def _eval_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
     """Resolve the forward refs in the annotation of a model the way pydantic does, keeping the unresolvable ones"""
     if not _contains_forward_refs(annotation):
         return annotation
+    if sys.version_info < (3, 11):
+        annotation = _convert_strings_in_builtin_generics_to_forward_refs(annotation)
     new_annotation, _ = pydantic_try_eval_type(
         annotation,
         getattr(sys.modules.get(model.__module__), "__dict__", None),
@@ -1655,7 +1726,46 @@ def _eval_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
 
 
 def _contains_forward_refs(annotation: Any) -> bool:
-    return isinstance(annotation, str | ForwardRef) or any(_contains_forward_refs(arg) for arg in get_args(annotation))
+    """Whether the annotation has strings or forward refs where typing evaluates them as types.
+
+    So the strings in the args of Literal and in the metadata of Annotated do not count.
+    """
+    from typing_inspection.typing_objects import is_annotated, is_literal
+
+    if isinstance(annotation, str | ForwardRef):
+        return True
+    origin = get_origin(annotation)
+    if is_literal(origin):
+        return False
+    args = get_args(annotation)
+    if is_annotated(origin):
+        args = args[:1]
+    return any(_contains_forward_refs(arg) for arg in args)
+
+
+def _convert_strings_in_builtin_generics_to_forward_refs(annotation: Any) -> Any:
+    """Python 3.10 does not evaluate the strings in the args of builtin generics such as list["Item"].
+
+    Python 3.11+ converts them to forward refs while evaluating, which we do ourselves here.
+    """
+    from typing_inspection.typing_objects import is_annotated, is_literal
+
+    if isinstance(annotation, types.GenericAlias):
+        args = tuple(
+            ForwardRef(arg) if isinstance(arg, str) else _convert_strings_in_builtin_generics_to_forward_refs(arg)
+            for arg in annotation.__args__
+        )
+        return types.GenericAlias(annotation.__origin__, args)
+    origin = get_origin(annotation)
+    # Bare aliases such as typing.List have no args to convert
+    args = getattr(annotation, "__args__", ())
+    if is_literal(origin) or not args or not hasattr(annotation, "copy_with"):
+        return annotation
+    if is_annotated(origin):
+        return _AnnotatedAlias(
+            _convert_strings_in_builtin_generics_to_forward_refs(annotation.__origin__), annotation.__metadata__
+        )
+    return annotation.copy_with(tuple(_convert_strings_in_builtin_generics_to_forward_refs(arg) for arg in args))
 
 
 def _try_eval_type(value: Any, globals: dict[str, Any]) -> Any:
