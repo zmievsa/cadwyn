@@ -1069,6 +1069,11 @@ def _change_field(
             defined_annotations[alter_schema_instruction.name],
         )
 
+    field_name = (
+        alter_schema_instruction.name
+        if alter_schema_instruction.new_name is Sentinel
+        else alter_schema_instruction.new_name
+    )
     for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
         attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
         if attr_value is not Sentinel:
@@ -1080,6 +1085,40 @@ def _change_field(
                     "but it already has that value.",
                 )
             field.update_attribute(name=attr_name, value=attr_value)
+            model.annotations[field_name] = _change_annotated_constraint(
+                model.annotations[field_name], attr_name, attr_value
+            )
+
+
+def _change_annotated_constraint(annotation: Any, attr_name: str, attr_value: Any) -> Any:
+    """Make the constraints stored in the annotation's metadata match the new value of the field's attribute.
+
+    Otherwise, they would override it. For example, with "from __future__ import annotations",
+    `x: str = Field(min_length=1)` is rebuilt from FieldInfo.metadata as
+    `x: Annotated[str, MinLen(1)] = Field(min_length=1)`.
+    We replace the values instead of removing the metadata to preserve its order relative to validators.
+    """
+    if get_origin(annotation) != Annotated:
+        return annotation
+    sub_annotations = get_args(annotation)
+    return _AnnotatedAlias(
+        sub_annotations[0],
+        tuple(
+            _replace_metadata_attribute(sub_ann, attr_name, attr_value)
+            # FieldInfo has no constraint attributes so we skip it here
+            if hasattr(sub_ann, attr_name) and attr_name in collect_known_metadata([sub_ann])[0]
+            else sub_ann
+            for sub_ann in sub_annotations[1:]
+        ),
+    )
+
+
+def _replace_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> Any:
+    if dataclasses.is_dataclass(metadata):
+        return dataclasses.replace(metadata, **{attr_name: attr_value})
+    metadata = copy.copy(metadata)
+    setattr(metadata, attr_name, attr_value)
+    return metadata
 
 
 def _delete_field_attributes(
