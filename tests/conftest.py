@@ -97,8 +97,7 @@ def _check_that_reference_discovery_finds_every_model_that_copying_requests(monk
 def check_that_discovery_finds_every_model_that_copying_would_request(
     generator: SchemaGenerator, model: type[BaseModel]
 ) -> None:
-    # Only the models in reference cycles are reused and the generator looks at their references to find cycles
-    references = generator._model_references[model]
+    references = generator._get_references(model)
     # A collector that requests the models the same way as copying does instead of only recording them
     collector = _ReferencedModelCollector()
     collector.annotation_transformer = _AnnotationTransformer(collector)

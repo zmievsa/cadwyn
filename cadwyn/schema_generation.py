@@ -1473,6 +1473,80 @@ class _GenerationAnalysis(NamedTuple):
     refers_to_changed_models: bool
 
 
+@final
+class _ReferenceCycles:
+    """The reference cycles among the head models, shared by the generators of all versions.
+
+    SchemaGenerator only uses the head models of the cycles whose models are not versioned, and the references of
+    such models are the same in every version because only instructions change them. So we find the cycles once
+    in the references of the head models. The cycles that only exist in some versions because of instructions
+    contain models with instructions so all of their models are versioned and copied anyway.
+    """
+
+    __slots__ = "_lock", "_models_in_cycles", "_requested_models"
+
+    def __init__(self) -> None:
+        # The generators of different versions can ask at the same time
+        self._lock = threading.Lock()
+        self._models_in_cycles: dict[type[Union[BaseModel, Enum]], bool] = {}
+        self._requested_models: dict[type[Union[BaseModel, Enum]], frozenset[type[Union[BaseModel, Enum]]]] = {}
+
+    def is_in_cycle(self, model: type[Union[BaseModel, Enum]]) -> bool:
+        """Whether copying the model would request the model itself again, directly or through other models.
+
+        Copying the generic args never leads back to the model because they are only versioned when they do not
+        (see SchemaGenerator._should_version_generic_args) so only the models in the fields, annotations,
+        and bases count.
+        """
+        with self._lock:
+            if model not in self._models_in_cycles:
+                self._find_cycles(model)
+            return self._models_in_cycles[model]
+
+    def _find_cycles(self, model: type[Union[BaseModel, Enum]]) -> None:
+        """Find the reference cycles among the models that copying the model requests (Tarjan's algorithm).
+
+        It is iterative instead of recursive because the chains of references in large apps can be very long.
+        The models whose cycles are already known are skipped because none of them can lead back to the new models.
+        """
+        indices: dict[type[Union[BaseModel, Enum]], int] = {model: 0}
+        lowest_indices = {model: 0}
+        stack = [model]
+        models_to_visit = [(model, iter(self._get_requested_models(model)))]
+        while models_to_visit:
+            current_model, requested_models = models_to_visit[-1]
+            for requested_model in requested_models:
+                if requested_model in self._models_in_cycles:
+                    continue
+                if requested_model not in indices:
+                    indices[requested_model] = lowest_indices[requested_model] = len(indices)
+                    stack.append(requested_model)
+                    models_to_visit.append((requested_model, iter(self._get_requested_models(requested_model))))
+                    break
+                # The model is still on the stack because the models that are not are in finished components
+                lowest_indices[current_model] = min(lowest_indices[current_model], indices[requested_model])
+            else:
+                models_to_visit.pop()
+                if models_to_visit:
+                    previous_model = models_to_visit[-1][0]
+                    lowest_indices[previous_model] = min(lowest_indices[previous_model], lowest_indices[current_model])
+                if lowest_indices[current_model] == indices[current_model]:
+                    component = []
+                    while not component or component[-1] is not current_model:
+                        component.append(stack.pop())
+                    is_in_cycle = len(component) > 1 or current_model in self._get_requested_models(current_model)
+                    self._models_in_cycles.update(dict.fromkeys(component, is_in_cycle))
+
+    def _get_requested_models(self, model: type[Union[BaseModel, Enum]]) -> frozenset[type[Union[BaseModel, Enum]]]:
+        if model not in self._requested_models:
+            if lenient_issubclass(model, BaseModel):
+                references = _get_head_model_references(model)
+                self._requested_models[model] = references.models | references.base_models
+            else:
+                self._requested_models[model] = frozenset()
+        return self._requested_models[model]
+
+
 class _VersioningQuestion(NamedTuple):
     """A question about a model that SchemaGenerator._is_versioned answers"""
 
@@ -1489,7 +1563,7 @@ class SchemaGenerator:
         "_generation_analyses",
         "_lock",
         "_model_references",
-        "_models_in_reference_cycles",
+        "_reference_cycles",
         "_versioning_answers",
         "_versions_of_generic_args",
         "annotation_transformer",
@@ -1500,14 +1574,15 @@ class SchemaGenerator:
     def __init__(
         self,
         model_bundle: _ModelBundle,
-        changed_models: "frozenset[type[Union[BaseModel, Enum]]]" = frozenset(),
+        changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
+        reference_cycles: "_ReferenceCycles",
     ) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
         self._changed_models = changed_models
         self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
         self._versioning_answers: dict[_VersioningQuestion, bool] = {}
-        self._models_in_reference_cycles: dict[type[Union[BaseModel, Enum]], bool] = {}
+        self._reference_cycles = reference_cycles
         self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
         self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
         # Models are generated lazily (e.g. in migrate_response_body) so several threads can generate them at once
@@ -1550,7 +1625,7 @@ class SchemaGenerator:
         that they refer to or inherit from do not change these decisions.
         """
         # Finding the cycles is much cheaper than looking at all of the subclasses in _is_versioned
-        if lenient_issubclass(model, BaseModel) and not self._is_in_reference_cycle(model):
+        if lenient_issubclass(model, BaseModel) and not self._reference_cycles.is_in_cycle(model):
             return True
         return self._is_versioned(model)
 
@@ -1624,54 +1699,6 @@ class SchemaGenerator:
             ),
             *(_VersioningQuestion(base, includes_subclasses=False) for base in references.base_models),
         ], True
-
-    def _is_in_reference_cycle(self, model: type[Union[BaseModel, Enum]]) -> bool:
-        """Whether copying the model would request the model itself again, directly or through other models.
-
-        Copying the generic args never leads back to the model because they are only versioned when they do not
-        (see _should_version_generic_args) so only the models in the fields, annotations, and bases count.
-        """
-        if model not in self._models_in_reference_cycles:
-            self._find_reference_cycles(model)
-        return self._models_in_reference_cycles[model]
-
-    def _find_reference_cycles(self, model: type[Union[BaseModel, Enum]]) -> None:
-        """Find the reference cycles among the models that copying the model requests (Tarjan's algorithm).
-
-        It is iterative instead of recursive because the chains of references in large apps can be very long.
-        The models whose cycles are already known are skipped because none of them can lead back to the new models.
-        """
-        indices: dict[type[Union[BaseModel, Enum]], int] = {model: 0}
-        lowest_indices = {model: 0}
-        stack = [model]
-        models_to_visit = [(model, iter(self._get_requested_models(model)))]
-        while models_to_visit:
-            current_model, requested_models = models_to_visit[-1]
-            for requested_model in requested_models:
-                if requested_model in self._models_in_reference_cycles:
-                    continue
-                if requested_model not in indices:
-                    indices[requested_model] = lowest_indices[requested_model] = len(indices)
-                    stack.append(requested_model)
-                    models_to_visit.append((requested_model, iter(self._get_requested_models(requested_model))))
-                    break
-                # The model is still on the stack because the models that are not are in finished components
-                lowest_indices[current_model] = min(lowest_indices[current_model], indices[requested_model])
-            else:
-                models_to_visit.pop()
-                if models_to_visit:
-                    previous_model = models_to_visit[-1][0]
-                    lowest_indices[previous_model] = min(lowest_indices[previous_model], lowest_indices[current_model])
-                if lowest_indices[current_model] == indices[current_model]:
-                    component = []
-                    while not component or component[-1] is not current_model:
-                        component.append(stack.pop())
-                    is_in_cycle = len(component) > 1 or current_model in self._get_requested_models(current_model)
-                    self._models_in_reference_cycles.update(dict.fromkeys(component, is_in_cycle))
-
-    def _get_requested_models(self, model: type[Union[BaseModel, Enum]]) -> frozenset[type[Union[BaseModel, Enum]]]:
-        references = self._get_references(model)
-        return references.models | references.base_models
 
     def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
         generic_metadata = model.__pydantic_generic_metadata__
@@ -1776,7 +1803,7 @@ class SchemaGenerator:
                 references = self.model_bundle.schemas[model].get_references()
             else:
                 # We do not wrap the model because wrapping copies parts of it and we may never need its copy
-                references = _get_head_model_references(cast("type[BaseModel]", model))
+                references = _get_head_model_references(model)
             self._model_references[model] = references
         return self._model_references[model]
 
@@ -1827,12 +1854,15 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
     )
 
     version_to_context_map = {}
+    reference_cycles = _ReferenceCycles()
     context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
     _migrate_classes(context)
 
     for version in versions.versions:
         context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
-        version_to_context_map[str(version.value)] = SchemaGenerator(copy.deepcopy(models), changed_models)
+        version_to_context_map[str(version.value)] = SchemaGenerator(
+            copy.deepcopy(models), changed_models, reference_cycles
+        )
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
 
