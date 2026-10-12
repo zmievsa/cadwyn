@@ -1386,6 +1386,7 @@ class OtherInnerSchema(BaseModel):
         pytest.param(Optional[dict[str, InnerSchemaWithValidationAlias]], None, None, id="optional_dict_with_none"),
         pytest.param(Optional[list[InnerSchemaWithValidationAlias]], [{"v": 1}], [{"value": 1}], id="optional_list"),
         pytest.param(Optional[list[InnerSchemaWithValidationAlias]], None, None, id="optional_list_with_none"),
+        pytest.param(list[list[InnerSchemaWithValidationAlias]], [[{"v": 1}], []], [[{"value": 1}], []], id="lists"),
         pytest.param(typing.List, [{"v": 1}], [{"v": 1}], id="bare_list"),  # noqa: UP006
         pytest.param(typing.Dict, {"a": {"v": 1}}, {"a": {"v": 1}}, id="bare_dict"),  # noqa: UP006
         pytest.param(
@@ -2723,6 +2724,34 @@ def test__request_body_migration__with_dumps_that_the_core_schema_does_not_descr
 
     for version_client in clients.values():
         assert version_client.post(test_path, json=payload).json() == expected
+
+
+class DeepNodeWithValidationAlias(BaseModel):
+    value: Optional[int] = Field(default=None, alias="x", validation_alias="vv")
+    kids: dict[str, list["DeepNodeWithValidationAlias"]] = {}
+
+
+def test__request_body_migration__with_body_as_deep_as_pydantic_accepts__head_should_get_it(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: DeepNodeWithValidationAlias):
+        depth = 0
+        while body.kids:
+            body = body.kids["k"][0]
+            depth += 1
+        return depth
+
+    clients = create_versioned_clients(version_change())
+    # Restoring it recursively would take several Python frames per level and exceed the recursion limit
+    payload: dict[str, Any] = {"vv": 1}
+    for _ in range(250):
+        payload = {"vv": 1, "kids": {"k": [payload]}}
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == 250
 
 
 def test__request_body_migration__with_json_form_field__should_stay_as_before(

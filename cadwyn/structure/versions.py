@@ -841,8 +841,8 @@ def _restore_validation_aliases(body_field: ModelField, data: Any) -> Any:
     """
     if not _is_body_field_safe(body_field):
         return data
-    restorer = _compile_restorer(body_field.field_info.annotation)
-    return data if restorer is None else restorer(data)
+    spec = _get_restorer_spec(body_field.field_info.annotation)
+    return data if spec is None else _restore_data(spec, data)
 
 
 _IS_BODY_FIELD_SAFE: dict[int, tuple[ModelField, bool]] = {}
@@ -877,84 +877,100 @@ def _is_body_field_safe(body_field: ModelField) -> bool:
     return is_safe
 
 
-def _compile_restorer(annotation: object) -> Union[Callable[[Any], Any], None]:
-    """Return a function that restores the data of `annotation`, or None if there's nothing to restore"""
+# What the restoration does with a value: `("list", item_spec)`, `("dict", value_spec)`, or `("model", model)`
+_RestorerSpec: TypeAlias = tuple[str, Any]
+# Marks the root of a root model, which replaces the model's data instead of a key in it
+_ROOT_KEY = object()
+
+
+def _get_restorer_spec(annotation: object) -> Union[_RestorerSpec, None]:
+    """Return what to restore in the data of `annotation`, or None if there's nothing to restore"""
     node = _get_restorable_node(annotation)
     if node is None:
         return None
     kind, inner = node
     if kind == "model":
-        return _get_model_restorer(inner)
-    item_restorer = _compile_restorer(inner)
-    if item_restorer is None:
-        return None
-    return functools.partial(_restore_list_data if kind == "list" else _restore_dict_data, item_restorer)
+        return node
+    item_spec = _get_restorer_spec(inner)
+    return None if item_spec is None else (kind, item_spec)
 
 
-def _restore_list_data(item_restorer: Callable[[Any], Any], data: Any) -> Any:
-    if not isinstance(data, list):
-        return data
-    restored = None
-    for index, item in enumerate(data):
-        restored_item = item_restorer(item)
-        if restored_item is not item:
-            if restored is None:
-                restored = list(data)
-            restored[index] = restored_item
-    return data if restored is None else restored
+def _needs_restoring(spec: _RestorerSpec, data: Any) -> bool:
+    kind, inner = spec
+    if kind == "list":
+        return isinstance(data, list) and bool(data)
+    if kind == "dict":
+        return isinstance(data, dict) and bool(data)
+    plan = _get_restore_plan(inner)
+    if plan.root_spec is not None:
+        return _needs_restoring(plan.root_spec, data)
+    # Most bulk items have none of the keys, so they only cost this check
+    return isinstance(data, dict) and not data.keys().isdisjoint(plan.keys)
 
 
-def _restore_dict_data(value_restorer: Callable[[Any], Any], data: Any) -> Any:
-    if not isinstance(data, dict):
-        return data
-    restored = None
-    for key, value in data.items():
-        restored_value = value_restorer(value)
-        if restored_value is not value:
-            if restored is None:
-                restored = dict(data)
-            restored[key] = restored_value
-    return data if restored is None else restored
-
-
-@functools.cache
-def _get_model_restorer(model: type[BaseModel]) -> Callable[[Any], Any]:
-    plan: Union[_RestorePlan, None] = None
-
-    def restore_model_data(data: Any) -> Any:
-        nonlocal plan
-        # The plan is looked up when restoring, which keeps recursive models finite
-        if plan is None:
-            plan = _get_restore_plan(model)
-        if plan.root_restorer is not None:
-            return plan.root_restorer(data)
+def _iter_children_to_restore(spec: _RestorerSpec, data: Any) -> Iterator[tuple[Any, _RestorerSpec, Any]]:
+    kind, inner = spec
+    if kind == "model":
+        plan = _get_restore_plan(inner)
+        if plan.root_spec is not None:
+            return iter([(_ROOT_KEY, plan.root_spec, data)])
+        return (
+            (key, child_spec, data[key])
+            for key, child_spec in plan.nested
+            if key in data and _needs_restoring(child_spec, data[key])
+        )
+    items = enumerate(data) if kind == "list" else data.items()
+    if inner[0] == "model" and (item_plan := _get_restore_plan(inner[1])).root_spec is None:
         # Most bulk items have none of the keys, so they only cost this check
-        if not isinstance(data, dict) or plan.keys.isdisjoint(data):
-            return data
-        return _restore_model_dict(plan, data)
+        keys = item_plan.keys
+        return (
+            (key, inner, item) for key, item in items if isinstance(item, dict) and not item.keys().isdisjoint(keys)
+        )
+    return ((key, inner, item) for key, item in items if _needs_restoring(inner, item))
 
-    return restore_model_data
+
+def _restore_data(spec: _RestorerSpec, data: Any) -> Any:
+    """Restore the data without recursion, so that bodies as deep as pydantic accepts never hit the recursion limit.
+
+    We only copy the containers in which something changes.
+    """
+    if not _needs_restoring(spec, data):
+        return data
+    # Each frame is [spec, data, children to restore, restored copy of data or None, key of the child being restored]
+    stack: list[list[Any]] = [[spec, data, _iter_children_to_restore(spec, data), None, None]]
+    restored_data = data
+    while stack:
+        frame = stack[-1]
+        child = next(frame[2], None)
+        if child is not None:
+            key, child_spec, child_data = child
+            frame[4] = key
+            stack.append([child_spec, child_data, _iter_children_to_restore(child_spec, child_data), None, None])
+            continue
+        stack.pop()
+        restored_data = _finish_restoring(frame)
+        if stack and restored_data is not frame[1]:
+            parent = stack[-1]
+            if parent[4] is _ROOT_KEY:
+                parent[3] = restored_data
+            else:
+                if parent[3] is None:
+                    parent[3] = list(parent[1]) if isinstance(parent[1], list) else dict(parent[1])
+                parent[3][parent[4]] = restored_data
+    return restored_data
 
 
-def _restore_model_dict(plan: "_RestorePlan", data: dict[str, Any]) -> dict[str, Any]:
-    # We only copy the data when something changes
-    restored = None
-    for dumped_key, restorer in plan.nested:
-        if dumped_key in data:
-            value = data[dumped_key]
-            restored_value = restorer(value)
-            if restored_value is not value:
+def _finish_restoring(frame: list[Any]) -> Any:
+    (kind, inner), data, _, restored, _ = frame
+    if kind == "model" and (plan := _get_restore_plan(inner)).root_spec is None:
+        for dumped_key, target_key, validation_paths in plan.renames:
+            # The head already finds a value for the field if a migration has set one of its validation paths
+            if dumped_key in data and all(
+                path.search_dict_for_path(data) is PydanticUndefined for path in validation_paths
+            ):
                 if restored is None:
                     restored = dict(data)
-                restored[dumped_key] = restored_value
-    for dumped_key, target_key, validation_paths in plan.renames:
-        # The head already finds a value for the field if a migration has set one of its validation paths
-        if dumped_key in data and all(
-            path.search_dict_for_path(data) is PydanticUndefined for path in validation_paths
-        ):
-            if restored is None:
-                restored = dict(data)
-            restored[target_key] = restored.pop(dumped_key)
+                restored[target_key] = restored.pop(dumped_key)
     return data if restored is None else restored
 
 
@@ -983,10 +999,10 @@ def _get_restorable_node(annotation: object) -> Union[tuple[str, Any], None]:
 class _RestorePlan:
     # (dumped_key, target_key, validation_paths) of the fields to rename
     renames: tuple[tuple[str, str, tuple[AliasPath, ...]], ...] = ()
-    # (dumped_key, restorer) of the fields to walk into
-    nested: tuple[tuple[str, Callable[[Any], Any]], ...] = ()
-    # The restorer of the root of root models
-    root_restorer: Union[Callable[[Any], Any], None] = None
+    # (dumped_key, spec) of the fields to walk into
+    nested: tuple[tuple[str, _RestorerSpec], ...] = ()
+    # What to restore in the root of root models
+    root_spec: Union[_RestorerSpec, None] = None
     # The dumped keys of `renames` and `nested`
     keys: frozenset[str] = frozenset()
 
@@ -998,12 +1014,12 @@ def _get_restore_plan(model: type[BaseModel]) -> _RestorePlan:
         return _RestorePlan()
     renames, traversable = _get_renames_and_traversable_fields(model)
     nested = tuple(
-        (key, restorer)
+        (key, spec)
         for key, annotation in traversable
-        if (restorer := _compile_restorer(annotation)) is not None and _annotation_reaches_renames(annotation)
+        if (spec := _get_restorer_spec(annotation)) is not None and _annotation_reaches_renames(annotation)
     )
     if issubclass(model, RootModel):
-        return _RestorePlan(root_restorer=nested[0][1] if nested else None)
+        return _RestorePlan(root_spec=nested[0][1] if nested else None)
     keys = frozenset(key for key, *_ in (*renames, *nested))
     return _RestorePlan(renames=renames, nested=nested, keys=keys)
 
