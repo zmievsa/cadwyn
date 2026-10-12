@@ -1238,6 +1238,80 @@ def test__schema_field_had__both_default_and_default_factory__should_raise_error
         )
 
 
+def _factory() -> str:
+    return "factory"
+
+
+@pytest.mark.parametrize(
+    ("instructions_from_newest", "expected"),
+    [
+        pytest.param(
+            [
+                [
+                    schema(ParentWithDefaults).field("with_default").had(default_factory=_factory),
+                    schema(ParentWithDefaults).field("with_default").didnt_have("default_factory"),
+                ],
+                [schema(ChildWithDefaults).field("with_default").had(description="Child")],
+            ],
+            {ParentWithDefaults: "default", ChildWithDefaults: "default", SiblingWithDefaults: "default"},
+            id="parent_added_and_deleted_default_factory_then_child_changed_something_else",
+        ),
+        pytest.param(
+            [
+                [
+                    schema(SiblingWithDefaults).field("with_default").had(description="Sibling"),
+                    schema(ChildWithDefaults).field("with_default").had(default_factory=_factory),
+                    schema(ParentWithDefaults).field("with_default").had(default="parent"),
+                    schema(ChildWithDefaults).field("with_default").didnt_have("default"),
+                ]
+            ],
+            {ParentWithDefaults: "parent", ChildWithDefaults: "factory", SiblingWithDefaults: "parent"},
+            id="child_added_default_factory_then_parent_changed_default_then_child_deleted_default",
+        ),
+    ],
+)
+def test__schema_field_had__default_and_default_factory_of_model__should_not_depend_on_other_models(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    instructions_from_newest: list[list[Any]],
+    expected: dict[type[ParentWithDefaults], str],
+):
+    schemas = create_runtime_schemas(
+        *(version_change(*instructions) for instructions in reversed(instructions_from_newest[1:])),
+        version_change(schema(ParentWithDefaults).field("bar").had(description="Bar"), *instructions_from_newest[0]),
+    )
+
+    assert {model: schemas["2000-01-01"][model]().with_default for model in expected} == expected
+
+
+class AnnotatedParentWithDefault(BaseModel):
+    foo: Annotated[str, Field(description="Head")] = "default"
+    bar: int = 0
+
+
+class AnnotatedChildWithDefault(AnnotatedParentWithDefault):
+    pass
+
+
+class AnnotatedSiblingWithDefault(AnnotatedParentWithDefault):
+    pass
+
+
+def test__schema_field_had__default_factory_of_annotated_field_that_sibling_deleted__should_replace_default(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(AnnotatedParentWithDefault).field("bar").had(description="Bar"),
+            schema(AnnotatedParentWithDefault).field("foo").had(default_factory=_factory),
+            schema(AnnotatedSiblingWithDefault).field("foo").didnt_have("default_factory"),
+        )
+    )
+
+    assert schemas["2000-01-01"][AnnotatedParentWithDefault]().foo == "factory"
+    assert schemas["2000-01-01"][AnnotatedChildWithDefault]().foo == "factory"
+    assert schemas["2000-01-01"][AnnotatedSiblingWithDefault]().foo == "default"
+
+
 class ParentWithoutField(BaseModel):
     pass
 

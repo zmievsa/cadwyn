@@ -225,23 +225,37 @@ class PydanticFieldWrapper:
 
     def _apply_changes(self, model: type[BaseModel]) -> dict[str, Any]:
         applies = {changed_by: issubclass(model, changed_by) for changed_by in self.models_that_changed_it}
-        if all(applies.values()):
-            return self.passed_field_attributes
-        attributes = self.declared_field_attributes.copy()
-        for change in self.changes:
-            if not applies[change.changed_by]:
-                continue
-            if change.is_deleted:
-                attributes.pop(change.name, None)
-            else:
-                attributes[change.name] = change.value
-                # Field() accepts only one of them
-                if change.name in _MUTUALLY_EXCLUSIVE_FIELD_ATTRIBUTES:
-                    attributes.pop(_MUTUALLY_EXCLUSIVE_FIELD_ATTRIBUTES[change.name], None)
+        changes = [change for change in self.changes if applies[change.changed_by]]
+        if len(changes) == len(self.changes):
+            attributes = self.passed_field_attributes
+        else:
+            attributes = self.declared_field_attributes.copy()
+            for change in changes:
+                if change.is_deleted:
+                    attributes.pop(change.name, None)
+                else:
+                    attributes[change.name] = change.value
+        return _keep_last_of_default_and_default_factory(attributes, changes)
+
+
+def _keep_last_of_default_and_default_factory(
+    attributes: dict[str, Any], changes: "list[_FieldAttributeChange]"
+) -> dict[str, Any]:
+    """Field() accepts only one of them so if the model has both, it keeps the one that it got last.
+
+    The model can have both because the changes of its siblings that deleted one of them do not apply to it.
+    """
+    if "default" not in attributes or "default_factory" not in attributes:
         return attributes
+    last_set = next(
+        change.name
+        for change in reversed(changes)
+        if not change.is_deleted and change.name in {"default", "default_factory"}
+    )
+    return {name: value for name, value in attributes.items() if name != _OTHER_DEFAULT_ATTRIBUTE[last_set]}
 
 
-_MUTUALLY_EXCLUSIVE_FIELD_ATTRIBUTES = {"default": "default_factory", "default_factory": "default"}
+_OTHER_DEFAULT_ATTRIBUTE = {"default": "default_factory", "default_factory": "default"}
 
 
 def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]:
@@ -739,10 +753,22 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 renamed_fields[name] = field
                 # The annotation that the model would inherit
                 renamed_field_annotations[name] = schemas[parent].annotations[name]
-        return (
-            {name: field.get_field_attributes(self.cls) for name, field in (renamed_fields | self.fields).items()},
-            renamed_field_annotations | self.annotations,
-        )
+        field_attributes = {
+            name: field.get_field_attributes(self.cls) for name, field in (renamed_fields | self.fields).items()
+        }
+        annotations = renamed_field_annotations | self.annotations
+        for name, attributes in field_attributes.items():
+            for attr_name, other_attr_name in _OTHER_DEFAULT_ATTRIBUTE.items():
+                if attr_name in attributes and other_attr_name not in attributes:
+                    # Field() in the annotation can still have the other one if a sibling deleted it
+                    annotations[name] = _change_annotated_metadata(
+                        annotations[name],
+                        lambda metadata, other_attr_name=other_attr_name: (
+                            isinstance(metadata, FieldInfo) and other_attr_name in metadata._attributes_set
+                        ),
+                        functools.partial(_delete_metadata_attribute, attr_name=other_attr_name),
+                    )
+        return field_attributes, annotations
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {}
