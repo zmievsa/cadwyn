@@ -755,7 +755,7 @@ class VersionBundle:
             # This is for requests without body or with complex body such as form or file
             body = await _get_body(request, route.body_field, exit_stack)
             if isinstance(body, FormData):
-                uploads_read_by_fastapi = _get_uploads_read_by_fastapi(route, body)
+                uploads_read_by_fastapi = _get_uploads_read_by_fastapi(route, head_route, head_dependant, body)
 
         request_info = RequestInfo(request, body)
         new_kwargs = await self._migrate_request(
@@ -810,28 +810,55 @@ class _UploadReadByFastapi:
 _UploadPositions: TypeAlias = dict[int, _UploadReadByFastapi]
 
 
-def _get_uploads_read_by_fastapi(route: APIRoute, form: FormData) -> _UploadPositions:
+def _get_uploads_read_by_fastapi(
+    route: APIRoute, head_route: APIRoute, head_dependant: Dependant, form: FormData
+) -> _UploadPositions:
     """Return the uploaded files that FastAPI has read for the `bytes` file params of the versioned route.
 
     FastAPI reads these files to the end, so the head route would get them empty if we passed them on as is.
-    We look them up the same way FastAPI does and only consider the spooled files that starlette creates.
+    These params can be declared by the endpoint or by any of its dependencies. We only take the params
+    that the head route also has, look the files up the same way FastAPI does, and only consider the spooled
+    files that starlette creates.
     """
+    bytes_file_params = _get_bytes_file_params(route.dependant, _get_dependency_overrides(route))
+    if bytes_file_params:
+        bytes_file_params &= _get_bytes_file_params(head_dependant, _get_dependency_overrides(head_route))
     uploads: _UploadPositions = {}
-    for field in route.dependant.body_params:
-        if not isinstance(field.field_info, params.File):
-            continue
-        annotation = field.field_info.annotation
-        alias = get_validation_alias(field)
-        if is_bytes_or_nonable_bytes_annotation(annotation):
-            is_sequence = False
-        elif is_bytes_sequence_annotation(annotation):
-            is_sequence = True
-        else:
-            continue
+    # If a scalar and a sequence param read the same file, the head must pick it as the scalar to get it rewound
+    for alias, is_sequence in sorted(bytes_file_params, key=lambda param: param[1]):
         for value in _get_form_values(form, alias, is_sequence=is_sequence):
             if isinstance(value, UploadFile) and isinstance(value.file, tempfile.SpooledTemporaryFile):
-                uploads[id(value)] = _UploadReadByFastapi(alias, is_sequence, value, value.file, value.file.tell())
+                uploads.setdefault(
+                    id(value), _UploadReadByFastapi(alias, is_sequence, value, value.file, value.file.tell())
+                )
     return uploads
+
+
+def _get_dependency_overrides(route: APIRoute) -> dict[Any, Any]:
+    return getattr(route.dependency_overrides_provider, "dependency_overrides", None) or {}
+
+
+def _get_bytes_file_params(dependant: Dependant, dependency_overrides: dict[Any, Any]) -> set[tuple[str, bool]]:
+    """Return `(alias, is_sequence)` of every `bytes` file param of the dependant and its dependencies.
+
+    FastAPI reads the body params of every dependency, including the cached ones, so we walk the whole tree.
+    FastAPI solves the dependant of an override instead of the overridden dependency, so we skip overridden
+    dependencies to keep their files as before.
+    """
+    bytes_file_params: set[tuple[str, bool]] = set()
+    for field in dependant.body_params:
+        if isinstance(field.field_info, params.File):
+            annotation = field.field_info.annotation
+            if is_bytes_or_nonable_bytes_annotation(annotation):
+                bytes_file_params.add((get_validation_alias(field), False))
+            elif is_bytes_sequence_annotation(annotation):
+                bytes_file_params.add((get_validation_alias(field), True))
+    for sub_dependant in dependant.dependencies:
+        call = sub_dependant.call
+        # Same lookup as in FastAPI, which only looks up overrides when there are any
+        if not dependency_overrides or dependency_overrides.get(call, call) is call:
+            bytes_file_params |= _get_bytes_file_params(sub_dependant, dependency_overrides)
+    return bytes_file_params
 
 
 def _get_form_values(form: FormData, key: str, *, is_sequence: bool) -> list[Union[UploadFile, str, None]]:

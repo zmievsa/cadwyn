@@ -65,7 +65,7 @@ from starlette.formparsers import MultiPartParser
 from starlette.responses import StreamingResponse
 from typing_extensions import Self, TypeAliasType, TypedDict, override
 
-from cadwyn import VersionedAPIRouter
+from cadwyn import Cadwyn, VersionedAPIRouter
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -1901,6 +1901,154 @@ def test__request_body_migration__with_file_uploads_rolled_to_disk__head_should_
             "size": len(sent_contents),
             "is_same": True,
         }
+
+
+async def _get_data_from_bytes(data: bytes = File()) -> str:
+    return data.decode()
+
+
+async def _get_data_from_bytes_list(data: list[bytes] = File()) -> list[str]:
+    return [file.decode() for file in data]
+
+
+async def _get_data_from_sub_dependency(data: str = Depends(_get_data_from_bytes)) -> str:
+    return data
+
+
+async def _get_data_from_uncached_sub_dependency(data: str = Depends(_get_data_from_bytes, use_cache=False)) -> str:
+    return data
+
+
+async def _bytes_dependency_endpoint(data: str = Depends(_get_data_from_bytes)):
+    return [data]
+
+
+async def _bytes_list_dependency_endpoint(data: list[str] = Depends(_get_data_from_bytes_list)):
+    return data
+
+
+async def _nested_bytes_dependency_endpoint(data: str = Depends(_get_data_from_sub_dependency)):
+    return [data]
+
+
+async def _bytes_dependency_with_form_endpoint(data: str = Depends(_get_data_from_bytes), name: str = Form()):
+    return [data, name]
+
+
+async def _cached_bytes_dependency_endpoint(
+    data: str = Depends(_get_data_from_bytes), nested_data: str = Depends(_get_data_from_sub_dependency)
+):
+    return [data, nested_data]
+
+
+async def _uncached_bytes_dependency_endpoint(
+    data: str = Depends(_get_data_from_bytes), nested_data: str = Depends(_get_data_from_uncached_sub_dependency)
+):
+    return [data, nested_data]
+
+
+async def _bytes_in_endpoint_and_dependency_endpoint(
+    data: bytes = File(), from_dependency: str = Depends(_get_data_from_bytes)
+):
+    return [data.decode(), from_dependency]
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "request_kwargs", "expected"),
+    [
+        pytest.param(_bytes_dependency_endpoint, {"files": {"data": b"first"}}, ["first"], id="bytes"),
+        pytest.param(
+            _bytes_list_dependency_endpoint,
+            {"files": [("data", b"first"), ("data", b"second")]},
+            ["first", "second"],
+            id="list_of_bytes",
+        ),
+        pytest.param(_nested_bytes_dependency_endpoint, {"files": {"data": b"first"}}, ["first"], id="nested"),
+        pytest.param(
+            _bytes_dependency_with_form_endpoint,
+            {"files": {"data": b"first"}, "data": {"name": "my_name"}},
+            ["first", "my_name"],
+            id="bytes_with_form",
+        ),
+        # Same as in FastAPI itself: the files get read once, and the cache gives the dependency's result again
+        pytest.param(_cached_bytes_dependency_endpoint, {"files": {"data": b"first"}}, ["first", "first"], id="cached"),
+        # Same as in FastAPI itself: only the first param that reads the file gets its contents
+        pytest.param(_uncached_bytes_dependency_endpoint, {"files": {"data": b"first"}}, ["first", ""], id="uncached"),
+        pytest.param(
+            _bytes_in_endpoint_and_dependency_endpoint,
+            {"files": {"data": b"first"}},
+            ["", "first"],
+            id="in_endpoint_and_dependency",
+        ),
+    ],
+)
+def test__request_body_migration__with_file_uploads_in_dependencies__head_should_get_the_uploaded_contents(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Any],
+    request_kwargs: dict[str, Any],
+    expected: list[str],
+):
+    router.post(test_path)(endpoint)
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, **request_kwargs).json() == expected
+
+
+async def _get_data_header(data: UploadFile = File()) -> str:
+    return (await data.read(2)).decode()
+
+
+async def _get_other_from_bytes(other: bytes = File()) -> str:
+    return other.decode()
+
+
+def test__request_body_migration__with_bytes_dependency_overridden__should_keep_the_override_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(data: str = Depends(_get_data_from_bytes), other: str = Depends(_get_other_from_bytes)):
+        return [data, other]
+
+    clients = create_versioned_clients(version_change())
+    app = cast("Cadwyn", clients["2000-01-01"].app)
+    app.dependency_overrides[_get_data_from_bytes] = _get_data_header
+
+    # The override reads a part of the file for every route as before, while the files of other dependencies
+    # don't arrive empty anymore
+    for version_client in clients.values():
+        assert version_client.post(test_path, files={"data": b"DATA", "other": b"second"}).json() == ["TA", "second"]
+
+
+async def _read_upload_as_bytes_in_old_version(upload: bytes = File()) -> None:
+    assert upload == b"first"
+
+
+@pytest.mark.parametrize(("annotation", "expected_in_old_version"), [(bytes, "first"), (UploadFile, "")])
+def test__request_body_migration__with_bytes_read_by_old_version_dependency__head_should_get_them_only_as_bytes(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+    expected_in_old_version: str,
+):
+    @router.post(test_path)
+    async def endpoint(upload: annotation = File()):
+        return await _read_upload_as_bytes(upload)
+
+    clients = create_versioned_clients(
+        version_change(
+            cadwyn_endpoint(test_path, ["POST"]).had(dependencies=[Depends(_read_upload_as_bytes_in_old_version)])
+        )
+    )
+
+    # The head has no dependency that takes the file as bytes, so the `UploadFile` stays where the old one left it
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"first"}).json() == expected_in_old_version
+    assert clients["2001-01-01"].post(test_path, files={"upload": b"first"}).json() == "first"
 
 
 async def _read_upload_as_bytes(upload: Union[bytes, UploadFile]) -> str:
