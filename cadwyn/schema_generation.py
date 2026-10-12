@@ -3,6 +3,7 @@ import copy
 import dataclasses
 import functools
 import inspect
+import operator
 import sys
 import threading
 import types
@@ -308,6 +309,26 @@ def _get_annotations_without_evaluating(obj: Any) -> dict[str, Any]:
     return obj.__annotations__
 
 
+_UNRESOLVED: Any = object()
+_T_EVALUATED = TypeVar("_T_EVALUATED")
+
+
+def _evaluate_user_annotations(evaluate: Callable[[], _T_EVALUATED]) -> _T_EVALUATED:
+    """Evaluate the annotations of the user's code for reference discovery, returning _UNRESOLVED if they fail.
+
+    Discovery evaluates the annotations of models that main may never copy, e.g. the ones in untouched generic args.
+    Any exception from evaluating them, such as a NameError for a name that is not defined yet, a TypeError for
+    a generic that only exists in stubs (`pandas.Series[int]`, Django's `QuerySet[Model]`) or an AttributeError,
+    means that discovery cannot know which models copying would request. The generic args that lead to them then
+    keep their head models, which is exactly main's behavior, so catching every exception here is safe. Only the
+    evaluation of the user's annotations goes through here so the bugs in Cadwyn's own logic still surface.
+    """
+    try:
+        return evaluate()
+    except Exception:  # noqa: BLE001
+        return _UNRESOLVED
+
+
 def _has_undefined_names_in_lazy_annotations(obj: Any) -> bool:
     """Whether the annotations of a class or a function refer to names that are not defined yet.
 
@@ -318,10 +339,7 @@ def _has_undefined_names_in_lazy_annotations(obj: Any) -> bool:
     if sys.version_info >= (3, 14):  # pragma: no cover
         from annotationlib import Format, get_annotations
 
-        try:
-            get_annotations(obj, format=Format.VALUE)
-        except NameError:
-            return True
+        return _evaluate_user_annotations(lambda: get_annotations(obj, format=Format.VALUE)) is _UNRESOLVED
     return False
 
 
@@ -338,9 +356,19 @@ def _get_model_annotations(model: type[BaseModel], fields: Union[dict[str, Field
 
     # Pydantic has already resolved the annotations of the fields so we prefer them over unresolved annotations
     return {
-        name: value if not isinstance(value, str | ForwardRef) else _rebuild_annotated(name, value)
+        name: _rebuild_annotated(name, value) if _is_unresolved_annotation(value) else value
         for name, value in _get_annotations_without_evaluating(model).items()
     }
+
+
+def _is_unresolved_annotation(annotation: Any) -> bool:
+    """Whether the annotation is a string or a forward ref that annotationlib created for undefined names.
+
+    Forward refs that the user wrote (e.g. `ForwardRef("Model")` in create_model) stay as they are, as on main.
+    """
+    if isinstance(annotation, str):
+        return True
+    return isinstance(annotation, ForwardRef) and getattr(annotation, "__owner__", None) is not None
 
 
 def _get_model_field_names(model: type[BaseModel], fields: Union[dict[str, FieldInfo], None] = None) -> list[str]:
@@ -361,18 +389,21 @@ def _get_rebuilt_model_fields(model: type[BaseModel]) -> Union[dict[str, FieldIn
     if model.__pydantic_fields_complete__:
         return model.model_fields
     ns_resolver = NsResolver(parent_namespace=unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
-    try:
-        if _REBUILD_MODEL_FIELDS_TAKES_CONFIG:
-            rebuilt_fields = rebuild_model_fields(
+    if _REBUILD_MODEL_FIELDS_TAKES_CONFIG:
+        rebuilt_fields = _evaluate_user_annotations(
+            lambda: rebuild_model_fields(
                 model,
                 config_wrapper=ConfigWrapper(model.model_config, check=False),
                 ns_resolver=ns_resolver,
                 typevars_map=get_model_typevars_map(model),
             )
-        else:  # pragma: no cover # Pydantic 2.11
-            rebuilt_fields = _rebuild_model_fields_without_changing_them(model, ns_resolver)
-    except NameError:
-        # Some names in the annotations are not defined yet
+        )
+    else:  # pragma: no cover # Pydantic 2.11
+        rebuilt_fields = _evaluate_user_annotations(
+            lambda: _rebuild_model_fields_without_changing_them(model, ns_resolver)
+        )
+    if rebuilt_fields is _UNRESOLVED:
+        # E.g. some names in the annotations are not defined yet
         return None
     # Pydantic >= 2.13 also returns the info about the extra fields
     return rebuilt_fields[0] if isinstance(rebuilt_fields, tuple) else rebuilt_fields
@@ -999,15 +1030,7 @@ class _AnnotationTransformer:
 
     def _record_callable(self, call: Callable[..., Any], callable_kind: _CallableKind) -> None:
         """Request the models that _modify_callable_annotations requests for the callable without copying it"""
-        try:
-            callable_annotations, defaults, is_complete = self._get_annotations_and_defaults_to_record(
-                call, callable_kind
-            )
-        # Copying the callable would fail the same way (e.g. on an annotation that cannot be evaluated at runtime)
-        # but main may never copy it so discovery must not fail. We keep the head models instead, as main does
-        except Exception:  # noqa: BLE001
-            self._record_unknown_references()
-            return
+        callable_annotations, defaults, is_complete = self._get_annotations_and_defaults_to_record(call, callable_kind)
         if not is_complete:
             self._record_unknown_references()
         self.change_version_of_annotation(callable_annotations)
@@ -1030,9 +1053,13 @@ class _AnnotationTransformer:
                 call, _get_annotations_without_evaluating(wrapper), _get_signature_parameters(call)
             )
         else:
-            # NameError means that some names are not defined yet so copying could request other models later
-            signature = inspect.signature(call, eval_str=True)
-            callable_annotations = self._get_annotations_of_callable_called_by_fastapi(call, signature, callable_kind)
+            signature = _evaluate_user_annotations(lambda: inspect.signature(call, eval_str=True))
+            if signature is _UNRESOLVED:
+                # E.g. some names are not defined yet so copying could request other models once they get defined
+                return {}, (), False
+            callable_annotations = self._get_annotations_of_callable_called_by_fastapi(
+                call, signature, callable_kind, evaluate=_try_eval_type_for_discovery
+            )
             defaults = tuple(
                 param.default for param in signature.parameters.values() if param.default is not inspect.Signature.empty
             )
@@ -1045,10 +1072,8 @@ class _AnnotationTransformer:
             # forever, as it does on main
             self._record_unknown_references()
             return
-        try:
-            # The values of native type aliases are evaluated lazily since Python 3.12
-            alias.__value__  # noqa: B018
-        except NameError:
+        # The values of native type aliases are evaluated lazily since Python 3.12
+        if _evaluate_user_annotations(lambda: alias.__value__) is _UNRESOLVED:
             self._record_unknown_references()
             return
         self._type_aliases_being_recorded.append(alias)
@@ -1172,7 +1197,12 @@ class _AnnotationTransformer:
 
     @classmethod
     def _get_annotations_of_callable_called_by_fastapi(
-        cls, call: Any, old_signature: inspect.Signature, callable_kind: _CallableKind
+        cls,
+        call: Any,
+        old_signature: inspect.Signature,
+        callable_kind: _CallableKind,
+        *,
+        evaluate: Union[Callable[[Any, dict[str, Any]], Any], None] = None,
     ) -> dict[str, Any]:
         """Return the annotations of an endpoint or a dependency that its versioned copy versions"""
         callable_annotations = {
@@ -1196,8 +1226,9 @@ class _AnnotationTransformer:
         if type(unevaluated_signature.return_annotation) is str:
             annotations_written_as_strings.add("return")
         call_globals = _get_best_effort_globals(cls._unwrap_callable(call))
+        evaluate = evaluate or _try_eval_type
         return {
-            k: _try_eval_type(v, call_globals) if k in annotations_written_as_strings else v
+            k: evaluate(v, call_globals) if k in annotations_written_as_strings else v
             for k, v in callable_annotations.items()
         }
 
@@ -1216,7 +1247,8 @@ class _AnnotationTransformer:
             dunder_call = inspect.getattr_static(original_call, "__call__", None)
             call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
         callable_annotations = {
-            k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
+            k: v if type(v) is not str else _try_eval_type_for_discovery(v, call_globals)
+            for k, v in callable_annotations.items()
         }
         defaults = tuple(p.default for p in parameters.values() if p.default is not inspect.Signature.empty)
         return callable_annotations, defaults
@@ -1462,6 +1494,9 @@ class SchemaGenerator:
         generating their copies would recurse forever (e.g. `children: "list[Tree]"` within `Tree`).
         The decision only depends on the references between the models, not on the order of generation.
         """
+        if not self._changed_models:
+            # Nothing has instructions so no generic args need versioning and we do not need to look into them
+            return False
         if generic not in self._versions_of_generic_args:
             references = self._get_references(generic)
             arg_models = references.arg_models
@@ -1952,12 +1987,15 @@ def _eval_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
         return annotation
     if sys.version_info < (3, 11):
         annotation = _convert_strings_in_builtin_generics_to_forward_refs(annotation)
-    new_annotation, _ = pydantic_try_eval_type(
-        annotation,
-        getattr(sys.modules.get(model.__module__), "__dict__", None),
-        {model.__name__: model} | (unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {}),
+    evaluated_annotation = _evaluate_user_annotations(
+        lambda: pydantic_try_eval_type(
+            annotation,
+            getattr(sys.modules.get(model.__module__), "__dict__", None),
+            {model.__name__: model} | (unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {}),
+        )[0]
     )
-    return new_annotation
+    # The forward refs that are left make discovery keep the head args, like main
+    return annotation if evaluated_annotation is _UNRESOLVED else evaluated_annotation
 
 
 def _contains_forward_refs(annotation: Any) -> bool:
@@ -1985,6 +2023,11 @@ def _convert_strings_in_builtin_generics_to_forward_refs(annotation: Any) -> Any
     """
     from typing_inspection.typing_objects import is_annotated, is_literal
 
+    if isinstance(annotation, types.UnionType):
+        # Unlike typing.Union, `X | Y` cannot be rebuilt with copy_with
+        return functools.reduce(
+            operator.or_, (_convert_strings_in_builtin_generics_to_forward_refs(arg) for arg in annotation.__args__)
+        )
     if isinstance(annotation, types.GenericAlias):
         args = tuple(
             ForwardRef(arg) if isinstance(arg, str) else _convert_strings_in_builtin_generics_to_forward_refs(arg)
@@ -2001,6 +2044,12 @@ def _convert_strings_in_builtin_generics_to_forward_refs(annotation: Any) -> Any
             _convert_strings_in_builtin_generics_to_forward_refs(annotation.__origin__), annotation.__metadata__
         )
     return annotation.copy_with(tuple(_convert_strings_in_builtin_generics_to_forward_refs(arg) for arg in args))
+
+
+def _try_eval_type_for_discovery(value: Any, globals: dict[str, Any]) -> Any:
+    """Like _try_eval_type but keeps the string if evaluating it fails in any way"""
+    evaluated_value = _evaluate_user_annotations(lambda: _try_eval_type(value, globals))
+    return value if evaluated_value is _UNRESOLVED else evaluated_value
 
 
 def _try_eval_type(value: Any, globals: dict[str, Any]) -> Any:

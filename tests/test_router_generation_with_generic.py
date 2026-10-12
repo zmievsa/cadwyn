@@ -1418,6 +1418,7 @@ class QuotedItemsHolder(BaseModel):
     quoted_in_optional_list: Optional[Page[Optional[list["Item"]]]] = None
     quoted_in_annotated_list: Optional[Page[Annotated[list["Item"], "Items"]]] = None
     quoted_next_to_literal: Optional[Page[Union[Literal["none"], list["Item"]]]] = None
+    quoted_in_union_type: Optional[Page[list["Item"] | None]] = None
 
 
 def test__router_generation__strings_nested_in_builtin_generic_args__should_be_versioned(
@@ -1434,6 +1435,7 @@ def test__router_generation__strings_nested_in_builtin_generic_args__should_be_v
             "quoted_in_optional_list": {"items": [[{"fullName": "d"}]]},
             "quoted_in_annotated_list": {"items": [[{"fullName": "e"}]]},
             "quoted_next_to_literal": {"items": ["none", [{"fullName": "f"}]]},
+            "quoted_in_union_type": {"items": [[{"fullName": "g"}]]},
         }
 
     app = create_versioned_app(item_alias_version_change(), router=router)
@@ -1446,6 +1448,7 @@ def test__router_generation__strings_nested_in_builtin_generic_args__should_be_v
         "quoted_in_optional_list": {"items": [[{"oldName": "d"}]]},
         "quoted_in_annotated_list": {"items": [[{"oldName": "e"}]]},
         "quoted_next_to_literal": {"items": ["none", [{"oldName": "f"}]]},
+        "quoted_in_union_type": {"items": [[{"oldName": "g"}]]},
     }
     schema_names = client_2000.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
     assert {"Page_Item_", "Page_list_Item__", "Page_dict_str__Item__", "Item"} <= set(schema_names)
@@ -1692,3 +1695,95 @@ def test__migrate_response_body__data_in_versioned_generic_args__should_run_vali
     )
 
     assert VALIDATED_VALUES == [1]
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "default_factory_type_error",
+        "default_factory_attribute_error",
+        "dependency_of_default_factory",
+        "quoted_generic_arg",
+        pytest.param(
+            "type_alias",
+            marks=pytest.mark.skipif(sys.version_info < (3, 12), reason="Native type aliases exist since Python 3.12"),
+        ),
+        pytest.param(
+            "lazy_default_factory",
+            marks=pytest.mark.skipif(sys.version_info < (3, 14), reason="Annotations are lazy since Python 3.14"),
+        ),
+    ],
+)
+@pytest.mark.parametrize("has_instructions", [True, False], ids=["unrelated_instructions", "no_instructions"])
+def test__router_generation__generic_arg_with_annotations_failing_at_runtime__should_work_as_on_main(
+    create_versioned_app: CreateVersionedApp,
+    kind: str,
+    has_instructions: bool,
+):
+    if kind == "type_alias":
+        module = load_fresh_data_module("generic_arg_with_stub_only_type_alias")
+    elif kind == "lazy_default_factory":
+        module = load_fresh_data_module("generic_arg_with_lazy_stub_only_annotations")
+    else:
+        module = load_fresh_data_module("generic_args_with_annotations_failing_at_runtime", KIND=kind)
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=module.Page[module.Item])
+    async def get_items() -> dict[str, Any]:
+        return {"items": [{"name": "b"}]}
+
+    version_changes = [version_change(schema(module.Other).field("value").had(description="Old"))]
+    app = create_versioned_app(*(version_changes if has_instructions else []), router=router)
+
+    for version in app.router.versioned_routers:
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.get("/items").json()["items"][0]["name"] == "b"
+        assert client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
+
+
+def test__generate_versioned_models__without_changed_models__should_not_look_into_generic_args():
+    versions = VersionBundle(HeadVersion(), Version("2001-01-01"), Version("2000-01-01"))
+
+    for generator in generate_versioned_models(versions).values():
+        generator[Page[Item]]
+        assert generator._model_references == {}
+
+
+class NodeWithExplicitForwardRef(BaseModel):
+    name: str = "n"
+    parent: ForwardRef("Optional[NodeWithExplicitForwardRef]") = None  # ty: ignore[invalid-type-form]
+
+
+class HolderWithExplicitForwardRef(BaseModel):
+    item: ForwardRef("Item")  # ty: ignore[invalid-type-form]
+
+
+NodeWithExplicitForwardRef.model_rebuild()
+HolderWithExplicitForwardRef.model_rebuild()
+
+
+@pytest.mark.parametrize(
+    ("response_model", "body"),
+    [
+        pytest.param(NodeWithExplicitForwardRef, {"name": "a", "parent": {"name": "b", "parent": None}}, id="self"),
+        # Main keeps explicit forward refs as they are so the head Item is used, unlike for quoted annotations
+        pytest.param(HolderWithExplicitForwardRef, {"item": {"fullName": "a"}}, id="changed_model"),
+    ],
+)
+def test__router_generation__explicit_forward_refs__should_work_as_on_main(
+    create_versioned_app: CreateVersionedApp,
+    response_model: type[BaseModel],
+    body: dict[str, Any],
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=response_model)
+    async def get_items() -> dict[str, Any]:
+        return body
+
+    app = create_versioned_app(item_alias_version_change(), router=router)
+
+    for version in app.router.versioned_routers:
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.get("/items").json() == body
+        assert client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
