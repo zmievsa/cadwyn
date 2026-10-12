@@ -707,6 +707,20 @@ def test__schema_field_had__constraint_of_other_parent_of_diamond__should_apply_
         schemas["2000-01-01"][RightChildOfConstrainedDiamond].model_validate({"foo": -1})
     assert schemas["2000-01-01"][LeftChildOfConstrainedDiamond].model_validate({"foo": -1}).foo == -1
 
+    # The same instruction for the diamond before the one for its other parent applies to the diamond
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ParentOfConstrainedDiamond).field("bar").had(description="Bar"),
+            schema(ConstrainedDiamond).field("foo").had(ge=0),
+            schema(RightChildOfConstrainedDiamond).field("foo").had(ge=0),
+        )
+    )
+
+    with pytest.raises(ValidationError):
+        schemas["2000-01-01"][ConstrainedDiamond].model_validate({"foo": -1})
+    assert schemas["2000-01-01"][ConstrainedDiamond].model_fields["foo"].description is None
+    assert schemas["2000-01-01"][LeftChildOfConstrainedDiamond].model_validate({"foo": -1}).foo == -1
+
     # Once the diamond changes the field itself, it gets the changes of all of its parents
     schemas = create_runtime_schemas(
         version_change(*right_instructions, schema(ConstrainedDiamond).field("foo").had(description="Foo"))
@@ -715,6 +729,157 @@ def test__schema_field_had__constraint_of_other_parent_of_diamond__should_apply_
     with pytest.raises(ValidationError):
         schemas["2000-01-01"][ConstrainedDiamond].model_validate({"foo": -1})
     assert schemas["2000-01-01"][LeftChildOfConstrainedDiamond].model_validate({"foo": -1}).foo == -1
+
+
+class ParentWithFieldThatGetsRenamed(BaseModel):
+    foo: str = Field(default="", max_length=10)
+    bar: int = 0
+
+
+class ChildWithFieldThatGetsRenamed(ParentWithFieldThatGetsRenamed):
+    pass
+
+
+class GrandchildWithFieldThatGetsRenamed(ChildWithFieldThatGetsRenamed):
+    pass
+
+
+def _get_max_lengths(model: type[BaseModel]) -> dict[str, Union[int, None]]:
+    return {
+        name: next((m.max_length for m in field.metadata if hasattr(m, "max_length")), None)
+        for name, field in model.model_fields.items()
+        if name != "bar"
+    }
+
+
+@pytest.mark.parametrize(
+    ("instructions_from_newest", "expected"),
+    [
+        pytest.param(
+            [
+                [schema(ChildWithFieldThatGetsRenamed).field("foo").had(max_length=3)],
+                [schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo")],
+            ],
+            {
+                ParentWithFieldThatGetsRenamed: {"old_foo": 10},
+                ChildWithFieldThatGetsRenamed: {"old_foo": 3, "foo": 3},
+                GrandchildWithFieldThatGetsRenamed: {"old_foo": 3, "foo": 3},
+            },
+            id="child_changed_field_then_parent_renamed_it",
+        ),
+        pytest.param(
+            [
+                [
+                    schema(ChildWithFieldThatGetsRenamed).field("foo").had(max_length=3),
+                    schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo"),
+                ]
+            ],
+            {
+                ParentWithFieldThatGetsRenamed: {"old_foo": 10},
+                ChildWithFieldThatGetsRenamed: {"old_foo": 3, "foo": 3},
+            },
+            id="child_changed_field_and_parent_renamed_it_in_one_version",
+        ),
+        pytest.param(
+            [
+                [schema(GrandchildWithFieldThatGetsRenamed).field("foo").had(max_length=3)],
+                [schema(ChildWithFieldThatGetsRenamed).field("foo").had(name="old_foo")],
+            ],
+            {
+                ParentWithFieldThatGetsRenamed: {"foo": 10},
+                ChildWithFieldThatGetsRenamed: {"foo": 10, "old_foo": 10},
+                GrandchildWithFieldThatGetsRenamed: {"foo": 3, "old_foo": 3},
+            },
+            id="grandchild_changed_field_then_child_renamed_it",
+        ),
+        pytest.param(
+            [
+                [schema(ChildWithFieldThatGetsRenamed).field("foo").had(max_length=3)],
+                [schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo")],
+                [schema(ParentWithFieldThatGetsRenamed).field("old_foo").had(name="older_foo")],
+            ],
+            {
+                ParentWithFieldThatGetsRenamed: {"older_foo": 10},
+                ChildWithFieldThatGetsRenamed: {"older_foo": 3, "foo": 3},
+            },
+            id="child_changed_field_then_parent_renamed_it_twice",
+        ),
+        pytest.param(
+            [
+                [schema(ChildWithFieldThatGetsRenamed).field("foo").had(max_length=3)],
+                [schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo")],
+                [schema(ParentWithFieldThatGetsRenamed).field("old_foo").didnt_exist],
+            ],
+            {ParentWithFieldThatGetsRenamed: {}, ChildWithFieldThatGetsRenamed: {"foo": 3}},
+            id="child_changed_field_then_parent_renamed_and_deleted_it",
+        ),
+        pytest.param(
+            [
+                [schema(ChildWithFieldThatGetsRenamed).field("foo").had(max_length=3)],
+                [schema(ParentWithFieldThatGetsRenamed).field("foo").didnt_exist],
+            ],
+            {ParentWithFieldThatGetsRenamed: {}, ChildWithFieldThatGetsRenamed: {"foo": 3}},
+            id="child_changed_field_then_parent_deleted_it",
+        ),
+        pytest.param(
+            [
+                [schema(ChildWithFieldThatGetsRenamed).field("foo").had(max_length=3)],
+                [schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo")],
+                [schema(ParentWithFieldThatGetsRenamed).field("old_foo").had(max_length=5)],
+            ],
+            {
+                ParentWithFieldThatGetsRenamed: {"old_foo": 5},
+                ChildWithFieldThatGetsRenamed: {"old_foo": 5, "foo": 5},
+            },
+            id="child_changed_field_then_parent_renamed_and_changed_it",
+        ),
+    ],
+)
+def test__schema_field_had__parent_renamed_field_that_subclass_changed__should_keep_changes_of_subclass(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    instructions_from_newest: list[list[Any]],
+    expected: dict[type[BaseModel], dict[str, Union[int, None]]],
+):
+    schemas = create_runtime_schemas(
+        *(version_change(*instructions) for instructions in reversed(instructions_from_newest[1:])),
+        version_change(
+            schema(ParentWithFieldThatGetsRenamed).field("bar").had(description="Bar"), *instructions_from_newest[0]
+        ),
+    )
+
+    assert {model: _get_max_lengths(schemas["2000-01-01"][model]) for model in expected} == expected
+
+
+def test__schema_field_had__parent_renamed_field_and_changed_its_type__should_change_type_of_subclass(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(ParentWithFieldThatGetsRenamed).field("old_foo").had(type=bytes)),
+        version_change(schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo")),
+        version_change(
+            schema(ParentWithFieldThatGetsRenamed).field("bar").had(description="Bar"),
+            schema(ChildWithFieldThatGetsRenamed).field("foo").had(max_length=3),
+        ),
+    )
+
+    child = schemas["2000-01-01"][ChildWithFieldThatGetsRenamed]
+    assert child.model_fields["old_foo"].annotation is bytes
+    assert _get_max_lengths(child)["old_foo"] == 3
+
+
+def test__schema_field_had__generic_parent_renamed_field_that_subclass_changed__should_keep_its_concrete_type(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(GenericParentWithInheritedField).field("kind").had(name="old_kind")),
+        version_change(
+            schema(GenericParentWithInheritedField).field("bar").had(description="Bar"),
+            schema(GenericChildWithInheritedField).field("kind").had(description="Child"),
+        ),
+    )
+
+    child = schemas["2000-01-01"][GenericChildWithInheritedField]
+    assert child.model_fields["old_kind"].annotation == Literal["a"]
 
 
 class ParentWithoutField(BaseModel):

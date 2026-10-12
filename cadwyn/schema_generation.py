@@ -589,6 +589,13 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     validators: dict[str, Union[_PerFieldValidatorWrapper, _ValidatorWrapper]] = dataclasses.field(repr=False)
     other_attributes: dict[str, Any] = dataclasses.field(repr=False)
     annotations: dict[str, Any] = dataclasses.field(repr=False)
+    fields_renamed_by_parents: Annotated[
+        dict["_FieldName", PydanticFieldWrapper],
+        Doc(
+            "The fields of this model that its parents renamed, by their new names. The model keeps them under their "
+            "old names too, as before, and defines them under their new names so that its changes apply to them."
+        ),
+    ] = dataclasses.field(default_factory=dict, repr=False)
     _parents: Union[list["_PydanticModelWrapper[BaseModel]"], None] = dataclasses.field(
         init=False, default=None, repr=False
     )
@@ -617,6 +624,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             validators=copy.deepcopy(self.validators),
             other_attributes=copy.deepcopy(self.other_attributes),
             annotations=copy.deepcopy(self.annotations),
+            fields_renamed_by_parents=copy.deepcopy(self.fields_renamed_by_parents, memo),
         )
         memo[id(self)] = result
         return result
@@ -661,20 +669,42 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return annotations | self.annotations
 
-    def get_references(self) -> "_ModelReferences":
+    def get_references(self, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]") -> "_ModelReferences":
         """Return the models that generate_model_copy requests from the generator"""
         collector = _ReferencedModelCollector()
-        self._change_version_of_references(collector)
+        self._change_version_of_references(collector, schemas)
         return collector.get_references()
 
     def _change_version_of_references(
-        self, generator: "Union[SchemaGenerator, _ReferencedModelCollector]"
+        self,
+        generator: "Union[SchemaGenerator, _ReferencedModelCollector]",
+        schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
     ) -> tuple[dict[str, dict[str, Any]], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
-        return _change_version_of_model_references(generator, self.cls, self.get_field_attributes(), self.annotations)
+        return _change_version_of_model_references(
+            generator, self.cls, *self.get_field_attributes_and_annotations(schemas)
+        )
 
-    def get_field_attributes(self) -> dict[str, dict[str, Any]]:
-        """Return the attributes of the fields that the copy of the model defines (`cadwyn render` uses them too)"""
-        return {name: field.get_field_attributes(self.cls) for name, field in self.fields.items()}
+    def get_field_attributes_and_annotations(
+        self, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]"
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+        """Return the attributes of the fields that the copy of the model defines and its annotations.
+
+        Both the copies of the model and `cadwyn render` use them.
+        """
+        fields = self.fields_renamed_by_parents | self.fields
+        # A field that a parent renamed has the annotation that the model would inherit
+        renamed_field_annotations = {
+            name: next(
+                schemas[base].annotations[name]
+                for base in self.cls.__mro__[1:]
+                if issubclass(base, BaseModel) and base in schemas and name in schemas[base].annotations
+            )
+            for name in self.fields_renamed_by_parents
+        }
+        return (
+            {name: field.get_field_attributes(self.cls) for name, field in fields.items()},
+            renamed_field_annotations | self.annotations,
+        )
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {}
@@ -687,7 +717,9 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 per_field_validators[name] = validator.decorator(*validator.fields, **validator.kwargs)(func)
             else:
                 root_validators[name] = validator.decorator(**validator.kwargs)(func)
-        field_attributes, orig_bases, annotations, generic_metadata = self._change_version_of_references(generator)
+        field_attributes, orig_bases, annotations, generic_metadata = self._change_version_of_references(
+            generator, generator.model_bundle.schemas
+        )
         fields = {name: pydantic.Field(**attributes) for name, attributes in field_attributes.items()}
         orig_bases_attribute = {"__orig_bases__": orig_bases} if "__orig_bases__" in self.cls.__dict__ else {}
 
@@ -1630,7 +1662,7 @@ class SchemaGenerator:
             if lenient_issubclass(model, Enum):
                 references = _ModelReferences(frozenset(), frozenset())
             elif model in self.model_bundle.schemas:
-                references = self.model_bundle.schemas[model].get_references()
+                references = self.model_bundle.schemas[model].get_references(self.model_bundle.schemas)
             else:
                 # We do not wrap the model because wrapping copies parts of it and we may never need its copy
                 references = _get_head_model_references(cast("type[BaseModel]", model))
@@ -1734,7 +1766,7 @@ def _apply_alter_schema_instructions(
                 version_change_name,
             )
         elif isinstance(alter_schema_instruction, FieldDidntExistInstruction):
-            _delete_field_from_model(schema_info, alter_schema_instruction.name, version_change_name)
+            _delete_field_from_model(schema_info, modified_schemas, alter_schema_instruction.name, version_change_name)
         elif isinstance(alter_schema_instruction, ValidatorExistedInstruction):
             validator_name = get_name_of_function_wrapped_in_pydantic_validator(alter_schema_instruction.validator)
             raw_validator = cast(
@@ -1862,6 +1894,10 @@ def _change_field_in_model(
             field,
             model.annotations[alter_schema_instruction.name],
         )
+        if alter_schema_instruction.new_name is not Sentinel:
+            _make_subclasses_follow_rename(
+                model, schemas, field, alter_schema_instruction.name, alter_schema_instruction.new_name
+            )
     else:
         _delete_field_attributes(
             model,
@@ -1870,6 +1906,46 @@ def _change_field_in_model(
             field,
             model.annotations[alter_schema_instruction.name],
         )
+
+
+def _get_subclasses_that_share_field(
+    model: _PydanticModelWrapper[BaseModel],
+    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
+    field: PydanticFieldWrapper,
+    field_name: str,
+) -> "list[_PydanticModelWrapper[BaseModel]]":
+    return [
+        subclass
+        for subclass in schemas.values()
+        if subclass is not model
+        and issubclass(subclass.cls, model.cls)
+        and (subclass.fields.get(field_name) is field or subclass.fields_renamed_by_parents.get(field_name) is field)
+    ]
+
+
+def _make_subclasses_follow_rename(
+    model: _PydanticModelWrapper[BaseModel],
+    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
+    field: PydanticFieldWrapper,
+    old_name: str,
+    new_name: str,
+) -> None:
+    """Make the subclasses that changed the field apply their changes to it under its new name too.
+
+    Otherwise, they would only inherit the renamed field of the model, which does not have their changes.
+    """
+    for subclass in _get_subclasses_that_share_field(model, schemas, field, old_name):
+        if any(_is_generic_model(cls) for cls in subclass.cls.__mro__ if issubclass(cls, model.cls)):
+            # Pydantic substitutes the type args of the fields of generics so we leave such fields to it
+            continue
+        subclass.fields_renamed_by_parents.pop(old_name, None)
+        subclass.fields_renamed_by_parents[new_name] = field
+
+
+def _is_generic_model(model: type[BaseModel]) -> bool:
+    """Whether the model is generic (e.g. `Parent[T]`) or parametrized (e.g. `Parent[int]`)"""
+    generic_metadata = model.__pydantic_generic_metadata__
+    return generic_metadata["origin"] is not None or bool(generic_metadata["parameters"])
 
 
 def _change_field(
@@ -2076,10 +2152,19 @@ def _delete_field_attributes(
         field.delete_attribute(name=attr_name, changed_by=model.cls)
 
 
-def _delete_field_from_model(model: _PydanticModelWrapper[BaseModel], field_name: str, version_change_name: str):
+def _delete_field_from_model(
+    model: _PydanticModelWrapper[BaseModel],
+    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
+    field_name: str,
+    version_change_name: str,
+):
     if field_name in model.fields:
-        model.fields.pop(field_name)
+        field = model.fields.pop(field_name)
         model.annotations.pop(field_name)
+        # The subclasses would have inherited the field that their parent renamed
+        for subclass in _get_subclasses_that_share_field(model, schemas, field, field_name):
+            if subclass.fields_renamed_by_parents.get(field_name) is field:
+                subclass.fields_renamed_by_parents.pop(field_name)
         for validator_name, validator in model.validators.copy().items():
             if isinstance(validator, _PerFieldValidatorWrapper) and field_name in validator.fields:
                 validator.fields.remove(field_name)
