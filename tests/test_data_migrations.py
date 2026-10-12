@@ -2167,6 +2167,61 @@ def test__request_body_migration__with_bytes_moved_by_old_version_dependency__sh
     assert clients["2001-01-01"].post(test_path, files={"upload": sent}).json() == sent.decode()
 
 
+async def _get_upload(upload: UploadFile = File()) -> UploadFile:
+    return upload
+
+
+async def _normalize_upload_from_request_form(request: Request) -> None:
+    upload = (await request.form())["upload"]
+    assert isinstance(upload, StarletteUploadFile)
+    upload.file.seek(0)
+    upload.file.truncate()
+    upload.file.write(b"NORMALIZED")
+
+
+async def _normalize_upload_from_shared_dependency(upload: UploadFile = Depends(_get_upload)) -> None:
+    upload.file.seek(0)
+    upload.file.truncate()
+    upload.file.write(b"NORMALIZED")
+
+
+async def _swap_upload_from_shared_dependency(upload: UploadFile = Depends(_get_upload)) -> None:
+    old_stream = upload.file
+    # The form closes the new stream like the one it replaces
+    upload.file = cast("Any", tempfile.SpooledTemporaryFile())  # noqa: SIM115
+    upload.file.write(b"NORMALIZED")
+    old_stream.close()
+
+
+@pytest.mark.parametrize(
+    "legacy_dependency",
+    [
+        _normalize_upload_from_request_form,
+        _normalize_upload_from_shared_dependency,
+        _swap_upload_from_shared_dependency,
+    ],
+)
+def test__request_body_migration__with_bytes_changed_by_old_version_dependency_indirectly__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    legacy_dependency: Callable[..., Coroutine[Any, Any, None]],
+):
+    @router.post(test_path, dependencies=[Depends(_store_upload)])
+    async def endpoint(request: Request, upload: UploadFile = Depends(_get_upload)):
+        return request.state.contents
+
+    clients = create_versioned_clients(
+        version_change(
+            cadwyn_endpoint(test_path, ["POST"]).had(dependencies=[Depends(_store_upload), Depends(legacy_dependency)])
+        )
+    )
+
+    # The dependency left the file at its end without declaring it, so the files of dependencies stay as before
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"original"}).json() == ""
+    assert clients["2001-01-01"].post(test_path, files={"upload": b"original"}).json() == "original"
+
+
 async def _skip_nothing(upload: UploadFile = File()) -> None:
     raise NotImplementedError
 

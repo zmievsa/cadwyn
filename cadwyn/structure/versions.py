@@ -865,9 +865,8 @@ def _get_bytes_file_params_of_dependencies(
     """Return `(alias, is_sequence)` of the `bytes` file params of dependencies whose files the head can get again.
 
     FastAPI reads the body params of every dependency, including the cached ones, so we walk the whole trees.
-    We only take the params that the head's tree also has. A dependency that only the versioned route has
-    won't run again for the head, so rewinding a file that it declares would undo what it did with the file,
-    e.g. skipping a header. So we leave the files of such dependencies as they are.
+    We only take the params that the head's tree also has, and none at all if the versioned route has
+    dependencies that the head doesn't have.
     """
     dependencies = list(_iter_dependencies(route.dependant, _get_dependency_overrides(route)))
     bytes_file_params = {
@@ -885,18 +884,12 @@ def _get_bytes_file_params_of_dependencies(
         if dependant is not None
         for param in _get_bytes_file_params_of_fields(dependant.body_params)
     }
-    head_calls = [call for call, _ in head_dependencies]
-    for call, dependant in dependencies:
-        if call not in head_calls:
-            if dependant is None:
-                # We can't see which files the override of a dependency that only the versioned route has takes
-                return set()
-            file_aliases = {
-                get_validation_alias(field)
-                for field in dependant.body_params
-                if isinstance(field.field_info, params.File)
-            }
-            bytes_file_params = {param for param in bytes_file_params if param[0] not in file_aliases}
+    head_calls = {call for call, _ in head_dependencies}
+    # A dependency that only the versioned route has won't run again for the head, so a rewind would undo what it
+    # did with a file. It can reach any file, e.g. through `Request.form()` or a sub-dependency that the head also
+    # has, so we leave the files of all dependencies as they are
+    if any(call not in head_calls for call, _ in dependencies):
+        return set()
     return bytes_file_params
 
 
