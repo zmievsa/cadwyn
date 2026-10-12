@@ -1947,25 +1947,53 @@ def test__router_generation__query_model_defaults__should_stay_isolated_between_
     class Filters(BaseModel):
         limit: int = 10
 
-    @router.get("/test")
-    async def route(filters: Filters = Query()):
+    def get_limit(filters: Filters = Query()) -> int:
         return filters.limit
 
-    def get_limits(app: Cadwyn) -> dict[str, tuple[int, int]]:
+    class LimitGetter:
+        def __call__(self, filters: Filters = Query()) -> int:
+            return filters.limit
+
+    @router.get("/endpoint")
+    async def endpoint_route(filters: Filters = Query()):
+        return filters.limit
+
+    @router.get("/annotated_dependency")
+    async def annotated_dependency_route(limit: Annotated[int, Depends(get_limit)]):
+        return limit
+
+    @router.get("/default_dependency")
+    async def default_dependency_route(limit: int = Depends(get_limit)):
+        return limit
+
+    @router.get("/instance_dependency")
+    async def instance_dependency_route(limit: Annotated[int, Depends(LimitGetter())]):
+        return limit
+
+    paths = ("/endpoint", "/annotated_dependency", "/default_dependency", "/instance_dependency")
+
+    def get_limits(app: Cadwyn) -> dict[tuple[str, str], tuple[int, int]]:
         limits = {}
         with TestClient(app) as client:
             for version in app.router.versioned_routers:
-                response = client.get("/test", headers={"x-api-version": version})
                 openapi = client.get(f"/openapi.json?version={version}").json()
-                (parameter,) = [p for p in openapi["paths"]["/test"]["get"]["parameters"] if p["name"] == "limit"]
-                limits[version] = (response.json(), parameter["schema"]["default"])
+                for path in paths:
+                    response = client.get(path, headers={"x-api-version": version})
+                    parameters = openapi["paths"][path]["get"]["parameters"]
+                    (parameter,) = [p for p in parameters if p["name"] == "limit"]
+                    limits[version, path] = (response.json(), parameter["schema"]["default"])
         return limits
 
     app = create_versioned_app(
         version_change(schema(Filters).field("limit").had(default=30)),
         version_change(schema(Filters).field("limit").had(default=20)),
     )
-    expected_limits = {"2002-01-01": (10, 10), "2001-01-01": (10, 20), "2000-01-01": (10, 30)}
+    # The endpoint always gets the head default because Cadwyn migrates requests to head before solving them again
+    expected_limits = {
+        (version, path): (10, openapi_default)
+        for version, openapi_default in {"2002-01-01": 10, "2001-01-01": 20, "2000-01-01": 30}.items()
+        for path in paths
+    }
     assert get_limits(app) == expected_limits
 
     create_versioned_app(version_change(schema(Filters).field("limit").had(default=50)))

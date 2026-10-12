@@ -8,6 +8,7 @@ import pytest
 from fastapi import Depends, Query, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field, WithJsonSchema
+from typing_extensions import Self, override
 
 from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
@@ -190,19 +191,59 @@ def test__router_generation__decorated_dependencies_with_forwardrefs__should_res
             assert version_client.get(path, params={"limit": 0}).status_code == 422
 
 
-class ResourceWithForwardRefs:
+class ResourceWithForwardRefsInInit:
     def __init__(self, body: MySchema) -> None:
         self.body = body
+
+
+class ResourceWithForwardRefsInNew:
+    body: MySchema
+
+    def __new__(cls, body: MySchema) -> Self:
+        resource = super().__new__(cls)
+        resource.body = body
+        return resource
+
+
+class ResourceMeta(type):
+    @override
+    def __call__(cls, body: MySchema) -> Any:
+        return super().__call__(body)
+
+
+class ResourceWithForwardRefsInMetaclass(metaclass=ResourceMeta):
+    def __init__(self, body: Any) -> None:
+        self.body = body
+
+
+class ResourceWithoutConstructor:
+    body = MySchema(foo="default")
 
 
 def test__router_generation__partial_of_class_with_forwardrefs__should_resolve_annotations(
     router, create_versioned_clients
 ):
-    @router.post("/test")
-    async def route(resource: Annotated[Any, Depends(functools.partial(ResourceWithForwardRefs))]):
+    @router.post("/init")
+    async def init_route(resource: Annotated[Any, Depends(functools.partial(ResourceWithForwardRefsInInit))]):
+        return resource.body
+
+    @router.post("/new")
+    async def new_route(resource: Annotated[Any, Depends(functools.partial(ResourceWithForwardRefsInNew))]):
+        return resource.body
+
+    @router.post("/metaclass")
+    async def metaclass_route(
+        resource: Annotated[Any, Depends(functools.partial(ResourceWithForwardRefsInMetaclass))],
+    ):
+        return resource.body
+
+    @router.get("/no_constructor")
+    async def no_constructor_route(resource: Annotated[Any, Depends(functools.partial(ResourceWithoutConstructor))]):
         return resource.body
 
     for version_client in create_versioned_clients(version_change()).values():
-        response = version_client.post("/test", json={"foo": "bar"})
-        assert response.status_code == 200, response.json()
-        assert response.json() == {"foo": "bar"}
+        for path in ("/init", "/new", "/metaclass"):
+            response = version_client.post(path, json={"foo": "bar"})
+            assert response.status_code == 200, (path, response.json())
+            assert response.json() == {"foo": "bar"}
+        assert version_client.get("/no_constructor").json() == {"foo": "default"}

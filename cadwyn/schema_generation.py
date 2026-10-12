@@ -491,6 +491,21 @@ def _unwrap_partials_and_decorators(call: Any) -> Any:
         call = unwrapped_call
 
 
+def _get_constructor_of_class(cls: type) -> Any:
+    """Return the method that inspect.signature() takes the signature of the class from"""
+    metaclass_call = inspect.getattr_static(type(cls), "__call__")
+    if is_regular_function(metaclass_call):
+        return metaclass_call
+    for base in cls.__mro__:
+        for method_name in ("__new__", "__init__"):
+            method = base.__dict__.get(method_name)
+            if isinstance(method, staticmethod):
+                method = method.__func__
+            if is_regular_function(method):
+                return method
+    return None
+
+
 def _get_callable_globals(call: Any) -> dict[str, Any]:
     """Return the globals that the annotations of the callable have to be evaluated in.
 
@@ -498,7 +513,7 @@ def _get_callable_globals(call: Any) -> dict[str, Any]:
     """
     function = _unwrap_partials_and_decorators(call)
     if inspect.isclass(function):
-        function = _unwrap_partials_and_decorators(function.__init__)
+        function = _unwrap_partials_and_decorators(_get_constructor_of_class(function))
     elif not is_regular_function(function):
         function = _unwrap_partials_and_decorators(function.__call__)
     return _function_globals(function) if is_regular_function(function) else {}
@@ -508,7 +523,6 @@ class _CallableWrapper:
     __annotations__: dict[str, Any]
     __defaults__: Union[tuple[Any, ...], None]
     __signature__: inspect.Signature
-    __wrapped__: Callable[..., Any]
 
     # __eq__ and __hash__ are needed to make sure that dependency overrides work correctly.
     # They are based on putting dependencies (functions) as keys for the dictionary so if we want to be able to
@@ -533,15 +547,10 @@ class _CallableWrapper:
         return _get_callable_globals(self._original_callable)
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "_CallableWrapper":
-        # The original dependency (e.g. a class instance or a partial) must not get copied. Otherwise, it would
-        # stop matching the keys of app.dependency_overrides and changes to its state would not be visible in the copy.
-        # Our own signature must get copied though because FastAPI mutates the FieldInfo objects in its defaults.
-        for original in (self._original_callable, self.__wrapped__):
-            memo[id(original)] = original
-        wrapper_copy = copy.copy(self)
-        memo[id(self)] = wrapper_copy
-        wrapper_copy.__dict__.update(copy.deepcopy(self.__dict__, memo))
-        return wrapper_copy
+        # Copying would also copy the original dependency (e.g. a class instance or a partial) so it would stop
+        # matching the keys of app.dependency_overrides and changes to its state would not be visible in the copy.
+        # Wrappers are never mutated after creation and every version creates its own wrappers anyway.
+        return self
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self._original_callable(*args, **kwargs)
@@ -748,7 +757,13 @@ class _AnnotationTransformer:
         }
         annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
         annotation_modifying_wrapper.__defaults__ = modify_defaults(
-            tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
+            tuple(
+                # FastAPI mutates the FieldInfo objects in defaults (e.g. their annotation) so every version (and app)
+                # must have its own copies. Otherwise, all of them would use the models of whichever got built last
+                copy.copy(p.default) if isinstance(p.default, FieldInfo) else p.default
+                for p in old_params.values()
+                if p.default is not inspect.Signature.empty
+            ),
         )
         annotation_modifying_wrapper.__signature__ = cls._generate_signature(
             annotation_modifying_wrapper,
