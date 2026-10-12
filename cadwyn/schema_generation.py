@@ -169,10 +169,7 @@ class PydanticFieldWrapper:
     # The same for all copies of the field
     identity: int = dataclasses.field(init=False)
     models_that_changed_it: set[type[BaseModel]] = dataclasses.field(init=False)
-    # default or default_factory that the attributes of the copy of the field do not have because the model got the
-    # other one later (see _keep_last_of_default_and_default_factory)
-    dropped_default_attribute: Union[str, None] = dataclasses.field(init=False)
-    _views_by_model: dict[type[BaseModel], "_FieldView"] = dataclasses.field(init=False, repr=False)
+    _field_attributes_by_model: dict[type[BaseModel], dict[str, Any]] = dataclasses.field(init=False, repr=False)
 
     def __post_init__(self, init_model_field: FieldInfo) -> None:
         self.passed_field_attributes = _extract_passed_field_attributes(init_model_field)
@@ -180,8 +177,7 @@ class PydanticFieldWrapper:
         self.changes = []
         self.identity = next(_field_identities)
         self.models_that_changed_it = set()
-        self.dropped_default_attribute = None
-        self._views_by_model = {}
+        self._field_attributes_by_model = {}
 
     def copy_for_model(self, model: type[BaseModel], name: str, memo: dict[int, Any]) -> "PydanticFieldWrapper":
         """Return a deep copy of the field with the attributes that it has in the model and no changes to apply.
@@ -191,54 +187,53 @@ class PydanticFieldWrapper:
         if _has_default_and_default_factory(self.passed_field_attributes):
             # pydantic would fail to create the field, as it did when every model shared these attributes
             changed_by = next(
-                change.changed_by for change in reversed(self.changes) if change.name in {"default", "default_factory"}
+                (
+                    change.changed_by
+                    for change in reversed(self.changes)
+                    if change.name in {"default", "default_factory"}
+                ),
+                None,
             )
-            raise InvalidGenerationInstructionError(
-                f'The field "{name}" of "{changed_by.__name__}" has both a default and a default_factory '
-                "in an older version."
-            )
-        view = self._get_view(model)
+            # Otherwise, the declaration has both (pydantic<2.12 accepts some) and pydantic fails as before
+            if changed_by is not None:
+                raise InvalidGenerationInstructionError(
+                    f'The field "{name}" of "{changed_by.__name__}" has both a default and a default_factory '
+                    "in an older version."
+                )
         field_copy = copy.copy(self)
         field_copy.annotation = copy.deepcopy(self.annotation, memo)
         field_copy.passed_field_attributes = {
-            attr_name: copy.deepcopy(attr_value, memo) for attr_name, attr_value in view.attributes.items()
+            attr_name: copy.deepcopy(attr_value, memo)
+            for attr_name, attr_value in self.get_field_attributes(model).items()
         }
-        field_copy.dropped_default_attribute = view.dropped_default_attribute or self.dropped_default_attribute
         field_copy.declared_field_attributes = field_copy.passed_field_attributes
         field_copy.changes = []
         field_copy.models_that_changed_it = set()
-        field_copy._views_by_model = {}
+        field_copy._field_attributes_by_model = {}
         return field_copy
 
     def update_attribute(self, *, name: str, value: Any, changed_by: type[BaseModel]) -> None:
         self.passed_field_attributes[name] = value
         self.changes.append(_FieldAttributeChange(changed_by, name, value, is_deleted=False))
         self.models_that_changed_it.add(changed_by)
-        self._views_by_model.clear()
+        self._field_attributes_by_model.clear()
 
     def delete_attribute(self, *, name: str, changed_by: type[BaseModel]) -> None:
         self.passed_field_attributes.pop(name, None)
         self.changes.append(_FieldAttributeChange(changed_by, name, None, is_deleted=True))
         self.models_that_changed_it.add(changed_by)
-        self._views_by_model.clear()
+        self._field_attributes_by_model.clear()
 
     def get_field_attributes(self, model: type[BaseModel]) -> dict[str, Any]:
         """Return the attributes of the field in the model: only the changes of the model and its parents apply.
 
         So the changes that a subclass makes to an inherited field do not change its parents and their other subclasses.
         """
-        return self._get_view(model).attributes
+        if model not in self._field_attributes_by_model:
+            self._field_attributes_by_model[model] = self._apply_changes(model)
+        return self._field_attributes_by_model[model]
 
-    def get_dropped_default_attribute(self, model: type[BaseModel]) -> Union[str, None]:
-        """Return default or default_factory if the model dropped it because it got the other one later"""
-        return self._get_view(model).dropped_default_attribute or self.dropped_default_attribute
-
-    def _get_view(self, model: type[BaseModel]) -> "_FieldView":
-        if model not in self._views_by_model:
-            self._views_by_model[model] = self._apply_changes(model)
-        return self._views_by_model[model]
-
-    def _apply_changes(self, model: type[BaseModel]) -> "_FieldView":
+    def _apply_changes(self, model: type[BaseModel]) -> dict[str, Any]:
         applies = {changed_by: issubclass(model, changed_by) for changed_by in self.models_that_changed_it}
         changes = [change for change in self.changes if applies[change.changed_by]]
         if len(changes) == len(self.changes):
@@ -253,34 +248,43 @@ class PydanticFieldWrapper:
         return _keep_last_of_default_and_default_factory(attributes, changes)
 
 
-class _FieldView(NamedTuple):
-    attributes: dict[str, Any]
-    dropped_default_attribute: Union[str, None] = None
-
-
 def _keep_last_of_default_and_default_factory(
     attributes: dict[str, Any], changes: "list[_FieldAttributeChange]"
-) -> _FieldView:
+) -> dict[str, Any]:
     """Field() accepts only one of them so if the model has both, it keeps the one that it got last.
 
     The model can have both because the changes of its siblings that deleted one of them do not apply to it.
     """
     if not _has_default_and_default_factory(attributes):
-        return _FieldView(attributes)
+        return attributes
     last_set = next(
-        change.name
-        for change in reversed(changes)
-        if not change.is_deleted and change.name in {"default", "default_factory"}
+        (
+            change.name
+            for change in reversed(changes)
+            if not change.is_deleted and change.name in {"default", "default_factory"}
+        ),
+        None,
     )
-    dropped = _OTHER_DEFAULT_ATTRIBUTE[last_set]
-    return _FieldView({name: value for name, value in attributes.items() if name != dropped}, dropped)
+    if last_set is None:
+        # The declaration has both (pydantic<2.12 accepts some) so pydantic fails as before
+        return attributes
+    return {name: value for name, value in attributes.items() if name != _OTHER_DEFAULT_ATTRIBUTE[last_set]}
 
 
 def _has_default_and_default_factory(attributes: dict[str, Any]) -> bool:
     """Whether Field(**attributes) fails because it has both. Like pydantic, `...` and `None` mean that it has none"""
-    return attributes.get("default", PydanticUndefined) not in (PydanticUndefined, Ellipsis) and (
-        attributes.get("default_factory") is not None
-    )
+    return _sets_default_attribute(attributes, "default") and _sets_default_attribute(attributes, "default_factory")
+
+
+def _sets_default_attribute(attributes: dict[str, Any], attr_name: str) -> bool:
+    """Whether Field(**attributes) sets default or default_factory: `default=...` and `default_factory=None` don't"""
+    if attr_name not in attributes:
+        return False
+    value = attributes[attr_name]
+    # Identity checks because user defaults can compare in any way (e.g. numpy arrays compare element-wise)
+    if attr_name == "default":
+        return value is not PydanticUndefined and value is not Ellipsis
+    return value is not None
 
 
 _OTHER_DEFAULT_ATTRIBUTE = {"default": "default_factory", "default_factory": "default"}
@@ -809,17 +813,21 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         fields = renamed_fields | self.fields
         field_attributes = {name: field.get_field_attributes(self.cls) for name, field in fields.items()}
         annotations = renamed_field_annotations | self.annotations
-        for name, field in fields.items():
-            dropped = field.get_dropped_default_attribute(self.cls)
-            if dropped is not None:
-                # Field() in the annotation can still have it because the sibling that deleted it was not this model
-                annotations[name] = _change_annotated_metadata(
-                    annotations[name],
-                    lambda metadata, dropped=dropped: (
-                        isinstance(metadata, FieldInfo) and dropped in metadata._attributes_set
-                    ),
-                    functools.partial(_delete_metadata_attribute, attr_name=dropped),
-                )
+        for name, attributes in field_attributes.items():
+            for attr_name, other_attr_name in _OTHER_DEFAULT_ATTRIBUTE.items():
+                if _sets_default_attribute(attributes, attr_name) and not _sets_default_attribute(
+                    attributes, other_attr_name
+                ):
+                    # The Field() in the annotation can still set the other one and pydantic would fail with both,
+                    # e.g. with `Annotated[int, Field(default=0)]` (pydantic<2.12 also fills it with the declared
+                    # default) after `had(default=..., default_factory=f)` or after a sibling deleted the default
+                    annotations[name] = _change_annotated_metadata(
+                        annotations[name],
+                        lambda metadata, other_attr_name=other_attr_name: (
+                            isinstance(metadata, FieldInfo) and other_attr_name in metadata._attributes_set
+                        ),
+                        functools.partial(_delete_metadata_attribute, attr_name=other_attr_name),
+                    )
         return field_attributes, annotations
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
@@ -2356,11 +2364,13 @@ def _change_field(
     for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
         attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
         if attr_value is not Sentinel:
-            # Another model that shares the field (e.g. a sibling) could have set the value only for itself
-            if (
-                field.passed_field_attributes.get(attr_name, Sentinel)
-                == field.get_field_attributes(model.cls).get(attr_name, Sentinel)
-                == attr_value
+            shared_value = field.passed_field_attributes.get(attr_name, Sentinel)
+            # Another model that shares the field (e.g. a sibling) could have set the value only for itself.
+            # We compare the shared value first, as Cadwyn always did, and avoid comparing it with the model's own
+            # value because user defaults can compare in any way (e.g. numpy arrays compare element-wise)
+            if shared_value == attr_value and (
+                (model_value := field.get_field_attributes(model.cls).get(attr_name, Sentinel)) is shared_value
+                or model_value == attr_value
             ):
                 raise InvalidGenerationInstructionError(
                     f'You tried to change the attribute "{attr_name}" of field '

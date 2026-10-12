@@ -15,6 +15,7 @@ from pydantic import (
 )
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
+from typing_extensions import override
 
 from cadwyn.exceptions import (
     CadwynStructureError,
@@ -1249,6 +1250,20 @@ def test__schema_field_had__default_of_child_after_sibling_deleted_default_facto
     assert schemas["2000-01-01"][SiblingWithDefaults].model_fields["with_factory"].is_required()
 
 
+def test__schema_field_had__none_default_of_child_after_sibling_unset_default_factory__should_replace_factory(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ParentWithDefaults).field("bar").had(description="Bar"),
+            schema(SiblingWithDefaults).field("with_factory").had(default_factory=None),  # ty: ignore[invalid-argument-type]
+            schema(ChildWithDefaults).field("with_factory").had(default=None),
+        )
+    )
+
+    assert schemas["2000-01-01"][ChildWithDefaults]().with_factory is None
+
+
 @pytest.mark.parametrize(
     ("field_name", "attributes"),
     [
@@ -1297,6 +1312,62 @@ def test__schema_field_had__default_or_default_factory_that_pydantic_treats_as_u
     )
 
     assert getattr(schemas["2000-01-01"][ModelWithExplicitDefaultSentinels](), field_name) == expected
+
+
+class AmbiguousTruthValue:
+    def __bool__(self) -> bool:
+        raise ValueError("The truth value is ambiguous")
+
+
+class ElementwiseEqualDefault:
+    """Like numpy arrays: comparing it gives an object whose truth value is ambiguous"""
+
+    @override
+    def __eq__(self, other: object) -> Any:
+        return AmbiguousTruthValue()
+
+    __hash__ = object.__hash__
+
+
+elementwise_equal_default = ElementwiseEqualDefault()
+
+
+class ParentWithElementwiseEqualDefault(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    foo: ElementwiseEqualDefault = elementwise_equal_default
+    bar: int = 0
+
+
+class ChildWithElementwiseEqualDefault(ParentWithElementwiseEqualDefault):
+    pass
+
+
+class SiblingWithElementwiseEqualDefault(ParentWithElementwiseEqualDefault):
+    pass
+
+
+def test__schema_field_had__other_field_of_model_with_elementwise_equal_default__should_keep_default(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(ParentWithElementwiseEqualDefault).field("bar").had(description="Bar"))
+    )
+
+    assert isinstance(schemas["2000-01-01"][ParentWithElementwiseEqualDefault]().foo, ElementwiseEqualDefault)
+
+
+def test__schema_field_had__default_of_field_with_elementwise_equal_default_that_sibling_deleted__should_set_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ParentWithElementwiseEqualDefault).field("bar").had(description="Bar"),
+            schema(SiblingWithElementwiseEqualDefault).field("foo").didnt_have("default"),
+            schema(ChildWithElementwiseEqualDefault).field("foo").had(default=None),
+        )
+    )
+
+    assert schemas["2000-01-01"][ChildWithElementwiseEqualDefault]().foo is None
 
 
 def _factory() -> str:
@@ -1373,6 +1444,10 @@ def test__schema_field_had__default_factory_of_annotated_field_that_sibling_dele
     assert schemas["2000-01-01"][AnnotatedSiblingWithDefault]().foo == "default"
 
 
+def _twenty() -> int:
+    return 20
+
+
 class AnnotatedParentWithDefaultInField(BaseModel):
     foo: Annotated[int, Field(default=0)]
     bar: int = 0
@@ -1397,16 +1472,96 @@ def test__schema_field_didnt_have__annotated_default_after_child_set_default_fac
     assert schemas["2000-01-01"][AnnotatedChildWithDefaultInField]().foo == 0
 
 
-def test__schema_field_didnt_have__annotated_default_after_child_set_default_factory__should_raise_error(
+def test__schema_field_didnt_have__annotated_default_after_child_set_default_factory__should_use_factory(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(AnnotatedParentWithDefaultInField).field("bar").had(description="Bar"),
+            schema(AnnotatedChildWithDefaultInField).field("foo").had(default_factory=_twenty),
+            schema(AnnotatedParentWithDefaultInField).field("foo").didnt_have("default"),
+        )
+    )
+
+    assert schemas["2000-01-01"][AnnotatedParentWithDefaultInField].model_fields["foo"].is_required()
+    assert schemas["2000-01-01"][AnnotatedChildWithDefaultInField]().foo == 20
+
+
+class AnnotatedParentWithDefaultToReplaceWithFactory(BaseModel):
+    foo: Annotated[Union[int, None], Field(default=1)]
+    bar: int = 0
+
+
+class AnnotatedChildWithDefaultToReplaceWithFactory(AnnotatedParentWithDefaultToReplaceWithFactory):
+    pass
+
+
+@pytest.mark.parametrize(
+    "child_instruction",
+    [
+        schema(AnnotatedChildWithDefaultToReplaceWithFactory).field("foo").had(default_factory=None),  # ty: ignore[invalid-argument-type]
+        schema(AnnotatedChildWithDefaultToReplaceWithFactory).field("foo").didnt_have("default_factory"),
+    ],
+)
+def test__schema_field_had__ellipsis_default_with_factory_of_annotated_field_with_default__should_use_factory(
+    create_runtime_schemas: CreateRuntimeSchemas, child_instruction: Any
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(AnnotatedParentWithDefaultToReplaceWithFactory).field("bar").had(description="Bar"),
+            schema(AnnotatedParentWithDefaultToReplaceWithFactory)
+            .field("foo")
+            .had(default=..., default_factory=_twenty),
+            child_instruction,
+        )
+    )
+
+    # The child's instruction does not apply to the parent
+    assert schemas["2000-01-01"][AnnotatedParentWithDefaultToReplaceWithFactory]().foo == 20
+    assert schemas["2000-01-01"][AnnotatedChildWithDefaultToReplaceWithFactory]().foo == 1
+
+
+class AnnotatedParentWithDefaultFactory(BaseModel):
+    foo: Annotated[int, Field(default_factory=int)]
+    bar: int = 0
+
+
+class AnnotatedChildWithDefaultFactory(AnnotatedParentWithDefaultFactory):
+    pass
+
+
+class AnnotatedSiblingWithDefaultFactory(AnnotatedParentWithDefaultFactory):
+    pass
+
+
+def test__schema_field_had__default_of_child_after_parent_deleted_annotated_default_factory__should_use_default(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            # The child gets its own annotation of the field with the factory before the parent deletes it
+            schema(AnnotatedChildWithDefaultFactory).field("foo").had(description="Child"),
+            schema(AnnotatedParentWithDefaultFactory).field("foo").didnt_have("default_factory"),
+            schema(AnnotatedSiblingWithDefaultFactory).field("foo").had(default_factory=None),  # ty: ignore[invalid-argument-type]
+            schema(AnnotatedChildWithDefaultFactory).field("foo").had(default=5),
+        )
+    )
+
+    assert schemas["2000-01-01"][AnnotatedChildWithDefaultFactory]().foo == 5
+
+
+def test__schema_field_had__annotated_default_factory_with_assigned_default__should_raise_pydantic_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    # pydantic<2.12 accepts the model itself but not the field that Cadwyn copies from it
     with pytest.raises(TypeError, match="cannot specify both default and default_factory"):
+
+        class ModelWithAnnotatedFactoryAndAssignedDefault(BaseModel):
+            foo: Annotated[int, Field(default_factory=int)] = 5
+            bar: int = 0
+
         create_runtime_schemas(
-            version_change(
-                schema(AnnotatedParentWithDefaultInField).field("bar").had(description="Bar"),
-                schema(AnnotatedChildWithDefaultInField).field("foo").had(default_factory=int),
-                schema(AnnotatedParentWithDefaultInField).field("foo").didnt_have("default"),
-            )
+            version_change(schema(ModelWithAnnotatedFactoryAndAssignedDefault).field("bar").had(description="Bar"))
         )
 
 
