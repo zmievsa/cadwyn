@@ -782,3 +782,73 @@ def test__router_generation__function_dependency_with_quoted_unevaluable_return_
 
     for version_client in create_versioned_clients(version_change()).values():
         assert version_client.get("/test").json() == [0, 1, 2]
+
+
+class QuotedPayload(BaseModel):
+    current: str
+
+
+# With postponed annotations, the quotes make these strings within strings so evaluating them once leaves strings
+def get_current_from_quoted_body(body: "QuotedPayload") -> str:  # noqa: UP037
+    return body.current
+
+
+@pytest.mark.parametrize("style", ["endpoint", "default_dependency", "annotated_dependency"])
+def test__router_generation__quoted_parameter_annotations__should_use_versioned_models(
+    router, create_versioned_clients, style
+):
+    if style == "endpoint":
+
+        @router.post("/test")
+        async def endpoint_route(body: "QuotedPayload"):  # noqa: UP037
+            return body.current
+
+    elif style == "default_dependency":
+
+        @router.post("/test")
+        async def default_dependency_route(current: str = Depends(get_current_from_quoted_body)):
+            return current
+
+    else:
+
+        @router.post("/test")
+        async def annotated_dependency_route(current: Annotated[str, Depends(get_current_from_quoted_body)]):
+            return current
+
+    clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
+    assert clients["2001-01-01"].post("/test", json={"current": "ok"}).json() == "ok"
+    assert clients["2000-01-01"].post("/test", json={"current": "ok"}).status_code == 422
+    assert clients["2000-01-01"].post("/test", json={"current": "ok", "legacy": "ok"}).json() == "ok"
+    required_fields = {}
+    for version, version_client in clients.items():
+        openapi = version_client.get(f"/openapi.json?version={version}").json()
+        required_fields[version] = openapi["components"]["schemas"]["QuotedPayload"]["required"]
+    assert required_fields == {"2001-01-01": ["current"], "2000-01-01": ["current", "legacy"]}
+
+
+def make_values_with_annotations_set_by_hand() -> Any:
+    return [0, 1, 2]
+
+
+make_values_with_annotations_set_by_hand.__annotations__ = {"return": "NotSubscriptableAtRuntime[int]"}
+
+
+class ModelWithFactoryWithAnnotationsSetByHand(BaseModel):
+    values: Any = Field(default_factory=make_values_with_annotations_set_by_hand)
+
+
+def test__router_generation__default_factory_with_annotations_set_by_hand__should_read_them_like_before(
+    router, create_versioned_clients
+):
+    @router.post("/test")
+    async def route(body: ModelWithFactoryWithAnnotationsSetByHand):
+        return body.values
+
+    # Cadwyn reads the annotations of such callables through annotationlib on Python 3.14+ which ignores the ones
+    # set by hand. Before 3.14, it reads __annotations__ and evaluates them
+    if sys.version_info >= (3, 14):
+        for version_client in create_versioned_clients(version_change()).values():
+            assert version_client.post("/test", json={}).json() == [0, 1, 2]
+    else:
+        with pytest.raises(TypeError, match="NotSubscriptableAtRuntime"):
+            create_versioned_clients(version_change())

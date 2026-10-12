@@ -1,7 +1,9 @@
 import asyncio
+import copy
 import functools
 import importlib
 import inspect
+import itertools
 import json
 import re
 import sys
@@ -2299,6 +2301,59 @@ def test__router_generation__cached_callable_default_factory__should_work(
 
     for version_client in create_versioned_clients(version_change()).values():
         assert version_client.post("/test", json={}).json() == 42
+
+
+class _ModelWithUnsignaturedDefaultFactory(BaseModel):
+    # inspect.signature() fails for builtins such as next() (and time.time() before Python 3.13)
+    value: Any = Field(default_factory=functools.partial(next, itertools.count(1)))
+
+
+def _get_model_with_unsignatured_default_factory(multiplier: int = 1) -> _ModelWithUnsignaturedDefaultFactory:
+    return _ModelWithUnsignaturedDefaultFactory(value=multiplier)
+
+
+def test__router_generation__dependency_return_annotations__should_not_be_versioned(
+    create_versioned_clients: CreateVersionedClients,
+):
+    # FastAPI never looks at the return annotations of dependencies so Cadwyn must not generate their models either
+    cached_dependency = functools.lru_cache(_get_model_with_unsignatured_default_factory)
+    partial_dependency = functools.partial(_get_model_with_unsignatured_default_factory, 2)
+    router = VersionedAPIRouter(dependencies=[Depends(cached_dependency), Depends(partial_dependency)])
+
+    @router.get("/annotated")
+    async def annotated_route(
+        cached: Annotated[Any, Depends(cached_dependency)], partial: Annotated[Any, Depends(partial_dependency)]
+    ):
+        return [cached.value, partial.value]
+
+    @router.get("/default")
+    async def default_route(cached: Any = Depends(cached_dependency), partial: Any = Depends(partial_dependency)):
+        return [cached.value, partial.value]
+
+    for version_client in create_versioned_clients(version_change(), router=router).values():
+        assert version_client.get("/annotated").json() == [1, 2]
+        assert version_client.get("/default").json() == [1, 2]
+
+
+class _Counter:
+    def __init__(self) -> None:
+        self.count = 0
+
+    def __call__(self) -> int:
+        self.count += 1
+        return self.count
+
+
+def test__schema_generation__deep_copies_of_versioned_default_factories__should_copy_the_factories_too():
+    class ModelWithStatefulDefaultFactory(BaseModel):
+        count: int = Field(default_factory=_Counter())
+
+    generators = generate_versioned_models(VersionBundle(Version("2001-01-01"), Version("2000-01-01")))
+    for generator in generators.values():
+        field = generator[ModelWithStatefulDefaultFactory].model_fields["count"]
+        count_before_copying = field.get_default(call_default_factory=True)
+        copy.deepcopy(field).get_default(call_default_factory=True)
+        assert field.get_default(call_default_factory=True) == count_before_copying + 1
 
 
 def test__router_generation__dependency_with_lazy_type_checking_only_annotations__should_resolve_the_other_ones(
