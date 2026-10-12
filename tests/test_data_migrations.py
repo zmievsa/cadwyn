@@ -2,7 +2,7 @@ import http.cookies
 import re
 import sys
 import typing
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from io import StringIO
 from typing import Annotated, Any, Literal, Optional, Union
@@ -20,17 +20,25 @@ from pydantic import (
     AliasGenerator,
     AliasPath,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
+    Json,
     PlainSerializer,
     RootModel,
     WrapSerializer,
+    computed_field,
     field_serializer,
+    field_validator,
     model_serializer,
     model_validator,
+    root_validator,  # ty: ignore[deprecated]  # V1 validators are still supported.
+    validator,  # ty: ignore[deprecated]  # V1 validators are still supported.
 )
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic_core import core_schema
 from starlette.responses import StreamingResponse
-from typing_extensions import TypedDict
+from typing_extensions import Self, TypeAliasType, TypedDict
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.exceptions import (
@@ -1362,9 +1370,7 @@ class OtherInnerSchema(BaseModel):
             [{"value": 1}],
             id="list_of_annotated",
         ),
-        pytest.param(Sequence[InnerSchemaWithValidationAlias], [{"v": 1}], [{"value": 1}], id="sequence"),
         pytest.param(dict[str, InnerSchemaWithValidationAlias], {"a": {"v": 1}}, {"a": {"value": 1}}, id="dict"),
-        pytest.param(Mapping[str, InnerSchemaWithValidationAlias], {"a": {"v": 1}}, {"a": {"value": 1}}, id="mapping"),
         pytest.param(Optional[list[InnerSchemaWithValidationAlias]], [{"v": 1}], [{"value": 1}], id="optional_list"),
         pytest.param(Optional[list[InnerSchemaWithValidationAlias]], None, None, id="optional_list_with_none"),
         pytest.param(typing.List, [{"v": 1}], [{"v": 1}], id="bare_list"),  # noqa: UP006
@@ -1784,6 +1790,376 @@ def test__request_body_migration__that_sets_a_later_alias_choice__head_should_ge
     clients = create_versioned_clients(version_change(migrator=migrator))
 
     assert clients["2000-01-01"].post(test_path, json=payload).json() == 99
+
+
+class CentsWithDollarsSerialization(BaseModel):
+    cents: int = Field(default=0, serialization_alias="dollars")
+
+
+def _decode_dollars(value: Any) -> Any:
+    if isinstance(value, dict) and "dollars" in value:
+        return {"cents": int(value["dollars"] * 100)}
+    return value
+
+
+def _encode_dollars(value: CentsWithDollarsSerialization) -> dict[str, float]:
+    return {"dollars": value.cents / 100}
+
+
+class MoneyWithAnnotatedHooks(BaseModel):
+    money: Annotated[CentsWithDollarsSerialization, BeforeValidator(_decode_dollars), PlainSerializer(_encode_dollars)]
+
+
+class MoneyParentWithHooks(BaseModel):
+    money: CentsWithDollarsSerialization
+
+    @field_serializer("money")
+    def serialize_money(self, value: CentsWithDollarsSerialization) -> dict[str, float]:
+        return _encode_dollars(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def deserialize_money(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return {**value, "money": _decode_dollars(value["money"])}
+
+
+class MoneyWithInheritedHooks(MoneyParentWithHooks):
+    pass
+
+
+class IntWithCustomCoreSchema(int):
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> core_schema.CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            cls,
+            core_schema.int_schema(),
+            serialization=core_schema.plain_serializer_function_ser_schema(lambda value: f"{value} cents"),
+        )
+
+
+IntWithSerializerAlias = TypeAliasType(
+    "IntWithSerializerAlias", Annotated[int, PlainSerializer(lambda value: f"#{value}", return_type=str)]
+)
+
+
+@pydantic_dataclass
+class DataclassWithFieldSerializer:
+    x: int
+
+    @field_serializer("x")
+    def serialize_x(self, value: int) -> str:
+        return f"x={value}"
+
+
+class InnerWithComputedFieldAndExtraForbid(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    a: int
+
+    @computed_field
+    @property
+    def double(self) -> int:
+        return self.a * 2
+
+
+class InnerWithModelSerializerInParent(BaseModel):
+    @model_serializer(mode="wrap")
+    def serialize_with_type(self, handler: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
+        return {**handler(self), "_t": type(self).__name__}
+
+
+class InnerWithModelSerializerInParentChild(InnerWithModelSerializerInParent):
+    q: Optional[int] = Field(default=None, validation_alias="qq")
+
+
+class InnerWithAlias(BaseModel):
+    a: Optional[int] = Field(default=None, alias="x", validation_alias="v")
+
+
+class SchemaWithJson(BaseModel):
+    value: Json[list[int]] = Field(default_factory=list, validation_alias="v", serialization_alias="s")
+
+
+class SchemaWithCustomCoreSchemaType(BaseModel):
+    value: IntWithCustomCoreSchema = Field(default=IntWithCustomCoreSchema(0), validation_alias="v")
+
+
+class SchemaWithSerializerInTypeAlias(BaseModel):
+    value: Optional[IntWithSerializerAlias] = Field(default=None, validation_alias="v")
+
+
+class SchemaWithDataclassWithFieldSerializer(BaseModel):
+    value: Optional[DataclassWithFieldSerializer] = Field(default=None, validation_alias="v")
+
+
+class SchemaWithComputedFieldInExtraForbidModel(BaseModel):
+    value: Optional[InnerWithComputedFieldAndExtraForbid] = Field(default=None, validation_alias="v")
+
+
+class SchemaWithModelSerializerInNestedParentClass(BaseModel):
+    inner: Optional[InnerWithModelSerializerInParentChild] = None
+
+
+class SchemaWithInheritedFieldSerializer(BaseModel):
+    value: Optional[int] = Field(default=None, validation_alias="v")
+
+    @field_serializer("value")
+    def serialize_value(self, value: Optional[int]) -> str:
+        return f"#{value}"
+
+
+class SchemaWithInheritedFieldSerializerChild(SchemaWithInheritedFieldSerializer):
+    pass
+
+
+class SchemaWithBeforeFieldValidator(BaseModel):
+    tags: list[str] = Field(default_factory=list, validation_alias="t")
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def split(cls, value: Any) -> Any:
+        return value.split(",")
+
+
+class SchemaWithBeforeValidatorInAnnotated(BaseModel):
+    tags: Annotated[list[str], BeforeValidator(lambda value: value.split(","))] = Field(
+        default_factory=list, validation_alias="t"
+    )
+
+
+class SchemaWithWrapFieldValidator(BaseModel):
+    value: Optional[int] = Field(default=None, validation_alias="v")
+
+    @field_validator("value", mode="wrap")
+    @classmethod
+    def count(cls, value: Any, handler: Callable[[Any], Any]) -> Any:
+        return handler(len(value)) if isinstance(value, str) else handler(value) * 1000
+
+
+class SchemaWithV1PreRootValidator(BaseModel):
+    value: Optional[int] = Field(default=None, alias="x", validation_alias="v")
+
+    @root_validator(pre=True)  # ty: ignore[deprecated]  # V1 validators are still supported.
+    def from_dumped_key(cls, values: dict[str, Any]) -> dict[str, Any]:
+        if "x" in values:
+            values = {**values, "v": values["x"] * 10}
+        return values
+
+
+class SchemaWithV1PreValidator(BaseModel):
+    tags: list[str] = Field(default_factory=list, validation_alias="t")
+
+    @validator("tags", pre=True)  # ty: ignore[deprecated]  # V1 validators are still supported.
+    def split(cls, value: Any) -> Any:
+        return value.split(",")
+
+
+class SchemaWithBeforeValidatorReadingNestedDumpedKey(BaseModel):
+    inner: Optional[InnerWithAlias] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def from_dumped_key(cls, data: Any) -> Any:
+        inner = data.get("inner") if isinstance(data, dict) else None
+        if isinstance(inner, dict) and "x" in inner:
+            return {**data, "inner": {"v": inner["x"] * 10}}
+        return data
+
+
+class SchemaWithFieldValidatorReadingNestedDumpedKey(BaseModel):
+    inner: Optional[InnerWithAlias] = None
+
+    @field_validator("inner", mode="before")
+    @classmethod
+    def from_dumped_key(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "v" not in value:
+            return {"v": value["x"] * 10}
+        return value
+
+
+class RootWithBeforeValidator(RootModel[Annotated[list[InnerWithAlias], BeforeValidator(lambda value: value)]]):
+    pass
+
+
+class InnerWithSerializationAlias(BaseModel):
+    x: int = Field(default=0, serialization_alias="y")
+
+
+class SchemaWithAliasPathIntoNestedModel(BaseModel):
+    inner: InnerWithSerializationAlias
+    copied: int = Field(default=0, validation_alias=AliasPath("inner", "y"))
+
+
+class OtherInnerWithY(BaseModel):
+    y: int
+
+
+class SchemaWithNestedModelsSharingAnAlias(BaseModel):
+    a: InnerWithSerializationAlias = Field(alias="shared")
+    b: OtherInnerWithY = Field(alias="shared")
+
+
+@pytest.mark.parametrize(
+    ("model", "payload", "read", "expected"),
+    [
+        pytest.param(
+            MoneyWithAnnotatedHooks, {"money": {"cents": 100}}, lambda b: b.money.cents, 100, id="annotated_hooks"
+        ),
+        pytest.param(
+            MoneyWithInheritedHooks, {"money": {"cents": 100}}, lambda b: b.money.cents, 100, id="inherited_hooks"
+        ),
+        pytest.param(SchemaWithJson, {"v": "[1,2]"}, lambda b: b.value, [], id="json"),
+        pytest.param(
+            SchemaWithCustomCoreSchemaType, {"v": 100}, lambda b: int(b.value), 0, id="custom_core_schema_type"
+        ),
+        pytest.param(SchemaWithSerializerInTypeAlias, {"v": 5}, lambda b: b.value, None, id="serializer_in_type_alias"),
+        pytest.param(SchemaWithDataclassWithFieldSerializer, {"v": {"x": 1}}, lambda b: b.value, None, id="dataclass"),
+        pytest.param(
+            SchemaWithComputedFieldInExtraForbidModel, {"v": {"a": 1}}, lambda b: b.value, None, id="computed"
+        ),
+        pytest.param(
+            SchemaWithModelSerializerInNestedParentClass,
+            {"inner": {"qq": 1}},
+            lambda b: b.inner.q,
+            None,
+            id="model_serializer_in_nested_parent_class",
+        ),
+        pytest.param(
+            SchemaWithInheritedFieldSerializerChild, {"v": 5}, lambda b: b.value, None, id="inherited_serializer"
+        ),
+        pytest.param(SchemaWithBeforeFieldValidator, {"t": "a,b"}, lambda b: b.tags, [], id="before_field_validator"),
+        pytest.param(
+            SchemaWithBeforeValidatorInAnnotated, {"t": "a,b"}, lambda b: b.tags, [], id="annotated_validator"
+        ),
+        pytest.param(SchemaWithWrapFieldValidator, {"v": "abc"}, lambda b: b.value, None, id="wrap_field_validator"),
+        pytest.param(SchemaWithV1PreRootValidator, {"v": 1}, lambda b: b.value, 10, id="v1_pre_root_validator"),
+        pytest.param(SchemaWithV1PreValidator, {"t": "a,b"}, lambda b: b.tags, [], id="v1_pre_validator"),
+        pytest.param(
+            SchemaWithBeforeValidatorReadingNestedDumpedKey,
+            {"inner": {"v": 1}},
+            lambda b: b.inner.a,
+            10,
+            id="model_validator_reading_nested_dumped_key",
+        ),
+        pytest.param(
+            SchemaWithFieldValidatorReadingNestedDumpedKey,
+            {"inner": {"v": 1}},
+            lambda b: b.inner.a,
+            10,
+            id="field_validator_reading_nested_dumped_key",
+        ),
+        pytest.param(
+            RootWithBeforeValidator, [{"v": 1}], lambda b: [i.a for i in b.root], [None], id="root_before_validator"
+        ),
+        pytest.param(
+            SchemaWithAliasPathIntoNestedModel,
+            {"inner": {"x": 7, "y": 7}},
+            lambda b: [b.inner.x, b.copied],
+            [0, 7],
+            id="alias_path_into_nested_model",
+        ),
+        pytest.param(
+            SchemaWithNestedModelsSharingAnAlias,
+            {"shared": {"x": 1, "y": 2}},
+            lambda b: [b.a.x, b.b.y],
+            [0, 2],
+            id="nested_models_sharing_an_alias",
+        ),
+    ],
+)
+def test__request_body_migration__with_values_that_might_not_survive_the_dump__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    model: type[BaseModel],
+    payload: Any,
+    read: Callable[[Any], Any],
+    expected: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: model):  # ty: ignore[invalid-type-form]
+        return read(body)
+
+    clients = create_versioned_clients(version_change())
+
+    # Known limitation: Cadwyn can't know whether such dumped values are valid input, so it leaves them as before
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == expected
+
+
+def test__request_body_migration__with_union_of_models_as_body__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Union[OtherInnerSchema, InnerSchemaWithValidationAlias]):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"o": 1}).json() == {"other_value": 1}
+
+
+def test__request_body_migration__with_after_model_validator_and_extra_forbid__head_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class InnerWithExtraForbid(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        value: int = Field(alias="x", validation_alias="v")
+
+    class SchemaWithAfterValidator(BaseModel):
+        inner: InnerWithExtraForbid
+
+        @model_validator(mode="after")
+        def check(self) -> Self:
+            assert self.inner.value > 0
+            return self
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithAfterValidator):
+        return body.inner.value
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"inner": {"v": 1}}).json() == 1
+
+
+def test__request_body_migration__with_json_form_field__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[SchemaWithJson, Form()]):
+        return body.value
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, data={"v": "[1,2]"}).json() == []
+
+
+def test__request_body_migration__with_value_that_the_head_rejects__should_fail_like_other_fields(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class SchemaWithStricterHead(BaseModel):
+        value: int = Field(default=0, validation_alias="v", ge=10)
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithStricterHead):
+        raise NotImplementedError  # pragma: no cover
+
+    clients = create_versioned_clients(version_change(schema(SchemaWithStricterHead).field("value").had(ge=0)))
+
+    # Main silently dropped the value. Now it reaches the head like any other field, which rejects it
+    with pytest.raises(CadwynHeadRequestValidationError):
+        clients["2000-01-01"].post(test_path, json={"v": 5})
 
 
 class SchemaWithAliasPathsIntoAnotherField(BaseModel):
