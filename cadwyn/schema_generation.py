@@ -527,7 +527,8 @@ def _get_best_effort_globals(call: Any) -> dict[str, Any]:
         is_partial_with_overridden_call = isinstance(unwrapped_call, functools.partial) and (
             type(unwrapped_call).__call__ is not functools.partial.__call__
         )
-        if is_partial_with_overridden_call:
+        # Proxies can pass the isinstance() check by faking __class__ but they have no partial __dict__ to create
+        if is_partial_with_overridden_call and issubclass(type(unwrapped_call), functools.partial):
             # This has nothing to do with globals but it must stay: accessing the instance __dict__ of a partial
             # creates it. Python 3.13+ flattens a partial of a partial (e.g. the one Starlette's run_in_threadpool
             # makes) into a single partial of the inner .func if the inner partial has no __dict__, which would

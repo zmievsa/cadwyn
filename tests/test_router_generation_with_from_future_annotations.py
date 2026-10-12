@@ -478,9 +478,10 @@ partial_subclass_of_dependency_from_another_module = _PartialWithOverriddenCall(
 def test__router_generation__partial_subclass_of_dependency_from_another_module__should_accept_bodies_like_head(
     router, create_versioned_clients
 ):
-    # Like FastAPI in the head route, Cadwyn resolves the annotations of such partials in the globals of their
-    # __call__, where "Payload" does not exist. Resolving it elsewhere would make the versioned routes expect
-    # a different request body than the head route that Cadwyn validates requests against after migrating them
+    # FastAPI cannot resolve "Payload" for such partials in the head route (it uses the unwrapped partial's globals,
+    # which are empty) and Cadwyn resolves them in the globals of their __call__, where "Payload" does not exist
+    # either. Resolving it anywhere else would make the versioned routes expect a different request body than
+    # the head route that Cadwyn validates requests against after migrating them
     @router.post("/test")
     async def route(body: Annotated[Any, Depends(partial_subclass_of_dependency_from_another_module)]):
         return body

@@ -2409,6 +2409,34 @@ def test__router_generation__partial_subclass_dependency_with_overridden_call__s
         assert version_client.get("/annotated").json() == 107
 
 
+class _ProxyPretendingToBeItsTarget:
+    def __init__(self, target: Callable[..., Any]) -> None:
+        self.target = target
+
+    @property
+    @override
+    def __class__(self) -> type:
+        return self.target.__class__
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.target, name)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.target(*args, **kwargs)
+
+
+def test__router_generation__proxy_of_partial_dependency__should_be_called_like_in_head(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.get("/test")
+    def route(value: int = Depends(_ProxyPretendingToBeItsTarget(functools.partial(_get_seven)))):
+        return value
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/test").json() == 7
+
+
 def test__router_generation__dependency_with_lazy_type_checking_only_annotations__should_resolve_the_other_ones(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
