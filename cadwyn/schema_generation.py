@@ -3,6 +3,7 @@ import copy
 import dataclasses
 import functools
 import inspect
+import itertools
 import operator
 import sys
 import threading
@@ -148,6 +149,9 @@ class _FieldAttributeChange(NamedTuple):
     is_deleted: bool
 
 
+_field_identities = itertools.count()
+
+
 @dataclasses.dataclass(**DATACLASS_SLOTS)
 class PydanticFieldWrapper:
     """We DO NOT maintain field.metadata at all"""
@@ -162,6 +166,8 @@ class PydanticFieldWrapper:
     passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
     declared_field_attributes: dict[str, Any] = dataclasses.field(init=False)
     changes: list[_FieldAttributeChange] = dataclasses.field(init=False)
+    # The same for all copies of the field
+    identity: int = dataclasses.field(init=False)
     models_that_changed_it: set[type[BaseModel]] = dataclasses.field(init=False)
     _field_attributes_by_model: dict[type[BaseModel], dict[str, Any]] = dataclasses.field(init=False, repr=False)
 
@@ -169,8 +175,23 @@ class PydanticFieldWrapper:
         self.passed_field_attributes = _extract_passed_field_attributes(init_model_field)
         self.declared_field_attributes = self.passed_field_attributes.copy()
         self.changes = []
+        self.identity = next(_field_identities)
         self.models_that_changed_it = set()
         self._field_attributes_by_model = {}
+
+    def copy_for_model(self, model: type[BaseModel], memo: dict[int, Any]) -> "PydanticFieldWrapper":
+        """Return a deep copy of the field with the attributes that it has in the model and no changes to apply.
+
+        Each model gets its own copy of the field (and of its default values) in every version, as before.
+        """
+        field_copy = copy.copy(self)
+        field_copy.annotation = copy.deepcopy(self.annotation, memo)
+        field_copy.passed_field_attributes = copy.deepcopy(self.get_field_attributes(model), memo)
+        field_copy.declared_field_attributes = field_copy.passed_field_attributes
+        field_copy.changes = []
+        field_copy.models_that_changed_it = set()
+        field_copy._field_attributes_by_model = {}
+        return field_copy
 
     def update_attribute(self, *, name: str, value: Any, changed_by: type[BaseModel]) -> None:
         self.passed_field_attributes[name] = value
@@ -615,16 +636,20 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 )
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
+        # The fields of the model share the copies of the objects that they share, like copy.deepcopy(self.fields)
+        memo_of_model: dict[int, Any] = {}
         result = _PydanticModelWrapper(
             self.cls,
             name=self.name,
             doc=self.doc,
-            # Subclasses can share fields with their parents so we copy each of them once
-            fields=copy.deepcopy(self.fields, memo),
+            fields={name: field.copy_for_model(self.cls, memo_of_model) for name, field in self.fields.items()},
             validators=copy.deepcopy(self.validators),
             other_attributes=copy.deepcopy(self.other_attributes),
             annotations=copy.deepcopy(self.annotations),
-            fields_renamed_by_parents=copy.deepcopy(self.fields_renamed_by_parents, memo),
+            fields_renamed_by_parents={
+                name: field.copy_for_model(self.cls, memo_of_model)
+                for name, field in self.fields_renamed_by_parents.items()
+            },
         )
         memo[id(self)] = result
         return result
@@ -1956,7 +1981,8 @@ def _get_parent_that_renamed_field(
         if not issubclass(base, BaseModel) or base is BaseModel or _is_generic_model(base):
             return None
         if base in schemas and field_name in schemas[base].fields:
-            return base if schemas[base].fields[field_name] is field else None
+            # Each model has its own copy of the field in every version
+            return base if schemas[base].fields[field_name].identity == field.identity else None
         cls = base
     return None
 

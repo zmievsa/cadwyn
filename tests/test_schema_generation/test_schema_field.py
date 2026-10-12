@@ -3,7 +3,16 @@ from enum import Enum, auto
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, Union, get_origin, get_type_hints
 
 import pytest
-from pydantic import BaseModel, Field, StringConstraints, ValidationError, computed_field, conint, constr
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    computed_field,
+    conint,
+    constr,
+)
 from pydantic.fields import FieldInfo
 
 from cadwyn.exceptions import (
@@ -1062,6 +1071,69 @@ def test__schema_field_had__parent_renamed_field_to_name_of_property_of_middle__
     child = schemas["2000-01-01"][ChildOfMiddleWithProperty]
     assert not child.model_fields["old"].is_required()
     assert child.model_validate({"foo": "abc", "old": "abcd"}).model_dump() == {"foo": "abc", "old": "abcd"}
+
+
+class CountingFactory:
+    def __init__(self) -> None:
+        self.value = 0
+
+    def __call__(self) -> int:
+        self.value += 1
+        return self.value
+
+
+class ParentWithDefaultFactory(BaseModel):
+    foo: int = Field(default_factory=CountingFactory())
+    bar: int = 0
+
+
+class ChildWithDefaultFactory(ParentWithDefaultFactory):
+    pass
+
+
+def test__schema_field_had__inherited_field_with_stateful_default_factory__should_not_share_it_with_parent(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ParentWithDefaultFactory).field("bar").had(description="Bar"),
+            schema(ChildWithDefaultFactory).field("foo").had(type=float),
+        )
+    )
+
+    models = [schemas["2000-01-01"][model] for model in (ParentWithDefaultFactory, ChildWithDefaultFactory)]
+    assert [model().foo for model in models + models] == [1, 1, 2, 2]
+
+
+class MutableDefault:
+    def __init__(self) -> None:
+        self.items: list[str] = []
+
+
+class ParentWithMutableDefault(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    foo: MutableDefault = MutableDefault()
+    bar: int = 0
+
+
+class ChildWithMutableDefault(ParentWithMutableDefault):
+    pass
+
+
+def test__schema_field_had__inherited_field_with_mutable_default__should_not_share_it_with_parent(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ParentWithMutableDefault).field("bar").had(description="Bar"),
+            schema(ChildWithMutableDefault).field("foo").had(type=object),
+        )
+    )
+
+    parent = schemas["2000-01-01"][ParentWithMutableDefault]()
+    child = schemas["2000-01-01"][ChildWithMutableDefault]()
+    parent.foo.items.append("parent")
+    assert child.foo.items == []
 
 
 class ParentWithoutField(BaseModel):
