@@ -1536,10 +1536,13 @@ class SchemaGenerator:
         We copy all other models even if their copies are the same as the head models because their copies
         differ from them in subtle ways that the older versions rely on, e.g. their OpenAPI names and their
         dunder methods such as __get_pydantic_json_schema__ that the copies do not have.
+        The decisions are cached so the models that are defined after the generator has decided about the models
+        that they refer to or inherit from do not change these decisions.
         """
-        if self._is_versioned(model):
+        # Finding the cycles is much cheaper than looking at all of the subclasses in _is_versioned
+        if lenient_issubclass(model, BaseModel) and not self._is_in_reference_cycle(model):
             return True
-        return lenient_issubclass(model, BaseModel) and not self._is_in_reference_cycle(model)
+        return self._is_versioned(model)
 
     def _is_versioned(self, model: type[Union[BaseModel, Enum]]) -> bool:
         """Whether the copy of the model or of any of its subclasses could differ from them in some version.
