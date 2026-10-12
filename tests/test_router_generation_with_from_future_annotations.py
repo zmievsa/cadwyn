@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import functools
 import inspect
 import sys
@@ -551,6 +552,53 @@ def test__router_generation__field_didnt_have_min_length_of_len__should_keep_max
             status_code_of_too_short_value
         )
         assert versioned_client.post("/test", json=payload | {field_name: "abcdef"}).status_code == 422
+
+
+@dataclasses.dataclass(frozen=True)
+class NameConstraints(StringConstraints):
+    min_length: int = 2
+
+
+@dataclasses.dataclass(frozen=True)
+class LenWithMinimum(Len):
+    min_length: int = 2
+
+
+class SchemaWithGroupedConstraintSubclasses(BaseModel):
+    string_constraints_subclass: Annotated[str, NameConstraints()]
+    len_subclass: Annotated[str, LenWithMinimum(max_length=5)]
+
+
+@pytest.mark.parametrize("field_name", ["string_constraints_subclass", "len_subclass"])
+def test__router_generation__field_didnt_have_constraint_with_default_in_grouped_constraint_subclass__should_remove_it(
+    router: VersionedAPIRouter,
+    create_versioned_clients,
+    field_name: str,
+):
+    @router.post("/test")
+    async def route(payload: SchemaWithGroupedConstraintSubclasses):
+        return payload.model_dump()
+
+    @convert_request_to_next_version_for(SchemaWithGroupedConstraintSubclasses)
+    def pad_values(request: RequestInfo):
+        request.body[field_name] = request.body[field_name].ljust(2, "_")
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(SchemaWithGroupedConstraintSubclasses).field(field_name).didnt_have("min_length"),
+            pad_values=pad_values,
+        ),
+    )
+    payload = {"string_constraints_subclass": "abc", "len_subclass": "abc"}
+
+    for version, min_length, status_code_of_empty_value in [("2001-01-01", 2, 422), ("2000-01-01", None, 200)]:
+        versioned_client = clients[version]
+        openapi = versioned_client.get(f"/openapi.json?version={version}").json()
+        properties = openapi["components"]["schemas"]["SchemaWithGroupedConstraintSubclasses"]["properties"]
+        assert properties[field_name].get("minLength") == min_length
+        assert versioned_client.post("/test", json=payload | {field_name: ""}).status_code == (
+            status_code_of_empty_value
+        )
 
 
 class SchemaWithSameConstraintBeforeAndAfterValidator(BaseModel):

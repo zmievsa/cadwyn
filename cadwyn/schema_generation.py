@@ -1395,12 +1395,19 @@ def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
 
 def _get_unset_metadata_attribute_value(metadata: Any, attr_name: str) -> Any:
     # Grouped metadata can become invalid with None (e.g. annotated_types.Len(min_length=None) fails to iterate)
-    # so we use the default value of its attribute
-    if isinstance(metadata, annotated_types.GroupedMetadata) and dataclasses.is_dataclass(metadata):
+    # so we use the default value of its attribute from the library class that defines it because
+    # the default of a user's subclass can be a constraint itself (e.g. `min_length: int = 2`)
+    if isinstance(metadata, annotated_types.GroupedMetadata):
+        library_dataclasses = (
+            cls
+            for cls in type(metadata).__mro__
+            if dataclasses.is_dataclass(cls) and cls.__module__.partition(".")[0] in {"annotated_types", "pydantic"}
+        )
         return next(
             (
                 field.default
-                for field in dataclasses.fields(metadata)
+                for cls in library_dataclasses
+                for field in dataclasses.fields(cls)
                 if field.name == attr_name and field.default is not dataclasses.MISSING
             ),
             None,
