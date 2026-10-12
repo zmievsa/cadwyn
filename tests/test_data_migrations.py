@@ -35,6 +35,7 @@ from pydantic import (
     WrapSerializer,
     WrapValidator,
     computed_field,
+    create_model,
     field_serializer,
     field_validator,
     model_serializer,
@@ -1387,6 +1388,12 @@ class OtherInnerSchema(BaseModel):
         pytest.param(Optional[list[InnerSchemaWithValidationAlias]], [{"v": 1}], [{"value": 1}], id="optional_list"),
         pytest.param(Optional[list[InnerSchemaWithValidationAlias]], None, None, id="optional_list_with_none"),
         pytest.param(list[list[InnerSchemaWithValidationAlias]], [[{"v": 1}], []], [[{"value": 1}], []], id="lists"),
+        pytest.param(
+            list[Annotated[InnerSchemaWithValidationAlias, {"unhashable": "metadata"}]],
+            [{"v": 1}],
+            [{"value": 1}],
+            id="list_of_unhashable_annotated",
+        ),
         pytest.param(typing.List, [{"v": 1}], [{"v": 1}], id="bare_list"),  # noqa: UP006
         pytest.param(typing.Dict, {"a": {"v": 1}}, {"a": {"v": 1}}, id="bare_dict"),  # noqa: UP006
         pytest.param(
@@ -2389,7 +2396,10 @@ def test__request_body_migration__with_field_core_schema_of_unexpected_shape__sh
     clients = create_versioned_clients(version_change())
     # Pydantic doesn't produce such schemas, but Cadwyn must not fail on them either
     original_schema: Any = SchemaWithUnexpectedFieldCoreSchema.__pydantic_core_schema__
-    fields = {**original_schema["schema"]["fields"], "value": {"type": "model-field", "schema": field_core_schema}}
+    fields = {
+        **original_schema["schema"]["fields"],
+        "value": {"type": "model-field", "schema": field_core_schema, "validation_alias": "v"},
+    }
     unexpected_schema: Any = {**original_schema, "schema": {**original_schema["schema"], "fields": fields}}
     SchemaWithUnexpectedFieldCoreSchema.__pydantic_core_schema__ = unexpected_schema
 
@@ -2752,6 +2762,125 @@ def test__request_body_migration__with_body_as_deep_as_pydantic_accepts__head_sh
 
     for version_client in clients.values():
         assert version_client.post(test_path, json=payload).json() == 250
+
+
+class SchemaWithAliasChangedInCoreSchema(BaseModel):
+    value: int = Field(default=0, validation_alias="v", serialization_alias="s")
+
+    @override
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> core_schema.CoreSchema:
+        schema = handler(source)
+        schema["schema"]["fields"]["value"]["validation_alias"] = "s"
+        return schema
+
+
+class ParentWithComputedField(BaseModel):
+    @computed_field(alias="wire")
+    @property
+    def display(self) -> str:
+        return "redacted"
+
+
+SchemaWithFieldNamedLikeAComputedFieldOwner = create_model(
+    "SchemaWithFieldNamedLikeAComputedFieldOwner",
+    __base__=ParentWithComputedField,
+    **{"computed field display": (int, Field(default=0, validation_alias="v", serialization_alias="wire"))},
+)
+
+
+@pytest.mark.parametrize(
+    ("model", "payload", "read", "expected"),
+    [
+        pytest.param(SchemaWithAliasChangedInCoreSchema, {"v": 7}, lambda b: b.value, 7, id="alias_in_core_schema"),
+        pytest.param(
+            SchemaWithFieldNamedLikeAComputedFieldOwner,
+            {"v": 5},
+            lambda b: getattr(b, "computed field display"),
+            0,
+            id="field_named_like_computed_field_owner",
+        ),
+    ],
+)
+def test__request_body_migration__with_keys_that_field_info_does_not_describe__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    model: type[BaseModel],
+    payload: dict[str, Any],
+    read: Callable[[Any], Any],
+    expected: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: model):  # ty: ignore[invalid-type-form]
+        return read(body)
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == expected
+
+
+def test__request_body_migration__with_bulk_items_with_several_nested_models__head_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class Details(BaseModel):
+        id: int
+        value: int = Field(default=0, validation_alias="v")
+
+    class Item(BaseModel):
+        first: Details
+        second: Details
+
+    class SchemaWithItems(BaseModel):
+        items: list[Item]
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithItems):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+    payload = {"items": [{"first": {"id": 1}, "second": {"id": 2, "v": 3}}, {"first": {"id": 4}, "second": {"id": 5}}]}
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == {
+            "items": [
+                {"first": {"id": 1, "value": 0}, "second": {"id": 2, "value": 3}},
+                {"first": {"id": 4, "value": 0}, "second": {"id": 5, "value": 0}},
+            ]
+        }
+
+
+def test__request_body_migration__with_safe_model_next_to_unsafe_one__should_restore_the_safe_one(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class SafeInner(BaseModel):
+        q: int = 0
+
+    class WrapperWithUnsafeModel(BaseModel):
+        money: MoneyWithModelSerializer = Field(default_factory=MoneyWithModelSerializer)
+        safe: SafeInner = Field(default_factory=SafeInner)
+
+    class WrapperWithSafeModel(BaseModel):
+        safe: SafeInner = Field(default_factory=SafeInner)
+
+    class SchemaWithWrappers(BaseModel):
+        unsafe_wrapper: WrapperWithUnsafeModel = Field(default_factory=WrapperWithUnsafeModel, validation_alias="u")
+        safe_wrapper: WrapperWithSafeModel = Field(default_factory=WrapperWithSafeModel, validation_alias="s")
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithWrappers):
+        return [body.unsafe_wrapper.safe.q, body.safe_wrapper.safe.q]
+
+    clients = create_versioned_clients(version_change())
+    payload = {"u": {"safe": {"q": 1}}, "s": {"safe": {"q": 2}}}
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == [0, 2]
 
 
 def test__request_body_migration__with_json_form_field__should_stay_as_before(
