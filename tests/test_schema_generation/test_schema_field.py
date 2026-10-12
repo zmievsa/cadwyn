@@ -172,6 +172,253 @@ def test__schema_field_didnt_exist__with_inheritance_and_child_not_versioned__ch
     assert schemas["2000-01-01"][ChildSchema](baz=83)  # ty: ignore[missing-argument]
 
 
+class InheritedFieldParent(BaseModel):
+    foo: str = Field(default="", description="Head", max_length=10)
+    bar: int = 0
+
+
+class InheritedFieldChild(InheritedFieldParent):
+    pass
+
+
+class InheritedFieldSibling(InheritedFieldParent):
+    pass
+
+
+class InheritedFieldGrandchild(InheritedFieldChild):
+    pass
+
+
+class InheritedFieldOtherParent(InheritedFieldParent):
+    pass
+
+
+class InheritedFieldDiamond(InheritedFieldChild, InheritedFieldOtherParent):
+    pass
+
+
+class InheritedFieldRedeclaringChild(InheritedFieldParent):
+    foo: str = Field(default="", description="Redeclared")
+
+
+class InheritedFieldDiamondWithRedeclaredField(InheritedFieldRedeclaringChild, InheritedFieldOtherParent):
+    baz: int = 0
+
+
+def _get_description_and_max_length(model: type[BaseModel]) -> tuple[Union[str, None], Union[int, None]]:
+    field = model.model_fields["foo"]
+    max_length = next((m.max_length for m in field.metadata if hasattr(m, "max_length")), None)
+    return field.description, max_length
+
+
+# The parent has an instruction so that its field is the same object as the field of its subclasses in Cadwyn
+PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="Bar")
+
+
+@pytest.mark.parametrize(
+    ("instructions_from_newest", "expected"),
+    [
+        pytest.param(
+            [[schema(InheritedFieldChild).field("foo").had(description="Child", max_length=3)]],
+            {
+                InheritedFieldParent: ("Head", 10),
+                InheritedFieldSibling: ("Head", 10),
+                InheritedFieldOtherParent: ("Head", 10),
+                InheritedFieldChild: ("Child", 3),
+                InheritedFieldGrandchild: ("Child", 3),
+                InheritedFieldDiamond: ("Child", 3),
+            },
+            id="child_had",
+        ),
+        pytest.param(
+            [[schema(InheritedFieldChild).field("foo").didnt_have("description", "max_length")]],
+            {
+                InheritedFieldParent: ("Head", 10),
+                InheritedFieldSibling: ("Head", 10),
+                InheritedFieldChild: (None, None),
+                InheritedFieldGrandchild: (None, None),
+            },
+            id="child_didnt_have",
+        ),
+        pytest.param(
+            [
+                [
+                    schema(InheritedFieldChild).field("foo").had(description="Changed"),
+                    schema(InheritedFieldSibling).field("foo").had(description="Changed"),
+                ]
+            ],
+            {
+                InheritedFieldParent: ("Head", 10),
+                InheritedFieldOtherParent: ("Head", 10),
+                InheritedFieldChild: ("Changed", 10),
+                InheritedFieldSibling: ("Changed", 10),
+            },
+            id="child_and_sibling_had_the_same_change",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldGrandchild).field("foo").had(description="Grandchild")],
+                [schema(InheritedFieldChild).field("foo").had(max_length=3)],
+            ],
+            {
+                InheritedFieldParent: ("Head", 10),
+                InheritedFieldChild: ("Head", 3),
+                InheritedFieldGrandchild: ("Grandchild", 3),
+            },
+            id="grandchild_then_child",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldGrandchild).field("foo").had(description="Grandchild")],
+                [schema(InheritedFieldParent).field("foo").had(max_length=3)],
+            ],
+            {
+                InheritedFieldParent: ("Head", 3),
+                InheritedFieldSibling: ("Head", 3),
+                InheritedFieldChild: ("Head", 3),
+                InheritedFieldGrandchild: ("Grandchild", 3),
+            },
+            id="grandchild_then_parent",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldChild).field("foo").had(description="Child")],
+                [schema(InheritedFieldParent).field("foo").had(description="Parent")],
+            ],
+            {InheritedFieldParent: ("Parent", 10), InheritedFieldChild: ("Parent", 10)},
+            id="child_then_parent_same_attribute",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldDiamond).field("foo").had(description="Diamond")],
+                [schema(InheritedFieldOtherParent).field("foo").had(max_length=3)],
+            ],
+            {
+                InheritedFieldChild: ("Head", 10),
+                InheritedFieldOtherParent: ("Head", 3),
+                InheritedFieldDiamond: ("Diamond", 3),
+            },
+            id="diamond_then_other_parent",
+        ),
+        pytest.param(
+            # Pydantic takes the field of the diamond from its first base that does not have the change
+            [[schema(InheritedFieldOtherParent).field("foo").had(max_length=3)]],
+            {
+                InheritedFieldChild: ("Head", 10),
+                InheritedFieldOtherParent: ("Head", 3),
+                InheritedFieldDiamond: ("Head", 3),
+            },
+            id="other_parent_of_diamond",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldChild).field("foo").had(description="Child")],
+                [schema(InheritedFieldOtherParent).field("foo").had(max_length=3)],
+            ],
+            {
+                InheritedFieldChild: ("Child", 10),
+                InheritedFieldOtherParent: ("Head", 3),
+                InheritedFieldDiamond: ("Child", 3),
+            },
+            id="both_parents_of_diamond",
+        ),
+        pytest.param(
+            [
+                [
+                    schema(InheritedFieldDiamondWithRedeclaredField).field("baz").had(description="Baz"),
+                    schema(InheritedFieldOtherParent).field("foo").had(max_length=3),
+                ]
+            ],
+            {InheritedFieldOtherParent: ("Head", 3), InheritedFieldDiamondWithRedeclaredField: ("Redeclared", None)},
+            id="other_parent_of_diamond_whose_first_base_redeclares_the_field",
+        ),
+    ],
+)
+def test__schema_field_had__inherited_field__should_change_the_model_and_its_subclasses_only(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    instructions_from_newest: list[list[Any]],
+    expected: dict[type[BaseModel], tuple[Union[str, None], Union[int, None]]],
+):
+    schemas = create_runtime_schemas(
+        *(version_change(*instructions) for instructions in reversed(instructions_from_newest[1:])),
+        version_change(PARENT_INSTRUCTION, *instructions_from_newest[0]),
+    )
+
+    assert {model: _get_description_and_max_length(schemas["2000-01-01"][model]) for model in expected} == expected
+
+
+@pytest.mark.parametrize(
+    ("instructions_from_newest", "expected_child", "expected_sibling"),
+    [
+        pytest.param(
+            [
+                [
+                    schema(InheritedFieldChild).field("foo").had(description="Child"),
+                    schema(InheritedFieldSibling).field("foo").had(description="Head"),
+                ]
+            ],
+            ("Child", 10),
+            ("Head", 10),
+            id="had_value_that_only_a_sibling_changed",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldChild).field("foo").had(description="Child")],
+                [schema(InheritedFieldSibling).field("foo").had(description="Head")],
+            ],
+            ("Child", 10),
+            ("Head", 10),
+            id="had_value_that_a_sibling_changed_in_a_newer_version",
+        ),
+        pytest.param(
+            [
+                [
+                    schema(InheritedFieldChild).field("foo").had(min_length=3),
+                    schema(InheritedFieldSibling).field("foo").didnt_have("min_length"),
+                ]
+            ],
+            ("Head", 10),
+            ("Head", 10),
+            id="didnt_have_attribute_that_only_a_sibling_had",
+        ),
+        pytest.param(
+            [
+                [
+                    schema(InheritedFieldChild).field("foo").had(type=bytes),
+                    schema(InheritedFieldSibling).field("foo").had(type=str),
+                ]
+            ],
+            ("Head", 10),
+            ("Head", 10),
+            id="had_type_that_only_a_sibling_changed",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldChild).field("foo").didnt_have("description")],
+                [schema(InheritedFieldSibling).field("foo").had(description="Head")],
+            ],
+            (None, 10),
+            ("Head", 10),
+            id="had_value_after_a_sibling_deleted_it",
+        ),
+    ],
+)
+def test__schema_field_had__inherited_field_that_a_sibling_changed__should_accept_the_same_instructions_as_before(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    instructions_from_newest: list[list[Any]],
+    expected_child: tuple[Union[str, None], Union[int, None]],
+    expected_sibling: tuple[Union[str, None], Union[int, None]],
+):
+    schemas = create_runtime_schemas(
+        *(version_change(*instructions) for instructions in reversed(instructions_from_newest[1:])),
+        version_change(PARENT_INSTRUCTION, *instructions_from_newest[0]),
+    )
+
+    assert _get_description_and_max_length(schemas["2000-01-01"][InheritedFieldChild]) == expected_child
+    assert _get_description_and_max_length(schemas["2000-01-01"][InheritedFieldSibling]) == expected_sibling
+    assert _get_description_and_max_length(schemas["2000-01-01"][InheritedFieldParent]) == ("Head", 10)
+
+
 #######
 # HAD #
 #######

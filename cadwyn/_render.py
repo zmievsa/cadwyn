@@ -115,7 +115,7 @@ def _render_pydantic_model(wrapper: _PydanticModelWrapper[BaseModel], original_c
         ast.AnnAssign(
             target=ast.Name(name),
             annotation=ast.Name(get_fancy_repr(field.annotation)),
-            value=_generate_field_ast(field),
+            value=_generate_field_ast(field, wrapper.cls),
             simple=1,
         )
         for name, field in wrapper.fields.items()
@@ -141,7 +141,7 @@ def _render_pydantic_model(wrapper: _PydanticModelWrapper[BaseModel], original_c
     return original_cls_node
 
 
-def _generate_field_ast(field: PydanticFieldWrapper) -> ast.Call:
+def _generate_field_ast(field: PydanticFieldWrapper, model: type[BaseModel]) -> ast.Call:
     return ast.Call(
         func=ast.Name("Field"),
         args=[],
@@ -150,6 +150,6 @@ def _generate_field_ast(field: PydanticFieldWrapper) -> ast.Call:
                 arg=attr,
                 value=ast.parse(get_fancy_repr(attr_value), mode="eval").body,
             )
-            for attr, attr_value in field.passed_field_attributes.items()
+            for attr, attr_value in field.get_field_attributes(model).items()
         ],
     )
