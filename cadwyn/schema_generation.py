@@ -484,24 +484,25 @@ def _get_function_behind_callable(call: Any) -> Any:
     return call.__call__
 
 
-def _get_signature(call: Callable[..., Any]) -> inspect.Signature:
+def _get_signature(call: Callable[..., Any]) -> tuple[inspect.Signature, bool]:
     """Return the signature of the callable with its postponed (string) annotations evaluated, like FastAPI does.
 
     inspect.signature() itself evaluates them in the globals of whichever function it reads the signature from,
     which is the only reliable way to pick the right globals for every kind of wrapper (partials, decorators, etc).
+    The second value is whether the annotations got evaluated.
     """
     try:
-        return inspect.signature(call, eval_str=True)
+        return inspect.signature(call, eval_str=True), True
     # This is deliberately narrow: an annotation may use a name that only exists for type checkers
-    # (e.g. one imported under "if TYPE_CHECKING:"). FastAPI handles this the same way. Annotations that can be
-    # resolved individually are resolved later in _modify_callable_annotations
+    # (e.g. one imported under "if TYPE_CHECKING:"). FastAPI handles this the same way. The parameter annotations
+    # that can be resolved individually are resolved later in _modify_callable_annotations
     except NameError:
         if sys.version_info >= (3, 14):
             from annotationlib import Format
 
             # Unresolvable names in lazily evaluated annotations become ForwardRefs instead of raising
-            return inspect.signature(call, annotation_format=Format.FORWARDREF)
-        return inspect.signature(call)
+            return inspect.signature(call, annotation_format=Format.FORWARDREF), False
+        return inspect.signature(call), False
 
 
 def _get_best_effort_globals(call: Any) -> dict[str, Any]:
@@ -767,7 +768,7 @@ class _AnnotationTransformer:
         if evaluate_postponed_annotations:
             # FastAPI evaluates the annotations of endpoints and dependencies the same way so we cannot fail where
             # FastAPI would not. Unlike __annotations__, the signature also follows functools.partial and __signature__
-            old_signature = _get_signature(call)
+            old_signature, annotations_were_evaluated = _get_signature(call)
             callable_annotations = {
                 name: param.annotation
                 for name, param in old_signature.parameters.items()
@@ -775,19 +776,31 @@ class _AnnotationTransformer:
             }
             if old_signature.return_annotation is not inspect.Signature.empty:
                 callable_annotations["return"] = old_signature.return_annotation
-            call_globals = _get_best_effort_globals(original_call)
+            if not annotations_were_evaluated:
+                # FastAPI would evaluate the remaining parameter annotations itself but in the globals that lead to
+                # the head models so we do it for it. It never evaluates the return annotations of dependencies
+                call_globals = _get_best_effort_globals(original_call)
+                callable_annotations = {
+                    k: _try_eval_type(v, call_globals) if type(v) is str and k != "return" else v
+                    for k, v in callable_annotations.items()
+                }
         else:
             # FastAPI never evaluates the annotations of other callables (e.g. pydantic's default factories) and they
-            # may not even be evaluable at runtime (e.g. pandas.Series[int]) so we keep evaluating only the ones
-            # that Cadwyn always did
+            # may not even be evaluable at runtime (e.g. pandas.Series[int]) so we keep evaluating them the way
+            # Cadwyn always did
             old_signature = inspect.signature(call)
             annotated_call = original_call if is_regular_function(original_call) else original_call.__call__
             callable_annotations = dict(getattr(annotated_call, "__annotations__", {}))
-            call_globals = _function_globals(annotated_call) if is_regular_function(annotated_call) else {}
+            # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
+            if is_regular_function(original_call):
+                call_globals = _function_globals(original_call)
+            else:
+                dunder_call = inspect.getattr_static(original_call, "__call__", None)
+                call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
+            callable_annotations = {
+                k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
+            }
         old_params = old_signature.parameters
-        callable_annotations = {
-            k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
-        }
         annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
         annotation_modifying_wrapper.__defaults__ = modify_defaults(
             tuple(

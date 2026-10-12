@@ -2280,6 +2280,27 @@ def test__router_generation__partial_dependency__should_keep_annotations_of_wrap
             }
 
 
+class _CachedFactory:
+    @functools.lru_cache  # noqa: B019
+    def __call__(self) -> int:
+        return 42
+
+
+def test__router_generation__cached_callable_default_factory__should_work(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    class Payload(BaseModel):
+        value: int = Field(default_factory=_CachedFactory())
+
+    @router.post("/test")
+    async def route(body: Payload):
+        return body.value
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.post("/test", json={}).json() == 42
+
+
 def test__router_generation__dependency_with_lazy_type_checking_only_annotations__should_resolve_the_other_ones(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,

@@ -662,6 +662,14 @@ def get_limit_with_type_checking_only_parameter(limit: int, price: Decimal | Non
     return limit
 
 
+class LimitGetterWithTypeCheckingOnlyReturn:
+    def __call__(self, limit: int) -> Decimal:
+        return limit  # ty: ignore[invalid-return-type]  # The annotation is only for type checkers.
+
+
+limit_getter_with_type_checking_only_return = LimitGetterWithTypeCheckingOnlyReturn()
+
+
 def test__router_generation__dependency_with_type_checking_only_annotations__should_resolve_the_other_ones(
     router, create_versioned_clients
 ):
@@ -673,8 +681,12 @@ def test__router_generation__dependency_with_type_checking_only_annotations__sho
     async def parameter_route(limit: Annotated[int, Depends(get_limit_with_type_checking_only_parameter)]):
         return limit
 
+    @router.get("/instance")
+    async def instance_route(limit: Annotated[int, Depends(limit_getter_with_type_checking_only_return)]):
+        return limit
+
     for version_client in create_versioned_clients(version_change()).values():
-        for path in ("/return", "/parameter"):
+        for path in ("/return", "/parameter", "/instance"):
             response = version_client.get(path, params={"limit": "5"})
             assert response.status_code == 200, (path, response.json())
             assert response.json() == 5
@@ -732,3 +744,41 @@ def test__router_generation__non_dependency_callables_with_unevaluable_annotatio
 
     for version_client in create_versioned_clients(version_change()).values():
         assert version_client.post("/test", json={}).json() == {"values": [0, 1, 2], "size": 1}
+
+
+# With postponed annotations, the quotes make this a string within a string so evaluating it once leaves a string
+def make_values_with_quoted_return(
+    size: int = 3,
+) -> "NotSubscriptableAtRuntime[int]":  # noqa: UP037  # ty: ignore[invalid-type-form]
+    return list(range(size))
+
+
+cached_make_values_with_quoted_return = functools.lru_cache(make_values_with_quoted_return)
+
+
+def test__router_generation__dependency_with_quoted_unevaluable_return_annotation__should_work(
+    router, create_versioned_clients
+):
+    # FastAPI never evaluates the return annotations of dependencies so neither does Cadwyn
+    @router.get("/partial")
+    async def partial_route(values: Annotated[Any, Depends(functools.partial(make_values_with_quoted_return, 3))]):
+        return values
+
+    @router.get("/cached")
+    async def cached_route(values: Annotated[Any, Depends(cached_make_values_with_quoted_return)]):
+        return values
+
+    for version_client in create_versioned_clients(version_change()).values():
+        for path in ("/partial", "/cached"):
+            assert version_client.get(path).json() == [0, 1, 2], path
+
+
+def test__router_generation__function_dependency_with_quoted_unevaluable_return_annotation__should_work(
+    router, create_versioned_clients
+):
+    @router.get("/test")
+    async def route(values: Annotated[Any, Depends(make_values_with_quoted_return)]):
+        return values
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/test").json() == [0, 1, 2]
