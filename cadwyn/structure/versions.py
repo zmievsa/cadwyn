@@ -5,7 +5,7 @@ import http
 import inspect
 import json
 import tempfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Coroutine, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
@@ -457,9 +457,9 @@ class VersionBundle:
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
         if request_info._form is not None:
-            if uploads_read_by_fastapi:
-                await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
             body_for_solving = FormData(request_info._form)
+            if uploads_read_by_fastapi:
+                await _rewind_uploads_read_by_fastapi(request_info._form, body_for_solving, uploads_read_by_fastapi)
         elif body_is_model_dump:
             body_for_solving = _restore_validation_aliases(head_dependant.body_params[0], request_info.body)
         else:
@@ -799,12 +799,14 @@ def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body
 @dataclasses.dataclass(frozen=True)
 class _UploadReadByFastapi:
     form_key: str
+    is_sequence: bool
     upload: UploadFile  # Keeps `id(upload)` valid
     file: BinaryIO
     position: int
 
 
-# Maps `id(upload)` to the upload with its form key, file, and position right after FastAPI has read it
+# Maps `id(upload)` to the upload with its form key, the kind of the param that read it, its file,
+# and its position right after FastAPI has read it
 _UploadPositions: TypeAlias = dict[int, _UploadReadByFastapi]
 
 
@@ -821,30 +823,38 @@ def _get_uploads_read_by_fastapi(route: APIRoute, form: FormData) -> _UploadPosi
         annotation = field.field_info.annotation
         alias = get_validation_alias(field)
         if is_bytes_or_nonable_bytes_annotation(annotation):
-            values = [form.get(alias)]
+            is_sequence = False
         elif is_bytes_sequence_annotation(annotation):
-            values = form.getlist(alias)
+            is_sequence = True
         else:
             continue
-        for value in values:
+        for value in _get_form_values(form, alias, is_sequence=is_sequence):
             if isinstance(value, UploadFile) and isinstance(value.file, tempfile.SpooledTemporaryFile):
-                uploads[id(value)] = _UploadReadByFastapi(alias, value, value.file, value.file.tell())
+                uploads[id(value)] = _UploadReadByFastapi(alias, is_sequence, value, value.file, value.file.tell())
     return uploads
 
 
-async def _rewind_uploads_read_by_fastapi(
-    form: list[tuple[str, Union[UploadFile, str]]], uploads: _UploadPositions
-) -> None:
-    """Undo FastAPI's reading of the uploaded files that are still in the form where FastAPI left them.
+def _get_form_values(form: FormData, key: str, *, is_sequence: bool) -> list[Union[UploadFile, str, None]]:
+    """Return the values that FastAPI picks from the form for a `bytes` (or a sequence of `bytes`) file param."""
+    return list(form.getlist(key)) if is_sequence else [form.get(key)]
 
-    Files that migrations replaced, moved under other keys, closed, seeked, or swapped for other streams
-    are passed on exactly as the migrations left them.
+
+async def _rewind_uploads_read_by_fastapi(
+    form: list[tuple[str, Union[UploadFile, str]]], form_data: FormData, uploads: _UploadPositions
+) -> None:
+    """Undo FastAPI's reading of the uploaded files that the head will get exactly where FastAPI left them.
+
+    We only rewind a file if the head's param will pick it from the same key again, if it appears in the form
+    only once, and if it still has the same stream at the same position. Files that migrations replaced,
+    shadowed, reused, moved under other keys, closed, seeked, or swapped for other streams are passed on
+    exactly as the migrations left them.
     """
-    for key, value in form:
-        read = uploads.get(id(value))
+    occurrences = Counter(id(value) for _, value in form)
+    for read in uploads.values():
+        picked_values = _get_form_values(form_data, read.form_key, is_sequence=read.is_sequence)
         if (
-            read is not None
-            and key == read.form_key
+            occurrences[id(read.upload)] == 1
+            and any(value is read.upload for value in picked_values)
             and read.upload.file is read.file
             and not read.file.closed
             and read.file.tell() == read.position

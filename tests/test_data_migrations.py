@@ -2000,24 +2000,47 @@ def test__form_migration__with_bytes_upload_stream_swapped_by_migration__should_
     assert clients["2000-01-01"].post(test_path, files={"upload": b"12345"}).json() == expected
 
 
+def _move_upload_to_attachment(request: RequestInfo):
+    assert request.form is not None
+    request.form[:] = [("upload", "converted"), ("attachment", dict(request.form)["upload"])]
+
+
+def _shadow_upload_and_reuse_it_as_attachment(request: RequestInfo):
+    assert request.form is not None
+    original = dict(request.form)["upload"]
+    request.form.extend([("upload", "converted"), ("attachment", original)])
+
+
+def _reuse_upload_as_attachment(request: RequestInfo):
+    assert request.form is not None
+    request.form.append(("attachment", dict(request.form)["upload"]))
+
+
+@pytest.mark.parametrize(
+    ("migration", "expected"),
+    [
+        (_move_upload_to_attachment, ["converted", ""]),
+        (_shadow_upload_and_reuse_it_as_attachment, ["converted", ""]),
+        (_reuse_upload_as_attachment, ["", ""]),
+    ],
+)
 def test__form_migration__with_bytes_upload_moved_to_another_field__should_stay_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
+    migration: Callable[[RequestInfo], None],
+    expected: list[str],
 ):
     @router.post(test_path)
     async def endpoint(upload: bytes = File(), attachment: Optional[UploadFile] = File(None)):
         assert attachment is not None
         return [upload.decode(), (await attachment.read()).decode()]
 
-    @convert_request_to_next_version_for(test_path, ["POST"])
-    def migrator(request: RequestInfo):
-        assert request.form is not None
-        request.form[:] = [("upload", "converted"), ("attachment", dict(request.form)["upload"])]
+    clients = create_versioned_clients(
+        version_change(migrator=convert_request_to_next_version_for(test_path, ["POST"])(migration))
+    )
 
-    clients = create_versioned_clients(version_change(migrator=migrator))
-
-    assert clients["2000-01-01"].post(test_path, files={"upload": b"legacy"}).json() == ["converted", ""]
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"legacy"}).json() == expected
 
 
 def test__form_migration__with_bytes_upload_closed_by_migration__should_stay_as_before(
