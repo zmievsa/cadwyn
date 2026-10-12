@@ -1167,6 +1167,12 @@ def _get_renames_and_traversable_fields(
             return (), ()
         return (), (("root", model.model_fields["root"].annotation),)
     field_schemas = inner_schema["fields"]
+    # The keys of every field decide which renames are unambiguous, so we only trust the field infos if the compiled
+    # schema validates and dumps all fields by the same aliases. `__get_pydantic_core_schema__` can change them.
+    if set(field_schemas) != set(model.model_fields) or not all(
+        _do_compiled_aliases_match(field, field_schemas[name]) for name, field in model.model_fields.items()
+    ):
+        return (), ()
     fields = {
         name: (field.serialization_alias or name, _get_validation_paths(model, name, field))
         for name, field in model.model_fields.items()
@@ -1198,7 +1204,6 @@ def _get_renames_and_traversable_fields(
                     for m in _get_restorable_models(annotation)
                 )
             )
-            or not _do_compiled_aliases_match(model.model_fields[name], field_schemas.get(name))
             or not _is_field_schema_safe(field_schemas, name)
         ):
             continue
