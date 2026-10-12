@@ -1037,6 +1037,16 @@ class _AnnotationTransformer:
             self.migrate_route_to_version(callback, ignore_response_model=ignore_response_model)
         self._remake_endpoint_dependencies(route)
 
+    def record_route(self, route: fastapi.routing.APIRoute) -> None:
+        """Request the models that migrate_route_to_version requests without changing the route (record-only)"""
+        if route.response_model is not None:
+            self.change_version_of_annotation(route.response_model)
+        self.change_version_of_annotation(route.dependencies)
+        self.change_versions_of_a_non_container_annotation(route.endpoint, callable_kind=_CallableKind.ENDPOINT)
+        for callback in route.callbacks or []:
+            if isinstance(callback, fastapi.routing.APIRoute):
+                self.record_route(callback)
+
     def _change_version_of_a_non_container_annotation(
         self, annotation: Any, *, callable_kind: _CallableKind = _CallableKind.OTHER
     ) -> Any:
@@ -1690,12 +1700,13 @@ class SchemaGenerator:
         "_cycles_behind_latest_generic_args",
         "_cycles_being_copied",
         "_cycles_to_copy",
+        "_eagerly_copied_cycles_exist",
         "_generation_analyses",
-        "_initial_models",
         "_lock",
         "_model_references",
-        "_models_copied_initially",
+        "_models_copied_eagerly",
         "_reference_cycles",
+        "_root_models",
         "_versioning_answers",
         "_versions_of_generic_args",
         "annotation_transformer",
@@ -1723,10 +1734,13 @@ class SchemaGenerator:
         self._adds_references: Union[bool, None] = None
         # The reference cycles whose copies we are generating right now, innermost last
         self._cycles_being_copied: list[frozenset[type[BaseModel]]] = []
-        # The models that the generator copies when it is created, with all of the models that they refer to
-        # (see _is_copied_initially)
-        self._initial_models = frozenset(self.model_bundle.schemas)
-        self._models_copied_initially: Union[frozenset[type[BaseModel]], None] = None
+        # The models that this version copies in any case: the ones with instructions, which the generator copies
+        # when it is created, and the ones that the routes use (see add_route_models). Along with all of the models
+        # that they refer to, they are the models copied eagerly (see _is_copied_eagerly)
+        self._root_models: set[type[BaseModel]] = set(self.model_bundle.schemas)
+        self._models_copied_eagerly: Union[set[type[BaseModel]], None] = None
+        # Whether the generator has copied any of the cycles that it copies eagerly
+        self._eagerly_copied_cycles_exist = False
         # The reference cycles that some generics keep the head models of in their type args
         self._cycles_behind_latest_generic_args: set[frozenset[type[BaseModel]]] = set()
         # Models are generated lazily (e.g. in migrate_response_body) so several threads can generate them at once
@@ -1742,9 +1756,7 @@ class SchemaGenerator:
             return model
         model = _unwrap_model(model)
 
-        # Pydantic holds its lock while it builds schemas, which can call the generator (e.g. a hook that calls
-        # migrate_response_body), and we rebuild models while we hold ours, so we always take pydantic's lock first
-        with _PYDANTIC_REBUILD_LOCK, self._lock:
+        with self._lock:
             if not self._needs_copy(model):
                 return model
             if model not in self.concrete_models:
@@ -1758,7 +1770,10 @@ class SchemaGenerator:
                 cycle = self._get_cycle_to_copy(model)
                 if cycle is None:
                     wrapper = self._get_wrapper_for_model(model)
-                    self.concrete_models[model] = wrapper.generate_model_copy(self)
+                    model_copy = wrapper.generate_model_copy(self)
+                    if self._eagerly_copied_cycles_exist and lenient_issubclass(model_copy, BaseModel):
+                        self._check_that_copy_does_not_use_latest_models_of_cycles(model_copy)
+                    self.concrete_models[model] = model_copy
                 else:
                     self._copy_cycle(cycle)
             return cast("type[_T_ANY_MODEL]", self.concrete_models[model])
@@ -1926,41 +1941,91 @@ class SchemaGenerator:
     def _analyze_generation_of_cycle(self, cycle: frozenset[type[BaseModel]]) -> _GenerationAnalysis:
         """Analyze the generation of the copies of a reference cycle that this version copies when they are needed.
 
-        If the generator copies the cycle anyway when it is created (where main failed), the generic args that refer
-        to it use its copies like any other versioned args. Otherwise, they keep the head models, exactly as on
-        main, which never copied such a cycle. If the cycle is copied later after all, e.g. for a route that uses it
-        directly (where main failed too), the same version would use both the head models and the copies of the
-        cycle, so we refuse to copy it (see _copy_cycle), whichever comes first.
+        If this version copies the cycle in any case (see _is_copied_eagerly), where main failed, the generic args
+        that refer to it use its copies like any other versioned args. Otherwise, they keep the head models, exactly
+        as on main, which never copied such a cycle. Copying such a cycle later on its own (e.g. in
+        migrate_response_body, where main failed) does not change them.
         """
-        if self._is_copied_initially(cycle):
+        if self._is_copied_eagerly(cycle):
             # Its models need copies so they are versioned
             return _GenerationAnalysis(terminates=True, refers_to_changed_models=True)
-        if any(model in self.concrete_models for model in cycle):
-            raise _get_latest_generic_args_error(cycle)
         self._cycles_behind_latest_generic_args.add(cycle)
         return _GenerationAnalysis(terminates=False, refers_to_changed_models=False)
 
-    def _is_copied_initially(self, cycle: frozenset[type[BaseModel]]) -> bool:
-        """Whether the generator copies the cycle when it is created: if the models of the bundle refer to it.
+    def add_route_models(self, models: "collections.abc.Iterable[type[Union[BaseModel, Enum]]]") -> None:
+        """Make the generator copy the cycles that the models of the routes refer to eagerly (see _is_copied_eagerly).
 
-        The generator copies the models of the bundle (the ones with instructions) and every model that they refer
-        to when it is created, before anything else can ask for copies. We decide statically, from the references,
-        so that the decisions do not depend on the order in which the models are requested.
+        Route generation registers all models of a version's routes before it versions any of them, so the
+        decisions do not depend on the order of the routes.
         """
-        if self._models_copied_initially is None:
-            models_copied_initially: set[type[BaseModel]] = set()
-            models_to_visit = [
-                model
-                for model in self._initial_models
-                if lenient_issubclass(model, BaseModel) and self._needs_copy(model)
-            ]
-            while models_to_visit:
-                model = models_to_visit.pop()
-                if model not in models_copied_initially:
-                    models_copied_initially.add(model)
-                    models_to_visit.extend(self._get_models_that_copying_requests(model))
-            self._models_copied_initially = frozenset(models_copied_initially)
-        return not cycle.isdisjoint(self._models_copied_initially)
+        with self._lock:
+            route_models = {
+                model for model in models if lenient_issubclass(model, BaseModel) and _is_versionable_model(model)
+            }
+            if route_models <= self._root_models:
+                return
+            self._root_models |= route_models
+            if self._models_copied_eagerly is not None:
+                self._add_models_copied_eagerly(route_models)
+            for cycle in self._cycles_behind_latest_generic_args:
+                if self._is_copied_eagerly(cycle):
+                    # E.g. a model with instructions has `Page[Category]`, which kept the latest Category when the
+                    # generator was created, and a route uses Category directly
+                    raise _get_latest_generic_args_error(cycle)
+
+    def _is_copied_eagerly(self, cycle: frozenset[type[BaseModel]]) -> bool:
+        """Whether this version copies the cycle in any case, where main failed.
+
+        This version copies the models with instructions when its generator is created, the models of its routes,
+        and every model that they refer to (except for the generic args that keep the head models). The decision
+        only depends on the references between the models and on the models of the routes, which route generation
+        registers before it versions them, so it does not depend on the order in which the models are requested.
+        """
+        if self._models_copied_eagerly is None:
+            self._models_copied_eagerly = set()
+            self._add_models_copied_eagerly(self._root_models)
+        return not cycle.isdisjoint(self._models_copied_eagerly)
+
+    def _add_models_copied_eagerly(self, root_models: "collections.abc.Iterable[type[BaseModel]]") -> None:
+        models_copied_eagerly = cast("set[type[BaseModel]]", self._models_copied_eagerly)
+        models_to_visit = [model for model in root_models if self._needs_copy(model)]
+        while models_to_visit:
+            model = models_to_visit.pop()
+            if model not in models_copied_eagerly:
+                models_copied_eagerly.add(model)
+                models_to_visit.extend(self._get_models_that_copying_requests(model))
+
+    def _is_member_of_cycle_copied_eagerly(self, model: type[Union[BaseModel, Enum]]) -> bool:
+        if not self._needs_copy(model):
+            return False
+        cycle = self._get_cycle_to_copy(model)
+        return cycle is not None and self._is_copied_eagerly(cycle)
+
+    def _check_that_copy_does_not_use_latest_models_of_cycles(self, model_copy: type[Any]) -> None:
+        """Raise if a copy outside of the eagerly copied cycles validates or serializes the head models of them.
+
+        E.g. `cats: list["Category"]` is resolved by pydantic in the module of the model, so Cadwyn does not see it
+        and the copy would keep the head Category of a changed self-referencing Category. Lazily copied cycles do not
+        count because the generics around them keep their head models, as on main.
+        """
+        copies = set(self.concrete_models.values())
+        latest_models = [
+            cls
+            for cls in _get_classes_in_core_schema(
+                model_copy.__pydantic_core_schema__, set(), other_copies=copies - {model_copy}
+            )
+            if _is_versionable_model(cls)
+            and not hasattr(cls, "__cadwyn_original_model__")
+            and self._is_member_of_cycle_copied_eagerly(cast("type[BaseModel]", cls))
+        ]
+        if latest_models:
+            raise SchemaGenerationError(
+                f"Cadwyn cannot generate the versioned copy of {model_copy.__qualname__} because it would use the "
+                f"latest {_get_cycle_name(latest_models)}, which refer to each other and need versioning, where "
+                "pydantic resolves them on its own: e.g. in the return types of computed fields or serializers, or in "
+                'names quoted within other annotations (`list["Model"]`, which you can write as `"list[Model]"` '
+                "instead)."
+            )
 
     def _is_referenced_through_args(self, generic: type[BaseModel]) -> bool:
         models_to_visit = list(self._get_references(generic).arg_models)
@@ -2036,8 +2101,6 @@ class SchemaGenerator:
         in its annotations. Pydantic resolves them once all of the copies exist (see _CycleCopier).
         The copies are only published once all of them are complete so no other request can see them before.
         """
-        if cycle in self._cycles_behind_latest_generic_args:
-            raise _get_latest_generic_args_error(cycle)
         creation_order = self._get_creation_order_of_cycle(cycle)
         self._cycles_being_copied.append(cycle)
         try:
@@ -2046,6 +2109,12 @@ class SchemaGenerator:
             self._cycles_being_copied.pop()
         for model, model_copy in copies.items():
             self.concrete_models[model] = model_copy
+        if not self._eagerly_copied_cycles_exist and self._is_copied_eagerly(cycle):
+            # The copies generated before could also use the head models of this cycle
+            self._eagerly_copied_cycles_exist = True
+            for model_copy in self.concrete_models.values():
+                if lenient_issubclass(model_copy, BaseModel) and model_copy not in copies.values():
+                    self._check_that_copy_does_not_use_latest_models_of_cycles(model_copy)
 
     def _get_creation_order_of_cycle(self, cycle: frozenset[type[BaseModel]]) -> list[type[BaseModel]]:
         """Return the order in which to create the copies of the models in the cycle, or raise if we cannot copy it.
@@ -2162,9 +2231,6 @@ def _parse_version(version: str) -> tuple[int, ...]:
 # on every rebuild, and copying reference cycles rebuilds their copies once their forward refs can be resolved
 _PYDANTIC_REBUILDS_FIELDS_WITHOUT_DUPLICATING_METADATA = _parse_version(pydantic.VERSION) >= (2, 11, 5)
 
-# Pydantic 2.14+ holds it while it rebuilds models (see SchemaGenerator.__getitem__)
-_PYDANTIC_REBUILD_LOCK: Any = getattr(pydantic.main, "_rebuild_lock", None) or contextlib.nullcontext()
-
 
 def _get_cycle_name(cycle: "collections.abc.Iterable[type]") -> str:
     return ", ".join(sorted(model.__qualname__ for model in cycle))
@@ -2174,8 +2240,9 @@ def _get_latest_generic_args_error(cycle: frozenset[type[BaseModel]]) -> SchemaG
     return SchemaGenerationError(
         f"Cadwyn cannot generate the versioned copies of {_get_cycle_name(cycle)} because they refer to each other "
         "and the same version also keeps the latest models in the type args of generics that refer to them, e.g. "
-        "in `Page[Model]`. This happens when only routes or migrate_response_body need their copies. Please add an "
-        "instruction for one of them or for a model that refers to them so that Cadwyn copies them in every case."
+        "in `Page[Model]` within a model with instructions that only refers to them through such generics. Please "
+        "add an instruction for one of them or refer to them from a model with instructions without a generic so "
+        "that Cadwyn copies them in every case."
     )
 
 
@@ -2183,8 +2250,23 @@ def _get_latest_generic_args_error(cycle: frozenset[type[BaseModel]]) -> SchemaG
 _CORE_SCHEMA_KEYS_WITHOUT_SCHEMAS = frozenset({"default", "default_factory", "expected", "metadata"})
 
 
-def _get_classes_in_core_schema(core_schema: Any, visited_ids: set[int]) -> set[type]:
-    """Return the classes that the core schema validates or serializes, e.g. the models in its fields"""
+def get_models_that_routes_request(routers: "collections.abc.Iterable[fastapi.routing.APIRouter]") -> set[type[Any]]:
+    """Return the models that versioning the routes of the routers requests from a generator directly"""
+    collector = _ReferencedModelCollector()
+    for router in routers:
+        for route in router.routes:
+            if isinstance(route, fastapi.routing.APIRoute):
+                collector.annotation_transformer.record_route(route)
+    return collector.models
+
+
+def _get_classes_in_core_schema(
+    core_schema: Any, visited_ids: set[int], *, other_copies: "collections.abc.Set[type]" = frozenset()
+) -> set[type]:
+    """Return the classes that the core schema validates or serializes, e.g. the models in its fields.
+
+    The schemas of other_copies are not visited because they are checked on their own.
+    """
     classes: set[type] = set()
     nodes_to_visit = [core_schema]
     while nodes_to_visit:
@@ -2195,6 +2277,8 @@ def _get_classes_in_core_schema(core_schema: Any, visited_ids: set[int]) -> set[
         if isinstance(node, dict):
             if isinstance(node.get("cls"), type):
                 classes.add(node["cls"])
+                if node["cls"] in other_copies:
+                    continue
             nodes_to_visit.extend(value for key, value in node.items() if key not in _CORE_SCHEMA_KEYS_WITHOUT_SCHEMAS)
         elif isinstance(node, list | tuple):
             nodes_to_visit.extend(node)
@@ -2280,9 +2364,7 @@ class _CycleCopier:
             latest_models = [
                 cls
                 for cls in _get_classes_in_core_schema(self.copies[model].__pydantic_core_schema__, visited_ids)
-                if _is_versionable_model(cls)
-                and not hasattr(cls, "__cadwyn_original_model__")
-                and self.schema_generator._is_versioned(cast("type[BaseModel]", cls))
+                if self._is_latest_versioned_model(cls)
             ]
             if latest_models:
                 raise SchemaGenerationError(
@@ -2293,6 +2375,65 @@ class _CycleCopier:
                     'annotations (`list["Model"]`, which you can write as `"list[Model]"` instead), or in generics '
                     "whose type args lead back to them."
                 )
+
+    def _check_that_defaults_are_not_latest_models(self, creation_order: list[type[BaseModel]]) -> None:
+        """Raise if the defaults of the copies or of the copies that they refer to are head models that need versioning.
+
+        Cadwyn does not version default values, so e.g. `settings: Settings = Settings()` would keep the head
+        Settings and lose the changes of the older versions. We can only see the defaults themselves and the return
+        annotations of the default factories, not what the factories or validators create without annotations.
+        """
+        models_to_check = list(creation_order)
+        visited_models = set(creation_order)
+        while models_to_check:
+            model = models_to_check.pop()
+            # The copies of the models that the cycle refers to are generated along with the cycle
+            model_copy = cast("type[BaseModel]", self.copies.get(model) or self.schema_generator.concrete_models[model])
+            for name, field in model_copy.model_fields.items():
+                self._check_field_default(model_copy, name, field)
+            for referenced_model in self.schema_generator._get_models_that_copying_requests(model):
+                if referenced_model not in visited_models:
+                    visited_models.add(referenced_model)
+                    models_to_check.append(referenced_model)
+
+    def _check_field_default(self, model_copy: Any, field_name: str, field: FieldInfo) -> None:
+        for value in _iter_values_within(field.default):
+            if isinstance(value, BaseModel) and self._is_latest_versioned_model(type(value)):
+                raise SchemaGenerationError(
+                    f"Cadwyn cannot generate the versioned copies of {_get_cycle_name(self.copies)} because they refer "
+                    f"to each other and the default of the field '{field_name}' of {model_copy.__qualname__} is an "
+                    f"instance of the latest {type(value).__qualname__}, which needs versioning. Please use a default "
+                    f"factory that is the class itself (`Field(default_factory={type(value).__qualname__})`) instead."
+                )
+        factory = field.default_factory
+        if factory is None:
+            return
+        factory = getattr(factory, "_original_callable", factory)
+        if isinstance(factory, type):
+            created_models = [factory]
+        else:
+            return_annotation = _evaluate_user_annotations(
+                lambda: inspect.signature(factory, eval_str=True).return_annotation
+            )
+            collector = _ReferencedModelCollector()
+            if return_annotation not in (_UNRESOLVED, inspect.Signature.empty):
+                collector.annotation_transformer.change_version_of_annotation(return_annotation)
+            created_models = list(collector.models)
+        latest_models = [cls for cls in created_models if self._is_latest_versioned_model(cls)]
+        if latest_models:
+            raise SchemaGenerationError(
+                f"Cadwyn cannot generate the versioned copies of {_get_cycle_name(self.copies)} because they refer "
+                f"to each other and the default factory of the field '{field_name}' of {model_copy.__qualname__} "
+                f"returns the latest {_get_cycle_name(latest_models)}, which need versioning. Please use a default "
+                "factory that is the class itself instead."
+            )
+
+    def _is_latest_versioned_model(self, cls: type) -> bool:
+        return (
+            _is_versionable_model(cls)
+            and not hasattr(cls, "__cadwyn_original_model__")
+            and self.schema_generator._is_versioned(cast("type[BaseModel]", cls))
+        )
 
     def _get_copy(self, model: Any) -> type[BaseModel]:
         if model not in self.copies:  # pragma: no cover # The order of creation makes sure that it exists
@@ -2318,6 +2459,7 @@ class _CycleCopier:
             if not self.copies[model].__pydantic_complete__:  # pragma: no cover # raise_errors=True raises before
                 raise SchemaGenerationError(f"Cadwyn could not build the versioned copy of {model.__qualname__}")
         self._check_that_copies_do_not_use_latest_models(creation_order)
+        self._check_that_defaults_are_not_latest_models(creation_order)
         for model_copy in self.copies.values():
             # Pydantic has already resolved the forward refs so the annotations can refer to the copies themselves,
             # e.g. for typing.get_type_hints
@@ -2325,6 +2467,22 @@ class _CycleCopier:
             for name, annotation in annotations.items():
                 annotations[name] = _replace_forward_refs(annotation, copies_by_name)
         return self.copies
+
+
+def _iter_values_within(value: Any) -> "collections.abc.Iterator[Any]":
+    """Iterate over the value and the values within its lists, tuples, sets, and dicts"""
+    values_to_visit = [value]
+    visited_ids: set[int] = set()
+    while values_to_visit:
+        current_value = values_to_visit.pop()
+        if id(current_value) in visited_ids:
+            continue
+        visited_ids.add(id(current_value))
+        yield current_value
+        if isinstance(current_value, dict):
+            values_to_visit.extend(current_value.values())
+        elif isinstance(current_value, list | tuple | set | frozenset):
+            values_to_visit.extend(current_value)
 
 
 def _replace_forward_refs(annotation: Any, models_by_name: dict[str, type[BaseModel]]) -> Any:

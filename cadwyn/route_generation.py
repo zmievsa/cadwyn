@@ -33,6 +33,7 @@ from cadwyn.exceptions import (
 from cadwyn.schema_generation import (
     _add_request_and_response_params,
     generate_versioned_models,
+    get_models_that_routes_request,
 )
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionType
@@ -215,8 +216,12 @@ class _EndpointTransformer(Generic[_R, _WR]):
         webhook_routers: dict[VersionType, _WR] = {}
 
         for version in self.versions:
-            self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(router)
-            self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(webhook_router)
+            schema_generator = self.schema_generators[str(version.value)]
+            # All routes of the version must be known before any of them is versioned so that the decisions about
+            # the models that refer to each other do not depend on the order of the routes
+            schema_generator.add_route_models(get_models_that_routes_request([router, webhook_router]))
+            schema_generator.annotation_transformer.migrate_router_to_version(router)
+            schema_generator.annotation_transformer.migrate_router_to_version(webhook_router)
 
             self._attach_routes_to_data_converters(router, self.head_router, version)
 
