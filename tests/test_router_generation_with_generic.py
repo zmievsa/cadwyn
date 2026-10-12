@@ -4,6 +4,7 @@ import sys
 import threading
 import typing
 import uuid
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from pathlib import Path
@@ -20,7 +21,10 @@ from pydantic import (
     Field,
     JsonValue,
     ValidationError,
+    computed_field,
     create_model,
+    field_serializer,
+    field_validator,
 )
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
 from typing_extensions import Self, TypeAliasType, TypeVarTuple, Unpack, override
@@ -1520,3 +1524,170 @@ def test__get_head_model_references__model_with_unresolved_annotated_field__shou
 
     assert assignment.metadata == metadata
     assert module.Parent().child is None
+
+
+class OneItemBox(BaseModel, Generic[ItemT]):
+    item: ItemT
+
+
+class SerializedItem(BaseModel):
+    amount: int
+    secret: str = Field(exclude=True)
+    label: str = Field(serialization_alias="Label")
+
+    @field_serializer("amount")
+    def serialize_amount(self, value: int) -> int:
+        return value * 100
+
+    @computed_field
+    @property
+    def double_amount(self) -> int:
+        return self.amount * 2
+
+
+class FrozenItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    value: int
+
+
+class ContainersBox(BaseModel, Generic[ItemT]):
+    unique: set[ItemT]
+    frozen: frozenset[ItemT]
+    queue: deque[ItemT]
+
+
+@pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
+def test__migrate_response_body__head_instance_with_serializers_in_versioned_generic_args__should_not_serialize_it(
+    version: str,
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(SerializedItem).field("amount").had(description="Old"))),
+        Version("2000-01-01"),
+    )
+    head_box = OneItemBox[SerializedItem](item=SerializedItem(amount=3, secret="s", label="l"))
+
+    migrated_body = migrate_response_body(
+        versions, OneItemBox[SerializedItem], latest_body={"item": head_box.item}, version=version
+    )
+
+    assert (migrated_body.item.amount, migrated_body.item.secret, migrated_body.item.label) == (3, "s", "l")
+    assert migrated_body.model_dump() == head_box.model_dump()
+    assert migrated_body.model_dump(by_alias=True) == head_box.model_dump(by_alias=True)
+
+
+@pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
+def test__migrate_response_body__head_instances_in_containers_in_versioned_generic_args__should_be_migrated(
+    version: str,
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(FrozenItem).field("value").had(description="Old"))),
+        Version("2000-01-01"),
+    )
+    latest_body = {
+        "unique": {FrozenItem(value=1)},
+        "frozen": frozenset({FrozenItem(value=2)}),
+        "queue": deque([FrozenItem(value=3)]),
+    }
+
+    migrated_body = migrate_response_body(versions, ContainersBox[FrozenItem], latest_body=latest_body, version=version)
+
+    assert [item.value for item in migrated_body.unique] == [1]
+    assert [item.value for item in migrated_body.frozen] == [2]
+    assert [item.value for item in migrated_body.queue] == [3]
+
+
+class ItemState(str, Enum):
+    active = "active"
+
+
+class StrictItemWithState(BaseModel):
+    model_config = ConfigDict(strict=True)
+    state: ItemState
+
+
+@pytest.mark.parametrize(
+    ("response_model", "body"),
+    [
+        pytest.param(
+            OneItemBox[StrictItemWithState],
+            OneItemBox[StrictItemWithState](item=StrictItemWithState(state=ItemState.active)),
+            id="generic_arg",
+        ),
+        # This failed on main too
+        pytest.param(StrictItemWithState, StrictItemWithState(state=ItemState.active), id="model"),
+    ],
+)
+def test__router_generation__strict_model_with_unchanged_enum__should_accept_head_enum_members(
+    create_versioned_app: CreateVersionedApp,
+    response_model: Any,
+    body: BaseModel,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=response_model)
+    async def get_items() -> Any:
+        return body
+
+    app = create_versioned_app(
+        version_change(schema(StrictItemWithState).field("state").had(description="Old")), router=router
+    )
+
+    for version in ["2000-01-01", "2001-01-01"]:
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.get("/items").json() == body.model_dump(mode="json")
+        assert "ItemState" in client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
+
+
+def test__generate_versioned_models__enums_without_instructions__should_not_be_copied():
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(StrictItemWithState).field("state").had(description="Old"))),
+        Version("2000-01-01"),
+    )
+
+    for generator in generate_versioned_models(versions).values():
+        assert generator[ItemState] is ItemState
+        assert generator[StrictItemWithState].model_fields["state"].annotation is ItemState
+
+
+@pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
+def test__migrate_response_body__head_enum_members_in_strict_generic_args__should_be_accepted(version: str):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(StrictItemWithState).field("state").had(description="Old"))),
+        Version("2000-01-01"),
+    )
+
+    migrated_body = migrate_response_body(
+        versions,
+        OneItemBox[StrictItemWithState],
+        latest_body={"item": {"state": ItemState.active}},
+        version=version,
+    )
+
+    assert migrated_body.model_dump() == {"item": {"state": ItemState.active}}
+
+
+class ItemWithCountedValidator(BaseModel):
+    value: int
+
+    @field_validator("value")
+    @classmethod
+    def count_validation(cls, value: int) -> int:
+        VALIDATED_VALUES.append(value)
+        return value
+
+
+VALIDATED_VALUES: list[int] = []
+
+
+def test__migrate_response_body__data_in_versioned_generic_args__should_run_validators_once():
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(ItemWithCountedValidator).field("value").had(description="Old"))),
+        Version("2000-01-01"),
+    )
+    VALIDATED_VALUES.clear()
+
+    migrate_response_body(
+        versions, Page[ItemWithCountedValidator], latest_body={"items": [{"value": 1}]}, version="2000-01-01"
+    )
+
+    assert VALIDATED_VALUES == [1]

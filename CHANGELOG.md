@@ -19,7 +19,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Fixed older API versions failing to start when a model uses annotations that cannot be rebuilt from their arguments, such as a bare `typing.Callable` or `Unpack[Ts]`, or a default factory without an inspectable signature, such as `functools.partial(dict, count=1)`.
 - Fixed older API versions failing on Python 3.14 when versioned models, their default factories, or their type aliases use names that are only imported under `TYPE_CHECKING`, e.g. in `ClassVar` annotations.
 - Fixed endpoints and dependencies whose `__annotations__` were assigned by hand (e.g. in route factories) losing their annotations on Python 3.14, which turned their body parameters into missing query parameters in every version.
-- Fixed `migrate_response_body` raising a `ValidationError` when `latest_body` contains instances of the latest models where the older version uses its own models, e.g. `{"item": Item(...)}`. It now validates the data of these instances instead.
+- Fixed `migrate_response_body` raising a `ValidationError` when `latest_body` contains instances of the latest models where the older version uses its own models, e.g. `{"item": Item(...)}`. When the body does not validate as is, these instances are now read by their attributes and field names.
+- Fixed strict models rejecting the members of their enums in older API versions (e.g. a 500 for a response with a strict model that uses an enum) by no longer copying enums that have no enum instructions in any version.
 - Fixed `TypeError: unhashable type` on older API versions when an endpoint's request body or response model is an unhashable annotation such as `list[Annotated[int, {"description": "item"}]]`.
 
 ## [7.4.1]

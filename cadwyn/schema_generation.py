@@ -215,35 +215,15 @@ def migrate_response_body(
     ]
     try:
         return versioned_response_model.model_validate(migrated_response.body)
+    except pydantic.ValidationError as error:
+        validation_error = error
+    # The versioned generic args use the copies of their models, which reject the instances of the head models
+    # that main accepted there. So we read these instances by their attributes instead, which neither serializes
+    # them nor depends on aliases. We only do it when needed so that every body that main accepted stays the same.
+    try:
+        return versioned_response_model.model_validate(migrated_response.body, from_attributes=True, by_name=True)
     except pydantic.ValidationError:
-        if not _contains_model_instances(migrated_response.body):
-            raise
-        # The versioned generic args use the copies of their models, which reject the instances of the head models
-        # that main accepted there. So we validate the data of these instances instead, like routes do.
-        return versioned_response_model.model_validate(_dump_model_instances(migrated_response.body))
-
-
-def _contains_model_instances(body: Any) -> bool:
-    if isinstance(body, pydantic.BaseModel):
-        return True
-    if isinstance(body, dict):
-        return any(_contains_model_instances(value) for value in body.values())
-    if isinstance(body, list | tuple):
-        return any(_contains_model_instances(value) for value in body)
-    return False
-
-
-def _dump_model_instances(body: Any) -> Any:
-    if isinstance(body, pydantic.BaseModel):
-        # round_trip leaves out computed fields so that the data is valid input for the model
-        return body.model_dump(by_alias=True, round_trip=True)
-    if isinstance(body, dict):
-        return {key: _dump_model_instances(value) for key, value in body.items()}
-    if isinstance(body, list):
-        return [_dump_model_instances(value) for value in body]
-    if isinstance(body, tuple):
-        return tuple(_dump_model_instances(value) for value in body)
-    return body
+        raise validation_error from None
 
 
 def _unwrap_model(model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
@@ -1197,11 +1177,18 @@ class SchemaGenerator:
             return model
         model = _unwrap_model(model)
 
+        if self._is_enum_without_instructions(model):
+            return model
         with self._lock:
             if model not in self.concrete_models:
                 wrapper = self._get_wrapper_for_model(model)
                 self.concrete_models[model] = wrapper.generate_model_copy(self)
             return cast("type[_T_ANY_MODEL]", self.concrete_models[model])
+
+    def _is_enum_without_instructions(self, model: type[Union[BaseModel, Enum]]) -> bool:
+        # Such an enum is the same in every version so we do not copy it. Its members must stay the same objects
+        # too: e.g. strict models reject the members of a copy of their enum.
+        return lenient_issubclass(model, Enum) and model not in self._changed_models
 
     def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
         generic_metadata = model.__pydantic_generic_metadata__
