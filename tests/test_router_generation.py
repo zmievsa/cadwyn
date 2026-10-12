@@ -2362,16 +2362,39 @@ class _PartialWithOverriddenCall(functools.partial):
         return super().__call__(*args, **kwargs) + 100
 
 
+class _PartialWithOverriddenCallAndForwardedAttributes(_PartialWithOverriddenCall):
+    # Forwards __globals__ of .func too
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.func, name)
+
+
+class _PartialWithOverriddenCallAndHiddenDict(_PartialWithOverriddenCall):
+    @override
+    def __getattribute__(self, name: str) -> Any:
+        if name == "__dict__":
+            raise AssertionError("Cadwyn must not depend on the __dict__ attribute of the dependency")
+        return super().__getattribute__(name)
+
+
 def _get_seven() -> int:
     return 7
 
 
+@pytest.mark.parametrize(
+    "partial_subclass",
+    [
+        _PartialWithOverriddenCall,
+        _PartialWithOverriddenCallAndForwardedAttributes,
+        _PartialWithOverriddenCallAndHiddenDict,
+    ],
+)
 def test__router_generation__partial_subclass_dependency_with_overridden_call__should_call_the_override(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
+    partial_subclass: type[functools.partial[int]],
 ):
     # The instance must not have any attributes. Otherwise, Python would not flatten it into the partials around it
-    dependency = _PartialWithOverriddenCall(_get_seven)
+    dependency = partial_subclass(_get_seven)
 
     @router.get("/default")
     def default_route(value: int = Depends(dependency)):
@@ -2384,6 +2407,34 @@ def test__router_generation__partial_subclass_dependency_with_overridden_call__s
     for version_client in create_versioned_clients(version_change()).values():
         assert version_client.get("/default").json() == 107
         assert version_client.get("/annotated").json() == 107
+
+
+class _ProxyPretendingToBeItsTarget:
+    def __init__(self, target: Callable[..., Any]) -> None:
+        self.target = target
+
+    @property
+    @override
+    def __class__(self) -> type:
+        return self.target.__class__
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.target, name)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.target(*args, **kwargs)
+
+
+def test__router_generation__proxy_of_partial_dependency__should_be_called_like_in_head(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.get("/test")
+    def route(value: int = Depends(_ProxyPretendingToBeItsTarget(functools.partial(_get_seven)))):
+        return value
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/test").json() == 7
 
 
 def test__router_generation__dependency_with_lazy_type_checking_only_annotations__should_resolve_the_other_ones(
