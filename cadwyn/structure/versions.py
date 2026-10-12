@@ -728,11 +728,16 @@ class VersionBundle:
             return kwargs
 
         body_is_model_dump = False
-        # This is a kind of body param you get when you define a single pydantic schema in your route's body
+        # This is a kind of body param you get when you define a single pydantic schema in your route's body.
+        # FastAPI keys the endpoint kwargs by param names so the body can only be found there by its alias
+        # when the alias is its name. Embedded bodies are wrapped into a separate field with the "body" alias
+        # that is never one of the kwargs, so a param named "body" must not be mistaken for it.
         if (
             len(route.dependant.body_params) == 1
+            and not embed_body_fields
             and head_body_field is not None
             and body_field_alias is not None
+            and body_field_alias == route.dependant.body_params[0].name
             and body_field_alias in kwargs
         ):
             raw_body: Union[BaseModel, None] = kwargs.get(body_field_alias)
