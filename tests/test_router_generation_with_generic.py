@@ -264,7 +264,8 @@ class PartialB(BaseModel):
     a: Optional[Page[PartialA]] = None
 
 
-def get_dependency_page() -> Page["DependencyB"]:
+# Only the annotations of its parameters are versioned, like FastAPI only uses them
+def get_dependency_page(page: Optional[Page["DependencyB"]] = None) -> Any:
     raise NotImplementedError("Only its annotations are used")
 
 
