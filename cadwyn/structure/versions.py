@@ -940,13 +940,11 @@ def _get_renames_and_traversable_fields(
     that can only be validated through an `AliasPath`, is left as on main.
     """
     model_schema, definitions = _get_model_core_schema(model)
-    # A client's extra key can't be told apart from a dumped key, and a "before", "wrap" or "plain" model validator
-    # might already handle the dumped keys
+    # A client's extra key can't be told apart from a dumped key
     if model_schema is None or model.model_config.get("extra") == "allow":
         return (), ()
     if model_schema["root_model"]:
-        root_schema = model_schema["schema"]
-        if _dumps_invalid_input(root_schema, definitions):
+        if not _is_field_schema_safe(model_schema, "schema", definitions):
             return (), ()
         return (), (("root", model.model_fields["root"].annotation),)
     field_schemas = model_schema["schema"]["fields"]
@@ -965,9 +963,9 @@ def _get_renames_and_traversable_fields(
     for name, (dumped_key, paths) in fields.items():
         # A key that belongs to several fields is ambiguous, e.g. another field might read into it via `AliasPath`
         if (
-            _dumps_invalid_input(field_schemas[name]["schema"], definitions)
-            or dumped_key_owners[dumped_key] != {name}
+            dumped_key_owners[dumped_key] != {name}
             or not validated_key_owners.get(dumped_key, set()) <= {name}
+            or not _is_field_schema_safe(field_schemas, name, definitions)
         ):
             continue
         keys = [path[0] for path in paths if len(path) == 1]
@@ -980,92 +978,119 @@ def _get_renames_and_traversable_fields(
     return tuple(renames), tuple(traversable)
 
 
-_VALIDATORS_OF_RAW_INPUT = ("function-before", "function-wrap", "function-plain")
+# Reading a core schema of an unexpected shape fails with one of these. We leave such models and fields as on main.
+_CORE_SCHEMA_ERRORS = (LookupError, TypeError, AttributeError)
+# The core schema types whose dumped values are their valid input, and their keys that hold child schemas as
+# `(key, holds_several_schemas, is_optional)`. Any other type, such as "json" or the validators that get the raw input
+# ("function-before", "function-wrap", "function-plain"), is unsafe.
+# Data-valued keys such as defaults, literal values, metadata, or serializers are never walked.
+_CHILD_SCHEMA_KEYS: dict[str, tuple[tuple[str, bool, bool], ...]] = {
+    **dict.fromkeys(
+        (
+            *("any", "none", "bool", "int", "float", "decimal", "complex", "str", "bytes", "literal", "enum"),
+            *("date", "time", "datetime", "timedelta", "uuid", "url", "multi-host-url", "missing-sentinel"),
+            *("is-instance", "is-subclass", "callable"),
+        ),
+        (),
+    ),
+    **dict.fromkeys(("list", "set", "frozenset", "generator"), (("items_schema", False, True),)),
+    **dict.fromkeys(
+        (
+            *("nullable", "default", "function-after", "custom-error", "model", "dataclass"),
+            *("model-field", "dataclass-field", "typed-dict-field"),
+        ),
+        (("schema", False, False),),
+    ),
+    "tuple": (("items_schema", True, False),),
+    "dict": (("keys_schema", False, True), ("values_schema", False, True)),
+    "lax-or-strict": (("lax_schema", False, False), ("strict_schema", False, False)),
+    "json-or-python": (("json_schema", False, False), ("python_schema", False, False)),
+    "chain": (("steps", True, False),),
+    "union": (("choices", True, False),),
+    "tagged-union": (("choices", True, False),),
+    "model-fields": (("fields", True, False), ("extras_schema", False, True)),
+    "typed-dict": (("fields", True, False), ("extras_schema", False, True)),
+    "dataclass-args": (("fields", True, False),),
+}
 
 
 def _get_model_core_schema(model: type[BaseModel]) -> tuple[Union[dict[str, Any], None], dict[str, Any]]:
-    """Return the `model` core schema of the model, or None if a validator of the model gets the raw input"""
-    definitions = _collect_core_schema_definitions(model.__pydantic_core_schema__, {})
-    schema = _resolve_core_schema(cast("dict[str, Any]", model.__pydantic_core_schema__), definitions)
-    while schema["type"] != "model":
-        # "wrap" and "plain" model validators wrap the model schema, "after" ones too
-        if schema["type"] in _VALIDATORS_OF_RAW_INPUT:
+    """Return the `model` core schema of the model and its definitions.
+
+    Return None instead if a validator of the model gets the raw input, if the model has a model serializer,
+    or if its core schema isn't shaped like the one of a plain model.
+    """
+    try:
+        schema = cast("dict[str, Any]", model.__pydantic_core_schema__)
+        definitions: dict[str, Any] = {}
+        if schema["type"] == "definitions":
+            definitions = {definition["ref"]: definition for definition in schema["definitions"]}
+            schema = schema["schema"]
+        if schema["type"] == "definition-ref":
+            schema = definitions[schema["schema_ref"]]
+        # "after" model validators wrap the model schema and only get the validated model
+        while schema["type"] == "function-after":
+            schema = schema["schema"]
+        # "wrap" and "plain" model validators wrap the model schema, while "before" ones wrap its fields schema
+        if (
+            schema["type"] != "model"
+            or schema["cls"] is not model
+            or _is_custom_serialization(schema.get("serialization"))
+            or (not schema["root_model"] and schema["schema"]["type"] != "model-fields")
+        ):
             return None, definitions
-        schema = _resolve_core_schema(schema["schema"], definitions)
-    # A model serializer can dump anything
-    if _is_custom_serialization(schema.get("serialization")):
-        return None, definitions
-    inner_schema = schema["schema"]
-    # "before" model validators (including `root_validator(pre=True)`) wrap the fields schema inside the model schema
-    if inner_schema["type"] in _VALIDATORS_OF_RAW_INPUT and not schema["root_model"]:
-        return None, definitions
+    except _CORE_SCHEMA_ERRORS:
+        return None, {}
     return schema, definitions
 
 
-def _resolve_core_schema(schema: dict[str, Any], definitions: dict[str, Any]) -> dict[str, Any]:
-    while schema["type"] in ("definitions", "definition-ref"):
-        schema = schema["schema"] if schema["type"] == "definitions" else definitions[schema["schema_ref"]]
-    return schema
-
-
-def _collect_core_schema_definitions(schema: object, definitions: dict[str, Any]) -> dict[str, Any]:
-    if isinstance(schema, dict):
-        if schema.get("type") == "definitions":
-            definitions.update((definition["ref"], definition) for definition in schema["definitions"])
-        for key, value in schema.items():
-            if key != "metadata":
-                _collect_core_schema_definitions(value, definitions)
-    elif isinstance(schema, list):
-        for value in schema:
-            _collect_core_schema_definitions(value, definitions)
-    return definitions
-
-
-def _dumps_invalid_input(field_schema: dict[str, Any], definitions: dict[str, Any]) -> bool:
-    """Whether the dumped value of a field with this core schema might not be the valid input of the field"""
-    schema = field_schema
-    while schema["type"] in ("default", "function-after"):
-        schema = schema["schema"]
-    # A field validator that gets the raw input might not expect the dumped value
-    return schema["type"] in _VALIDATORS_OF_RAW_INPUT or _has_custom_serialization(field_schema, definitions, set())
-
-
-def _has_custom_serialization(schema: object, definitions: dict[str, Any], seen_refs: set[str]) -> bool:
-    """Whether the core schema dumps values that might not be valid input in Python mode.
-
-    That's the case for custom serializers, `Json`, and models that forbid extra keys but dump computed fields.
-    """
-    if isinstance(schema, list):
-        return any(_has_custom_serialization(value, definitions, seen_refs) for value in schema)
-    if not isinstance(schema, dict):
+def _is_field_schema_safe(schemas: dict[str, Any], key: str, definitions: dict[str, Any]) -> bool:
+    """Whether the dumped value of the field with the core schema at `schemas[key]` is its valid input"""
+    try:
+        return _is_core_schema_safe(schemas[key], definitions, set())
+    except _CORE_SCHEMA_ERRORS:
         return False
-    if schema.get("type") == "definition-ref":
+
+
+def _is_core_schema_safe(schema: dict[str, Any], definitions: dict[str, Any], seen_refs: set[str]) -> bool:
+    """Whether the dumped values of the core schema are its valid input.
+
+    They might not be with custom serializers, `Json`, models that forbid extra keys but dump computed fields,
+    and validators that get the raw input, anywhere in the schema.
+    """
+    schema_type = schema["type"]
+    if schema_type == "definition-ref":
         if schema["schema_ref"] in seen_refs:
-            return False
+            return True
         seen_refs.add(schema["schema_ref"])
-        return _has_custom_serialization(definitions[schema["schema_ref"]], definitions, seen_refs)
-    if _is_custom_serialization(schema.get("serialization")):
-        return True
-    if schema.get("type") == "json" or (
-        schema.get("type") in ("model", "dataclass")
+        return _is_core_schema_safe(definitions[schema["schema_ref"]], definitions, seen_refs)
+    if schema_type not in _CHILD_SCHEMA_KEYS:
+        return False
+    if _is_custom_serialization(schema.get("serialization")) or (
+        schema_type in ("model", "dataclass")
         and schema.get("config", {}).get("extra_fields_behavior") == "forbid"
-        and _has_computed_fields(schema["schema"])
+        and schema["schema"].get("computed_fields")
     ):
-        return True
-    return any(
-        _has_custom_serialization(value, definitions, seen_refs) for key, value in schema.items() if key != "metadata"
-    )
+        return False
+    return all(_is_core_schema_safe(child, definitions, seen_refs) for child in _get_child_core_schemas(schema))
+
+
+def _get_child_core_schemas(schema: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    for key, holds_several, is_optional in _CHILD_SCHEMA_KEYS[schema["type"]]:
+        if is_optional and key not in schema:
+            continue
+        child = schema[key]
+        if holds_several:
+            for item in child.values() if isinstance(child, dict) else child:
+                # Union choices can be `(schema, label)` tuples
+                yield item[0] if isinstance(item, tuple) else item
+        else:
+            yield child
 
 
 def _is_custom_serialization(serialization: object) -> bool:
     # Serializers that only run in JSON mode don't affect `model_dump()`
     return isinstance(serialization, dict) and serialization.get("when_used") not in ("json", "json-unless-none")
-
-
-def _has_computed_fields(schema: object) -> bool:
-    if isinstance(schema, dict):
-        return bool(schema.get("computed_fields")) or any(_has_computed_fields(value) for value in schema.values())
-    return isinstance(schema, list) and any(_has_computed_fields(value) for value in schema)
 
 
 def _get_validation_paths(model: type[BaseModel], name: str, field: FieldInfo) -> list[list[Union[str, int]]]:

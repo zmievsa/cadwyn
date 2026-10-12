@@ -4,8 +4,12 @@ import sys
 import typing
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
+from datetime import datetime
+from decimal import Decimal
+from enum import Enum
 from io import StringIO
 from typing import Annotated, Any, Literal, Optional, Union
+from uuid import UUID
 
 import fastapi
 import pytest
@@ -26,6 +30,7 @@ from pydantic import (
     Json,
     PlainSerializer,
     RootModel,
+    Strict,
     WrapSerializer,
     computed_field,
     field_serializer,
@@ -38,7 +43,7 @@ from pydantic import (
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import core_schema
 from starlette.responses import StreamingResponse
-from typing_extensions import Self, TypeAliasType, TypedDict
+from typing_extensions import Self, TypeAliasType, TypedDict, override
 
 from cadwyn import VersionedAPIRouter
 from cadwyn.exceptions import (
@@ -1875,6 +1880,42 @@ class InnerWithAlias(BaseModel):
     a: Optional[int] = Field(default=None, alias="x", validation_alias="v")
 
 
+class ItemWithWireSerialization(BaseModel):
+    value: int = Field(serialization_alias="wire")
+
+
+def _decode_wire(data: dict[str, Any]) -> dict[str, Any]:
+    # Fails if it gets anything but the serialized value
+    return {"value": data["wire"]}
+
+
+class SchemaWithBeforeValidatorInList(BaseModel):
+    items: list[Annotated[ItemWithWireSerialization, BeforeValidator(_decode_wire)]]
+
+
+class SchemaWithBeforeValidatorInOptional(BaseModel):
+    item: Optional[Annotated[ItemWithWireSerialization, BeforeValidator(_decode_wire)]] = None
+
+
+class SchemaWithChainCoreSchema(BaseModel):
+    value: Optional[int] = Field(default=None, validation_alias="v")
+
+    @override
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> core_schema.CoreSchema:
+        return core_schema.chain_schema([handler(source)])
+
+
+class SchemaWithJsonOrPythonCoreSchema(BaseModel):
+    value: Optional[int] = Field(default=None, validation_alias="v")
+
+    @override
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> core_schema.CoreSchema:
+        schema = handler(source)
+        return core_schema.json_or_python_schema(json_schema=schema, python_schema=schema)
+
+
 class SchemaWithJson(BaseModel):
     value: Json[list[int]] = Field(default_factory=list, validation_alias="v", serialization_alias="s")
 
@@ -2048,6 +2089,22 @@ class SchemaWithNestedModelsSharingAnAlias(BaseModel):
             id="field_validator_reading_nested_dumped_key",
         ),
         pytest.param(
+            SchemaWithBeforeValidatorInList,
+            {"items": [{"wire": 7}]},
+            lambda b: [item.value for item in b.items],
+            [7],
+            id="before_validator_in_list",
+        ),
+        pytest.param(
+            SchemaWithBeforeValidatorInOptional,
+            {"item": {"wire": 7}},
+            lambda b: b.item.value,
+            7,
+            id="before_validator_in_optional",
+        ),
+        pytest.param(SchemaWithChainCoreSchema, {"v": 1}, lambda b: b.value, None, id="chain_core_schema"),
+        pytest.param(SchemaWithJsonOrPythonCoreSchema, {"v": 1}, lambda b: b.value, None, id="json_or_python"),
+        pytest.param(
             RootWithBeforeValidator, [{"v": 1}], lambda b: [i.a for i in b.root], [None], id="root_before_validator"
         ),
         pytest.param(
@@ -2126,6 +2183,177 @@ def test__request_body_migration__with_after_model_validator_and_extra_forbid__h
 
     for version_client in clients.values():
         assert version_client.post(test_path, json={"inner": {"v": 1}}).json() == 1
+
+
+@pytest.mark.parametrize(
+    "default",
+    [
+        pytest.param({"type": "definitions"}, id="definitions"),
+        pytest.param({"type": "definition-ref", "schema_ref": "missing"}, id="definition_ref"),
+        pytest.param({"type": "function-before", "schema": {"type": "int"}}, id="function_before"),
+    ],
+)
+def test__request_body_migration__with_defaults_shaped_like_core_schemas__should_not_read_them(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    default: dict[str, Any],
+):
+    class SchemaWithCoreSchemaShapedDefault(BaseModel):
+        options: dict[str, Any] = default
+        value: Optional[int] = Field(default=None, validation_alias="v")
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithCoreSchemaShapedDefault):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"v": 1}).json() == {"options": default, "value": 1}
+        assert version_client.post(test_path, json={"options": {}, "v": 1}).json() == {"options": {}, "value": 1}
+
+
+class TypedDictWithValue(TypedDict):
+    value: int
+
+
+@pydantic_dataclass
+class DataclassWithValue:
+    value: int
+
+
+class Cat(BaseModel):
+    kind: Literal["cat"] = "cat"
+
+
+class Dog(BaseModel):
+    kind: Literal["dog"] = "dog"
+
+
+class StrEnumWithValue(str, Enum):
+    value = "value"
+
+
+def test__request_body_migration__with_fields_of_all_kinds_of_core_schemas__head_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class SchemaWithAllKindsOfFields(BaseModel):
+        tuple_: tuple[int, ...] = Field(validation_alias="tuple_v")
+        fixed_tuple: tuple[int, str] = Field(validation_alias="fixed_tuple_v")
+        set_: set[int] = Field(validation_alias="set_v")
+        frozenset_: frozenset[int] = Field(validation_alias="frozenset_v")
+        dict_: dict[str, Optional[int]] = Field(validation_alias="dict_v")
+        union: Union[int, str] = Field(validation_alias="union_v")
+        tagged_union: Annotated[Union[Cat, Dog], Field(discriminator="kind")] = Field(validation_alias="tagged_union_v")
+        typed_dict: TypedDictWithValue = Field(validation_alias="typed_dict_v")
+        dataclass: DataclassWithValue = Field(validation_alias="dataclass_v")
+        strict: Annotated[int, Strict()] = Field(validation_alias="strict_v")
+        literal: Literal["a", "b"] = Field(validation_alias="literal_v")
+        enum: StrEnumWithValue = Field(validation_alias="enum_v")
+        decimal: Decimal = Field(validation_alias="decimal_v")
+        uuid: UUID = Field(validation_alias="uuid_v")
+        datetime_: datetime = Field(validation_alias="datetime_v")
+        any_: Any = Field(validation_alias="any_v")
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithAllKindsOfFields):
+        return body.model_dump(mode="json")
+
+    clients = create_versioned_clients(version_change())
+    values = {
+        "tuple_": [1, 2],
+        "fixed_tuple": [1, "a"],
+        "set_": [1],
+        "frozenset_": [2],
+        "dict_": {"a": 1, "b": None},
+        "union": "a",
+        "tagged_union": {"kind": "dog"},
+        "typed_dict": {"value": 1},
+        "dataclass": {"value": 2},
+        "strict": 3,
+        "literal": "b",
+        "enum": "value",
+        "decimal": "1.5",
+        "uuid": "12345678-1234-5678-1234-567812345678",
+        "datetime_": "2000-01-01T00:00:00",
+        "any_": {"type": "definitions"},
+    }
+
+    for version_client in clients.values():
+        payload = {f"{name.rstrip('_')}_v": value for name, value in values.items()}
+        assert version_client.post(test_path, json=payload).json() == values
+
+
+@pytest.mark.parametrize(
+    "core_schema_",
+    [
+        pytest.param(None, id="none"),
+        pytest.param({}, id="empty"),
+        pytest.param({"type": "model"}, id="model_without_keys"),
+        pytest.param({"type": "definitions"}, id="definitions_without_keys"),
+        pytest.param({"type": "definitions", "definitions": [], "schema": {"type": "definition-ref"}}, id="bad_ref"),
+        pytest.param({"type": "function-after", "schema": None}, id="bad_wrapper"),
+        pytest.param({"type": "model", "cls": None, "root_model": False, "schema": {}}, id="other_class"),
+    ],
+)
+def test__request_body_migration__with_model_core_schema_of_unexpected_shape__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    core_schema_: Any,
+):
+    class SchemaWithUnexpectedCoreSchema(BaseModel):
+        value: Optional[int] = Field(default=None, validation_alias="v")
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithUnexpectedCoreSchema):
+        return body.value
+
+    clients = create_versioned_clients(version_change())
+    # Pydantic doesn't produce such schemas, but Cadwyn must not fail on them either
+    SchemaWithUnexpectedCoreSchema.__pydantic_core_schema__ = core_schema_
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"v": 1}).json() is None
+
+
+@pytest.mark.parametrize(
+    "field_core_schema",
+    [
+        pytest.param(None, id="none"),
+        pytest.param({"type": "list", "items_schema": "garbage"}, id="garbage_child"),
+        pytest.param({"type": "tuple", "items_schema": 1}, id="garbage_children"),
+        pytest.param({"type": "definition-ref", "schema_ref": "missing"}, id="missing_ref"),
+        pytest.param({"type": "model", "schema": None}, id="model_without_fields"),
+        pytest.param({"type": "unknown"}, id="unknown_type"),
+    ],
+)
+def test__request_body_migration__with_field_core_schema_of_unexpected_shape__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    field_core_schema: Any,
+):
+    class SchemaWithUnexpectedFieldCoreSchema(BaseModel):
+        value: Optional[int] = Field(default=None, validation_alias="v")
+        other: Optional[int] = Field(default=None, validation_alias="o")
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithUnexpectedFieldCoreSchema):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+    # Pydantic doesn't produce such schemas, but Cadwyn must not fail on them either
+    original_schema: Any = SchemaWithUnexpectedFieldCoreSchema.__pydantic_core_schema__
+    fields = {**original_schema["schema"]["fields"], "value": {"type": "model-field", "schema": field_core_schema}}
+    unexpected_schema: Any = {**original_schema, "schema": {**original_schema["schema"], "fields": fields}}
+    SchemaWithUnexpectedFieldCoreSchema.__pydantic_core_schema__ = unexpected_schema
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"v": 1, "o": 2}).json() == {"value": None, "other": 2}
 
 
 def test__request_body_migration__with_json_form_field__should_stay_as_before(
