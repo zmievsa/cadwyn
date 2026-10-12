@@ -850,22 +850,61 @@ def _restore_validation_aliases(annotation: object, data: Any) -> Any:
         return [_restore_validation_aliases(args[0], item) for item in data]
     if origin in (dict, Mapping) and len(args) == 2 and isinstance(data, dict):
         return {key: _restore_validation_aliases(args[1], value) for key, value in data.items()}
-    if not lenient_issubclass(annotation, BaseModel) or not _model_dumps_keys_it_does_not_validate(annotation):
+    if not lenient_issubclass(annotation, BaseModel):
         return data
+    renames, nested = _get_restore_plan(annotation)
     if issubclass(annotation, RootModel):
-        return _restore_validation_aliases(annotation.model_fields["root"].annotation, data)
-    return _restore_model_validation_aliases(annotation, data) if isinstance(data, dict) else data
+        return _restore_validation_aliases(annotation.model_fields["root"].annotation, data) if nested else data
+    if (not renames and not nested) or not isinstance(data, dict):
+        return data
+    restored = dict(data)
+    for dumped_key, field_annotation in nested:
+        if dumped_key in restored:
+            restored[dumped_key] = _restore_validation_aliases(field_annotation, restored[dumped_key])
+    for dumped_key, target_key, validated_keys in renames:
+        # We leave the field as on main if the data already has a key that the head validates for it, e.g. one that
+        # a migration set. This includes another field's dumped key so in chains like `a <- "b"`, `b <- "c"`,
+        # `a` doesn't get renamed and the head doesn't find it.
+        if dumped_key in data and target_key not in restored and not any(key in data for key in validated_keys):
+            restored[target_key] = restored.pop(dumped_key)
+    return restored
 
 
 @functools.cache
-def _model_dumps_keys_it_does_not_validate(model: type[BaseModel]) -> bool:
-    """Whether the dump of the model, or of any model inside it, has a key that the model doesn't validate"""
-    return any(
-        [dumped_key] not in _get_validation_paths(nested_model, name, field)
-        for nested_model in _collect_models(model, set())
-        for name, field in nested_model.model_fields.items()
+def _get_renames(model: type[BaseModel]) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """Return `(dumped_key, target_key, validated_keys)` for the fields whose dumped key the model doesn't validate.
+
+    We only rename to plain keys. Fields that can only be validated through an `AliasPath` are left as on main.
+    """
+    # A client's extra key can't be told apart from a dumped key so we leave such models as on main
+    if model.model_config.get("extra") == "allow":
+        return ()
+    renames = []
+    for name, field in model.model_fields.items():
+        dumped_key = field.serialization_alias or name
+        paths = _get_validation_paths(model, name, field)
+        keys = tuple(path[0] for path in paths if len(path) == 1 and isinstance(path[0], str))
+        if [dumped_key] not in paths and keys:
+            renames.append((dumped_key, keys[0], keys))
+    return tuple(renames)
+
+
+@functools.cache
+def _get_restore_plan(
+    model: type[BaseModel],
+) -> tuple[tuple[tuple[str, str, tuple[str, ...]], ...], tuple[tuple[str, object], ...]]:
+    """Return the renames of the model and the fields that contain models with renames, which we need to walk into"""
+    renames = _get_renames(model)
+    renamed_keys = {dumped_key for dumped_key, _, _ in renames}
+    nested = tuple(
+        (dumped_key, field.annotation)
+        for name, field in model.model_fields.items()
         for dumped_key in [field.serialization_alias or name]
+        # The head only reads the values under validated or renamed keys
+        if ([dumped_key] in _get_validation_paths(model, name, field) or dumped_key in renamed_keys)
+        and any(_get_renames(nested_model) for nested_model in _collect_models(field.annotation, set()))
     )
+    return renames, nested
 
 
 def _collect_models(annotation: object, models: set[type[BaseModel]]) -> set[type[BaseModel]]:
@@ -895,50 +934,6 @@ def _get_validation_paths(model: type[BaseModel], name: str, field: FieldInfo) -
     if model.model_config.get("validate_by_name", model.model_config.get("populate_by_name", False)):
         paths.append([name])
     return paths
-
-
-def _restore_model_validation_aliases(model: type[BaseModel], data: dict[str, Any]) -> dict[str, Any]:
-    restored = dict(data)
-    moved_values: list[tuple[str, Sequence[Union[str, int]], Any]] = []
-    for name, field in model.model_fields.items():
-        dumped_key = field.serialization_alias or name
-        if dumped_key not in data:
-            continue
-        value = _restore_validation_aliases(field.annotation, data[dumped_key])
-        paths = _get_validation_paths(model, name, field)
-        # The head validates the dumped key, or a key that a migration has already set, so we keep it as on main
-        if any(len(path) == 1 and path[0] in data for path in paths):
-            restored[dumped_key] = value
-        else:
-            del restored[dumped_key]
-            moved_values.append((dumped_key, next((path for path in paths if len(path) == 1), paths[0]), value))
-    # We move the values only after removing all dumped keys because a dumped key can be another field's alias
-    for dumped_key, path, value in moved_values:
-        moved = _set_alias_path(restored, path, value)
-        # Every validation path starts with a key
-        if AliasPath(cast("str", path[0]), *path[1:]).search_dict_for_path(moved) is value:
-            restored = moved
-        else:
-            # Something else is already there (e.g. another field's value), so we leave the value where it was
-            restored[dumped_key] = value
-    return restored
-
-
-def _set_alias_path(container: Any, path: Sequence[Union[str, int]], value: Any) -> Any:
-    """Return a copy of `container` where `AliasPath(*path)` finds `value`, never overwriting what's already there"""
-    if not path:
-        return value if container is None else container
-    key, *rest = path
-    if container is None:
-        container = {} if isinstance(key, str) else []
-    if isinstance(key, str) and isinstance(container, dict):
-        return {**container, key: _set_alias_path(container.get(key), rest, value)}
-    # A negative index can only be added to a new list, where it needs at least `-key` items
-    if isinstance(key, int) and isinstance(container, list) and (key >= 0 or not container):
-        items = [*container, *[None] * (max(key + 1, -key) - len(container))]
-        items[key] = _set_alias_path(items[key], rest, value)
-        return items
-    return container
 
 
 def _add_keyword_only_parameter(

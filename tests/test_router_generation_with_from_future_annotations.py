@@ -15,7 +15,7 @@ from fastapi import Body, Depends, Query, Request
 from fastapi.testclient import TestClient
 from pydantic import (
     AfterValidator,
-    AliasPath,
+    AliasChoices,
     AllowInfNan,
     BaseModel,
     ConfigDict,
@@ -686,7 +686,7 @@ class OuterSchemaWithValidationAliases(BaseModel):
 
 class InnerSchemaWithValidationAliases(BaseModel):
     value: int = Field(alias="x", validation_alias="v")
-    other: Annotated[int, Field(validation_alias=AliasPath("o", 0), serialization_alias="s")]
+    other: Annotated[int, Field(validation_alias=AliasChoices("o", "p"), serialization_alias="s")]
 
 
 def test__router_generation__body_fields_with_validation_aliases__should_reach_head_in_every_version(
@@ -702,7 +702,7 @@ def test__router_generation__body_fields_with_validation_aliases__should_reach_h
         request.body["l"].append({"x": 5, "s": 6})
 
     clients = create_versioned_clients(version_change(migrator=migrator))
-    payload = {"j": {"v": 1, "o": [2]}, "m": [{"v": 3, "o": [4]}]}
+    payload = {"j": {"v": 1, "o": 2}, "m": [{"v": 3, "p": 4}]}
 
     assert clients["2001-01-01"].post("/test", json=payload).json() == {
         "inner": {"value": 1, "other": 2},
