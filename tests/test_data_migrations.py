@@ -1538,6 +1538,22 @@ def _add_embedded_body_with_alias_endpoint(router: VersionedAPIRouter, path: str
         return body.value
 
 
+def _add_optional_embedded_body_endpoint(router: VersionedAPIRouter, path: str) -> None:
+    @router.post(path)
+    async def endpoint(body: Optional[InnerSchemaWithValidationAlias] = Body(None, embed=True)):
+        return body.value if body is not None else None
+
+
+def _add_optional_embedded_body_next_to_optional_query_param_named_body_endpoint(
+    router: VersionedAPIRouter, path: str
+) -> None:
+    @router.post(path)
+    async def endpoint(
+        payload: Optional[InnerSchemaWithValidationAlias] = Body(None, embed=True), body: Optional[str] = Query(None)
+    ):
+        return [payload.value if payload is not None else None, body]
+
+
 def _add_embedded_body_next_to_query_param_named_body_endpoint(router: VersionedAPIRouter, path: str) -> None:
     @router.post(path)
     async def endpoint(payload: InnerSchemaWithValidationAlias = Body(embed=True), body: str = Query()):
@@ -1578,6 +1594,18 @@ def _add_body_with_alias_of_query_param_endpoint(router: VersionedAPIRouter, pat
             {"json": {"payload": {"v": 1}}},
             1,
             id="embedded_body_with_alias",
+        ),
+        pytest.param(
+            _add_optional_embedded_body_endpoint,
+            {"json": {"body": {"v": 1}}},
+            1,
+            id="optional_embedded_body",
+        ),
+        pytest.param(
+            _add_optional_embedded_body_next_to_optional_query_param_named_body_endpoint,
+            {"json": {"payload": {"v": 1}}, "params": {"body": "q"}},
+            [1, "q"],
+            id="optional_embedded_body_next_to_optional_query_param_named_body",
         ),
         pytest.param(
             _add_embedded_body_next_to_query_param_named_body_endpoint,
@@ -1654,6 +1682,61 @@ def test__request_body_migration__with_embedded_body_changed_in_old_version__hea
         embedded_ref = body_schema["properties"]["body"]["$ref"]
         embedded_schema = openapi["components"]["schemas"][embedded_ref.removeprefix("#/components/schemas/")]
         assert list(embedded_schema["properties"]) == [field_name]
+
+
+class SchemaWithDifferentAliases(BaseModel):
+    value: int = Field(alias="out", validation_alias="in")
+
+
+def _get_checked_body(body: SchemaWithDifferentAliases) -> SchemaWithDifferentAliases:
+    return body
+
+
+@pytest.mark.parametrize("migration_target", [(SchemaWithDifferentAliases,), ("/test", ["POST"])])
+def test__request_body_migration__with_body_alias_of_dependency_returning_the_body__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    migration_target: tuple[Any, ...],
+):
+    @router.post(test_path)
+    async def endpoint(
+        body: SchemaWithDifferentAliases = Body(alias="checked"),
+        checked: SchemaWithDifferentAliases = Depends(_get_checked_body),
+    ):
+        return body.value
+
+    bodies_seen_by_migration = []
+
+    @convert_request_to_next_version_for(*migration_target)
+    def migrator(request: RequestInfo):
+        bodies_seen_by_migration.append(dict(request.body))
+        request.body["out"] = 7
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, json={"in": 4}).json() == 7
+    assert clients["2001-01-01"].post(test_path, json={"in": 4}).json() == 4
+    assert bodies_seen_by_migration == [{"out": 4}]
+
+
+@pytest.mark.parametrize("annotation", [bytes, list[bytes]])
+def test__request_body_migration__with_file_named_body__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: annotation = File()):
+        raise NotImplementedError
+
+    clients = create_versioned_clients(version_change())
+
+    # FastAPI has already read the uploaded files so reading the request again would deliver them empty
+    for version_client in clients.values():
+        with pytest.raises(CadwynHeadRequestValidationError):
+            version_client.post(test_path, files={"body": ("file.txt", b"content")})
 
 
 def test__request_by_schema_migration__with_embedded_body__should_raise_error(
