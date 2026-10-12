@@ -28,7 +28,7 @@ from starlette.datastructures import FormData
 from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated, override
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
-from cadwyn._utils import classproperty
+from cadwyn._utils import classproperty, lenient_issubclass
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -433,10 +433,13 @@ class VersionBundle:
         head_route_id = id(head_route)
         for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
-                if body_type is not None and body_type in version_change.alter_request_by_schema_instructions:
-                    # Membership establishes that this annotation is a registered BaseModel key.
-                    schema = cast("type[BaseModel]", body_type)
-                    for instruction in version_change.alter_request_by_schema_instructions[schema]:
+                # Non-model annotations (e.g. list[Annotated[int, {...}]]) can be unhashable
+                # and can never have schema migrations anyway
+                if (
+                    lenient_issubclass(body_type, BaseModel)
+                    and body_type in version_change.alter_request_by_schema_instructions
+                ):
+                    for instruction in version_change.alter_request_by_schema_instructions[body_type]:
                         instruction(request_info)
                 if head_route_id in version_change._route_to_request_migration_mapping:
                     for instruction in version_change._route_to_request_migration_mapping[head_route_id]:
@@ -480,7 +483,12 @@ class VersionBundle:
             for version_change in v.changes:
                 migrations_to_apply: list[_BaseAlterResponseInstruction] = []
 
-                if head_response_model and head_response_model in version_change.alter_response_by_schema_instructions:
+                # Non-model response models (e.g. list[Annotated[int, {...}]]) can be unhashable
+                # and can never have schema migrations anyway
+                if (
+                    lenient_issubclass(head_response_model, BaseModel)
+                    and head_response_model in version_change.alter_response_by_schema_instructions
+                ):
                     migrations_to_apply.extend(
                         version_change.alter_response_by_schema_instructions[head_response_model]
                     )

@@ -4,7 +4,7 @@ import sys
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
 from io import StringIO
-from typing import Any, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 import fastapi
 import pytest
@@ -389,6 +389,25 @@ class TestRequestMigrations:
         assert empty_response.status_code == 200
         assert empty_response.json() is None
 
+    def test__request_migration__when_body_annotation_is_unhashable__should_migrate_by_path(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        # Dict metadata inside Annotated makes the whole annotation unhashable
+        @router.post(test_path)
+        async def route(payload: list[Annotated[int, {"description": "item"}]]):
+            return payload
+
+        @convert_request_to_next_version_for(test_path, ["POST"])
+        def migrator(request: RequestInfo):
+            request.body.append(3)
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        assert clients["2000-01-01"].post(url=test_path, json=[1, 2]).json() == [1, 2, 3]
+        assert clients["2001-01-01"].post(url=test_path, json=[1, 2]).json() == [1, 2]
+
 
 class TestResponseMigrations:
     def test__all_response_components_migration__post_endpoint__migration_filled_results_up(
@@ -650,6 +669,25 @@ class TestResponseMigrations:
         resp = client_2001.post(test_path, json={})
         assert resp.content == b"Hello, world"
         assert resp.status_code == 200
+
+    def test__response_migration__when_response_model_is_unhashable__should_migrate_by_path(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+    ):
+        # Dict metadata inside Annotated makes the whole annotation unhashable
+        @router.get(test_path)
+        async def route() -> list[Annotated[int, {"description": "item"}]]:
+            return [1, 2]
+
+        @convert_response_to_previous_version_for(test_path, ["GET"])
+        def migrator(response: ResponseInfo):
+            response.body.append(3)
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        assert clients["2000-01-01"].get(test_path).json() == [1, 2, 3]
+        assert clients["2001-01-01"].get(test_path).json() == [1, 2]
 
 
 class TestHowAndWhenMigrationsApply:
