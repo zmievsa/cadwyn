@@ -431,11 +431,15 @@ class VersionBundle:
     ) -> dict[str, Any]:
         start = self.reversed_version_values.index(current_version)
         head_route_id = id(head_route)
+        body_schema_key = _get_schema_migration_key(body_type)
         for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
-                if body_type is not None and body_type in version_change.alter_request_by_schema_instructions:
+                if (
+                    body_schema_key is not None
+                    and body_schema_key in version_change.alter_request_by_schema_instructions
+                ):
                     # Membership establishes that this annotation is a registered BaseModel key.
-                    schema = cast("type[BaseModel]", body_type)
+                    schema = cast("type[BaseModel]", body_schema_key)
                     for instruction in version_change.alter_request_by_schema_instructions[schema]:
                         instruction(request_info)
                 if head_route_id in version_change._route_to_request_migration_mapping:
@@ -471,19 +475,23 @@ class VersionBundle:
         self,
         response_info: ResponseInfo,
         current_version: VersionType,
-        head_response_model: Union[type[BaseModel], None],
+        head_response_model: object,
         head_route: Union[APIRoute, None],
     ) -> ResponseInfo:
         head_route_id = id(head_route)
         end = self.version_values.index(current_version)
+        response_schema_key = _get_schema_migration_key(head_response_model)
         for v in self.versions[:end]:
             for version_change in v.changes:
                 migrations_to_apply: list[_BaseAlterResponseInstruction] = []
 
-                if head_response_model and head_response_model in version_change.alter_response_by_schema_instructions:
-                    migrations_to_apply.extend(
-                        version_change.alter_response_by_schema_instructions[head_response_model]
-                    )
+                if (
+                    response_schema_key is not None
+                    and response_schema_key in version_change.alter_response_by_schema_instructions
+                ):
+                    # Membership establishes that this annotation is a registered key.
+                    schema = cast("type", response_schema_key)
+                    migrations_to_apply.extend(version_change.alter_response_by_schema_instructions[schema])
 
                 if head_route_id in version_change._route_to_response_migration_mapping:
                     migrations_to_apply.extend(version_change._route_to_response_migration_mapping[head_route_id])
@@ -801,6 +809,19 @@ async def _get_body(
     except Exception as e:
         raise HTTPException(status_code=400, detail="There was an error parsing the body") from e
     return body
+
+
+def _get_schema_migration_key(annotation: object) -> object:
+    """Return the annotation if it can be looked up in schema migration mappings, otherwise None.
+
+    Some annotations (e.g. `list[Annotated[int, {"description": "item"}]]`) are unhashable,
+    so no schema migration can ever be registered for them.
+    """
+    try:
+        hash(annotation)
+    except TypeError:
+        return None
+    return annotation
 
 
 def _add_keyword_only_parameter(
