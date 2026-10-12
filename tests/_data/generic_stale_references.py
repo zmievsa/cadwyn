@@ -1,17 +1,23 @@
-"""Models whose forward ref is only defined after Cadwyn has looked at them, which can close a cycle through a generic.
+"""Models that refer to `Later`, a name that is only defined when the tests call define_later().
 
-The tests load a fresh copy of this module for every case because defining `Later` changes these models.
+`X` refers to `Later` in the way that the tests set in `KIND` before loading this module. The tests load a fresh
+copy of this module for every case because defining `Later` changes these models.
 """
 
-from __future__ import annotations
+from typing import TYPE_CHECKING, ClassVar, Generic, Optional, TypeVar
 
-from typing import Generic, Optional, TypeVar
-
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 T = TypeVar("T")
-# Only declared here so that define_later() can define it
-Later: type[BaseModel]
+# The tests set it before executing this module
+KIND: str = globals()["KIND"]
+
+if TYPE_CHECKING:
+    # Only defined by define_later()
+    class Later(BaseModel):
+        back: Optional[object] = None
+
+    LaterAlias = Optional[Later]
 
 
 class Page(BaseModel, Generic[T]):
@@ -22,20 +28,48 @@ class Box(BaseModel, Generic[T]):
     value: Optional[T] = None
 
 
+class Ref(BaseModel, Generic[T]):
+    id: int = 1
+
+
 class Other(BaseModel):
     value: int = 1
 
 
+if KIND == "lazy_default_factory":
+    # Only evaluated lazily since Python 3.14
+    def make_later_id() -> Later:
+        return 1  # ty: ignore[invalid-return-type]
+
+else:
+
+    def make_later_id() -> "Later":
+        return 1  # ty: ignore[invalid-return-type]
+
+
 class X(BaseModel):
     other: Optional[Other] = None
-    later: Optional[Later] = None  # ty: ignore[invalid-type-form]
+    if KIND == "field":
+        later: "Optional[Later]" = None
+    elif KIND == "generic_arg":
+        later: Ref["Later"] = Ref["Later"]()
+    elif KIND in {"default_factory", "lazy_default_factory"}:
+        later_id: int = Field(default_factory=make_later_id)
+    elif KIND == "classvar":
+        # Only evaluated lazily since Python 3.14
+        later: ClassVar[Later]
+    else:
+        # The value of a type alias is evaluated lazily. Python 3.12 can define one but before Python 3.14
+        # Cadwyn fails on its undefined names as on main
+        exec("type LaterAlias = Optional[Later]")
+        later: Optional[LaterAlias] = None
 
 
 class W(BaseModel):
     x: Optional[X] = None
     page: Optional[Page[X]] = None
     # A plain self reference makes Box[W] keep its head args after looking at X and Page[X]
-    w: Optional[W] = None
+    w: "Optional[W]" = None
 
 
 def define_later(*, refer_back_to_page: bool) -> None:

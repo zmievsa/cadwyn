@@ -298,6 +298,23 @@ def _get_annotations_without_evaluating(obj: Any) -> dict[str, Any]:
     return obj.__annotations__
 
 
+def _has_undefined_names_in_lazy_annotations(obj: Any) -> bool:
+    """Whether the annotations of a class or a function refer to names that are not defined yet.
+
+    Since Python 3.14, annotations are evaluated lazily and _get_annotations_without_evaluating keeps such names
+    as forward refs, which would resolve to other objects once the names get defined. Earlier versions evaluate
+    annotations when they are defined unless they are strings, which stay strings.
+    """
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        from annotationlib import Format, get_annotations
+
+        try:
+            get_annotations(obj, format=Format.VALUE)
+        except NameError:
+            return True
+    return False
+
+
 def _get_model_annotations(model: type[BaseModel], fields: Union[dict[str, FieldInfo], None] = None) -> dict[str, Any]:
     fields = model.model_fields if fields is None else fields
 
@@ -354,7 +371,7 @@ def _get_head_model_references(model: type[BaseModel]) -> "_ModelReferences":
     Unlike _wrap_pydantic_model, it does not copy anything from the model because the model may never be copied.
     """
     fields = _get_rebuilt_model_fields(model)
-    if fields is None:
+    if fields is None or _has_undefined_names_in_lazy_annotations(model):
         # The models that it refers to are unknown until the missing names get defined
         return _ModelReferences(frozenset(), frozenset(), is_complete=False)
     collector = _ReferencedModelCollector()
@@ -571,14 +588,18 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         return cast("type[_T_PYDANTIC_MODEL]", model_copy)
 
 
-def _get_raw_callable_annotations(call: Any) -> dict[str, Any]:
-    """Return the annotations of the function that _CallableWrapper wraps"""
+def _get_annotated_function(call: Any) -> Any:
+    """Return the function whose annotations _CallableWrapper wraps, if any"""
     call = _AnnotationTransformer._unwrap_callable(call)
     if not is_regular_function(call):
         call = call.__call__
-    if not is_regular_function(call):
-        return {}
-    return _get_annotations_without_evaluating(call)
+    return call if is_regular_function(call) else None
+
+
+def _get_raw_callable_annotations(call: Any) -> dict[str, Any]:
+    """Return the annotations of the function that _CallableWrapper wraps"""
+    function = _get_annotated_function(call)
+    return {} if function is None else _get_annotations_without_evaluating(function)
 
 
 def _get_signature_parameters(call: Any) -> types.MappingProxyType[str, inspect.Parameter]:
@@ -589,6 +610,19 @@ def _get_signature_parameters(call: Any) -> types.MappingProxyType[str, inspect.
         # imported for type checking would raise a NameError. We only need the names and the defaults anyway.
         return inspect.signature(call, annotation_format=Format.FORWARDREF).parameters
     return inspect.signature(call).parameters
+
+
+def _has_undefined_names_in_type_alias_value(alias: Any) -> bool:
+    """Whether the lazily evaluated value of a type alias refers to names that are not defined yet.
+
+    _get_type_alias_value keeps such names as forward refs since Python 3.14.
+    """
+    if sys.version_info >= (3, 14) and hasattr(alias, "evaluate_value"):  # pragma: no cover
+        try:
+            alias.__value__  # noqa: B018
+        except NameError:
+            return True
+    return False
 
 
 def _get_type_alias_value(alias: Any) -> Any:
@@ -742,6 +776,8 @@ class _AnnotationTransformer:
             value = self.change_version_of_annotation(_get_type_alias_value(annotation))
             type_params = self.change_version_of_annotation(annotation.__type_params__)
             if self.record_only:
+                if _has_undefined_names_in_type_alias_value(annotation):  # pragma: no cover # Only on Python 3.14
+                    self._record_undefined_names()
                 return annotation
             return type(annotation)(name=annotation.__name__, value=value, type_params=type_params)
         elif isinstance(annotation, fastapi.params.Depends):
@@ -786,6 +822,12 @@ class _AnnotationTransformer:
             callable_annotations, defaults = self._get_callable_annotations_and_defaults(
                 annotation, _get_raw_callable_annotations(annotation), parameters
             )
+            function = _get_annotated_function(annotation)
+            # The string annotations that cannot be evaluated yet stay strings
+            if any(type(value) is str for value in callable_annotations.values()) or (
+                function is not None and _has_undefined_names_in_lazy_annotations(function)
+            ):
+                self._record_undefined_names()
             modifier(callable_annotations)
             modifier(defaults)
             return annotation
@@ -795,6 +837,13 @@ class _AnnotationTransformer:
             modifier,
             annotation_modifying_wrapper_factory=self._copy_function_through_class_based_wrapper,
         )
+
+    def _record_undefined_names(self) -> None:
+        """Record that the annotation refers to names that are not defined yet.
+
+        So the models that it refers to are unknown: they could change once the names get defined.
+        """
+        cast("_ReferencedModelCollector", self.generator).is_complete = False
 
     def _change_version_of_generic_alias(self, annotation: Any) -> Any:
         from typing_inspection.typing_objects import is_unpack
@@ -982,12 +1031,14 @@ def _is_versionable_model(model: Any) -> bool:
 class _ReferencedModelCollector:
     """A generator that records the models requested from it instead of generating their copies"""
 
-    __slots__ = "annotation_transformer", "arg_models", "models"
+    __slots__ = "annotation_transformer", "arg_models", "is_complete", "models"
 
     def __init__(self) -> None:
         self.annotation_transformer = _AnnotationTransformer(self, record_only=True)
         self.models: set[type[Union[BaseModel, Enum]]] = set()
         self.arg_models: set[type[Union[BaseModel, Enum]]] = set()
+        # Whether the annotations that we looked at only refer to names that are already defined
+        self.is_complete = True
 
     def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
         if _is_versionable_model(model):
@@ -997,14 +1048,18 @@ class _ReferencedModelCollector:
     def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
         generic_metadata = model.__pydantic_generic_metadata__
         arg_collector = _ReferencedModelCollector()
-        arg_collector.annotation_transformer.change_version_of_annotation(_eval_generic_args(model))
+        args = _eval_generic_args(model)
+        arg_collector.annotation_transformer.change_version_of_annotation(args)
         self.arg_models |= arg_collector.models
+        # The quoted args that cannot be evaluated yet stay forward refs
+        if not arg_collector.is_complete or any(_contains_forward_refs(arg) for arg in args):
+            self.is_complete = False
         if generic_metadata["origin"] is not None:
             self[generic_metadata["origin"]]
         return generic_metadata
 
     def get_references(self) -> "_ModelReferences":
-        return _ModelReferences(frozenset(self.models), frozenset(self.arg_models))
+        return _ModelReferences(frozenset(self.models), frozenset(self.arg_models), self.is_complete)
 
 
 class _ModelReferences(NamedTuple):
@@ -1012,10 +1067,10 @@ class _ModelReferences(NamedTuple):
     models: frozenset[type[Union[BaseModel, Enum]]]
     # The models in the type args of a parametrized generic (e.g. Item in Page[Item])
     arg_models: frozenset[type[Union[BaseModel, Enum]]]
-    # Whether we know all of the models that the model refers to. If we do not (e.g. its annotations refer to
-    # names that are not defined yet), copying it could refer to any model so we must not version the generic args
-    # that lead to it. Such references are not cached because the model can refer to anything once the names
-    # get defined.
+    # Whether we know all of the models that the model refers to. We do not when some names in its annotations
+    # (fields, class variables, quoted generic args, annotations of default factories, etc.) are not defined yet:
+    # once they get defined, copying the model can request any model. So we never version the generic args that
+    # lead to such a model, even after the names get defined, which keeps their head args exactly as on main.
     is_complete: bool = True
 
 
@@ -1031,7 +1086,6 @@ class SchemaGenerator:
     __slots__ = (
         "_changed_models",
         "_generation_analyses",
-        "_incomplete_reference_lookups",
         "_lock",
         "_model_references",
         "_versions_of_generic_args",
@@ -1051,8 +1105,6 @@ class SchemaGenerator:
         self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
         self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
         self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
-        # Counts the lookups of incomplete references so that we do not cache the decisions that relied on them
-        self._incomplete_reference_lookups = 0
         # Models are generated lazily (e.g. in migrate_response_body) so several threads can generate them at once
         self._lock = threading.RLock()
         self.concrete_models: dict[type[Union[BaseModel, Enum]], type[Union[BaseModel, Enum]]] = {}
@@ -1096,20 +1148,17 @@ class SchemaGenerator:
         generating their copies would recurse forever (e.g. `children: "list[Tree]"` within `Tree`).
         The decision only depends on the references between the models, not on the order of generation.
         """
-        if generic in self._versions_of_generic_args:
-            return self._versions_of_generic_args[generic]
-        incomplete_reference_lookups = self._incomplete_reference_lookups
-        arg_models = self._get_references(generic).arg_models
-        if not arg_models or self._is_referenced_through_args(generic):
-            should_version = False
-        else:
-            analyses = [self._analyze_generation(model, generation_stack) for model in arg_models]
-            should_version = all(analysis.terminates for analysis in analyses) and any(
-                analysis.refers_to_changed_models for analysis in analyses
-            )
-        if incomplete_reference_lookups == self._incomplete_reference_lookups:
+        if generic not in self._versions_of_generic_args:
+            arg_models = self._get_references(generic).arg_models
+            if not arg_models or self._is_referenced_through_args(generic):
+                should_version = False
+            else:
+                analyses = [self._analyze_generation(model, generation_stack) for model in arg_models]
+                should_version = all(analysis.terminates for analysis in analyses) and any(
+                    analysis.refers_to_changed_models for analysis in analyses
+                )
             self._versions_of_generic_args[generic] = should_version
-        return should_version
+        return self._versions_of_generic_args[generic]
 
     def _analyze_generation(
         self, model: type[Union[BaseModel, Enum]], generation_stack: list[type[Union[BaseModel, Enum]]]
@@ -1119,7 +1168,6 @@ class SchemaGenerator:
         if model in generation_stack:
             # The models that generating this model requests lead back to it so its generation would never finish
             return _GenerationAnalysis(terminates=False, refers_to_changed_models=False)
-        incomplete_reference_lookups = self._incomplete_reference_lookups
         generation_stack.append(model)
         references = self._get_references(model)
         requested_models = set(references.models)
@@ -1134,8 +1182,7 @@ class SchemaGenerator:
             refers_to_changed_models=model in self._changed_models
             or any(analysis.refers_to_changed_models for analysis in analyses),
         )
-        if incomplete_reference_lookups == self._incomplete_reference_lookups:
-            self._generation_analyses[model] = analysis
+        self._generation_analyses[model] = analysis
         return analysis
 
     def _is_referenced_through_args(self, generic: type[BaseModel]) -> bool:
@@ -1159,24 +1206,22 @@ class SchemaGenerator:
         that would make copying recurse forever, so any model that copying requests and discovery misses can lead
         to infinite recursion. This is why discovery runs the same function as copying
         (_change_version_of_model_references) and why tests/conftest.py checks the invariant for every model
-        copied in the test suite. If discovery cannot know all of the references (see _ModelReferences.is_complete),
-        it must say so instead of returning a subset.
+        copied in the test suite. If discovery cannot know all of the references because some names are not defined
+        yet (see _ModelReferences.is_complete), it must say so instead of returning a subset.
         Discovery must not change the model either because the model may never be copied.
+        The references and the decisions based on them are cached for the lifetime of the generator, just like
+        the copies, so a generic keeps the args that it got when the generator first needed it.
         """
-        if model in self._model_references:
-            return self._model_references[model]
-        if lenient_issubclass(model, Enum):
-            references = _ModelReferences(frozenset(), frozenset())
-        elif model in self.model_bundle.schemas:
-            references = self.model_bundle.schemas[model].get_references()
-        else:
-            # We do not wrap the model because wrapping copies parts of it and we may never need its copy
-            references = _get_head_model_references(cast("type[BaseModel]", model))
-        if references.is_complete:
+        if model not in self._model_references:
+            if lenient_issubclass(model, Enum):
+                references = _ModelReferences(frozenset(), frozenset())
+            elif model in self.model_bundle.schemas:
+                references = self.model_bundle.schemas[model].get_references()
+            else:
+                # We do not wrap the model because wrapping copies parts of it and we may never need its copy
+                references = _get_head_model_references(cast("type[BaseModel]", model))
             self._model_references[model] = references
-        else:
-            self._incomplete_reference_lookups += 1
-        return references
+        return self._model_references[model]
 
     @overload
     def _get_wrapper_for_model(self, model: type[BaseModel]) -> "_PydanticModelWrapper[BaseModel]": ...
@@ -1605,5 +1650,5 @@ def _try_eval_type(value: Any, globals: dict[str, Any]) -> Any:
     new_value, success = pydantic_try_eval_type(value, globals)
     if success:
         return new_value
-    else:  # pragma: no cover # Can't imagine when this would happen
+    else:
         return value
