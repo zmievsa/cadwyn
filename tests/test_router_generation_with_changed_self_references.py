@@ -12,8 +12,9 @@ from typing import Annotated, Any, ClassVar, Generic, Literal, Optional, TypeVar
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr, computed_field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr, computed_field, field_serializer
 from starlette.status import HTTP_200_OK, HTTP_422_UNPROCESSABLE_CONTENT
+from typing_extensions import override
 
 from cadwyn import (
     RequestInfo,
@@ -113,6 +114,10 @@ class Page(BaseModel, Generic[ValueT]):
     items: list[ValueT]
 
 
+class Envelope(BaseModel, Generic[ValueT]):
+    item: ValueT
+
+
 class Node(BaseModel, Generic[ValueT]):
     name: str
     value: ValueT
@@ -136,6 +141,15 @@ PagedCategory.model_rebuild()
 
 class Leaf(BaseModel):
     name: str
+
+
+class LazyItem(BaseModel):
+    name: str
+
+
+class LazyTree(BaseModel):
+    item: LazyItem
+    children: "list[LazyTree]" = []
 
 
 class VersionedParent(BaseModel):
@@ -214,6 +228,10 @@ class ValidatedCategory(BaseModel):
 
 def short_name(model: type[BaseModel]):
     return schema(model).field("name").had(max_length=3)
+
+
+def described_name(model: type[BaseModel]):
+    return schema(model).field("name").had(description="Old name")
 
 
 def get_schema_names(client: TestClient, version: str) -> list[str]:
@@ -493,71 +511,182 @@ def test__router_generation__validator_on_field_in_cycle__should_run_once(create
     assert old_client.post("/categories", json={"name": "abc", "children": []}).status_code == HTTP_200_OK
 
 
-@pytest.mark.parametrize("page_route_first", [False, True])
-def test__router_generation__changed_generic_tree_with_head_generic_args__should_not_depend_on_route_order(
-    page_route_first: bool, create_versioned_app: CreateVersionedApp
+def get_openapi_components(app: Any, version: str) -> dict[str, Any]:
+    response = TestClient(app).get(f"/openapi.json?version={version}")
+    assert response.status_code == HTTP_200_OK
+    return response.json()["components"]["schemas"]
+
+
+def get_request_body_schema(openapi_components: dict[str, Any], openapi: dict[str, Any], path: str) -> Any:
+    reference = openapi["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    return openapi_components[reference.rsplit("/", 1)[-1]]
+
+
+@pytest.mark.parametrize("generic_route_first", [False, True])
+@pytest.mark.parametrize(
+    ("model", "generic_model", "valid_body", "invalid_old_body"),
+    [
+        pytest.param(
+            TreeNode[int],
+            Page[TreeNode[int]],
+            {"name": "abc", "value": 1, "children": [{"name": "abc", "value": 2, "children": []}]},
+            {"name": "abc", "value": 1, "children": [{"name": "toolong", "value": 2, "children": []}]},
+            id="generic_tree",
+        ),
+        pytest.param(
+            Category,
+            Page[Category],
+            {"name": "abc", "children": [{"name": "abc", "children": []}]},
+            {"name": "abc", "children": [{"name": "toolong", "children": []}]},
+            id="self_referencing_model",
+        ),
+    ],
+)
+def test__router_generation__generic_route_model_around_changed_cycle__should_use_versioned_args(
+    model: Any,
+    generic_model: Any,
+    valid_body: dict[str, Any],
+    invalid_old_body: dict[str, Any],
+    generic_route_first: bool,
+    create_versioned_app: CreateVersionedApp,
+):
+    """The copies of a cycle that has instructions always exist, so the generics around it use them too"""
+    router = VersionedAPIRouter()
+
+    def add_model_route():
+        @router.post("/model", response_model=model)
+        async def create_model(payload: model) -> Any:
+            return payload
+
+    def add_generic_route():
+        @router.post("/page", response_model=generic_model)
+        async def create_page(page: generic_model) -> Any:
+            return page
+
+    if generic_route_first:
+        add_generic_route()
+        add_model_route()
+    else:
+        add_model_route()
+        add_generic_route()
+
+    app = create_versioned_app(version_change(short_name(get_origin_of_model(model))), router=router)
+    old_client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+    for path, body, invalid_body in [
+        ("/model", valid_body, invalid_old_body),
+        ("/page", {"items": [valid_body]}, {"items": [invalid_old_body]}),
+    ]:
+        assert old_client.post(path, json=body).json() == body
+        response = old_client.post(path, json=invalid_body)
+        assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+        assert response.json()["detail"][0]["type"] == "string_too_long"
+
+    components = get_openapi_components(app, "2000-01-01")
+    assert_no_duplicate_schemas(list(components))
+    old_openapi = TestClient(app).get("/openapi.json?version=2000-01-01").json()
+    model_schema = get_request_body_schema(components, old_openapi, "/model")
+    assert model_schema["properties"]["name"]["maxLength"] == 3
+    page_schema = get_request_body_schema(components, old_openapi, "/page")
+    assert page_schema["properties"]["items"]["items"] == model_schema["properties"]["children"]["items"]
+    generator = generate_versioned_models(app.versions)["2000-01-01"]
+    assert generator[Envelope[model]].model_fields["item"].annotation is generator[model]
+
+
+def get_origin_of_model(model: Any) -> Any:
+    return model.__pydantic_generic_metadata__["origin"] or model
+
+
+def test__router_generation__generic_route_model_around_renamed_cycle__should_apply_its_converter(
+    create_versioned_app: CreateVersionedApp,
 ):
     router = VersionedAPIRouter()
 
-    def add_tree_route():
-        @router.post("/tree", response_model=TreeNode[int])
-        async def create_tree(tree: TreeNode[int]) -> Any:
-            return tree
+    @router.get("/pages", response_model=Page[Category])
+    async def get_page() -> dict[str, Any]:
+        return {"items": [{"name": "root", "children": [{"name": "leaf"}]}]}
 
-    def add_page_route():
-        @router.post("/page", response_model=Page[TreeNode[int]])
-        async def create_page(page: Page[TreeNode[int]]) -> Any:
-            return page
+    @convert_response_to_previous_version_for(Page[Category])
+    def rename_page(response: ResponseInfo) -> None:
+        for item in response.body["items"]:
+            rename_name_to_title(item)
 
-    if page_route_first:
-        add_page_route()
-        add_tree_route()
-    else:
-        add_tree_route()
-        add_page_route()
-
-    app = create_versioned_app(version_change(short_name(TreeNode)), router=router)
+    app = create_versioned_app(
+        version_change(schema(Category).field("name").had(name="title"), rename_page=rename_page), router=router
+    )
     old_client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
 
-    invalid_tree = {"name": "abc", "value": 1, "children": [{"name": "toolong", "value": 2, "children": []}]}
-    assert old_client.post("/tree", json=invalid_tree).status_code == HTTP_422_UNPROCESSABLE_CONTENT
-    valid_tree = {"name": "abc", "value": 1, "children": [{"name": "abc", "value": 2, "children": []}]}
-    assert old_client.post("/tree", json=valid_tree).json() == valid_tree
-    assert old_client.post("/page", json={"items": [valid_tree]}).json() == {"items": [valid_tree]}
-    # Page[TreeNode[int]] keeps the latest TreeNode[int] (see the next test) so the OpenAPI of the old version has
-    # both of them under numbered names, but the tree route uses its own copy
-    old_openapi = old_client.get("/openapi.json?version=2000-01-01").json()
-    tree_body_ref = old_openapi["paths"]["/tree"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-    old_tree_schema = old_openapi["components"]["schemas"][tree_body_ref["$ref"].rsplit("/", 1)[-1]]
-    assert old_tree_schema["properties"]["name"]["maxLength"] == 3
-    assert old_tree_schema["properties"]["children"]["items"] == tree_body_ref
+    assert old_client.get("/pages").json() == {
+        "items": [{"title": "root", "children": [{"title": "leaf", "children": []}]}]
+    }
 
 
-def test__router_generation__generic_args_that_refer_to_changed_cycles__should_keep_head_args(
+def test__router_generation__generic_args_that_lead_back_to_the_generic__should_keep_head_args(
     create_versioned_app: CreateVersionedApp,
 ):
-    """A known limitation: generic args that lead to changed reference cycles keep the latest models.
-
-    This is what Cadwyn always did for the generic args that lead back to the generic itself.
-    """
+    """Cadwyn keeps the latest args of generics whose args lead back to the generic itself, as it always did"""
     router = VersionedAPIRouter()
 
     @router.post("/categories", response_model=PagedCategory)
     async def create_category(category: PagedCategory) -> Any:
         return category
 
-    @router.post("/pages", response_model=Page[Category])
-    async def create_page(page: Page[Category]) -> Any:
-        return page
-
-    app = create_versioned_app(version_change(short_name(PagedCategory), short_name(Category)), router=router)
+    app = create_versioned_app(version_change(short_name(PagedCategory)), router=router)
     old_client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
 
     assert old_client.post("/categories", json={"name": "toolong"}).status_code == HTTP_422_UNPROCESSABLE_CONTENT
     nested_body = {"name": "abc", "children": {"items": [{"name": "toolong", "children": None}]}}
     assert old_client.post("/categories", json=nested_body).json() == nested_body
-    page_body = {"items": [{"name": "toolong", "children": []}]}
-    assert old_client.post("/pages", json=page_body).json() == page_body
+    # The changelog generates another copy of PagedCategory whose generic args refer to the version's copy
+    assert TestClient(app).get("/changelog").status_code == HTTP_200_OK
+
+
+def test__router_generation__generic_around_unchanged_cycle_that_is_never_copied__should_keep_head_args(
+    create_versioned_app: CreateVersionedApp,
+):
+    """The cycle refers to a changed model, so it needs versioning, but nothing copies it, so it works as before"""
+    router = VersionedAPIRouter()
+
+    @router.get("/pages", response_model=Page[LazyTree])
+    async def get_page() -> dict[str, Any]:
+        return {"items": [{"item": {"name": "x"}}]}
+
+    app = create_versioned_app(version_change(described_name(LazyItem)), router=router)
+    old_client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+    assert old_client.get("/pages").json() == {"items": [{"item": {"name": "x"}, "children": []}]}
+    components = get_openapi_components(app, "2000-01-01")
+    assert components["LazyItem"]["properties"]["name"] == {"type": "string", "title": "Name"}
+    # Copying the cycle itself would make the generic and the cycle use different models in the same version
+    with pytest.raises(SchemaGenerationError, match=r"LazyTree.* the latest models in the type args of generics"):
+        migrate_response_body(app.versions, LazyTree, latest_body={"item": {"name": "x"}}, version="2000-01-01")
+
+
+@pytest.mark.parametrize("generic_route_first", [False, True])
+def test__router_generation__generic_around_cycle_that_is_only_copied_for_a_route__should_raise(
+    generic_route_first: bool, create_versioned_app: CreateVersionedApp
+):
+    router = VersionedAPIRouter()
+
+    def add_tree_route():
+        @router.get("/tree", response_model=LazyTree)
+        async def get_tree() -> dict[str, Any]:
+            raise NotImplementedError
+
+    def add_page_route():
+        @router.get("/pages", response_model=Page[LazyTree])
+        async def get_page() -> dict[str, Any]:
+            raise NotImplementedError
+
+    if generic_route_first:
+        add_page_route()
+        add_tree_route()
+    else:
+        add_tree_route()
+        add_page_route()
+
+    with pytest.raises(SchemaGenerationError, match=r"LazyTree.* the latest models in the type args of generics"):
+        create_versioned_app(version_change(described_name(LazyItem)), router=router)
 
 
 def test__router_generation__self_referencing_model_changed_in_head_version__should_be_versioned_in_every_version(
@@ -734,6 +863,59 @@ class BoxedCategory(BaseModel):
 BoxedCategory.model_rebuild()
 
 
+class MixedCategory(BaseModel):
+    name: str
+    parent: "Optional[MixedCategory]" = None
+    children: "Optional[MixedCategoryPage]" = None
+
+
+MixedCategoryPage = Page[MixedCategory]
+MixedCategory.model_rebuild()
+
+
+class QuotedAuthor(BaseModel):
+    name: str
+    books: "list[QuotedBook]" = []
+    favorite: Optional["QuotedBook"] = None
+
+
+class QuotedBook(BaseModel):
+    name: str
+    author: "Optional[QuotedAuthor]" = None
+
+
+QuotedAuthor.model_rebuild()
+
+
+class HiddenCategory(BaseModel):
+    name: str
+    children: "list[HiddenCategory]" = []
+    books: list["HiddenBook"] = []
+
+
+class HiddenBook(BaseModel):
+    category: HiddenCategory
+
+
+HiddenCategory.model_rebuild()
+
+
+class SerializedBook(BaseModel):
+    category: "Optional[SerializedCategory]" = None
+
+
+class SerializedCategory(BaseModel):
+    name: str
+    books: list[SerializedBook] = []
+
+    @field_serializer("books")
+    def serialize_books(self, books: Any) -> list[SerializedBook]:
+        return books  # pragma: no cover
+
+
+SerializedBook.model_rebuild()
+
+
 class ComputedCategory(BaseModel):
     name: str
     children: "list[ComputedCategory]" = []
@@ -761,11 +943,11 @@ class IncompleteCategory(BaseModel):
             "BoxedCategory.* refer to each other in positions that need the classes themselves",
             id="custom_generic",
         ),
-        pytest.param(
-            ComputedCategory,
-            "computed field 'first_child' of .*ComputedCategory",
-            id="computed_field",
-        ),
+        pytest.param(ComputedCategory, "would use the latest ComputedCategory", id="computed_field"),
+        pytest.param(SerializedCategory, "would use the latest .*SerializedBook", id="serializer"),
+        pytest.param(MixedCategory, "would use the latest MixedCategory", id="generic_field"),
+        pytest.param(QuotedBook, "would use the latest .*QuotedBook", id="partially_quoted"),
+        pytest.param(HiddenCategory, "would use the latest HiddenBook", id="quoted_arg"),
         pytest.param(IncompleteCategory, "IncompleteCategory.* not defined yet", id="undefined_names"),
     ],
 )
@@ -804,3 +986,63 @@ def test__generate_versioned_models__hook_that_asks_for_copy_while_its_cycle_is_
             generator[HookedItemTree]
     finally:
         HOOK_GENERATORS.clear()
+
+
+class LockingItem(BaseModel):
+    name: str
+
+
+# Set while a thread copies LockingTree so that another thread can rebuild a model at the same time
+LOCKING_TREE_IS_BEING_COPIED = threading.Event()
+LOCKING_TREE_HOOK_IS_ARMED: list[bool] = []
+
+
+class WaitsWhileCopied:
+    @classmethod
+    def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
+        super().__pydantic_init_subclass__(**kwargs)  # ty: ignore[unresolved-attribute]
+        if LOCKING_TREE_HOOK_IS_ARMED:
+            LOCKING_TREE_IS_BEING_COPIED.set()
+            # Gives the other thread the time to start rebuilding its model
+            threading.Event().wait(0.2)
+
+
+class LockingTree(WaitsWhileCopied, BaseModel):
+    item: LockingItem
+    children: "list[LockingTree]" = []
+
+
+def test__generate_versioned_models__schema_hook_that_uses_generator_while_cycle_is_copied__should_not_deadlock():
+    versions = VersionBundle(Version("2001-01-01", version_change(short_name(LockingItem))), Version("2000-01-01"))
+    generator = generate_versioned_models(versions)["2000-01-01"]
+    hook_results: list[Any] = []
+
+    class UsesGeneratorInSchemaHook(BaseModel):
+        model_config = ConfigDict(defer_build=True)
+
+        @classmethod
+        @override
+        def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
+            hook_results.append(generator[LockingItem])
+            return handler(source)
+
+    def rebuild_while_cycle_is_copied():
+        assert LOCKING_TREE_IS_BEING_COPIED.wait(5)
+        UsesGeneratorInSchemaHook.model_rebuild()
+
+    LOCKING_TREE_HOOK_IS_ARMED.append(True)
+    try:
+        rebuilding_thread = threading.Thread(target=rebuild_while_cycle_is_copied, daemon=True)
+        copying_thread = threading.Thread(target=lambda: generator[LockingTree], daemon=True)
+        rebuilding_thread.start()
+        copying_thread.start()
+        copying_thread.join(10)
+        rebuilding_thread.join(10)
+    finally:
+        LOCKING_TREE_HOOK_IS_ARMED.clear()
+
+    assert not copying_thread.is_alive()
+    assert not rebuilding_thread.is_alive()
+    assert hook_results == [generator[LockingItem]]
+    old_locking_tree = generator[LockingTree]
+    assert typing.get_args(old_locking_tree.model_fields["children"].annotation) == (old_locking_tree,)
