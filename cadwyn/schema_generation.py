@@ -489,7 +489,8 @@ def _get_signature(call: Callable[..., Any]) -> inspect.Signature:
 
     inspect.signature() itself evaluates them in the globals of whichever function it reads the signature from,
     which is the only reliable way to pick the right globals for every kind of wrapper (partials, decorators, etc).
-    It evaluates them only once so strings within strings (e.g. `body: "Model"` with postponed annotations) are left.
+    It evaluates them only once so the forward references within them (e.g. `body: "Model"` or `list["Model"]`
+    with postponed annotations) are left.
     """
     try:
         return inspect.signature(call, eval_str=True)
@@ -497,12 +498,17 @@ def _get_signature(call: Callable[..., Any]) -> inspect.Signature:
     # (e.g. one imported under "if TYPE_CHECKING:"). FastAPI handles this the same way. The parameter annotations
     # that can be resolved individually are resolved later in _modify_callable_annotations
     except NameError:
-        if sys.version_info >= (3, 14):
-            from annotationlib import Format
+        return _get_unevaluated_signature(call)
 
-            # Unresolvable names in lazily evaluated annotations become ForwardRefs instead of raising
-            return inspect.signature(call, annotation_format=Format.FORWARDREF)
-        return inspect.signature(call)
+
+def _get_unevaluated_signature(call: Callable[..., Any]) -> inspect.Signature:
+    """Return the signature of the callable with its annotations as written, e.g. strings for postponed ones"""
+    if sys.version_info >= (3, 14):
+        from annotationlib import Format
+
+        # Unresolvable names in lazily evaluated annotations become ForwardRefs instead of raising
+        return inspect.signature(call, annotation_format=Format.FORWARDREF)
+    return inspect.signature(call)
 
 
 def _get_best_effort_globals(call: Any) -> dict[str, Any]:
@@ -833,12 +839,21 @@ class _AnnotationTransformer:
             if callable_kind is _CallableKind.ENDPOINT and return_annotation is not inspect.Signature.empty:
                 # FastAPI infers the response model of endpoints from their return annotations
                 callable_annotations["return"] = return_annotation
-            # Strings are left when they could not be evaluated or when they were strings within strings
-            # (e.g. `body: "Model"` with postponed annotations). FastAPI would evaluate them itself but in the globals
-            # that lead to the head models so we evaluate them before versioning, just like Cadwyn always did
+            # Cadwyn always evaluated the annotations that were written as strings (e.g. postponed ones) recursively
+            # before versioning them. inspect.signature() evaluates them only once so forward references can be left
+            # within them (e.g. `body: "Model"` or `list["Model"]` with postponed annotations) or they can stay strings
+            # (e.g. if they could not be evaluated or if they come from __signature__). FastAPI would evaluate some of
+            # them itself but in the globals that lead to the head models so we finish evaluating them here
+            unevaluated_signature = _get_unevaluated_signature(call)
+            annotations_written_as_strings = {
+                name for name, param in unevaluated_signature.parameters.items() if type(param.annotation) is str
+            }
+            if type(unevaluated_signature.return_annotation) is str:
+                annotations_written_as_strings.add("return")
             call_globals = _get_best_effort_globals(cls._unwrap_callable(call))
             callable_annotations = {
-                k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
+                k: _try_eval_type(v, call_globals) if k in annotations_written_as_strings else v
+                for k, v in callable_annotations.items()
             }
             annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
             if callable_kind is _CallableKind.DEPENDENCY and return_annotation is not inspect.Signature.empty:

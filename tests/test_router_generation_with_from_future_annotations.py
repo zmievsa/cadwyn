@@ -4,11 +4,12 @@ import functools
 import inspect
 import sys
 import types
+import typing
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Optional
 
 import pytest
-from fastapi import Depends, Query, Request
+from fastapi import Body, Depends, Query, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema
 from typing_extensions import Self, override
@@ -820,6 +821,74 @@ def test__router_generation__quoted_parameter_annotations__should_use_versioned_
     assert clients["2001-01-01"].post("/test", json={"current": "ok"}).json() == "ok"
     assert clients["2000-01-01"].post("/test", json={"current": "ok"}).status_code == 422
     assert clients["2000-01-01"].post("/test", json={"current": "ok", "legacy": "ok"}).json() == "ok"
+    required_fields = {}
+    for version, version_client in clients.items():
+        openapi = version_client.get(f"/openapi.json?version={version}").json()
+        required_fields[version] = openapi["components"]["schemas"]["QuotedPayload"]["required"]
+    assert required_fields == {"2001-01-01": ["current"], "2000-01-01": ["current", "legacy"]}
+
+
+# With postponed annotations, evaluating these once leaves forward references within them
+def get_current_from_nested_quoted_list(items: list["QuotedPayload"]) -> str:  # noqa: UP037
+    raise NotImplementedError
+
+
+def get_current_from_nested_quoted_typing_list(items: typing.List["QuotedPayload"]) -> str:  # noqa: UP006, UP037
+    raise NotImplementedError
+
+
+def get_current_from_nested_quoted_optional(item: Optional["QuotedPayload"]) -> str:  # noqa: UP037
+    raise NotImplementedError
+
+
+def get_current_from_nested_quoted_dict(items: dict[str, "QuotedPayload"]) -> str:  # noqa: UP037
+    raise NotImplementedError
+
+
+def get_current_from_nested_quoted_annotated(items: Annotated[list["QuotedPayload"], Body()]) -> str:  # noqa: UP037
+    raise NotImplementedError
+
+
+_NESTED_QUOTED_DEPENDENCIES = {
+    "list": (get_current_from_nested_quoted_list, lambda payload: [payload]),
+    "typing_list": (get_current_from_nested_quoted_typing_list, lambda payload: [payload]),
+    "optional": (get_current_from_nested_quoted_optional, lambda payload: payload),
+    "dict": (get_current_from_nested_quoted_dict, lambda payload: {"key": payload}),
+    "annotated": (get_current_from_nested_quoted_annotated, lambda payload: [payload]),
+}
+
+
+# Postponed annotations of routes can only refer to the dependency through the globals
+nested_quoted_dependency: Any = None
+
+
+@pytest.mark.parametrize("shape", list(_NESTED_QUOTED_DEPENDENCIES))
+@pytest.mark.parametrize("style", ["endpoint", "default_dependency", "annotated_dependency"])
+def test__router_generation__nested_quoted_parameter_annotations__should_use_versioned_models(
+    router, create_versioned_clients, monkeypatch, style, shape
+):
+    if sys.version_info < (3, 11) and shape in {"list", "dict", "annotated"}:
+        pytest.skip("Python 3.10 cannot evaluate forward references within builtin generics such as list['Model']")
+    dependency, make_body = _NESTED_QUOTED_DEPENDENCIES[shape]
+    monkeypatch.setitem(globals(), "nested_quoted_dependency", dependency)
+    if style == "endpoint":
+        router.post("/test")(dependency)
+    elif style == "default_dependency":
+
+        @router.post("/test")
+        async def default_dependency_route(current: str = Depends(nested_quoted_dependency)):
+            raise NotImplementedError
+
+    else:
+
+        @router.post("/test")
+        async def annotated_dependency_route(current: Annotated[str, Depends(nested_quoted_dependency)]):
+            raise NotImplementedError
+
+    clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
+    # FastAPI itself cannot evaluate such forward references in the head route that Cadwyn validates requests
+    # against after migrating them so we only check what each version validates and documents on its own
+    assert clients["2000-01-01"].post("/test", json=make_body({"current": "ok"})).status_code == 422
     required_fields = {}
     for version, version_client in clients.items():
         openapi = version_client.get(f"/openapi.json?version={version}").json()
