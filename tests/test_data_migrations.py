@@ -2620,6 +2620,111 @@ def test__request_body_migration__with_bulk_items_without_the_renamed_keys__head
         }
 
 
+class SchemaWithComputedFieldCollidingWithDumpedKey(BaseModel):
+    value: int = Field(default=0, validation_alias="v")
+
+    @computed_field(alias="value")
+    @property
+    def display(self) -> str:
+        return f"{self.value} cents"
+
+
+class SchemaWithComputedFieldCollidingWithTargetKey(BaseModel):
+    value: int = Field(default=0, validation_alias="v")
+
+    @computed_field(alias="v")
+    @property
+    def display(self) -> int:
+        return 123
+
+
+class SchemaWithModelDumpOverride(BaseModel):
+    value: Optional[int] = Field(default=None, validation_alias="v")
+
+    @override
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return {**BaseModel.model_dump(self, **kwargs), "value": "redacted"}
+
+
+class InnerWithModelDumpOverride(SchemaWithModelDumpOverride):
+    pass
+
+
+class SchemaWithNestedModelDumpOverride(BaseModel):
+    inner: Optional[InnerWithModelDumpOverride] = Field(default=None, validation_alias="i")
+
+
+class InnerWithComputedFieldAndV1PostRootValidator(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    value: int
+
+    @root_validator(skip_on_failure=True)  # ty: ignore[deprecated]  # V1 validators are still supported.
+    def check(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return values
+
+    @computed_field
+    @property
+    def display(self) -> str:
+        return str(self.value)
+
+
+class SchemaWithComputedFieldBehindV1PostRootValidator(BaseModel):
+    inner: Optional[InnerWithComputedFieldAndV1PostRootValidator] = Field(default=None, validation_alias="v")
+
+
+@pytest.mark.parametrize(
+    ("model", "payload", "read", "expected"),
+    [
+        pytest.param(
+            SchemaWithComputedFieldCollidingWithDumpedKey,
+            {"v": 0},
+            lambda b: b.value,
+            0,
+            id="computed_field_on_dumped_key",
+        ),
+        pytest.param(
+            SchemaWithComputedFieldCollidingWithTargetKey,
+            {"v": 5},
+            lambda b: b.value,
+            123,
+            id="computed_field_on_target_key",
+        ),
+        pytest.param(SchemaWithModelDumpOverride, {"v": None}, lambda b: b.value, None, id="model_dump_override"),
+        pytest.param(
+            SchemaWithNestedModelDumpOverride,
+            {"i": {"v": None}},
+            lambda b: b.inner,
+            None,
+            id="nested_model_dump_override",
+        ),
+        pytest.param(
+            SchemaWithComputedFieldBehindV1PostRootValidator,
+            {"v": {"value": 7}},
+            lambda b: b.inner,
+            None,
+            id="computed_field_behind_v1_post_root_validator",
+        ),
+    ],
+)
+def test__request_body_migration__with_dumps_that_the_core_schema_does_not_describe__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    model: type[BaseModel],
+    payload: dict[str, Any],
+    read: Callable[[Any], Any],
+    expected: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: model):  # ty: ignore[invalid-type-form]
+        return read(body)
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == expected
+
+
 def test__request_body_migration__with_json_form_field__should_stay_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],

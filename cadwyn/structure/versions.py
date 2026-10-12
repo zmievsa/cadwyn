@@ -1043,14 +1043,19 @@ def _reaches_models_with(
     if cache_key in _REACHES_MODELS_WITH:
         return _REACHES_MODELS_WITH[cache_key]
     explored: set[type[BaseModel]] = set()
+    parents: dict[type[BaseModel], type[BaseModel]] = {}
     to_explore = [root]
     while to_explore:
         model = to_explore.pop()
         if model in explored or _REACHES_MODELS_WITH.get((get_items, all_fields, model)) is False:
             continue
         if _REACHES_MODELS_WITH.get((get_items, all_fields, model)) or get_items(model):
-            _REACHES_MODELS_WITH[cache_key] = True
-            return True
+            # Everything on the way from the root reaches it too
+            while True:
+                _REACHES_MODELS_WITH[get_items, all_fields, model] = True
+                if model is root:
+                    return True
+                model = parents[model]
         explored.add(model)
         if all_fields:
             annotations = [field.annotation for field in model.model_fields.values()]
@@ -1059,7 +1064,9 @@ def _reaches_models_with(
         else:
             # Nothing below this model has rename candidates, so there's no need to read its core schema
             annotations = []
-        to_explore.extend(nested for annotation in annotations for nested in _iter_restorable_models(annotation))
+        for nested in (nested for annotation in annotations for nested in _iter_restorable_models(annotation)):
+            parents.setdefault(nested, model)
+            to_explore.append(nested)
     for model in explored:
         _REACHES_MODELS_WITH[get_items, all_fields, model] = False
     return False
@@ -1104,6 +1111,9 @@ def _get_renames_and_traversable_fields(
         dumped_key_owners[dumped_key].add(name)
         for path in paths:
             validated_key_owners[path[0]].add(name)
+    # Computed fields are dumped too, so their keys are ambiguous as well
+    for name, computed_field_info in model.model_computed_fields.items():
+        dumped_key_owners[computed_field_info.alias or name].add(f"computed field {name}")
     renames = []
     traversable = []
     for name, (dumped_key, paths) in fields.items():
@@ -1200,18 +1210,35 @@ def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any]
             or schema["cls"] is not model
             or schema.get("custom_init")
             or _is_custom_serialization(schema.get("serialization"))
+            or _overrides_dumping(model)
         ):
             return None
-        inner_schema = schema["schema"]
-        # "after" validators (including `root_validator(skip_on_failure=True)`) wrap the fields schema
-        while inner_schema["type"] == "function-after" and not schema["root_model"]:
-            inner_schema = inner_schema["schema"]
+        inner_schema = schema["schema"] if schema["root_model"] else _get_fields_core_schema(schema)
         # "wrap" and "plain" model validators wrap the model schema, while "before" ones wrap its fields schema
         if not schema["root_model"] and inner_schema["type"] != "model-fields":
             return None
     except _CORE_SCHEMA_ERRORS:
         return None
     return inner_schema
+
+
+def _get_fields_core_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return the fields core schema of a model or dataclass core schema"""
+    fields_schema = schema["schema"]
+    # "after" validators (including `root_validator(skip_on_failure=True)`) wrap the fields schema
+    while fields_schema["type"] == "function-after":
+        fields_schema = fields_schema["schema"]
+    return fields_schema
+
+
+def _overrides_dumping(cls: object) -> bool:
+    """Whether a class overrides how pydantic dumps it, which its core schema doesn't describe"""
+    return any(
+        name in vars(base)
+        for base in getattr(cls, "__mro__", ())
+        if base not in (BaseModel, RootModel, object)
+        for name in ("model_dump", "model_dump_json")
+    )
 
 
 def _is_field_schema_safe(schemas: dict[str, Any], key: str) -> bool:
@@ -1283,10 +1310,11 @@ def _has_unsafe_core_schema(
         schema_type not in _CHILD_SCHEMA_KEYS
         or _is_custom_serialization(schema.get("serialization"))
         or schema.get("custom_init")
+        or (schema_type == "model" and _overrides_dumping(schema["cls"]))
         or (
             schema_type in ("model", "dataclass")
             and schema.get("config", {}).get("extra_fields_behavior") == "forbid"
-            and schema["schema"].get("computed_fields")
+            and _get_fields_core_schema(schema).get("computed_fields")
         )
     ):
         return True
