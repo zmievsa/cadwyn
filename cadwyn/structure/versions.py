@@ -4,12 +4,12 @@ import http
 import inspect
 import json
 from collections import defaultdict
-from collections.abc import Callable, Coroutine, Iterator, Sequence
+from collections.abc import Callable, Coroutine, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar, TypeAlias, Union, cast, get_args
+from typing import TYPE_CHECKING, Annotated, ClassVar, TypeAlias, Union, cast, get_args, get_origin
 
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -21,14 +21,15 @@ from fastapi.dependencies.utils import solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
+from pydantic import AliasPath, BaseModel, RootModel
+from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 from starlette._utils import is_async_callable
 from starlette.datastructures import FormData
 from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated, override
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
-from cadwyn._utils import classproperty
+from cadwyn._utils import UnionType, classproperty, lenient_issubclass
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -428,6 +429,7 @@ class VersionBundle:
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
         background_tasks: Union[BackgroundTasks, None],
+        body_is_model_dump: bool,
     ) -> dict[str, Any]:
         start = self.reversed_version_values.index(current_version)
         head_route_id = id(head_route)
@@ -453,6 +455,10 @@ class VersionBundle:
 
         if request_info._form is not None:
             body_for_solving = FormData(request_info._form)
+        elif body_is_model_dump:
+            body_for_solving = _restore_validation_aliases(
+                head_dependant.body_params[0].field_info.annotation, request_info.body
+            )
         else:
             body_for_solving = request_info.body
 
@@ -722,6 +728,7 @@ class VersionBundle:
         if api_version is None:
             return kwargs
 
+        body_is_model_dump = False
         # This is a kind of body param you get when you define a single pydantic schema in your route's body
         if (
             len(route.dependant.body_params) == 1
@@ -738,6 +745,7 @@ class VersionBundle:
                 body = raw_body
             else:
                 body = raw_body.model_dump(by_alias=True, exclude_unset=True)
+                body_is_model_dump = True
         else:
             # This is for requests without body or with complex body such as form or file
             body = await _get_body(request, route.body_field, exit_stack)
@@ -754,6 +762,7 @@ class VersionBundle:
             exit_stack=exit_stack,
             embed_body_fields=embed_body_fields,
             background_tasks=background_tasks,
+            body_is_model_dump=body_is_model_dump,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:
@@ -822,6 +831,114 @@ def _get_schema_migration_key(annotation: object) -> object:
     except TypeError:
         return None
     return annotation
+
+
+def _restore_validation_aliases(annotation: object, data: Any) -> Any:
+    """Rename the keys of `model_dump(by_alias=True)` data to the keys that the models in `annotation` validate.
+
+    The dump uses serialization aliases, which can differ from what a field validates
+    (e.g. `Field(alias="x", validation_alias="v")`), so the head model would silently ignore such values.
+    """
+    if get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    origin, args = get_origin(annotation), get_args(annotation)
+    if isinstance(annotation, UnionType):
+        options = [arg for arg in args if arg is not type(None)]
+        # With several options, we can't know which one is going to validate the data so we leave it as is
+        return _restore_validation_aliases(options[0], data) if len(options) == 1 else data
+    if origin in (list, Sequence) and len(args) == 1 and isinstance(data, list):
+        return [_restore_validation_aliases(args[0], item) for item in data]
+    if origin in (dict, Mapping) and len(args) == 2 and isinstance(data, dict):
+        return {key: _restore_validation_aliases(args[1], value) for key, value in data.items()}
+    if not lenient_issubclass(annotation, BaseModel) or not _model_dumps_keys_it_does_not_validate(annotation):
+        return data
+    if issubclass(annotation, RootModel):
+        return _restore_validation_aliases(annotation.model_fields["root"].annotation, data)
+    return _restore_model_validation_aliases(annotation, data) if isinstance(data, dict) else data
+
+
+@functools.cache
+def _model_dumps_keys_it_does_not_validate(model: type[BaseModel]) -> bool:
+    """Whether the dump of the model, or of any model inside it, has a key that the model doesn't validate"""
+    return any(
+        [dumped_key] not in _get_validation_paths(nested_model, name, field)
+        for nested_model in _collect_models(model, set())
+        for name, field in nested_model.model_fields.items()
+        for dumped_key in [field.serialization_alias or name]
+    )
+
+
+def _collect_models(annotation: object, models: set[type[BaseModel]]) -> set[type[BaseModel]]:
+    if lenient_issubclass(annotation, BaseModel):
+        if annotation not in models:
+            models.add(annotation)
+            for field in annotation.model_fields.values():
+                _collect_models(field.annotation, models)
+    else:
+        for arg in get_args(annotation):
+            _collect_models(arg, models)
+    return models
+
+
+def _get_validation_paths(model: type[BaseModel], name: str, field: FieldInfo) -> list[list[Union[str, int]]]:
+    """Return the paths in the input data that the field validates, in the order Pydantic tries them"""
+    alias = field.validation_alias
+    paths: list[list[Union[str, int]]] = []
+    if not model.model_config.get("validate_by_alias", True) or alias is None:
+        paths.append([name])
+    elif isinstance(alias, str):
+        paths.append([alias])
+    elif isinstance(alias, AliasPath):
+        paths.append(alias.convert_to_aliases())
+    else:
+        paths.extend(alias.convert_to_aliases())
+    if model.model_config.get("validate_by_name", model.model_config.get("populate_by_name", False)):
+        paths.append([name])
+    return paths
+
+
+def _restore_model_validation_aliases(model: type[BaseModel], data: dict[str, Any]) -> dict[str, Any]:
+    restored = dict(data)
+    moved_values: list[tuple[str, Sequence[Union[str, int]], Any]] = []
+    for name, field in model.model_fields.items():
+        dumped_key = field.serialization_alias or name
+        if dumped_key not in data:
+            continue
+        value = _restore_validation_aliases(field.annotation, data[dumped_key])
+        paths = _get_validation_paths(model, name, field)
+        # The head validates the dumped key, or a key that a migration has already set, so we keep it as on main
+        if any(len(path) == 1 and path[0] in data for path in paths):
+            restored[dumped_key] = value
+        else:
+            del restored[dumped_key]
+            moved_values.append((dumped_key, next((path for path in paths if len(path) == 1), paths[0]), value))
+    # We move the values only after removing all dumped keys because a dumped key can be another field's alias
+    for dumped_key, path, value in moved_values:
+        moved = _set_alias_path(restored, path, value)
+        # Every validation path starts with a key
+        if AliasPath(cast("str", path[0]), *path[1:]).search_dict_for_path(moved) is value:
+            restored = moved
+        else:
+            # Something else is already there (e.g. another field's value), so we leave the value where it was
+            restored[dumped_key] = value
+    return restored
+
+
+def _set_alias_path(container: Any, path: Sequence[Union[str, int]], value: Any) -> Any:
+    """Return a copy of `container` where `AliasPath(*path)` finds `value`, never overwriting what's already there"""
+    if not path:
+        return value if container is None else container
+    key, *rest = path
+    if container is None:
+        container = {} if isinstance(key, str) else []
+    if isinstance(key, str) and isinstance(container, dict):
+        return {**container, key: _set_alias_path(container.get(key), rest, value)}
+    # A negative index can only be added to a new list, where it needs at least `-key` items
+    if isinstance(key, int) and isinstance(container, list) and (key >= 0 or not container):
+        items = [*container, *[None] * (max(key + 1, -key) - len(container))]
+        items[key] = _set_alias_path(items[key], rest, value)
+        return items
+    return container
 
 
 def _add_keyword_only_parameter(

@@ -15,6 +15,7 @@ from fastapi import Body, Depends, Query, Request
 from fastapi.testclient import TestClient
 from pydantic import (
     AfterValidator,
+    AliasPath,
     AllowInfNan,
     BaseModel,
     ConfigDict,
@@ -676,6 +677,41 @@ def test__router_generation__field_didnt_have_title__with_string_in_annotated__s
         openapi = clients[version].get(f"/openapi.json?version={version}").json()
         assert openapi["components"]["schemas"]["SchemaWithDocStringInAnnotated"]["properties"]["foo"]["title"] == title
         assert clients[version].post("/test", json={"foo": "bar"}).json() == {"foo": "bar"}
+
+
+class OuterSchemaWithValidationAliases(BaseModel):
+    inner: InnerSchemaWithValidationAliases = Field(alias="i", validation_alias="j")
+    inners: Annotated[list[InnerSchemaWithValidationAliases], Field(alias="l", validation_alias="m")]
+
+
+class InnerSchemaWithValidationAliases(BaseModel):
+    value: int = Field(alias="x", validation_alias="v")
+    other: Annotated[int, Field(validation_alias=AliasPath("o", 0), serialization_alias="s")]
+
+
+def test__router_generation__body_fields_with_validation_aliases__should_reach_head_in_every_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients,
+):
+    @router.post("/test")
+    async def route(payload: OuterSchemaWithValidationAliases):
+        return payload.model_dump()
+
+    @convert_request_to_next_version_for(OuterSchemaWithValidationAliases)
+    def migrator(request: RequestInfo):
+        request.body["l"].append({"x": 5, "s": 6})
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    payload = {"j": {"v": 1, "o": [2]}, "m": [{"v": 3, "o": [4]}]}
+
+    assert clients["2001-01-01"].post("/test", json=payload).json() == {
+        "inner": {"value": 1, "other": 2},
+        "inners": [{"value": 3, "other": 4}],
+    }
+    assert clients["2000-01-01"].post("/test", json=payload).json() == {
+        "inner": {"value": 1, "other": 2},
+        "inners": [{"value": 3, "other": 4}, {"value": 5, "other": 6}],
+    }
 
 
 @functools.lru_cache

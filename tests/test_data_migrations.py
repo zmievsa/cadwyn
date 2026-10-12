@@ -1,7 +1,8 @@
 import http.cookies
 import re
 import sys
-from collections.abc import Callable, Coroutine
+import typing
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextvars import ContextVar
 from io import StringIO
 from typing import Annotated, Any, Literal, Optional, Union
@@ -13,7 +14,7 @@ from fastapi import APIRouter, Body, Cookie, File, Form, Header, HTTPException, 
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, Field, RootModel
+from pydantic import AfterValidator, AliasChoices, AliasGenerator, AliasPath, BaseModel, ConfigDict, Field, RootModel
 from starlette.responses import StreamingResponse
 from typing_extensions import TypedDict
 
@@ -1192,6 +1193,378 @@ def test__request_body_parsing__malformed_json_returns_422(
 
     assert resp.status_code == 422
     assert resp.json()["detail"][0]["type"] == "json_invalid"
+
+
+def _model_with_value_field(
+    field: Callable[[], Any],
+    *,
+    annotated: bool,
+    config: Optional[ConfigDict] = None,
+) -> type[BaseModel]:
+    if annotated:
+
+        class AnnotatedModel(BaseModel):
+            model_config = config or ConfigDict()
+            value: Annotated[int, field()]
+
+        return AnnotatedModel
+
+    class DefaultModel(BaseModel):
+        model_config = config or ConfigDict()
+        value: int = field()
+
+    return DefaultModel
+
+
+@pytest.mark.parametrize("annotated", [False, True], ids=["field_default", "annotated"])
+@pytest.mark.parametrize(
+    ("field", "config", "payload", "dumped_key"),
+    [
+        pytest.param(lambda: Field(alias="x"), None, {"x": 1}, "x", id="alias"),
+        pytest.param(lambda: Field(alias="x", validation_alias="v"), None, {"v": 1}, "x", id="alias+validation_alias"),
+        pytest.param(
+            lambda: Field(validation_alias="v", serialization_alias="s"),
+            None,
+            {"v": 1},
+            "s",
+            id="validation_alias+serialization_alias",
+        ),
+        pytest.param(lambda: Field(validation_alias="v"), None, {"v": 1}, "value", id="validation_alias"),
+        pytest.param(lambda: Field(serialization_alias="s"), None, {"value": 1}, "s", id="serialization_alias"),
+        pytest.param(
+            lambda: Field(alias="x", serialization_alias="s"), None, {"x": 1}, "s", id="alias+serialization_alias"
+        ),
+        pytest.param(
+            lambda: Field(validation_alias=AliasPath("v", "w")), None, {"v": {"w": 1}}, "value", id="alias_path_key"
+        ),
+        pytest.param(
+            lambda: Field(validation_alias=AliasPath("v", 1)), None, {"v": [0, 1]}, "value", id="alias_path_index"
+        ),
+        pytest.param(
+            lambda: Field(validation_alias=AliasPath("v", -2)),
+            None,
+            {"v": [1, 0]},
+            "value",
+            id="alias_path_negative_index",
+        ),
+        pytest.param(
+            lambda: Field(validation_alias=AliasChoices("v", "w")), None, {"w": 1}, "value", id="alias_choices"
+        ),
+        pytest.param(
+            lambda: Field(validation_alias=AliasChoices(AliasPath("p", 0), "w")),
+            None,
+            {"p": [1]},
+            "value",
+            id="alias_choices_with_path_and_key",
+        ),
+        pytest.param(
+            lambda: Field(validation_alias=AliasChoices(AliasPath("p", 0, "q"))),
+            None,
+            {"p": [{"q": 1}]},
+            "value",
+            id="alias_choices_with_path_only",
+        ),
+        pytest.param(
+            lambda: Field(alias="x", validation_alias=AliasChoices("v", "x")),
+            None,
+            {"v": 1},
+            "x",
+            id="alias_choices_with_serialization_alias",
+        ),
+        pytest.param(
+            Field,
+            ConfigDict(alias_generator=str.upper),
+            {"VALUE": 1},
+            "VALUE",
+            id="alias_generator",
+        ),
+        pytest.param(
+            Field,
+            ConfigDict(alias_generator=AliasGenerator(validation_alias=str.upper, serialization_alias=str.title)),
+            {"VALUE": 1},
+            "Value",
+            id="alias_generator_with_different_aliases",
+        ),
+        pytest.param(
+            lambda: Field(validation_alias="v"),
+            ConfigDict(populate_by_name=True),
+            {"v": 1},
+            "value",
+            id="populate_by_name+validation_alias",
+        ),
+        pytest.param(
+            lambda: Field(alias="x", validation_alias="v"),
+            ConfigDict(populate_by_name=True),
+            {"value": 1},
+            "x",
+            id="populate_by_name+alias+validation_alias",
+        ),
+        pytest.param(
+            lambda: Field(alias="x", validation_alias="v"),
+            ConfigDict(validate_by_name=True),
+            {"v": 1},
+            "x",
+            id="validate_by_name+alias+validation_alias",
+        ),
+        pytest.param(
+            lambda: Field(alias="x"),
+            ConfigDict(validate_by_name=True, validate_by_alias=False),
+            {"value": 1},
+            "x",
+            id="validate_by_name_only+alias",
+        ),
+    ],
+)
+def test__request_body_migration__with_any_kind_of_field_aliases__head_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotated: bool,
+    field: Callable[[], Any],
+    config: Optional[ConfigDict],
+    payload: dict[str, Any],
+    dumped_key: str,
+):
+    model = _model_with_value_field(field, annotated=annotated, config=config)
+
+    @router.post(test_path)
+    async def endpoint(body: model):  # ty: ignore[invalid-type-form]
+        return body.value
+
+    bodies_seen_by_migration = []
+
+    @convert_request_to_next_version_for(model)
+    def migrator(request: RequestInfo):
+        bodies_seen_by_migration.append(request.body)
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, json=payload).json() == 1
+    assert clients["2001-01-01"].post(test_path, json=payload).json() == 1
+    # Migrations still see the keys of `model_dump(by_alias=True)`
+    assert bodies_seen_by_migration == [{dumped_key: 1}]
+
+
+class InnerSchemaWithValidationAlias(BaseModel):
+    value: int = Field(alias="x", validation_alias="v")
+
+
+class OtherInnerSchema(BaseModel):
+    other_value: int = Field(alias="o")
+
+
+@pytest.mark.parametrize(
+    ("annotation", "payload", "expected"),
+    [
+        pytest.param(InnerSchemaWithValidationAlias, {"v": 1}, {"value": 1}, id="model"),
+        pytest.param(Optional[InnerSchemaWithValidationAlias], {"v": 1}, {"value": 1}, id="optional_model"),
+        pytest.param(Optional[InnerSchemaWithValidationAlias], None, None, id="optional_model_with_none"),
+        pytest.param(
+            list[InnerSchemaWithValidationAlias], [{"v": 1}, {"v": 2}], [{"value": 1}, {"value": 2}], id="list"
+        ),
+        pytest.param(
+            list[Annotated[InnerSchemaWithValidationAlias, Field(description="Inner")]],
+            [{"v": 1}],
+            [{"value": 1}],
+            id="list_of_annotated",
+        ),
+        pytest.param(Sequence[InnerSchemaWithValidationAlias], [{"v": 1}], [{"value": 1}], id="sequence"),
+        pytest.param(dict[str, InnerSchemaWithValidationAlias], {"a": {"v": 1}}, {"a": {"value": 1}}, id="dict"),
+        pytest.param(Mapping[str, InnerSchemaWithValidationAlias], {"a": {"v": 1}}, {"a": {"value": 1}}, id="mapping"),
+        pytest.param(Optional[list[InnerSchemaWithValidationAlias]], [{"v": 1}], [{"value": 1}], id="optional_list"),
+        pytest.param(typing.List, [{"v": 1}], [{"v": 1}], id="bare_list"),  # noqa: UP006
+        pytest.param(typing.Dict, {"a": {"v": 1}}, {"a": {"v": 1}}, id="bare_dict"),  # noqa: UP006
+        pytest.param(
+            Union[OtherInnerSchema, InnerSchemaWithValidationAlias],
+            {"o": 1},
+            {"other_value": 1},
+            id="union_of_models",
+        ),
+    ],
+)
+def test__request_body_migration__with_validation_aliases_in_nested_models__head_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+    payload: Any,
+    expected: Any,
+):
+    class OuterSchema(BaseModel):
+        inner: annotation = Field(alias="i", validation_alias="j")
+
+    @router.post(test_path)
+    async def endpoint(body: OuterSchema):
+        return body.model_dump()
+
+    @convert_request_to_next_version_for(OuterSchema)
+    def migrator(request: RequestInfo):
+        request.body["i"] = request.body["i"]
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"j": payload}).json() == {"inner": expected}
+
+
+class RootSchemaWithValidationAliases(RootModel[list[InnerSchemaWithValidationAlias]]):
+    pass
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [Optional[InnerSchemaWithValidationAlias], Annotated[InnerSchemaWithValidationAlias, Body()]],
+)
+def test__request_body_migration__with_validation_aliases_in_top_level_body__head_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: annotation = None):
+        return body.value
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"v": 1}).json() == 1
+
+
+def test__request_body_migration__with_validation_aliases_in_root_model__head_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: RootSchemaWithValidationAliases):
+        return [inner.value for inner in body.root]
+
+    @convert_request_to_next_version_for(RootSchemaWithValidationAliases)
+    def migrator(request: RequestInfo):
+        request.body.append({"x": 3})
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, json=[{"v": 1}, {"v": 2}]).json() == [1, 2, 3]
+    assert clients["2001-01-01"].post(test_path, json=[{"v": 1}, {"v": 2}]).json() == [1, 2]
+
+
+def test__request_body_migration__with_validation_aliases_in_form_model__head_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[InnerSchemaWithValidationAlias, Form()]):
+        return body.value
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, data={"v": "1"}).json() == 1
+
+
+class SchemaWithAliasPathsIntoTheSameKeys(BaseModel):
+    first_name: str = Field(validation_alias=AliasPath("names", 0))
+    last_name: str = Field(validation_alias=AliasPath("names", 1))
+    city: str = Field(validation_alias=AliasPath("address", "city"))
+    street: str = Field(validation_alias=AliasPath("address", "street"))
+
+
+def test__request_body_migration__with_alias_paths_into_the_same_keys__head_should_get_all_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithAliasPathsIntoTheSameKeys):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+    payload = {"names": ["John", "Doe"], "address": {"city": "Paris", "street": "Rue"}}
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == {
+            "first_name": "John",
+            "last_name": "Doe",
+            "city": "Paris",
+            "street": "Rue",
+        }
+
+
+class SchemaWithAliasPathsIntoAnotherField(BaseModel):
+    names: list[str]
+    first_name: Annotated[str, AfterValidator(str.upper)] = Field(validation_alias=AliasPath("names", 0))
+    last_name: Annotated[str, AfterValidator(str.upper)] = Field(validation_alias=AliasPath("names", -1))
+
+
+def test__request_body_migration__with_alias_paths_into_another_field__should_not_overwrite_it(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithAliasPathsIntoAnotherField):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"names": ["John", "Doe"]}).json() == {
+            "names": ["John", "Doe"],
+            "first_name": "JOHN",
+            "last_name": "DOE",
+        }
+
+
+class SchemaWithValidationAliasThatChangedItsType(BaseModel):
+    value: int = Field(alias="x", validation_alias="v")
+    other: int = Field(default=0, alias="y", validation_alias="w")
+
+
+def test__request_body_migration__that_converts_the_value_of_a_field_with_validation_alias__head_should_get_it(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithValidationAliasThatChangedItsType):
+        return body.model_dump()
+
+    @convert_request_to_next_version_for(SchemaWithValidationAliasThatChangedItsType)
+    def migrator(request: RequestInfo):
+        request.body["x"] = len(request.body["x"])
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(SchemaWithValidationAliasThatChangedItsType).field("value").had(type=str),
+            migrator=migrator,
+        )
+    )
+
+    assert clients["2000-01-01"].post(test_path, json={"v": "abc", "w": 2}).json() == {"value": 3, "other": 2}
+    assert clients["2001-01-01"].post(test_path, json={"v": 3, "w": 2}).json() == {"value": 3, "other": 2}
+
+
+def test__request_body_migration__that_sets_the_validation_alias_itself__head_should_get_its_value_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithValidationAliasThatChangedItsType):
+        return body.model_dump()
+
+    @convert_request_to_next_version_for(SchemaWithValidationAliasThatChangedItsType)
+    def migrator(request: RequestInfo):
+        request.body["v"] = request.body["x"] * 10
+        request.body["w"] = request.body.pop("y") * 10
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, json={"v": 1, "w": 2}).json() == {"value": 10, "other": 20}
+    assert clients["2001-01-01"].post(test_path, json={"v": 1, "w": 2}).json() == {"value": 1, "other": 2}
 
 
 def test__request_and_response_migrations__for_paths_with_variables__can_match(
