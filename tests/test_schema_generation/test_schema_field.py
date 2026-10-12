@@ -518,8 +518,7 @@ def test__schema_field_had_and_didnt_have__field_info_subclass_in_annotated__sho
     old_schema = schemas["2000-01-01"][SchemaWithFieldInfoSubclassInAnnotated]
 
     for field_name in ("foo", "bar"):
-        metadata = get_type_hints(old_schema, include_extras=True)[field_name].__metadata__
-        field_infos = [field_info for field_info in metadata if isinstance(field_info, FieldInfo)]
+        field_infos = get_type_hints(old_schema, include_extras=True)[field_name].__metadata__
         assert [(type(field_info), field_info.extra) for field_info in field_infos] == [
             (FieldInfoWithExtraAttribute, "hello")
         ]

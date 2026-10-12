@@ -9,6 +9,7 @@ from uuid import UUID
 
 import pytest
 import svcs
+from annotated_types import Len, MinLen
 from fastapi import APIRouter, Body, Cookie, Depends, Header, Path, Query, Response, UploadFile
 from fastapi.routing import APIRoute, _EffectiveRouteContext
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -16,7 +17,8 @@ from fastapi.security.http import HTTPBasic
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from inline_snapshot import snapshot
-from pydantic import AfterValidator, BaseModel, Field, JsonValue, StringConstraints, ValidationError, conint
+from pydantic import AfterValidator, BaseModel, Field, JsonValue, StringConstraints, conint
+from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse
@@ -1445,28 +1447,6 @@ def test__router_generation__field_had_alias_and_description__should_be_applied(
         assert properties["description_field"]["description"] == description
 
 
-class FieldWithConstraintAfterValidator(BaseModel):
-    foo: Annotated[str, AfterValidator(str.strip), Field(min_length=1)]
-
-
-def test__router_generation__field_had_constraint_declared_after_validator__should_still_apply_after_it(
-    router: VersionedAPIRouter,
-    create_versioned_clients: CreateVersionedClients,
-):
-    @router.post("/test")
-    async def route(payload: FieldWithConstraintAfterValidator):
-        return payload.model_dump()
-
-    clients = create_versioned_clients(
-        version_change(schema(FieldWithConstraintAfterValidator).field("foo").had(min_length=3)),
-    )
-
-    assert clients["2001-01-01"].post("/test", json={"foo": "  ab  "}).json() == {"foo": "ab"}
-    assert clients["2001-01-01"].post("/test", json={"foo": "   "}).status_code == 422
-    assert clients["2000-01-01"].post("/test", json={"foo": "  abc  "}).json() == {"foo": "abc"}
-    assert clients["2000-01-01"].post("/test", json={"foo": "  ab  "}).status_code == 422
-
-
 class DeletableAttributesInFieldDefaults(BaseModel):
     min_length_field: str = Field(min_length=3)
     max_length_field: str = Field(max_length=3)
@@ -1600,35 +1580,6 @@ def test__router_generation__field_didnt_have_description_and_title__should_remo
         assert client.post(path, json=PAYLOAD_WITH_DELETABLE_ATTRIBUTES_VALID_IN_ALL_VERSIONS).status_code == 200
 
 
-class FieldWithTwoConstraintsAfterValidator(BaseModel):
-    foo: Annotated[str, AfterValidator(str.strip), Field(min_length=3, max_length=5)]
-
-
-def test__router_generation__field_didnt_have_constraint_declared_after_validator__should_keep_others_after_it(
-    router: VersionedAPIRouter,
-    create_versioned_clients: CreateVersionedClients,
-):
-    @router.post("/test")
-    async def route(payload: FieldWithTwoConstraintsAfterValidator):
-        return payload.model_dump()
-
-    @convert_request_to_next_version_for(FieldWithTwoConstraintsAfterValidator)
-    def truncate_foo(request: RequestInfo):
-        request.body["foo"] = request.body["foo"][:5]
-
-    clients = create_versioned_clients(
-        version_change(
-            schema(FieldWithTwoConstraintsAfterValidator).field("foo").didnt_have("max_length"),
-            truncate_foo=truncate_foo,
-        ),
-    )
-
-    assert clients["2001-01-01"].post("/test", json={"foo": "  abcdefg  "}).status_code == 422
-    assert clients["2001-01-01"].post("/test", json={"foo": "  ab  "}).status_code == 422
-    assert clients["2000-01-01"].post("/test", json={"foo": "  abcdefg  "}).json() == {"foo": "abcde"}
-    assert clients["2000-01-01"].post("/test", json={"foo": "  ab  "}).status_code == 422
-
-
 class SchemaWithUnsetAttributesInAnnotated(BaseModel):
     conint_field: Annotated[conint(lt=7), Field(description="Description")]  # ty: ignore[invalid-type-form]
     min_length_field: Annotated[str, Field(min_length=1)]
@@ -1718,35 +1669,64 @@ def test__router_generation__field_didnt_have_constraint_of_constraints_subclass
     assert clients["2000-01-01"].post("/test", json={"foo": " a "}).json() == {"foo": "a_"}
 
 
-class FieldsWithConstraintAfterValidatorAndDefault(BaseModel):
-    plain_default: Annotated[str, AfterValidator(lambda v: v * 3), Field(min_length=3)] = "fallback"
-    field_default: Annotated[str, AfterValidator(lambda v: v * 3), Field(min_length=3)] = Field(default="fallback")
-    field_default_factory: Annotated[str, AfterValidator(lambda v: v * 3), Field(min_length=3)] = Field(
-        default_factory=lambda: "fallback"
-    )
+FIELD_INFO_WITH_LEN = FieldInfo.from_annotation(Annotated[str, Len(2, 5)])  # ty: ignore[invalid-argument-type]
 
 
-@pytest.mark.parametrize("field_name", ["plain_default", "field_default", "field_default_factory"])
-def test__router_generation__defaulted_field_with_constraint_after_validator__should_validate_like_original_model(
+class SchemaWithLenConstraints(BaseModel):
+    annotated_len: Annotated[str, Len(2, 5)]
+    field_info_with_len: Annotated[str, FIELD_INFO_WITH_LEN]
+
+
+@pytest.mark.parametrize("field_name", ["annotated_len", "field_info_with_len"])
+def test__router_generation__field_didnt_have_min_length_of_len__should_keep_max_length(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     field_name: str,
 ):
     @router.post("/test")
-    async def route(payload: FieldsWithConstraintAfterValidatorAndDefault):
+    async def route(payload: SchemaWithLenConstraints):
+        return payload.model_dump()
+
+    @convert_request_to_next_version_for(SchemaWithLenConstraints)
+    def pad_values(request: RequestInfo):
+        request.body[field_name] = request.body[field_name].ljust(2, "_")
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(SchemaWithLenConstraints).field(field_name).didnt_have("min_length"), pad_values=pad_values
+        ),
+    )
+    payload = {"annotated_len": "abc", "field_info_with_len": "abc"}
+
+    for version, min_length, status_code_of_too_short_value in [("2001-01-01", 2, 422), ("2000-01-01", None, 200)]:
+        versioned_client = clients[version]
+        openapi = versioned_client.get(f"/openapi.json?version={version}").json()
+        field_schema = openapi["components"]["schemas"]["SchemaWithLenConstraints"]["properties"][field_name]
+        assert field_schema.get("minLength") == min_length
+        assert field_schema["maxLength"] == 5
+        assert versioned_client.post("/test", json=payload | {field_name: "a"}).status_code == (
+            status_code_of_too_short_value
+        )
+        assert versioned_client.post("/test", json=payload | {field_name: "abcdef"}).status_code == 422
+
+
+class SchemaWithSameConstraintBeforeAndAfterValidator(BaseModel):
+    value: Annotated[str, AfterValidator(lambda v: v * 3), MinLen(3)] = Field(min_length=3)
+
+
+def test__router_generation__same_constraint_before_and_after_validator__should_be_checked_on_both_sides(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/test")
+    async def route(payload: SchemaWithSameConstraintBeforeAndAfterValidator):
         return payload.model_dump()
 
     clients = create_versioned_clients(version_change())
-    try:
-        FieldsWithConstraintAfterValidatorAndDefault.model_validate({field_name: "a"})
-        expected_status_code = 200
-    except ValidationError:  # pragma: no cover # Only pydantic<2.12 applies these constraints before validators
-        expected_status_code = 422
 
     for versioned_client in clients.values():
-        assert versioned_client.post("/test", json={field_name: "a"}).status_code == expected_status_code
-        assert versioned_client.post("/test", json={field_name: "aaaa"}).status_code == 200
-        assert versioned_client.post("/test", json={}).json()[field_name] == "fallback"
+        assert versioned_client.post("/test", json={"value": "a"}).status_code == 422
+        assert versioned_client.post("/test", json={"value": "abc"}).status_code == 200
 
 
 class SchemaWithConstrainedAnnotatedField(BaseModel):
