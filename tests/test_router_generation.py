@@ -2362,16 +2362,39 @@ class _PartialWithOverriddenCall(functools.partial):
         return super().__call__(*args, **kwargs) + 100
 
 
+class _PartialWithOverriddenCallAndForwardedAttributes(_PartialWithOverriddenCall):
+    # Forwards __globals__ of .func too
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.func, name)
+
+
+class _PartialWithOverriddenCallAndHiddenDict(_PartialWithOverriddenCall):
+    @override
+    def __getattribute__(self, name: str) -> Any:
+        if name == "__dict__":
+            raise AssertionError("Cadwyn must not depend on the __dict__ attribute of the dependency")
+        return super().__getattribute__(name)
+
+
 def _get_seven() -> int:
     return 7
 
 
+@pytest.mark.parametrize(
+    "partial_subclass",
+    [
+        _PartialWithOverriddenCall,
+        _PartialWithOverriddenCallAndForwardedAttributes,
+        _PartialWithOverriddenCallAndHiddenDict,
+    ],
+)
 def test__router_generation__partial_subclass_dependency_with_overridden_call__should_call_the_override(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
+    partial_subclass: type[functools.partial[int]],
 ):
     # The instance must not have any attributes. Otherwise, Python would not flatten it into the partials around it
-    dependency = _PartialWithOverriddenCall(_get_seven)
+    dependency = partial_subclass(_get_seven)
 
     @router.get("/default")
     def default_route(value: int = Depends(dependency)):

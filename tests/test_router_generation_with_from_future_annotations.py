@@ -469,21 +469,39 @@ class _PartialWithOverriddenCall(functools.partial):
         raise NotImplementedError
 
 
+_DEPENDENCIES_WITH_NESTED_QUOTED_ANNOTATIONS_FROM_ANOTHER_MODULE = {
+    "function": other_module.get_body_with_optional_quoted_body,
+    "init": other_module.ResourceWithOptionalQuotedBodyInInit,
+    "new": other_module.ResourceWithOptionalQuotedBodyInNew,
+    "metaclass_call": other_module.ResourceWithOptionalQuotedBodyInMetaclassCall,
+    "partialmethod_init": other_module.ResourceWithOptionalQuotedBodyInPartialmethodInit,
+}
 # Postponed annotations of routes can only refer to the dependency through the globals
-partial_subclass_of_other_module_dependency = _PartialWithOverriddenCall(
-    other_module.get_body_with_optional_quoted_body
-)
+dependency_in_globals: Any = None
 
 
-def test__router_generation__partial_subclass_of_dependency_from_another_module__should_resolve_its_annotations(
-    router, create_versioned_clients
+_WRAPPERS_OF_DEPENDENCIES_FROM_ANOTHER_MODULE = {
+    "partial": functools.partial,
+    "partial_subclass": _PartialWithOverriddenCall,
+}
+
+
+@pytest.mark.parametrize("wrapper", list(_WRAPPERS_OF_DEPENDENCIES_FROM_ANOTHER_MODULE))
+@pytest.mark.parametrize("shape", list(_DEPENDENCIES_WITH_NESTED_QUOTED_ANNOTATIONS_FROM_ANOTHER_MODULE))
+def test__router_generation__dependency_from_another_module_with_nested_quoted_annotations__should_resolve_them(
+    router, create_versioned_clients, monkeypatch, shape, wrapper
 ):
+    dependency = _WRAPPERS_OF_DEPENDENCIES_FROM_ANOTHER_MODULE[wrapper](
+        _DEPENDENCIES_WITH_NESTED_QUOTED_ANNOTATIONS_FROM_ANOTHER_MODULE[shape]
+    )
+    monkeypatch.setitem(globals(), "dependency_in_globals", dependency)
+
     @router.post("/default")
-    async def default_route(body: Any = Depends(partial_subclass_of_other_module_dependency)):
+    async def default_route(body: Any = Depends(dependency_in_globals)):
         raise NotImplementedError
 
     @router.post("/annotated")
-    async def annotated_route(body: Annotated[Any, Depends(partial_subclass_of_other_module_dependency)]):
+    async def annotated_route(body: Annotated[Any, Depends(dependency_in_globals)]):
         raise NotImplementedError
 
     clients = create_versioned_clients(version_change(schema(other_module.Payload).field("foo").had(type=int)))
@@ -500,6 +518,70 @@ def test__router_generation__partial_subclass_of_dependency_from_another_module_
         openapi = version_client.get(f"/openapi.json?version={version}").json()
         foo_types[version] = openapi["components"]["schemas"]["Payload"]["properties"]["foo"]["type"]
     assert foo_types == {"2001-01-01": "string", "2000-01-01": "integer"}
+
+
+class PartialSubclassPayload(BaseModel):
+    foo: str
+
+
+class ResourceWithOptionalQuotedBody:
+    def __init__(self, body: Optional["PartialSubclassPayload"]) -> None:  # noqa: UP037
+        raise NotImplementedError
+
+
+partial_subclass_of_class = _PartialWithOverriddenCall(ResourceWithOptionalQuotedBody)
+
+
+def test__router_generation__partial_subclass_of_class_with_nested_quoted_annotations__should_resolve_them(
+    router, create_versioned_clients
+):
+    @router.post("/test")
+    async def route(resource: Annotated[Any, Depends(partial_subclass_of_class)]):
+        raise NotImplementedError
+
+    clients = create_versioned_clients(
+        version_change(schema(PartialSubclassPayload).field("foo").had(type=int)),
+    )
+    response = clients["2000-01-01"].post("/test", json={"foo": "bar"})
+    assert [(error["loc"], error["type"]) for error in response.json()["detail"]] == [(["body", "foo"], "int_parsing")]
+    foo_types = {}
+    for version, version_client in clients.items():
+        openapi = version_client.get(f"/openapi.json?version={version}").json()
+        foo_types[version] = openapi["components"]["schemas"]["PartialSubclassPayload"]["properties"]["foo"]["type"]
+    assert foo_types == {"2001-01-01": "string", "2000-01-01": "integer"}
+
+
+# other_module has a namesake of this alias
+Number = int
+
+
+class _PartialWithOverriddenCallAndSignature(functools.partial):
+    @override
+    def __call__(self, number: Number) -> Any:
+        raise NotImplementedError
+
+    __signature__ = inspect.signature(__call__).replace(
+        parameters=list(inspect.signature(__call__).parameters.values())[1:]
+    )
+
+
+@pytest.mark.parametrize("func", [int, other_module.get_number])
+def test__router_generation__partial_subclass_with_signature_of_its_call__should_resolve_it_in_the_globals_of_call(
+    router, create_versioned_clients, monkeypatch, func
+):
+    monkeypatch.setitem(globals(), "dependency_in_globals", _PartialWithOverriddenCallAndSignature(func))
+
+    @router.get("/test")
+    async def route(number: Annotated[Any, Depends(dependency_in_globals)]):
+        raise NotImplementedError
+
+    for version, version_client in create_versioned_clients(version_change()).items():
+        response = version_client.get("/test", params={"number": "five"})
+        assert [(error["loc"], error["type"]) for error in response.json()["detail"]] == [
+            (["query", "number"], "int_parsing")
+        ]
+        openapi = version_client.get(f"/openapi.json?version={version}").json()
+        assert openapi["paths"]["/test"]["get"]["parameters"][0]["schema"]["type"] == "integer"
 
 
 def test__router_generation__wrapped_dependencies_from_another_module__should_resolve_annotations_like_signature(

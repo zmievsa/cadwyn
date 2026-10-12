@@ -20,7 +20,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Fixed a `NameError` at startup on Python 3.14 when a dependency's annotations use a name that only exists for type checkers (e.g. one imported under `if TYPE_CHECKING:`).
 - Fixed router generation failing for dependencies whose return annotation only type checkers can evaluate, such as `-> "pd.Series[int]"` with postponed annotations, or whose returned model has a default factory without a signature, such as `time.time` before Python 3.13. Like FastAPI, Cadwyn no longer evaluates or versions the return annotations of dependencies.
 - Fixed `Annotated` dependencies whose type is not versioned, such as `Annotated[list[int], Depends(get_values)]`, using the dependency of the head or another API version. This made versioned request constraints, such as a `min_length` or a removed enum member, get ignored in both validation and OpenAPI.
-- Fixed OpenAPI and older API versions failing for `functools.partial` subclass dependencies that override `__call__` when the subclass is defined in another module than the function it wraps and the function's postponed annotations contain quoted references such as `Optional["Item"]`. They were resolved in the module of the subclass.
+- Fixed OpenAPI failing for `functools.partial` dependencies of classes, and for `functools.partial` subclass dependencies that override `__call__` and are defined in another module than the function they wrap, when the postponed annotations of the wrapped function or class constructor contain quoted references such as `Optional["Item"]`.
+- Fixed the overridden `__call__` of `functools.partial` subclass dependencies being skipped on Python 3.13+ when the subclass forwards attribute lookups to the wrapped function (e.g. through `__getattr__`).
 
 ## [7.4.1]
 
