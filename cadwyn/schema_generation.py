@@ -512,23 +512,36 @@ def _get_unevaluated_signature(call: Callable[..., Any]) -> inspect.Signature:
     return inspect.signature(call)
 
 
+_PARTIAL_DICT_ACCESSOR = vars(functools.partial)["__dict__"]
+
+
 def _get_best_effort_globals(call: Any) -> dict[str, Any]:
     """Return the globals of the callable for the string annotations that _get_signature() left.
 
     Like FastAPI, we take them from the unwrapped callable. Unlike FastAPI, we also unwrap partials that do not
     carry globals themselves. For callable class instances, __globals__ is on the __call__ method instead.
     Partial subclasses that override __call__ are treated like other callable instances, just like Cadwyn always did.
-    This also matters at runtime: looking up their __call__ statically creates their instance __dict__ and Python
-    3.13+ flattens partials of partial subclasses without one, which skips the overridden __call__
     """
     unwrapped_call = inspect.unwrap(call)
     while True:
+        is_partial_with_overridden_call = isinstance(unwrapped_call, functools.partial) and (
+            type(unwrapped_call).__call__ is not functools.partial.__call__
+        )
+        # Proxies can pass the isinstance() check by faking __class__ but they have no partial __dict__ to create
+        if is_partial_with_overridden_call and issubclass(type(unwrapped_call), functools.partial):
+            # This has nothing to do with globals but it must stay: accessing the instance __dict__ of a partial
+            # creates it. Python 3.13+ flattens a partial of a partial (e.g. the one Starlette's run_in_threadpool
+            # makes) into a single partial of the inner .func if the inner partial has no __dict__, which would
+            # silently skip the overridden __call__ of a partial subclass. Cadwyn used to create the __dict__ as
+            # a side effect of inspect.getattr_static(partial, "__call__") so we keep doing it explicitly.
+            # We use the accessor of partial itself so that __getattribute__ or __dict__ of subclasses cannot
+            # interfere, and we do it before anything else so that it also happens for the subclasses that
+            # forward __globals__ to their .func (e.g. through __getattr__)
+            _PARTIAL_DICT_ACCESSOR.__get__(unwrapped_call)
         unwrapped_call_globals = getattr(unwrapped_call, "__globals__", None)
         if isinstance(unwrapped_call_globals, dict):
             return unwrapped_call_globals
-        if not isinstance(unwrapped_call, functools.partial) or (
-            type(unwrapped_call).__call__ is not functools.partial.__call__
-        ):
+        if not isinstance(unwrapped_call, functools.partial) or is_partial_with_overridden_call:
             break
         unwrapped_call = inspect.unwrap(unwrapped_call.func)
     dunder_call = inspect.getattr_static(unwrapped_call, "__call__", None)
