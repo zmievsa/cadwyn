@@ -3,12 +3,13 @@ import sys
 import threading
 import typing
 from concurrent.futures import ThreadPoolExecutor
+from enum import Enum
 from typing import Annotated, Any, Generic, Optional, TypeVar, Union
 
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from pydantic import AliasChoices, BaseModel, Field, JsonValue, create_model
+from pydantic import AliasChoices, BaseModel, BeforeValidator, Field, JsonValue, create_model
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
 from typing_extensions import Self, TypeAliasType, TypeVarTuple, Unpack
 
@@ -22,6 +23,7 @@ from cadwyn import (
 )
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.schema_generation import generate_versioned_models
+from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import VersionChange
 from tests.conftest import CreateVersionedApp, version_change
@@ -299,6 +301,30 @@ class ItemWithUnusualAnnotations(BaseModel):
     callback: typing.Callable = Field(default=lambda: None, exclude=True)
     values: tuple[int, ...] = Field(default_factory=make_values)
     metadata: dict[str, int] = Field(default_factory=functools.partial(dict, count=1))
+
+
+class StripWithLock:
+    """A validator that cannot be deep-copied"""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+
+    def __call__(self, value: str) -> str:
+        with self.lock:
+            return value.strip()
+
+
+class LockedItem(BaseModel):
+    name: Annotated[str, BeforeValidator(StripWithLock())]
+
+
+class TaskStatus(str, Enum):
+    open = "open"
+    archived = "archived"
+
+
+class Task(BaseModel):
+    status: TaskStatus
 
 
 class Author(BaseModel):
@@ -878,3 +904,38 @@ def test__router_generation__generic_arg_with_annotations_that_cannot_be_rebuilt
     assert client_2000.get("/items").json() == {"items": [{"item": {"oldName": "Ada"}, **expected_item}]}
     assert client_2001.get("/items").json() == {"items": [{"item": {"fullName": "Ada"}, **expected_item}]}
     assert TestClient(app).get("/openapi.json?version=2000-01-01").status_code == HTTP_200_OK
+
+
+@pytest.mark.parametrize(
+    "version_changes",
+    [[], [version_change(old_name_description(Item))]],
+    ids=["no_instructions", "unrelated_instructions"],
+)
+def test__migrate_response_body__generic_args_without_versioned_models__should_not_be_copied(
+    version_changes: list[type[VersionChange]],
+):
+    versions = VersionBundle(Version("2001-01-01", *version_changes), Version("2000-01-01"))
+
+    migrated_body = migrate_response_body(
+        versions, Page[LockedItem], latest_body={"items": [{"name": " Ada "}]}, version="2000-01-01"
+    )
+
+    assert migrated_body.model_dump() == {"items": [{"name": "Ada"}]}
+
+
+def test__router_generation__generic_arg_referring_to_versioned_enum__should_use_enum_from_requested_version(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/tasks", response_model=Page[Task])
+    async def create_tasks(tasks: Page[Task]) -> Page[Task]:
+        return tasks
+
+    app = create_versioned_app(version_change(enum(TaskStatus).didnt_have("archived")), router=router)
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+
+    body = {"items": [{"status": "archived"}]}
+    assert client_2000.post("/tasks", json=body).status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    assert client_2001.post("/tasks", json=body).json() == body

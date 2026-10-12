@@ -276,11 +276,71 @@ def _is_dunder(attr_name: str):
     return attr_name.startswith("__") and attr_name.endswith("__")
 
 
-def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
+def _rebuild_model(model: type[BaseModel]) -> None:
     # In case we have a forwardref within one of the fields
     # For example, when "from __future__ import annotations" is used in the file with the schema
     if model is not BaseModel:
         model.model_rebuild(raise_errors=False)
+
+
+def _get_model_annotations(model: type[BaseModel]) -> dict[str, Any]:
+    def _rebuild_annotated(name: str):
+        if field_info := model.model_fields.get(name):
+            if not field_info.metadata:
+                return field_info.annotation
+
+            return _AnnotatedAlias(field_info.annotation, tuple(field_info.metadata))
+        return model.__annotations__[name]  # pragma: no cover
+
+    return {
+        name: value if not isinstance(value, str) else _rebuild_annotated(name)
+        for name, value in model.__annotations__.items()
+    }
+
+
+def _get_model_field_names(model: type[BaseModel]) -> list[str]:
+    return [field_name for field_name in model.__annotations__ if field_name in model.model_fields]
+
+
+def _get_head_model_references(model: type[BaseModel]) -> "_ModelReferences":
+    """Return the models that the copy of a model without instructions would request from the generator.
+
+    Unlike _wrap_pydantic_model, it does not copy anything from the model because the model may never be copied.
+    """
+    _rebuild_model(model)
+    collector = _ReferencedModelCollector()
+    _change_version_of_model_references(
+        collector,
+        model,
+        {name: _extract_passed_field_attributes(model.model_fields[name]) for name in _get_model_field_names(model)},
+        _get_model_annotations(model),
+    )
+    return collector.get_references()
+
+
+def _change_version_of_model_references(
+    generator: "Union[SchemaGenerator, _ReferencedModelCollector]",
+    model: type[BaseModel],
+    field_attributes: dict[str, dict[str, Any]],
+    annotations: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
+    """Version everything in the model that can refer to other models: field attributes, bases, and annotations"""
+    versioned_field_attributes = {
+        name: generator.annotation_transformer.change_version_of_annotation(attributes)
+        for name, attributes in field_attributes.items()
+    }
+    # __orig_bases__ keeps bases such as Generic[T] that __bases__ loses so that the copy stays generic
+    orig_bases = tuple(
+        generator[base] if isinstance(base, type) else base
+        for base in model.__dict__.get("__orig_bases__", model.__bases__)
+    )
+    versioned_annotations = generator.annotation_transformer.change_version_of_annotation(annotations)
+    generic_metadata = generator.change_version_of_generic_metadata(model)
+    return versioned_field_attributes, orig_bases, versioned_annotations, generic_metadata
+
+
+def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
+    _rebuild_model(model)
     decorators = _get_model_decorators(model)
     validators = {}
     for decorator_wrapper in decorators:
@@ -290,28 +350,14 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
         wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
         validators[decorator_wrapper.cls_var_name] = wrapped_validator
 
-    def _rebuild_annotated(name: str):
-        if field_info := model.model_fields.get(name):
-            if not field_info.metadata:
-                return field_info.annotation
-
-            return _AnnotatedAlias(field_info.annotation, tuple(field_info.metadata))
-        return model.__annotations__[name]  # pragma: no cover
-
-    annotations = {
-        name: value if not isinstance(value, str) else _rebuild_annotated(name)
-        for name, value in model.__annotations__.items()
-    }
-
-    defined_fields = model.__annotations__
+    annotations = _get_model_annotations(model)
     fields = {
         field_name: PydanticFieldWrapper(
             model.model_fields[field_name],
             annotations[field_name],
             field_name,
         )
-        for field_name in model.__annotations__
-        if field_name in defined_fields and field_name in model.model_fields
+        for field_name in _get_model_field_names(model)
     }
 
     main_attributes = fields | validators
@@ -429,24 +475,17 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         """Return the models that generate_model_copy requests from the generator"""
         collector = _ReferencedModelCollector()
         self._change_version_of_references(collector)
-        return _ModelReferences(frozenset(collector.models), frozenset(collector.arg_models))
+        return collector.get_references()
 
     def _change_version_of_references(
         self, generator: "Union[SchemaGenerator, _ReferencedModelCollector]"
     ) -> tuple[dict[str, dict[str, Any]], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
-        """Version everything in the model that can refer to other models: field attributes, bases, and annotations"""
-        field_attributes = {
-            name: generator.annotation_transformer.change_version_of_annotation(field.passed_field_attributes)
-            for name, field in self.fields.items()
-        }
-        # __orig_bases__ keeps bases such as Generic[T] that __bases__ loses so that the copy stays generic
-        orig_bases = tuple(
-            generator[base] if isinstance(base, type) else base
-            for base in self.cls.__dict__.get("__orig_bases__", self.cls.__bases__)
+        return _change_version_of_model_references(
+            generator,
+            self.cls,
+            {name: field.passed_field_attributes for name, field in self.fields.items()},
+            self.annotations,
         )
-        annotations = generator.annotation_transformer.change_version_of_annotation(self.annotations)
-        generic_metadata = generator.change_version_of_generic_metadata(self.cls)
-        return field_attributes, orig_bases, annotations, generic_metadata
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {}
@@ -899,6 +938,9 @@ class _ReferencedModelCollector:
             self[generic_metadata["origin"]]
         return generic_metadata
 
+    def get_references(self) -> "_ModelReferences":
+        return _ModelReferences(frozenset(self.models), frozenset(self.arg_models))
+
 
 class _ModelReferences(NamedTuple):
     # The models that are always versioned along with the model: in its fields, annotations, and bases
@@ -1033,12 +1075,14 @@ class SchemaGenerator:
 
     def _get_references(self, model: type[Union[BaseModel, Enum]]) -> _ModelReferences:
         if model not in self._model_references:
-            wrapper = self._get_wrapper_for_model(model)
-            self._model_references[model] = (
-                wrapper.get_references()
-                if isinstance(wrapper, _PydanticModelWrapper)
-                else _ModelReferences(frozenset(), frozenset())
-            )
+            if lenient_issubclass(model, Enum):
+                references = _ModelReferences(frozenset(), frozenset())
+            elif model in self.model_bundle.schemas:
+                references = self.model_bundle.schemas[model].get_references()
+            else:
+                # We do not wrap the model because wrapping copies parts of it and we may never need its copy
+                references = _get_head_model_references(cast("type[BaseModel]", model))
+            self._model_references[model] = references
         return self._model_references[model]
 
     @overload

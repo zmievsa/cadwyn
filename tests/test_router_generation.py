@@ -2081,3 +2081,19 @@ def test__router_generation__bare_tuple_body__should_keep_its_current_behavior(
         assert client.post("/tuples", json=[1]).status_code == 422
         request_body = client.get(f"/openapi.json?version={version}").json()["paths"]["/tuples"]["post"]["requestBody"]
         assert request_body["content"]["application/json"]["schema"]["maxItems"] == 0
+
+
+def test__router_generation__endpoint_with_annotations_assigned_by_hand__should_get_body_in_all_versions(
+    create_versioned_app: CreateVersionedApp,
+):
+    def create_item(item):  # The annotations are assigned below like in route factories
+        return item
+
+    create_item.__annotations__ = {"item": SchemaWithOneIntField, "return": SchemaWithOneIntField}
+    router = VersionedAPIRouter()
+    router.add_api_route("/items", create_item, methods=["POST"])
+
+    app = create_versioned_app(version_change(schema(EmptySchema).had(name="OldEmptySchema")), router=router)
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.post("/items", json={"foo": 1}).json() == {"foo": 1}
