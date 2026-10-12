@@ -1,6 +1,7 @@
 import http.cookies
 import re
 import sys
+import tempfile
 import typing
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar
@@ -2049,6 +2050,100 @@ def test__request_body_migration__with_bytes_read_by_old_version_dependency__hea
     # The head has no dependency that takes the file as bytes, so the `UploadFile` stays where the old one left it
     assert clients["2000-01-01"].post(test_path, files={"upload": b"first"}).json() == expected_in_old_version
     assert clients["2001-01-01"].post(test_path, files={"upload": b"first"}).json() == "first"
+
+
+async def _get_last_file(last: bytes = File(alias="f")) -> str:
+    return last.decode()
+
+
+def test__request_body_migration__with_bytes_alias_shared_by_dependency_and_endpoint_list__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(files: list[bytes] = File(alias="f"), last: str = Depends(_get_last_file)):
+        return [last, [file.decode() for file in files]]
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        assert request.form is not None
+        request.form.append(("f", UploadFile(BytesIO(b"NEW"), filename="new")))
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    files = [("f", b"A"), ("f", b"B")]
+
+    # The dependency reads the last file first, so the endpoint gets it empty as in FastAPI itself
+    assert clients["2000-01-01"].post(test_path, files=files).json() == ["NEW", ["A", "B", ""]]
+    assert clients["2001-01-01"].post(test_path, files=files).json() == ["B", ["A", ""]]
+
+
+async def _read_and_close_upload(request: Request, upload: bytes = File()) -> str:
+    form_upload = (await request.form())["upload"]
+    assert isinstance(form_upload, StarletteUploadFile)
+    await form_upload.close()
+    return upload.decode()
+
+
+def test__form_migration__with_bytes_upload_closed_by_dependency_and_replaced__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(contents: str = Depends(_read_and_close_upload)):
+        return contents
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        assert request.form is not None
+        request.form[:] = [("upload", UploadFile(BytesIO(b"normalized"), filename="normalized"))]
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"original"}).json() == "normalized"
+
+
+async def _store_upload(request: Request, upload: bytes = File()) -> None:
+    request.state.contents = upload.decode()
+
+
+async def _swap_in_stream_after_legacy_header(upload: UploadFile = File()) -> None:
+    old_stream = upload.file
+    # The form closes the new stream like the one it replaces
+    upload.file = cast("Any", tempfile.SpooledTemporaryFile())  # noqa: SIM115
+    upload.file.write(b"xxNORMALIZED")
+    upload.file.seek(len(b"xx"))
+    old_stream.close()
+
+
+async def _skip_legacy_header_after_reading(upload: UploadFile = File()) -> None:
+    await upload.seek(len(b"or"))
+
+
+@pytest.mark.parametrize(
+    ("legacy_dependency", "expected"),
+    [(_swap_in_stream_after_legacy_header, "NORMALIZED"), (_skip_legacy_header_after_reading, "iginal")],
+)
+def test__request_body_migration__with_bytes_moved_by_old_version_dependency__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    legacy_dependency: Callable[..., Coroutine[Any, Any, None]],
+    expected: str,
+):
+    @router.post(test_path, dependencies=[Depends(_store_upload)])
+    async def endpoint(request: Request):
+        return request.state.contents
+
+    clients = create_versioned_clients(
+        version_change(
+            cadwyn_endpoint(test_path, ["POST"]).had(dependencies=[Depends(_store_upload), Depends(legacy_dependency)])
+        )
+    )
+
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"original"}).json() == expected
+    assert clients["2001-01-01"].post(test_path, files={"upload": b"original"}).json() == "original"
 
 
 async def _read_upload_as_bytes(upload: Union[bytes, UploadFile]) -> str:
