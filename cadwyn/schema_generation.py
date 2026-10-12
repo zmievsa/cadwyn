@@ -691,18 +691,19 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         Both the copies of the model and `cadwyn render` use them.
         """
-        fields = self.fields_renamed_by_parents | self.fields
-        # A field that a parent renamed has the annotation that the model would inherit
-        renamed_field_annotations = {
-            name: next(
-                schemas[base].annotations[name]
-                for base in self.cls.__mro__[1:]
-                if issubclass(base, BaseModel) and base in schemas and name in schemas[base].annotations
-            )
-            for name in self.fields_renamed_by_parents
-        }
+        renamed_fields = {}
+        renamed_field_annotations = {}
+        for name, field in self.fields_renamed_by_parents.items():
+            if name in self.annotations:
+                # The model defines the name itself
+                continue
+            parent = _get_parent_that_renamed_field(self.cls, name, field, schemas)
+            if parent is not None:
+                renamed_fields[name] = field
+                # The annotation that the model would inherit
+                renamed_field_annotations[name] = schemas[parent].annotations[name]
         return (
-            {name: field.get_field_attributes(self.cls) for name, field in fields.items()},
+            {name: field.get_field_attributes(self.cls) for name, field in (renamed_fields | self.fields).items()},
             renamed_field_annotations | self.annotations,
         )
 
@@ -1766,7 +1767,7 @@ def _apply_alter_schema_instructions(
                 version_change_name,
             )
         elif isinstance(alter_schema_instruction, FieldDidntExistInstruction):
-            _delete_field_from_model(schema_info, modified_schemas, alter_schema_instruction.name, version_change_name)
+            _delete_field_from_model(schema_info, alter_schema_instruction.name, version_change_name)
         elif isinstance(alter_schema_instruction, ValidatorExistedInstruction):
             validator_name = get_name_of_function_wrapped_in_pydantic_validator(alter_schema_instruction.validator)
             raw_validator = cast(
@@ -1935,11 +1936,33 @@ def _make_subclasses_follow_rename(
     Otherwise, they would only inherit the renamed field of the model, which does not have their changes.
     """
     for subclass in _get_subclasses_that_share_field(model, schemas, field, old_name):
-        if any(_is_generic_model(cls) for cls in subclass.cls.__mro__ if issubclass(cls, model.cls)):
-            # Pydantic substitutes the type args of the fields of generics so we leave such fields to it
-            continue
         subclass.fields_renamed_by_parents.pop(old_name, None)
         subclass.fields_renamed_by_parents[new_name] = field
+
+
+def _get_parent_that_renamed_field(
+    model: type[BaseModel],
+    field_name: str,
+    field: PydanticFieldWrapper,
+    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
+) -> Union[type[BaseModel], None]:
+    """Return the parent that the model inherits the renamed field from, if the model can define it instead.
+
+    The model can only define it if it would inherit it through single inheritance from that parent without any
+    generics on the way (pydantic substitutes their type args) and no other class defines the name. Otherwise,
+    we leave the name to pydantic. The parent could also have reused or deleted the name since it renamed the field.
+    """
+    cls = model
+    while len(cls.__bases__) == 1 and not _is_generic_model(cls):
+        base = cls.__bases__[0]
+        if not issubclass(base, BaseModel) or base is BaseModel or _is_generic_model(base):
+            return None
+        if base in schemas and field_name in schemas[base].fields:
+            return base if schemas[base].fields[field_name] is field else None
+        if field_name in _get_annotations_without_evaluating(base):
+            return None
+        cls = base
+    return None
 
 
 def _is_generic_model(model: type[BaseModel]) -> bool:
@@ -2152,19 +2175,10 @@ def _delete_field_attributes(
         field.delete_attribute(name=attr_name, changed_by=model.cls)
 
 
-def _delete_field_from_model(
-    model: _PydanticModelWrapper[BaseModel],
-    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
-    field_name: str,
-    version_change_name: str,
-):
+def _delete_field_from_model(model: _PydanticModelWrapper[BaseModel], field_name: str, version_change_name: str):
     if field_name in model.fields:
-        field = model.fields.pop(field_name)
+        model.fields.pop(field_name)
         model.annotations.pop(field_name)
-        # The subclasses would have inherited the field that their parent renamed
-        for subclass in _get_subclasses_that_share_field(model, schemas, field, field_name):
-            if subclass.fields_renamed_by_parents.get(field_name) is field:
-                subclass.fields_renamed_by_parents.pop(field_name)
         for validator_name, validator in model.validators.copy().items():
             if isinstance(validator, _PerFieldValidatorWrapper) and field_name in validator.fields:
                 validator.fields.remove(field_name)

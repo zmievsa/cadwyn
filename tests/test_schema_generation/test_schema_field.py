@@ -833,6 +833,18 @@ def _get_max_lengths(model: type[BaseModel]) -> dict[str, Union[int, None]]:
             },
             id="child_changed_field_then_parent_renamed_and_changed_it",
         ),
+        pytest.param(
+            [
+                [schema(ChildWithFieldThatGetsRenamed).field("foo").had(max_length=3)],
+                [schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo")],
+                [schema(ChildWithFieldThatGetsRenamed).field("old_foo").had(max_length=5)],
+            ],
+            {
+                ParentWithFieldThatGetsRenamed: {"old_foo": 10},
+                ChildWithFieldThatGetsRenamed: {"old_foo": 5, "foo": 5},
+            },
+            id="child_changed_field_then_parent_renamed_it_then_child_changed_it_again",
+        ),
     ],
 )
 def test__schema_field_had__parent_renamed_field_that_subclass_changed__should_keep_changes_of_subclass(
@@ -880,6 +892,119 @@ def test__schema_field_had__generic_parent_renamed_field_that_subclass_changed__
 
     child = schemas["2000-01-01"][GenericChildWithInheritedField]
     assert child.model_fields["old_kind"].annotation == Literal["a"]
+
+
+class ParentWithRenameCollision(BaseModel):
+    foo: str = Field(max_length=10)
+    bar: int = 0
+
+
+class ChildWithRenameCollision(ParentWithRenameCollision):
+    pass
+
+
+def test__schema_field_had__parent_renamed_another_field_to_name_of_renamed_field_and_deleted_it__should_drop_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ChildWithRenameCollision).field("foo").had(max_length=3),
+            schema(ParentWithRenameCollision).field("foo").had(name="old"),
+            schema(ParentWithRenameCollision).field("bar").had(name="old"),
+            schema(ParentWithRenameCollision).field("old").didnt_exist,
+        )
+    )
+
+    assert _get_max_lengths(schemas["2000-01-01"][ChildWithRenameCollision]) == {"foo": 3}
+
+
+class ParentRenamedIntoFirstBase(BaseModel):
+    foo: str = Field(max_length=10)
+
+
+class FirstBaseWithField(BaseModel):
+    old: int = 0
+
+
+class FirstBaseWithClassVar(BaseModel):
+    old: ClassVar[int] = 0
+
+
+class GenericFirstBase(BaseModel, Generic[_T]):
+    old: _T
+
+
+class ChildOfFirstBaseWithField(FirstBaseWithField, ParentRenamedIntoFirstBase):
+    pass
+
+
+class ChildOfFirstBaseWithClassVar(FirstBaseWithClassVar, ParentRenamedIntoFirstBase):
+    pass
+
+
+class ChildOfGenericFirstBase(GenericFirstBase[int], ParentRenamedIntoFirstBase):
+    pass
+
+
+class MiddleWithField(ParentRenamedIntoFirstBase):
+    old: int = 0
+
+
+class ChildOfMiddleWithField(MiddleWithField):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("child", "expected"),
+    [
+        (ChildOfFirstBaseWithField, {"old": 123, "foo": "abc"}),
+        (ChildOfFirstBaseWithClassVar, {"foo": "abc"}),
+        (ChildOfGenericFirstBase, {"old": 123, "foo": "abc"}),
+        (ChildOfMiddleWithField, {"old": 123, "foo": "abc"}),
+    ],
+)
+def test__schema_field_had__parent_renamed_field_to_name_that_first_base_has__should_keep_first_base_one(
+    create_runtime_schemas: CreateRuntimeSchemas, child: type[BaseModel], expected: dict[str, Any]
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(child).field("foo").had(max_length=3),
+            schema(ParentRenamedIntoFirstBase).field("foo").had(name="old"),
+        )
+    )
+
+    assert schemas["2000-01-01"][child].model_validate({"foo": "abc", "old": 123}).model_dump() == expected
+
+
+class ParentOfDiamondWithRenamedField(BaseModel):
+    foo: str = Field(max_length=10)
+
+
+class LeftChildOfDiamondWithRenamedField(ParentOfDiamondWithRenamedField):
+    pass
+
+
+class RightChildOfDiamondWithRenamedField(ParentOfDiamondWithRenamedField):
+    pass
+
+
+class DiamondWithRenamedField(LeftChildOfDiamondWithRenamedField, RightChildOfDiamondWithRenamedField):
+    pass
+
+
+def test__schema_field_had__parent_renamed_field_of_diamond_and_other_parent_changed_its_type__should_keep_type(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(DiamondWithRenamedField).field("foo").had(max_length=3),
+            schema(ParentOfDiamondWithRenamedField).field("foo").had(name="old"),
+            schema(RightChildOfDiamondWithRenamedField).field("old").had(type=bytes),
+        )
+    )
+
+    diamond = schemas["2000-01-01"][DiamondWithRenamedField]
+    assert diamond.model_validate({"foo": "abc", "old": "abc"}).model_dump() == {"foo": "abc", "old": "abc"}
 
 
 class ParentWithoutField(BaseModel):
