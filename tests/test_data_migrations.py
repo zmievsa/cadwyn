@@ -1960,6 +1960,66 @@ def test__form_migration__with_file_positions_set_by_migration__head_should_keep
     assert clients["2001-01-01"].post(test_path, files={"upload": b"HDR:payload"}).json() == "HDR:payload"
 
 
+def _swap_stream_for_non_seekable_one(request: RequestInfo):
+    assert request.form is not None
+    for _, value in request.form:
+        assert isinstance(value, StarletteUploadFile)
+        value.file.close()
+        value.file = cast("Any", _ReadOnlyStream(b"decoded"))
+
+
+def _swap_stream_for_one_at_the_same_position(request: RequestInfo):
+    assert request.form is not None
+    for _, value in request.form:
+        assert isinstance(value, StarletteUploadFile)
+        value.file.close()
+        # The position where FastAPI left the original file
+        value.file = BytesIO(b"NEWDATA")
+        value.file.seek(len(b"12345"))
+
+
+@pytest.mark.parametrize(
+    ("migration", "expected"),
+    [(_swap_stream_for_non_seekable_one, "decoded"), (_swap_stream_for_one_at_the_same_position, "TA")],
+)
+def test__form_migration__with_bytes_upload_stream_swapped_by_migration__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    migration: Callable[[RequestInfo], None],
+    expected: str,
+):
+    @router.post(test_path)
+    async def endpoint(upload: bytes = File()):
+        return upload.decode()
+
+    clients = create_versioned_clients(
+        version_change(migrator=convert_request_to_next_version_for(test_path, ["POST"])(migration))
+    )
+
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"12345"}).json() == expected
+
+
+def test__form_migration__with_bytes_upload_moved_to_another_field__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(upload: bytes = File(), attachment: Optional[UploadFile] = File(None)):
+        assert attachment is not None
+        return [upload.decode(), (await attachment.read()).decode()]
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        assert request.form is not None
+        request.form[:] = [("upload", "converted"), ("attachment", dict(request.form)["upload"])]
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"legacy"}).json() == ["converted", ""]
+
+
 def test__form_migration__with_bytes_upload_closed_by_migration__should_stay_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],

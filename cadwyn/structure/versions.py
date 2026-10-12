@@ -11,7 +11,7 @@ from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, ClassVar, TypeAlias, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, BinaryIO, ClassVar, TypeAlias, Union, cast, get_args, get_origin
 
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -796,8 +796,16 @@ def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body
     )
 
 
-# Maps `id(upload)` to the upload (which keeps the id valid) and its position right after FastAPI has read it
-_UploadPositions: TypeAlias = dict[int, tuple[UploadFile, int]]
+@dataclasses.dataclass(frozen=True)
+class _UploadReadByFastapi:
+    form_key: str
+    upload: UploadFile  # Keeps `id(upload)` valid
+    file: BinaryIO
+    position: int
+
+
+# Maps `id(upload)` to the upload with its form key, file, and position right after FastAPI has read it
+_UploadPositions: TypeAlias = dict[int, _UploadReadByFastapi]
 
 
 def _get_uploads_read_by_fastapi(route: APIRoute, form: FormData) -> _UploadPositions:
@@ -820,7 +828,7 @@ def _get_uploads_read_by_fastapi(route: APIRoute, form: FormData) -> _UploadPosi
             continue
         for value in values:
             if isinstance(value, UploadFile) and isinstance(value.file, tempfile.SpooledTemporaryFile):
-                uploads[id(value)] = (value, value.file.tell())
+                uploads[id(value)] = _UploadReadByFastapi(alias, value, value.file, value.file.tell())
     return uploads
 
 
@@ -829,15 +837,19 @@ async def _rewind_uploads_read_by_fastapi(
 ) -> None:
     """Undo FastAPI's reading of the uploaded files that are still in the form where FastAPI left them.
 
-    Files that migrations replaced, moved, or closed are passed on exactly as the migrations left them.
+    Files that migrations replaced, moved under other keys, closed, seeked, or swapped for other streams
+    are passed on exactly as the migrations left them.
     """
-    for _, value in form:
-        upload_and_position = uploads.get(id(value))
-        if upload_and_position is None:
-            continue
-        upload, position = upload_and_position
-        if not upload.file.closed and upload.file.tell() == position:
-            await upload.seek(0)
+    for key, value in form:
+        read = uploads.get(id(value))
+        if (
+            read is not None
+            and key == read.form_key
+            and read.upload.file is read.file
+            and not read.file.closed
+            and read.file.tell() == read.position
+        ):
+            await read.upload.seek(0)
 
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
