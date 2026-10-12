@@ -14,6 +14,7 @@ from pydantic import (
     constr,
 )
 from pydantic.fields import FieldInfo
+from pydantic_core import PydanticUndefined
 
 from cadwyn.exceptions import (
     CadwynStructureError,
@@ -1157,6 +1158,41 @@ def test__schema_field_had__parent_renamed_field_with_default_factory__should_no
     assert schemas["2000-01-01"][ChildWithDefaultFactoryToRename]().model_dump() == {"old_foo": 1, "foo": 1}
 
 
+shared_counting_factory = CountingFactory()
+
+
+class ParentWithFieldsThatShareDefaultFactoryToRename(BaseModel):
+    foo: int = Field(default_factory=shared_counting_factory)
+    bar: int = Field(default_factory=shared_counting_factory)
+    baz: int = Field(default_factory=shared_counting_factory)
+
+
+class ChildWithFieldsThatShareDefaultFactoryToRename(ParentWithFieldsThatShareDefaultFactoryToRename):
+    pass
+
+
+def test__schema_field_had__parent_renamed_fields_that_share_default_factory__should_share_it_with_parent_fields(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ChildWithFieldsThatShareDefaultFactoryToRename).field("foo").had(type=float),
+            schema(ChildWithFieldsThatShareDefaultFactoryToRename).field("bar").had(type=float),
+            schema(ParentWithFieldsThatShareDefaultFactoryToRename).field("foo").had(name="old_foo"),
+            schema(ParentWithFieldsThatShareDefaultFactoryToRename).field("bar").had(name="old_bar"),
+        )
+    )
+
+    # Like the fields that the child inherits from the parent, the renamed ones share the parent's copy of the factory
+    assert schemas["2000-01-01"][ChildWithFieldsThatShareDefaultFactoryToRename]().model_dump() == {
+        "baz": 1,
+        "old_foo": 2,
+        "old_bar": 3,
+        "foo": 1,
+        "bar": 2,
+    }
+
+
 class ParentWithMutableDefaultToRename(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     foo: MutableDefault = MutableDefault()
@@ -1238,6 +1274,31 @@ def test__schema_field_had__both_default_and_default_factory__should_raise_error
         )
 
 
+class ModelWithExplicitDefaultSentinels(BaseModel):
+    with_default_and_none_factory: int = Field(default=1, default_factory=None)
+    with_default: int = 1
+    with_factory: int = Field(default_factory=int)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "attributes", "expected"),
+    [
+        ("with_default_and_none_factory", {"description": "Old"}, 1),
+        ("with_default", {"default": 2, "default_factory": None}, 2),
+        ("with_default", {"default": ..., "default_factory": int}, 0),
+        ("with_factory", {"default": PydanticUndefined}, 0),
+    ],
+)
+def test__schema_field_had__default_or_default_factory_that_pydantic_treats_as_unset__should_not_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas, field_name: str, attributes: dict[str, Any], expected: int
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(ModelWithExplicitDefaultSentinels).field(field_name).had(**attributes))
+    )
+
+    assert getattr(schemas["2000-01-01"][ModelWithExplicitDefaultSentinels](), field_name) == expected
+
+
 def _factory() -> str:
     return "factory"
 
@@ -1310,6 +1371,43 @@ def test__schema_field_had__default_factory_of_annotated_field_that_sibling_dele
     assert schemas["2000-01-01"][AnnotatedParentWithDefault]().foo == "factory"
     assert schemas["2000-01-01"][AnnotatedChildWithDefault]().foo == "factory"
     assert schemas["2000-01-01"][AnnotatedSiblingWithDefault]().foo == "default"
+
+
+class AnnotatedParentWithDefaultInField(BaseModel):
+    foo: Annotated[int, Field(default=0)]
+    bar: int = 0
+
+
+class AnnotatedChildWithDefaultInField(AnnotatedParentWithDefaultInField):
+    pass
+
+
+def test__schema_field_didnt_have__annotated_default_after_child_set_default_factory_to_none__should_keep_it_in_child(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(AnnotatedParentWithDefaultInField).field("bar").had(description="Bar"),
+            schema(AnnotatedChildWithDefaultInField).field("foo").had(default_factory=None),  # ty: ignore[invalid-argument-type]
+            schema(AnnotatedParentWithDefaultInField).field("foo").didnt_have("default"),
+        )
+    )
+
+    assert schemas["2000-01-01"][AnnotatedParentWithDefaultInField].model_fields["foo"].is_required()
+    assert schemas["2000-01-01"][AnnotatedChildWithDefaultInField]().foo == 0
+
+
+def test__schema_field_didnt_have__annotated_default_after_child_set_default_factory__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    with pytest.raises(TypeError, match="cannot specify both default and default_factory"):
+        create_runtime_schemas(
+            version_change(
+                schema(AnnotatedParentWithDefaultInField).field("bar").had(description="Bar"),
+                schema(AnnotatedChildWithDefaultInField).field("foo").had(default_factory=int),
+                schema(AnnotatedParentWithDefaultInField).field("foo").didnt_have("default"),
+            )
+        )
 
 
 class ParentWithoutField(BaseModel):

@@ -169,7 +169,10 @@ class PydanticFieldWrapper:
     # The same for all copies of the field
     identity: int = dataclasses.field(init=False)
     models_that_changed_it: set[type[BaseModel]] = dataclasses.field(init=False)
-    _field_attributes_by_model: dict[type[BaseModel], dict[str, Any]] = dataclasses.field(init=False, repr=False)
+    # default or default_factory that the attributes of the copy of the field do not have because the model got the
+    # other one later (see _keep_last_of_default_and_default_factory)
+    dropped_default_attribute: Union[str, None] = dataclasses.field(init=False)
+    _views_by_model: dict[type[BaseModel], "_FieldView"] = dataclasses.field(init=False, repr=False)
 
     def __post_init__(self, init_model_field: FieldInfo) -> None:
         self.passed_field_attributes = _extract_passed_field_attributes(init_model_field)
@@ -177,15 +180,16 @@ class PydanticFieldWrapper:
         self.changes = []
         self.identity = next(_field_identities)
         self.models_that_changed_it = set()
-        self._field_attributes_by_model = {}
+        self.dropped_default_attribute = None
+        self._views_by_model = {}
 
     def copy_for_model(self, model: type[BaseModel], name: str, memo: dict[int, Any]) -> "PydanticFieldWrapper":
         """Return a deep copy of the field with the attributes that it has in the model and no changes to apply.
 
         Each model gets its own copy of the field (and of its default values) in every version, as before.
         """
-        if "default" in self.passed_field_attributes and "default_factory" in self.passed_field_attributes:
-            # pydantic would fail to create the field
+        if _has_default_and_default_factory(self.passed_field_attributes):
+            # pydantic would fail to create the field, as it did when every model shared these attributes
             changed_by = next(
                 change.changed_by for change in reversed(self.changes) if change.name in {"default", "default_factory"}
             )
@@ -193,37 +197,48 @@ class PydanticFieldWrapper:
                 f'The field "{name}" of "{changed_by.__name__}" has both a default and a default_factory '
                 "in an older version."
             )
+        view = self._get_view(model)
         field_copy = copy.copy(self)
         field_copy.annotation = copy.deepcopy(self.annotation, memo)
-        field_copy.passed_field_attributes = copy.deepcopy(self.get_field_attributes(model), memo)
+        field_copy.passed_field_attributes = {
+            attr_name: copy.deepcopy(attr_value, memo) for attr_name, attr_value in view.attributes.items()
+        }
+        field_copy.dropped_default_attribute = view.dropped_default_attribute or self.dropped_default_attribute
         field_copy.declared_field_attributes = field_copy.passed_field_attributes
         field_copy.changes = []
         field_copy.models_that_changed_it = set()
-        field_copy._field_attributes_by_model = {}
+        field_copy._views_by_model = {}
         return field_copy
 
     def update_attribute(self, *, name: str, value: Any, changed_by: type[BaseModel]) -> None:
         self.passed_field_attributes[name] = value
         self.changes.append(_FieldAttributeChange(changed_by, name, value, is_deleted=False))
         self.models_that_changed_it.add(changed_by)
-        self._field_attributes_by_model.clear()
+        self._views_by_model.clear()
 
     def delete_attribute(self, *, name: str, changed_by: type[BaseModel]) -> None:
         self.passed_field_attributes.pop(name, None)
         self.changes.append(_FieldAttributeChange(changed_by, name, None, is_deleted=True))
         self.models_that_changed_it.add(changed_by)
-        self._field_attributes_by_model.clear()
+        self._views_by_model.clear()
 
     def get_field_attributes(self, model: type[BaseModel]) -> dict[str, Any]:
         """Return the attributes of the field in the model: only the changes of the model and its parents apply.
 
         So the changes that a subclass makes to an inherited field do not change its parents and their other subclasses.
         """
-        if model not in self._field_attributes_by_model:
-            self._field_attributes_by_model[model] = self._apply_changes(model)
-        return self._field_attributes_by_model[model]
+        return self._get_view(model).attributes
 
-    def _apply_changes(self, model: type[BaseModel]) -> dict[str, Any]:
+    def get_dropped_default_attribute(self, model: type[BaseModel]) -> Union[str, None]:
+        """Return default or default_factory if the model dropped it because it got the other one later"""
+        return self._get_view(model).dropped_default_attribute or self.dropped_default_attribute
+
+    def _get_view(self, model: type[BaseModel]) -> "_FieldView":
+        if model not in self._views_by_model:
+            self._views_by_model[model] = self._apply_changes(model)
+        return self._views_by_model[model]
+
+    def _apply_changes(self, model: type[BaseModel]) -> "_FieldView":
         applies = {changed_by: issubclass(model, changed_by) for changed_by in self.models_that_changed_it}
         changes = [change for change in self.changes if applies[change.changed_by]]
         if len(changes) == len(self.changes):
@@ -238,21 +253,34 @@ class PydanticFieldWrapper:
         return _keep_last_of_default_and_default_factory(attributes, changes)
 
 
+class _FieldView(NamedTuple):
+    attributes: dict[str, Any]
+    dropped_default_attribute: Union[str, None] = None
+
+
 def _keep_last_of_default_and_default_factory(
     attributes: dict[str, Any], changes: "list[_FieldAttributeChange]"
-) -> dict[str, Any]:
+) -> _FieldView:
     """Field() accepts only one of them so if the model has both, it keeps the one that it got last.
 
     The model can have both because the changes of its siblings that deleted one of them do not apply to it.
     """
-    if "default" not in attributes or "default_factory" not in attributes:
-        return attributes
+    if not _has_default_and_default_factory(attributes):
+        return _FieldView(attributes)
     last_set = next(
         change.name
         for change in reversed(changes)
         if not change.is_deleted and change.name in {"default", "default_factory"}
     )
-    return {name: value for name, value in attributes.items() if name != _OTHER_DEFAULT_ATTRIBUTE[last_set]}
+    dropped = _OTHER_DEFAULT_ATTRIBUTE[last_set]
+    return _FieldView({name: value for name, value in attributes.items() if name != dropped}, dropped)
+
+
+def _has_default_and_default_factory(attributes: dict[str, Any]) -> bool:
+    """Whether Field(**attributes) fails because it has both. Like pydantic, `...` and `None` mean that it has none"""
+    return attributes.get("default", PydanticUndefined) not in (PydanticUndefined, Ellipsis) and (
+        attributes.get("default_factory") is not None
+    )
 
 
 _OTHER_DEFAULT_ATTRIBUTE = {"default": "default_factory", "default_factory": "default"}
@@ -270,6 +298,18 @@ def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]
 class _ModelBundle:
     enums: dict[type[Enum], "_EnumWrapper[Enum]"]
     schemas: dict[type[BaseModel], "_PydanticModelWrapper[BaseModel]"]
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "_ModelBundle":
+        memos_of_models: dict[type[BaseModel], dict[int, Any]] = collections.defaultdict(dict)
+        result = _ModelBundle(
+            enums=copy.deepcopy(self.enums, memo),
+            schemas={
+                model: wrapper.copy_with_schemas(self.schemas, memos_of_models)
+                for model, wrapper in self.schemas.items()
+            },
+        )
+        memo[id(self)] = result
+        return result
 
 
 @dataclasses.dataclass(**DATACLASS_SLOTS, **DATACLASS_KW_ONLY)
@@ -665,9 +705,27 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 )
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
-        # The fields of the model share the copies of the objects that they share, like copy.deepcopy(self.fields)
-        memo_of_model: dict[int, Any] = {}
-        result = _PydanticModelWrapper(
+        result = self.copy_with_schemas(None, collections.defaultdict(dict))
+        memo[id(self)] = result
+        return result
+
+    def copy_with_schemas(
+        self,
+        schemas: "Union[dict[type[BaseModel], _PydanticModelWrapper[BaseModel]], None]",
+        memos_of_models: dict[type[BaseModel], dict[int, Any]],
+    ) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
+        """Copy the model, sharing copies of its fields' objects as copy.deepcopy(model.fields) did for each model.
+
+        So the fields of the model share the copies of the objects that they share. The fields that the model's
+        parents renamed share them with the copy of the parent that the model would inherit them from instead.
+        """
+        memo_of_model = memos_of_models[self.cls]
+        fields_renamed_by_parents = {}
+        for name, field in self.fields_renamed_by_parents.items():
+            parent = None if schemas is None else _get_parent_that_renamed_field(self.cls, name, field, schemas)
+            memo = {} if parent is None else memos_of_models[parent]
+            fields_renamed_by_parents[name] = field.copy_for_model(self.cls, name, memo)
+        return _PydanticModelWrapper(
             self.cls,
             name=self.name,
             doc=self.doc,
@@ -675,13 +733,8 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             validators=copy.deepcopy(self.validators),
             other_attributes=copy.deepcopy(self.other_attributes),
             annotations=copy.deepcopy(self.annotations),
-            # The model would inherit them from its parent so they do not share anything with its own fields
-            fields_renamed_by_parents={
-                name: field.copy_for_model(self.cls, name, {}) for name, field in self.fields_renamed_by_parents.items()
-            },
+            fields_renamed_by_parents=fields_renamed_by_parents,
         )
-        memo[id(self)] = result
-        return result
 
     @override
     def __hash__(self) -> int:
@@ -753,21 +806,20 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 renamed_fields[name] = field
                 # The annotation that the model would inherit
                 renamed_field_annotations[name] = schemas[parent].annotations[name]
-        field_attributes = {
-            name: field.get_field_attributes(self.cls) for name, field in (renamed_fields | self.fields).items()
-        }
+        fields = renamed_fields | self.fields
+        field_attributes = {name: field.get_field_attributes(self.cls) for name, field in fields.items()}
         annotations = renamed_field_annotations | self.annotations
-        for name, attributes in field_attributes.items():
-            for attr_name, other_attr_name in _OTHER_DEFAULT_ATTRIBUTE.items():
-                if attr_name in attributes and other_attr_name not in attributes:
-                    # Field() in the annotation can still have the other one if a sibling deleted it
-                    annotations[name] = _change_annotated_metadata(
-                        annotations[name],
-                        lambda metadata, other_attr_name=other_attr_name: (
-                            isinstance(metadata, FieldInfo) and other_attr_name in metadata._attributes_set
-                        ),
-                        functools.partial(_delete_metadata_attribute, attr_name=other_attr_name),
-                    )
+        for name, field in fields.items():
+            dropped = field.get_dropped_default_attribute(self.cls)
+            if dropped is not None:
+                # Field() in the annotation can still have it because the sibling that deleted it was not this model
+                annotations[name] = _change_annotated_metadata(
+                    annotations[name],
+                    lambda metadata, dropped=dropped: (
+                        isinstance(metadata, FieldInfo) and dropped in metadata._attributes_set
+                    ),
+                    functools.partial(_delete_metadata_attribute, attr_name=dropped),
+                )
         return field_attributes, annotations
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
