@@ -1316,7 +1316,7 @@ def test__schema_field_had__default_or_default_factory_that_pydantic_treats_as_u
 
 class AmbiguousTruthValue:
     def __bool__(self) -> bool:
-        raise ValueError("The truth value is ambiguous")
+        raise ValueError("The truth value is ambiguous")  # pragma: no cover
 
 
 class ElementwiseEqualDefault:
@@ -1324,7 +1324,7 @@ class ElementwiseEqualDefault:
 
     @override
     def __eq__(self, other: object) -> Any:
-        return AmbiguousTruthValue()
+        return AmbiguousTruthValue()  # pragma: no cover
 
     __hash__ = object.__hash__
 
@@ -1560,7 +1560,7 @@ def test__schema_field_had__annotated_default_factory_with_assigned_default__sho
             foo: Annotated[int, Field(default_factory=int)] = 5
             bar: int = 0
 
-        create_runtime_schemas(
+        create_runtime_schemas(  # pragma: no cover # Pydantic 2.11
             version_change(schema(ModelWithAnnotatedFactoryAndAssignedDefault).field("bar").had(description="Bar"))
         )
 

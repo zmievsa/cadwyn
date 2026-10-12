@@ -195,7 +195,7 @@ class PydanticFieldWrapper:
                 None,
             )
             # Otherwise, the declaration has both (pydantic<2.12 accepts some) and pydantic fails as before
-            if changed_by is not None:
+            if changed_by is not None:  # pragma: no branch # Pydantic 2.11
                 raise InvalidGenerationInstructionError(
                     f'The field "{name}" of "{changed_by.__name__}" has both a default and a default_factory '
                     "in an older version."
@@ -265,7 +265,7 @@ def _keep_last_of_default_and_default_factory(
         ),
         None,
     )
-    if last_set is None:
+    if last_set is None:  # pragma: no cover # Pydantic 2.11
         # The declaration has both (pydantic<2.12 accepts some) so pydantic fails as before
         return attributes
     return {name: value for name, value in attributes.items() if name != _OTHER_DEFAULT_ATTRIBUTE[last_set]}
