@@ -1550,11 +1550,37 @@ def test__router_generation__default_factory_with_annotations_set_by_hand__shoul
     async def route(body: ModelWithFactoryWithAnnotationsSetByHand):
         return body.values
 
+    # Only the copies of the models read the annotations of their default factories
+    model_change = version_change(schema(ModelWithFactoryWithAnnotationsSetByHand).field("values").had(description="A"))
     # Cadwyn reads the annotations of such callables through annotationlib on Python 3.14+ which ignores the ones
     # set by hand. Before 3.14, it reads __annotations__ and evaluates them
     if sys.version_info >= (3, 14):
-        for version_client in create_versioned_clients(version_change()).values():
+        for version_client in create_versioned_clients(model_change).values():
             assert version_client.post("/test", json={}).json() == [0, 1, 2]
     else:
         with pytest.raises(TypeError, match="NotSubscriptableAtRuntime"):
-            create_versioned_clients(version_change())
+            create_versioned_clients(model_change)
+
+
+class FutureCategory(BaseModel):
+    name: str
+    children: list[FutureCategory] = []
+    parent: Optional[FutureCategory] = None
+
+
+@pytest.mark.parametrize("has_older_version", [False, True], ids=["single_version", "with_unrelated_change"])
+def test__router_generation__unchanged_self_referencing_model__should_work_in_every_version(
+    router, create_versioned_clients, has_older_version
+):
+    version_changes = (
+        [version_change(schema(MySchema).field("foo").had(description="Old"))] if has_older_version else []
+    )
+    body = {"name": "a", "children": [{"name": "b", "children": [], "parent": None}], "parent": None}
+
+    @router.post("/categories", response_model=FutureCategory)
+    async def create_category(category: FutureCategory) -> FutureCategory:
+        return category
+
+    for version, version_client in create_versioned_clients(*version_changes).items():
+        assert version_client.post("/categories", json=body).json() == body
+        assert version_client.get(f"/openapi.json?version={version}").status_code == 200
