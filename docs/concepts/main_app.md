@@ -41,6 +41,39 @@ However, header-based routing is the default way to use Cadwyn. If you want to u
 
 Cadwyn has its own API Router class: `cadwyn.VersionedAPIRouter`. You are free to use a regular `fastapi.APIRouter` but `cadwyn.VersionedAPIRouter` has a special decorator `only_exists_in_older_versions(route)` which allows you to define routes that have been previously deleted. First you define the route and then add this decorator to it.
 
+### Using fastapi-pagination
+
+`add_pagination(app)` from [fastapi-pagination](https://github.com/uriyyo/fastapi-pagination) does not work with Cadwyn's versioned routes: either the app fails to start with `AttributeError: __params_type__`, or paginated endpoints fail with `UninitializedConfigurationError`. Instead, call `add_pagination()` on your `VersionedAPIRouter` before you include it:
+
+```python
+from fastapi_pagination import Page, add_pagination, paginate
+
+router = VersionedAPIRouter()
+
+
+@router.get("/users")
+async def list_users() -> Page[User]:
+    return paginate(get_users())
+
+
+add_pagination(router)
+app.generate_and_include_versioned_routers(router)
+```
+
+Alternatively, pass the pagination params to `paginate()` explicitly:
+
+```python
+from typing import Annotated
+
+from fastapi import Depends
+from fastapi_pagination import Page, Params, paginate
+
+
+@router.get("/users")
+async def list_users(params: Annotated[Params, Depends()]) -> Page[User]:
+    return paginate(get_users(), params)
+```
+
 ## Custom docs static assets
 
 By default, Swagger UI and ReDoc load JavaScript and CSS from CDNs. You can override these URLs to serve assets locally:
