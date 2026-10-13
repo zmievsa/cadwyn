@@ -474,7 +474,15 @@ class VersionBundle:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
             body_for_solving = FormData(request_info._form)
         elif body_is_model_dump:
-            body_for_solving = _restore_validation_aliases(head_dependant.body_params[0], request_info.body)
+            body_field = head_dependant.body_params[0]
+            body_for_solving = _restore_validation_aliases(body_field, request_info.body)
+            # We never fail a request that worked before: if the head rejects the restored body, it gets the body
+            # as before, e.g. when the head is stricter than the version and used to get the default of a field
+            if (
+                body_for_solving is not request_info.body
+                and body_field.validate(body_for_solving, {}, loc=("body",))[1]
+            ):
+                body_for_solving = request_info.body
         else:
             body_for_solving = request_info.body
 
@@ -1624,6 +1632,10 @@ def _has_unsafe_core_schema(
     That's the case for custom serializers, `Json`, models that forbid extra keys but dump computed fields,
     models with a custom `__init__`, validators that get the raw input, and core schema types that we don't know.
     """
+    # References and models can carry serializers too, e.g. `Annotated[Model, PlainSerializer(...)]`,
+    # so we check them before we summarize the schemas that they refer to
+    if _is_custom_serialization(schema.get("serialization")):
+        return True
     schema_type = schema["type"]
     if schema_type == "definition-ref":
         units["ref", schema["schema_ref"]] = None
@@ -1634,7 +1646,6 @@ def _has_unsafe_core_schema(
         return False
     if (
         schema_type not in _CHILD_SCHEMA_KEYS
-        or _is_custom_serialization(schema.get("serialization"))
         or schema.get("custom_init")
         or (schema_type == "model" and _overrides_dumping(schema["cls"]))
         or (

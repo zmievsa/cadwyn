@@ -2929,6 +2929,22 @@ class MoneyWithSerializerInNestedModel(BaseModel):
     )
 
 
+class Cents(BaseModel):
+    amount: float = Field(default=0, validation_alias="cents", serialization_alias="dollars")
+
+
+class MoneyWithPlainSerializerOnNestedModel(BaseModel):
+    money: Annotated[Cents, PlainSerializer(lambda value: {"dollars": value.amount / 100})] = Field(
+        default_factory=Cents, validation_alias="m", serialization_alias="n"
+    )
+
+
+class MoneyWithWrapSerializerOnNestedModel(BaseModel):
+    money: Annotated[Cents, WrapSerializer(lambda value, handler: {"dollars": handler(value)["dollars"] / 100})] = (
+        Field(default_factory=Cents, validation_alias="m", serialization_alias="n")
+    )
+
+
 @pytest.mark.parametrize(
     ("model", "payload", "expected"),
     [
@@ -2958,19 +2974,61 @@ def test__request_body_migration__with_custom_serialization_or_model_validators_
         assert version_client.post(test_path, json=payload).json() == expected
 
 
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param(MoneyWithSerializerInNestedModel, id="model_serializer"),
+        # The serializer is attached to the reference to the nested model, not to the nested model itself
+        pytest.param(MoneyWithPlainSerializerOnNestedModel, id="plain_serializer_on_nested_model"),
+        pytest.param(MoneyWithWrapSerializerOnNestedModel, id="wrap_serializer_on_nested_model"),
+    ],
+)
 def test__request_body_migration__with_custom_serialization_in_nested_model__should_stay_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
+    model: type[BaseModel],
 ):
     @router.post(test_path)
-    async def endpoint(body: MoneyWithSerializerInNestedModel):
+    async def endpoint(body: model):  # ty: ignore[invalid-type-form]
         return body.money.amount
 
     clients = create_versioned_clients(version_change())
 
     for version_client in clients.values():
         assert version_client.post(test_path, json={"m": {"cents": 100}}).json() == 0
+
+
+class CentsWithPlainSerializer(BaseModel):
+    amount: Annotated[float, PlainSerializer(lambda value: value / 100)] = 0
+
+
+class MoneyWithSerializerTwoLevelsDeep(BaseModel):
+    with_serializer: CentsWithPlainSerializer = Field(default_factory=CentsWithPlainSerializer)
+    without_serializer: Cents = Field(default_factory=Cents)
+
+
+class MoneyWithSerializerTwoLevelsDeepAndSafeMoney(BaseModel):
+    money: MoneyWithSerializerTwoLevelsDeep = Field(
+        default_factory=MoneyWithSerializerTwoLevelsDeep, validation_alias="m", serialization_alias="n"
+    )
+    other_money: Cents = Field(default_factory=Cents, validation_alias="o", serialization_alias="p")
+
+
+def test__request_body_migration__with_custom_serialization_two_levels_deep__should_only_restore_safe_fields(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: MoneyWithSerializerTwoLevelsDeepAndSafeMoney):
+        return [body.money.with_serializer.amount, body.money.without_serializer.amount, body.other_money.amount]
+
+    clients = create_versioned_clients(version_change())
+
+    payload = {"m": {"with_serializer": {"amount": 100}, "without_serializer": {"cents": 100}}, "o": {"cents": 100}}
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == [0, 0, 100]
 
 
 @pytest.mark.parametrize(
@@ -4225,7 +4283,7 @@ def test__request_body_migration__with_json_form_field__should_stay_as_before(
         assert version_client.post(test_path, data={"v": "[1,2]"}).json() == []
 
 
-def test__request_body_migration__with_value_that_the_head_rejects__should_fail_like_other_fields(
+def test__request_body_migration__with_value_that_the_head_rejects__should_stay_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -4235,13 +4293,33 @@ def test__request_body_migration__with_value_that_the_head_rejects__should_fail_
 
     @router.post(test_path)
     async def endpoint(body: SchemaWithStricterHead):
-        raise NotImplementedError  # pragma: no cover
+        return body.value
 
     clients = create_versioned_clients(version_change(schema(SchemaWithStricterHead).field("value").had(ge=0)))
 
-    # Main silently dropped the value. Now it reaches the head like any other field, which rejects it
-    with pytest.raises(CadwynHeadRequestValidationError):
+    # The head rejects the value, so we never fail where we didn't before: the head gets the body as before
+    assert clients["2000-01-01"].post(test_path, json={"v": 5}).json() == 0
+    assert clients["2000-01-01"].post(test_path, json={"v": 15}).json() == 15
+
+
+def test__request_body_migration__with_required_value_that_the_head_rejects__should_fail_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class RequiredValueWithStricterHead(BaseModel):
+        value: int = Field(validation_alias="v", ge=10)
+
+    @router.post(test_path)
+    async def endpoint(body: RequiredValueWithStricterHead):
+        raise NotImplementedError  # pragma: no cover
+
+    clients = create_versioned_clients(version_change(schema(RequiredValueWithStricterHead).field("value").had(ge=0)))
+
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
         clients["2000-01-01"].post(test_path, json={"v": 5})
+    # The error is the one that the body would get without the value, as before
+    assert [error["type"] for error in exc_info.value.errors] == ["missing"]
 
 
 class SchemaWithAliasPathsIntoAnotherField(BaseModel):
