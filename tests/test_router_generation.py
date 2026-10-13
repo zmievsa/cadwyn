@@ -6,6 +6,7 @@ import importlib
 import inspect
 import itertools
 import json
+import operator
 import re
 import sys
 import typing
@@ -1472,6 +1473,263 @@ def test__router_generation__field_had_alias_and_description__should_be_applied(
         properties = openapi["components"]["schemas"][schema_name]["properties"]
         assert alias in properties
         assert properties["description_field"]["description"] == description
+
+
+class AliasedFieldsInFieldDefaults(BaseModel):
+    field_with_alias: str = Field(default="", alias="fieldAlias")
+    field_with_validation_alias: str = Field(default="", alias="fieldAlias2", validation_alias="fieldValidationAlias")
+    field_with_serialization_alias: str = Field(
+        default="", alias="fieldAlias3", serialization_alias="fieldSerializationAlias"
+    )
+
+
+class AliasedFieldsInAnnotated(BaseModel):
+    field_with_alias: Annotated[str, Field(alias="fieldAlias")] = ""
+    field_with_validation_alias: Annotated[str, Field(alias="fieldAlias2", validation_alias="fieldValidationAlias")] = (
+        ""
+    )
+    field_with_serialization_alias: Annotated[
+        str, Field(alias="fieldAlias3", serialization_alias="fieldSerializationAlias")
+    ] = ""
+
+
+@pytest.fixture
+def aliased_fields_router(router: VersionedAPIRouter) -> VersionedAPIRouter:
+    @router.post("/field_defaults", response_model=AliasedFieldsInFieldDefaults)
+    async def field_defaults(payload: AliasedFieldsInFieldDefaults):
+        return payload
+
+    @router.post("/annotated", response_model=AliasedFieldsInAnnotated)
+    async def annotated(payload: AliasedFieldsInAnnotated):
+        return payload
+
+    return router
+
+
+@pytest.mark.parametrize("path", ["/field_defaults", "/annotated"])
+@pytest.mark.parametrize(
+    ("field_name", "changes", "head_keys", "old_keys"),
+    [
+        (
+            "field_with_alias",
+            [operator.methodcaller("had", alias="oldAlias")],
+            ("fieldAlias", "fieldAlias"),
+            ("oldAlias", "oldAlias"),
+        ),
+        (
+            "field_with_validation_alias",
+            [operator.methodcaller("had", alias="oldAlias")],
+            ("fieldValidationAlias", "fieldAlias2"),
+            ("fieldValidationAlias", "oldAlias"),
+        ),
+        (
+            "field_with_serialization_alias",
+            [operator.methodcaller("had", alias="oldAlias")],
+            ("fieldAlias3", "fieldSerializationAlias"),
+            ("oldAlias", "fieldSerializationAlias"),
+        ),
+        (
+            "field_with_alias",
+            [operator.methodcaller("had", alias="oldAlias", validation_alias="oldValidationAlias")],
+            ("fieldAlias", "fieldAlias"),
+            ("oldValidationAlias", "oldAlias"),
+        ),
+        (
+            "field_with_alias",
+            [operator.methodcaller("had", alias="oldAlias", validation_alias="oldAlias")],
+            ("fieldAlias", "fieldAlias"),
+            ("oldAlias", "oldAlias"),
+        ),
+        (
+            "field_with_alias",
+            [operator.methodcaller("had", alias=None)],
+            ("fieldAlias", "fieldAlias"),
+            ("field_with_alias", "field_with_alias"),
+        ),
+        (
+            "field_with_alias",
+            [
+                operator.methodcaller(
+                    "had", alias="oldAlias", validation_alias="fieldAlias", serialization_alias="fieldAlias"
+                )
+            ],
+            ("fieldAlias", "fieldAlias"),
+            ("fieldAlias", "fieldAlias"),
+        ),
+        (
+            "field_with_alias",
+            [operator.methodcaller("had", validation_alias="oldAlias")],
+            ("fieldAlias", "fieldAlias"),
+            ("oldAlias", "fieldAlias"),
+        ),
+        (
+            "field_with_alias",
+            [operator.methodcaller("had", serialization_alias="oldAlias")],
+            ("fieldAlias", "fieldAlias"),
+            ("fieldAlias", "oldAlias"),
+        ),
+        (
+            "field_with_alias",
+            [operator.methodcaller("didnt_have", "alias")],
+            ("fieldAlias", "fieldAlias"),
+            ("field_with_alias", "field_with_alias"),
+        ),
+        (
+            "field_with_validation_alias",
+            [operator.methodcaller("didnt_have", "alias")],
+            ("fieldValidationAlias", "fieldAlias2"),
+            ("fieldValidationAlias", "field_with_validation_alias"),
+        ),
+        (
+            "field_with_serialization_alias",
+            [operator.methodcaller("didnt_have", "alias")],
+            ("fieldAlias3", "fieldSerializationAlias"),
+            ("field_with_serialization_alias", "fieldSerializationAlias"),
+        ),
+        (
+            "field_with_alias",
+            [operator.methodcaller("didnt_have", "alias", "validation_alias")],
+            ("fieldAlias", "fieldAlias"),
+            ("field_with_alias", "field_with_alias"),
+        ),
+        (
+            "field_with_alias",
+            [
+                operator.methodcaller("had", alias="oldAlias"),
+                operator.methodcaller("had", validation_alias="oldAlias"),
+            ],
+            ("fieldAlias", "fieldAlias"),
+            ("oldAlias", "oldAlias"),
+        ),
+        (
+            "field_with_alias",
+            [
+                operator.methodcaller("had", alias="oldAlias"),
+                operator.methodcaller("didnt_have", "validation_alias", "serialization_alias"),
+            ],
+            ("fieldAlias", "fieldAlias"),
+            ("oldAlias", "oldAlias"),
+        ),
+    ],
+)
+def test__router_generation__field_had_or_didnt_have_alias__should_change_validation_and_serialization_aliases(
+    aliased_fields_router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    path: str,
+    field_name: str,
+    changes: list[Callable[[Any], Any]],
+    head_keys: tuple[str, str],
+    old_keys: tuple[str, str],
+):
+    (head_validation_key, head_serialization_key), (old_validation_key, old_serialization_key) = head_keys, old_keys
+
+    @convert_request_to_next_version_for(AliasedFieldsInFieldDefaults, AliasedFieldsInAnnotated)
+    def migrate_request(request: RequestInfo):
+        request.body[head_validation_key] = request.body.pop(old_serialization_key)
+
+    @convert_response_to_previous_version_for(AliasedFieldsInFieldDefaults, AliasedFieldsInAnnotated)
+    def migrate_response(response: ResponseInfo):
+        response.body[old_validation_key] = response.body.pop(head_serialization_key)
+
+    clients = create_versioned_clients(
+        version_change(
+            *(
+                change(schema(model).field(field_name))
+                for model in (AliasedFieldsInFieldDefaults, AliasedFieldsInAnnotated)
+                for change in changes
+            ),
+            migrate_request=migrate_request,
+            migrate_response=migrate_response,
+        ),
+        router=aliased_fields_router,
+    )
+
+    response = clients["2000-01-01"].post(path, json={old_validation_key: "value"})
+    assert response.status_code == 200
+    assert response.json()[old_serialization_key] == "value"
+
+    for version, (validation_key, serialization_key) in [("2001-01-01", head_keys), ("2000-01-01", old_keys)]:
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        operation = openapi["paths"][path]["post"]
+        request_schema_ref = operation["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+        response_schema_ref = operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+        components = openapi["components"]["schemas"]
+        assert validation_key in components[request_schema_ref.rpartition("/")[2]]["properties"]
+        assert serialization_key in components[response_schema_ref.rpartition("/")[2]]["properties"]
+
+
+class ParentWithAnnotatedAlias(BaseModel):
+    foo: Annotated[str, Field(alias="fooAlias")] = ""
+    bar: int = 0
+
+
+class ChildWithAnnotatedAlias(ParentWithAnnotatedAlias):
+    pass
+
+
+class SiblingWithAnnotatedAlias(ParentWithAnnotatedAlias):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("parent_change", "old_key"),
+    [
+        (operator.methodcaller("didnt_have", "alias"), "foo"),
+        (operator.methodcaller("had", alias="oldAlias"), "oldAlias"),
+    ],
+)
+def test__router_generation__parent_changed_alias_after_child_changed_field__should_change_alias_of_child(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    parent_change: Callable[[Any], Any],
+    old_key: str,
+):
+    @router.post("/parent", response_model=ParentWithAnnotatedAlias)
+    async def parent(payload: ParentWithAnnotatedAlias):
+        return payload
+
+    @router.post("/child", response_model=ChildWithAnnotatedAlias)
+    async def child(payload: ChildWithAnnotatedAlias):
+        return payload
+
+    @router.post("/sibling", response_model=SiblingWithAnnotatedAlias)
+    async def sibling(payload: SiblingWithAnnotatedAlias):
+        return payload
+
+    @convert_request_to_next_version_for(ParentWithAnnotatedAlias, ChildWithAnnotatedAlias, SiblingWithAnnotatedAlias)
+    def migrate_request(request: RequestInfo):
+        request.body["fooAlias"] = request.body.pop(old_key)
+
+    @convert_response_to_previous_version_for(
+        ParentWithAnnotatedAlias, ChildWithAnnotatedAlias, SiblingWithAnnotatedAlias
+    )
+    def migrate_response(response: ResponseInfo):
+        response.body[old_key] = response.body.pop("fooAlias")
+
+    clients = create_versioned_clients(
+        version_change(
+            parent_change(schema(ParentWithAnnotatedAlias).field("foo")),
+            migrate_request=migrate_request,
+            migrate_response=migrate_response,
+        ),
+        version_change(
+            schema(ParentWithAnnotatedAlias).field("bar").had(description="Bar"),
+            schema(ChildWithAnnotatedAlias).field("foo").had(description="Child description"),
+        ),
+        router=router,
+    )
+
+    client = clients["2000-01-01"]
+    openapi = client.get("/openapi.json?version=2000-01-01").json()
+    for path, schema_name in [
+        ("/parent", "ParentWithAnnotatedAlias"),
+        ("/child", "ChildWithAnnotatedAlias"),
+        ("/sibling", "SiblingWithAnnotatedAlias"),
+    ]:
+        response = client.post(path, json={old_key: "value"})
+        assert response.status_code == 200
+        assert response.json()[old_key] == "value"
+        assert set(openapi["components"]["schemas"][schema_name]["properties"]) == {old_key, "bar"}
 
 
 class ParentWithInheritedField(BaseModel):
