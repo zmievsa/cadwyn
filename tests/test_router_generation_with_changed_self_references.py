@@ -1141,6 +1141,24 @@ class ClassmethodNode(BaseModel):
     children: "list[ClassmethodNode]" = []
 
 
+class OverridingConstructorDefaults(BaseModel):
+    @classmethod
+    @override
+    def model_validate(cls, *args: Any, **kwargs: Any) -> Any:
+        return Settings(name="abc")  # pragma: no cover
+
+
+class OverridingConstructorNode(BaseModel):
+    settings: Settings = Field(default_factory=OverridingConstructorDefaults.model_validate)
+    children: "list[OverridingConstructorNode]" = []
+
+
+class UntypedDefaultHolder(BaseModel):
+    # Cadwyn cannot know what the lambda returns and the field does not use the cycle, as for any other model
+    meta: Any = Field(default_factory=lambda: None)
+    raw: dict[str, Any] = {"category": Category(name="abc")}
+
+
 class LambdaChildrenNode(BaseModel):
     name: str
     children: "list[LambdaChildrenNode]" = Field(default_factory=lambda: [])  # noqa: PIE807
@@ -1266,6 +1284,18 @@ def test__generate_versioned_models__cycle_that_cannot_be_copied__should_raise(
             ClassmethodNode,
             "cannot verify what the default factory of the field 'settings' of ClassmethodNode returns",
             id="classmethod_of_other_model",
+        ),
+        pytest.param(
+            Settings,
+            OverridingConstructorNode,
+            "cannot verify what the default factory of the field 'settings' of OverridingConstructorNode returns",
+            id="overridden_constructor",
+        ),
+        pytest.param(
+            Category,
+            UntypedDefaultHolder,
+            "default of the field 'raw' of UntypedDefaultHolder contains an instance of the latest Category",
+            id="untyped_field_default",
         ),
         pytest.param(
             Settings,

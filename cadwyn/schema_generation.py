@@ -1963,7 +1963,6 @@ class SchemaGenerator:
         self._copied_cycles: set[frozenset[type[BaseModel]]] = set()
         # Whether the generator has copied a cycle that it copies eagerly (see _is_copied_eagerly)
         self._has_copied_eager_cycles = False
-
         # The thread that versions the routes of the version right now, if any (see versioning_routes)
         self._route_versioning_thread: Union[int, None] = None
         # The reference cycles that some generics keep the head models of in their type args
@@ -2294,6 +2293,7 @@ class SchemaGenerator:
         is_latest_model: Callable[[type], bool],
         is_checked_field_model: Callable[[type], bool],
         *,
+        is_latest_cycle_model: Union[Callable[[type], bool], None] = None,
         skipped_classes: "collections.abc.Set[type]" = frozenset(),
     ) -> None:
         """Raise if the copy validates, serializes, or defaults to head models that it should not use.
@@ -2303,7 +2303,8 @@ class SchemaGenerator:
         other annotations (`list["Model"]`), or in generics whose args stay the head models. We look at what
         pydantic has actually built so we do not have to know every such place. We do not look into the schemas of
         skipped_classes, which are checked on their own. We check the defaults of the fields whose schemas use
-        the classes for which is_checked_field_model is true.
+        the classes for which is_checked_field_model is true, and the default values of all other fields for the
+        head models for which is_latest_cycle_model (is_latest_model by default) is true.
         """
         if not model_copy.__pydantic_complete__:
             # E.g. defer_build=True. We only check the copies in the versions that copy cycles, where main failed
@@ -2328,31 +2329,37 @@ class SchemaGenerator:
                 'annotations (`list["Model"]`, which you can write as `"list[Model]"` instead), or in the type args '
                 "of generics that keep the latest models."
             )
-        self._check_defaults(model_copy, core_schema, is_checked_field_model)
+        self._check_defaults(model_copy, core_schema, is_checked_field_model, is_latest_cycle_model or is_latest_model)
 
     def _check_defaults(
-        self, model_copy: type[BaseModel], core_schema: Any, is_checked_field_model: Callable[[type], bool]
+        self,
+        model_copy: type[BaseModel],
+        core_schema: Any,
+        is_checked_field_model: Callable[[type], bool],
+        is_latest_cycle_model: Callable[[type], bool],
     ) -> None:
         """Raise if the default of a field that uses the checked models could be a head model that needs versioning.
 
         Cadwyn does not version default values, so e.g. `settings: Settings = Settings()` would keep the head
         Settings and lose the changes of the older versions. We look into the default values themselves, but we
         cannot know what most default factories return, so we only accept the ones that create the copies.
-        Enum members do not count because they are serialized by their values, as in all other models.
+        Enum members do not count because they are serialized by their values, as in all other models. The fields
+        that do not use the checked models (e.g. `Any` or `dict`) keep their defaults as on main, except for the
+        head models of the cycles in their values.
         """
         definitions = _get_core_schema_definitions(core_schema)
         field_schemas = _get_field_core_schemas(model_copy, core_schema, definitions)
         for name, field in model_copy.model_fields.items():
             field_schema = None if field_schemas is None else field_schemas.get(name)
-            if field_schema is not None and not any(
+            uses_checked_models = field_schema is None or any(
                 is_checked_field_model(cls)
                 for cls in _get_classes_in_core_schema(field_schema, definitions=definitions)
-            ):
-                continue
+            )
+            is_latest_value_model = self._is_latest_versioned_model if uses_checked_models else is_latest_cycle_model
             latest_values = [
                 value
                 for value in _iter_values_within(field.default)
-                if isinstance(value, BaseModel) and self._is_latest_versioned_model(type(value))
+                if isinstance(value, BaseModel) and is_latest_value_model(type(value))
             ]
             if latest_values:
                 raise SchemaGenerationError(
@@ -2361,7 +2368,11 @@ class SchemaGenerator:
                     f"{type(latest_values[0]).__qualname__}, which needs versioning. Please use a default factory "
                     "instead, e.g. the class of the field's model itself (`Field(default_factory=Model)`)."
                 )
-            if field.default_factory is not None and not self._is_safe_default_factory(field.default_factory):
+            if (
+                uses_checked_models
+                and field.default_factory is not None
+                and not self._is_safe_default_factory(field.default_factory)
+            ):
                 raise SchemaGenerationError(
                     f"Cadwyn cannot verify what the default factory of the field '{name}' of "
                     f"{model_copy.__qualname__} returns, so its older versions could get the latest versions of the "
@@ -2384,7 +2395,7 @@ class SchemaGenerator:
         # Only pydantic's own constructors are known to create instances of the class that they are bound to
         return (
             inspect.ismethod(factory)
-            and factory.__name__ in _PYDANTIC_CONSTRUCTOR_NAMES
+            and getattr(factory, "__func__", None) in _PYDANTIC_CONSTRUCTORS
             and isinstance(factory.__self__, type)
             and self._is_class_of_this_version(factory.__self__)
         )
@@ -2491,7 +2502,12 @@ class SchemaGenerator:
             copies = _CycleCopier(self, cycle).copy(creation_order)
             for model in creation_order:
                 # The defaults of the models in the cycle are checked for every model that needs versioning
-                self._check_copy(copies[model], self._is_latest_versioned_model, self._is_versioned_class)
+                self._check_copy(
+                    copies[model],
+                    self._is_latest_versioned_model,
+                    self._is_versioned_class,
+                    is_latest_cycle_model=cycle.__contains__,
+                )
         finally:
             self._cycles_being_copied.pop()
         for model, model_copy in copies.items():
@@ -2822,7 +2838,13 @@ class _CycleCopier:
 
 
 _BUILTIN_CONTAINER_TYPES = (list, dict, set, tuple, frozenset)
-_PYDANTIC_CONSTRUCTOR_NAMES = frozenset({"model_construct", "model_validate", "model_validate_json"})
+# The functions behind pydantic's own constructors, which create instances of the class that they are bound to
+_PYDANTIC_CONSTRUCTORS = frozenset(
+    vars(cls)[name].__func__
+    for cls in (BaseModel, RootModel)
+    for name in ("model_construct", "model_validate", "model_validate_json")
+    if name in vars(cls)
+)
 
 
 def _iter_values_within(value: Any) -> "collections.abc.Iterator[Any]":
