@@ -884,11 +884,12 @@ def _get_bytes_file_params_of_dependencies(
         if dependant is not None
         for param in _get_bytes_file_params_of_fields(dependant.body_params)
     }
-    head_call_keys = {call_key for call_key, _ in head_dependencies}
+    # Counted, so that a versioned route that runs a dependency more often than the head also counts as adding it
+    head_call_keys = Counter(call_key for call_key, _ in head_dependencies)
     # A dependency that only the versioned route has won't run again for the head, so a rewind would undo what it
     # did with a file. It can reach any file, e.g. through `Request.form()` or a sub-dependency that the head also
     # has, so we leave the files of all dependencies as they are
-    if any(call_key not in head_call_keys for call_key, _ in dependencies):
+    if Counter(call_key for call_key, _ in dependencies) - head_call_keys:
         return set()
     return bytes_file_params
 
@@ -901,7 +902,9 @@ def _iter_dependencies(
     The keys of the same dependency are equal in the trees of all versions. Like FastAPI's dependency cache keys,
     they consist of the callable that FastAPI calls, all security scopes of the dependency, and its scope. Versioned
     routes use copies of dependencies that compare equal to the originals, and FastAPI already hashes these
-    callables. Overrides come from the same dict for every route but can be unhashable, so we key them by identity.
+    callables. Overrides come from the same dict for every route but can be unhashable, so we key them by identity,
+    together with the overridden callable (a key of that dict) because FastAPI keeps dependencies with the same
+    override apart.
     FastAPI solves the dependant of an override instead of the overridden dependency, so for an overridden
     dependency we yield no dependant and skip its sub-dependencies.
     """
@@ -910,7 +913,7 @@ def _iter_dependencies(
         scopes = tuple(sorted({*(sub_dependant.parent_oauth_scopes or ()), *(sub_dependant.own_oauth_scopes or ())}))
         # Same lookup as in FastAPI, which only looks up overrides when there are any
         if dependency_overrides and (override := dependency_overrides.get(call, call)) is not call:
-            yield (_OVERRIDE_KEY, id(override), scopes, sub_dependant.scope), None
+            yield (_OVERRIDE_KEY, call, id(override), scopes, sub_dependant.scope), None
         else:
             yield (call, scopes, sub_dependant.scope), sub_dependant
             yield from _iter_dependencies(sub_dependant, dependency_overrides)

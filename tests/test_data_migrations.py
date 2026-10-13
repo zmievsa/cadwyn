@@ -2286,6 +2286,88 @@ def test__request_body_migration__with_bytes_and_old_version_security_scopes__sh
     assert clients["2001-01-01"].post(test_path, files={"upload": b"or"}).json() == "or"
 
 
+async def _check_upload() -> None:
+    raise NotImplementedError
+
+
+async def _strip_legacy_header() -> None:
+    raise NotImplementedError
+
+
+async def _prepare_upload_in_second_run(request: Request, upload: UploadFile = File()) -> None:
+    request.state.runs = getattr(request.state, "runs", 0) + 1
+    if request.state.runs == 2:
+        await upload.seek(len(b"or"))
+
+
+class _EqualDependency:
+    """Instances are distinct dependencies that compare equal."""
+
+    @override
+    def __hash__(self) -> int:
+        return 0
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        return True if isinstance(other, _EqualDependency) else NotImplemented
+
+    async def __call__(self, upload: UploadFile = File()) -> None:
+        pass
+
+
+_shared_dependency = _EqualDependency()
+
+
+@pytest.mark.parametrize(
+    ("head_dependency", "added_dependency", "dependency_overrides"),
+    [
+        pytest.param(
+            Depends(_check_upload),
+            Depends(_strip_legacy_header),
+            {_check_upload: _prepare_upload_in_second_run, _strip_legacy_header: _prepare_upload_in_second_run},
+            id="same_override",
+        ),
+        pytest.param(
+            Depends(_prepare_upload_in_second_run),
+            Depends(_prepare_upload_in_second_run, use_cache=False),
+            {},
+            id="uncached_copy",
+        ),
+        pytest.param(
+            Depends(_shared_dependency, use_cache=False),
+            Depends(_EqualDependency(), use_cache=False),
+            {},
+            id="equal_callable",
+        ),
+    ],
+)
+def test__request_body_migration__with_bytes_and_old_version_dependency_like_a_head_one__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    head_dependency: Any,
+    added_dependency: Any,
+    dependency_overrides: dict[Any, Any],
+):
+    @router.post(test_path, dependencies=[Depends(_store_upload), head_dependency])
+    async def endpoint(request: Request):
+        return request.state.contents
+
+    clients = create_versioned_clients(
+        version_change(
+            cadwyn_endpoint(test_path, ["POST"]).had(
+                dependencies=[Depends(_store_upload), head_dependency, added_dependency]
+            )
+        )
+    )
+    app = cast("Cadwyn", clients["2000-01-01"].app)
+    app.dependency_overrides.update(dependency_overrides)
+
+    # The old version runs one more dependency than the head, even though it looks like the head's one
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"or"}).json() == ""
+    assert clients["2001-01-01"].post(test_path, files={"upload": b"or"}).json() == "or"
+
+
 async def _skip_nothing(upload: UploadFile = File()) -> None:
     raise NotImplementedError
 
