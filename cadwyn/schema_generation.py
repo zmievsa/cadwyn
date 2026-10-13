@@ -3331,10 +3331,16 @@ def _substitute_type_vars_of_inherited_annotation(
     defines itself. So when the copy of the model defines such a field because of an instruction, it gets the
     annotation of its parent with the type vars that the parametrizations between them substitute.
     """
-    parent = next(parent for parent in model._get_parents(schemas) if field_name in parent.annotations)
-    mro = model.cls.__mro__
+    parent = next(parent for parent in model._get_parents(schemas) if field_name in parent.annotations).cls
+    # Like pydantic, each class inherits the field from its first base that has it. The other bases, e.g. `A[int]`
+    # in `class M(A[int], B[T])`, do not substitute its type vars even if they reuse them.
+    classes_on_the_way: list[type] = []
+    cls: type = model.cls
+    while cls is not parent:
+        classes_on_the_way.append(cls)
+        cls = next(base for base in cls.__bases__ if lenient_issubclass(base, parent))
     # From the parametrization closest to the parent to the model itself, as pydantic substitutes them
-    for cls in reversed(mro[: mro.index(parent.cls)]):
+    for cls in reversed(classes_on_the_way):
         origin = getattr(cls, "__pydantic_generic_metadata__", {}).get("origin")
         if origin is not None:
             parameters = origin.__pydantic_generic_metadata__["parameters"]
