@@ -24,18 +24,6 @@ from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
 from tests.conftest import CreateVersionedApp, version_change
 
-
-@pytest.fixture(params=[False, True], ids=["head_generic_args", "versioned_generic_args"])
-def version_generic_type_args(request: pytest.FixtureRequest) -> bool:
-    """Every test of this module runs with and without VersionBundle(version_generic_type_args=True)"""
-    return request.param
-
-
-# For the tests of the generics whose type args are versioned, which only happens with the option
-versions_generic_type_args = pytest.mark.parametrize(
-    "version_generic_type_args", [True], ids=["versioned_generic_args"]
-)
-
 ValueT = TypeVar("ValueT")
 
 
@@ -246,8 +234,8 @@ def test__router_generation__unchanged_self_referencing_models__should_work_in_e
         assert not [name for name in schema_names if name.endswith(("__1", "__2"))]
 
 
-def test__issue_419_reproduction__should_serve_self_referencing_model(version_generic_type_args: bool):
-    app = Cadwyn(versions=VersionBundle(Version("2000-01-01"), version_generic_type_args=version_generic_type_args))
+def test__issue_419_reproduction__should_serve_self_referencing_model():
+    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
     router = VersionedAPIRouter()
 
     @router.get("/categories", response_model=Category)
@@ -263,12 +251,11 @@ def test__issue_419_reproduction__should_serve_self_referencing_model(version_ge
 
 @pytest.mark.parametrize("has_instructions", [False, True])
 def test__generate_versioned_models__unchanged_models_in_reference_cycles__should_be_the_head_classes(
-    has_instructions: bool, version_generic_type_args: bool
+    has_instructions: bool,
 ):
     versions = VersionBundle(
         Version("2001-01-01", *([unrelated_version_change()] if has_instructions else [])),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
 
     for generator in generate_versioned_models(versions).values():
@@ -288,12 +275,11 @@ def test__generate_versioned_models__unchanged_models_in_reference_cycles__shoul
 
 @pytest.mark.parametrize("has_instructions", [False, True])
 def test__generate_versioned_models__unchanged_models_outside_of_reference_cycles__should_be_copied_as_before(
-    has_instructions: bool, version_generic_type_args: bool
+    has_instructions: bool,
 ):
     versions = VersionBundle(
         Version("2001-01-01", *([unrelated_version_change()] if has_instructions else [])),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
 
     for generator in generate_versioned_models(versions).values():
@@ -305,13 +291,10 @@ def test__generate_versioned_models__unchanged_models_outside_of_reference_cycle
         assert generator[OuterOfItem].model_fields["item"].annotation is generator[Item]
 
 
-def test__generate_versioned_models__models_referring_to_changed_models__should_still_be_versioned(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__models_referring_to_changed_models__should_still_be_versioned():
     versions = VersionBundle(
         Version("2001-01-01", version_change(old_name_alias(CategoryParent))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generators = generate_versioned_models(versions)
 
@@ -325,14 +308,11 @@ def test__generate_versioned_models__models_referring_to_changed_models__should_
     assert generators["2001-01-01"][CategoryChild].model_fields["name"].alias == "fullName"
 
 
-def test__generate_versioned_models__model_changed_only_in_head_version__should_be_versioned(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__model_changed_only_in_head_version__should_be_versioned():
     versions = VersionBundle(
         HeadVersion(version_change(schema(Item).field("name").had(description="Head description"))),
         Version("2001-01-01"),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
 
     for generator in generate_versioned_models(versions).values():
@@ -342,13 +322,10 @@ def test__generate_versioned_models__model_changed_only_in_head_version__should_
         assert generator[Category] is Category
 
 
-def test__generate_versioned_models__changed_enum_in_unchanged_model__should_version_the_model(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__changed_enum_in_unchanged_model__should_version_the_model():
     versions = VersionBundle(
         Version("2001-01-01", version_change(enum(Color).didnt_have("green"))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generators = generate_versioned_models(versions)
 
@@ -412,13 +389,10 @@ def test__router_generation__request_migration_for_unchanged_self_referencing_mo
 
 
 @pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
-def test__migrate_response_body__unchanged_self_referencing_model__should_be_validated(
-    version: str, version_generic_type_args: bool
-):
+def test__migrate_response_body__unchanged_self_referencing_model__should_be_validated(version: str):
     versions = VersionBundle(
         Version("2001-01-01", unrelated_version_change()),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
 
     migrated_body = migrate_response_body(
@@ -442,50 +416,28 @@ class CategoryWithItemPage(BaseModel):
     children: "list[CategoryWithItemPage]" = []
 
 
-@pytest.mark.parametrize(
-    "version_generic_type_args",
-    [
-        False,
-        pytest.param(
-            True,
-            marks=pytest.mark.skipif(
-                tuple(int(part) for part in re.findall(r"\d+", importlib.metadata.version("pydantic"))[:3])
-                < (2, 11, 5),
-                reason="Copying reference cycles requires pydantic 2.11.5+",
-            ),
-        ),
-    ],
-    ids=["head_generic_args", "versioned_generic_args"],
+@pytest.mark.skipif(
+    tuple(int(part) for part in re.findall(r"\d+", importlib.metadata.version("pydantic"))[:3]) < (2, 11, 5),
+    reason="Copying reference cycles requires pydantic 2.11.5+",
 )
-def test__generate_versioned_models__self_referencing_model_with_changed_generic_arg__should_be_reused_without_option(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__self_referencing_model_with_changed_generic_arg__should_be_copied():
     versions = VersionBundle(
         Version("2001-01-01", version_change(old_name_alias(Item))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
     old_category = generator[CategoryWithItemPage]
-    if version_generic_type_args:
-        # Its generic uses the old Item so it needs a copy of its own
-        assert old_category is not CategoryWithItemPage
-        old_page = get_args(old_category.model_fields["items"].annotation)[0]
-        assert get_args(old_page.model_fields["items"].annotation) == (generator[Item],)
-    else:
-        # Its generic keeps the latest Item so it has nothing to version, like other unchanged self-referencing models
-        assert old_category is CategoryWithItemPage
+    # Its generic uses the old Item so it needs a copy of its own
+    assert old_category is not CategoryWithItemPage
+    old_page = get_args(old_category.model_fields["items"].annotation)[0]
+    assert get_args(old_page.model_fields["items"].annotation) == (generator[Item],)
 
 
-@versions_generic_type_args
-def test__generate_versioned_models__generic_arg_referring_to_self_referencing_model__should_be_versioned(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__generic_arg_referring_to_self_referencing_model__should_be_versioned():
     versions = VersionBundle(
         Version("2001-01-01", version_change(old_name_alias(ItemWithCategory))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
@@ -516,13 +468,10 @@ def test__router_generation__changed_child_of_parent_with_init_subclass_argument
         assert unversioned_client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
 
 
-def test__generate_versioned_models__changed_child_of_parent_with_custom_init__should_not_use_head_parent(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__changed_child_of_parent_with_custom_init__should_not_use_head_parent():
     versions = VersionBundle(
         Version("2001-01-01", version_change(schema(StrippingChild).field("x").had(type=int))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
 
     old_child = generate_versioned_models(versions)["2000-01-01"][StrippingChild]
@@ -540,12 +489,11 @@ def test__generate_versioned_models__changed_child_of_parent_with_custom_init__s
     ],
 )
 def test__migrate_response_body__head_instance_of_changed_subclass__should_be_rejected(
-    response_model: type[BaseModel], latest_body: Any, version_generic_type_args: bool
+    response_model: type[BaseModel], latest_body: Any
 ):
     versions = VersionBundle(
         Version("2001-01-01", version_change(schema(Dog).field("is_good").didnt_exist)),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
 
     # The head parent would accept the head instance and serialize it with the field that did not exist
@@ -583,13 +531,10 @@ def test__router_generation__unchanged_self_referencing_sibling_of_changed_model
         assert generator[SiblingCategory] is SiblingCategory
 
 
-def test__generate_versioned_models__self_referencing_generic_parametrized_while_deciding__should_stay_reused(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__self_referencing_generic_parametrized_while_deciding__should_stay_reused():
     versions = VersionBundle(
         Version("2001-01-01", unrelated_version_change()),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
     answers_during_parametrization: list[Any] = []
@@ -616,13 +561,10 @@ def test__generate_versioned_models__self_referencing_generic_parametrized_while
     tuple(int(part) for part in re.findall(r"\d+", importlib.metadata.version("pydantic"))[:3]) >= (2, 11, 5),
     reason="Pydantic 2.11.5+ can copy self-referencing models that need versioning",
 )
-def test__generate_versioned_models__changed_cycle_with_old_pydantic__should_raise(
-    version_generic_type_args: bool,
-):  # pragma: no cover
+def test__generate_versioned_models__changed_cycle_with_old_pydantic__should_raise():  # pragma: no cover
     versions = VersionBundle(
         Version("2001-01-01", version_change(schema(Category).field("name").had(description="Old"))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
 
     with pytest.raises(SchemaGenerationError, match=r"upgrade pydantic to 2\.11\.5"):

@@ -419,7 +419,6 @@ def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
             generator_from_newer_version.model_bundle.schemas,
             alter_schema_instruction=instruction,
             version_change_name=version_change.__name__,
-            version_generic_type_args=generator_from_newer_version._may_version_generic_args(),
         )
 
         older_model = newer_model_wrapper_with_migrated_field.generate_model_copy(generator_from_newer_version)

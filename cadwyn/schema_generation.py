@@ -326,13 +326,8 @@ class _ModelBundle:
 
 @dataclasses.dataclass(**DATACLASS_SLOTS, **DATACLASS_KW_ONLY)
 class _RuntimeSchemaGenContext:
-    version_bundle: "VersionBundle"
     current_version: "Union[Version, HeadVersion]"
     models: _ModelBundle
-    latest_version: "Version" = dataclasses.field(init=False)
-
-    def __post_init__(self) -> None:
-        self.latest_version = max(self.version_bundle.versions, key=lambda v: v.value)
 
 
 def migrate_response_body(
@@ -585,7 +580,6 @@ def _rebuild_model_fields_without_changing_them(  # pragma: no cover # Pydantic 
     Pydantic 2.11 merges the `Annotated` metadata of a field into the FieldInfo assigned to the field in place,
     so every call would add that metadata (e.g. validators) to the field of the model once more.
     """
-    from pydantic._internal._generics import replace_types
     from pydantic._internal._typing_extra import eval_type
     from pydantic_core import PydanticUndefined
     from typing_inspection.introspection import AnnotationSource
@@ -2156,7 +2150,6 @@ class SchemaGenerator:
     __slots__ = (
         "_adds_references",
         "_changed_models",
-        "_classes_of_generic_args",
         "_copied_cycles",
         "_cycles_behind_latest_generic_args",
         "_cycles_being_copied",
@@ -2169,7 +2162,6 @@ class SchemaGenerator:
         "_reference_cycles",
         "_root_models",
         "_route_versioning_thread",
-        "_version_generic_type_args",
         "_versioning_answers",
         "_versions_of_generic_args",
         "annotation_transformer",
@@ -2182,21 +2174,15 @@ class SchemaGenerator:
         model_bundle: _ModelBundle,
         changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
         reference_cycles: "_ReferenceCycles",
-        *,
-        version_generic_type_args: bool = False,
     ) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
         self._changed_models = changed_models
-        # VersionBundle.version_generic_type_args (see _may_version_generic_args)
-        self._version_generic_type_args = version_generic_type_args
         self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
         self._versioning_answers: dict[_VersioningQuestion, bool] = {}
         self._reference_cycles = reference_cycles
         self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
         self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
-        # The head classes that the type args lead to in each field of each copy (see _get_classes_of_generic_args)
-        self._classes_of_generic_args: dict[type[BaseModel], dict[str, frozenset[type]]] = {}
         # The reference cycles among the models that this version copies, or None for the models outside of them
         self._cycles_to_copy: dict[type[BaseModel], Union[frozenset[type[BaseModel]], None]] = {}
         # Whether the instructions of this version add references to models (see _adds_references_to_models)
@@ -2341,33 +2327,16 @@ class SchemaGenerator:
                 *(_VersioningQuestion(_unwrap_model(subclass), includes_subclasses=True) for subclass in subclasses),
             ], are_all_known
         references = self._get_references(model)
-        # The type args of generics only make the copies of the generics differ if they can be versioned
-        arg_models = references.arg_models if self._may_version_generic_args() else frozenset()
         return [
             *(
                 _VersioningQuestion(referenced_model, includes_subclasses=True)
-                for referenced_model in references.models | arg_models
+                for referenced_model in references.models | references.arg_models
             ),
             *(_VersioningQuestion(base, includes_subclasses=False) for base in references.base_models),
         ], True
 
     def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
         return _change_version_of_generic_metadata(self, self, model)
-
-    def _may_version_generic_args(self) -> bool:
-        """Whether the copies of any generics in this version may use the copies of their type args.
-
-        This is the only switch for versioning generic args, which is opt-in through
-        VersionBundle(version_generic_type_args=True) because it changes the behavior of existing apps: their older
-        versions start validating and serializing the args with older models, which may need new converters,
-        HeadVersion changes start applying to the args in the latest version, OpenAPI names of the generics with
-        quoted args change, and migrate_response_body rejects the latest models in them. When it is off, every
-        generic keeps the head models in its type args in every version, exactly as Cadwyn always did. Everything
-        that versions generic args or depends on whether they are versioned must check it, directly or through
-        _should_version_generic_args.
-        """
-        # When nothing has instructions, no generic args need versioning and we do not need to look into them
-        return self._version_generic_type_args and bool(self._changed_models)
 
     def _should_version_generic_args(
         self, generic: type[BaseModel], generation_stack: list[type[Union[BaseModel, Enum]]]
@@ -2380,7 +2349,8 @@ class SchemaGenerator:
         generating their copies would recurse forever (e.g. `children: "list[Tree]"` within a versioned `Tree`).
         The decision only depends on the references between the models, not on the order of generation.
         """
-        if not self._may_version_generic_args():
+        if not self._changed_models:
+            # Nothing has instructions so no generic args need versioning and we do not need to look into them
             return False
         if generic not in self._versions_of_generic_args:
             references = self._get_references(generic)
@@ -2590,17 +2560,11 @@ class SchemaGenerator:
                 )
         core_schema = model_copy.__pydantic_core_schema__
         skipped_classes = set(skipped_classes) - {model_copy}
-        if self._may_version_generic_args():
-            classes = _get_classes_in_core_schema(core_schema, skipped_classes=skipped_classes)
-        else:
-            # Without versioning generic args, every generic keeps the latest models in its type args, as it always
-            # did, including the models of the copied cycles. Only the other places where they are left count
-            classes = _get_classes_in_core_schema_outside_of_generic_args(
-                core_schema,
-                skipped_classes=skipped_classes,
-                get_classes_of_generic_args=self._get_classes_of_generic_args,
-            )
-        latest_models = [cls for cls in classes if is_latest_model(cls)]
+        latest_models = [
+            cls
+            for cls in _get_classes_in_core_schema(core_schema, skipped_classes=skipped_classes)
+            if is_latest_model(cls)
+        ]
         if latest_models:
             raise SchemaGenerationError(
                 f"Cadwyn cannot generate the versioned copy of {model_copy.__qualname__} because it would use the "
@@ -2610,36 +2574,6 @@ class SchemaGenerator:
                 "of generics that keep the latest models."
             )
         self._check_defaults(model_copy, core_schema, is_checked_field_model, is_latest_cycle_model or is_latest_model)
-
-    def _get_classes_of_generic_args(self, model: type[BaseModel]) -> dict[str, frozenset[type]]:
-        """Return the fields of the model whose types come from type args, with the head classes that they lead to.
-
-        These are the classes in the type args that the field gets (see _get_type_args_of_field) and all of the
-        classes that they refer to, which the copies of such generics keep when generic args are not versioned. The
-        args are the head classes, so they lead to what the head classes refer to, whatever the instructions of this
-        version change in their copies. Like the other decisions of the generator, the result is kept even if names
-        that are not defined yet get defined later, which can only make the check stricter, as on main.
-        """
-        if model not in self._classes_of_generic_args:
-            classes_by_field: dict[str, frozenset[type]] = {}
-            for name in model.__pydantic_fields__:
-                type_args = _get_type_args_of_field(model, name)
-                if type_args is None:
-                    continue
-                arg_collector = _ReferencedModelCollector()
-                arg_collector.annotation_transformer.change_version_of_annotation(type_args)
-                reached_classes: set[type] = set()
-                classes_to_visit: list[type] = list(arg_collector.models)
-                while classes_to_visit:
-                    cls = classes_to_visit.pop()
-                    if cls not in reached_classes:
-                        reached_classes.add(cls)
-                        if lenient_issubclass(cls, BaseModel):
-                            references = self._reference_cycles.get_head_references(cls)
-                            classes_to_visit.extend(references.models | references.arg_models | references.base_models)
-                classes_by_field[name] = frozenset(reached_classes)
-            self._classes_of_generic_args[model] = classes_by_field
-        return self._classes_of_generic_args[model]
 
     def _check_defaults(
         self,
@@ -3041,113 +2975,6 @@ def _get_classes_in_core_schema(
     }
 
 
-def _get_classes_in_core_schema_outside_of_generic_args(
-    core_schema: Any,
-    *,
-    skipped_classes: "collections.abc.Set[type]",
-    get_classes_of_generic_args: "Callable[[type[BaseModel]], dict[str, frozenset[type]]]",
-) -> set[type]:
-    """Like _get_classes_in_core_schema but without the classes that the copies get from the type args of generics.
-
-    E.g. without the latest Item in the `items` of the copies of Page[Item] or of `class ItemPage(Page[Item])` for
-    `items: list[T]` in Page, or in the root of `class Items(RootModel[list[Item]])`. Only the classes that the type
-    args lead to (see get_classes_of_generic_args) and only within the fields whose types come from them do not count.
-    Everything else counts, e.g. the return types of the serializers of these fields and of computed fields, the
-    metadata of their annotations, and the latest generics that pydantic resolves on its own.
-    """
-    definitions = _get_core_schema_definitions(core_schema)
-    classes: set[type] = set()
-    # The schemas of the fields whose types come from the type args, with the classes that these type args lead to
-    classes_of_generic_args_by_node_id: dict[int, frozenset[type]] = {}
-    nodes_to_visit: list[tuple[Any, frozenset[type]]] = [(core_schema, frozenset())]
-    visited: set[tuple[int, frozenset[type]]] = set()
-    while nodes_to_visit:
-        node, classes_of_generic_args = nodes_to_visit.pop()
-        if isinstance(node, list | tuple):
-            nodes_to_visit.extend((value, classes_of_generic_args) for value in node)
-            continue
-        if not isinstance(node, dict):
-            continue
-        classes_of_generic_args |= classes_of_generic_args_by_node_id.get(id(node), frozenset())
-        if (id(node), classes_of_generic_args) in visited:
-            continue
-        visited.add((id(node), classes_of_generic_args))
-        cls = node.get("cls")
-        if isinstance(cls, type):
-            if cls not in classes_of_generic_args:
-                classes.add(cls)
-            if cls in skipped_classes:
-                continue
-        # Only Cadwyn's copies keep the latest type args because generic args are not versioned. The latest generics
-        # that pydantic resolves on its own (e.g. in the return types of computed fields) count like any latest model
-        if (
-            node.get("type") == "model"
-            and lenient_issubclass(cls, BaseModel)
-            and "__cadwyn_original_model__" in vars(cls)
-        ):
-            classes_of_generic_args_by_field = get_classes_of_generic_args(cast("type[BaseModel]", cls))
-            if classes_of_generic_args_by_field:
-                if getattr(cls, "__pydantic_root_model__", False):
-                    # The schema of a root model is the schema of its root field, which is its only field
-                    field_schemas = {"root": node.get("schema")}
-                else:
-                    field_schemas = _get_field_core_schemas(cls, node, definitions) or {}
-                for name in classes_of_generic_args_by_field.keys() & field_schemas.keys():
-                    classes_of_generic_args_by_node_id[id(field_schemas[name])] = classes_of_generic_args_by_field[name]
-        if node.get("type") == "definition-ref":
-            nodes_to_visit.append((definitions.get(node.get("schema_ref")), classes_of_generic_args))
-        skipped_keys = _CORE_SCHEMA_KEYS_WITHOUT_SCHEMAS
-        if node.get("type") == "definitions":
-            # The definitions are only visited through the refs to them so they get the classes of the right args
-            skipped_keys = skipped_keys | {"definitions"}
-        nodes_to_visit.extend(
-            (value, classes_of_generic_args) for key, value in node.items() if key not in skipped_keys
-        )
-    return classes
-
-
-def _get_type_args_of_field(model: type[BaseModel], name: str) -> Union[tuple[Any, ...], None]:
-    """Return the type args that the field of the model gets for the type params in its annotation, if any.
-
-    Like pydantic, we follow the field from the model through the first base that has it to the class that annotates
-    it (so overrides count), and substitute its type params with the type args of the parametrizations on that path,
-    from the closest one to that class to the model itself. The type args of other bases, e.g. of `B[Category]` for
-    a field of `A[int]` in `class M(A[int], B[Category])`, do not count. Quoted type args are evaluated.
-    """
-    path = [model]
-    while name not in _get_annotations_without_evaluating(path[-1]):
-        base = next((base for base in path[-1].__bases__ if name in getattr(base, "__pydantic_fields__", {})), None)
-        if base is None:  # pragma: no cover # Pydantic only creates the fields that some class annotates
-            return None
-        path.append(base)
-    annotation = path[-1].__pydantic_fields__[name].annotation
-    type_args = {type_param: type_param for type_param in _get_type_params(annotation)}
-    if not type_args:
-        return None
-    for cls in reversed(path):
-        generic_metadata = cls.__pydantic_generic_metadata__
-        if generic_metadata["origin"] is not None and generic_metadata["args"]:
-            evaluated_args = _eval_generic_args(_unwrap_model(cls))
-            typevars_map = dict(zip(get_model_typevars_map(cls), evaluated_args, strict=False))
-            type_args = {type_param: replace_types(arg, typevars_map) for type_param, arg in type_args.items()}
-    return tuple(type_args.values())
-
-
-def _get_type_params(annotation: Any) -> "list[Any]":
-    """Return the type params in the annotation, e.g. T in `list[T]` or in `Wrapper[T]`, in the order of appearance"""
-    from typing_inspection.typing_objects import is_paramspec, is_typevar, is_typevartuple
-
-    if is_typevar(annotation) or is_paramspec(annotation) or is_typevartuple(annotation):
-        return [annotation]
-    if isinstance(annotation, type) and hasattr(annotation, "__pydantic_generic_metadata__"):
-        # E.g. Wrapper[T] or the origin of a generic that refers to itself, such as `next: Optional["LinkedPage[T]"]`
-        generic_metadata = annotation.__pydantic_generic_metadata__
-        args = generic_metadata["args"] or generic_metadata["parameters"]
-    else:
-        args = get_args(annotation)
-    return list(dict.fromkeys(type_param for arg in args for type_param in _get_type_params(arg)))
-
-
 def _get_core_schema_definitions(core_schema: Any) -> dict[str, Any]:
     return {node["ref"]: node for node in _iter_core_schema_nodes(core_schema) if isinstance(node.get("ref"), str)}
 
@@ -3348,20 +3175,15 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
     version_to_context_map = {}
     reference_cycles = _ReferenceCycles(
         changed_models,
-        _get_parametrizations_whose_instructions_reach_other_generics(
-            changed_models, version_generic_type_args=versions.version_generic_type_args
-        ),
+        _get_parametrizations_whose_instructions_reach_other_generics(changed_models),
     )
-    context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
+    context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models)
     _migrate_classes(context)
 
     for version in versions.versions:
-        context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
+        context = _RuntimeSchemaGenContext(current_version=version, models=models)
         version_to_context_map[str(version.value)] = SchemaGenerator(
-            copy.deepcopy(models),
-            changed_models,
-            reference_cycles,
-            version_generic_type_args=versions.version_generic_type_args,
+            copy.deepcopy(models), changed_models, reference_cycles
         )
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
@@ -3382,8 +3204,6 @@ def _migrate_classes(context: _RuntimeSchemaGenContext) -> None:
             context.models.schemas,
             version_change.alter_schema_instructions,
             version_change.__name__,
-            # The same switch as SchemaGenerator._may_version_generic_args: these instructions exist
-            version_generic_type_args=context.version_bundle.version_generic_type_args,
         )
         _apply_alter_enum_instructions(
             context.models.enums,
@@ -3396,8 +3216,6 @@ def _apply_alter_schema_instructions(
     modified_schemas: dict[type[BaseModel], _PydanticModelWrapper[BaseModel]],
     alter_schema_instructions: Sequence[Union[AlterSchemaSubInstruction, SchemaHadInstruction]],
     version_change_name: str,
-    *,
-    version_generic_type_args: bool,
 ) -> None:
     for alter_schema_instruction in alter_schema_instructions:
         schema_info = modified_schemas[alter_schema_instruction.schema]
@@ -3409,7 +3227,6 @@ def _apply_alter_schema_instructions(
                 modified_schemas,
                 alter_schema_instruction,
                 version_change_name,
-                version_generic_type_args=version_generic_type_args,
             )
         elif isinstance(alter_schema_instruction, FieldDidntExistInstruction):
             _delete_field_from_model(schema_info, alter_schema_instruction.name, version_change_name)
@@ -3537,8 +3354,6 @@ def _change_field_in_model(
     schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
     alter_schema_instruction: Union[FieldHadInstruction, FieldDidntHaveInstruction],
     version_change_name: str,
-    *,
-    version_generic_type_args: bool,
 ):
     defined_annotations = model._get_defined_annotations_through_mro(schemas)
     defined_fields = model._get_defined_fields_through_mro(schemas)
@@ -3550,8 +3365,7 @@ def _change_field_in_model(
 
     field = defined_fields[alter_schema_instruction.name]
     model.fields[alter_schema_instruction.name] = field
-    if version_generic_type_args and alter_schema_instruction.name not in model.annotations:
-        # Opt-in like the versioning of generic args: the field changes how older versions validate and serialize
+    if alter_schema_instruction.name not in model.annotations:
         defined_annotations[alter_schema_instruction.name] = _substitute_type_vars_of_inherited_annotation(
             model, schemas, alter_schema_instruction.name, defined_annotations[alter_schema_instruction.name]
         )
@@ -3684,19 +3498,14 @@ def _declares_name(
 
 
 def _get_parametrizations_whose_instructions_reach_other_generics(
-    changed_models: "frozenset[type[Union[BaseModel, Enum]]]", *, version_generic_type_args: bool
+    changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
 ) -> "frozenset[type[BaseModel]]":
     """Return the parametrizations whose instructions apply where pydantic builds them in other generics' fields.
 
     E.g. the instructions of `schema(Pair[str, int])` in `Box[str]` with `pair: Pair[T, int]`
     (see _ReferenceCycles.get_redefined_field_names).
-    This is the only switch for that behavior (#420): with an empty set, every model is copied exactly as before.
-    Like the versioning of generic args (see SchemaGenerator._may_version_generic_args), it changes what the older
-    versions of existing apps serve, so it is only on with VersionBundle(version_generic_type_args=True). Unlike that
-    switch, it is decided once for all versions because their generators share the reference cycles.
+    It is decided once for all versions because their generators share the reference cycles.
     """
-    if not version_generic_type_args:
-        return frozenset()
     return frozenset(
         model for model in changed_models if lenient_issubclass(model, BaseModel) and _is_parametrization(model)
     )
