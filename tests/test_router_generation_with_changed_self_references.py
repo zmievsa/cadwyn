@@ -45,6 +45,18 @@ from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
 from tests.conftest import CreateVersionedApp, version_change
 
+
+@pytest.fixture(params=[False, True], ids=["head_generic_args", "versioned_generic_args"])
+def version_generic_type_args(request: pytest.FixtureRequest) -> bool:
+    """Every test of this module runs with and without VersionBundle(version_generic_type_args=True)"""
+    return request.param
+
+
+# For the tests of the generics whose type args are versioned, which only happens with the option
+versions_generic_type_args = pytest.mark.parametrize(
+    "version_generic_type_args", [True], ids=["versioned_generic_args"]
+)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from decimal import Decimal as OnlyForTypeCheckers
@@ -503,8 +515,12 @@ def test__issue_419_reproduction__renamed_field_of_self_referencing_model__shoul
     assert "title" in changelog.text
 
 
-def test__generate_versioned_models__copies_in_cycle__should_refer_to_each_other():
-    versions = VersionBundle(Version("2001-01-01", version_change(short_name(Book))), Version("2000-01-01"))
+def test__generate_versioned_models__copies_in_cycle__should_refer_to_each_other(version_generic_type_args: bool):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(short_name(Book))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
     old_author, old_book = generator[Author], generator[Book]
@@ -515,7 +531,11 @@ def test__generate_versioned_models__copies_in_cycle__should_refer_to_each_other
     assert typing.get_type_hints(old_author) == {"name": str, "books": list[old_book]}
 
     old_entry = generate_versioned_models(
-        VersionBundle(Version("2001-01-01", version_change(short_name(RegistryEntry))), Version("2000-01-01"))
+        VersionBundle(
+            Version("2001-01-01", version_change(short_name(RegistryEntry))),
+            Version("2000-01-01"),
+            version_generic_type_args=version_generic_type_args,
+        )
     )["2000-01-01"][RegistryEntry]
     old_registry = typing.get_args(old_entry.model_fields["registry"].annotation)[0]
     assert old_registry is not Registry
@@ -576,6 +596,7 @@ def get_request_body_schema(openapi_components: dict[str, Any], openapi: dict[st
         ),
     ],
 )
+@versions_generic_type_args
 def test__router_generation__generic_route_model_around_changed_cycle__should_use_versioned_args(
     model: Any,
     generic_model: Any,
@@ -627,10 +648,29 @@ def test__router_generation__generic_route_model_around_changed_cycle__should_us
     assert generator[Envelope[model]].model_fields["item"].annotation is generator[model]
 
 
+@pytest.mark.parametrize("version_generic_type_args", [False], ids=["head_generic_args"])
+def test__router_generation__generic_route_model_around_changed_cycle_with_head_args__should_raise_with_hint(
+    create_versioned_app: CreateVersionedApp,
+):
+    """Without version_generic_type_args, the generic would keep the latest models of a cycle that needs versioning.
+
+    Cadwyn could not copy such cycles at all before, so these apps failed with a RecursionError.
+    """
+    router = VersionedAPIRouter()
+
+    @router.post("/page", response_model=Page[Category])
+    async def create_page(page: Page[Category]) -> Any:
+        raise NotImplementedError
+
+    with pytest.raises(SchemaGenerationError, match=r"pass `version_generic_type_args=True` to `VersionBundle`"):
+        create_versioned_app(version_change(short_name(Category)), router=router)
+
+
 def get_origin_of_model(model: Any) -> Any:
     return model.__pydantic_generic_metadata__["origin"] or model
 
 
+@versions_generic_type_args
 def test__router_generation__generic_route_model_around_renamed_cycle__should_apply_its_converter(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -715,8 +755,14 @@ def test__router_generation__generic_around_cycle_that_no_route_copies__should_k
     assert old_client.get("/pages").json() == {"items": [{"item": {"name": "x"}, "children": []}]}
 
 
-def test__router_generation__generic_that_kept_head_args_before_routes_that_do_not_use_its_cycle__should_work():
-    versions = VersionBundle(Version("2001-01-01", version_change(described_name(LazyItem))), Version("2000-01-01"))
+def test__router_generation__generic_that_kept_head_args_before_routes_that_do_not_use_its_cycle__should_work(
+    version_generic_type_args: bool,
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(described_name(LazyItem))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
     old_page = migrate_response_body(
         versions, Page[LazyTree], latest_body={"items": [{"item": {"name": "x"}}]}, version="2000-01-01"
     )
@@ -735,6 +781,7 @@ def test__router_generation__generic_that_kept_head_args_before_routes_that_do_n
 
 
 @pytest.mark.parametrize("generic_route_first", [False, True])
+@versions_generic_type_args
 def test__router_generation__generic_around_cycle_that_a_route_copies__should_use_versioned_args(
     generic_route_first: bool, create_versioned_app: CreateVersionedApp
 ):
@@ -773,6 +820,7 @@ def get_one() -> int:
     return 1
 
 
+@versions_generic_type_args
 def test__router_generation__route_with_unresolvable_dependency_annotation__should_still_copy_cycle_eagerly(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -802,6 +850,7 @@ def test__router_generation__route_with_unresolvable_dependency_annotation__shou
     assert client.post("/pages", json={"items": [tree]}).json() == {"ok": True}
 
 
+@versions_generic_type_args
 def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_route_copies__should_raise(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -857,13 +906,16 @@ def test__router_generation__self_referencing_model_changed_in_head_version__sho
         assert client.post("/categories", json=valid_body).json() == valid_body
 
 
-def test__generate_versioned_models__cycle_that_only_exists_in_older_versions__should_be_copied():
+def test__generate_versioned_models__cycle_that_only_exists_in_older_versions__should_be_copied(
+    version_generic_type_args: bool,
+):
     versions = VersionBundle(
         Version(
             "2001-01-01",
             version_change(schema(Leaf).field("parent").existed_as(type=Optional[Leaf], info=Field(default=None))),
         ),
         Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
     )
     generators = generate_versioned_models(versions)
 
@@ -875,10 +927,13 @@ def test__generate_versioned_models__cycle_that_only_exists_in_older_versions__s
     assert "parent" not in generators["2001-01-01"][Leaf].model_fields
 
 
-def test__generate_versioned_models__cycle_that_does_not_exist_in_older_versions__should_be_copied_as_before():
+def test__generate_versioned_models__cycle_that_does_not_exist_in_older_versions__should_be_copied_as_before(
+    version_generic_type_args: bool,
+):
     versions = VersionBundle(
         Version("2001-01-01", version_change(schema(Category).field("children").didnt_exist)),
         Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
     )
     generators = generate_versioned_models(versions)
 
@@ -888,8 +943,14 @@ def test__generate_versioned_models__cycle_that_does_not_exist_in_older_versions
     assert new_category.model_fields["children"].annotation == list[new_category]
 
 
-def test__migrate_response_body__changed_self_referencing_model__should_be_validated_with_old_model():
-    versions = VersionBundle(Version("2001-01-01", version_change(short_name(Category))), Version("2000-01-01"))
+def test__migrate_response_body__changed_self_referencing_model__should_be_validated_with_old_model(
+    version_generic_type_args: bool,
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(short_name(Category))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
 
     body = {"name": "abc", "children": [{"name": "abc", "children": []}]}
     migrated = migrate_response_body(versions, Category, latest_body=body, version="2000-01-01")
@@ -901,8 +962,14 @@ def test__migrate_response_body__changed_self_referencing_model__should_be_valid
         )
 
 
-def test__migrate_response_body__changed_self_referencing_model_with_deferred_build__should_be_built():
-    versions = VersionBundle(Version("2001-01-01", version_change(short_name(DeferredCategory))), Version("2000-01-01"))
+def test__migrate_response_body__changed_self_referencing_model_with_deferred_build__should_be_built(
+    version_generic_type_args: bool,
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(short_name(DeferredCategory))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
 
     body = {"name": "abc", "children": [{"name": "abc", "children": []}]}
     migrated = migrate_response_body(versions, DeferredCategory, latest_body=body, version="2000-01-01")
@@ -936,8 +1003,14 @@ def test__router_generation__request_migration_for_changed_self_referencing_mode
     assert old_client.post("/categories", json=body).json() == {"name": "ABC", "children": body["children"]}
 
 
-def test__generate_versioned_models__cycle_copied_from_several_threads__should_be_copied_once():
-    versions = VersionBundle(Version("2001-01-01", version_change(short_name(ChangedItem))), Version("2000-01-01"))
+def test__generate_versioned_models__cycle_copied_from_several_threads__should_be_copied_once(
+    version_generic_type_args: bool,
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(short_name(ChangedItem))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
     generator = generate_versioned_models(versions)["2000-01-01"]
     thread_count = 8
     barrier = threading.Barrier(thread_count)
@@ -1279,9 +1352,13 @@ class IncompleteCategory(BaseModel):
     ],
 )
 def test__generate_versioned_models__cycle_that_cannot_be_copied__should_raise(
-    model: type[BaseModel], error_message: str
+    model: type[BaseModel], error_message: str, version_generic_type_args: bool
 ):
-    versions = VersionBundle(Version("2001-01-01", version_change(short_name(model))), Version("2000-01-01"))
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(short_name(model))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
 
     with pytest.raises(SchemaGenerationError, match=error_message):
         generate_versioned_models(versions)
@@ -1389,19 +1466,30 @@ def test__generate_versioned_models__cycle_that_cannot_be_copied__should_raise(
     ],
 )
 def test__generate_versioned_models__copy_that_would_use_latest_models_of_cycle__should_raise(
-    changed_model: type[BaseModel], requested_model: type[BaseModel], error_message: str
+    changed_model: type[BaseModel],
+    requested_model: type[BaseModel],
+    error_message: str,
+    version_generic_type_args: bool,
 ):
-    versions = VersionBundle(Version("2001-01-01", version_change(short_name(changed_model))), Version("2000-01-01"))
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(short_name(changed_model))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
     with pytest.raises(SchemaGenerationError, match=error_message):
         generator[requested_model]
 
 
-def test__generate_versioned_models__enum_default_in_cycle__should_work_as_for_other_models():
+def test__generate_versioned_models__enum_default_in_cycle__should_work_as_for_other_models(
+    version_generic_type_args: bool,
+):
     """Enum members are serialized by their values, so Cadwyn uses them as defaults as it always did"""
     versions = VersionBundle(
-        Version("2001-01-01", version_change(enum(Status).didnt_have("new"))), Version("2000-01-01")
+        Version("2001-01-01", version_change(enum(Status).didnt_have("new"))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
     )
     old_node = generate_versioned_models(versions)["2000-01-01"][StatusNode]
 
@@ -1410,13 +1498,16 @@ def test__generate_versioned_models__enum_default_in_cycle__should_work_as_for_o
     assert old_node().children == []
 
 
-def test__generate_versioned_models__defaults_of_fields_that_do_not_reach_copied_cycles__should_work_as_on_main():
+def test__generate_versioned_models__defaults_of_fields_that_do_not_reach_copied_cycles__should_work_as_on_main(
+    version_generic_type_args: bool,
+):
     versions = VersionBundle(
         Version(
             "2001-01-01",
             version_change(short_name(Category), short_name(ChangedItem), enum(Status).didnt_have("new")),
         ),
         Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
@@ -1426,10 +1517,13 @@ def test__generate_versioned_models__defaults_of_fields_that_do_not_reach_copied
     assert old_order().items == []
 
 
-def test__generate_versioned_models__default_factories_that_create_versioned_copies__should_be_allowed():
+def test__generate_versioned_models__default_factories_that_create_versioned_copies__should_be_allowed(
+    version_generic_type_args: bool,
+):
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(Settings), short_name(SafeFactoriesCategory))),
         Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
     )
     old_category = generate_versioned_models(versions)["2000-01-01"][SafeFactoriesCategory]
 
@@ -1442,8 +1536,15 @@ def test__generate_versioned_models__default_factories_that_create_versioned_cop
     assert category.optional_settings == [None, None]
 
 
-def test__generate_versioned_models__root_model_around_changed_cycle__should_use_its_copies():
-    versions = VersionBundle(Version("2001-01-01", version_change(short_name(Category))), Version("2000-01-01"))
+@versions_generic_type_args
+def test__generate_versioned_models__root_model_around_changed_cycle__should_use_its_copies(
+    version_generic_type_args: bool,
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(short_name(Category))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
     old_root = generate_versioned_models(versions)["2000-01-01"][CategoryRoot]
 
     assert old_root.model_validate([{"name": "abc"}]).model_dump() == [{"name": "abc", "children": []}]
@@ -1451,8 +1552,14 @@ def test__generate_versioned_models__root_model_around_changed_cycle__should_use
         old_root.model_validate([{"name": "toolong"}])
 
 
-def test__generate_versioned_models__copy_that_cannot_be_built_in_version_that_copies_cycles__should_raise():
-    versions = VersionBundle(Version("2001-01-01", version_change(short_name(Category))), Version("2000-01-01"))
+def test__generate_versioned_models__copy_that_cannot_be_built_in_version_that_copies_cycles__should_raise(
+    version_generic_type_args: bool,
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(short_name(Category))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
     with pytest.raises(SchemaGenerationError, match="cannot check the versioned copy of UnbuildableHolder"):
@@ -1550,8 +1657,14 @@ class HookedItemTree(AsksForItsCopies, BaseModel):
     children: "list[HookedItemTree]" = []
 
 
-def test__generate_versioned_models__hook_that_asks_for_copy_while_its_cycle_is_copied__should_raise():
-    versions = VersionBundle(Version("2001-01-01", version_change(short_name(ChangedItem))), Version("2000-01-01"))
+def test__generate_versioned_models__hook_that_asks_for_copy_while_its_cycle_is_copied__should_raise(
+    version_generic_type_args: bool,
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(short_name(ChangedItem))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
     generator = generate_versioned_models(versions)["2000-01-01"]
     HOOK_GENERATORS.append(generator)
     try:
@@ -1561,9 +1674,15 @@ def test__generate_versioned_models__hook_that_asks_for_copy_while_its_cycle_is_
         HOOK_GENERATORS.clear()
 
 
-def test__generate_versioned_models__schema_hook_that_reads_cached_copies_from_another_thread__should_work():
+def test__generate_versioned_models__schema_hook_that_reads_cached_copies_from_another_thread__should_work(
+    version_generic_type_args: bool,
+):
     """Rebuilding a model must not wait for Cadwyn's lookups of the copies that it has already generated"""
-    versions = VersionBundle(Version("2001-01-01", version_change(short_name(ChangedItem))), Version("2000-01-01"))
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(short_name(ChangedItem))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
     generator = generate_versioned_models(versions)["2000-01-01"]
     old_item = generator[ChangedItem]
     worker_results: list[Any] = []

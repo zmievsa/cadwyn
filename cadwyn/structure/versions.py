@@ -331,6 +331,7 @@ class VersionBundle:
         /,
         *other_versions: Version,
         api_version_var: Union[ContextVar[Union[VersionType, None]], None] = None,
+        version_generic_type_args: bool = False,
     ) -> None:
         super().__init__()
 
@@ -348,6 +349,10 @@ class VersionBundle:
         self.version_values = tuple(version.value for version in self.versions)
         self.reversed_version_values = tuple(reversed(self.version_values))
         self.api_version_var = api_version_var
+        # Whether parametrized generic models such as `Page[Item]` use the versioned copies of their type args in
+        # each version when the args refer to models or enums with instructions. Off by default, so that the type args
+        # keep their latest versions in every version, as Cadwyn always did. See "Generic models" in the docs.
+        self.version_generic_type_args = version_generic_type_args
         self._all_versions = (self.head_version, *self.versions)
         self._version_changes_to_version_mapping = {
             version_change: version.value for version in self.versions for version_change in version.changes

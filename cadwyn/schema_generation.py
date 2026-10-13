@@ -1927,6 +1927,7 @@ class SchemaGenerator:
         "_reference_cycles",
         "_root_models",
         "_route_versioning_thread",
+        "_version_generic_type_args",
         "_versioning_answers",
         "_versions_of_generic_args",
         "annotation_transformer",
@@ -1939,10 +1940,14 @@ class SchemaGenerator:
         model_bundle: _ModelBundle,
         changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
         reference_cycles: "_ReferenceCycles",
+        *,
+        version_generic_type_args: bool = False,
     ) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
         self._changed_models = changed_models
+        # VersionBundle.version_generic_type_args (see _may_version_generic_args)
+        self._version_generic_type_args = version_generic_type_args
         self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
         self._versioning_answers: dict[_VersioningQuestion, bool] = {}
         self._reference_cycles = reference_cycles
@@ -2092,16 +2097,33 @@ class SchemaGenerator:
                 *(_VersioningQuestion(_unwrap_model(subclass), includes_subclasses=True) for subclass in subclasses),
             ], are_all_known
         references = self._get_references(model)
+        # The type args of generics only make the copies of the generics differ if they can be versioned
+        arg_models = references.arg_models if self._may_version_generic_args() else frozenset()
         return [
             *(
                 _VersioningQuestion(referenced_model, includes_subclasses=True)
-                for referenced_model in references.models | references.arg_models
+                for referenced_model in references.models | arg_models
             ),
             *(_VersioningQuestion(base, includes_subclasses=False) for base in references.base_models),
         ], True
 
     def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
         return _change_version_of_generic_metadata(self, self, model)
+
+    def _may_version_generic_args(self) -> bool:
+        """Whether the copies of any generics in this version may use the copies of their type args.
+
+        This is the only switch for versioning generic args, which is opt-in through
+        VersionBundle(version_generic_type_args=True) because it changes the behavior of existing apps: their older
+        versions start validating and serializing the args with older models, which may need new converters,
+        HeadVersion changes start applying to the args in the latest version, OpenAPI names of the generics with
+        quoted args change, and migrate_response_body rejects the latest models in them. When it is off, every
+        generic keeps the head models in its type args in every version, exactly as Cadwyn always did. Everything
+        that versions generic args or depends on whether they are versioned must check it, directly or through
+        _should_version_generic_args.
+        """
+        # When nothing has instructions, no generic args need versioning and we do not need to look into them
+        return self._version_generic_type_args and bool(self._changed_models)
 
     def _should_version_generic_args(
         self, generic: type[BaseModel], generation_stack: list[type[Union[BaseModel, Enum]]]
@@ -2114,8 +2136,7 @@ class SchemaGenerator:
         generating their copies would recurse forever (e.g. `children: "list[Tree]"` within a versioned `Tree`).
         The decision only depends on the references between the models, not on the order of generation.
         """
-        if not self._changed_models:
-            # Nothing has instructions so no generic args need versioning and we do not need to look into them
+        if not self._may_version_generic_args():
             return False
         if generic not in self._versions_of_generic_args:
             references = self._get_references(generic)
@@ -2331,12 +2352,18 @@ class SchemaGenerator:
             if is_latest_model(cls)
         ]
         if latest_models:
+            hint = (
+                ""
+                if self._may_version_generic_args()
+                else " To make generics use the versioned copies of their type args, pass "
+                "`version_generic_type_args=True` to `VersionBundle`."
+            )
             raise SchemaGenerationError(
                 f"Cadwyn cannot generate the versioned copy of {model_copy.__qualname__} because it would use the "
                 f"latest {_get_cycle_name(latest_models)}, which need versioning, where pydantic resolves them on its "
                 "own: e.g. in the return types of computed fields or serializers, in names quoted within other "
                 'annotations (`list["Model"]`, which you can write as `"list[Model]"` instead), or in the type args '
-                "of generics that keep the latest models."
+                f"of generics that keep the latest models.{hint}"
             )
         self._check_defaults(model_copy, core_schema, is_checked_field_model, is_latest_cycle_model or is_latest_model)
 
@@ -2936,7 +2963,10 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
     for version in versions.versions:
         context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
         version_to_context_map[str(version.value)] = SchemaGenerator(
-            copy.deepcopy(models), changed_models, reference_cycles
+            copy.deepcopy(models),
+            changed_models,
+            reference_cycles,
+            version_generic_type_args=versions.version_generic_type_args,
         )
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)

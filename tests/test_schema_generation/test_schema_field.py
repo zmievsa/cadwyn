@@ -570,6 +570,8 @@ def test__schema_field_had__model_type_arg_field_of_other_parent_of_diamond__sho
     assert diamond.model_validate({"value": InheritedItem(name="ok")}).value.name == "ok"
 
 
+# The type args of generics are only versioned with VersionBundle(version_generic_type_args=True)
+@pytest.mark.parametrize("version_generic_type_args", [True])
 def test__schema_field_had__quoted_type_arg_field_of_other_parent_of_diamond__should_use_versioned_type_arg(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):

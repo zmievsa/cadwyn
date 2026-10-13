@@ -43,6 +43,62 @@ MyVersionedSchemaFrom2025 = schema_generators["2025-11-16"][MyVersionedSchema]
 
 Cadwyn generates a copy of every model for every version, except for the enums without enum instructions and the models that refer to themselves (directly or through other models, e.g. `children: "list[Category]"`) when neither they nor the models they refer to have instructions in any version (including `HeadVersion`) and they are not parents of models with versioned copies. Cadwyn uses such enums and models as they are: `schema_generators["2025-11-16"][Category] is Category`. Cadwyn makes this decision when it first needs a model, so the models defined after that (e.g. new subclasses) do not change it.
 
+### Generic models
+
+By default, parametrized generic models such as `Page[Item]` keep the latest versions of their type args in every version, as Cadwyn always did. So if `Item` changed in an older version, an endpoint that returns `Item` serves the older shape to that version, while an endpoint that returns `Page[Item]` still serves and validates the latest `Item` inside it, and that version's OpenAPI contains both versions of `Item`.
+
+To make generics use the versioned copies of their type args, pass `version_generic_type_args=True` to `VersionBundle`. For example, the app from [issue #416](https://github.com/zmievsa/cadwyn/issues/416) only needs this argument added to its `VersionBundle(...)`:
+
+```python
+from typing import Generic, TypeVar
+
+from pydantic import BaseModel
+
+from cadwyn import Cadwyn, Version, VersionBundle, VersionChange, schema
+
+T = TypeVar("T")
+
+
+class Item(BaseModel):
+    full_name: str
+
+
+class Page(BaseModel, Generic[T]):
+    items: list[T]
+
+
+class RenameNameToFullName(VersionChange):
+    description = "Renamed `name` to `full_name`"
+    instructions_to_migrate_to_previous_version = (
+        schema(Item).field("full_name").had(name="name"),
+    )
+
+
+app = Cadwyn(
+    versions=VersionBundle(
+        Version("2001-01-01", RenameNameToFullName),
+        Version("2000-01-01"),
+        version_generic_type_args=True,
+    )
+)
+```
+
+Now version 2000-01-01 uses the old `Item` with its `name` field inside `Page[Item]`, generic subclasses such as `PageWithTotal[Item]`, `class ItemPage(Page[Item])`, `class Items(RootModel[list[Item]])`, and nested generics such as `Page[Page[Item]]`, and its OpenAPI has one `Item` schema. The option lives on `VersionBundle` rather than on `Cadwyn` because everything that generates versioned models takes the version bundle: the app, `migrate_response_body`, `generate_versioned_models`, `cadwyn render`, and the changelog.
+
+Only the generics whose type args refer to models or enums that have schema or enum instructions in any version, including `HeadVersion`, are affected. All other generics keep their type args, their OpenAPI names, and their behavior. The option is off by default because it changes the behavior of existing apps that have such generics:
+
+* Older versions validate and serialize the args with their old models, so clients of older versions that relied on the latest models inside generics may get validation errors. Converters for `Item` do not run for the items of `Page[Item]`, so add converters for the generics too where older clients need them, e.g. `convert_response_to_previous_version_for(Page[Item])` and `convert_request_to_next_version_for(Page[Item])` that rename `full_name` to `name` and back in every item.
+* Changes from `HeadVersion` also apply to these args in every version, including the latest one.
+* The OpenAPI names of these generics can change in every version because their quoted type args are evaluated, e.g. `Page[list["Item"]]` is named `Page_list_Item__` instead of `Page_list_str__`.
+* `migrate_response_body` rejects instances of the latest models inside these generics, e.g. `Page[Item](...)` or `{"items": [Item(...)]}` for `Page[Item]`, with a `ValidationError` in every version, including the latest one, as it already does for other versioned models nested in the response model. Pass plain data, such as the result of `model_dump()`, instead.
+* The models in these args are copied for every version like other versioned models, so the ones that cannot be copied (e.g. with an `Annotated` validator that holds a `threading.Lock`, which cannot be deep-copied) fail even if no route uses them directly.
+
+Some type args keep their latest models even with the option:
+
+* the args that lead back to the generic itself, e.g. `subcategories: Page["Category"]` within `Category` (see [Models that refer to each other](#models-that-refer-to-each-other));
+* the args whose models refer to names that are not defined yet when Cadwyn first needs the generic;
+* quoted args, such as `Page["Item"]`, whose models are not defined in the module of the generic.
+
 ### Computed fields that return models
 
 Pydantic resolves the return types of computed fields on its own, so Cadwyn cannot version them: in every version, a computed field that returns a versioned model (a model with instructions, or one that refers to such models) keeps the latest version of that model. In older versions, this has two consequences:
@@ -54,9 +110,9 @@ If older versions need the older shape of such data, expose it as a regular fiel
 
 ### Models that refer to each other
 
-Models can refer to themselves, directly or through other models, e.g. `children: "list[Category]"` or `Author.books: list[Book]` with `Book.author: Author`. When such models need versioning, Cadwyn copies all of them together, and their copies refer to each other. So if `Category` had a `title` field instead of `name` in an older version, that version uses `title` at every depth of the tree. Parametrized generic models such as `Page[Category]` use these copies as their type args when the models with instructions or the routes of the version refer to such models. This requires Pydantic 2.11.5 or newer: with older Pydantic versions, Cadwyn raises a `SchemaGenerationError` for such models.
+Models can refer to themselves, directly or through other models, e.g. `children: "list[Category]"` or `Author.books: list[Book]` with `Book.author: Author`. When such models need versioning, Cadwyn copies all of them together, and their copies refer to each other. So if `Category` had a `title` field instead of `name` in an older version, that version uses `title` at every depth of the tree. This requires Pydantic 2.11.5 or newer: with older Pydantic versions, Cadwyn raises a `SchemaGenerationError` for such models.
 
-Otherwise, e.g. when such models only need versioning because they refer to a model with instructions and only `migrate_response_body` uses them directly, the type args of generics keep the latest models, as they always did. If a model with instructions refers to such models only through the type args of a generic, while a route uses them directly, Cadwyn raises a `SchemaGenerationError` instead of using both the latest and the older versions of them in one version.
+With [`version_generic_type_args=True`](#generic-models), parametrized generic models such as `Page[Category]` use these copies as their type args when the models with instructions or the routes of the version refer to such models. Otherwise, e.g. when such models only need versioning because they refer to a model with instructions and only `migrate_response_body` uses them directly, the type args of generics keep the latest models, as they always did. If a model with instructions refers to such models only through the type args of a generic, while a route uses them directly, Cadwyn raises a `SchemaGenerationError` instead of using both the latest and the older versions of them in one version. Without the option, generics always keep the latest models in their type args, so Cadwyn raises a `SchemaGenerationError` whenever a version would use both the latest versions of such models in a generic and their copies elsewhere, e.g. for a route that returns `Page[Category]` when `Category` has instructions.
 
 Cadwyn raises a `SchemaGenerationError` when it generates the versions if it cannot copy such models:
 
