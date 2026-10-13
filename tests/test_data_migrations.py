@@ -4346,6 +4346,31 @@ def test__request_body_migration__with_value_that_the_head_rejects__should_run_d
     assert sorted(calls) == sorted(["dependency", "uncached_dependency", "enter", "exit"] * 2 + ["background_task"])
 
 
+def test__request_body_migration__with_form_value_that_the_head_rejects__should_run_dependencies_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    solvers: list[str] = []
+
+    async def dependency(solver: str = Depends(current_dependency_solver)) -> None:
+        solvers.append(solver)
+
+    class FormWithStricterHead(BaseModel):
+        value: int = Field(default=0, validation_alias="v", serialization_alias="x", ge=10)
+
+    @router.post(test_path, dependencies=[Depends(dependency)])
+    async def endpoint(body: Annotated[FormWithStricterHead, Form()]):
+        return body.value
+
+    clients = create_versioned_clients(version_change(schema(FormWithStricterHead).field("value").had(ge=0)))
+
+    # The head rejects the restored form, so we solve the request again with the form as before,
+    # reusing the dependencies of the first solve
+    assert clients["2000-01-01"].post(test_path, data={"v": "5"}).json() == 0
+    assert solvers == ["fastapi", "cadwyn"]
+
+
 def test__request_body_migration__with_required_value_that_the_head_rejects__should_fail_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
