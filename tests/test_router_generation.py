@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import dataclasses
+import datetime as dt
 import functools
 import importlib
 import inspect
@@ -46,10 +47,12 @@ from pydantic import (
     BaseModel,
     Field,
     JsonValue,
+    SerializationInfo,
     Strict,
     StringConstraints,
     computed_field,
     conint,
+    field_serializer,
 )
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings
@@ -84,6 +87,7 @@ from tests.conftest import (
     client,
     version_change,
 )
+from tests.conftest import versions as versions_of
 
 Default = object()
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
@@ -1240,6 +1244,75 @@ def test__router_generation__computed_field_returning_existing_items_of_changed_
     )
     assert migrated_body.model_dump() == expected_body({"name": "a"})
     assert migrated_body.model_dump_json() == json.dumps(expected_body({"name": "a"}), separators=(",", ":"))
+
+
+class ItemOwner(BaseModel):
+    name: str = "Ada"
+
+
+class AdminItemOwner(ItemOwner):
+    password_hash: str = "private"
+
+
+class DetailedItem(BaseModel):
+    title: str
+    owner: ItemOwner = Field(default_factory=AdminItemOwner)
+    note: Union[str, None] = None
+    code: int = Field(default=0, serialization_alias="itemCode")
+    created: dt.date = dt.date(2000, 1, 1)
+
+    @computed_field
+    @property
+    def double_code(self) -> int:
+        return self.code * 2
+
+    @field_serializer("code")
+    def serialize_code(self, code: int, info: SerializationInfo) -> Any:
+        return (info.context or {}).get("code_prefix", "") + str(code)
+
+
+class HolderWithComputedDetailedItems(BaseModel):
+    items: list[DetailedItem]
+
+    @computed_field
+    @property
+    def all_items(self) -> list[DetailedItem]:
+        return self.items
+
+
+@pytest.mark.parametrize(
+    "get_dump_options",
+    [
+        pytest.param(lambda _field: {}, id="defaults"),
+        pytest.param(lambda _field: {"mode": "json"}, id="mode"),
+        pytest.param(lambda _field: {"by_alias": True}, id="by_alias"),
+        pytest.param(lambda _field: {"exclude_unset": True}, id="exclude_unset"),
+        pytest.param(lambda _field: {"exclude_defaults": True}, id="exclude_defaults"),
+        pytest.param(lambda _field: {"exclude_none": True}, id="exclude_none"),
+        pytest.param(lambda _field: {"serialize_as_any": True}, id="serialize_as_any"),
+        pytest.param(
+            lambda _field: {"polymorphic_serialization": True},
+            id="polymorphic_serialization",
+            marks=pytest.mark.skipif(
+                "polymorphic_serialization" not in inspect.signature(BaseModel.model_dump).parameters,
+                reason="pydantic 2.13 added the option",
+            ),
+        ),
+        pytest.param(lambda _field: {"context": {"code_prefix": "#"}}, id="context"),
+        pytest.param(lambda field: {"include": {field: {0: {"name", "code"}}}}, id="include"),
+        pytest.param(lambda field: {"exclude": {field: {0: {"name", "double_code"}}}}, id="exclude"),
+    ],
+)
+def test__generate_versioned_models__computed_field_returning_existing_data__should_honor_dump_options(
+    get_dump_options: Callable[[str], dict[str, Any]],
+):
+    versions = VersionBundle(*versions_of(version_change(schema(DetailedItem).field("title").had(name="name"))))
+    old_model = generate_versioned_models(versions)["2000-01-01"][HolderWithComputedDetailedItems]
+    old_holder = old_model.model_validate({"items": [{"name": "a", "code": 1}]})
+
+    # The field holds the same instances of the version's copy, which pydantic serializes without Cadwyn's help
+    dumped_field = old_holder.model_dump(**get_dump_options("items"))["items"]
+    assert old_holder.model_dump(**get_dump_options("all_items"))["all_items"] == dumped_field
 
 
 class KindWithComputedField(str, Enum):

@@ -954,19 +954,33 @@ def _make_versioned_copy_serializer(
     def serialize_versioned_copy(value: Any, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
         if type(value) is not generator.concrete_models.get(model):
             return handler(value)
-        return value.__pydantic_serializer__.to_python(
-            value,
-            mode=info.mode,
-            by_alias=info.by_alias,
-            exclude_unset=info.exclude_unset,
-            exclude_defaults=info.exclude_defaults,
-            exclude_none=info.exclude_none,
-            round_trip=info.round_trip,
-            serialize_as_any=info.serialize_as_any,
-            context=info.context,
-        )
+        # The handler would serialize the value with the latest model so we pass on every option of the dump that
+        # pydantic gives us. It does not give us the `warnings` and `fallback` options.
+        options = {option: getattr(info, option) for option in _SERIALIZATION_OPTIONS_IN_INFO}
+        return value.__pydantic_serializer__.to_python(value, **options)
 
     return serialize_versioned_copy
+
+
+# exclude_computed_fields exists since pydantic 2.12 and polymorphic_serialization since 2.13
+_SERIALIZATION_OPTIONS_IN_INFO = tuple(
+    option
+    for option in (
+        "mode",
+        "include",
+        "exclude",
+        "by_alias",
+        "exclude_unset",
+        "exclude_defaults",
+        "exclude_none",
+        "exclude_computed_fields",
+        "round_trip",
+        "serialize_as_any",
+        "polymorphic_serialization",
+        "context",
+    )
+    if hasattr(SerializationInfo, option)
+)
 
 
 def _get_signature_parameters(call: Any) -> types.MappingProxyType[str, inspect.Parameter]:
