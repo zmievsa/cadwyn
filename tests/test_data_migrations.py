@@ -4349,6 +4349,42 @@ def test__request_body_migration__with_json_form_field__should_stay_as_before(
         assert version_client.post(test_path, data={"v": "[1,2]"}).json() == []
 
 
+class OptionalOuterWithRequiredInner(BaseModel):
+    inner: Optional[InnerSchemaWithValidationAlias] = Field(default=None, alias="i", validation_alias="j")
+    name: str = "n"
+
+
+class OptionalOuterListWithRequiredInner(BaseModel):
+    items: list[InnerSchemaWithValidationAlias] = Field(default=[], alias="i", validation_alias="j")
+
+
+@pytest.mark.parametrize(
+    ("model", "payload", "expected"),
+    [
+        pytest.param(OptionalOuterWithRequiredInner, {"j": {"v": 5}}, {"inner": None, "name": "n"}, id="nested_model"),
+        pytest.param(OptionalOuterListWithRequiredInner, {"j": [{"v": 5}]}, {"items": []}, id="nested_list"),
+    ],
+)
+def test__request_body_migration__with_required_field_under_optional_field_with_validation_alias__should_stay(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    model: type[BaseModel],
+    payload: dict[str, Any],
+    expected: dict[str, Any],
+):
+    @router.post(test_path)
+    async def endpoint(body: model):  # ty: ignore[invalid-type-form]
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+
+    # The head doesn't read the dumped key of the optional field, so it never validates the required field under it,
+    # and the body passes as it is. We leave it as it is, so the optional field gets its default as before.
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == expected
+
+
 def test__request_body_migration__with_optional_field_with_validation_alias__should_stay_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],

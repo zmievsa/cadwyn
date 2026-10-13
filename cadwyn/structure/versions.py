@@ -1219,7 +1219,8 @@ def _restore_data(spec: _RestorerSpec, data: Any) -> Any:
     if not _needs_restoring(spec, data):
         return data
     # Each frame is [spec, data, children to restore, restored copy of data or None, key of the child being restored]
-    stack: list[list[Any]] = [[spec, data, _iter_children_to_restore(spec, data), None, None]]
+    # The 6th item says whether the head validates the data of the frame: it doesn't validate what's under a dumped key
+    stack: list[list[Any]] = [[spec, data, _iter_children_to_restore(spec, data), None, None, True]]
     restored_data = data
     while stack:
         frame = stack[-1]
@@ -1227,7 +1228,12 @@ def _restore_data(spec: _RestorerSpec, data: Any) -> Any:
         if child is not None:
             key, child_spec, child_data = child
             frame[4] = key
-            stack.append([child_spec, child_data, _iter_children_to_restore(child_spec, child_data), None, None])
+            is_validated = frame[5] and (
+                frame[0][0] != "model" or key not in _get_restore_plan(frame[0][1]).renamed_keys
+            )
+            stack.append(
+                [child_spec, child_data, _iter_children_to_restore(child_spec, child_data), None, None, is_validated]
+            )
             continue
         stack.pop()
         restored_data = _finish_restoring(frame)
@@ -1243,7 +1249,7 @@ def _restore_data(spec: _RestorerSpec, data: Any) -> Any:
 
 
 def _finish_restoring(frame: list[Any]) -> Any:
-    (kind, inner), data, _, restored, _ = frame
+    (kind, inner), data, _, restored, _, is_validated = frame
     if kind == "model" and (plan := _get_restore_plan(inner)).root_spec is None:
         for rename in plan.renames:
             if _does_rename_apply(rename, data):
@@ -1251,7 +1257,7 @@ def _finish_restoring(frame: list[Any]) -> Any:
                     restored = dict(data)
                 dumped_key, target_key, *_ = rename
                 restored[target_key] = restored.pop(dumped_key)
-                if dumped_key in plan.failing_keys:
+                if is_validated and dumped_key in plan.failing_keys:
                     _RESTORATION.has_failing_renames = True
     return data if restored is None else restored
 
@@ -1296,6 +1302,8 @@ class _RestorePlan:
     # The dumped keys of `renames` without which the data of the model surely fails validation:
     # the keys of required fields, or all of them if the model forbids extra keys
     failing_keys: frozenset[str] = frozenset()
+    # The dumped keys of `renames`
+    renamed_keys: frozenset[str] = frozenset()
 
 
 @functools.cache
@@ -1312,7 +1320,13 @@ def _get_restore_plan(model: type[BaseModel]) -> _RestorePlan:
     if issubclass(model, RootModel):
         return _RestorePlan(root_spec=nested[0][1] if nested else None)
     keys = frozenset(key for key, *_ in (*renames, *nested))
-    return _RestorePlan(renames=renames, nested=nested, keys=keys, failing_keys=_get_failing_keys(model, renames))
+    return _RestorePlan(
+        renames=renames,
+        nested=nested,
+        keys=keys,
+        failing_keys=_get_failing_keys(model, renames),
+        renamed_keys=frozenset(key for key, *_ in renames),
+    )
 
 
 def _get_failing_keys(model: type[BaseModel], renames: tuple["_Rename", ...]) -> frozenset[str]:
