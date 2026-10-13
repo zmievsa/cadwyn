@@ -694,6 +694,74 @@ def test__router_generation__generic_route_model_around_changed_cycle_with_head_
         assert old_client.post("/category", json=old_category).json() == old_category
 
 
+class LatestCategoryPageHolder(BaseModel):
+    @computed_field
+    @property
+    def categories(self) -> Page[CategoryWithItem]:
+        raise NotImplementedError
+
+
+def test__router_generation__computed_field_with_latest_generic_around_cycle__should_raise(
+    create_versioned_app: CreateVersionedApp,
+):
+    """Pydantic builds the latest Page[CategoryWithItem] on its own, not Cadwyn's copy that keeps the latest args"""
+    router = VersionedAPIRouter()
+
+    @router.post("/category", response_model=CategoryWithItem)
+    async def create_category(category: CategoryWithItem) -> Any:
+        raise NotImplementedError
+
+    @router.get("/holder", response_model=LatestCategoryPageHolder)
+    async def get_holder() -> Any:
+        raise NotImplementedError
+
+    with pytest.raises(
+        SchemaGenerationError, match="copy of LatestCategoryPageHolder because it would use the latest CategoryWithItem"
+    ):
+        create_versioned_app(version_change(short_name(ItemOfPagedCategory)), router=router)
+
+
+class GenericCategoryList(RootModel[list[ValueT]], Generic[ValueT]):
+    pass
+
+
+class CategoryList(RootModel[list[CategoryWithItem]]):
+    pass
+
+
+@pytest.mark.parametrize(
+    "root_model", [GenericCategoryList[CategoryWithItem], CategoryList], ids=["generic_root_model", "root_model"]
+)
+def test__router_generation__root_model_with_type_arg_around_changed_cycle__should_version_it_only_with_option(
+    root_model: Any,
+    create_versioned_app: CreateVersionedApp,
+    version_generic_type_args: bool,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/category", response_model=CategoryWithItem)
+    async def create_category(category: CategoryWithItem) -> Any:
+        return category
+
+    @router.post("/categories", response_model=root_model)
+    async def create_categories(categories: root_model) -> Any:
+        return categories
+
+    app = create_versioned_app(version_change(short_name(ItemOfPagedCategory)), router=router)
+    old_client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    old_category = {"name": "a", "item": {"name": "abc"}, "children": []}
+    latest_category = {"name": "a", "item": {"name": "toolong"}, "children": []}
+
+    assert old_client.post("/category", json=old_category).json() == old_category
+    assert old_client.post("/categories", json=[old_category]).json() == [old_category]
+    response = old_client.post("/categories", json=[latest_category])
+    if version_generic_type_args:
+        assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    else:
+        # Like other generics, the root model keeps the latest models in its type args
+        assert response.json() == [latest_category]
+
+
 class LatestCategoryHolder(BaseModel):
     @computed_field
     @property

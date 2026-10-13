@@ -2775,10 +2775,11 @@ def _get_classes_in_core_schema(
 def _get_classes_in_core_schema_outside_of_generic_args(
     core_schema: Any, *, skipped_classes: "collections.abc.Set[type]"
 ) -> set[type]:
-    """Like _get_classes_in_core_schema but without the fields whose types come from the type args of generics.
+    """Like _get_classes_in_core_schema but without the fields of the copies whose types come from generic type args.
 
-    E.g. without `items` of Page[Item], or of `class ItemPage(Page[Item])`, for `items: list[T]` in Page. Everything
-    else that pydantic resolves on its own in such generics, e.g. the return types of their computed fields, counts.
+    E.g. without `items` of the copies of Page[Item] or of `class ItemPage(Page[Item])` for `items: list[T]` in Page,
+    or without the root of `class Items(RootModel[list[Item]])`. Everything else that pydantic resolves on its own,
+    e.g. the return types of computed fields, counts, including the latest generics in them.
     """
     definitions = _get_core_schema_definitions(core_schema)
     # The schemas of the fields whose types come from the type args
@@ -2788,10 +2789,20 @@ def _get_classes_in_core_schema_outside_of_generic_args(
         cls = node.get("cls")
         if id(node) in skipped_node_ids or (isinstance(cls, type) and cls in skipped_classes):
             return True
-        if node.get("type") == "model" and lenient_issubclass(cls, BaseModel):
+        # Only Cadwyn's copies keep the latest type args because generic args are not versioned. The latest generics
+        # that pydantic resolves on its own (e.g. in the return types of computed fields) count like any latest model
+        if (
+            node.get("type") == "model"
+            and lenient_issubclass(cls, BaseModel)
+            and "__cadwyn_original_model__" in vars(cls)
+        ):
             field_names = _get_fields_typed_by_generic_args(cast("type[BaseModel]", cls))
-            field_schemas = (_get_field_core_schemas(cls, node, definitions) or {}) if field_names else {}
-            skipped_node_ids.update(id(schema) for name, schema in field_schemas.items() if name in field_names)
+            if getattr(cls, "__pydantic_root_model__", False) and "root" in field_names:
+                # The schema of a root model is the schema of its root field, which is its only field
+                skipped_node_ids.add(id(node.get("schema")))
+            elif field_names:
+                field_schemas = _get_field_core_schemas(cls, node, definitions) or {}
+                skipped_node_ids.update(id(schema) for name, schema in field_schemas.items() if name in field_names)
         return False
 
     return {
