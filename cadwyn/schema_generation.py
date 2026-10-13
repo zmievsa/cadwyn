@@ -1876,7 +1876,11 @@ class _ReferenceCycles:
         "_requested_models",
     )
 
-    def __init__(self, changed_models: "frozenset[type[Union[BaseModel, Enum]]]") -> None:
+    def __init__(
+        self,
+        changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
+        changed_parametrizations: "frozenset[type[BaseModel]]",
+    ) -> None:
         # The generators of different versions can ask at the same time
         self._lock = threading.Lock()
         self._models_in_cycles: dict[type[Union[BaseModel, Enum]], bool] = {}
@@ -1885,10 +1889,9 @@ class _ReferenceCycles:
         self._head_references: dict[type[BaseModel], _ModelReferences] = {}
         # The models with schema or enum instructions in any version
         self._changed_models = changed_models
-        # The parametrizations of generics with their own instructions, e.g. `schema(Pair[str, int])`
-        self._changed_parametrizations = frozenset(
-            model for model in changed_models if lenient_issubclass(model, BaseModel) and _is_parametrization(model)
-        )
+        # The parametrizations whose instructions reach the fields of other parametrizations (see
+        # _get_parametrizations_whose_instructions_reach_other_generics). Without them, nothing is redefined.
+        self._changed_parametrizations = changed_parametrizations
         # See get_redefined_field_names
         self._parametrizations_built_by_pydantic: dict[
             type[Union[BaseModel, Enum]], dict[str, frozenset[type[BaseModel]]]
@@ -3270,7 +3273,9 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
     )
 
     version_to_context_map = {}
-    reference_cycles = _ReferenceCycles(changed_models)
+    reference_cycles = _ReferenceCycles(
+        changed_models, _get_parametrizations_whose_instructions_reach_other_generics(changed_models)
+    )
     context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
     _migrate_classes(context)
 
@@ -3600,6 +3605,20 @@ def _declares_name(
     ):
         return True
     return name in _get_annotations_without_evaluating(model) or name in vars(model)
+
+
+def _get_parametrizations_whose_instructions_reach_other_generics(
+    changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
+) -> "frozenset[type[BaseModel]]":
+    """Return the parametrizations whose instructions apply where pydantic builds them in other generics' fields.
+
+    E.g. the instructions of `schema(Pair[str, int])` in `Box[str]` with `pair: Pair[T, int]`
+    (see _ReferenceCycles.get_redefined_field_names).
+    This is the only switch for that behavior (#420): with an empty set, every model is copied exactly as before.
+    """
+    return frozenset(
+        model for model in changed_models if lenient_issubclass(model, BaseModel) and _is_parametrization(model)
+    )
 
 
 def _is_parametrization(model: type[BaseModel]) -> bool:
