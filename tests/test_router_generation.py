@@ -513,7 +513,7 @@ def test__get_openapi__older_version_with_params_without_examples__should_not_ad
         {
             "name": "x-api-version",
             "in": "header",
-            "required": False,
+            "required": True,
             "schema": {"type": "string", "format": "date", "default": "2000-01-01", "title": "X-Api-Version"},
             "examples": {"default": {"value": "2000-01-01"}},
         },
