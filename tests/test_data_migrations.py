@@ -4,7 +4,7 @@ import re
 import sys
 import tempfile
 import typing
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
 from contextvars import ContextVar
 from datetime import datetime
 from decimal import Decimal
@@ -4300,6 +4300,50 @@ def test__request_body_migration__with_value_that_the_head_rejects__should_stay_
     # The head rejects the value, so we never fail where we didn't before: the head gets the body as before
     assert clients["2000-01-01"].post(test_path, json={"v": 5}).json() == 0
     assert clients["2000-01-01"].post(test_path, json={"v": 15}).json() == 15
+
+
+def test__request_body_migration__with_value_that_the_head_rejects__should_run_dependencies_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    calls: list[str] = []
+
+    def dependency() -> None:
+        calls.append("dependency")
+
+    def uncached_dependency() -> None:
+        calls.append("uncached_dependency")
+
+    def yield_dependency() -> Iterator[None]:
+        calls.append("enter")
+        yield
+        calls.append("exit")
+
+    def dependency_with_background_task(background_tasks: BackgroundTasks) -> None:
+        background_tasks.add_task(calls.append, "background_task")
+
+    class SchemaWithStricterHead(BaseModel):
+        value: int = Field(default=0, alias="x", validation_alias="v", ge=10)
+
+    @router.post(
+        test_path,
+        dependencies=[
+            Depends(dependency),
+            Depends(uncached_dependency, use_cache=False),
+            Depends(yield_dependency),
+            Depends(dependency_with_background_task),
+        ],
+    )
+    async def endpoint(body: SchemaWithStricterHead):
+        return body.value
+
+    clients = create_versioned_clients(version_change(schema(SchemaWithStricterHead).field("value").had(ge=0)))
+
+    # The head rejects the restored body, so we solve the request again with the body as before.
+    # The dependencies run as many times as they did before: once for the version and once for the head.
+    assert clients["2000-01-01"].post(test_path, json={"v": 5}).json() == 0
+    assert sorted(calls) == sorted(["dependency", "uncached_dependency", "enter", "exit"] * 2 + ["background_task"])
 
 
 def test__request_body_migration__with_required_value_that_the_head_rejects__should_fail_as_before(

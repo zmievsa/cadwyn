@@ -494,9 +494,9 @@ class VersionBundle:
         result = await solve(body=body_for_solving)
         # We never fail a request that worked before: if the head rejects the restored body, e.g. because it is stricter
         # than the version and used to get the default of a field, we solve the request with the body as before.
-        # Its dependencies run again, but only for requests that would have failed otherwise.
+        # The second solve reuses the dependencies of the first one, so they run as many times as before.
         if result.errors and is_body_restored:
-            result = await solve(body=request_info.body)
+            result = await solve(body=request_info.body, dependency_cache=result.dependency_cache)
         if result.errors:
             raise CadwynHeadRequestValidationError(result.errors, body=request_info.body, version=current_version)
         return result.values
