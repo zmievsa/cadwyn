@@ -585,7 +585,6 @@ def _rebuild_model_fields_without_changing_them(  # pragma: no cover # Pydantic 
     Pydantic 2.11 merges the `Annotated` metadata of a field into the FieldInfo assigned to the field in place,
     so every call would add that metadata (e.g. validators) to the field of the model once more.
     """
-    from pydantic._internal._generics import replace_types
     from pydantic._internal._typing_extra import eval_type
     from pydantic_core import PydanticUndefined
     from typing_inspection.introspection import AnnotationSource
