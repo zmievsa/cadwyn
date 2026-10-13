@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
 from types import GenericAlias
-from typing import Annotated, ClassVar, NewType, TypeAlias, Union, cast, get_args
+from typing import Annotated, ClassVar, Literal, NewType, TypeAlias, Union, cast, get_args
 from uuid import UUID
 
 import fastapi.params
@@ -39,7 +39,17 @@ from fastapi.security.http import HTTPBasic
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from inline_snapshot import snapshot
-from pydantic import AfterValidator, AllowInfNan, BaseModel, Field, JsonValue, Strict, StringConstraints, conint
+from pydantic import (
+    AfterValidator,
+    AllowInfNan,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    Strict,
+    StringConstraints,
+    conint,
+)
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
@@ -67,6 +77,7 @@ from tests._data.sqlalchemy_models import ImperativelyMappedModel, MappedChild, 
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
+from tests._resources.utils import HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED
 from tests.conftest import (
     CreateVersionedApp,
     CreateVersionedClients,
@@ -1391,10 +1402,13 @@ def constrained_fields_router(router: VersionedAPIRouter) -> VersionedAPIRouter:
 
 
 @pytest.mark.parametrize(
-    ("path", "schema_name"),
+    ("path", "schema_name", "is_applied"),
     [
-        ("/field_defaults", "ConstrainedFieldsInFieldDefaults"),
-        ("/annotated", "ConstrainedFieldsInAnnotated"),
+        ("/field_defaults", "ConstrainedFieldsInFieldDefaults", True),
+        # Cadwyn 7.4.0 ignored had() for a constraint that the annotation's metadata sets (since pydantic 2.12).
+        # Applying it would make the older versions reject the requests and responses that they have always
+        # accepted, so it stays ignored
+        ("/annotated", "ConstrainedFieldsInAnnotated", HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED),
     ],
 )
 @pytest.mark.parametrize(
@@ -1407,11 +1421,12 @@ def constrained_fields_router(router: VersionedAPIRouter) -> VersionedAPIRouter:
         ("pattern_field", {"pattern": "^ab"}, {"pattern": "^a"}, {"pattern": "^ab"}, "ac"),
     ],
 )
-def test__router_generation__field_had_constraint_that_was_already_set__should_override_it(
+def test__router_generation__field_had_constraint_that_was_already_set__should_override_it_unless_annotation_sets_it(
     constrained_fields_router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     path: str,
     schema_name: str,
+    is_applied: bool,
     field_name: str,
     old_attributes: dict[str, Any],
     head_json_schema: dict[str, object],
@@ -1429,7 +1444,7 @@ def test__router_generation__field_had_constraint_that_was_already_set__should_o
 
     for version, expected_json_schema, expected_status_code in [
         ("2001-01-01", head_json_schema, 200),
-        ("2000-01-01", old_json_schema, 422),
+        ("2000-01-01", old_json_schema, 422) if is_applied else ("2000-01-01", head_json_schema, 200),
     ]:
         client = clients[version]
         openapi = client.get(f"/openapi.json?version={version}").json()
@@ -1575,10 +1590,13 @@ def deletable_attributes_router(router: VersionedAPIRouter) -> VersionedAPIRoute
 
 
 @pytest.mark.parametrize(
-    ("path", "schema_name"),
+    ("path", "schema_name", "is_removed"),
     [
-        ("/field_defaults", "DeletableAttributesInFieldDefaults"),
-        ("/annotated", "DeletableAttributesInAnnotated"),
+        ("/field_defaults", "DeletableAttributesInFieldDefaults", True),
+        # Cadwyn 7.4.0 ignored didnt_have() for the constraints of a Field() in the annotation's metadata. Removing
+        # them could make the older versions reject or change the data that they have always accepted or returned
+        # (e.g. through `ConfigDict(str_max_length=...)` or a `left_to_right` union), so it stays ignored
+        ("/annotated", "DeletableAttributesInAnnotated", False),
     ],
 )
 @pytest.mark.parametrize(
@@ -1591,11 +1609,12 @@ def deletable_attributes_router(router: VersionedAPIRouter) -> VersionedAPIRoute
         ("pattern_field", "pattern", "pattern", "bc"),
     ],
 )
-def test__router_generation__field_didnt_have_constraint__should_remove_it(
+def test__router_generation__field_didnt_have_constraint__should_remove_it_unless_field_in_annotation_sets_it(
     deletable_attributes_router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     path: str,
     schema_name: str,
+    is_removed: bool,
     field_name: str,
     attribute: Any,
     json_schema_key: str,
@@ -1615,11 +1634,11 @@ def test__router_generation__field_didnt_have_constraint__should_remove_it(
     )
     payload = PAYLOAD_WITH_DELETABLE_ATTRIBUTES_VALID_IN_ALL_VERSIONS | {field_name: value_valid_only_in_old_version}
 
-    for version, expected_status_code in [("2001-01-01", 422), ("2000-01-01", 200)]:
+    for version, expected_status_code in [("2001-01-01", 422), ("2000-01-01", 200 if is_removed else 422)]:
         client = clients[version]
         openapi = client.get(f"/openapi.json?version={version}").json()
         field_schema = openapi["components"]["schemas"][schema_name]["properties"][field_name]
-        assert (json_schema_key in field_schema) == (version == "2001-01-01")
+        assert (json_schema_key in field_schema) == (version == "2001-01-01" or not is_removed)
 
         assert client.post(path, json=PAYLOAD_WITH_DELETABLE_ATTRIBUTES_VALID_IN_ALL_VERSIONS).status_code == 200
         assert client.post(path, json=payload).status_code == expected_status_code
@@ -1760,11 +1779,22 @@ class SchemaWithLenConstraints(BaseModel):
     field_info_with_len: Annotated[str, FIELD_INFO_WITH_LEN]
 
 
-@pytest.mark.parametrize("field_name", ["annotated_len", "field_info_with_len"])
+@pytest.mark.parametrize(
+    ("field_name", "old_min_length", "old_status_code_of_too_short_value"),
+    [
+        ("annotated_len", None, 200),
+        # Cadwyn 7.4.0 ignored didnt_have() for the constraints of a Field() in the annotation's metadata. Removing
+        # them could make the older versions reject or change the data that they have always accepted or returned,
+        # so it stays ignored
+        ("field_info_with_len", 2, 422),
+    ],
+)
 def test__router_generation__field_didnt_have_min_length_of_len__should_keep_max_length(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     field_name: str,
+    old_min_length: Union[int, None],
+    old_status_code_of_too_short_value: int,
 ):
     @router.post("/test")
     async def route(payload: SchemaWithLenConstraints):
@@ -1781,7 +1811,10 @@ def test__router_generation__field_didnt_have_min_length_of_len__should_keep_max
     )
     payload = {"annotated_len": "abc", "field_info_with_len": "abc"}
 
-    for version, min_length, status_code_of_too_short_value in [("2001-01-01", 2, 422), ("2000-01-01", None, 200)]:
+    for version, min_length, status_code_of_too_short_value in [
+        ("2001-01-01", 2, 422),
+        ("2000-01-01", old_min_length, old_status_code_of_too_short_value),
+    ]:
         versioned_client = clients[version]
         openapi = versioned_client.get(f"/openapi.json?version={version}").json()
         field_schema = openapi["components"]["schemas"]["SchemaWithLenConstraints"]["properties"][field_name]
@@ -1867,9 +1900,12 @@ class SchemaWithConstraintClasses(BaseModel):
 @pytest.mark.parametrize(
     ("field_name", "instruction", "value", "head_status_code", "old_status_code"),
     [
-        ("strict_field", lambda field: field.had(strict=False), "1", 422, 200),
+        # Cadwyn 7.4.0 ignored had() for constraint classes, like for other constraints in the annotation's metadata.
+        # Applying it could make the older versions reject the requests that they have always accepted (as in
+        # had(allow_inf_nan=False)), so it stays ignored. didnt_have() failed with TypeError there instead
+        ("strict_field", lambda field: field.had(strict=False), "1", 422, 422),
         ("strict_field", lambda field: field.didnt_have("strict"), "1", 422, 200),
-        ("allow_inf_nan_field", lambda field: field.had(allow_inf_nan=False), "inf", 200, 422),
+        ("allow_inf_nan_field", lambda field: field.had(allow_inf_nan=False), "inf", 200, 200),
         ("allow_inf_nan_field", lambda field: field.didnt_have("allow_inf_nan"), "inf", 200, 200),
     ],
 )
@@ -1938,6 +1974,123 @@ def test__router_generation__field_had_json_schema_extra__with_field_info_in_ann
         field_schema = openapi["components"]["schemas"]["SchemaWithJsonSchemaExtraInAnnotated"]["properties"]["foo"]
         assert {key: field_schema[key] for key in ("a", "b") if key in field_schema} == expected_extra
         assert clients[version].post("/test", json={"foo": "bar"}).json() == {"foo": "bar"}
+
+
+class AnnotatedCat(BaseModel):
+    kind: Literal["cat"] = "cat"
+
+
+class AnnotatedDog(BaseModel):
+    kind: Literal["dog"] = "dog"
+
+
+class SchemaWithWireAttributesInAnnotated(BaseModel):
+    name: Annotated[str, Field(min_length=1, max_length=10)]
+    with_default: Annotated[int, Field(default=1)]
+    with_default_factory: Annotated[list[int], Field(default_factory=list)]
+    with_validation_alias: Annotated[str, Field(validation_alias="validationAlias")] = ""
+    with_serialization_alias: Annotated[str, Field(serialization_alias="serializationAlias")] = ""
+    with_exclude: Annotated[str, Field(exclude=True)] = "hidden"
+    with_coerce_numbers_to_str: Annotated[str, Field(coerce_numbers_to_str=True)] = ""
+    with_discriminator: Annotated[Union[AnnotatedCat, AnnotatedDog], Field(discriminator="kind")] = AnnotatedCat()
+
+
+class StrictSchemaWithLaxFieldInAnnotated(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    not_strict: Annotated[int, Field(strict=False)] = 0
+
+
+@pytest.mark.parametrize(
+    ("model", "attribute", "instruction"),
+    [
+        *(
+            pytest.param(
+                SchemaWithWireAttributesInAnnotated,
+                "name",
+                instruction,
+                marks=pytest.mark.skipif(
+                    HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED,
+                    reason="Before pydantic 2.12, had() changes such constraints, as in Cadwyn 7.4.0",
+                ),
+            )
+            for instruction in [lambda field: field.had(min_length=5), lambda field: field.had(max_length=3)]
+        ),
+        (SchemaWithWireAttributesInAnnotated, "name", lambda field: field.didnt_have("min_length")),
+        (SchemaWithWireAttributesInAnnotated, "name", lambda field: field.didnt_have("max_length")),
+        (SchemaWithWireAttributesInAnnotated, "with_default", lambda field: field.didnt_have("default")),
+        (SchemaWithWireAttributesInAnnotated, "with_default_factory", lambda f: f.didnt_have("default_factory")),
+        (SchemaWithWireAttributesInAnnotated, "with_validation_alias", lambda f: f.didnt_have("validation_alias")),
+        (
+            SchemaWithWireAttributesInAnnotated,
+            "with_serialization_alias",
+            lambda field: field.didnt_have("serialization_alias"),
+        ),
+        (SchemaWithWireAttributesInAnnotated, "with_exclude", lambda field: field.didnt_have("exclude")),
+        (
+            SchemaWithWireAttributesInAnnotated,
+            "with_coerce_numbers_to_str",
+            lambda field: field.didnt_have("coerce_numbers_to_str"),
+        ),
+        (SchemaWithWireAttributesInAnnotated, "with_discriminator", lambda f: f.didnt_have("discriminator")),
+        (StrictSchemaWithLaxFieldInAnnotated, "not_strict", lambda field: field.didnt_have("strict")),
+    ],
+)
+def test__router_generation__field_had_and_didnt_have__attributes_of_field_info_in_annotated__should_keep_wire_format(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    model: type[BaseModel],
+    attribute: str,
+    instruction: Callable[[Any], Any],
+):
+    """Cadwyn 7.4.0 ignored these instructions for the attributes of a Field() in the annotation's metadata.
+
+    Applying them would make the older versions reject or change the requests and responses that they have always
+    accepted or returned, so they stay ignored and the older versions behave exactly like the head version.
+    """
+
+    @router.post("/test", response_model=model)
+    async def post(payload: model):  # ty: ignore[invalid-type-form]
+        return payload
+
+    @router.get("/test", response_model=model)
+    async def get():
+        if model is StrictSchemaWithLaxFieldInAnnotated:
+            return StrictSchemaWithLaxFieldInAnnotated()
+        return SchemaWithWireAttributesInAnnotated(name="abcdefgh", with_exclude="secret")
+
+    clients = create_versioned_clients(version_change(instruction(schema(model).field(attribute))))
+    payloads = [
+        {},
+        {"not_strict": "4"},
+        {"name": "ab"},
+        {"name": "abcdefgh", "with_default": 2, "with_default_factory": [3]},
+        {"name": "ab", "validationAlias": "validated", "with_validation_alias": "unused"},
+        {"name": "ab", "with_serialization_alias": "serialized", "with_exclude": "secret"},
+        {"name": "ab", "with_coerce_numbers_to_str": 5},
+        {"name": "ab", "with_discriminator": {"kind": "dog"}},
+        {"name": "ab", "with_discriminator": {}},
+    ]
+
+    def responses(version: str) -> list[object]:
+        client = clients[version]
+        return [
+            *[(r.status_code, r.json()) for r in (client.post("/test", json=payload) for payload in payloads)],
+            client.get("/test").json(),
+            client.get(f"/openapi.json?version={version}").json()["components"]["schemas"],
+        ]
+
+    assert responses("2000-01-01") == responses("2001-01-01")
+    if model is SchemaWithWireAttributesInAnnotated:
+        assert clients["2000-01-01"].get("/test").json() == {
+            "name": "abcdefgh",
+            "with_default": 1,
+            "with_default_factory": [],
+            "with_validation_alias": "",
+            "serializationAlias": "",
+            "with_coerce_numbers_to_str": "",
+            "with_discriminator": {"kind": "cat"},
+        }
 
 
 class SchemaWithOnlyDocStringInAnnotated(BaseModel):

@@ -3214,11 +3214,6 @@ def _change_field(
             defined_annotations[alter_schema_instruction.name],
         )
 
-    field_name = (
-        alter_schema_instruction.name
-        if alter_schema_instruction.new_name is Sentinel
-        else alter_schema_instruction.new_name
-    )
     for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
         attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
         if attr_value is not Sentinel:
@@ -3236,12 +3231,10 @@ def _change_field(
                     f'from "{model.name}" to {attr_value!r} in "{version_change_name}" '
                     "but it already has that value.",
                 )
+            # Like Cadwyn always did, we don't change the annotation's metadata, so a constraint from it (e.g. from
+            # `Annotated[str, Field(min_length=1)]`) still wins over the new value. Changing it would make the older
+            # versions reject the requests and responses that they have always accepted whenever it is stricter.
             field.update_attribute(name=attr_name, value=attr_value, changed_by=model.cls)
-            model.annotations[field_name] = _change_annotated_metadata(
-                model.annotations[field_name],
-                functools.partial(_metadata_sets_constraint, attr_name=attr_name),
-                functools.partial(_set_metadata_attribute, attr_name=attr_name, attr_value=attr_value),
-            )
 
 
 def _change_annotated_metadata(
@@ -3264,13 +3257,7 @@ def _change_annotated_metadata(
 
 
 def _metadata_sets_constraint(metadata: Any, attr_name: str) -> bool:
-    """Whether the metadata sets the constraint, e.g. annotated_types.MinLen, pydantic.Strict, or Field(min_length=1).
-
-    Only constraints need to be changed in FieldInfo: its other attributes, such as description, are overridden by
-    the Field() of the field, and json_schema_extra gets merged with it.
-    """
-    if isinstance(metadata, FieldInfo):
-        return attr_name in collect_known_metadata(metadata.metadata)[0]
+    """Whether the metadata sets the constraint, e.g. annotated_types.MinLen or pydantic.Strict"""
     # pydantic also allows constraint classes such as `Annotated[int, Strict]`
     return attr_name in collect_known_metadata([metadata])[0] and (
         inspect.isclass(metadata) or hasattr(metadata, attr_name)
@@ -3291,18 +3278,6 @@ def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
 
 
 def _set_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> Any:
-    if isinstance(metadata, FieldInfo):
-        field_info = _copy_field_info(metadata)
-        field_info.metadata = [
-            _set_metadata_attribute(sub_metadata, attr_name, attr_value)
-            if _metadata_sets_constraint(sub_metadata, attr_name)
-            else sub_metadata
-            for sub_metadata in field_info.metadata
-        ]
-        # pydantic<2.12 also keeps constraints in _attributes_set which it uses to build fields
-        if attr_name in field_info._attributes_set:  # pragma: no cover
-            field_info._attributes_set[attr_name] = attr_value
-        return field_info
     if inspect.isclass(metadata):
         # We never change the class itself and use its instance with the same constraints instead
         constraint = metadata.__new__(metadata)
@@ -3317,17 +3292,11 @@ def _set_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> A
 
 def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
     if isinstance(metadata, FieldInfo):
-        # FieldInfo's attributes get the values of an empty Field()
+        # We only delete the attributes of FieldInfo itself (never its constraints), and they get the values of an
+        # empty Field()
         field_info = _copy_field_info(metadata)
-        field_info.metadata = [
-            _delete_metadata_attribute(sub_metadata, attr_name)
-            if _metadata_sets_constraint(sub_metadata, attr_name)
-            else sub_metadata
-            for sub_metadata in field_info.metadata
-        ]
         field_info._attributes_set.pop(attr_name, None)
-        if attr_name in FieldInfo.__slots__:
-            setattr(field_info, attr_name, dict_of_empty_field_info[attr_name])
+        setattr(field_info, attr_name, dict_of_empty_field_info[attr_name])
         return field_info
     return _set_metadata_attribute(metadata, attr_name, _get_unset_metadata_attribute_value(metadata, attr_name))
 
@@ -3355,6 +3324,22 @@ def _get_unset_metadata_attribute_value(metadata: Any, attr_name: str) -> Any:
     return None
 
 
+# The attributes that field().didnt_have() removes from a Field() in the annotation's metadata, such as
+# `Annotated[str, Field(description="...")]`. Cadwyn 7.4.0 left that Field() unchanged, so we only remove the
+# attributes that only document the field: removing any other one could make the older versions reject or change
+# the data that they have always accepted or returned. E.g. removing a default makes the field required, removing an
+# alias renames it, removing exclude returns a hidden field, and even removing a constraint such as max_length can
+# make a model-wide limit (`ConfigDict(str_max_length=...)`) or an older had() apply, or change the member that a
+# `left_to_right` union picks. json_schema_extra holds arbitrary data that validators can read, so it stays as well.
+_FIELD_INFO_ATTRIBUTES_REMOVED_BY_DIDNT_HAVE = frozenset(("title", "description", "examples", "deprecated"))
+
+
+def _metadata_attribute_can_be_deleted(metadata: Any, attr_name: str) -> bool:
+    if isinstance(metadata, FieldInfo) and attr_name not in _FIELD_INFO_ATTRIBUTES_REMOVED_BY_DIDNT_HAVE:
+        return False
+    return _metadata_has_attribute(metadata, attr_name)
+
+
 def _delete_field_attributes(
     model: _PydanticModelWrapper[BaseModel],
     alter_schema_instruction: FieldDidntHaveInstruction,
@@ -3374,7 +3359,7 @@ def _delete_field_attributes(
         ):
             annotation = _change_annotated_metadata(
                 annotation,
-                functools.partial(_metadata_has_attribute, attr_name=attr_name),
+                functools.partial(_metadata_attribute_can_be_deleted, attr_name=attr_name),
                 functools.partial(_delete_metadata_attribute, attr_name=attr_name),
             )
             model.annotations[alter_schema_instruction.name] = annotation
