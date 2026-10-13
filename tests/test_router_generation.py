@@ -525,6 +525,78 @@ def test__get_openapi__older_version_with_params_without_examples__should_not_ad
     }
 
 
+def test__router_generation__schema_had_description__should_change_description_in_openapi_of_older_versions(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+):
+    class User(BaseModel):
+        """INTERNAL: head-only implementation note."""
+
+        name: str
+
+    class UserCreate(BaseModel):
+        """INTERNAL: request note."""
+
+        name: str
+
+    @router.post("/users", response_model=User)
+    async def create_user(user: UserCreate) -> Any:
+        return user
+
+    app = create_versioned_app(
+        version_change(schema(User).had(description="A user."), schema(UserCreate).had(description=None)),
+        version_change(schema(User).had(description="A user of the API.")),
+    )
+
+    with TestClient(app) as client:
+        openapis = {
+            version: client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
+            for version in ("2002-01-01", "2001-01-01", "2000-01-01")
+        }
+        response = client.post("/users", json={"name": "Ada"}, headers={"x-api-version": "2000-01-01"})
+
+    assert response.json() == {"name": "Ada"}
+    assert {version: schemas["User"].get("description") for version, schemas in openapis.items()} == {
+        "2002-01-01": "INTERNAL: head-only implementation note.",
+        "2001-01-01": "A user of the API.",
+        "2000-01-01": "A user.",
+    }
+    assert {version: schemas["UserCreate"].get("description") for version, schemas in openapis.items()} == {
+        "2002-01-01": "INTERNAL: request note.",
+        "2001-01-01": "INTERNAL: request note.",
+        "2000-01-01": None,
+    }
+
+
+def test__router_generation__schema_had_description_in_head_version__should_change_description_in_every_version(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+):
+    class User(BaseModel):
+        """INTERNAL: head-only implementation note."""
+
+        name: str
+
+    @router.get("/users", response_model=User)
+    async def get_user() -> Any:
+        raise NotImplementedError
+
+    app = create_versioned_app(
+        version_change(schema(User).had(description="A user.")),
+        head_version_changes=[version_change(schema(User).had(description="A user of the API."))],
+    )
+
+    with TestClient(app) as client:
+        descriptions = {
+            version: client.get(f"/openapi.json?version={version}")
+            .json()["components"]["schemas"]["User"]
+            .get("description")
+            for version in ("2001-01-01", "2000-01-01")
+        }
+
+    assert descriptions == {"2001-01-01": "A user of the API.", "2000-01-01": "A user."}
+
+
 def test__versioned_router_generation__hidden_included_route_still_routes_but_is_removed_from_openapi():
     api_router = VersionedAPIRouter(prefix="/api")
     internal_router = VersionedAPIRouter()

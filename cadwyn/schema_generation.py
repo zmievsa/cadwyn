@@ -3214,13 +3214,33 @@ def _change_model(
     alter_schema_instruction: SchemaHadInstruction,
     version_change_name: str,
 ):
-    if alter_schema_instruction.name == model.name:
+    name = alter_schema_instruction.name
+    description = alter_schema_instruction.description
+    if name is not Sentinel and name == model.name:
         raise InvalidGenerationInstructionError(
             f'You tried to change the name of "{model.name}" in "{version_change_name}" '
             "but it already has the name you tried to assign.",
         )
+    if description is not Sentinel and _get_description(description) == _get_description(model.doc):
+        if description:
+            raise InvalidGenerationInstructionError(
+                f'You tried to change the description of "{model.name}" in "{version_change_name}" '
+                "but it already has the description you tried to assign.",
+            )
+        raise InvalidGenerationInstructionError(
+            f'You tried to remove the description of "{model.name}" in "{version_change_name}" '
+            "but it already doesn't have a description.",
+        )
 
-    model.name = alter_schema_instruction.name
+    if name is not Sentinel:
+        model.name = name
+    if description is not Sentinel:
+        model.doc = description
+
+
+def _get_description(docstring: Union[str, None]) -> Union[str, None]:
+    """Return the description that pydantic generates from the docstring of a model"""
+    return inspect.cleandoc(docstring) if docstring else None
 
 
 def _add_field_to_model(

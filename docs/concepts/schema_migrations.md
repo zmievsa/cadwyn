@@ -154,3 +154,51 @@ class RenameOtherSchemaToMySchema(VersionChange):
         schema(MySchema).had(name="OtherSchema"),
     )
 ```
+
+## Change the description of a schema in the older version
+
+Pydantic uses the docstring of a schema as its description in openapi.json, and Cadwyn copies it into every version of the schema. Use `had(description=...)` to give the older versions a different description:
+
+```python
+from cadwyn import VersionChange, schema
+from pydantic import BaseModel
+
+
+class User(BaseModel):
+    """A user of the API who can belong to several organizations."""
+
+    name: str
+
+
+class AllowUsersToBelongToSeveralOrganizations(VersionChange):
+    """Users can now belong to several organizations."""
+
+    instructions_to_migrate_to_previous_version = (
+        schema(User).had(
+            description="A user of the API who belongs to one organization."
+        ),
+    )
+```
+
+Pass `description=None` to remove the description from the older versions. You can also pass `name` and `description` together, e.g. `schema(User).had(name="OldUser", description="An old user.")`.
+
+Like `name`, the description only applies to the schema itself, not to its subclasses: like in pydantic, every schema has its own docstring. The latest version keeps the docstring from your code, so if the docstring contains internal notes that no version should show, put the public description into [`HeadVersion`](./version_changes.md#headversion), which applies it to every version, including the latest one:
+
+```python
+from cadwyn import HeadVersion, Version, VersionBundle, VersionChange, schema
+
+
+class HideInternalNotesOfUser(VersionChange):
+    description = "Hide the internal notes of 'User' from the API reference"
+    instructions_to_migrate_to_previous_version = (
+        schema(User).had(description="A user of the API."),
+    )
+
+
+versions = VersionBundle(
+    HeadVersion(HideInternalNotesOfUser),
+    Version("2001-01-01"),
+)
+```
+
+The [changelog](./changelogs.md) does not describe changes of schema descriptions.

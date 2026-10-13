@@ -1192,6 +1192,44 @@ def test__generate_versioned_models__cycle_that_does_not_exist_in_older_versions
     assert new_category.model_fields["children"].annotation == list[new_category]
 
 
+class DocumentedCategory(BaseModel):
+    """INTERNAL: head-only implementation note."""
+
+    name: str
+    children: "list[DocumentedCategory]" = []
+
+
+def test__router_generation__description_of_self_referencing_model_changed__should_change_it_at_every_depth(
+    version_generic_type_args: bool,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/categories", response_model=DocumentedCategory)
+    async def create_category(category: DocumentedCategory) -> DocumentedCategory:
+        return category
+
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(DocumentedCategory).had(description="A category."))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
+    app = Cadwyn(versions=versions, changelog_url=None)
+    app.generate_and_include_versioned_routers(router)
+    client = TestClient(app)
+
+    old_schemas = client.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    new_schemas = client.get("/openapi.json?version=2001-01-01").json()["components"]["schemas"]
+    # FastAPI separates the request and the response schemas because "children" has a default
+    for name in ("DocumentedCategory-Input", "DocumentedCategory-Output"):
+        assert old_schemas[name]["description"] == "A category."
+        assert old_schemas[name]["properties"]["children"]["items"] == {"$ref": f"#/components/schemas/{name}"}
+        assert new_schemas[name]["description"] == "INTERNAL: head-only implementation note."
+    old_category = generate_versioned_models(versions)["2000-01-01"][DocumentedCategory]
+    assert old_category.model_fields["children"].annotation == list[old_category]  # ty: ignore[invalid-type-form]
+    body = {"name": "a", "children": [{"name": "b", "children": []}]}
+    assert client.post("/categories", json=body, headers={"x-api-version": "2000-01-01"}).json() == body
+
+
 def test__migrate_response_body__changed_self_referencing_model__should_be_validated_with_old_model(
     version_generic_type_args: bool,
 ):
