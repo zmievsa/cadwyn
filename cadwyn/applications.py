@@ -444,18 +444,18 @@ class Cadwyn(FastAPI):
     def _describe_api_version_header_in_openapi(self, openapi: dict[str, Any]) -> None:
         # The API version header dependency of the routes defaults to their version so that requests
         # without the header still reach them when api_version_default_value or a custom versioning
-        # middleware picks their version. But the server itself never uses this default: a request without
-        # the header gets a 404 unless api_version_default_value is set, and then it gets the version
-        # from api_version_default_value, not the one of this document. So we describe that instead.
+        # middleware picks their version. FastAPI then documents the header as optional, but without
+        # api_version_default_value the server returns a 404 for requests without it, so it is required.
+        # We keep the default so that clients generated from OpenAPI keep sending the version of the document.
+        if self._api_version_has_default_value:
+            return
         header_name = self.api_version_pythonic_parameter_name.replace("_", "-")
         for path_item in openapi.get("paths", {}).values():
             for operation in path_item.values():
                 for parameter in operation.get("parameters", ()):
-                    if parameter["in"] != "header" or parameter["name"] != header_name:
-                        continue
-                    if not self._api_version_has_default_value:
+                    # Parameters from openapi_extra can be references such as {"$ref": "..."} without "in"
+                    if parameter.get("in") == "header" and parameter.get("name") == header_name:
                         parameter["required"] = True
-                    parameter["schema"].pop("default", None)
 
     def _there_are_public_unversioned_routes(self):
         return any(

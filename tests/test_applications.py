@@ -528,6 +528,7 @@ def test__get_openapi__api_version_header_has_configured_metadata_and_date_schem
                 "format": "date",
                 "title": "Requested API version",
                 "description": "Selects the version contract",
+                "default": "2022-11-16",
             },
             "description": "Selects the version contract",
             "examples": {"default": {"value": "2022-11-16"}},
@@ -554,7 +555,7 @@ def _get_api_version_parameters_from_openapi(app: Cadwyn, path: str) -> dict[str
         ("string", ("v2", "v1"), {"type": "string", "title": "X-Api-Version"}),
     ],
 )
-def test__get_openapi__api_version_header_without_default_value__should_be_required_without_default(
+def test__get_openapi__api_version_header_without_default_value__should_be_required(
     api_version_format: Literal["date", "string"], version_values: tuple[str, str], expected_schema: dict[str, Any]
 ):
     app = Cadwyn(
@@ -575,7 +576,7 @@ def test__get_openapi__api_version_header_without_default_value__should_be_requi
                 "name": "x-api-version",
                 "in": "header",
                 "required": True,
-                "schema": expected_schema,
+                "schema": expected_schema | {"default": version},
                 "examples": {"default": {"value": version}},
             }
         ]
@@ -587,7 +588,7 @@ def test__get_openapi__api_version_header_without_default_value__should_be_requi
 
 
 @pytest.mark.parametrize("api_version_default_value", ["2023-04-14", _get_default_api_version])
-def test__get_openapi__api_version_header_with_default_value__should_be_optional_without_default(
+def test__get_openapi__api_version_header_with_default_value__should_stay_optional(
     api_version_default_value: "str | Callable[[Request], Awaitable[str]]",
 ):
     app = Cadwyn(
@@ -602,15 +603,13 @@ def test__get_openapi__api_version_header_with_default_value__should_be_optional
 
     app.generate_and_include_versioned_routers(router)
 
-    # The schema has no default because the server uses api_version_default_value for a request without
-    # the header in every version's document, not the version of the document.
     assert _get_api_version_parameters_from_openapi(app, "/items") == {
         version: [
             {
                 "name": "x-api-version",
                 "in": "header",
                 "required": False,
-                "schema": {"type": "string", "format": "date", "title": "X-Api-Version"},
+                "schema": {"type": "string", "format": "date", "default": version, "title": "X-Api-Version"},
                 "examples": {"default": {"value": version}},
             }
         ]
@@ -650,6 +649,30 @@ def test__get_openapi__api_version_in_path__should_stay_required_without_default
     }
     with TestClient(app) as client:
         assert client.get("/v1/items").json() == []
+
+
+def test__get_openapi__route_with_ref_parameters__should_keep_them_and_require_api_version_header():
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
+    router = VersionedAPIRouter()
+
+    @router.get("/items", openapi_extra={"parameters": [{"$ref": "#/components/parameters/TenantId"}]})
+    async def get_items():
+        raise NotImplementedError
+
+    app.generate_and_include_versioned_routers(router)
+
+    assert _get_api_version_parameters_from_openapi(app, "/items") == {
+        "2022-11-16": [
+            {
+                "name": "x-api-version",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string", "format": "date", "default": "2022-11-16", "title": "X-Api-Version"},
+                "examples": {"default": {"value": "2022-11-16"}},
+            },
+            {"$ref": "#/components/parameters/TenantId"},
+        ]
+    }
 
 
 def test__api_version_header_without_default_value__version_picked_by_custom_middleware__should_not_require_header():
