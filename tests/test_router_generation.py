@@ -3557,6 +3557,36 @@ def test__router_generation__annotated_dependency_with_quoted_args_in_annotation
             assert role_schema["enum"] == ["reader", "editor"]
 
 
+def test__router_generation__annotated_dependency_with_unhashable_metadata__should_use_dependency_of_its_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    class Payload(BaseModel):
+        value: str
+
+    def get_payload(payload: Payload) -> dict[str, Any]:
+        return payload.model_dump()
+
+    @router.post("/value")
+    async def route(value: Annotated[dict, Depends(get_payload), {"description": "Resolved value"}]):
+        return value
+
+    @convert_request_to_next_version_for("/value", ["POST"])
+    def migrate(request: RequestInfo):
+        request.body["value"] = request.body.pop("legacy_value")
+
+    clients = create_versioned_clients(
+        version_change(schema(Payload).field("value").had(name="legacy_value"), migrate=migrate),
+    )
+    # As in Cadwyn 7.4.0: typing does not cache Annotated[...] with unhashable metadata, so every version gets its
+    # own version of the dependency
+    assert clients["2001-01-01"].post("/value", json={"value": "ok"}).json() == {"value": "ok"}
+    assert clients["2000-01-01"].post("/value", json={"legacy_value": "ok"}).json() == {"value": "ok"}
+    for version, field_name in [("2001-01-01", "value"), ("2000-01-01", "legacy_value")]:
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert list(openapi["components"]["schemas"]["Payload"]["properties"]) == [field_name]
+
+
 def test__router_generation__with_pydantic_settings_dependency(
     create_versioned_app: CreateVersionedApp,
     router: VersionedAPIRouter,

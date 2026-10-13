@@ -583,9 +583,10 @@ def _rebuild_generic_alias(annotation: Any, new_args: tuple[Any, ...]) -> Any:
     if origin is Annotated:
         # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the originals.
         # So in Cadwyn 7.4.0, the annotations whose args did not change (e.g. `Annotated[int, Depends(get_limit)]`)
-        # got the original dependencies in every version and we keep them. We only use the versioned ones if FastAPI
-        # cannot resolve the annotation of a parameter of the original ones because these failed in Cadwyn 7.4.0
-        if new_args == get_args(annotation):
+        # and that typing could cache (with hashable args) got the original dependencies in every version and we keep
+        # them. We only use the versioned ones if FastAPI cannot resolve the annotation of a parameter of the
+        # original ones because these failed in Cadwyn 7.4.0
+        if new_args == get_args(annotation) and _is_hashable(new_args):
             original_metadata = tuple(_get_original_dependency(metadata) for metadata in new_args[1:])
             if all(
                 _fastapi_resolves_annotations(metadata.dependency)
@@ -595,6 +596,16 @@ def _rebuild_generic_alias(annotation: Any, new_args: tuple[Any, ...]) -> Any:
                 return _AnnotatedAlias(new_args[0], original_metadata)
         return _AnnotatedAlias(new_args[0], new_args[1:])
     return origin[new_args]
+
+
+def _is_hashable(value: Any) -> bool:
+    """Whether typing caches the generic alias with these args"""
+    try:
+        hash(value)
+    except TypeError:
+        # Like typing, which then builds the alias without its cache
+        return False
+    return True
 
 
 def _get_original_dependency(metadata: Any) -> Any:
