@@ -1,4 +1,3 @@
-import asyncio
 import dataclasses
 import http.cookies
 import re
@@ -15,7 +14,6 @@ from typing import Annotated, Any, Literal, Optional, Union, cast
 from uuid import UUID
 
 import fastapi
-import httpx
 import pytest
 from dirty_equals import IsPartialDict, IsStr
 from fastapi import (
@@ -4836,9 +4834,13 @@ def test__request_body_migration__with_nested_models_seen_for_the_first_time__sh
         return body.value
 
     app = create_versioned_app(version_change())
-    headers = {app.router.api_version_parameter_name: "2000-01-01"}
+    max_depths: list[int] = []
 
-    async def get_stack_depth_of_request(client: httpx.AsyncClient, path: str, payload: dict[str, Any]) -> int:
+    async def app_with_measured_stack(scope: Any, receive: Any, send: Any) -> None:
+        """Measure how deep the stack gets above the app while it handles the request, in the thread that runs it"""
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
         depth = max_depth = 0
 
         # Coverage doesn't trace profile hooks
@@ -4852,21 +4854,17 @@ def test__request_body_migration__with_nested_models_seen_for_the_first_time__sh
 
         sys.setprofile(profile)
         try:
-            response = await client.post(path, json=payload, headers=headers)
+            await app(scope, receive, send)
         finally:
             sys.setprofile(None)
-        assert response.json() == 7
-        return max_depth
+        max_depths.append(max_depth)
 
-    async def get_stack_depths() -> tuple[int, int]:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
-            await client.post("/seen", json=seen_payload, headers=headers)
-            return (
-                await get_stack_depth_of_request(client, "/seen", seen_payload),
-                await get_stack_depth_of_request(client, "/new", new_payload),
-            )
-
-    depth_with_known_models, depth_with_new_models = asyncio.run(get_stack_depths())
+    headers = {app.router.api_version_parameter_name: "2000-01-01"}
+    with TestClient(app_with_measured_stack, headers=headers) as client:
+        assert client.post("/seen", json=seen_payload).json() == 7
+        assert client.post("/seen", json=seen_payload).json() == 7
+        assert client.post("/new", json=new_payload).json() == 7
+    depth_with_known_models, depth_with_new_models = max_depths[1:]
 
     # Reading the models takes a few frames, but not a frame per nested model
     assert depth_with_new_models <= depth_with_known_models + 20
