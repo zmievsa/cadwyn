@@ -3257,13 +3257,7 @@ def _change_annotated_metadata(
 
 
 def _metadata_sets_constraint(metadata: Any, attr_name: str) -> bool:
-    """Whether the metadata sets the constraint, e.g. annotated_types.MinLen, pydantic.Strict, or Field(min_length=1).
-
-    Only constraints need to be changed in FieldInfo: its other attributes, such as description, are overridden by
-    the Field() of the field, and json_schema_extra gets merged with it.
-    """
-    if isinstance(metadata, FieldInfo):
-        return attr_name in collect_known_metadata(metadata.metadata)[0]
+    """Whether the metadata sets the constraint, e.g. annotated_types.MinLen or pydantic.Strict"""
     # pydantic also allows constraint classes such as `Annotated[int, Strict]`
     return attr_name in collect_known_metadata([metadata])[0] and (
         inspect.isclass(metadata) or hasattr(metadata, attr_name)
