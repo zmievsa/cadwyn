@@ -797,9 +797,22 @@ class BoxWithSerializerOfTypeArgField(ValueBox[int]):
         raise NotImplementedError
 
 
+class OtherBox(BaseModel, Generic[ValueT]):
+    other: ValueT
+
+
+class BoxWithSerializerOfOtherBaseTypeArgField(ValueBox[int], OtherBox[CategoryWithItem]):
+    # `value` comes from ValueBox[int], so CategoryWithItem from OtherBox[CategoryWithItem] is not its type arg
+    @field_serializer("value", return_type=CategoryWithItem)
+    def serialize_value(self, value: int) -> Any:
+        raise NotImplementedError
+
+
 @pytest.mark.parametrize("box_route_first", [False, True])
 @pytest.mark.parametrize(
-    "box_model", [BoxOverridingTypeArgField, BoxWithSerializerOfTypeArgField], ids=["overridden_field", "serializer"]
+    "box_model",
+    [BoxOverridingTypeArgField, BoxWithSerializerOfTypeArgField, BoxWithSerializerOfOtherBaseTypeArgField],
+    ids=["overridden_field", "serializer", "serializer_with_type_arg_of_other_base"],
 )
 def test__router_generation__latest_model_of_cycle_in_field_inherited_from_generic__should_raise(
     box_model: type[BaseModel],
