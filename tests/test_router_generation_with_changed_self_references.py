@@ -1153,6 +1153,39 @@ class OverridingConstructorNode(BaseModel):
     children: "list[OverridingConstructorNode]" = []
 
 
+class UnchangedConstructed(BaseModel):
+    pass
+
+
+class CallOverridingPartial(functools.partial):
+    @override
+    def __call__(self, /, *args: Any, **kwargs: Any) -> Any:
+        return Settings()  # pragma: no cover
+
+
+class PartialSubclassNode(BaseModel):
+    settings: Settings = Field(default_factory=CallOverridingPartial(UnchangedConstructed.model_construct))
+    children: "list[PartialSubclassNode]" = []
+
+
+class ConstructorOverride(BaseModel):
+    @classmethod
+    @override
+    def model_construct(cls, *args: Any, **kwargs: Any) -> Any:
+        return Settings()  # pragma: no cover
+
+
+class RootConstructorFactory(RootModel[int], ConstructorOverride):
+    pass
+
+
+class InheritedConstructorNode(BaseModel):
+    settings: Settings = Field(  # ty: ignore[invalid-assignment] # The constructor is overridden to return Settings
+        default_factory=functools.partial(RootConstructorFactory.model_construct, 1)
+    )
+    children: "list[InheritedConstructorNode]" = []
+
+
 class UntypedDefaultHolder(BaseModel):
     # Cadwyn cannot know what the lambda returns and the field does not use the cycle, as for any other model
     meta: Any = Field(default_factory=lambda: None)
@@ -1290,6 +1323,18 @@ def test__generate_versioned_models__cycle_that_cannot_be_copied__should_raise(
             OverridingConstructorNode,
             "cannot verify what the default factory of the field 'settings' of OverridingConstructorNode returns",
             id="overridden_constructor",
+        ),
+        pytest.param(
+            Settings,
+            PartialSubclassNode,
+            "cannot verify what the default factory of the field 'settings' of PartialSubclassNode returns",
+            id="partial_subclass",
+        ),
+        pytest.param(
+            Settings,
+            InheritedConstructorNode,
+            "cannot verify what the default factory of the field 'settings' of InheritedConstructorNode returns",
+            id="constructor_overridden_in_base",
         ),
         pytest.param(
             Category,

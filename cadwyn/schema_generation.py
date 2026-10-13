@@ -2383,7 +2383,8 @@ class SchemaGenerator:
     def _is_safe_default_factory(self, factory: Any) -> bool:
         """Whether the default factory provably creates the copies of this version rather than the head models"""
         factory = getattr(factory, "_original_callable", factory)
-        if isinstance(factory, functools.partial):
+        # Subclasses of partial can override what calling them does
+        if type(factory) is functools.partial:
             return self._is_safe_default_factory(factory.func) and not any(
                 isinstance(value, BaseModel) and self._is_latest_versioned_model(type(value))
                 for value in _iter_values_within([factory.args, factory.keywords])
@@ -2398,6 +2399,10 @@ class SchemaGenerator:
             and getattr(factory, "__func__", None) in _PYDANTIC_CONSTRUCTORS
             and isinstance(factory.__self__, type)
             and self._is_class_of_this_version(factory.__self__)
+            # E.g. RootModel.model_construct calls the model_construct of the next class in the MRO
+            and not any(
+                factory.__name__ in vars(cls) for cls in factory.__self__.__mro__ if not _is_pydantic_model_class(cls)
+            )
         )
 
     def _is_class_of_this_version(self, cls: type) -> bool:
@@ -2845,6 +2850,11 @@ _PYDANTIC_CONSTRUCTORS = frozenset(
     for name in ("model_construct", "model_validate", "model_validate_json")
     if name in vars(cls)
 )
+
+
+def _is_pydantic_model_class(cls: type) -> bool:
+    """Whether the class is BaseModel, RootModel, or a parametrization of RootModel such as RootModel[int]"""
+    return cls in (BaseModel, RootModel) or getattr(cls, "__pydantic_generic_metadata__", {}).get("origin") is RootModel
 
 
 def _iter_values_within(value: Any) -> "collections.abc.Iterator[Any]":
