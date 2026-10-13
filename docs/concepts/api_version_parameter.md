@@ -94,7 +94,7 @@ The routing is implemented like this because Cadwyn was born in a microservice a
 
 ## Requests without an API version
 
-Cadwyn routes versioned endpoints by the API version, so a request without it gets a 404. Some clients cannot send the version header. For example, Swagger UI's "Authorize" button for `OAuth2PasswordBearer(tokenUrl=...)` sends the token request to `tokenUrl` without any custom headers. You have two options for such endpoints.
+Cadwyn routes versioned endpoints by the API version, so a request without it gets a 404. That's why the OpenAPI of each version documents the version header as required unless you [set a default API version](#set-a-default-api-version). Some clients cannot send the version header. For example, Swagger UI's "Authorize" button for `OAuth2PasswordBearer(tokenUrl=...)` sends the token request to `tokenUrl` without any custom headers. You have two options for such endpoints.
 
 ### Keep the endpoint unversioned
 
