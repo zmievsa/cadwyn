@@ -721,6 +721,67 @@ def test__router_generation__computed_field_with_latest_generic_around_cycle__sh
         create_versioned_app(version_change(short_name(ItemOfPagedCategory)), router=router)
 
 
+class ItemOfTag(BaseModel):
+    name: str
+
+
+class TagWithItem(BaseModel):
+    label: str
+    item: Optional[ItemOfTag] = None
+    children: "list[TagWithItem]" = []
+
+
+class CategoryColor(str, Enum):
+    red = "red"
+
+
+class CategoryWithTag(BaseModel):
+    name: str
+    tag: Optional[TagWithItem] = None
+    color: CategoryColor = CategoryColor.red
+    children: "list[CategoryWithTag]" = []
+
+
+@pytest.mark.parametrize(
+    "tag_change",
+    [
+        lambda field: field.didnt_exist,
+        lambda field: field.had(type=Optional[str]),
+        lambda field: field.had(description="Old"),
+    ],
+    ids=["didnt_exist", "had_type", "had_description"],
+)
+def test__router_generation__generic_arg_whose_copy_drops_reference_to_cycle__should_keep_latest_references(
+    tag_change: Callable[[Any], Any],
+    create_versioned_app: CreateVersionedApp,
+    version_generic_type_args: bool,
+):
+    """The latest CategoryWithTag in Page[CategoryWithTag] refers to the latest TagWithItem whatever its copy has"""
+    router = VersionedAPIRouter()
+
+    @router.get("/categories", response_model=Page[CategoryWithTag])
+    async def get_categories() -> Any:
+        return {"items": [{"name": "a", "tag": {"label": "t", "item": {"name": "toolong"}}}]}
+
+    @router.get("/tag", response_model=TagWithItem)
+    async def get_tag() -> Any:
+        raise NotImplementedError
+
+    @router.get("/category", response_model=CategoryWithTag)
+    async def get_category() -> Any:
+        raise NotImplementedError
+
+    app = create_versioned_app(
+        version_change(short_name(ItemOfTag), tag_change(schema(CategoryWithTag).field("tag"))), router=router
+    )
+    assert TestClient(app).get("/openapi.json?version=2000-01-01").status_code == HTTP_200_OK
+    if not version_generic_type_args:
+        old_client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+        tag = {"label": "t", "item": {"name": "toolong"}, "children": []}
+        category = {"name": "a", "tag": tag, "color": "red", "children": []}
+        assert old_client.get("/categories").json() == {"items": [category]}
+
+
 class ValueBox(BaseModel, Generic[ValueT]):
     value: ValueT
 

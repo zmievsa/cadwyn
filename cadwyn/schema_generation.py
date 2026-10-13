@@ -1915,6 +1915,7 @@ class SchemaGenerator:
     __slots__ = (
         "_adds_references",
         "_changed_models",
+        "_classes_of_generic_args",
         "_copied_cycles",
         "_cycles_behind_latest_generic_args",
         "_cycles_being_copied",
@@ -1953,6 +1954,8 @@ class SchemaGenerator:
         self._reference_cycles = reference_cycles
         self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
         self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
+        # The head classes that the type args of the generics of each copy lead to (see _get_classes_of_generic_args)
+        self._classes_of_generic_args: dict[type[BaseModel], frozenset[type]] = {}
         # The reference cycles among the models that this version copies, or None for the models outside of them
         self._cycles_to_copy: dict[type[BaseModel], Union[frozenset[type[BaseModel]], None]] = {}
         # Whether the instructions of this version add references to models (see _adds_references_to_models)
@@ -2371,8 +2374,11 @@ class SchemaGenerator:
         """Return the head classes that the type args of the generics that the model is or inherits from lead to.
 
         These are the classes in the args and all of the classes that they refer to, which the copies of such generics
-        keep when generic args are not versioned.
+        keep when generic args are not versioned. The args are the head classes, so they lead to what the head classes
+        refer to, whatever the instructions of this version change in their copies.
         """
+        if model in self._classes_of_generic_args:
+            return self._classes_of_generic_args[model]
         arg_collector = _ReferencedModelCollector()
         for cls in model.__mro__:
             generic_metadata = getattr(cls, "__pydantic_generic_metadata__", None)
@@ -2385,9 +2391,12 @@ class SchemaGenerator:
             cls = classes_to_visit.pop()
             if cls not in reached_classes:
                 reached_classes.add(cls)
-                references = self._get_references(cast("type[Union[BaseModel, Enum]]", cls))
-                classes_to_visit.extend(references.models | references.arg_models | references.base_models)
-        return frozenset(reached_classes)
+                if lenient_issubclass(cls, BaseModel):
+                    references = self._reference_cycles.get_head_references(cls)
+                    classes_to_visit.extend(references.models | references.arg_models | references.base_models)
+        # Like the other decisions of the generator, it is kept even if names that are not defined yet get defined later
+        self._classes_of_generic_args[model] = frozenset(reached_classes)
+        return self._classes_of_generic_args[model]
 
     def _check_defaults(
         self,
