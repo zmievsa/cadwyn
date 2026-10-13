@@ -97,6 +97,7 @@ Only the generics whose type args refer to models or enums that have schema or e
     * serializers that change its value, e.g. `PlainSerializer(lambda v: f"{v:,}", return_type=str)`, also change the request body that reaches the latest version, so such requests need request migrations;
     * models in its type args validate their older shape, e.g. after `schema(Item).field("n").had(name="old_n")` the older version requires `old_n`;
     * request migrations run after the older version validates the field, so they no longer see values that its type rejects.
+    * as for other fields, `had()` does not change the constraints that the field's type declares through `Annotated[..., Field(...)]`, e.g. in its type arg or in the annotation of the parent that defines it. So on Pydantic 2.12 and newer, `.had(ge=5)` for a field whose type carries `Annotated[int, Field(ge=0)]` no longer applies, and older versions accept values such as `1` that they rejected before.
 
 Some type args keep their latest models even with the option:
 
