@@ -9,12 +9,22 @@ import re
 import threading
 import typing
 from collections.abc import Callable
+from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Optional, TypeVar, Union
 
 import pytest
 from fastapi import Depends
 from fastapi.testclient import TestClient
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr, computed_field, field_serializer
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    RootModel,
+    computed_field,
+    field_serializer,
+)
 from starlette.status import HTTP_200_OK, HTTP_422_UNPROCESSABLE_CONTENT
 from typing_extensions import override
 
@@ -31,10 +41,12 @@ from cadwyn import (
     migrate_response_body,
 )
 from cadwyn.exceptions import CadwynError, SchemaGenerationError
+from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
 from tests.conftest import CreateVersionedApp, version_change
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from decimal import Decimal as OnlyForTypeCheckers
 
 ValueT = TypeVar("ValueT")
@@ -1072,6 +1084,66 @@ class PartialCategoryHolder(BaseModel):
     category: Category = Field(default_factory=functools.partial(Category, name="abc"))
 
 
+class SettingsLambdaNode(BaseModel):
+    settings: Settings = Field(default_factory=lambda: Settings(name="default"))
+    children: "list[SettingsLambdaNode]" = []
+
+
+class CategoryBox(BaseModel):
+    category: Category
+
+
+class BoxedDefaultHolder(BaseModel):
+    box: CategoryBox = CategoryBox(category=Category(name="abc"))
+
+
+def make_category(data: "Mapping[str, object]") -> Category:
+    return Category(name="abc")  # pragma: no cover
+
+
+class UnreadableFactoryHolder(BaseModel):
+    category: Category = Field(default_factory=make_category)
+
+
+class Status(str, Enum):
+    active = "active"
+    new = "new"
+
+
+class StatusNode(BaseModel):
+    status: Status = Status.new
+    children: "list[StatusNode]" = []
+
+
+class SafeFactoriesCategory(BaseModel):
+    name: str
+    children: "list[SafeFactoriesCategory]" = Field(default_factory=list)
+    by_name: "dict[str, SafeFactoriesCategory]" = Field(default_factory=functools.partial(dict, {}))
+    settings: Settings = Field(default_factory=Settings)
+    unrelated: list[str] = Field(default_factory=lambda: ["unrelated"])
+    optional_settings: list[Optional[Settings]] = [None, None]
+
+
+class CategoryRoot(RootModel[list[Category]]):
+    pass
+
+
+class UnbuildableHolder(BaseModel):
+    category: Category
+    unbuildable: "NotDefinedAnywhere"  # noqa: F821 # ty: ignore[unresolved-reference]
+
+
+class DeferredEnvelope(BaseModel):
+    model_config = ConfigDict(defer_build=True)
+    categories: list["Category"]
+
+
+class RetroFeed(BaseModel):
+    name: str
+    trees: list["LazyTree"] = []
+    category: Optional[OptionalCategory] = None
+
+
 class ComputedCategory(BaseModel):
     name: str
     children: "list[ComputedCategory]" = []
@@ -1126,40 +1198,64 @@ def test__generate_versioned_models__cycle_that_cannot_be_copied__should_raise(
             id="quoted_name_outside",
         ),
         pytest.param(
-            Settings, SettingsNode, "default of the field 'settings' of SettingsNode is an instance", id="default"
+            Settings, SettingsNode, "default of the field 'settings' of SettingsNode contains an instance", id="default"
         ),
         pytest.param(
             Settings,
             SettingsFactoryNode,
-            "default factory of the field 'settings' of SettingsFactoryNode returns",
+            "cannot verify what the default factory of the field 'settings' of SettingsFactoryNode returns",
             id="default_factory",
         ),
         pytest.param(
             Settings,
             SettingsPartialNode,
-            "default factory of the field 'settings' of SettingsPartialNode returns",
+            "cannot verify what the default factory of the field 'settings' of SettingsPartialNode returns",
             id="partial_default_factory",
         ),
         pytest.param(
             Settings,
             SettingsConstructNode,
-            "default factory of the field 'settings' of SettingsConstructNode returns",
+            "cannot verify what the default factory of the field 'settings' of SettingsConstructNode returns",
             id="classmethod_default_factory",
         ),
         pytest.param(
             Category,
             DefaultCategoryHolder,
-            "default of the field 'category' of DefaultCategoryHolder is an instance",
+            "default of the field 'category' of DefaultCategoryHolder contains an instance",
             id="default_outside",
         ),
         pytest.param(
             Category,
             PartialCategoryHolder,
-            "default factory of the field 'category' of PartialCategoryHolder returns",
+            "cannot verify what the default factory of the field 'category' of PartialCategoryHolder returns",
             id="partial_default_factory_outside",
         ),
         pytest.param(
             LazyItem, LazyWebhook, "copy of LazyWebhook because it would use the latest LazyTree", id="lazy_cycle"
+        ),
+        pytest.param(
+            Settings,
+            SettingsLambdaNode,
+            "cannot verify what the default factory of the field 'settings' of SettingsLambdaNode returns",
+            id="lambda_default_factory",
+        ),
+        pytest.param(
+            Category,
+            BoxedDefaultHolder,
+            "default of the field 'box' of BoxedDefaultHolder contains an instance of the latest Category",
+            id="nested_default",
+        ),
+        pytest.param(
+            Category,
+            UnreadableFactoryHolder,
+            "cannot verify what the default factory of the field 'category' of UnreadableFactoryHolder returns",
+            id="default_factory_with_unreadable_annotations",
+        ),
+        pytest.param(
+            Category,
+            DeferredEnvelope,
+            "copy of DeferredEnvelope because it would use the latest Category",
+            id="deferred",
         ),
     ],
 )
@@ -1171,6 +1267,69 @@ def test__generate_versioned_models__copy_that_would_use_latest_models_of_cycle_
 
     with pytest.raises(SchemaGenerationError, match=error_message):
         generator[requested_model]
+
+
+def test__generate_versioned_models__default_of_enum_that_needs_versioning_in_cycle__should_raise():
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(enum(Status).didnt_have("new"))), Version("2000-01-01")
+    )
+    generator = generate_versioned_models(versions)["2000-01-01"]
+
+    with pytest.raises(SchemaGenerationError, match="default of the field 'status' of StatusNode contains"):
+        generator[StatusNode]
+
+
+def test__generate_versioned_models__default_factories_that_create_versioned_copies__should_be_allowed():
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(short_name(Settings), short_name(SafeFactoriesCategory))),
+        Version("2000-01-01"),
+    )
+    old_category = generate_versioned_models(versions)["2000-01-01"][SafeFactoriesCategory]
+
+    category = old_category(name="abc")
+    assert category.children == []
+    assert category.by_name == {}
+    old_settings = old_category.model_fields["settings"].annotation
+    assert type(category.settings) is old_settings
+    assert category.unrelated == ["unrelated"]
+    assert category.optional_settings == [None, None]
+
+
+def test__generate_versioned_models__root_model_around_changed_cycle__should_use_its_copies():
+    versions = VersionBundle(Version("2001-01-01", version_change(short_name(Category))), Version("2000-01-01"))
+    old_root = generate_versioned_models(versions)["2000-01-01"][CategoryRoot]
+
+    assert old_root.model_validate([{"name": "abc"}]).model_dump() == [{"name": "abc", "children": []}]
+    with pytest.raises(ValueError, match="at most 3 characters"):
+        old_root.model_validate([{"name": "toolong"}])
+
+
+def test__generate_versioned_models__copy_that_cannot_be_built_in_version_that_copies_cycles__should_raise():
+    versions = VersionBundle(Version("2001-01-01", version_change(short_name(Category))), Version("2000-01-01"))
+    generator = generate_versioned_models(versions)["2000-01-01"]
+
+    with pytest.raises(SchemaGenerationError, match="cannot check the versioned copy of UnbuildableHolder"):
+        generator[UnbuildableHolder]
+
+
+def test__router_generation__copy_checked_before_a_route_cycle_is_copied__should_be_checked_again(
+    create_versioned_app: CreateVersionedApp,
+):
+    """RetroFeed is copied with OptionalCategory before Cadwyn knows that a route copies LazyTree"""
+    router = VersionedAPIRouter()
+
+    @router.post("/feeds")
+    async def create_feed(feed: RetroFeed) -> dict[str, bool]:
+        raise NotImplementedError
+
+    @router.post("/trees")
+    async def create_tree(tree: LazyTree) -> dict[str, bool]:
+        raise NotImplementedError
+
+    with pytest.raises(SchemaGenerationError, match="copy of RetroFeed because it would use the latest LazyTree"):
+        create_versioned_app(
+            version_change(short_name(LazyItem), short_name(RetroFeed), short_name(OptionalCategory)), router=router
+        )
 
 
 # The generators that HookedItemTree asks for its copy while pydantic creates its subclasses
