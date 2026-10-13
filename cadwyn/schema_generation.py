@@ -3330,10 +3330,8 @@ def _get_unset_metadata_attribute_value(metadata: Any, attr_name: str) -> Any:
 # the data that they have always accepted or returned. E.g. removing a default makes the field required, removing an
 # alias renames it, removing exclude returns a hidden field, and even removing a constraint such as max_length can
 # make a model-wide limit (`ConfigDict(str_max_length=...)`) or an older had() apply, or change the member that a
-# `left_to_right` union picks.
-_FIELD_INFO_ATTRIBUTES_REMOVED_BY_DIDNT_HAVE = frozenset(
-    ("title", "description", "examples", "json_schema_extra", "deprecated")
-)
+# `left_to_right` union picks. json_schema_extra holds arbitrary data that validators can read, so it stays as well.
+_FIELD_INFO_ATTRIBUTES_REMOVED_BY_DIDNT_HAVE = frozenset(("title", "description", "examples", "deprecated"))
 
 
 def _metadata_attribute_can_be_deleted(metadata: Any, attr_name: str) -> bool:

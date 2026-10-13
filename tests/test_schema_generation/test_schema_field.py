@@ -2060,13 +2060,8 @@ FIELD_ATTRIBUTES_OF_PYDANTIC_V1 = {"const", "allow_mutation"}
 # Cadwyn 7.4.0 ignored didnt_have() for all attributes of a Field() in the annotation's metadata. Removing any
 # attribute but the ones that only document the field could make the older versions reject or change the data that
 # they have always accepted or returned, so only these get removed
-ATTRIBUTES_THAT_DIDNT_HAVE_REMOVES_FROM_FIELD_IN_ANNOTATED = {
-    "title",
-    "description",
-    "examples",
-    "json_schema_extra",
-    "deprecated",
-}
+# (json_schema_extra holds arbitrary data that validators can read, so it isn't one of them)
+ATTRIBUTES_THAT_DIDNT_HAVE_REMOVES_FROM_FIELD_IN_ANNOTATED = {"title", "description", "examples", "deprecated"}
 
 
 def _get_field_attribute(field_info: FieldInfo, attr_name: str) -> Any:
