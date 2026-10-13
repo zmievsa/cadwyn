@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import tempfile
+import threading
 from collections import Counter, defaultdict
 from collections.abc import Callable, Coroutine, Hashable, Iterator, Sequence
 from contextlib import AsyncExitStack
@@ -475,7 +476,7 @@ class VersionBundle:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
             body_for_solving = FormData(request_info._form)
         elif body_is_model_dump:
-            body_for_solving = _restore_validation_aliases(head_dependant.body_params[0], request_info.body)
+            body_for_solving = _rescue_request_body(head_dependant.body_params[0], request_info.body)
             is_body_restored = body_for_solving is not request_info.body
         else:
             body_for_solving = request_info.body
@@ -492,9 +493,9 @@ class VersionBundle:
             background_tasks=background_tasks,
         )
         result = await solve(body=body_for_solving)
-        # We never fail a request that worked before: if the head rejects the restored body, e.g. because it is stricter
-        # than the version and used to get the default of a field, we solve the request with the body as before.
-        # The second solve reuses the dependencies of the first one, so they run as many times as before.
+        # We only restore bodies that would fail as they are. If the head rejects the restored body too, we solve the
+        # request again with the body as it is, so that it fails with the same error as before. The second solve reuses
+        # the dependencies of the first one, so they run as many times as before.
         if result.errors and is_body_restored:
             result = await solve(body=request_info.body, dependency_cache=result.dependency_cache)
         if result.errors:
@@ -1058,6 +1059,25 @@ def _get_schema_migration_key(annotation: object) -> object:
     return annotation
 
 
+# Whether the last restoration renamed a key without which the data surely fails validation
+_RESTORATION = threading.local()
+
+
+def _rescue_request_body(body_field: ModelField, data: Any) -> Any:
+    """Restore the validation aliases of a `model_dump(by_alias=True)` body only if the head surely rejects it as it is.
+
+    That's the case when a required field, or a model that forbids extra keys, gets a dumped key instead of
+    a validation key. Bodies that the head accepts as they are stay exactly as they are, even if a field gets its
+    default instead of its value.
+    """
+    # Most bodies have no fields without which they fail, so they aren't walked at all
+    if not _annotation_reaches_models_with_failing_renames(body_field.field_info.annotation):
+        return data
+    _RESTORATION.has_failing_renames = False
+    restored = _restore_validation_aliases(body_field, data)
+    return restored if _RESTORATION.has_failing_renames else data
+
+
 def _restore_validation_aliases(body_field: ModelField, data: Any) -> Any:
     """Rename the keys of `model_dump(by_alias=True)` data to the keys that the models of the body validate.
 
@@ -1089,7 +1109,10 @@ def _is_body_field_safe(body_field: ModelField) -> bool:
             for definition in schema["definitions"]:
                 _CORE_SCHEMA_DEFINITIONS.setdefault(definition["ref"], definition)
             schema = schema["schema"]
-        while schema["type"] in ("definition-ref", "nullable", "default", "function-after"):
+        # `OnErrorOmit` and other defaults that swallow errors make invalid data pass, so we stop at them
+        while schema["type"] in ("definition-ref", "nullable", "default", "function-after") and (
+            schema.get("on_error", "raise") == "raise"
+        ):
             schema = (
                 _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
                 if schema["type"] == "definition-ref"
@@ -1228,6 +1251,8 @@ def _finish_restoring(frame: list[Any]) -> Any:
                     restored = dict(data)
                 dumped_key, target_key, *_ = rename
                 restored[target_key] = restored.pop(dumped_key)
+                if dumped_key in plan.failing_keys:
+                    _RESTORATION.has_failing_renames = True
     return data if restored is None else restored
 
 
@@ -1268,6 +1293,9 @@ class _RestorePlan:
     root_spec: Union[_RestorerSpec, None] = None
     # The dumped keys of `renames` and `nested`
     keys: frozenset[str] = frozenset()
+    # The dumped keys of `renames` without which the data of the model surely fails validation:
+    # the keys of required fields, or all of them if the model forbids extra keys
+    failing_keys: frozenset[str] = frozenset()
 
 
 @functools.cache
@@ -1284,7 +1312,27 @@ def _get_restore_plan(model: type[BaseModel]) -> _RestorePlan:
     if issubclass(model, RootModel):
         return _RestorePlan(root_spec=nested[0][1] if nested else None)
     keys = frozenset(key for key, *_ in (*renames, *nested))
-    return _RestorePlan(renames=renames, nested=nested, keys=keys)
+    return _RestorePlan(renames=renames, nested=nested, keys=keys, failing_keys=_get_failing_keys(model, renames))
+
+
+def _get_failing_keys(model: type[BaseModel], renames: tuple["_Rename", ...]) -> frozenset[str]:
+    if _get_validation_settings(model)[2] == "forbid":
+        return frozenset(dumped_key for dumped_key, *_ in renames)
+    required_dumped_keys = {
+        field.serialization_alias or name for name, field in model.model_fields.items() if field.is_required()
+    }
+    return frozenset(dumped_key for dumped_key, *_ in renames if dumped_key in required_dumped_keys)
+
+
+def _get_failing_renames(model: type[BaseModel]) -> tuple[object, ...]:
+    return tuple(_get_restore_plan(model).failing_keys)
+
+
+def _annotation_reaches_models_with_failing_renames(annotation: object) -> bool:
+    return any(
+        _reaches_models_with(model, _get_failing_renames, all_fields=False)
+        for model in _get_restorable_models(annotation)
+    )
 
 
 _RESTORABLE_MODELS: dict[object, tuple[type[BaseModel], ...]] = {}
@@ -1629,12 +1677,16 @@ def _has_unsafe_core_schema(
 ) -> bool:
     """Whether the core schema itself makes its dumped values invalid input. Collect the units it refers to.
 
-    That's the case for custom serializers, `Json`, models that forbid extra keys but dump computed fields,
-    models with a custom `__init__`, validators that get the raw input, and core schema types that we don't know.
+    That's the case for custom serializers, `Json`, `OnErrorOmit`, models that forbid extra keys but dump computed
+    fields, models with a custom `__init__`, validators that get the raw input, and core schema types we don't know.
     """
     # References and models can carry serializers too, e.g. `Annotated[Model, PlainSerializer(...)]`,
     # so we check them before we summarize the schemas that they refer to
     if _is_custom_serialization(schema.get("serialization")):
+        return True
+    # `OnErrorOmit` and other defaults that swallow errors make invalid data pass, so we can't tell what the dumped
+    # keys break
+    if schema.get("on_error", "raise") != "raise":
         return True
     schema_type = schema["type"]
     if schema_type == "definition-ref":
