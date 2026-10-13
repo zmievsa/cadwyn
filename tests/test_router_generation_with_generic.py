@@ -2090,3 +2090,55 @@ def test__version_bundle__version_generic_type_args__should_be_read_only(version
     with pytest.raises(AttributeError):
         versions.version_generic_type_args = not version_generic_type_args  # ty: ignore[invalid-assignment]
     assert versions.version_generic_type_args is version_generic_type_args
+
+
+_InheritedT = TypeVar("_InheritedT")
+_InheritedU = TypeVar("_InheritedU")
+
+
+@pytest.mark.parametrize("shape", ["parametrization", "subclass_of_parametrization", "two_levels_of_generics"])
+def test__router_generation__instruction_on_field_inherited_through_parametrized_generic__should_keep_its_type(
+    create_versioned_app: CreateVersionedApp, shape: str
+):
+    class Pair(BaseModel, Generic[_InheritedT, _InheritedU]):
+        first: _InheritedT
+        second: _InheritedU
+
+    if shape == "parametrization":
+        model: Any = Pair[str, int]
+    elif shape == "subclass_of_parametrization":
+
+        class StrIntPair(Pair[str, int]):
+            pass
+
+        model = StrIntPair
+    else:
+
+        class IntPair(Pair[_InheritedU, int], Generic[_InheritedU]):
+            pass
+
+        model = IntPair[str]
+
+    router = VersionedAPIRouter()
+
+    @router.post("/pair", response_model=model)
+    async def create_pair(body: model) -> Any:
+        return body
+
+    app = create_versioned_app(
+        version_change(schema(model).field("second").had(description="Old second")), router=router
+    )
+
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.post("/pair", json={"first": "a", "second": 1}).json() == {"first": "a", "second": 1}
+        response = client.post("/pair", json={"first": "a", "second": "not a number"})
+        assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+        assert response.json()["detail"][0]["loc"] == ["body", "second"]
+
+    old_schemas = TestClient(app).get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert {name: schema["properties"]["second"] for name, schema in old_schemas.items() if "Pair" in name} == {
+        name: {"type": "integer", "title": "Second", "description": "Old second"}
+        for name in old_schemas
+        if "Pair" in name
+    }

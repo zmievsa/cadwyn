@@ -3288,6 +3288,10 @@ def _change_field_in_model(
 
     field = defined_fields[alter_schema_instruction.name]
     model.fields[alter_schema_instruction.name] = field
+    if alter_schema_instruction.name not in model.annotations:
+        defined_annotations[alter_schema_instruction.name] = _substitute_type_vars_of_inherited_annotation(
+            model, schemas, alter_schema_instruction.name, defined_annotations[alter_schema_instruction.name]
+        )
     model.annotations[alter_schema_instruction.name] = defined_annotations[alter_schema_instruction.name]
 
     if isinstance(alter_schema_instruction, FieldHadInstruction):
@@ -3312,6 +3316,34 @@ def _change_field_in_model(
             field,
             model.annotations[alter_schema_instruction.name],
         )
+
+
+def _substitute_type_vars_of_inherited_annotation(
+    model: _PydanticModelWrapper[BaseModel],
+    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
+    field_name: str,
+    annotation: Any,
+) -> Any:
+    """Substitute the type vars in the annotation of a field that the model inherits, as pydantic does.
+
+    Pydantic substitutes the type vars of the inherited fields of the parametrizations of generics (e.g. `second: U`
+    of `Pair` in `Pair[str, int]` and in `class StrIntPair(Pair[str, int])`) but not of the fields that a class
+    defines itself. So when the copy of the model defines such a field because of an instruction, it gets the
+    annotation of its parent with the type vars that the parametrizations between them substitute.
+    """
+    parent = next(parent for parent in model._get_parents(schemas) if field_name in parent.annotations)
+    mro = model.cls.__mro__
+    # From the parametrization closest to the parent to the model itself, as pydantic substitutes them
+    for cls in reversed(mro[: mro.index(parent.cls)]):
+        origin = getattr(cls, "__pydantic_generic_metadata__", {}).get("origin")
+        if origin is not None:
+            parameters = origin.__pydantic_generic_metadata__["parameters"]
+            type_vars = dict(zip(parameters, _eval_generic_args(cast("type[BaseModel]", cls)), strict=True))
+            substituted_annotation = replace_types(annotation, type_vars)
+            # Pydantic rebuilds Annotated even without type vars in it, which would give it another cache key
+            if substituted_annotation != annotation:
+                annotation = substituted_annotation
+    return annotation
 
 
 def _get_subclasses_that_share_field(
