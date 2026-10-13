@@ -3127,6 +3127,8 @@ def _migrate_classes(context: _RuntimeSchemaGenContext) -> None:
             context.models.schemas,
             version_change.alter_schema_instructions,
             version_change.__name__,
+            # The same switch as SchemaGenerator._may_version_generic_args: these instructions exist
+            version_generic_type_args=context.version_bundle.version_generic_type_args,
         )
         _apply_alter_enum_instructions(
             context.models.enums,
@@ -3139,6 +3141,8 @@ def _apply_alter_schema_instructions(
     modified_schemas: dict[type[BaseModel], _PydanticModelWrapper[BaseModel]],
     alter_schema_instructions: Sequence[Union[AlterSchemaSubInstruction, SchemaHadInstruction]],
     version_change_name: str,
+    *,
+    version_generic_type_args: bool,
 ) -> None:
     for alter_schema_instruction in alter_schema_instructions:
         schema_info = modified_schemas[alter_schema_instruction.schema]
@@ -3150,6 +3154,7 @@ def _apply_alter_schema_instructions(
                 modified_schemas,
                 alter_schema_instruction,
                 version_change_name,
+                version_generic_type_args=version_generic_type_args,
             )
         elif isinstance(alter_schema_instruction, FieldDidntExistInstruction):
             _delete_field_from_model(schema_info, alter_schema_instruction.name, version_change_name)
@@ -3277,6 +3282,8 @@ def _change_field_in_model(
     schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
     alter_schema_instruction: Union[FieldHadInstruction, FieldDidntHaveInstruction],
     version_change_name: str,
+    *,
+    version_generic_type_args: bool,
 ):
     defined_annotations = model._get_defined_annotations_through_mro(schemas)
     defined_fields = model._get_defined_fields_through_mro(schemas)
@@ -3288,7 +3295,8 @@ def _change_field_in_model(
 
     field = defined_fields[alter_schema_instruction.name]
     model.fields[alter_schema_instruction.name] = field
-    if alter_schema_instruction.name not in model.annotations:
+    if version_generic_type_args and alter_schema_instruction.name not in model.annotations:
+        # Opt-in like the versioning of generic args: the field changes how older versions validate and serialize
         defined_annotations[alter_schema_instruction.name] = _substitute_type_vars_of_inherited_annotation(
             model, schemas, alter_schema_instruction.name, defined_annotations[alter_schema_instruction.name]
         )

@@ -92,6 +92,11 @@ Only the generics whose type args refer to models or enums that have schema or e
 * The OpenAPI names of these generics can change in every version because their quoted type args are evaluated, e.g. `Page[list["Item"]]` is named `Page_list_Item__` instead of `Page_list_str__`.
 * `migrate_response_body` rejects instances of the latest models inside these generics, e.g. `Page[Item](...)` or `{"items": [Item(...)]}` for `Page[Item]`, with a `ValidationError` in every version, including the latest one, as it already does for other versioned models nested in the response model. Pass plain data, such as the result of `model_dump()`, instead.
 * The models in these args are copied for every version like other versioned models, so the ones that cannot be copied (e.g. with an `Annotated` validator that holds a `threading.Lock`, which cannot be deep-copied) fail even if no route uses them directly.
+* Instructions for a field that a model inherits from a generic base through its type args keep the field's type in older versions. For example, `schema(Ints).field("root").had(description=...)` for `class Ints(RootModel[list[int]])`, or `schema(StrIntPair).field("second").had(...)` for `class StrIntPair(Pair[str, int])`. Without the option, such a field becomes the bare type var (`~RootModelRootType`, `~U`) in older versions, so they accept any value for it, and invalid input fails with a 500 instead of a 422. With the option, the field behaves in older versions like any other field of its type, so requests that only worked because it accepted anything can change:
+    * its validators and coercion run in the older version as well as in the latest one, as for other fields, so validators that are not idempotent, e.g. `AfterValidator(lambda v: v + 1)` in the type args, apply more than once;
+    * serializers that change its value, e.g. `PlainSerializer(lambda v: f"{v:,}", return_type=str)`, also change the request body that reaches the latest version, so such requests need request migrations;
+    * models in its type args validate their older shape, e.g. after `schema(Item).field("n").had(name="old_n")` the older version requires `old_n`;
+    * request migrations run after the older version validates the field, so they no longer see values that its type rejects.
 
 Some type args keep their latest models even with the option:
 

@@ -2097,6 +2097,7 @@ _InheritedT = TypeVar("_InheritedT")
 _InheritedU = TypeVar("_InheritedU")
 
 
+@versions_generic_type_args
 @pytest.mark.parametrize("shape", ["parametrization", "subclass_of_parametrization", "two_levels_of_generics"])
 def test__router_generation__instruction_on_field_inherited_through_parametrized_generic__should_keep_its_type(
     create_versioned_app: CreateVersionedApp, shape: str
@@ -2206,6 +2207,7 @@ class _IntGenericRoot(_GenericRoot[int]):
     pass
 
 
+@versions_generic_type_args
 @pytest.mark.parametrize(
     ("route_model", "changed_model", "field_name", "valid_body", "invalid_body"),
     [
@@ -2266,3 +2268,29 @@ def _get_request_body_field_schema(openapi: dict[str, Any], field_name: str) -> 
     ref = openapi["paths"]["/models"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
     model_schema = openapi["components"]["schemas"][ref.removeprefix("#/components/schemas/")]
     return model_schema if field_name == "root" else model_schema["properties"][field_name]
+
+
+@pytest.mark.parametrize("version_generic_type_args", [False], ids=["head_generic_args"])
+@pytest.mark.parametrize(
+    ("model", "field_name"),
+    [
+        # Subclasses of parametrizations, which keep the type vars of their bases with every pydantic version
+        pytest.param(_MS, "b", id="subclass_with_sibling_parametrization"),
+        pytest.param(_IntsRoot, "root", id="root_model_subclass"),
+        pytest.param(_IntGenericRoot, "root", id="subclass_of_generic_root_model"),
+    ],
+)
+def test__generate_versioned_models__instruction_on_inherited_generic_field_without_option__should_keep_it_as_before(
+    create_runtime_schemas: Any, model: Any, field_name: str
+):
+    old_model = create_runtime_schemas(version_change(schema(model).field(field_name).had(description="Old")))[
+        "2000-01-01"
+    ][model]
+
+    # Older versions keep the type var of the base that defines the field, as Cadwyn always did
+    assert _contains_type_vars(old_model.model_fields[field_name].annotation)
+    assert not _contains_type_vars(model.model_fields[field_name].annotation)
+
+
+def _contains_type_vars(annotation: Any) -> bool:
+    return isinstance(annotation, TypeVar) or any(_contains_type_vars(arg) for arg in typing.get_args(annotation))
