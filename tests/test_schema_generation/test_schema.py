@@ -1,5 +1,4 @@
 import re
-from typing import Union
 
 import pytest
 from pydantic import BaseModel, RootModel
@@ -154,9 +153,8 @@ def test__schema_had_description__with_the_same_description_as_in_newer_version_
         )
 
 
-@pytest.mark.parametrize("description", [None, ""])
 def test__schema_had_description__removing_missing_description__should_raise_error(
-    description: Union[str, None], create_runtime_schemas: CreateRuntimeSchemas
+    create_runtime_schemas: CreateRuntimeSchemas,
 ):
     with pytest.raises(
         InvalidGenerationInstructionError,
@@ -165,7 +163,19 @@ def test__schema_had_description__removing_missing_description__should_raise_err
             "but it already doesn't have a description."
         ),
     ):
-        create_runtime_schemas(version_change(schema(MySchema).had(description=description)))
+        create_runtime_schemas(version_change(schema(MySchema).had(description=None)))
+
+
+@pytest.mark.parametrize("description", ["", " ", "\n\t "])
+def test__schema_had_description__blank__should_raise_error(description: str):
+    with pytest.raises(
+        CadwynStructureError,
+        match=re.escape(
+            "The description that you passed to schema(DocumentedSchema).had() is blank. "
+            "Pass description=None to remove the description instead."
+        ),
+    ):
+        schema(DocumentedSchema).had(description=description)
 
 
 class DocumentedParent(BaseModel):

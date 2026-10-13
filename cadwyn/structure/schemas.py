@@ -352,6 +352,12 @@ class AlterSchemaInstructionFactory:
             raise CadwynStructureError(
                 f"You must pass at least one of the arguments of schema({self.schema.__name__}).had()"
             )
+        if isinstance(description, str) and not description.strip():
+            # Pydantic and Python treat such docstrings differently so `cadwyn render` could not render them
+            raise CadwynStructureError(
+                f"The description that you passed to schema({self.schema.__name__}).had() is blank. "
+                "Pass description=None to remove the description instead."
+            )
         return SchemaHadInstruction(
             is_hidden_from_changelog=False, schema=self.schema, name=name, description=description
         )
