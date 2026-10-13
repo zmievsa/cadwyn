@@ -4,10 +4,22 @@ import sys
 import threading
 import typing
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, ForwardRef, Generic, Literal, Optional, TypeVar, Union
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    ForwardRef,
+    Generic,
+    Literal,
+    Optional,
+    TypeVar,
+    Union,
+)
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -23,6 +35,7 @@ from pydantic import (
     ValidationError,
     create_model,
 )
+from pydantic.json_schema import SkipJsonSchema
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
 from typing_extensions import Self, TypeAliasType, TypeVarTuple, Unpack, override
 
@@ -2294,3 +2307,343 @@ def test__generate_versioned_models__instruction_on_inherited_generic_field_with
 
 def _contains_type_vars(annotation: Any) -> bool:
     return isinstance(annotation, TypeVar) or any(_contains_type_vars(arg) for arg in typing.get_args(annotation))
+
+
+_T = TypeVar("_T")
+_U = TypeVar("_U")
+
+
+def _create_app_with_instructions_for_parametrization_reached_through_generic(
+    create_versioned_app: CreateVersionedApp, box_model: Any, pair_model: Any, box_body: dict[str, Any]
+) -> dict[str, TestClient]:
+    router = VersionedAPIRouter()
+
+    @router.get("/pair", response_model=pair_model)
+    async def get_pair() -> dict[str, Any]:
+        return {"first": "a", "second": 1}
+
+    @router.get("/box", response_model=box_model)
+    async def get_box() -> dict[str, Any]:
+        return box_body
+
+    app = create_versioned_app(
+        version_change(schema(pair_model).field("second").had(serialization_alias="old_second")), router=router
+    )
+    return {
+        version: TestClient(app, headers={app.router.api_version_parameter_name: version})
+        for version in ("2000-01-01", "2001-01-01")
+    } | {"unversioned": TestClient(app)}
+
+
+@versions_generic_type_args
+@pytest.mark.parametrize("field_shape", ["direct", "optional", "list", "nested_generic"])
+def test__router_generation__parametrization_with_instructions_reached_through_generic__should_apply_them(
+    create_versioned_app: CreateVersionedApp, field_shape: str
+):
+    class Pair(BaseModel, Generic[_T, _U]):
+        first: _T
+        second: _U
+
+    if field_shape == "direct":
+
+        class Box(BaseModel, Generic[_T]):
+            pair: Pair[_T, int]
+
+        new_body = {"pair": {"first": "a", "second": 1}}
+        old_body = {"pair": {"first": "a", "old_second": 1}}
+    elif field_shape == "optional":
+
+        class Box(BaseModel, Generic[_T]):
+            pair: Optional[Pair[_T, int]] = None
+
+        new_body = {"pair": {"first": "a", "second": 1}}
+        old_body = {"pair": {"first": "a", "old_second": 1}}
+    elif field_shape == "list":
+
+        class Box(BaseModel, Generic[_T]):
+            pairs: list[Pair[_T, int]]
+
+        new_body = {"pairs": [{"first": "a", "second": 1}]}
+        old_body = {"pairs": [{"first": "a", "old_second": 1}]}
+    else:
+
+        class Inner(BaseModel, Generic[_T]):
+            pair: Pair[_T, int]
+
+        class Box(BaseModel, Generic[_T]):
+            inner: Inner[_T]
+
+        new_body = {"inner": {"pair": {"first": "a", "second": 1}}}
+        old_body = {"inner": {"pair": {"first": "a", "old_second": 1}}}
+
+    clients = _create_app_with_instructions_for_parametrization_reached_through_generic(
+        create_versioned_app, Box[str], Pair[str, int], new_body
+    )
+
+    assert clients["2000-01-01"].get("/pair").json() == {"first": "a", "old_second": 1}
+    assert clients["2000-01-01"].get("/box").json() == old_body
+    assert clients["2001-01-01"].get("/pair").json() == {"first": "a", "second": 1}
+    assert clients["2001-01-01"].get("/box").json() == new_body
+
+    old_schemas = clients["unversioned"].get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert [name for name in old_schemas if "Pair" in name] == ["Pair_str_int_"]
+    assert "old_second" in old_schemas["Pair_str_int_"]["properties"]
+
+
+@pytest.mark.parametrize("version_generic_type_args", [False], ids=["head_generic_args"])
+def test__router_generation__parametrization_reached_through_generic__without_option__should_skip_its_instructions(
+    create_versioned_app: CreateVersionedApp,
+):
+    class Pair(BaseModel, Generic[_T, _U]):
+        first: _T
+        second: _U
+
+    class Box(BaseModel, Generic[_T]):
+        pair: Pair[_T, int]
+
+    clients = _create_app_with_instructions_for_parametrization_reached_through_generic(
+        create_versioned_app, Box[str], Pair[str, int], {"pair": {"first": "a", "second": 1}}
+    )
+
+    # As before the option existed: only the routes that use the parametrization directly get its instructions
+    assert clients["2000-01-01"].get("/pair").json() == {"first": "a", "old_second": 1}
+    assert clients["2000-01-01"].get("/box").json() == {"pair": {"first": "a", "second": 1}}
+    old_schemas = clients["unversioned"].get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert sorted(old_schemas) == ["Box_str_", "HTTPValidationError", "Pair_str_int_", "ValidationError"]
+    reference_cycles = generate_versioned_models(clients["2000-01-01"].app.versions)["2000-01-01"]._reference_cycles
+    assert reference_cycles.get_redefined_field_names(Box[str]) == ()
+
+
+@versions_generic_type_args
+def test__router_generation__generic_built_before_parametrization_with_instructions__should_apply_them(
+    create_versioned_app: CreateVersionedApp,
+):
+    class Pair(BaseModel, Generic[_T, _U]):
+        first: _T
+        second: _U
+
+    class Box(BaseModel, Generic[_T]):
+        pair: Pair[_T, int]
+
+    # E.g. the routes are defined before the version changes. Pydantic 2.11 then builds a Pair[str, int] for Box[str]
+    # that is a different class from the Pair[str, int] of the instructions.
+    box_model = Box[str]
+    clients = _create_app_with_instructions_for_parametrization_reached_through_generic(
+        create_versioned_app, box_model, Pair[str, int], {"pair": {"first": "a", "second": 1}}
+    )
+
+    assert clients["2000-01-01"].get("/box").json() == {"pair": {"first": "a", "old_second": 1}}
+    assert clients["2001-01-01"].get("/box").json() == {"pair": {"first": "a", "second": 1}}
+    old_schemas = clients["unversioned"].get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert [name for name in old_schemas if "Pair" in name] == ["Pair_str_int_"]
+
+
+@versions_generic_type_args
+@pytest.mark.parametrize("field_shape", ["unhashable_annotated_metadata", "callable_args"])
+def test__generate_versioned_models__fields_with_unhashable_parts_reaching_parametrization__should_apply_instructions(
+    create_runtime_schemas: Any, field_shape: str
+):
+    class Pair(BaseModel, Generic[_T, _U]):
+        first: _T
+        second: _U
+
+    if field_shape == "unhashable_annotated_metadata":
+
+        class Box(BaseModel, Generic[_T]):
+            pair: Annotated[Pair[_T, int], {"doc": "unhashable metadata"}]
+
+    else:
+
+        class Box(BaseModel, Generic[_T]):
+            pair: Pair[_T, int]
+            # The args of Callable are a list
+            callback: SkipJsonSchema[Optional[Callable[[Pair[_T, int]], None]]] = None
+
+    old_box = create_runtime_schemas(
+        version_change(schema(Pair[str, int]).field("second").had(serialization_alias="old_second"))
+    )["2000-01-01"][Box[str]]
+
+    assert old_box.model_validate({"pair": {"first": "a", "second": 1}}).model_dump(by_alias=True)["pair"] == {
+        "first": "a",
+        "old_second": 1,
+    }
+
+
+@versions_generic_type_args
+def test__router_generation__parametrization_with_instructions_reached_through_versioned_args__should_apply_them(
+    create_versioned_app: CreateVersionedApp,
+):
+    class Item(BaseModel):
+        name: str
+
+    class Pair(BaseModel, Generic[_T, _U]):
+        first: _T
+        second: _U
+
+    class Box(BaseModel, Generic[_T]):
+        pair: Pair[_T, int]
+
+    router = VersionedAPIRouter()
+
+    @router.get("/box", response_model=Box[Item])
+    async def get_box() -> dict[str, Any]:
+        return {"pair": {"first": {"name": "a"}, "second": 1}}
+
+    app = create_versioned_app(
+        version_change(
+            schema(Item).field("name").had(serialization_alias="old_name"),
+            schema(Pair[Item, int]).field("second").had(serialization_alias="old_second"),
+        ),
+        router=router,
+    )
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+
+    assert client_2000.get("/box").json() == {"pair": {"first": {"old_name": "a"}, "old_second": 1}}
+    assert client_2001.get("/box").json() == {"pair": {"first": {"name": "a"}, "second": 1}}
+
+
+@versions_generic_type_args
+def test__router_generation__generic_of_parametrization_reaching_instructions__should_apply_only_them(
+    create_versioned_app: CreateVersionedApp,
+):
+    class Kind(str, Enum):
+        a = "a"
+
+    class Pair(BaseModel, Generic[_T, _U]):
+        first: _T
+        second: _U
+
+    class Wrapper(BaseModel, Generic[_T]):
+        pair: Pair[_T, str]
+        pairs: list[Pair[_T, str]] = []
+
+    class Box(BaseModel, Generic[_T]):
+        pair: Pair[_T, int]
+        wrapper: Wrapper[_T]
+        kind: Kind = Kind.a
+
+    class Page(BaseModel, Generic[_T]):
+        items: list[_T]
+
+    router = VersionedAPIRouter()
+    box = {"pair": {"first": "a", "second": 1}, "wrapper": {"pair": {"first": "b", "second": "c"}, "pairs": []}}
+
+    @router.get("/boxes", response_model=Page[Box[str]])
+    async def get_boxes() -> dict[str, Any]:
+        return {"items": [box]}
+
+    app = create_versioned_app(
+        version_change(schema(Pair[str, int]).field("second").had(serialization_alias="old_second")), router=router
+    )
+    client_2000 = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    client_2001 = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
+
+    old_box = box | {"pair": {"first": "a", "old_second": 1}, "kind": "a"}
+    assert client_2000.get("/boxes").json() == {"items": [old_box]}
+    assert client_2001.get("/boxes").json() == {"items": [box | {"kind": "a"}]}
+    reference_cycles = generate_versioned_models(app.versions)["2000-01-01"]._reference_cycles
+    assert reference_cycles.get_redefined_field_names(Box[str]) == ("pair",)
+    assert reference_cycles.get_redefined_field_names(Wrapper[str]) == ()
+
+
+def test__generate_versioned_models__parametrization_with_undefined_names__should_inherit_fields_as_on_main():
+    class Pair(BaseModel, Generic[_T, _U]):
+        first: _T
+        second: _U
+
+    class Box(BaseModel, Generic[_T]):
+        pair: Pair[_T, int]
+        later_pair: "Pair[_T, UndefinedPairArg]"  # noqa: F821 # ty: ignore[unresolved-reference]
+
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(Pair[str, int]).field("second").had(serialization_alias="old"))),
+        Version("2000-01-01"),
+        version_generic_type_args=True,
+    )
+    reference_cycles = generate_versioned_models(versions)["2000-01-01"]._reference_cycles
+
+    # We cannot know what copying the fields of a generic with undefined names would request
+    assert reference_cycles.get_redefined_field_names(Box[str]) == ()
+
+
+class _RecursiveItem(BaseModel):
+    name: str
+
+
+class _RecursivePair(BaseModel, Generic[_T, _U]):
+    first: _T
+    second: _U
+
+
+# Pydantic refers to _RecursiveNode[_RecursiveItem] within itself by a reference that does not lead to its copy.
+# The models are defined here because Pydantic 2.11 cannot resolve such a model defined within a function.
+class _RecursiveNode(BaseModel, Generic[_T]):
+    items: "list[Union[_RecursivePair[_T, int], _RecursiveNode[_T]]]" = []
+
+
+def test__router_generation__parametrization_with_instructions_within_recursive_generic__should_work_as_on_main(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+    body = {"items": [{"first": {"name": "a"}, "second": 1}, {"items": [{"first": {"name": "b"}, "second": 2}]}]}
+
+    @router.get("/node", response_model=_RecursiveNode[_RecursiveItem])
+    async def get_node() -> dict[str, Any]:
+        return body
+
+    app = create_versioned_app(
+        version_change(
+            schema(_RecursiveItem).field("name").had(description="Old name"),
+            schema(_RecursivePair[_RecursiveItem, int]).field("second").had(serialization_alias="old_second"),
+        ),
+        router=router,
+    )
+
+    schema_names = []
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.get("/node").json() == body
+        schemas = TestClient(app).get(f"/openapi.json?version={version}").json()["components"]["schemas"]
+        schema_names.append(sorted(schemas))
+    # One schema per model in both versions, as on main
+    assert schema_names[0] == schema_names[1]
+    assert len([name for name in schema_names[0] if "Pair" in name or "Node" in name]) == 2
+
+
+def test__generate_versioned_models__parametrizations_that_refer_to_each_other__should_inherit_fields_as_on_main():
+    class Pair(BaseModel, Generic[_T, _U]):
+        first: _T
+        second: _U
+
+    class Limb(BaseModel, Generic[_T]):
+        trunk: "Optional[Trunk[_T]]" = None
+        pair: Optional[Pair[_T, int]] = None
+
+    limb_model = Limb[str]
+
+    class Trunk(BaseModel, Generic[_T]):
+        limb: Optional[Limb[_T]] = None
+
+    class Stump(BaseModel, Generic[_T]):
+        limb: Optional[Limb[_T]] = None
+
+    trunk_model = Trunk[str]
+    Limb.model_rebuild()
+    limb_model.model_rebuild()
+    # Pydantic builds them separately so they refer to each other by the classes themselves. If their copies defined
+    # the fields that pydantic otherwise builds itself, copying them would never finish
+    assert trunk_model.model_fields["limb"].annotation == Optional[limb_model]
+    assert limb_model.model_fields["trunk"].annotation == Optional[trunk_model]
+
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(Pair[str, int]).field("second").had(serialization_alias="old"))),
+        Version("2000-01-01"),
+        version_generic_type_args=True,
+    )
+    reference_cycles = generate_versioned_models(versions)["2000-01-01"]._reference_cycles
+
+    assert reference_cycles.get_redefined_field_names(trunk_model) == ()
+    assert reference_cycles.get_redefined_field_names(limb_model) == ()
+    # Stump[str] only leads to the cycle so it is not in it
+    assert reference_cycles.get_redefined_field_names(Stump[str]) == ("limb",)

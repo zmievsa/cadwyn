@@ -92,7 +92,9 @@ def _check_that_reference_discovery_finds_every_model_that_copying_requests(monk
             # discovered in place
             self.get_references(schema_generator.model_bundle.schemas)
             if self.cls in schema_generator._changed_models
-            else _get_head_model_references(self.cls),
+            else _get_head_model_references(
+                self.cls, schema_generator._reference_cycles.get_redefined_fields(self.cls)
+            ),
             # The references that the generator caches for its decisions
             schema_generator._get_references(self.cls),
         ]
@@ -199,11 +201,15 @@ def check_that_discovery_finds_every_model_that_copying_would_request(
     collector = _ReferencedModelCollector()
     collector.annotation_transformer = _AnnotationTransformer(collector)
     fields = model.model_fields
+    redefined_fields = generator._reference_cycles.get_redefined_fields(model)
     _change_version_of_model_references(
         collector,
         model,
-        {name: _extract_passed_field_attributes(fields[name]) for name in _get_model_field_names(model, fields)},
-        _get_model_annotations(model, fields),
+        {
+            name: _extract_passed_field_attributes(fields[name])
+            for name in _get_model_field_names(model, fields, redefined_fields)
+        },
+        _get_model_annotations(model, fields, redefined_fields),
     )
     requested_models = collector.models | collector.arg_models | collector.base_models
     discovered_models = references.models | references.arg_models | references.base_models
