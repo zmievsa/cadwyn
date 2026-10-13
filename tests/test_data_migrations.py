@@ -29,10 +29,12 @@ from fastapi import (
     Query,
     Request,
     Response,
+    Security,
     UploadFile,
 )
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from fastapi.security import SecurityScopes
 from fastapi.testclient import TestClient
 from pydantic import (
     AfterValidator,
@@ -2251,6 +2253,37 @@ def test__request_body_migration__with_bytes_changed_by_old_version_dependency_i
     # The dependency left the file at its end without declaring it, so the files of dependencies stay as before
     assert clients["2000-01-01"].post(test_path, files={"upload": b"original"}).json() == ""
     assert clients["2001-01-01"].post(test_path, files={"upload": b"original"}).json() == "original"
+
+
+async def _prepare_upload(security_scopes: SecurityScopes, upload: UploadFile = File()) -> None:
+    if "strip_header" in security_scopes.scopes:
+        await upload.seek(len(b"or"))
+
+
+def test__request_body_migration__with_bytes_and_old_version_security_scopes__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, dependencies=[Depends(_store_upload), Security(_prepare_upload, scopes=["check"])])
+    async def endpoint(request: Request):
+        return request.state.contents
+
+    clients = create_versioned_clients(
+        version_change(
+            cadwyn_endpoint(test_path, ["POST"]).had(
+                dependencies=[
+                    Depends(_store_upload),
+                    Security(_prepare_upload, scopes=["check"]),
+                    Security(_prepare_upload, scopes=["strip_header"]),
+                ]
+            )
+        )
+    )
+
+    # Only the old version runs the dependency with these scopes, and it leaves a header without a payload at its end
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"or"}).json() == ""
+    assert clients["2001-01-01"].post(test_path, files={"upload": b"or"}).json() == "or"
 
 
 async def _skip_nothing(upload: UploadFile = File()) -> None:

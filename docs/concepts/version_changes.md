@@ -294,7 +294,7 @@ Cadwyn can migrate more than just request bodies.
 * `headers: starlette.datastructures.MutableHeaders`
 * `cookies: dict[str, str]`
 * `query_params: dict[str, str]`
-* `form: list[tuple[str, UploadFile | str]] | None` for form and multipart requests (`None` for other requests)
+* `form: list[tuple[str, UploadFile | str]] | None` for requests to endpoints that declare their form fields as separate `Form()` or `File()` parameters. Otherwise it is `None`. For example, an endpoint that takes a single model through `Form()` gets the model's fields as a dict in `body` instead
 
 If a migration reads an uploaded file from `form`, it must `seek` the file back to where the latest version should start reading it, usually `upload.file.seek(0)`. Otherwise, the latest version gets the file as the migration left it, e.g. empty.
 

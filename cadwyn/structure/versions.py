@@ -896,21 +896,23 @@ def _get_bytes_file_params_of_dependencies(
 def _iter_dependencies(
     dependant: Dependant, dependency_overrides: dict[Any, Any]
 ) -> Iterator[tuple[Hashable, Union[Dependant, None]]]:
-    """Yield a key of the callable that FastAPI calls for every dependency in the tree, with the dependency's dependant.
+    """Yield a key of every dependency in the tree that FastAPI solves, with the dependency's dependant.
 
-    The keys of the same callable are equal in the trees of all versions. Versioned routes use copies of
-    dependencies that compare equal to the originals, and FastAPI already hashes these callables. Overrides come
-    from the same dict for every route but can be unhashable, so we key them by identity. FastAPI solves the
-    dependant of an override instead of the overridden dependency, so for an overridden dependency we yield no
-    dependant and skip its sub-dependencies.
+    The keys of the same dependency are equal in the trees of all versions. Like FastAPI's dependency cache keys,
+    they consist of the callable that FastAPI calls, all security scopes of the dependency, and its scope. Versioned
+    routes use copies of dependencies that compare equal to the originals, and FastAPI already hashes these
+    callables. Overrides come from the same dict for every route but can be unhashable, so we key them by identity.
+    FastAPI solves the dependant of an override instead of the overridden dependency, so for an overridden
+    dependency we yield no dependant and skip its sub-dependencies.
     """
     for sub_dependant in dependant.dependencies:
         call = sub_dependant.call
+        scopes = tuple(sorted({*(sub_dependant.parent_oauth_scopes or ()), *(sub_dependant.own_oauth_scopes or ())}))
         # Same lookup as in FastAPI, which only looks up overrides when there are any
         if dependency_overrides and (override := dependency_overrides.get(call, call)) is not call:
-            yield (_OVERRIDE_KEY, id(override)), None
+            yield (_OVERRIDE_KEY, id(override), scopes, sub_dependant.scope), None
         else:
-            yield call, sub_dependant
+            yield (call, scopes, sub_dependant.scope), sub_dependant
             yield from _iter_dependencies(sub_dependant, dependency_overrides)
 
 
