@@ -1,17 +1,21 @@
 import functools
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 import pytest
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
+from starlette.middleware.base import RequestResponseEndpoint
+from starlette.responses import Response as StarletteResponse
+from typing_extensions import override
 
 from cadwyn import Cadwyn
 from cadwyn.exceptions import CadwynStructureError
+from cadwyn.middleware import VersionPickingMiddleware
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure.endpoints import endpoint
 from cadwyn.structure.schemas import schema
@@ -524,12 +528,154 @@ def test__get_openapi__api_version_header_has_configured_metadata_and_date_schem
                 "format": "date",
                 "title": "Requested API version",
                 "description": "Selects the version contract",
-                "default": "2022-11-16",
             },
             "description": "Selects the version contract",
             "examples": {"default": {"value": "2022-11-16"}},
         }
     ]
+
+
+async def _get_default_api_version(request: Request) -> str:
+    return "2023-04-14"
+
+
+def _get_api_version_parameters_from_openapi(app: Cadwyn, path: str) -> dict[str, list[dict[str, Any]]]:
+    with TestClient(app) as client:
+        return {
+            version: client.get(f"/openapi.json?version={version}").json()["paths"][path]["get"]["parameters"]
+            for version in app.router.versions
+        }
+
+
+@pytest.mark.parametrize(
+    ("api_version_format", "version_values", "expected_schema"),
+    [
+        ("date", ("2023-04-14", "2022-11-16"), {"type": "string", "format": "date", "title": "X-Api-Version"}),
+        ("string", ("v2", "v1"), {"type": "string", "title": "X-Api-Version"}),
+    ],
+)
+def test__get_openapi__api_version_header_without_default_value__should_be_required_without_default(
+    api_version_format: Literal["date", "string"], version_values: tuple[str, str], expected_schema: dict[str, Any]
+):
+    app = Cadwyn(
+        versions=VersionBundle(*(Version(version) for version in version_values)),
+        api_version_format=api_version_format,
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    async def get_items():
+        return []
+
+    app.generate_and_include_versioned_routers(router)
+
+    assert _get_api_version_parameters_from_openapi(app, "/items") == {
+        version: [
+            {
+                "name": "x-api-version",
+                "in": "header",
+                "required": True,
+                "schema": expected_schema,
+                "examples": {"default": {"value": version}},
+            }
+        ]
+        for version in version_values
+    }
+    with TestClient(app) as client:
+        assert client.get("/items").status_code == 404
+        assert client.get("/items", headers={"x-api-version": version_values[1]}).json() == []
+
+
+@pytest.mark.parametrize("api_version_default_value", ["2023-04-14", _get_default_api_version])
+def test__get_openapi__api_version_header_with_default_value__should_be_optional_without_default(
+    api_version_default_value: "str | Callable[[Request], Awaitable[str]]",
+):
+    app = Cadwyn(
+        versions=VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+        api_version_default_value=api_version_default_value,
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    async def get_items(request: Request):
+        return request.scope["cadwyn.api_version"]
+
+    app.generate_and_include_versioned_routers(router)
+
+    # The schema has no default because the server uses api_version_default_value for a request without
+    # the header in every version's document, not the version of the document.
+    assert _get_api_version_parameters_from_openapi(app, "/items") == {
+        version: [
+            {
+                "name": "x-api-version",
+                "in": "header",
+                "required": False,
+                "schema": {"type": "string", "format": "date", "title": "X-Api-Version"},
+                "examples": {"default": {"value": version}},
+            }
+        ]
+        for version in ("2023-04-14", "2022-11-16")
+    }
+    with TestClient(app) as client:
+        assert client.get("/items").json() == "2023-04-14"
+        assert client.get("/items", headers={"x-api-version": "2022-11-16"}).json() == "2022-11-16"
+
+
+def test__get_openapi__api_version_in_path__should_stay_required_without_default():
+    app = Cadwyn(
+        versions=VersionBundle(Version("v2"), Version("v1")),
+        api_version_location="path",
+        api_version_parameter_name="api_version",
+        api_version_format="string",
+    )
+    router = VersionedAPIRouter(prefix="/{api_version}")
+
+    @router.get("/items")
+    async def get_items():
+        return []
+
+    app.generate_and_include_versioned_routers(router)
+
+    assert _get_api_version_parameters_from_openapi(app, "/{api_version}/items") == {
+        version: [
+            {
+                "name": "api_version",
+                "in": "path",
+                "required": True,
+                "schema": {"type": "string", "title": "Api Version"},
+                "examples": {"default": {"value": version}},
+            }
+        ]
+        for version in ("v2", "v1")
+    }
+    with TestClient(app) as client:
+        assert client.get("/v1/items").json() == []
+
+
+def test__api_version_header_without_default_value__version_picked_by_custom_middleware__should_not_require_header():
+    class QueryVersionPickingMiddleware(VersionPickingMiddleware):
+        @override
+        async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> StarletteResponse:
+            self.api_version_var.set(request.query_params.get("version"))
+            return await call_next(request)
+
+    app = Cadwyn(
+        versions=VersionBundle(Version("2023-04-14"), Version("2022-11-16")),
+        versioning_middleware_class=QueryVersionPickingMiddleware,
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    async def get_items(request: Request):
+        return request.scope["cadwyn.api_version"]
+
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app) as client:
+        response = client.get("/items?version=2022-11-16")
+
+    assert response.status_code == 200, response.json()
+    assert response.json() == "2022-11-16"
 
 
 def test__get_openapi__nonexisting_version__should_return_404():

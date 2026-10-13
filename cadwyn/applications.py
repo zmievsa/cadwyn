@@ -246,6 +246,7 @@ class Cadwyn(FastAPI):
         }
         self.api_version_format = api_version_format
         self._api_version_location: APIVersionLocation = api_version_location
+        self._api_version_has_default_value = api_version_default_value is not None
         self.api_version_parameter_name = api_version_parameter_name
         self.api_version_pythonic_parameter_name = api_version_parameter_name.replace("-", "_")
         self.api_version_title = api_version_title
@@ -422,23 +423,39 @@ class Cadwyn(FastAPI):
 
         tags = self._filter_openapi_tags(routes)
 
-        return JSONResponse(
-            get_openapi(
-                title=self.title,
-                version=formatted_version,
-                openapi_version=self.openapi_version,
-                description=self.description,
-                summary=self.summary,
-                terms_of_service=self.terms_of_service,
-                contact=self.contact,
-                license_info=self.license_info,
-                routes=routes,
-                webhooks=webhook_routes,
-                tags=tags,
-                servers=self.servers,
-                separate_input_output_schemas=self.separate_input_output_schemas,
-            )
+        openapi = get_openapi(
+            title=self.title,
+            version=formatted_version,
+            openapi_version=self.openapi_version,
+            description=self.description,
+            summary=self.summary,
+            terms_of_service=self.terms_of_service,
+            contact=self.contact,
+            license_info=self.license_info,
+            routes=routes,
+            webhooks=webhook_routes,
+            tags=tags,
+            servers=self.servers,
+            separate_input_output_schemas=self.separate_input_output_schemas,
         )
+        self._describe_api_version_header_in_openapi(openapi)
+        return JSONResponse(openapi)
+
+    def _describe_api_version_header_in_openapi(self, openapi: dict[str, Any]) -> None:
+        # The API version header dependency of the routes defaults to their version so that requests
+        # without the header still reach them when api_version_default_value or a custom versioning
+        # middleware picks their version. But the server itself never uses this default: a request without
+        # the header gets a 404 unless api_version_default_value is set, and then it gets the version
+        # from api_version_default_value, not the one of this document. So we describe that instead.
+        header_name = self.api_version_pythonic_parameter_name.replace("_", "-")
+        for path_item in openapi.get("paths", {}).values():
+            for operation in path_item.values():
+                for parameter in operation.get("parameters", ()):
+                    if parameter["in"] != "header" or parameter["name"] != header_name:
+                        continue
+                    if not self._api_version_has_default_value:
+                        parameter["required"] = True
+                    parameter["schema"].pop("default", None)
 
     def _there_are_public_unversioned_routes(self):
         return any(
