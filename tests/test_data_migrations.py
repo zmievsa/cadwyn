@@ -69,7 +69,7 @@ from starlette.formparsers import MultiPartParser
 from starlette.responses import StreamingResponse
 from typing_extensions import Self, TypeAliasType, TypedDict, override
 
-from cadwyn import Cadwyn, VersionedAPIRouter
+from cadwyn import Cadwyn, VersionedAPIRouter, current_dependency_solver
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -4320,6 +4320,73 @@ def test__request_body_migration__with_required_value_that_the_head_rejects__sho
         clients["2000-01-01"].post(test_path, json={"v": 5})
     # The error is the one that the body would get without the value, as before
     assert [error["type"] for error in exc_info.value.errors] == ["missing"]
+
+
+@pytest.mark.parametrize("fails_on_third_validation", [False, True], ids=["counts", "rejects_third_validation"])
+def test__request_body_migration__with_validation_aliases__should_validate_the_body_as_many_times_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    fails_on_third_validation: bool,
+):
+    validations: list[str] = []
+
+    class SchemaWithStatefulValidator(BaseModel):
+        value: int = Field(default=0, alias="x", validation_alias="v")
+        data: Any
+
+        @model_validator(mode="after")
+        def count_validations(self) -> Self:
+            validations.append("validate")
+            if fails_on_third_validation and len(validations) > 2:
+                raise ValueError("Already validated twice")  # pragma: no cover # Only if the test fails
+            self.data["count"] += 1
+            return self
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithStatefulValidator):
+        return {"value": body.value, "count": body.data["count"]}
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        validations.clear()
+        # The version validates the body once, and the head validates the restored body once
+        assert version_client.post(test_path, json={"v": 7, "data": {"count": 0}}).json() == {"value": 7, "count": 2}
+        assert len(validations) == 2
+
+
+_head_dependency_has_run: ContextVar[bool] = ContextVar("_head_dependency_has_run", default=False)
+
+
+async def _set_up_head_validation(solver: str = Depends(current_dependency_solver)) -> None:
+    _head_dependency_has_run.set(solver == "cadwyn")
+
+
+class SchemaValidatedAfterHeadDependency(BaseModel):
+    value: int = Field(default=0, alias="x", validation_alias="v")
+
+    @model_validator(mode="after")
+    def check_that_head_dependency_has_run(self) -> Self:
+        if type(self) is SchemaValidatedAfterHeadDependency and self.value and not _head_dependency_has_run.get():
+            raise ValueError("The head dependency hasn't run yet")  # pragma: no cover # Only if the test fails
+        return self
+
+
+def test__request_body_migration__with_validators_that_rely_on_head_dependencies__head_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, dependencies=[Depends(_set_up_head_validation)])
+    async def endpoint(body: SchemaValidatedAfterHeadDependency):
+        return body.value
+
+    clients = create_versioned_clients(version_change())
+
+    # The head validates the restored body while solving its dependencies, like any other body
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"v": 7}).json() == 7
 
 
 class SchemaWithAliasPathsIntoAnotherField(BaseModel):

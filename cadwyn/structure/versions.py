@@ -469,34 +469,34 @@ class VersionBundle:
         # This gives us the ability to tell the user whether cadwyn is running its dependencies or FastAPI
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
+        is_body_restored = False
         if request_info._form is not None:
             if uploads_read_by_fastapi:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
             body_for_solving = FormData(request_info._form)
         elif body_is_model_dump:
-            body_field = head_dependant.body_params[0]
-            body_for_solving = _restore_validation_aliases(body_field, request_info.body)
-            # We never fail a request that worked before: if the head rejects the restored body, it gets the body
-            # as before, e.g. when the head is stricter than the version and used to get the default of a field
-            if (
-                body_for_solving is not request_info.body
-                and body_field.validate(body_for_solving, {}, loc=("body",))[1]
-            ):
-                body_for_solving = request_info.body
+            body_for_solving = _restore_validation_aliases(head_dependant.body_params[0], request_info.body)
+            is_body_restored = body_for_solving is not request_info.body
         else:
             body_for_solving = request_info.body
 
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
-        result = await solve_dependencies(
+        solve = functools.partial(
+            solve_dependencies,
             request=request,
             response=response,
             dependant=head_dependant,
-            body=body_for_solving,
             dependency_overrides_provider=head_route.dependency_overrides_provider,
             async_exit_stack=exit_stack,
             embed_body_fields=embed_body_fields,
             background_tasks=background_tasks,
         )
+        result = await solve(body=body_for_solving)
+        # We never fail a request that worked before: if the head rejects the restored body, e.g. because it is stricter
+        # than the version and used to get the default of a field, we solve the request with the body as before.
+        # Its dependencies run again, but only for requests that would have failed otherwise.
+        if result.errors and is_body_restored:
+            result = await solve(body=request_info.body)
         if result.errors:
             raise CadwynHeadRequestValidationError(result.errors, body=request_info.body, version=current_version)
         return result.values
