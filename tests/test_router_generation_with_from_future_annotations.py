@@ -1360,6 +1360,12 @@ def get_item_with_type_checking_only_return(item: VersionedItem) -> Decimal:
     raise NotImplementedError
 
 
+async def get_item_through_partial_with_type_checking_only_return(
+    item: Annotated[Any, Depends(functools.partial(get_item_with_type_checking_only_return))],
+) -> Any:
+    raise NotImplementedError
+
+
 def test__router_generation__partial_dependency_with_type_checking_only_annotations__should_use_versioned_models(
     router, create_versioned_clients
 ):
@@ -1367,6 +1373,12 @@ def test__router_generation__partial_dependency_with_type_checking_only_annotati
     # the partial) so we only compare the schemas that each version documents
     @router.post("/test")
     async def route(item: Annotated[Any, Depends(functools.partial(get_item_with_type_checking_only_return))]):
+        raise NotImplementedError
+
+    @router.post("/sub_dependency")
+    async def sub_dependency_route(
+        item: Annotated[Any, Depends(get_item_through_partial_with_type_checking_only_return)],
+    ):
         raise NotImplementedError
 
     clients = create_versioned_clients(version_change(schema(VersionedItem).field("bar").existed_as(type=str)))
@@ -1475,14 +1487,20 @@ def test__router_generation__quoted_parameter_annotations__should_use_versioned_
             return current
 
     clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
+    # As in Cadwyn 7.4.0, the Annotated dependency whose args did not change keeps the original dependency, whose
+    # annotations FastAPI resolves by itself, with the head model in every version
+    uses_head_model = style == "annotated_dependency"
     assert clients["2001-01-01"].post("/test", json={"current": "ok"}).json() == "ok"
-    assert clients["2000-01-01"].post("/test", json={"current": "ok"}).status_code == 422
+    assert clients["2000-01-01"].post("/test", json={"current": "ok"}).status_code == (200 if uses_head_model else 422)
     assert clients["2000-01-01"].post("/test", json={"current": "ok", "legacy": "ok"}).json() == "ok"
     required_fields = {}
     for version, version_client in clients.items():
         openapi = version_client.get(f"/openapi.json?version={version}").json()
         required_fields[version] = openapi["components"]["schemas"]["QuotedPayload"]["required"]
-    assert required_fields == {"2001-01-01": ["current"], "2000-01-01": ["current", "legacy"]}
+    assert required_fields == {
+        "2001-01-01": ["current"],
+        "2000-01-01": ["current"] if uses_head_model else ["current", "legacy"],
+    }
 
 
 # With postponed annotations, evaluating these once leaves forward references within them
@@ -1520,7 +1538,10 @@ nested_quoted_dependency: Any = None
 
 
 @pytest.mark.parametrize("shape", list(_NESTED_QUOTED_DEPENDENCIES))
-@pytest.mark.parametrize("style", ["endpoint", "default_dependency", "annotated_dependency"])
+# Not in Annotated[...] because, as in Cadwyn 7.4.0, the ones whose args did not change keep the original dependency
+# in every version when FastAPI resolves the annotations of its parameters, leaving the forward refs within them to
+# pydantic (see the test of annotated dependencies with quoted args in annotations in test_router_generation.py)
+@pytest.mark.parametrize("style", ["endpoint", "default_dependency"])
 def test__router_generation__nested_quoted_parameter_annotations__should_use_versioned_models(
     router, create_versioned_clients, monkeypatch, style, shape
 ):
@@ -1530,16 +1551,10 @@ def test__router_generation__nested_quoted_parameter_annotations__should_use_ver
     monkeypatch.setitem(globals(), "nested_quoted_dependency", dependency)
     if style == "endpoint":
         router.post("/test")(dependency)
-    elif style == "default_dependency":
-
-        @router.post("/test")
-        async def default_dependency_route(current: str = Depends(nested_quoted_dependency)):
-            raise NotImplementedError
-
     else:
 
         @router.post("/test")
-        async def annotated_dependency_route(current: Annotated[str, Depends(nested_quoted_dependency)]):
+        async def default_dependency_route(current: str = Depends(nested_quoted_dependency)):
             raise NotImplementedError
 
     clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
@@ -1591,14 +1606,20 @@ def test__router_generation__signatures_with_unevaluated_annotations__should_use
             return current
 
     clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
+    # As in Cadwyn 7.4.0, the Annotated dependency whose args did not change keeps the original dependency, whose
+    # annotations FastAPI resolves by itself, with the head model in every version
+    uses_head_model = style == "annotated_dependency"
     assert clients["2001-01-01"].post("/test", json={"current": "ok"}).json() == "ok"
-    assert clients["2000-01-01"].post("/test", json={"current": "ok"}).status_code == 422
+    assert clients["2000-01-01"].post("/test", json={"current": "ok"}).status_code == (200 if uses_head_model else 422)
     assert clients["2000-01-01"].post("/test", json={"current": "ok", "legacy": "ok"}).json() == "ok"
     required_fields = {}
     for version, version_client in clients.items():
         openapi = version_client.get(f"/openapi.json?version={version}").json()
         required_fields[version] = openapi["components"]["schemas"]["QuotedPayload"]["required"]
-    assert required_fields == {"2001-01-01": ["current"], "2000-01-01": ["current", "legacy"]}
+    assert required_fields == {
+        "2001-01-01": ["current"],
+        "2000-01-01": ["current"] if uses_head_model else ["current", "legacy"],
+    }
 
 
 def make_values_with_annotations_set_by_hand() -> Any:

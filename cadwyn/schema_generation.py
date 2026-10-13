@@ -31,6 +31,7 @@ from typing import (
 )
 
 import annotated_types
+import fastapi.dependencies.utils
 import fastapi.params
 import fastapi.security.base
 import fastapi.utils
@@ -580,10 +581,60 @@ def _rebuild_generic_alias(annotation: Any, new_args: tuple[Any, ...]) -> Any:
     if origin is ClassVar or is_unpack(origin):
         return origin[new_args[0]]
     if origin is Annotated:
-        # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the
-        # originals so it could return the alias that holds the dependency of another version
+        # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the originals.
+        # So in Cadwyn 7.4.0, the annotations whose args did not change (e.g. `Annotated[int, Depends(get_limit)]`)
+        # and that typing could cache (with hashable args) got the original dependencies in every version and we keep
+        # them. We only use the versioned ones if FastAPI cannot resolve the annotation of a parameter of the
+        # original ones because these failed in Cadwyn 7.4.0
+        if new_args == get_args(annotation) and _is_hashable(new_args):
+            original_metadata = tuple(_get_original_dependency(metadata) for metadata in new_args[1:])
+            if all(
+                _fastapi_resolves_annotations(metadata.dependency)
+                for metadata in original_metadata
+                if isinstance(metadata, fastapi.params.Depends) and metadata.dependency is not None
+            ):
+                return _AnnotatedAlias(new_args[0], original_metadata)
         return _AnnotatedAlias(new_args[0], new_args[1:])
     return origin[new_args]
+
+
+def _is_hashable(value: Any) -> bool:
+    """Whether typing caches the generic alias with these args"""
+    try:
+        hash(value)
+    except TypeError:
+        # Like typing, which then builds the alias without its cache
+        return False
+    return True
+
+
+def _get_original_dependency(metadata: Any) -> Any:
+    if not isinstance(metadata, fastapi.params.Depends) or metadata.dependency is None:
+        return metadata
+    original = copy.copy(metadata)
+    object.__setattr__(original, "dependency", _AnnotationTransformer._unwrap_callable(metadata.dependency))
+    return original
+
+
+def _fastapi_resolves_annotations(call: Callable[..., Any]) -> bool:
+    """Whether FastAPI resolves the annotations of the parameters of the dependency and of its sub-dependencies.
+
+    E.g. not `item: "Item"` in a partial, which has no globals. Like FastAPI, we leave the forward refs within the
+    annotations (e.g. `list["Item"]`) to pydantic.
+    """
+    for parameter in fastapi.dependencies.utils.get_typed_signature(call).parameters.values():
+        depends = [
+            metadata
+            for metadata in (parameter.default, *get_args(parameter.annotation)[1:])
+            if isinstance(metadata, fastapi.params.Depends)
+        ]
+        if depends:
+            sub_dependency = depends[-1].dependency
+            if sub_dependency is not None and not _fastapi_resolves_annotations(sub_dependency):
+                return False
+        elif isinstance(parameter.annotation, str | ForwardRef):
+            return False
+    return True
 
 
 def _wrap_pydantic_model(
