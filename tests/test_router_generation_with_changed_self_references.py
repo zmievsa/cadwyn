@@ -1124,6 +1124,28 @@ class SafeFactoriesCategory(BaseModel):
     optional_settings: list[Optional[Settings]] = [None, None]
 
 
+class UnrelatedOrder(BaseModel):
+    status: Status = Status.new
+    # Cadwyn cannot know what the lambda returns but this field does not use the cycle
+    items: list[ChangedItem] = Field(default_factory=lambda: [])  # noqa: PIE807
+
+
+class ClassmethodDefaults(BaseModel):
+    @classmethod
+    def make_settings(cls) -> Settings:
+        return Settings(name="abc")  # pragma: no cover
+
+
+class ClassmethodNode(BaseModel):
+    settings: Settings = Field(default_factory=ClassmethodDefaults.make_settings)
+    children: "list[ClassmethodNode]" = []
+
+
+class LambdaChildrenNode(BaseModel):
+    name: str
+    children: "list[LambdaChildrenNode]" = Field(default_factory=lambda: [])  # noqa: PIE807
+
+
 class CategoryRoot(RootModel[list[Category]]):
     pass
 
@@ -1176,6 +1198,12 @@ class IncompleteCategory(BaseModel):
         pytest.param(MixedCategory, "would use the latest MixedCategory", id="generic_field"),
         pytest.param(QuotedBook, "would use the latest .*QuotedBook", id="partially_quoted"),
         pytest.param(HiddenCategory, "would use the latest HiddenBook", id="quoted_arg"),
+        pytest.param(
+            LambdaChildrenNode,
+            "cannot verify what the default factory of the field 'children' of LambdaChildrenNode returns.*"
+            "default_factory=list",
+            id="lambda_default_factory",
+        ),
         pytest.param(IncompleteCategory, "IncompleteCategory.* not defined yet", id="undefined_names"),
     ],
 )
@@ -1235,6 +1263,12 @@ def test__generate_versioned_models__cycle_that_cannot_be_copied__should_raise(
         ),
         pytest.param(
             Settings,
+            ClassmethodNode,
+            "cannot verify what the default factory of the field 'settings' of ClassmethodNode returns",
+            id="classmethod_of_other_model",
+        ),
+        pytest.param(
+            Settings,
             SettingsLambdaNode,
             "cannot verify what the default factory of the field 'settings' of SettingsLambdaNode returns",
             id="lambda_default_factory",
@@ -1269,14 +1303,32 @@ def test__generate_versioned_models__copy_that_would_use_latest_models_of_cycle_
         generator[requested_model]
 
 
-def test__generate_versioned_models__default_of_enum_that_needs_versioning_in_cycle__should_raise():
+def test__generate_versioned_models__enum_default_in_cycle__should_work_as_for_other_models():
+    """Enum members are serialized by their values, so Cadwyn uses them as defaults as it always did"""
     versions = VersionBundle(
         Version("2001-01-01", version_change(enum(Status).didnt_have("new"))), Version("2000-01-01")
     )
+    old_node = generate_versioned_models(versions)["2000-01-01"][StatusNode]
+
+    # As for any other model with such a default, Cadwyn keeps the latest enum member
+    assert old_node.model_fields["status"].default is Status.new
+    assert old_node().children == []
+
+
+def test__generate_versioned_models__defaults_of_fields_that_do_not_reach_copied_cycles__should_work_as_on_main():
+    versions = VersionBundle(
+        Version(
+            "2001-01-01",
+            version_change(short_name(Category), short_name(ChangedItem), enum(Status).didnt_have("new")),
+        ),
+        Version("2000-01-01"),
+    )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
-    with pytest.raises(SchemaGenerationError, match="default of the field 'status' of StatusNode contains"):
-        generator[StatusNode]
+    assert generator[Category] is not Category
+    old_order = generator[UnrelatedOrder]
+    assert old_order.model_fields["status"].default is Status.new
+    assert old_order().items == []
 
 
 def test__generate_versioned_models__default_factories_that_create_versioned_copies__should_be_allowed():
