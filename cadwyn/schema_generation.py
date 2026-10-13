@@ -326,13 +326,8 @@ class _ModelBundle:
 
 @dataclasses.dataclass(**DATACLASS_SLOTS, **DATACLASS_KW_ONLY)
 class _RuntimeSchemaGenContext:
-    version_bundle: "VersionBundle"
     current_version: "Union[Version, HeadVersion]"
     models: _ModelBundle
-    latest_version: "Version" = dataclasses.field(init=False)
-
-    def __post_init__(self) -> None:
-        self.latest_version = max(self.version_bundle.versions, key=lambda v: v.value)
 
 
 def migrate_response_body(
@@ -3182,11 +3177,11 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
         changed_models,
         _get_parametrizations_whose_instructions_reach_other_generics(changed_models),
     )
-    context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
+    context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models)
     _migrate_classes(context)
 
     for version in versions.versions:
-        context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
+        context = _RuntimeSchemaGenContext(current_version=version, models=models)
         version_to_context_map[str(version.value)] = SchemaGenerator(
             copy.deepcopy(models), changed_models, reference_cycles
         )
