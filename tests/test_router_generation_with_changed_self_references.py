@@ -816,6 +816,26 @@ def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_ro
         create_versioned_app(version_change(short_name(LazyItem), short_name(LazyShelf)), router=router)
 
 
+def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_route_copies__should_raise_every_time():
+    """A failed attempt to start the app must not register the routes, or the next attempt would skip the check"""
+    router = VersionedAPIRouter()
+
+    @router.get("/tree", response_model=LazyTree)
+    async def get_tree() -> dict[str, Any]:
+        raise NotImplementedError
+
+    app = Cadwyn(
+        versions=VersionBundle(
+            Version("2001-01-01", version_change(short_name(LazyItem), short_name(LazyShelf))), Version("2000-01-01")
+        )
+    )
+    app.generate_and_include_versioned_routers(router)
+
+    for _ in range(3):
+        with pytest.raises(SchemaGenerationError, match=r"LazyTree.* the latest models in the type args of generics"):
+            app._cadwyn_initialize()
+
+
 def test__router_generation__self_referencing_model_changed_in_head_version__should_be_versioned_in_every_version(
     create_versioned_app: CreateVersionedApp,
 ):

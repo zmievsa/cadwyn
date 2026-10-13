@@ -2202,14 +2202,18 @@ class SchemaGenerator:
             }
             if route_models <= self._root_models:
                 return
-            self._root_models |= route_models
+            # The models are only registered after the check so the next attempt to start the app fails the same way.
+            # There are no cycles behind the latest generic args before the models copied eagerly are known because
+            # finding such cycles needs them (see _analyze_generation_of_cycle)
             if self._models_copied_eagerly is not None:
-                self._add_models_copied_eagerly(route_models)
-            for cycle in self._cycles_behind_latest_generic_args:
-                if self._is_copied_eagerly(cycle):
-                    # E.g. a model with instructions has `Page[Category]`, which kept the latest Category when the
-                    # generator was created, and a route uses Category directly
-                    raise _get_latest_generic_args_error(cycle)
+                models_copied_eagerly = self._get_models_copied_eagerly(route_models, self._models_copied_eagerly)
+                for cycle in self._cycles_behind_latest_generic_args:
+                    if not cycle.isdisjoint(models_copied_eagerly):
+                        # E.g. a model with instructions has `Page[Category]`, which kept the latest Category when the
+                        # generator was created, and a route uses Category directly
+                        raise _get_latest_generic_args_error(cycle)
+                self._models_copied_eagerly = models_copied_eagerly
+            self._root_models |= route_models
 
     def _is_copied_eagerly(self, cycle: frozenset[type[BaseModel]]) -> bool:
         """Whether this version copies the cycle in any case, where main failed.
@@ -2220,18 +2224,23 @@ class SchemaGenerator:
         registers before it versions them, so it does not depend on the order in which the models are requested.
         """
         if self._models_copied_eagerly is None:
-            self._models_copied_eagerly = set()
-            self._add_models_copied_eagerly(self._root_models)
+            self._models_copied_eagerly = self._get_models_copied_eagerly(self._root_models)
         return not cycle.isdisjoint(self._models_copied_eagerly)
 
-    def _add_models_copied_eagerly(self, root_models: "collections.abc.Iterable[type[BaseModel]]") -> None:
-        models_copied_eagerly = cast("set[type[BaseModel]]", self._models_copied_eagerly)
+    def _get_models_copied_eagerly(
+        self,
+        root_models: "collections.abc.Iterable[type[BaseModel]]",
+        models_copied_eagerly: "collections.abc.Set[type[BaseModel]]" = frozenset(),
+    ) -> set[type[BaseModel]]:
+        """Return the models copied eagerly along with the given ones: they and every model that they refer to"""
+        models = set(models_copied_eagerly)
         models_to_visit = [model for model in root_models if self._needs_copy(model)]
         while models_to_visit:
             model = models_to_visit.pop()
-            if model not in models_copied_eagerly:
-                models_copied_eagerly.add(model)
+            if model not in models:
+                models.add(model)
                 models_to_visit.extend(self._get_models_that_copying_requests(model))
+        return models
 
     def _get_models_reached_by_copying(self, model: type[BaseModel]) -> set[type[BaseModel]]:
         """Return the models that copying the model generates the copies of, directly or through other models"""
