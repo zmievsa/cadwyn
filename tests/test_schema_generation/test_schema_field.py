@@ -23,6 +23,7 @@ from cadwyn.exceptions import (
 )
 from cadwyn.schema_generation import SchemaGenerator
 from cadwyn.structure import schema
+from tests._resources.utils import HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED
 from tests.conftest import (
     CreateRuntimeSchemas,
     assert_models_are_equal,
@@ -1984,10 +1985,16 @@ def test__schema_field_had_and_didnt_have__field_info_subclass_in_annotated__sho
         assert [(type(field_info), field_info.extra) for field_info in field_infos] == [
             (FieldInfoWithExtraAttribute, "hello")
         ]
-    # Cadwyn 7.4.0 ignored had() for a constraint that the annotation's metadata sets. Applying it would make the
-    # older versions reject the requests and responses that they have always accepted, so it stays ignored
+    # Cadwyn 7.4.0 ignored had() for a constraint that the annotation's metadata sets (since pydantic 2.12). Applying
+    # it would make the older versions reject the requests and responses that they have always accepted, so it stays
+    # ignored
     assert old_schema.model_json_schema()["properties"] == {
-        "foo": {"description": "Old", "minLength": 1, "title": "Foo", "type": "string"},
+        "foo": {
+            "description": "Old",
+            "minLength": 5 if HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED else 1,
+            "title": "Foo",
+            "type": "string",
+        },
         "bar": {"title": "Bar", "type": "string"},
     }
 

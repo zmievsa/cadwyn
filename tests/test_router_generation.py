@@ -77,6 +77,7 @@ from tests._data.sqlalchemy_models import ImperativelyMappedModel, MappedChild, 
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
+from tests._resources.utils import HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED
 from tests.conftest import (
     CreateVersionedApp,
     CreateVersionedClients,
@@ -1404,9 +1405,10 @@ def constrained_fields_router(router: VersionedAPIRouter) -> VersionedAPIRouter:
     ("path", "schema_name", "is_applied"),
     [
         ("/field_defaults", "ConstrainedFieldsInFieldDefaults", True),
-        # Cadwyn 7.4.0 ignored had() for a constraint that the annotation's metadata sets. Applying it would make
-        # the older versions reject the requests and responses that they have always accepted, so it stays ignored
-        ("/annotated", "ConstrainedFieldsInAnnotated", False),
+        # Cadwyn 7.4.0 ignored had() for a constraint that the annotation's metadata sets (since pydantic 2.12).
+        # Applying it would make the older versions reject the requests and responses that they have always
+        # accepted, so it stays ignored
+        ("/annotated", "ConstrainedFieldsInAnnotated", HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED),
     ],
 )
 @pytest.mark.parametrize(
@@ -1984,8 +1986,18 @@ class StrictSchemaWithLaxFieldInAnnotated(BaseModel):
 @pytest.mark.parametrize(
     ("model", "attribute", "instruction"),
     [
-        (SchemaWithWireAttributesInAnnotated, "name", lambda field: field.had(min_length=5)),
-        (SchemaWithWireAttributesInAnnotated, "name", lambda field: field.had(max_length=3)),
+        *(
+            pytest.param(
+                SchemaWithWireAttributesInAnnotated,
+                "name",
+                instruction,
+                marks=pytest.mark.skipif(
+                    HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED,
+                    reason="Before pydantic 2.12, had() changes such constraints, as in Cadwyn 7.4.0",
+                ),
+            )
+            for instruction in [lambda field: field.had(min_length=5), lambda field: field.had(max_length=3)]
+        ),
         (SchemaWithWireAttributesInAnnotated, "with_default", lambda field: field.didnt_have("default")),
         (SchemaWithWireAttributesInAnnotated, "with_default_factory", lambda f: f.didnt_have("default_factory")),
         (SchemaWithWireAttributesInAnnotated, "with_validation_alias", lambda f: f.didnt_have("validation_alias")),
