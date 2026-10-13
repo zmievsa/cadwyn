@@ -220,6 +220,15 @@ def api_version_var():
 
 
 @pytest.fixture
+def version_generic_type_args() -> bool:
+    """VersionBundle(version_generic_type_args=...) for the apps and models that the fixtures create.
+
+    Test modules override it, and tests parametrize it, to version the type args of generic models.
+    """
+    return False
+
+
+@pytest.fixture
 def random_uuid():
     return uuid.uuid4()
 
@@ -268,14 +277,19 @@ def router() -> VersionedAPIRouter:
 
 @fixture_class(name="create_runtime_schemas")
 class CreateRuntimeSchemas:
+    version_generic_type_args: bool
+
     def __call__(self, *version_changes: type[VersionChange]) -> dict[str, SchemaGenerator]:
-        return generate_versioned_models(VersionBundle(*versions(*version_changes)))
+        return generate_versioned_models(
+            VersionBundle(*versions(*version_changes), version_generic_type_args=self.version_generic_type_args)
+        )
 
 
 @fixture_class(name="create_versioned_app")
 class CreateVersionedApp:
     api_version_var: ContextVar[Union[str, None]]
     router: VersionedAPIRouter
+    version_generic_type_args: bool
 
     def __call__(
         self,
@@ -289,6 +303,7 @@ class CreateVersionedApp:
                 HeadVersion(*head_version_changes),
                 *versions(*version_changes),
                 api_version_var=self.api_version_var,
+                version_generic_type_args=self.version_generic_type_args,
             )
         )
         app.generate_and_include_versioned_routers(router)

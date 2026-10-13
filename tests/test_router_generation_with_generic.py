@@ -29,9 +29,11 @@ from cadwyn import (
     Cadwyn,
     HeadVersion,
     RequestInfo,
+    ResponseInfo,
     Version,
     VersionBundle,
     convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
     migrate_response_body,
 )
 from cadwyn.route_generation import VersionedAPIRouter
@@ -48,6 +50,18 @@ from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import VersionChange
 from tests.conftest import CreateVersionedApp, version_change
 
+
+@pytest.fixture(params=[False, True], ids=["head_generic_args", "versioned_generic_args"])
+def version_generic_type_args(request: pytest.FixtureRequest) -> bool:
+    """Every test of this module runs with and without VersionBundle(version_generic_type_args=True)"""
+    return request.param
+
+
+# For the tests of the generics whose type args are versioned, which only happens with the option
+versions_generic_type_args = pytest.mark.parametrize(
+    "version_generic_type_args", [True], ids=["versioned_generic_args"]
+)
+
 BoolT = TypeVar("BoolT", bound=Union[bool, int])
 
 
@@ -60,26 +74,34 @@ class ParametrizedSchema(GenericSchema[bool]):
     pass
 
 
-class GenericVersionChange(VersionChange):
-    description = "Generic"
-    instructions_to_migrate_to_previous_version = (
-        schema(GenericSchema).field("foo").didnt_have("strict"),
-        schema(GenericSchema).field("foo").had(type=BoolT),
-        schema(GenericSchema).field("bar").had(description="A bar"),
-        schema(GenericSchema).field("bar").didnt_have("title"),
-    )
+# The tests of this module run once per value of version_generic_type_args, and a version change can only be bound
+# to one version bundle, so each app gets its own
+def generic_version_change() -> type[VersionChange]:
+    class GenericVersionChange(VersionChange):
+        description = "Generic"
+        instructions_to_migrate_to_previous_version = (
+            schema(GenericSchema).field("foo").didnt_have("strict"),
+            schema(GenericSchema).field("foo").had(type=BoolT),
+            schema(GenericSchema).field("bar").had(description="A bar"),
+            schema(GenericSchema).field("bar").didnt_have("title"),
+        )
 
-    @convert_request_to_next_version_for(GenericSchema)
-    def to_bool(request: RequestInfo) -> None:
-        request.body["foo"] = bool(request.body["foo"])
+        @convert_request_to_next_version_for(GenericSchema)
+        def to_bool(request: RequestInfo) -> None:
+            request.body["foo"] = bool(request.body["foo"])
+
+    return GenericVersionChange
 
 
-class ParametrizedVersionChange(VersionChange):
-    description = "Parametrized"
-    instructions_to_migrate_to_previous_version = (
-        schema(ParametrizedSchema).field("bar").had(description="A bar"),
-        schema(ParametrizedSchema).field("bar").didnt_have("title"),
-    )
+def parametrized_version_change() -> type[VersionChange]:
+    class ParametrizedVersionChange(VersionChange):
+        description = "Parametrized"
+        instructions_to_migrate_to_previous_version = (
+            schema(ParametrizedSchema).field("bar").had(description="A bar"),
+            schema(ParametrizedSchema).field("bar").didnt_have("title"),
+        )
+
+    return ParametrizedVersionChange
 
 
 router = VersionedAPIRouter()
@@ -99,7 +121,7 @@ def test__router_generation__using_generic_schema_in_body(
     create_versioned_app: CreateVersionedApp,
 ):
     app = create_versioned_app(
-        GenericVersionChange,
+        generic_version_change(),
         router=router,
     )
 
@@ -120,7 +142,7 @@ def test__router_generation__using_parametrized_schema_in_body(
     create_versioned_app: CreateVersionedApp,
 ):
     app = create_versioned_app(
-        ParametrizedVersionChange,
+        parametrized_version_change(),
         router=router,
     )
 
@@ -421,6 +443,7 @@ def get_response_schema(openapi: dict[str, Any], path: str) -> dict[str, Any]:
     [Page[Item], Page["Item"], PageWithTotal[Item], ItemPage],
     ids=["generic", "generic_with_quoted_arg", "generic_subclass", "parametrized_subclass"],
 )
+@versions_generic_type_args
 def test__router_generation__generic_response_model_with_versioned_arg__should_use_arg_from_requested_version(
     page_model: type[Page[Item]],
     create_versioned_app: CreateVersionedApp,
@@ -448,6 +471,7 @@ def test__router_generation__generic_response_model_with_versioned_arg__should_u
     }
 
 
+@versions_generic_type_args
 def test__router_generation__generic_using_other_generic_with_its_type_param__should_use_arg_from_requested_version(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -468,6 +492,7 @@ def test__router_generation__generic_using_other_generic_with_its_type_param__sh
 
 
 @pytest.mark.parametrize("page_model", [Page[Item], Page["Item"]], ids=["generic", "generic_with_quoted_arg"])
+@versions_generic_type_args
 def test__router_generation__generic_request_body_with_versioned_arg__should_use_arg_from_requested_version(
     page_model: type[Page[Item]],
     create_versioned_app: CreateVersionedApp,
@@ -493,6 +518,7 @@ def test__router_generation__generic_request_body_with_versioned_arg__should_use
     assert client_2001.post("/items", json={"items": [{"fullName": "Ada"}]}).json() == ["Ada"]
 
 
+@versions_generic_type_args
 def test__router_generation__local_generic_with_quoted_arg__should_use_arg_from_requested_version(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -516,6 +542,7 @@ def test__router_generation__local_generic_with_quoted_arg__should_use_arg_from_
     assert client_2001.get("/items").json() == {"items": [{"fullName": "Ada"}]}
 
 
+@versions_generic_type_args
 def test__router_generation__generic_from_unimportable_module__should_use_arg_from_requested_version(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -869,7 +896,7 @@ def test__router_generation__unquoted_parametrization_of_cyclic_generic__should_
 
 
 def test__router_generation__generic_args_without_versioned_models__should_be_left_as_they_are(
-    create_versioned_app: CreateVersionedApp,
+    create_versioned_app: CreateVersionedApp, version_generic_type_args: bool
 ):
     router = VersionedAPIRouter()
     body = {"quoted": {"items": [{"name": "a"}]}, "kind_items": {"items": [{"name": "b"}]}}
@@ -891,13 +918,19 @@ def test__router_generation__generic_args_without_versioned_models__should_be_le
             expected_schema_names
         )
 
-    versions = VersionBundle(Version("2001-01-01", item_alias_version_change()), Version("2000-01-01"))
+    versions = VersionBundle(
+        Version("2001-01-01", item_alias_version_change()),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
     assert migrate_response_body(
         versions, Page[UnchangedItem], latest_body={"items": [UnchangedItem()]}, version="2000-01-01"
     ).model_dump() == {"items": [{"name": "a"}]}
 
 
-def test__migrate_response_body__concurrently_for_generics__should_generate_models_without_errors():
+def test__migrate_response_body__concurrently_for_generics__should_generate_models_without_errors(
+    version_generic_type_args: bool,
+):
     switch_interval = sys.getswitchinterval()
     sys.setswitchinterval(1e-6)
     try:
@@ -911,6 +944,7 @@ def test__migrate_response_body__concurrently_for_generics__should_generate_mode
                 HeadVersion(),
                 Version("2001-01-01", version_change(*(old_name_description(leaf) for leaf in leaves))),
                 Version("2000-01-01"),
+                version_generic_type_args=version_generic_type_args,
             )
             # Like in an app that has already started and generates the rest of the models lazily
             generate_versioned_models(versions)
@@ -933,6 +967,7 @@ def test__migrate_response_body__concurrently_for_generics__should_generate_mode
         sys.setswitchinterval(switch_interval)
 
 
+@versions_generic_type_args
 def test__router_generation__generic_arg_with_annotations_that_cannot_be_rebuilt__should_use_arg_from_version(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -952,15 +987,16 @@ def test__router_generation__generic_arg_with_annotations_that_cannot_be_rebuilt
     assert TestClient(app).get("/openapi.json?version=2000-01-01").status_code == HTTP_200_OK
 
 
-@pytest.mark.parametrize(
-    "version_changes",
-    [[], [version_change(old_name_description(Item))]],
-    ids=["no_instructions", "unrelated_instructions"],
-)
+@pytest.mark.parametrize("has_instructions", [False, True], ids=["no_instructions", "unrelated_instructions"])
 def test__migrate_response_body__generic_args_without_versioned_models__should_not_be_copied(
-    version_changes: list[type[VersionChange]],
+    has_instructions: bool, version_generic_type_args: bool
 ):
-    versions = VersionBundle(Version("2001-01-01", *version_changes), Version("2000-01-01"))
+    version_changes = [version_change(old_name_description(Item))] if has_instructions else []
+    versions = VersionBundle(
+        Version("2001-01-01", *version_changes),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
 
     migrated_body = migrate_response_body(
         versions, Page[LockedItem], latest_body={"items": [{"name": " Ada "}]}, version="2000-01-01"
@@ -969,6 +1005,7 @@ def test__migrate_response_body__generic_args_without_versioned_models__should_n
     assert migrated_body.model_dump() == {"items": [{"name": "Ada"}]}
 
 
+@versions_generic_type_args
 def test__router_generation__generic_arg_referring_to_versioned_enum__should_use_enum_from_requested_version(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -988,14 +1025,12 @@ def test__router_generation__generic_arg_referring_to_versioned_enum__should_use
 
 
 @pytest.mark.skipif(sys.version_info < (3, 14), reason="Annotations are only evaluated lazily since Python 3.14")
-@pytest.mark.parametrize(
-    "version_changes",
-    [[], [version_change(old_name_description(Item))]],
-    ids=["no_instructions", "unrelated_instructions"],
-)
+@pytest.mark.parametrize("has_instructions", [False, True], ids=["no_instructions", "unrelated_instructions"])
 def test__router_generation__generic_args_with_annotations_only_defined_for_type_checking__should_work(
-    version_changes: list[type[VersionChange]],
+    has_instructions: bool, version_generic_type_args: bool
 ):
+    version_changes = [version_change(old_name_description(Item))] if has_instructions else []
+
     # These annotations would fail before Python 3.14 because they are evaluated when the class is created
     class ItemWithLock(BaseModel):
         name: str = "a"
@@ -1017,7 +1052,12 @@ def test__router_generation__generic_args_with_annotations_only_defined_for_type
     async def get_items_with_values() -> dict[str, Any]:
         return {"items": [{}]}
 
-    versions = VersionBundle(HeadVersion(), Version("2001-01-01", *version_changes), Version("2000-01-01"))
+    versions = VersionBundle(
+        HeadVersion(),
+        Version("2001-01-01", *version_changes),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
     app = Cadwyn(versions=versions)
     app.generate_and_include_versioned_routers(router)
     for version in ("2000-01-01", "2001-01-01"):
@@ -1036,21 +1076,23 @@ def test__router_generation__generic_args_with_annotations_only_defined_for_type
     assert migrated_body.model_dump() == {"items": [{"values": []}]}
 
 
-@pytest.mark.parametrize(
-    "version_changes",
-    [[], [version_change(old_name_description(Item))]],
-    ids=["no_instructions", "unrelated_instructions"],
-)
+@pytest.mark.parametrize("has_instructions", [False, True], ids=["no_instructions", "unrelated_instructions"])
 def test__router_generation__generic_arg_whose_schema_cannot_be_built__should_not_be_built(
-    version_changes: list[type[VersionChange]],
+    has_instructions: bool, version_generic_type_args: bool
 ):
+    version_changes = [version_change(old_name_description(Item))] if has_instructions else []
     router = VersionedAPIRouter()
 
     @router.get("/refs", response_model=Ref[DeferredItem])
     async def get_ref() -> dict[str, Any]:
         return {"id": 1}
 
-    versions = VersionBundle(HeadVersion(), Version("2001-01-01", *version_changes), Version("2000-01-01"))
+    versions = VersionBundle(
+        HeadVersion(),
+        Version("2001-01-01", *version_changes),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
     app = Cadwyn(versions=versions)
     app.generate_and_include_versioned_routers(router)
     for version in ("2000-01-01", "2001-01-01"):
@@ -1062,6 +1104,7 @@ def test__router_generation__generic_arg_whose_schema_cannot_be_built__should_no
     assert migrated_body.model_dump() == {"id": 1}
 
 
+@versions_generic_type_args
 def test__router_generation__generic_arg_with_unresolved_forward_ref__should_use_arg_from_requested_version(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -1108,13 +1151,19 @@ def test__router_generation__untouched_generic_arg_referring_to_deferred_model__
     assert not DeferredKind.__pydantic_complete__
 
 
-def test__generate_versioned_models__untouched_generic_arg_with_unresolvable_forward_ref__should_stay_unresolved():
+def test__generate_versioned_models__untouched_generic_arg_with_unresolvable_forward_ref__should_stay_unresolved(
+    version_generic_type_args: bool,
+):
     class ItemWithUnresolvableRef(BaseModel):
         name: str = "a"
         # Cadwyn's own local variables must not be used to resolve forward refs
         unresolvable: "Optional[model]" = None  # noqa: F821  # ty: ignore[unresolved-reference]
 
-    versions = VersionBundle(Version("2001-01-01", item_alias_version_change()), Version("2000-01-01"))
+    versions = VersionBundle(
+        Version("2001-01-01", item_alias_version_change()),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
 
     generate_versioned_models(versions)["2000-01-01"][Page[ItemWithUnresolvableRef]]
 
@@ -1151,11 +1200,13 @@ def load_fresh_data_module(name: str, **module_attributes: Any) -> Any:
     ],
 )
 @pytest.mark.parametrize("migrate_arg_first", [False, True], ids=["generic_first", "arg_first"])
+@versions_generic_type_args
 def test__migrate_response_body__generic_arg_with_forward_refs_resolved_by_pydantic__should_find_their_cycles(
     model_name: str,
     body: dict[str, Any],
     old_body: dict[str, Any],
     migrate_arg_first: bool,
+    version_generic_type_args: bool,
 ):
     module = load_fresh_data_module("generic_forward_ref_cycles")
     model = getattr(module, model_name)
@@ -1171,6 +1222,7 @@ def test__migrate_response_body__generic_arg_with_forward_refs_resolved_by_pydan
             ),
         ),
         Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
     )
     if migrate_arg_first:
         assert (
@@ -1208,13 +1260,13 @@ REFERENCE_KINDS_TO_LATER_NAMES = [
 @pytest.mark.parametrize("refer_back_to_page", [True, False], ids=["cycle", "no_cycle"])
 @pytest.mark.parametrize("look_through_other_generic", [True, False], ids=["through_box", "directly"])
 def test__generate_versioned_models__generic_arg_looked_at_before_its_names_are_defined__should_keep_head_args(
-    kind: str,
-    refer_back_to_page: bool,
-    look_through_other_generic: bool,
+    kind: str, refer_back_to_page: bool, look_through_other_generic: bool, version_generic_type_args: bool
 ):
     module = load_fresh_data_module("generic_stale_references", KIND=kind)
     versions = VersionBundle(
-        Version("2001-01-01", version_change(schema(module.Other).field("value").didnt_exist)), Version("2000-01-01")
+        Version("2001-01-01", version_change(schema(module.Other).field("value").didnt_exist)),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
     # Looks at X while Later is not defined yet
@@ -1233,14 +1285,15 @@ def test__generate_versioned_models__generic_arg_looked_at_before_its_names_are_
     ("refer_back_to_page", "old_other"),
     [pytest.param(True, {"value": 3}, id="cycle"), pytest.param(False, {}, id="no_cycle")],
 )
+@versions_generic_type_args
 def test__generate_versioned_models__generic_arg_whose_names_are_defined_before_looking_at_it__should_be_versioned(
-    kind: str,
-    refer_back_to_page: bool,
-    old_other: dict[str, Any],
+    kind: str, refer_back_to_page: bool, old_other: dict[str, Any], version_generic_type_args: bool
 ):
     module = load_fresh_data_module("generic_stale_references", KIND=kind)
     versions = VersionBundle(
-        Version("2001-01-01", version_change(schema(module.Other).field("value").didnt_exist)), Version("2000-01-01")
+        Version("2001-01-01", version_change(schema(module.Other).field("value").didnt_exist)),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
     )
     module.define_later(refer_back_to_page=refer_back_to_page)
 
@@ -1250,10 +1303,14 @@ def test__generate_versioned_models__generic_arg_whose_names_are_defined_before_
     assert page.model_dump()["items"][0]["other"] == old_other
 
 
-def test__generate_versioned_models__generic_whose_own_args_have_names_defined_later__should_keep_head_args():
+def test__generate_versioned_models__generic_whose_own_args_have_names_defined_later__should_keep_head_args(
+    version_generic_type_args: bool,
+):
     module = load_fresh_data_module("generic_stale_references", KIND="field")
     versions = VersionBundle(
-        Version("2001-01-01", version_change(schema(module.Other).field("value").didnt_exist)), Version("2000-01-01")
+        Version("2001-01-01", version_change(schema(module.Other).field("value").didnt_exist)),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
     # Looks at Ref[Union[Other, "Later"]] while Later is not defined yet
@@ -1387,6 +1444,7 @@ class AnnotatedItemsHolder(BaseModel):
         ),
     ],
 )
+@versions_generic_type_args
 def test__router_generation__generic_args_with_strings_that_are_not_types__should_be_versioned(
     create_versioned_app: CreateVersionedApp,
     response_model: Any,
@@ -1424,6 +1482,7 @@ class QuotedItemsHolder(BaseModel):
     quoted_in_union_type: Optional[Page[list["Item"] | None]] = None
 
 
+@versions_generic_type_args
 def test__router_generation__strings_nested_in_builtin_generic_args__should_be_versioned(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -1459,8 +1518,15 @@ def test__router_generation__strings_nested_in_builtin_generic_args__should_be_v
 
 
 @pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
-def test__migrate_response_body__head_instances_in_versioned_generic_args__should_be_rejected(version: str):
-    versions = VersionBundle(Version("2001-01-01", version_change(old_name_description(Item))), Version("2000-01-01"))
+@versions_generic_type_args
+def test__migrate_response_body__head_instances_in_versioned_generic_args__should_be_rejected(
+    version: str, version_generic_type_args: bool
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(old_name_description(Item))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
 
     # Like in versioned models that are not generic, the versioned args only accept data
     with pytest.raises(ValidationError):
@@ -1531,10 +1597,11 @@ def test__router_generation__strict_model_with_unchanged_enum__should_accept_hea
         assert "ItemState" in client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
 
 
-def test__generate_versioned_models__enums_without_instructions__should_not_be_copied():
+def test__generate_versioned_models__enums_without_instructions__should_not_be_copied(version_generic_type_args: bool):
     versions = VersionBundle(
         Version("2001-01-01", version_change(schema(StrictItemWithState).field("state").had(description="Old"))),
         Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
     )
 
     for generator in generate_versioned_models(versions).values():
@@ -1543,10 +1610,13 @@ def test__generate_versioned_models__enums_without_instructions__should_not_be_c
 
 
 @pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
-def test__migrate_response_body__head_enum_members_in_strict_generic_args__should_be_accepted(version: str):
+def test__migrate_response_body__head_enum_members_in_strict_generic_args__should_be_accepted(
+    version: str, version_generic_type_args: bool
+):
     versions = VersionBundle(
         Version("2001-01-01", version_change(schema(StrictItemWithState).field("state").had(description="Old"))),
         Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
     )
 
     migrated_body = migrate_response_body(
@@ -1603,8 +1673,12 @@ def test__router_generation__generic_arg_with_annotations_failing_at_runtime__sh
         assert client.get(f"/openapi.json?version={version}").status_code == HTTP_200_OK
 
 
-def test__generate_versioned_models__without_changed_models__should_keep_head_generic_args():
-    versions = VersionBundle(HeadVersion(), Version("2001-01-01"), Version("2000-01-01"))
+def test__generate_versioned_models__without_changed_models__should_keep_head_generic_args(
+    version_generic_type_args: bool,
+):
+    versions = VersionBundle(
+        HeadVersion(), Version("2001-01-01"), Version("2000-01-01"), version_generic_type_args=version_generic_type_args
+    )
 
     for generator in generate_versioned_models(versions).values():
         assert generator[Page[Item]].__pydantic_generic_metadata__["args"] == (Item,)
@@ -1764,3 +1838,225 @@ def test__router_generation__request_body_with_unchanged_enum__should_validate_i
     for version in app.router.versioned_routers:
         client = TestClient(app, headers={app.router.api_version_parameter_name: version})
         assert client.post("/items", json={"state": "active"}).json() == {"is_head_member": True}
+
+
+# Without version_generic_type_args, the generics behave exactly as in Cadwyn 7.4.0: their type args stay the latest
+# models in every version. These tests pin that, along with what the option changes.
+
+
+class RenamedItem(BaseModel):
+    id: int
+    name: str
+
+
+def get_schema_names(app: Cadwyn, version: str) -> list[str]:
+    openapi = TestClient(app).get(f"/openapi.json?version={version}").json()
+    return sorted(openapi["components"]["schemas"])
+
+
+def test__router_generation__generic_with_renamed_arg_field__should_version_arg_only_with_option(
+    create_versioned_app: CreateVersionedApp,
+    version_generic_type_args: bool,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/item", response_model=RenamedItem)
+    async def get_item() -> RenamedItem:
+        return RenamedItem(id=1, name="a")
+
+    @router.post("/item", response_model=RenamedItem)
+    async def post_item(item: RenamedItem) -> RenamedItem:
+        return item
+
+    @router.get("/page", response_model=Page[RenamedItem])
+    async def get_page() -> Page[RenamedItem]:
+        return Page[RenamedItem](items=[RenamedItem(id=1, name="a")])
+
+    @router.post("/page", response_model=Page[RenamedItem])
+    async def post_page(page: Page[RenamedItem]) -> Page[RenamedItem]:
+        return page
+
+    # The usual converters of the model, which do not run for the items of the generic
+    @convert_response_to_previous_version_for(RenamedItem)
+    def rename_name_to_title(response: ResponseInfo) -> None:
+        response.body["title"] = response.body.pop("name")
+
+    @convert_request_to_next_version_for(RenamedItem)
+    def rename_title_to_name(request: RequestInfo) -> None:
+        request.body["name"] = request.body.pop("title")
+
+    app = create_versioned_app(
+        version_change(
+            schema(RenamedItem).field("name").had(name="title"),
+            rename_name_to_title=rename_name_to_title,
+            rename_title_to_name=rename_title_to_name,
+        ),
+        router=router,
+    )
+    old_client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    latest_body = {"items": [{"id": 1, "name": "a"}]}
+    old_body = {"items": [{"id": 1, "title": "a"}]}
+
+    assert old_client.get("/item").json() == {"id": 1, "title": "a"}
+    assert old_client.post("/item", json={"id": 1, "title": "a"}).json() == {"id": 1, "title": "a"}
+    head_shape_response = old_client.post("/page", json=latest_body)
+    old_schema_names = [
+        name for name in get_schema_names(app, "2000-01-01") if "RenamedItem" in name and not name.startswith("Page")
+    ]
+    if version_generic_type_args:
+        assert head_shape_response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+        assert head_shape_response.json()["detail"][0]["loc"] == ["body", "items", 0, "title"]
+        assert old_schema_names == ["RenamedItem"]
+    else:
+        assert old_client.get("/page").json() == latest_body
+        assert head_shape_response.json() == latest_body
+        old_shape_response = old_client.post("/page", json=old_body)
+        assert old_shape_response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+        assert old_shape_response.json()["detail"][0]["loc"] == ["body", "items", 0, "name"]
+        # The latest RenamedItem in the generic and its old copy in /item
+        assert len(old_schema_names) == 2
+    assert get_schema_names(app, "2001-01-01") == [
+        "HTTPValidationError",
+        "Page_RenamedItem_",
+        "RenamedItem",
+        "ValidationError",
+    ]
+
+
+class ItemWithInternalField(BaseModel):
+    id: int
+    internal: str = "secret"
+
+
+def test__router_generation__generic_arg_changed_in_head_version__should_only_change_in_generic_with_option(
+    create_versioned_app: CreateVersionedApp,
+    version_generic_type_args: bool,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/item", response_model=ItemWithInternalField)
+    async def get_item() -> dict[str, Any]:
+        return {"id": 1}
+
+    @router.get("/page", response_model=Page[ItemWithInternalField])
+    async def get_page() -> dict[str, Any]:
+        return {"items": [{"id": 1}]}
+
+    @router.get("/quoted", response_model=Page[list["ItemWithInternalField"]])
+    async def get_quoted() -> dict[str, Any]:
+        return {"items": [[{"id": 1}]]}
+
+    app = create_versioned_app(
+        head_version_changes=[version_change(schema(ItemWithInternalField).field("internal").didnt_exist)],
+        router=router,
+    )
+
+    assert list(app.router.versioned_routers) == ["2000-01-01"]
+    for version in app.router.versioned_routers:
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.get("/item").json() == {"id": 1}
+        schema_names = get_schema_names(app, version)
+        if version_generic_type_args:
+            assert client.get("/page").json() == {"items": [{"id": 1}]}
+            assert client.get("/quoted").json() == {"items": [[{"id": 1}]]}
+            # The quoted arg is evaluated to version it
+            assert "Page_list_ItemWithInternalField__" in schema_names
+            assert [name for name in schema_names if "ItemWithInternalField" in name] == [
+                "ItemWithInternalField",
+                "Page_ItemWithInternalField_",
+                "Page_list_ItemWithInternalField__",
+            ]
+        else:
+            # HeadVersion changes do not apply to the latest models in the generics, even in the latest version
+            assert client.get("/page").json() == {"items": [{"id": 1, "internal": "secret"}]}
+            assert client.get("/quoted").json() == {"items": [[{"id": 1, "internal": "secret"}]]}
+            assert "Page_list_str__" in schema_names
+            assert (
+                len(
+                    [
+                        name
+                        for name in schema_names
+                        if name.endswith(("ItemWithInternalField__1", "ItemWithInternalField__2"))
+                    ]
+                )
+                == 2
+            )
+
+
+class ItemColor(str, Enum):
+    red = "red"
+    blue = "blue"
+
+
+class ItemWithColor(BaseModel):
+    color: ItemColor
+    category: "Optional[CategoryOfItemWithColor]" = None
+
+
+class CategoryOfItemWithColor(BaseModel):
+    name: str
+    parent: "Optional[CategoryOfItemWithColor]" = None
+
+
+class ItemWithStripWithLock(BaseModel):
+    name: Annotated[str, BeforeValidator(StripWithLock())]
+    item: Optional[RenamedItem] = None
+
+
+def test__migrate_response_body__generic_args_referring_to_changed_models__should_be_latest_models_without_option(
+    version_generic_type_args: bool,
+):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenamedItem).field("name").had(description="Old"))),
+        Version("2000-01-01"),
+        version_generic_type_args=version_generic_type_args,
+    )
+
+    for version in ("2000-01-01", "2001-01-01"):
+        latest_body = {"items": [RenamedItem(id=1, name="a")]}
+        if version_generic_type_args:
+            with pytest.raises(ValidationError):
+                migrate_response_body(versions, Page[RenamedItem], latest_body=latest_body, version=version)
+            # Copying the arg needs a deep copy of its validator, which cannot be copied
+            with pytest.raises(TypeError, match="pickle"):
+                migrate_response_body(
+                    versions, Page[ItemWithStripWithLock], latest_body={"items": [{"name": " a "}]}, version=version
+                )
+        else:
+            migrated_body = migrate_response_body(versions, Page[RenamedItem], latest_body=latest_body, version=version)
+            assert migrated_body.model_dump(mode="json") == {"items": [{"id": 1, "name": "a"}]}
+            migrated_body = migrate_response_body(
+                versions, Page[ItemWithStripWithLock], latest_body={"items": [{"name": " a "}]}, version=version
+            )
+            assert migrated_body.model_dump() == {"items": [{"name": "a", "item": None}]}
+
+
+def test__router_generation__generic_arg_with_changed_enum_and_self_referencing_model__should_be_versioned_with_option(
+    create_versioned_app: CreateVersionedApp,
+    version_generic_type_args: bool,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/items", response_model=Page[ItemWithColor])
+    async def post_items(page: Page[ItemWithColor]) -> Page[ItemWithColor]:
+        return page
+
+    app = create_versioned_app(version_change(enum(ItemColor).didnt_have("blue")), router=router)
+    old_client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+    body = {"items": [{"color": "blue", "category": {"name": "c", "parent": None}}]}
+
+    response = old_client.post("/items", json=body)
+    if version_generic_type_args:
+        assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    else:
+        assert response.json() == body
+
+
+def test__version_bundle__version_generic_type_args__should_be_read_only(version_generic_type_args: bool):
+    """The versioned models are cached per version bundle so changing the option later would be silently ignored"""
+    versions = VersionBundle(Version("2000-01-01"), version_generic_type_args=version_generic_type_args)
+
+    assert versions.version_generic_type_args is version_generic_type_args
+    with pytest.raises(AttributeError):
+        versions.version_generic_type_args = not version_generic_type_args  # ty: ignore[invalid-assignment]
+    assert versions.version_generic_type_args is version_generic_type_args
