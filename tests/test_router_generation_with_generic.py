@@ -2402,6 +2402,30 @@ def test__router_generation__parametrization_reached_through_generic__without_op
 
 
 @versions_generic_type_args
+def test__router_generation__generic_built_before_parametrization_with_instructions__should_apply_them(
+    create_versioned_app: CreateVersionedApp,
+):
+    class Pair(BaseModel, Generic[_T, _U]):
+        first: _T
+        second: _U
+
+    class Box(BaseModel, Generic[_T]):
+        pair: Pair[_T, int]
+
+    # E.g. the routes are defined before the version changes. Pydantic 2.11 then builds a Pair[str, int] for Box[str]
+    # that is a different class from the Pair[str, int] of the instructions.
+    box_model = Box[str]
+    clients = _create_app_with_instructions_for_parametrization_reached_through_generic(
+        create_versioned_app, box_model, Pair[str, int], {"pair": {"first": "a", "second": 1}}
+    )
+
+    assert clients["2000-01-01"].get("/box").json() == {"pair": {"first": "a", "old_second": 1}}
+    assert clients["2001-01-01"].get("/box").json() == {"pair": {"first": "a", "second": 1}}
+    old_schemas = clients["unversioned"].get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert [name for name in old_schemas if "Pair" in name] == ["Pair_str_int_"]
+
+
+@versions_generic_type_args
 def test__router_generation__parametrization_with_instructions_reached_through_versioned_args__should_apply_them(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -2499,40 +2523,48 @@ def test__generate_versioned_models__parametrization_with_undefined_names__shoul
     assert reference_cycles.get_redefined_field_names(Box[str]) == ()
 
 
+class _RecursiveItem(BaseModel):
+    name: str
+
+
+class _RecursivePair(BaseModel, Generic[_T, _U]):
+    first: _T
+    second: _U
+
+
+# Pydantic refers to _RecursiveNode[_RecursiveItem] within itself by a reference that does not lead to its copy.
+# The models are defined here because Pydantic 2.11 cannot resolve such a model defined within a function.
+class _RecursiveNode(BaseModel, Generic[_T]):
+    items: "list[Union[_RecursivePair[_T, int], _RecursiveNode[_T]]]" = []
+
+
 def test__router_generation__parametrization_with_instructions_within_recursive_generic__should_work_as_on_main(
     create_versioned_app: CreateVersionedApp,
 ):
-    class Item(BaseModel):
-        name: str
-
-    class Pair(BaseModel, Generic[_T, _U]):
-        first: _T
-        second: _U
-
-    class Node(BaseModel, Generic[_T]):
-        # Pydantic refers to Node[Item] within Node[Item] by a reference that does not lead to its copy
-        items: "list[Union[Pair[_T, int], Node[_T]]]" = []
-
     router = VersionedAPIRouter()
     body = {"items": [{"first": {"name": "a"}, "second": 1}, {"items": [{"first": {"name": "b"}, "second": 2}]}]}
 
-    @router.get("/node", response_model=Node[Item])
+    @router.get("/node", response_model=_RecursiveNode[_RecursiveItem])
     async def get_node() -> dict[str, Any]:
         return body
 
     app = create_versioned_app(
         version_change(
-            schema(Item).field("name").had(description="Old name"),
-            schema(Pair[Item, int]).field("second").had(serialization_alias="old_second"),
+            schema(_RecursiveItem).field("name").had(description="Old name"),
+            schema(_RecursivePair[_RecursiveItem, int]).field("second").had(serialization_alias="old_second"),
         ),
         router=router,
     )
 
+    schema_names = []
     for version in ("2000-01-01", "2001-01-01"):
         client = TestClient(app, headers={app.router.api_version_parameter_name: version})
         assert client.get("/node").json() == body
         schemas = TestClient(app).get(f"/openapi.json?version={version}").json()["components"]["schemas"]
-        assert sorted(schemas) == ["HTTPValidationError", "Item", "Node_Item_", "Pair_Item_int_", "ValidationError"]
+        schema_names.append(sorted(schemas))
+    # One schema per model in both versions, as on main
+    assert schema_names[0] == schema_names[1]
+    assert len([name for name in schema_names[0] if "Pair" in name or "Node" in name]) == 2
 
 
 def test__generate_versioned_models__parametrizations_that_refer_to_each_other__should_inherit_fields_as_on_main():

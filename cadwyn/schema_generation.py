@@ -480,10 +480,14 @@ def _has_undefined_names_in_lazy_annotations(obj: Any) -> bool:
     return False
 
 
+# The models whose copies do not redefine inherited fields (see _ReferenceCycles.get_redefined_fields)
+_NO_REDEFINED_FIELDS: "collections.abc.Mapping[str, Any]" = types.MappingProxyType({})
+
+
 def _get_model_annotations(
     model: type[BaseModel],
     fields: Union[dict[str, FieldInfo], None] = None,
-    redefined_field_names: "collections.abc.Iterable[str]" = (),
+    redefined_fields: "collections.abc.Mapping[str, Any]" = _NO_REDEFINED_FIELDS,
 ) -> dict[str, Any]:
     fields = model.model_fields if fields is None else fields
 
@@ -500,9 +504,8 @@ def _get_model_annotations(
         name: _rebuild_annotated(name, value) if _is_unresolved_annotation(value) else value
         for name, value in _get_annotations_without_evaluating(model).items()
     }
-    # The inherited fields that the copy redefines (see _ReferenceCycles.get_redefined_field_names) only have
-    # the annotations that pydantic has resolved
-    return annotations | {name: _rebuild_annotated(name, None) for name in redefined_field_names}
+    # The inherited fields that the copy redefines (see _ReferenceCycles.get_redefined_fields)
+    return annotations | dict(redefined_fields)
 
 
 def _is_unresolved_annotation(annotation: Any) -> bool:
@@ -598,7 +601,7 @@ def _rebuild_model_fields_without_changing_them(  # pragma: no cover # Pydantic 
 
 
 def _get_head_model_references(
-    model: type[BaseModel], redefined_field_names: "collections.abc.Iterable[str]" = ()
+    model: type[BaseModel], redefined_fields: "collections.abc.Mapping[str, Any]" = _NO_REDEFINED_FIELDS
 ) -> "_ModelReferences":
     """Return the models that the copy of a model without instructions would request from the generator.
 
@@ -614,9 +617,9 @@ def _get_head_model_references(
         model,
         {
             name: _extract_passed_field_attributes(fields[name])
-            for name in _get_model_field_names(model, fields, redefined_field_names)
+            for name in _get_model_field_names(model, fields, redefined_fields)
         },
-        _get_model_annotations(model, fields, redefined_field_names),
+        _get_model_annotations(model, fields, redefined_fields),
     )
     return collector.get_references()
 
@@ -688,7 +691,7 @@ def _rebuild_generic_alias(annotation: Any, new_args: tuple[Any, ...]) -> Any:
 
 
 def _wrap_pydantic_model(
-    model: type[_T_PYDANTIC_MODEL], redefined_field_names: "collections.abc.Iterable[str]" = ()
+    model: type[_T_PYDANTIC_MODEL], redefined_fields: "collections.abc.Mapping[str, Any]" = _NO_REDEFINED_FIELDS
 ) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
     _rebuild_model(model)
     decorators = _get_model_decorators(model)
@@ -700,14 +703,14 @@ def _wrap_pydantic_model(
         wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
         validators[decorator_wrapper.cls_var_name] = wrapped_validator
 
-    annotations = _get_model_annotations(model, redefined_field_names=redefined_field_names)
+    annotations = _get_model_annotations(model, redefined_fields=redefined_fields)
     fields = {
         field_name: PydanticFieldWrapper(
             model.model_fields[field_name],
             annotations[field_name],
             field_name,
         )
-        for field_name in _get_model_field_names(model, redefined_field_names=redefined_field_names)
+        for field_name in _get_model_field_names(model, redefined_field_names=redefined_fields)
     }
 
     main_attributes = fields | validators
@@ -1873,6 +1876,7 @@ class _ReferenceCycles:
         "_parametrizations_built_by_pydantic",
         "_reaches_changed_parametrizations",
         "_redefined_field_names",
+        "_redefined_fields",
         "_requested_models",
     )
 
@@ -1899,6 +1903,7 @@ class _ReferenceCycles:
         self._reaches_changed_parametrizations: dict[type[BaseModel], bool] = {}
         self._models_in_cycles_with_redefined_fields: dict[type[Union[BaseModel, Enum]], bool] = {}
         self._redefined_field_names: dict[type[BaseModel], tuple[str, ...]] = {}
+        self._redefined_fields: dict[type[BaseModel], collections.abc.Mapping[str, Any]] = {}
         self._head_references_with_redefined_fields: dict[type[BaseModel], _ModelReferences] = {}
 
     def is_in_cycle(self, model: type[Union[BaseModel, Enum]]) -> bool:
@@ -1929,14 +1934,12 @@ class _ReferenceCycles:
     def get_head_references(self, model: type[BaseModel]) -> "_ModelReferences":
         """Return the references of the head model (see _get_head_model_references), with its redefined fields"""
         with self._lock:
-            redefined_field_names = self._get_redefined_field_names(model)
-            if not redefined_field_names:
+            redefined_fields = self._get_redefined_fields(model)
+            if not redefined_fields:
                 return self._get_head_references(model)
             if model not in self._head_references_with_redefined_fields:
                 # They are complete because the fields are only redefined if we know what copying them requests
-                self._head_references_with_redefined_fields[model] = _get_head_model_references(
-                    model, redefined_field_names
-                )
+                self._head_references_with_redefined_fields[model] = _get_head_model_references(model, redefined_fields)
             return self._head_references_with_redefined_fields[model]
 
     def get_redefined_field_names(self, model: type[BaseModel]) -> tuple[str, ...]:
@@ -1955,6 +1958,48 @@ class _ReferenceCycles:
         """
         with self._lock:
             return self._get_redefined_field_names(model)
+
+    def get_redefined_fields(self, model: type[BaseModel]) -> "collections.abc.Mapping[str, Any]":
+        """Return the annotations of the fields that the copies of the model redefine (see get_redefined_field_names).
+
+        They are the annotations that pydantic resolved for the head model, with the parametrizations that have
+        instructions instead of the equal ones that pydantic built separately (Pydantic 2.11 builds another
+        `Pair[str, int]` for `Box[str]` if `Box[str]` is created before `Pair[str, int]` itself).
+        """
+        with self._lock:
+            return self._get_redefined_fields(model)
+
+    def _get_redefined_fields(self, model: type[BaseModel]) -> "collections.abc.Mapping[str, Any]":
+        redefined_field_names = self._get_redefined_field_names(model)
+        if not redefined_field_names:
+            return _NO_REDEFINED_FIELDS
+        if model not in self._redefined_fields:
+            # The fields are only redefined if they are known (see _get_parametrizations_built_by_pydantic)
+            fields = cast("dict[str, FieldInfo]", _get_rebuilt_model_fields(model))
+            self._redefined_fields[model] = types.MappingProxyType(
+                {
+                    name: _replace_in_type_positions(
+                        _get_annotation_with_metadata(fields[name]), self._get_changed_parametrization
+                    )
+                    for name in redefined_field_names
+                }
+            )
+        return self._redefined_fields[model]
+
+    def _get_changed_parametrization(self, annotation: Any) -> Any:
+        """Return the parametrization with instructions that is the same as the annotation, or the annotation"""
+        if annotation in self._changed_parametrizations or not (
+            lenient_issubclass(annotation, BaseModel) and _is_parametrization(annotation)
+        ):
+            return annotation
+        return next(
+            (
+                parametrization
+                for parametrization in self._changed_parametrizations
+                if _is_same_parametrization(annotation, parametrization)
+            ),
+            annotation,
+        )
 
     def _get_redefined_field_names(self, model: type[BaseModel]) -> tuple[str, ...]:
         if not self._changed_parametrizations or not lenient_issubclass(model, BaseModel):
@@ -2026,7 +2071,7 @@ class _ReferenceCycles:
                 if current_model in visited_models:
                     continue
                 visited_models.add(current_model)
-                if current_model in self._changed_parametrizations:
+                if self._get_changed_parametrization(current_model) in self._changed_parametrizations:
                     answer = True
                     break
                 for parametrizations in self._get_parametrizations_built_by_pydantic(current_model).values():
@@ -2878,7 +2923,7 @@ class SchemaGenerator:
                 return self.model_bundle.schemas[model]
             # TODO: My god, what if one of its fields is in our concrete schemas and we don't use it? :O
             # TODO: Add an argument with our concrete schemas for _wrap_pydantic_model
-            wrapper = _wrap_pydantic_model(model, self._reference_cycles.get_redefined_field_names(model))
+            wrapper = _wrap_pydantic_model(model, self._reference_cycles.get_redefined_fields(model))
             self.model_bundle.schemas[model] = wrapper
         elif issubclass(model, Enum):
             if model in self.model_bundle.enums:
@@ -3237,17 +3282,26 @@ def _iter_values_within(value: Any) -> "collections.abc.Iterator[Any]":
 
 def _replace_forward_refs(annotation: Any, models_by_name: dict[str, type[BaseModel]]) -> Any:
     """Replace the forward refs to the models in the type positions of the annotation (see _CycleCopier)"""
-    if isinstance(annotation, ForwardRef):
-        return models_by_name.get(annotation.__forward_arg__, annotation)
+    return _replace_in_type_positions(
+        annotation,
+        lambda value: models_by_name.get(value.__forward_arg__, value) if isinstance(value, ForwardRef) else value,
+    )
+
+
+def _replace_in_type_positions(annotation: Any, replace: Callable[[Any], Any]) -> Any:
+    """Replace the values in the type positions of the annotation, keeping the annotation if nothing changes"""
+    replaced = replace(annotation)
+    if replaced is not annotation:
+        return replaced
     if isinstance(annotation, list):
         # E.g. the args of Callable[[Item], None]
-        return [_replace_forward_refs(arg, models_by_name) for arg in annotation]
+        return [_replace_in_type_positions(arg, replace) for arg in annotation]
     if not isinstance(annotation, (*GenericAliasUnionArgs, UnionType)):
         return annotation
     origin = get_origin(annotation)
     args = get_args(annotation)
     new_args = tuple(
-        _replace_forward_refs(arg, models_by_name) if _is_type_position_in_generic(origin, index) else arg
+        _replace_in_type_positions(arg, replace) if _is_type_position_in_generic(origin, index) else arg
         for index, arg in enumerate(args)
     )
     if all(new_arg is arg for new_arg, arg in zip(new_args, args, strict=True)):
@@ -3644,10 +3698,12 @@ def _get_models_in_field(field: FieldInfo) -> Union[frozenset[type[Union[BaseMod
     transformer = collector.annotation_transformer
     with transformer.hard_position():
         transformer.change_version_of_annotation(_extract_passed_field_attributes(field))
-    transformer.change_version_of_annotation(
-        _AnnotatedAlias(field.annotation, tuple(field.metadata)) if field.metadata else field.annotation
-    )
+    transformer.change_version_of_annotation(_get_annotation_with_metadata(field))
     return frozenset(collector.models) if collector.is_complete else None
+
+
+def _get_annotation_with_metadata(field: FieldInfo) -> Any:
+    return _AnnotatedAlias(field.annotation, tuple(field.metadata)) if field.metadata else field.annotation
 
 
 def _contains_pydantic_recursive_refs(annotation: Any) -> bool:
