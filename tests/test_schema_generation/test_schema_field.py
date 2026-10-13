@@ -237,7 +237,9 @@ def _get_description_and_max_length(model: type[BaseModel]) -> tuple[Union[str, 
     return field.description, max_length
 
 
-# The parent has an instruction so that its field is the same object as the field of its subclasses in Cadwyn
+# The parent has an instruction so that its field is the same object as the field of its subclasses in Cadwyn.
+# As in Cadwyn 7.4.0, the changes that any of these models make to the field then apply to all of them, in this and
+# all older versions. Existing apps rely on it, e.g. for the keys of their responses
 PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="Bar")
 
 
@@ -247,9 +249,9 @@ PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="
         pytest.param(
             [[schema(InheritedFieldChild).field("foo").had(description="Child", max_length=3)]],
             {
-                InheritedFieldParent: ("Head", 10),
-                InheritedFieldSibling: ("Head", 10),
-                InheritedFieldOtherParent: ("Head", 10),
+                InheritedFieldParent: ("Child", 3),
+                InheritedFieldSibling: ("Child", 3),
+                InheritedFieldOtherParent: ("Child", 3),
                 InheritedFieldChild: ("Child", 3),
                 InheritedFieldGrandchild: ("Child", 3),
                 InheritedFieldDiamond: ("Child", 3),
@@ -259,8 +261,8 @@ PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="
         pytest.param(
             [[schema(InheritedFieldChild).field("foo").didnt_have("description", "max_length")]],
             {
-                InheritedFieldParent: ("Head", 10),
-                InheritedFieldSibling: ("Head", 10),
+                InheritedFieldParent: (None, None),
+                InheritedFieldSibling: (None, None),
                 InheritedFieldChild: (None, None),
                 InheritedFieldGrandchild: (None, None),
             },
@@ -268,27 +270,12 @@ PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="
         ),
         pytest.param(
             [
-                [
-                    schema(InheritedFieldChild).field("foo").had(description="Changed"),
-                    schema(InheritedFieldSibling).field("foo").had(description="Changed"),
-                ]
-            ],
-            {
-                InheritedFieldParent: ("Head", 10),
-                InheritedFieldOtherParent: ("Head", 10),
-                InheritedFieldChild: ("Changed", 10),
-                InheritedFieldSibling: ("Changed", 10),
-            },
-            id="child_and_sibling_had_the_same_change",
-        ),
-        pytest.param(
-            [
                 [schema(InheritedFieldGrandchild).field("foo").had(description="Grandchild")],
                 [schema(InheritedFieldChild).field("foo").had(max_length=3)],
             ],
             {
-                InheritedFieldParent: ("Head", 10),
-                InheritedFieldChild: ("Head", 3),
+                InheritedFieldParent: ("Grandchild", 3),
+                InheritedFieldChild: ("Grandchild", 3),
                 InheritedFieldGrandchild: ("Grandchild", 3),
             },
             id="grandchild_then_child",
@@ -299,9 +286,9 @@ PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="
                 [schema(InheritedFieldParent).field("foo").had(max_length=3)],
             ],
             {
-                InheritedFieldParent: ("Head", 3),
-                InheritedFieldSibling: ("Head", 3),
-                InheritedFieldChild: ("Head", 3),
+                InheritedFieldParent: ("Grandchild", 3),
+                InheritedFieldSibling: ("Grandchild", 3),
+                InheritedFieldChild: ("Grandchild", 3),
                 InheritedFieldGrandchild: ("Grandchild", 3),
             },
             id="grandchild_then_parent",
@@ -320,20 +307,20 @@ PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="
                 [schema(InheritedFieldOtherParent).field("foo").had(max_length=3)],
             ],
             {
-                InheritedFieldChild: ("Head", 10),
-                InheritedFieldOtherParent: ("Head", 3),
+                InheritedFieldChild: ("Diamond", 3),
+                InheritedFieldOtherParent: ("Diamond", 3),
                 InheritedFieldDiamond: ("Diamond", 3),
             },
             id="diamond_then_other_parent",
         ),
         pytest.param(
-            # Pydantic takes the field of the diamond from its first base which does not have the change
+            # Pydantic takes the field of the diamond from its first base, which shares the field too
             [[schema(InheritedFieldOtherParent).field("foo").had(max_length=3)]],
             {
-                InheritedFieldChild: ("Head", 10),
+                InheritedFieldChild: ("Head", 3),
                 InheritedFieldOtherParent: ("Head", 3),
-                InheritedFieldDiamond: ("Head", 10),
-                InheritedFieldDiamondWithMixin: ("Head", 10),
+                InheritedFieldDiamond: ("Head", 3),
+                InheritedFieldDiamondWithMixin: ("Head", 3),
             },
             id="other_parent_of_diamond",
         ),
@@ -343,9 +330,9 @@ PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="
                 [schema(InheritedFieldOtherParent).field("foo").had(max_length=3)],
             ],
             {
-                InheritedFieldChild: ("Child", 10),
-                InheritedFieldOtherParent: ("Head", 3),
-                InheritedFieldDiamond: ("Child", 10),
+                InheritedFieldChild: ("Child", 3),
+                InheritedFieldOtherParent: ("Child", 3),
+                InheritedFieldDiamond: ("Child", 3),
             },
             id="both_parents_of_diamond",
         ),
@@ -361,7 +348,7 @@ PARENT_INSTRUCTION = schema(InheritedFieldParent).field("bar").had(description="
         ),
     ],
 )
-def test__schema_field_had__inherited_field__should_change_the_model_and_its_subclasses_only(
+def test__schema_field_had__inherited_field__should_change_every_model_that_shares_it(
     create_runtime_schemas: CreateRuntimeSchemas,
     instructions_from_newest: list[list[Any]],
     expected: dict[type[BaseModel], tuple[Union[str, None], Union[int, None]]],
@@ -374,6 +361,26 @@ def test__schema_field_had__inherited_field__should_change_the_model_and_its_sub
     assert {model: _get_description_and_max_length(schemas["2000-01-01"][model]) for model in expected} == expected
 
 
+def test__schema_field_had__same_change_for_child_and_sibling_that_share_field__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    # As in Cadwyn 7.4.0: the sibling shares the field that the child has already changed
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            'You tried to change the attribute "description" of field "foo" from "InheritedFieldSibling" to '
+            "'Changed' in \"MyVersionChange\" but it already has that value."
+        ),
+    ):
+        create_runtime_schemas(
+            version_change(
+                PARENT_INSTRUCTION,
+                schema(InheritedFieldChild).field("foo").had(description="Changed"),
+                schema(InheritedFieldSibling).field("foo").had(description="Changed"),
+            )
+        )
+
+
 @pytest.mark.parametrize(
     ("instructions_from_newest", "expected_child", "expected_sibling"),
     [
@@ -384,7 +391,7 @@ def test__schema_field_had__inherited_field__should_change_the_model_and_its_sub
                     schema(InheritedFieldSibling).field("foo").had(description="Head"),
                 ]
             ],
-            ("Child", 10),
+            ("Head", 10),
             ("Head", 10),
             id="had_value_that_only_a_sibling_changed",
         ),
@@ -393,7 +400,7 @@ def test__schema_field_had__inherited_field__should_change_the_model_and_its_sub
                 [schema(InheritedFieldChild).field("foo").had(description="Child")],
                 [schema(InheritedFieldSibling).field("foo").had(description="Head")],
             ],
-            ("Child", 10),
+            ("Head", 10),
             ("Head", 10),
             id="had_value_that_a_sibling_changed_in_a_newer_version",
         ),
@@ -424,7 +431,7 @@ def test__schema_field_had__inherited_field__should_change_the_model_and_its_sub
                 [schema(InheritedFieldChild).field("foo").didnt_have("description")],
                 [schema(InheritedFieldSibling).field("foo").had(description="Head")],
             ],
-            (None, 10),
+            ("Head", 10),
             ("Head", 10),
             id="had_value_after_a_sibling_deleted_it",
         ),
@@ -707,43 +714,32 @@ class ConstrainedDiamond(LeftChildOfConstrainedDiamond, RightChildOfConstrainedD
     pass
 
 
-def test__schema_field_had__constraint_of_other_parent_of_diamond__should_apply_only_if_diamond_changes_field(
+def test__schema_field_had__constraint_of_other_parent_of_diamond__should_apply_to_every_model_that_shares_field(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     right_instructions = (
         schema(ParentOfConstrainedDiamond).field("bar").had(description="Bar"),
         schema(RightChildOfConstrainedDiamond).field("foo").had(ge=0),
     )
-    schemas = create_runtime_schemas(version_change(*right_instructions))
-
-    # Pydantic takes the field of the diamond from its first base which does not have the constraint
-    assert schemas["2000-01-01"][ConstrainedDiamond].model_validate({"foo": -1}).foo == -1
-    with pytest.raises(ValidationError):
-        schemas["2000-01-01"][RightChildOfConstrainedDiamond].model_validate({"foo": -1})
-    assert schemas["2000-01-01"][LeftChildOfConstrainedDiamond].model_validate({"foo": -1}).foo == -1
-
-    # The same instruction for the diamond before the one for its other parent applies to the diamond
-    schemas = create_runtime_schemas(
-        version_change(
-            schema(ParentOfConstrainedDiamond).field("bar").had(description="Bar"),
-            schema(ConstrainedDiamond).field("foo").had(ge=0),
-            schema(RightChildOfConstrainedDiamond).field("foo").had(ge=0),
-        )
+    models = (
+        ParentOfConstrainedDiamond,
+        LeftChildOfConstrainedDiamond,
+        RightChildOfConstrainedDiamond,
+        ConstrainedDiamond,
     )
+    # As in Cadwyn 7.4.0: the parent has an instruction of its own so all of its subclasses share the field with it
+    schemas = create_runtime_schemas(version_change(*right_instructions))
+    for model in models:
+        with pytest.raises(ValidationError):
+            schemas["2000-01-01"][model].model_validate({"foo": -1})
 
-    with pytest.raises(ValidationError):
-        schemas["2000-01-01"][ConstrainedDiamond].model_validate({"foo": -1})
-    assert schemas["2000-01-01"][ConstrainedDiamond].model_fields["foo"].description is None
-    assert schemas["2000-01-01"][LeftChildOfConstrainedDiamond].model_validate({"foo": -1}).foo == -1
-
-    # Once the diamond changes the field itself, it gets the changes of all of its parents
     schemas = create_runtime_schemas(
         version_change(*right_instructions, schema(ConstrainedDiamond).field("foo").had(description="Foo"))
     )
-
-    with pytest.raises(ValidationError):
-        schemas["2000-01-01"][ConstrainedDiamond].model_validate({"foo": -1})
-    assert schemas["2000-01-01"][LeftChildOfConstrainedDiamond].model_validate({"foo": -1}).foo == -1
+    for model in models:
+        with pytest.raises(ValidationError):
+            schemas["2000-01-01"][model].model_validate({"foo": -1})
+        assert schemas["2000-01-01"][model].model_fields["foo"].description == "Foo"
 
 
 class ParentWithFieldThatGetsRenamed(BaseModel):
@@ -767,6 +763,8 @@ def _get_max_lengths(model: type[BaseModel]) -> dict[str, Union[int, None]]:
     }
 
 
+# As in Cadwyn 7.4.0: the parent has an instruction of its own so its subclasses share the field with it. They keep its
+# old name and the parent gets their changes too
 @pytest.mark.parametrize(
     ("instructions_from_newest", "expected"),
     [
@@ -776,7 +774,7 @@ def _get_max_lengths(model: type[BaseModel]) -> dict[str, Union[int, None]]:
                 [schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo")],
             ],
             {
-                ParentWithFieldThatGetsRenamed: {"old_foo": 10},
+                ParentWithFieldThatGetsRenamed: {"old_foo": 3},
                 ChildWithFieldThatGetsRenamed: {"old_foo": 3, "foo": 3},
                 GrandchildWithFieldThatGetsRenamed: {"old_foo": 3, "foo": 3},
             },
@@ -790,7 +788,7 @@ def _get_max_lengths(model: type[BaseModel]) -> dict[str, Union[int, None]]:
                 ]
             ],
             {
-                ParentWithFieldThatGetsRenamed: {"old_foo": 10},
+                ParentWithFieldThatGetsRenamed: {"old_foo": 3},
                 ChildWithFieldThatGetsRenamed: {"old_foo": 3, "foo": 3},
             },
             id="child_changed_field_and_parent_renamed_it_in_one_version",
@@ -801,8 +799,8 @@ def _get_max_lengths(model: type[BaseModel]) -> dict[str, Union[int, None]]:
                 [schema(ChildWithFieldThatGetsRenamed).field("foo").had(name="old_foo")],
             ],
             {
-                ParentWithFieldThatGetsRenamed: {"foo": 10},
-                ChildWithFieldThatGetsRenamed: {"foo": 10, "old_foo": 10},
+                ParentWithFieldThatGetsRenamed: {"foo": 3},
+                ChildWithFieldThatGetsRenamed: {"foo": 3, "old_foo": 3},
                 GrandchildWithFieldThatGetsRenamed: {"foo": 3, "old_foo": 3},
             },
             id="grandchild_changed_field_then_child_renamed_it",
@@ -814,7 +812,7 @@ def _get_max_lengths(model: type[BaseModel]) -> dict[str, Union[int, None]]:
                 [schema(ParentWithFieldThatGetsRenamed).field("old_foo").had(name="older_foo")],
             ],
             {
-                ParentWithFieldThatGetsRenamed: {"older_foo": 10},
+                ParentWithFieldThatGetsRenamed: {"older_foo": 3},
                 ChildWithFieldThatGetsRenamed: {"older_foo": 3, "foo": 3},
             },
             id="child_changed_field_then_parent_renamed_it_twice",
@@ -855,14 +853,14 @@ def _get_max_lengths(model: type[BaseModel]) -> dict[str, Union[int, None]]:
                 [schema(ChildWithFieldThatGetsRenamed).field("old_foo").had(max_length=5)],
             ],
             {
-                ParentWithFieldThatGetsRenamed: {"old_foo": 10},
+                ParentWithFieldThatGetsRenamed: {"old_foo": 5},
                 ChildWithFieldThatGetsRenamed: {"old_foo": 5, "foo": 5},
             },
             id="child_changed_field_then_parent_renamed_it_then_child_changed_it_again",
         ),
     ],
 )
-def test__schema_field_had__parent_renamed_field_that_subclass_changed__should_keep_changes_of_subclass(
+def test__schema_field_had__parent_renamed_field_that_subclass_changed__should_keep_changes_of_every_model(
     create_runtime_schemas: CreateRuntimeSchemas,
     instructions_from_newest: list[list[Any]],
     expected: dict[type[BaseModel], dict[str, Union[int, None]]],
@@ -1238,7 +1236,7 @@ class SiblingWithDefaults(ParentWithDefaults):
     pass
 
 
-def test__schema_field_had__default_of_child_after_sibling_deleted_default_factory__should_replace_factory(
+def test__schema_field_had__default_of_child_after_sibling_deleted_default_factory__should_change_shared_field(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     schemas = create_runtime_schemas(
@@ -1249,9 +1247,10 @@ def test__schema_field_had__default_of_child_after_sibling_deleted_default_facto
         )
     )
 
+    # As in Cadwyn 7.4.0: the parent has an instruction of its own so all of its subclasses share the field with it
     assert schemas["2000-01-01"][ChildWithDefaults]().with_factory == "old"
-    assert schemas["2000-01-01"][ParentWithDefaults]().with_factory == ""
-    assert schemas["2000-01-01"][SiblingWithDefaults].model_fields["with_factory"].is_required()
+    assert schemas["2000-01-01"][ParentWithDefaults]().with_factory == "old"
+    assert schemas["2000-01-01"][SiblingWithDefaults]().with_factory == "old"
 
 
 def test__schema_field_had__none_default_of_child_after_sibling_unset_default_factory__should_replace_factory(
@@ -1278,11 +1277,12 @@ def test__schema_field_had__none_default_of_child_after_sibling_unset_default_fa
 def test__schema_field_had__both_default_and_default_factory__should_raise_error(
     create_runtime_schemas: CreateRuntimeSchemas, field_name: str, attributes: dict[str, Any]
 ):
+    # Cadwyn 7.4.0 failed with pydantic's TypeError here
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            f'The field "{field_name}" of "ChildWithDefaults" has both a default and a default_factory '
-            "in an older version."
+            f'Instructions leave the field "{field_name}" with both a default and a default_factory, which pydantic '
+            'does not allow. The last instruction that changed one of them is for "ChildWithDefaults".'
         ),
     ):
         create_runtime_schemas(
@@ -1401,16 +1401,17 @@ def _factory() -> str:
                     schema(ChildWithDefaults).field("with_default").didnt_have("default"),
                 ]
             ],
-            {ParentWithDefaults: "parent", ChildWithDefaults: "factory", SiblingWithDefaults: "parent"},
+            {ParentWithDefaults: "factory", ChildWithDefaults: "factory", SiblingWithDefaults: "factory"},
             id="child_added_default_factory_then_parent_changed_default_then_child_deleted_default",
         ),
     ],
 )
-def test__schema_field_had__default_and_default_factory_of_model__should_not_depend_on_other_models(
+def test__schema_field_had__default_and_default_factory_of_shared_field__should_follow_all_instructions_for_it(
     create_runtime_schemas: CreateRuntimeSchemas,
     instructions_from_newest: list[list[Any]],
     expected: dict[type[ParentWithDefaults], str],
 ):
+    # As in Cadwyn 7.4.0: the parent has an instruction of its own so all of its subclasses share the field with it
     schemas = create_runtime_schemas(
         *(version_change(*instructions) for instructions in reversed(instructions_from_newest[1:])),
         version_change(schema(ParentWithDefaults).field("bar").had(description="Bar"), *instructions_from_newest[0]),
@@ -1432,7 +1433,7 @@ class AnnotatedSiblingWithDefault(AnnotatedParentWithDefault):
     pass
 
 
-def test__schema_field_had__default_factory_of_annotated_field_that_sibling_deleted__should_replace_default(
+def test__schema_field_had__default_factory_of_annotated_field_that_sibling_deleted__should_delete_it_everywhere(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     schemas = create_runtime_schemas(
@@ -1443,8 +1444,9 @@ def test__schema_field_had__default_factory_of_annotated_field_that_sibling_dele
         )
     )
 
-    assert schemas["2000-01-01"][AnnotatedParentWithDefault]().foo == "factory"
-    assert schemas["2000-01-01"][AnnotatedChildWithDefault]().foo == "factory"
+    # As in Cadwyn 7.4.0: the parent has an instruction of its own so all of its subclasses share the field with it
+    assert schemas["2000-01-01"][AnnotatedParentWithDefault]().foo == "default"
+    assert schemas["2000-01-01"][AnnotatedChildWithDefault]().foo == "default"
     assert schemas["2000-01-01"][AnnotatedSiblingWithDefault]().foo == "default"
 
 
@@ -1489,9 +1491,9 @@ def test__schema_field_didnt_have__annotated_default_after_child_set_default_fac
         )
     )
 
-    # Cadwyn 7.4.0 ignored didnt_have("default") for the default from Field() in the annotation. Applying it would
-    # make the older versions reject the requests without the field that they have always accepted, so it stays ignored
-    assert schemas["2000-01-01"][AnnotatedParentWithDefaultInField]().foo == 0
+    # Cadwyn 7.4.0 failed with pydantic's TypeError here. The parent shares the field with the child because it has
+    # an instruction of its own, so it gets the child's default factory too
+    assert schemas["2000-01-01"][AnnotatedParentWithDefaultInField]().foo == 20
     assert schemas["2000-01-01"][AnnotatedChildWithDefaultInField]().foo == 20
 
 
@@ -1511,7 +1513,7 @@ class AnnotatedChildWithDefaultToReplaceWithFactory(AnnotatedParentWithDefaultTo
         schema(AnnotatedChildWithDefaultToReplaceWithFactory).field("foo").didnt_have("default_factory"),
     ],
 )
-def test__schema_field_had__ellipsis_default_with_factory_of_annotated_field_with_default__should_use_factory(
+def test__schema_field_had__ellipsis_default_with_factory_of_annotated_field_with_default__should_use_annotation(
     create_runtime_schemas: CreateRuntimeSchemas, child_instruction: Any
 ):
     schemas = create_runtime_schemas(
@@ -1524,8 +1526,9 @@ def test__schema_field_had__ellipsis_default_with_factory_of_annotated_field_wit
         )
     )
 
-    # The child's instruction does not apply to the parent
-    assert schemas["2000-01-01"][AnnotatedParentWithDefaultToReplaceWithFactory]().foo == 20
+    # As in Cadwyn 7.4.0: the child's instruction unsets the default factory of the field that it shares with the
+    # parent, so both use the default from the Field() in the annotation
+    assert schemas["2000-01-01"][AnnotatedParentWithDefaultToReplaceWithFactory]().foo == 1
     assert schemas["2000-01-01"][AnnotatedChildWithDefaultToReplaceWithFactory]().foo == 1
 
 
@@ -1624,7 +1627,7 @@ class DiamondWithFieldToRename(LeftChildWithFieldToRename, RightChildWithFieldTo
         ),
     ],
 )
-def test__schema_field_had__field_of_other_parent_of_diamond_that_only_older_versions_have__should_keep_first(
+def test__schema_field_had__field_of_other_parent_of_diamond_that_only_older_versions_have__should_change_it(
     create_runtime_schemas: CreateRuntimeSchemas,
     newer_instruction: Any,
     older_instruction: Any,
@@ -1634,8 +1637,9 @@ def test__schema_field_had__field_of_other_parent_of_diamond_that_only_older_ver
     schemas = create_runtime_schemas(version_change(older_instruction), version_change(newer_instruction))
 
     field = schemas["2000-01-01"][diamond].model_fields[field_name]
-    # Pydantic takes the field of the diamond from its first base which does not have the change
-    assert [m.max_length for m in field.metadata if hasattr(m, "max_length")] == [10]
+    # As in Cadwyn 7.4.0: the parents of the diamond share the field with the model that defines it because that model
+    # has an instruction of its own, so the change of the other parent reaches the diamond through its first base
+    assert [m.max_length for m in field.metadata if hasattr(m, "max_length")] == [3]
 
 
 #######
