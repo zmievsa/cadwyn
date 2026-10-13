@@ -7,6 +7,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Added
 
+- Documented how to serve endpoints to requests without an API version, such as the OAuth2 token endpoint that Swagger UI's "Authorize" button calls without the version header: keep the endpoint unversioned or set `api_version_default_value` (#230).
+- Documented how to use fastapi-pagination with Cadwyn: call `add_pagination()` on the `VersionedAPIRouter` instead of the app, or pass the pagination params to `paginate()` explicitly (#191).
 - Documented that computed fields that return versioned models keep the latest versions of these models in older API versions, in both serialization and OpenAPI, and how to expose such data as a regular field instead.
 
 ### Changed
