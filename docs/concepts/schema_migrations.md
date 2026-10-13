@@ -182,7 +182,7 @@ class AllowUsersToBelongToSeveralOrganizations(VersionChange):
 
 Pass `description=None` to remove the description from the older versions. Cadwyn rejects blank descriptions such as `" "`. You can also pass `name` and `description` together, e.g. `schema(User).had(name="OldUser", description="An old user.")`.
 
-Like `name`, the description only applies to the schema itself, not to its subclasses: like in pydantic, every schema has its own docstring. For the same reason, the description of a generic schema such as `Page` does not show up for its parametrizations such as `Page[Item]`, which have no description in pydantic. If the schema sets `json_schema_extra={"description": ...}` in its `model_config`, that description overrides the docstring in every version.
+Like `name`, the description only applies to the schema itself, not to its subclasses: like in pydantic, every schema has its own docstring. For the same reason, the description of a generic schema such as `Page` does not show up for its parametrizations such as `Page[Item]`, which have no description in pydantic. Like other instructions, the description of a model in the type args of a generic, such as `Item` in `Page[Item]`, only changes there with [`version_generic_type_args=True`](./schema_generation.md#generic-models). If the schema sets `json_schema_extra={"description": ...}` in its `model_config`, that description overrides the docstring in every version.
 
 The latest version keeps the docstring from your code, so if the docstring contains internal notes that no version should show, put the public description into [`HeadVersion`](./version_changes.md#headversion), which applies it to every version, including the latest one:
 
