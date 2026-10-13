@@ -4,10 +4,22 @@ import sys
 import threading
 import typing
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, ForwardRef, Generic, Literal, Optional, TypeVar, Union
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    ForwardRef,
+    Generic,
+    Literal,
+    Optional,
+    TypeVar,
+    Union,
+)
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -23,6 +35,7 @@ from pydantic import (
     ValidationError,
     create_model,
 )
+from pydantic.json_schema import SkipJsonSchema
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
 from typing_extensions import Self, TypeAliasType, TypeVarTuple, Unpack, override
 
@@ -2423,6 +2436,37 @@ def test__router_generation__generic_built_before_parametrization_with_instructi
     assert clients["2001-01-01"].get("/box").json() == {"pair": {"first": "a", "second": 1}}
     old_schemas = clients["unversioned"].get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
     assert [name for name in old_schemas if "Pair" in name] == ["Pair_str_int_"]
+
+
+@versions_generic_type_args
+@pytest.mark.parametrize("field_shape", ["unhashable_annotated_metadata", "callable_args"])
+def test__generate_versioned_models__fields_with_unhashable_parts_reaching_parametrization__should_apply_instructions(
+    create_runtime_schemas: Any, field_shape: str
+):
+    class Pair(BaseModel, Generic[_T, _U]):
+        first: _T
+        second: _U
+
+    if field_shape == "unhashable_annotated_metadata":
+
+        class Box(BaseModel, Generic[_T]):
+            pair: Annotated[Pair[_T, int], {"doc": "unhashable metadata"}]
+
+    else:
+
+        class Box(BaseModel, Generic[_T]):
+            pair: Pair[_T, int]
+            # The args of Callable are a list
+            callback: SkipJsonSchema[Optional[Callable[[Pair[_T, int]], None]]] = None
+
+    old_box = create_runtime_schemas(
+        version_change(schema(Pair[str, int]).field("second").had(serialization_alias="old_second"))
+    )["2000-01-01"][Box[str]]
+
+    assert old_box.model_validate({"pair": {"first": "a", "second": 1}}).model_dump(by_alias=True)["pair"] == {
+        "first": "a",
+        "old_second": 1,
+    }
 
 
 @versions_generic_type_args

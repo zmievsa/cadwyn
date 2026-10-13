@@ -1988,8 +1988,9 @@ class _ReferenceCycles:
 
     def _get_changed_parametrization(self, annotation: Any) -> Any:
         """Return the parametrization with instructions that is the same as the annotation, or the annotation"""
-        if annotation in self._changed_parametrizations or not (
-            lenient_issubclass(annotation, BaseModel) and _is_parametrization(annotation)
+        # The type positions can hold anything, including unhashable values such as the list of args of Callable
+        if not (lenient_issubclass(annotation, BaseModel) and _is_parametrization(annotation)) or (
+            annotation in self._changed_parametrizations
         ):
             return annotation
         return next(
