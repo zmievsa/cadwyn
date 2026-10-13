@@ -2322,6 +2322,7 @@ def _create_app_with_instructions_for_parametrization_reached_through_generic(
     } | {"unversioned": TestClient(app)}
 
 
+@versions_generic_type_args
 @pytest.mark.parametrize("field_shape", ["direct", "optional", "list", "nested_generic"])
 def test__router_generation__parametrization_with_instructions_reached_through_generic__should_apply_them(
     create_versioned_app: CreateVersionedApp, field_shape: str
@@ -2376,6 +2377,31 @@ def test__router_generation__parametrization_with_instructions_reached_through_g
     assert "old_second" in old_schemas["Pair_str_int_"]["properties"]
 
 
+@pytest.mark.parametrize("version_generic_type_args", [False], ids=["head_generic_args"])
+def test__router_generation__parametrization_reached_through_generic__without_option__should_skip_its_instructions(
+    create_versioned_app: CreateVersionedApp,
+):
+    class Pair(BaseModel, Generic[_T, _U]):
+        first: _T
+        second: _U
+
+    class Box(BaseModel, Generic[_T]):
+        pair: Pair[_T, int]
+
+    clients = _create_app_with_instructions_for_parametrization_reached_through_generic(
+        create_versioned_app, Box[str], Pair[str, int], {"pair": {"first": "a", "second": 1}}
+    )
+
+    # As before the option existed: only the routes that use the parametrization directly get its instructions
+    assert clients["2000-01-01"].get("/pair").json() == {"first": "a", "old_second": 1}
+    assert clients["2000-01-01"].get("/box").json() == {"pair": {"first": "a", "second": 1}}
+    old_schemas = clients["unversioned"].get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert sorted(old_schemas) == ["Box_str_", "HTTPValidationError", "Pair_str_int_", "ValidationError"]
+    reference_cycles = generate_versioned_models(clients["2000-01-01"].app.versions)["2000-01-01"]._reference_cycles
+    assert reference_cycles.get_redefined_field_names(Box[str]) == ()
+
+
+@versions_generic_type_args
 def test__router_generation__parametrization_with_instructions_reached_through_versioned_args__should_apply_them(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -2409,6 +2435,7 @@ def test__router_generation__parametrization_with_instructions_reached_through_v
     assert client_2001.get("/box").json() == {"pair": {"first": {"name": "a"}, "second": 1}}
 
 
+@versions_generic_type_args
 def test__router_generation__generic_of_parametrization_reaching_instructions__should_apply_only_them(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -2464,6 +2491,7 @@ def test__generate_versioned_models__parametrization_with_undefined_names__shoul
     versions = VersionBundle(
         Version("2001-01-01", version_change(schema(Pair[str, int]).field("second").had(serialization_alias="old"))),
         Version("2000-01-01"),
+        version_generic_type_args=True,
     )
     reference_cycles = generate_versioned_models(versions)["2000-01-01"]._reference_cycles
 
@@ -2535,6 +2563,7 @@ def test__generate_versioned_models__parametrizations_that_refer_to_each_other__
     versions = VersionBundle(
         Version("2001-01-01", version_change(schema(Pair[str, int]).field("second").had(serialization_alias="old"))),
         Version("2000-01-01"),
+        version_generic_type_args=True,
     )
     reference_cycles = generate_versioned_models(versions)["2000-01-01"]._reference_cycles
 

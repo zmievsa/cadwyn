@@ -3274,7 +3274,10 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
 
     version_to_context_map = {}
     reference_cycles = _ReferenceCycles(
-        changed_models, _get_parametrizations_whose_instructions_reach_other_generics(changed_models)
+        changed_models,
+        _get_parametrizations_whose_instructions_reach_other_generics(
+            changed_models, version_generic_type_args=versions.version_generic_type_args
+        ),
     )
     context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
     _migrate_classes(context)
@@ -3608,14 +3611,19 @@ def _declares_name(
 
 
 def _get_parametrizations_whose_instructions_reach_other_generics(
-    changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
+    changed_models: "frozenset[type[Union[BaseModel, Enum]]]", *, version_generic_type_args: bool
 ) -> "frozenset[type[BaseModel]]":
     """Return the parametrizations whose instructions apply where pydantic builds them in other generics' fields.
 
     E.g. the instructions of `schema(Pair[str, int])` in `Box[str]` with `pair: Pair[T, int]`
     (see _ReferenceCycles.get_redefined_field_names).
     This is the only switch for that behavior (#420): with an empty set, every model is copied exactly as before.
+    Like the versioning of generic args (see SchemaGenerator._may_version_generic_args), it changes what the older
+    versions of existing apps serve, so it is only on with VersionBundle(version_generic_type_args=True). Unlike that
+    switch, it is decided once for all versions because their generators share the reference cycles.
     """
+    if not version_generic_type_args:
+        return frozenset()
     return frozenset(
         model for model in changed_models if lenient_issubclass(model, BaseModel) and _is_parametrization(model)
     )
