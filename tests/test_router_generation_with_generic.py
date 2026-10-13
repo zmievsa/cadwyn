@@ -2050,3 +2050,13 @@ def test__router_generation__generic_arg_with_changed_enum_and_self_referencing_
         assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
     else:
         assert response.json() == body
+
+
+def test__version_bundle__version_generic_type_args__should_be_read_only(version_generic_type_args: bool):
+    """The versioned models are cached per version bundle so changing the option later would be silently ignored"""
+    versions = VersionBundle(Version("2000-01-01"), version_generic_type_args=version_generic_type_args)
+
+    assert versions.version_generic_type_args is version_generic_type_args
+    with pytest.raises(AttributeError):
+        versions.version_generic_type_args = not version_generic_type_args  # ty: ignore[invalid-assignment]
+    assert versions.version_generic_type_args is version_generic_type_args

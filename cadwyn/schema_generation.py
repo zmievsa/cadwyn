@@ -2346,24 +2346,20 @@ class SchemaGenerator:
                 )
         core_schema = model_copy.__pydantic_core_schema__
         skipped_classes = set(skipped_classes) - {model_copy}
-        latest_models = [
-            cls
-            for cls in _get_classes_in_core_schema(core_schema, skipped_classes=skipped_classes)
-            if is_latest_model(cls)
-        ]
+        if self._may_version_generic_args():
+            classes = _get_classes_in_core_schema(core_schema, skipped_classes=skipped_classes)
+        else:
+            # Without versioning generic args, every generic keeps the latest models in its type args, as it always
+            # did, including the models of the copied cycles. Only the other places where they are left count
+            classes = _get_classes_in_core_schema_outside_of_generic_args(core_schema, skipped_classes=skipped_classes)
+        latest_models = [cls for cls in classes if is_latest_model(cls)]
         if latest_models:
-            hint = (
-                ""
-                if self._may_version_generic_args()
-                else " To make generics use the versioned copies of their type args, pass "
-                "`version_generic_type_args=True` to `VersionBundle`."
-            )
             raise SchemaGenerationError(
                 f"Cadwyn cannot generate the versioned copy of {model_copy.__qualname__} because it would use the "
                 f"latest {_get_cycle_name(latest_models)}, which need versioning, where pydantic resolves them on its "
                 "own: e.g. in the return types of computed fields or serializers, in names quoted within other "
                 'annotations (`list["Model"]`, which you can write as `"list[Model]"` instead), or in the type args '
-                f"of generics that keep the latest models.{hint}"
+                "of generics that keep the latest models."
             )
         self._check_defaults(model_copy, core_schema, is_checked_field_model, is_latest_cycle_model or is_latest_model)
 
@@ -2723,8 +2719,12 @@ def _iter_core_schema_nodes(
     *,
     definitions: Union[dict[str, Any], None] = None,
     should_skip_children: Union[Callable[[dict[str, Any]], bool], None] = None,
+    only_follows_definition_refs: bool = False,
 ) -> "collections.abc.Iterator[dict[str, Any]]":
-    """Iterate over the schemas within the core schema, following its definition refs if definitions are given"""
+    """Iterate over the schemas within the core schema, following its definition refs if definitions are given.
+
+    If only_follows_definition_refs is true, the definitions are only visited through the refs that are visited.
+    """
     nodes_to_visit = [core_schema]
     visited_ids: set[int] = set()
     while nodes_to_visit:
@@ -2738,7 +2738,12 @@ def _iter_core_schema_nodes(
                 continue
             if definitions is not None and node.get("type") == "definition-ref":
                 nodes_to_visit.append(definitions.get(node.get("schema_ref")))
-            nodes_to_visit.extend(value for key, value in node.items() if key not in _CORE_SCHEMA_KEYS_WITHOUT_SCHEMAS)
+            skipped_keys = (
+                _CORE_SCHEMA_KEYS_WITHOUT_SCHEMAS | {"definitions"}
+                if only_follows_definition_refs and node.get("type") == "definitions"
+                else _CORE_SCHEMA_KEYS_WITHOUT_SCHEMAS
+            )
+            nodes_to_visit.extend(value for key, value in node.items() if key not in skipped_keys)
         elif isinstance(node, list | tuple):
             nodes_to_visit.extend(node)
 
@@ -2765,6 +2770,68 @@ def _get_classes_in_core_schema(
         )
         if isinstance(node.get("cls"), type)
     }
+
+
+def _get_classes_in_core_schema_outside_of_generic_args(
+    core_schema: Any, *, skipped_classes: "collections.abc.Set[type]"
+) -> set[type]:
+    """Like _get_classes_in_core_schema but without the fields whose types come from the type args of generics.
+
+    E.g. without `items` of Page[Item], or of `class ItemPage(Page[Item])`, for `items: list[T]` in Page. Everything
+    else that pydantic resolves on its own in such generics, e.g. the return types of their computed fields, counts.
+    """
+    definitions = _get_core_schema_definitions(core_schema)
+    # The schemas of the fields whose types come from the type args
+    skipped_node_ids: set[int] = set()
+
+    def should_skip_children(node: dict[str, Any]) -> bool:
+        cls = node.get("cls")
+        if id(node) in skipped_node_ids or (isinstance(cls, type) and cls in skipped_classes):
+            return True
+        if node.get("type") == "model" and lenient_issubclass(cls, BaseModel):
+            field_names = _get_fields_typed_by_generic_args(cast("type[BaseModel]", cls))
+            field_schemas = (_get_field_core_schemas(cls, node, definitions) or {}) if field_names else {}
+            skipped_node_ids.update(id(schema) for name, schema in field_schemas.items() if name in field_names)
+        return False
+
+    return {
+        node["cls"]
+        for node in _iter_core_schema_nodes(
+            core_schema,
+            definitions=definitions,
+            should_skip_children=should_skip_children,
+            only_follows_definition_refs=True,
+        )
+        if isinstance(node.get("cls"), type) and id(node) not in skipped_node_ids
+    }
+
+
+def _get_fields_typed_by_generic_args(model: type[BaseModel]) -> frozenset[str]:
+    """Return the fields of the model whose types come from the type args of a parametrized generic.
+
+    That is a generic that the model is or inherits from, and the fields are the ones whose annotations in the origin
+    of the generic use its type parameters.
+    """
+    field_names: set[str] = set()
+    for cls in model.__mro__:
+        generic_metadata = getattr(cls, "__pydantic_generic_metadata__", None)
+        if generic_metadata is not None and generic_metadata["origin"] is not None and generic_metadata["args"]:
+            for name, field in generic_metadata["origin"].__pydantic_fields__.items():
+                if _uses_type_params(field.annotation):
+                    field_names.add(name)
+    return frozenset(field_names)
+
+
+def _uses_type_params(annotation: Any) -> bool:
+    from typing_inspection.typing_objects import is_paramspec, is_typevar, is_typevartuple
+
+    if is_typevar(annotation) or is_paramspec(annotation) or is_typevartuple(annotation):
+        return True
+    if isinstance(annotation, type) and hasattr(annotation, "__pydantic_generic_metadata__"):
+        # E.g. Wrapper[T] or the origin of a generic that refers to itself, such as `next: Optional["LinkedPage[T]"]`
+        generic_metadata = annotation.__pydantic_generic_metadata__
+        return bool(generic_metadata["parameters"]) or any(_uses_type_params(arg) for arg in generic_metadata["args"])
+    return any(_uses_type_params(arg) for arg in get_args(annotation))
 
 
 def _get_core_schema_definitions(core_schema: Any) -> dict[str, Any]:
