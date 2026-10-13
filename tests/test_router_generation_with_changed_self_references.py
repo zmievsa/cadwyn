@@ -721,6 +721,52 @@ def test__router_generation__computed_field_with_latest_generic_around_cycle__sh
         create_versioned_app(version_change(short_name(ItemOfPagedCategory)), router=router)
 
 
+class ValueBox(BaseModel, Generic[ValueT]):
+    value: ValueT
+
+
+class BoxOverridingTypeArgField(ValueBox[int]):
+    # Overrides the field typed by the type arg, so CategoryWithItem does not come from a type arg
+    value: list["CategoryWithItem"]  # ty: ignore[invalid-attribute-override]
+
+
+class BoxWithSerializerOfTypeArgField(ValueBox[int]):
+    @field_serializer("value", return_type=CategoryWithItem)
+    def serialize_value(self, value: int) -> Any:
+        raise NotImplementedError
+
+
+@pytest.mark.parametrize("box_route_first", [False, True])
+@pytest.mark.parametrize(
+    "box_model", [BoxOverridingTypeArgField, BoxWithSerializerOfTypeArgField], ids=["overridden_field", "serializer"]
+)
+def test__router_generation__latest_model_of_cycle_in_field_inherited_from_generic__should_raise(
+    box_model: type[BaseModel],
+    box_route_first: bool,
+    create_versioned_app: CreateVersionedApp,
+):
+    """Only the parts of a field that come from the type args of a generic keep the latest models without the option"""
+    router = VersionedAPIRouter()
+
+    def add_category_route() -> None:
+        @router.get("/category", response_model=CategoryWithItem)
+        async def get_category() -> Any:
+            raise NotImplementedError
+
+    def add_box_route() -> None:
+        @router.get("/box", response_model=box_model)
+        async def get_box() -> Any:
+            raise NotImplementedError
+
+    for add_route in (add_box_route, add_category_route) if box_route_first else (add_category_route, add_box_route):
+        add_route()
+
+    with pytest.raises(
+        SchemaGenerationError, match=f"copy of {box_model.__name__} because it would use the latest CategoryWithItem"
+    ):
+        create_versioned_app(version_change(short_name(ItemOfPagedCategory)), router=router)
+
+
 class GenericCategoryList(RootModel[list[ValueT]], Generic[ValueT]):
     pass
 
