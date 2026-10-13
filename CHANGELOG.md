@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Documented that computed fields that return versioned models keep the latest versions of these models in older API versions, in both serialization and OpenAPI, and how to expose such data as a regular field instead.
+
 ### Changed
 
 - Parametrized generic models such as `Page[Item]` now use the versioned copies of their type args when the args refer to models or enums that have schema or enum instructions, including the ones in `HeadVersion`. So older versions validate and serialize these args with their own models instead of the latest ones, and clients that relied on latest-shaped models inside generics may need converters. Changes from `HeadVersion` now also apply to these args in every version, including the latest one. The OpenAPI names of these generics can change in every version because their quoted type args are now evaluated, e.g. `Page[list["Item"]]` is named `Page_list_Item__` instead of `Page_list_str__`. Generics whose type args do not refer to such models are not affected.
