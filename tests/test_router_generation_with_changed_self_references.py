@@ -1459,6 +1459,60 @@ def test__router_generation__copy_checked_before_a_route_cycle_is_copied__should
         )
 
 
+class ItemOfLatestCategory(BaseModel):
+    name: str
+
+
+class CategoryOfComputedField(BaseModel):
+    name: str
+    item: Optional[ItemOfLatestCategory] = None
+    parent: "Optional[CategoryOfComputedField]" = None
+
+
+class ComputedCategoryHolder(BaseModel):
+    @computed_field
+    @property
+    def category(self) -> CategoryOfComputedField:
+        raise NotImplementedError
+
+
+@pytest.mark.parametrize("holder_route_first", [True, False], ids=["holder_route_first", "cycle_route_first"])
+def test__router_generation__copy_that_fails_its_check_after_its_cycle_is_copied__should_fail_on_every_attempt(
+    holder_route_first: bool,
+):
+    """Copying the cycle checks the copies generated before it, so a failed check must not leave the cycle copied"""
+    router = VersionedAPIRouter()
+
+    def add_holder_route() -> None:
+        @router.get("/holder", response_model=ComputedCategoryHolder)
+        async def get_holder() -> Any:
+            raise NotImplementedError
+
+    def add_category_route() -> None:
+        @router.get("/category", response_model=CategoryOfComputedField)
+        async def get_category() -> Any:
+            raise NotImplementedError
+
+    for add_route in (
+        (add_holder_route, add_category_route) if holder_route_first else (add_category_route, add_holder_route)
+    ):
+        add_route()
+    app = Cadwyn(
+        versions=VersionBundle(
+            Version("2001-01-01", version_change(short_name(ItemOfLatestCategory))), Version("2000-01-01")
+        )
+    )
+    app.generate_and_include_versioned_routers(router)
+
+    # Each request initializes the app again until it succeeds, with the versioned models that the bundle cached
+    for _ in range(3):
+        with pytest.raises(
+            SchemaGenerationError,
+            match="copy of ComputedCategoryHolder because it would use the latest CategoryOfComputedField",
+        ):
+            TestClient(app).get("/holder", headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+
 # The generators that HookedItemTree asks for its copy while pydantic creates its subclasses
 HOOK_GENERATORS: list[Any] = []
 

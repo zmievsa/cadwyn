@@ -2495,7 +2495,8 @@ class SchemaGenerator:
 
         Copying a model in the cycle refers to the other models of the cycle, and to itself, through forward refs
         in its annotations. Pydantic resolves them once all of the copies exist (see _CycleCopier).
-        The copies are only published once all of them are complete so no other request can see them before.
+        The copies are only published once all of them are complete and every check passed, so no other request
+        can see them before, and a failed check leaves nothing behind: the next attempt fails the same way.
         """
         if (
             self._route_versioning_thread == threading.get_ident() and cycle in self._cycles_behind_latest_generic_args
@@ -2515,21 +2516,26 @@ class SchemaGenerator:
                 )
         finally:
             self._cycles_being_copied.pop()
+        is_copied_eagerly = self._is_copied_eagerly(cycle)
+        if is_copied_eagerly:
+            # The copies generated before could also use the head models of this cycle. They cannot reach the cycles
+            # that are copied lazily because copying them would have copied these cycles first
+            copied_classes = {*self.concrete_models.values(), *copies.values()}
+            earlier_model_copies = [
+                model_copy for model_copy in self.concrete_models.values() if lenient_issubclass(model_copy, BaseModel)
+            ]
+            for model_copy in earlier_model_copies:
+                self._check_copy(
+                    model_copy,
+                    cycle.__contains__,
+                    lambda cls: _unwrap_model(cast("type[BaseModel]", cls)) in cycle,
+                    skipped_classes=copied_classes,
+                )
         for model, model_copy in copies.items():
             self.concrete_models[model] = model_copy
         self._copied_cycles.add(cycle)
-        if self._is_copied_eagerly(cycle):
+        if is_copied_eagerly:
             self._has_copied_eager_cycles = True
-            # The copies generated before could also use the head models of this cycle. They cannot reach the cycles
-            # that are copied lazily because copying them would have copied these cycles first
-            for model_copy in list(self.concrete_models.values()):
-                if lenient_issubclass(model_copy, BaseModel) and model_copy not in copies.values():
-                    self._check_copy(
-                        model_copy,
-                        cycle.__contains__,
-                        lambda cls: _unwrap_model(cast("type[BaseModel]", cls)) in cycle,
-                        skipped_classes=set(self.concrete_models.values()),
-                    )
 
     def _get_creation_order_of_cycle(self, cycle: frozenset[type[BaseModel]]) -> list[type[BaseModel]]:
         """Return the order in which to create the copies of the models in the cycle, or raise if we cannot copy it.
