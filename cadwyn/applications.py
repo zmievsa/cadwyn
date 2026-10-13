@@ -25,10 +25,10 @@ from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
-from starlette.types import Lifespan
+from starlette.types import Lifespan, Receive, Scope, Send
 from typing_extensions import Self, assert_never, deprecated, override
 
-from cadwyn._utils import DATACLASS_SLOTS, same_method_definition_as_in
+from cadwyn._utils import DATACLASS_SLOTS
 from cadwyn.changelogs import _CHANGELOG_DEPRECATION_MESSAGE, CadwynChangelogResource, _generate_changelog
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
@@ -299,12 +299,12 @@ class Cadwyn(FastAPI):
                 "Versions are not sorted correctly. Please sort them in descending order.",
             )
 
-    @same_method_definition_as_in(FastAPI.__call__)
+    # The parameters must be explicit: uvicorn treats any app that can be called without arguments as an app factory
     @override
-    async def __call__(self, *args: Any, **kwargs: Any) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if not self._cadwyn_initialized:
             self._cadwyn_initialize()
-        await super().__call__(*args, **kwargs)
+        await super().__call__(scope, receive, send)
 
     def _cadwyn_initialize(self) -> None:
         try:
