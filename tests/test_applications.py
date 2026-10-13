@@ -889,3 +889,15 @@ def test__api_version_default_value_with_path_location__should_raise_error():
             api_version_default_value="2022-11-16",
             api_version_location="path",
         )
+
+
+# The pinned uvicorn calls `asyncio.iscoroutinefunction` while loading the app, which is deprecated on Python 3.14
+@pytest.mark.filterwarnings("ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning")
+def test__cadwyn__loaded_by_uvicorn__should_not_be_mistaken_for_an_app_factory():
+    import uvicorn
+
+    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+    config = uvicorn.Config(app, proxy_headers=False, ws="none")
+    config.load()
+
+    assert config.loaded_app is app
