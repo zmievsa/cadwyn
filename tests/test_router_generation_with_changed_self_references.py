@@ -260,16 +260,6 @@ class ValidatedCategory(BaseModel):
     children: "Annotated[list[ValidatedCategory], AfterValidator(count_validation)]" = []
 
 
-class AliasedCategory(BaseModel):
-    name: str = Field(alias="categoryName")
-    children: "list[AliasedCategory]" = []
-
-
-class AnnotatedAliasedCategory(BaseModel):
-    name: Annotated[str, Field(alias="categoryName")]
-    children: "list[AnnotatedAliasedCategory]" = []
-
-
 def short_name(model: type[BaseModel]):
     return schema(model).field("name").had(max_length=3)
 
@@ -511,72 +501,6 @@ def test__issue_419_reproduction__renamed_field_of_self_referencing_model__shoul
     changelog = TestClient(app).get("/changelog")
     assert changelog.status_code == HTTP_200_OK
     assert "title" in changelog.text
-
-
-def rename_key(data: Any, old_key: str, new_key: str) -> None:
-    data[new_key] = data.pop(old_key)
-    for child in data.get("children", []):
-        rename_key(child, old_key, new_key)
-
-
-@pytest.mark.parametrize("model", [AliasedCategory, AnnotatedAliasedCategory])
-@pytest.mark.parametrize(
-    ("change", "old_key"),
-    [
-        (lambda field: field.had(alias="oldName"), "oldName"),
-        (lambda field: field.didnt_have("alias"), "name"),
-    ],
-)
-def test__router_generation__alias_of_self_referencing_model_changed__should_change_keys_at_every_depth(
-    create_versioned_app: CreateVersionedApp,
-    model: type[BaseModel],
-    change: Callable[[Any], Any],
-    old_key: str,
-):
-    router = VersionedAPIRouter()
-
-    @router.post("/categories", response_model=model)
-    async def create_category(category: model) -> Any:  # ty: ignore[invalid-type-form]
-        return category
-
-    @convert_request_to_next_version_for(model)
-    def migrate_request(request: RequestInfo) -> None:
-        rename_key(request.body, old_key, "categoryName")
-
-    @convert_response_to_previous_version_for(model)
-    def migrate_response(response: ResponseInfo) -> None:
-        rename_key(response.body, "categoryName", old_key)
-
-    app = create_versioned_app(
-        version_change(
-            change(schema(model).field("name")), migrate_request=migrate_request, migrate_response=migrate_response
-        ),
-        router=router,
-    )
-    old_client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
-    new_client = TestClient(app, headers={app.router.api_version_parameter_name: "2001-01-01"})
-
-    old_body = {old_key: "root", "children": [{old_key: "leaf", "children": []}]}
-    new_body = {"categoryName": "root", "children": [{"categoryName": "leaf", "children": []}]}
-    assert old_client.post("/categories", json=old_body).json() == old_body
-    assert new_client.post("/categories", json=new_body).json() == new_body
-    # The old version does not accept the key of the new version at any depth
-    assert old_client.post("/categories", json=new_body).status_code == HTTP_422_UNPROCESSABLE_CONTENT
-    old_body_with_new_child_key = {old_key: "root", "children": [{"categoryName": "leaf", "children": []}]}
-    assert old_client.post("/categories", json=old_body_with_new_child_key).status_code == (
-        HTTP_422_UNPROCESSABLE_CONTENT
-    )
-
-    old_category = generate_versioned_models(app.versions)["2000-01-01"][model]
-    assert old_category is not model
-    children_annotation = old_category.model_fields["children"].annotation
-    assert typing.get_origin(children_annotation) is list
-    assert typing.get_args(children_annotation) == (old_category,)
-    old_openapi = old_client.get("/openapi.json?version=2000-01-01").json()
-    old_schema_name = old_openapi["paths"]["/categories"]["post"]["requestBody"]["content"]["application/json"][
-        "schema"
-    ]["$ref"].rsplit("/", 1)[-1]
-    assert set(old_openapi["components"]["schemas"][old_schema_name]["properties"]) == {old_key, "children"}
 
 
 def test__generate_versioned_models__copies_in_cycle__should_refer_to_each_other():

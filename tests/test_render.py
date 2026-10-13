@@ -1,4 +1,3 @@
-import ast
 import re
 import sys
 from datetime import datetime
@@ -6,7 +5,7 @@ from enum import Enum
 from typing import Annotated, Any
 
 import pytest
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
+from pydantic import AfterValidator, BaseModel, Field
 
 from cadwyn import VersionChange, schema
 from cadwyn._render import render_model, render_model_by_path, render_module_by_path
@@ -260,111 +259,3 @@ def test__render_model__diamond_whose_other_parent_changed_field_with_default_fa
     rendered = render_model(RenderedDiamondWithFactory, versions, "2000-01-01")
 
     compile(rendered, "<rendered>", "exec")
-
-
-class RenderedAliases(BaseModel):
-    deleted_alias: str = Field(alias="a", validation_alias="v", serialization_alias="s")
-    deleted_derived_aliases: str = Field(alias="b")
-    changed_alias: str = Field(alias="c")
-
-
-class RenderedAnnotatedAlias(BaseModel):
-    deleted_alias: Annotated[str, Field(alias="a")]
-
-
-class ChangeRenderedAliases(VersionChange):
-    description = "Change the aliases"
-    instructions_to_migrate_to_previous_version = (
-        schema(RenderedAliases).field("deleted_alias").didnt_have("alias"),
-        schema(RenderedAliases).field("deleted_derived_aliases").didnt_have("alias"),
-        schema(RenderedAliases).field("changed_alias").had(alias="old"),
-        schema(RenderedAnnotatedAlias).field("deleted_alias").didnt_have("alias"),
-    )
-
-
-def test__render_model__deleted_alias__should_only_render_none_aliases_that_override_the_annotation():
-    versions = VersionBundle(Version("2001-01-01", ChangeRenderedAliases), Version("2000-01-01"))
-
-    rendered = render_model(RenderedAliases, versions, "2000-01-01")
-    assert code(rendered) == code(
-        """
-class RenderedAliases(BaseModel):
-    deleted_alias: str = Field(validation_alias='v', serialization_alias='s')
-    deleted_derived_aliases: str = Field()
-    changed_alias: str = Field(alias='old', validation_alias='old', serialization_alias='old')
-"""
-    )
-    # The rendered model behaves like the one that Cadwyn generates
-    rendered_namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field}
-    exec(rendered, rendered_namespace)
-    generated_model = generate_versioned_models(versions)["2000-01-01"][RenderedAliases]
-    for mode in ("validation", "serialization"):
-        assert rendered_namespace["RenderedAliases"].model_json_schema(mode=mode) == generated_model.model_json_schema(
-            mode=mode
-        )
-
-    # The Field() in the annotation still has the aliases so only the None ones override them
-    rendered_annotated = render_model(RenderedAnnotatedAlias, versions, "2000-01-01")
-    class_definition = ast.parse(rendered_annotated).body[0]
-    assert isinstance(class_definition, ast.ClassDef)
-    field_definition = class_definition.body[0]
-    assert isinstance(field_definition, ast.AnnAssign)
-    assert isinstance(field_definition.value, ast.Call)
-    assert {keyword.arg: ast.literal_eval(keyword.value) for keyword in field_definition.value.keywords} == {
-        "alias": None,
-        "validation_alias": None,
-        "serialization_alias": None,
-    }
-
-
-class RenderedGeneratedAliases(BaseModel):
-    model_config = ConfigDict(alias_generator=str.upper)
-
-    deleted_alias: int = Field(alias="new")
-    alias_set_to_none: int = Field(alias="other")
-    explicit_alias: int = Field(alias="explicit")
-    generated_alias: int
-
-
-class ChangeRenderedGeneratedAliases(VersionChange):
-    description = "Change the aliases of a model with an alias generator"
-    instructions_to_migrate_to_previous_version = (
-        schema(RenderedGeneratedAliases).field("deleted_alias").didnt_have("alias"),
-        schema(RenderedGeneratedAliases).field("alias_set_to_none").had(alias=None),
-    )
-
-
-def test__render_model__aliases_from_alias_generator__should_be_rendered_explicitly():
-    versions = VersionBundle(Version("2001-01-01", ChangeRenderedGeneratedAliases), Version("2000-01-01"))
-
-    rendered = render_model(RenderedGeneratedAliases, versions, "2000-01-01")
-    class_definition = ast.parse(rendered).body[0]
-    assert isinstance(class_definition, ast.ClassDef)
-    rendered_fields = {}
-    for field_definition in class_definition.body:
-        assert isinstance(field_definition, ast.AnnAssign)
-        assert isinstance(field_definition.target, ast.Name)
-        assert isinstance(field_definition.value, ast.Call)
-        rendered_fields[field_definition.target.id] = {
-            keyword.arg: ast.literal_eval(keyword.value) for keyword in field_definition.value.keywords
-        }
-    assert rendered_fields == {
-        # None follows alias in Field()
-        "deleted_alias": {"alias": "DELETED_ALIAS", "validation_alias": None, "serialization_alias": None},
-        "alias_set_to_none": {"alias": "ALIAS_SET_TO_NONE", "validation_alias": None, "serialization_alias": None},
-        "explicit_alias": {"alias": "explicit", "validation_alias": "explicit", "serialization_alias": "explicit"},
-        "generated_alias": {"alias": "GENERATED_ALIAS"},
-    }
-
-    # The rendered model has no model_config so it behaves like the generated one only with explicit aliases
-    rendered_namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field}
-    exec(rendered, rendered_namespace)
-    rendered_model = rendered_namespace["RenderedGeneratedAliases"]
-    generated_model = generate_versioned_models(versions)["2000-01-01"][RenderedGeneratedAliases]
-    for mode in ("validation", "serialization"):
-        assert rendered_model.model_json_schema(mode=mode) == generated_model.model_json_schema(mode=mode)
-    payload = {"DELETED_ALIAS": 1, "ALIAS_SET_TO_NONE": 2, "explicit": 3, "GENERATED_ALIAS": 4}
-    for model in (rendered_model, generated_model):
-        assert model.model_validate(payload).model_dump(by_alias=True) == payload
-        with pytest.raises(ValidationError):
-            model.model_validate({"new": 1, "other": 2, "explicit": 3, "generated_alias": 4})

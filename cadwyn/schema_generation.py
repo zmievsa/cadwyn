@@ -167,7 +167,6 @@ class PydanticFieldWrapper:
     # subclasses that changed it. We keep using them to validate the instructions so that we accept the same ones.
     passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
     declared_field_attributes: dict[str, Any] = dataclasses.field(init=False)
-    aliases_derived_from_alias: frozenset[str] = dataclasses.field(init=False)
     changes: list[_FieldAttributeChange] = dataclasses.field(init=False)
     # The same for all copies of the field
     identity: int = dataclasses.field(init=False)
@@ -177,7 +176,6 @@ class PydanticFieldWrapper:
     def __post_init__(self, init_model_field: FieldInfo) -> None:
         self.passed_field_attributes = _extract_passed_field_attributes(init_model_field)
         self.declared_field_attributes = self.passed_field_attributes.copy()
-        self.aliases_derived_from_alias = _get_aliases_derived_from_alias(self.declared_field_attributes)
         self.changes = []
         self.identity = next(_field_identities)
         self.models_that_changed_it = set()
@@ -212,8 +210,6 @@ class PydanticFieldWrapper:
         }
         field_copy.declared_field_attributes = field_copy.passed_field_attributes
         field_copy.changes = []
-        # Its attributes already have the aliases that follow alias
-        field_copy.aliases_derived_from_alias = frozenset()
         field_copy.models_that_changed_it = set()
         field_copy._field_attributes_by_model = {}
         return field_copy
@@ -251,12 +247,7 @@ class PydanticFieldWrapper:
                     attributes.pop(change.name, None)
                 else:
                     attributes[change.name] = change.value
-        attributes = _keep_last_of_default_and_default_factory(attributes, changes)
-        # The aliases that were changed explicitly do not follow alias anymore
-        derived_aliases = self.aliases_derived_from_alias.difference(change.name for change in changes)
-        return _make_derived_aliases_follow_alias(
-            attributes, derived_aliases, had_alias="alias" in self.declared_field_attributes
-        )
+        return _keep_last_of_default_and_default_factory(attributes, changes)
 
 
 def _keep_last_of_default_and_default_factory(
@@ -296,30 +287,6 @@ def _sets_default_attribute(attributes: dict[str, Any], attr_name: str) -> bool:
     if attr_name == "default":
         return value is not PydanticUndefined and value is not Ellipsis
     return value is not None
-
-
-def _get_aliases_derived_from_alias(field_attributes: dict[str, Any]) -> frozenset[str]:
-    """Return the aliases that Field() set to alias because they were not passed explicitly (or were equal to it)"""
-    return frozenset(
-        name
-        for name in ("validation_alias", "serialization_alias")
-        if "alias" in field_attributes and field_attributes.get(name, Sentinel) == field_attributes["alias"]
-    )
-
-
-def _make_derived_aliases_follow_alias(
-    attributes: dict[str, Any], derived_aliases: frozenset[str], *, had_alias: bool
-) -> dict[str, Any]:
-    """Make the aliases that Field() derived from alias follow it when field().had() or field().didnt_have() change it.
-
-    We pass them (and a deleted alias) explicitly, even as None, so that they override the ones from the Field()
-    in the annotation of the field, e.g. `Annotated[str, Field(alias="a")]`.
-    """
-    if "alias" in attributes:
-        return attributes | dict.fromkeys(derived_aliases, attributes["alias"])
-    if had_alias:
-        return attributes | {"alias": None} | dict.fromkeys(derived_aliases, None)
-    return attributes
 
 
 _OTHER_DEFAULT_ATTRIBUTE = {"default": "default_factory", "default_factory": "default"}
