@@ -19,6 +19,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    RootModel,
     ValidationError,
     create_model,
 )
@@ -2090,3 +2091,206 @@ def test__version_bundle__version_generic_type_args__should_be_read_only(version
     with pytest.raises(AttributeError):
         versions.version_generic_type_args = not version_generic_type_args  # ty: ignore[invalid-assignment]
     assert versions.version_generic_type_args is version_generic_type_args
+
+
+_InheritedT = TypeVar("_InheritedT")
+_InheritedU = TypeVar("_InheritedU")
+
+
+@versions_generic_type_args
+@pytest.mark.parametrize("shape", ["parametrization", "subclass_of_parametrization", "two_levels_of_generics"])
+def test__router_generation__instruction_on_field_inherited_through_parametrized_generic__should_keep_its_type(
+    create_versioned_app: CreateVersionedApp, shape: str
+):
+    class Pair(BaseModel, Generic[_InheritedT, _InheritedU]):
+        first: _InheritedT
+        second: _InheritedU
+
+    if shape == "parametrization":
+        model: Any = Pair[str, int]
+    elif shape == "subclass_of_parametrization":
+
+        class StrIntPair(Pair[str, int]):
+            pass
+
+        model = StrIntPair
+    else:
+
+        class IntPair(Pair[_InheritedU, int], Generic[_InheritedU]):
+            pass
+
+        model = IntPair[str]
+
+    router = VersionedAPIRouter()
+
+    @router.post("/pair", response_model=model)
+    async def create_pair(body: model) -> Any:
+        return body
+
+    app = create_versioned_app(
+        version_change(schema(model).field("second").had(description="Old second")), router=router
+    )
+
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.post("/pair", json={"first": "a", "second": 1}).json() == {"first": "a", "second": 1}
+        response = client.post("/pair", json={"first": "a", "second": "not a number"})
+        assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+        assert response.json()["detail"][0]["loc"] == ["body", "second"]
+
+    old_schemas = TestClient(app).get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert {name: schema["properties"]["second"] for name, schema in old_schemas.items() if "Pair" in name} == {
+        name: {"type": "integer", "title": "Second", "description": "Old second"}
+        for name in old_schemas
+        if "Pair" in name
+    }
+
+
+class _InheritedItem(BaseModel):
+    name: str
+
+
+class _WithMeta(BaseModel, Generic[_InheritedT]):
+    meta: _InheritedT
+
+
+class _ItemsPage(BaseModel, Generic[_InheritedT]):
+    items: list[_InheritedT]
+
+
+class _PageMeta(BaseModel):
+    total: int
+
+
+# Sibling bases reuse the same TypeVar, as most codebases do
+class _ItemsPageWithMeta(_WithMeta[_PageMeta], _ItemsPage[_InheritedT], Generic[_InheritedT]):
+    pass
+
+
+class _A(BaseModel, Generic[_InheritedT]):
+    a: _InheritedT
+
+
+class _B(BaseModel, Generic[_InheritedT]):
+    b: _InheritedT
+
+
+class _B2(BaseModel, Generic[_InheritedU]):
+    b: _InheritedU
+
+
+class _M(_A[int], _B[_InheritedT], Generic[_InheritedT]):
+    pass
+
+
+class _MS(_M[str]):
+    pass
+
+
+class _M2(_A[int], _B2[_InheritedT], Generic[_InheritedT]):
+    pass
+
+
+class _M3(_A[int], _B):
+    pass
+
+
+class _IntsRoot(RootModel[list[int]]):
+    pass
+
+
+class _GenericRoot(RootModel[list[_InheritedT]], Generic[_InheritedT]):
+    pass
+
+
+class _IntGenericRoot(_GenericRoot[int]):
+    pass
+
+
+@versions_generic_type_args
+@pytest.mark.parametrize(
+    ("route_model", "changed_model", "field_name", "valid_body", "invalid_body"),
+    [
+        pytest.param(
+            _ItemsPageWithMeta[_InheritedItem],
+            _ItemsPageWithMeta,
+            "items",
+            {"meta": {"total": 1}, "items": [{"name": "a"}]},
+            {"meta": {"total": 1}, "items": [{"total": 1}]},
+            id="sibling_base_with_same_type_var",
+        ),
+        pytest.param(_M[str], _M[str], "b", {"a": 1, "b": "s"}, {"a": 1, "b": 5}, id="sibling_parametrization"),
+        pytest.param(_MS, _MS, "b", {"a": 1, "b": "s"}, {"a": 1, "b": 5}, id="subclass_with_sibling_parametrization"),
+        pytest.param(_M2[str], _M2[str], "b", {"a": 1, "b": "s"}, {"a": 1, "b": 5}, id="sibling_with_other_type_var"),
+        # Pydantic leaves the type var of the bare generic base as it is, so the field accepts anything
+        pytest.param(_M3, _M3, "b", {"a": 1, "b": "s"}, None, id="bare_generic_next_to_parametrization"),
+        pytest.param(_IntsRoot, _IntsRoot, "root", [1], ["zz"], id="root_model_subclass"),
+        pytest.param(_GenericRoot[int], _GenericRoot[int], "root", [1], ["zz"], id="generic_root_model"),
+        pytest.param(_IntGenericRoot, _IntGenericRoot, "root", [1], ["zz"], id="subclass_of_generic_root_model"),
+    ],
+)
+def test__router_generation__instruction_on_field_inherited_through_other_bases__should_keep_its_type(
+    create_versioned_app: CreateVersionedApp,
+    route_model: Any,
+    changed_model: Any,
+    field_name: str,
+    valid_body: Any,
+    invalid_body: Any,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/models", response_model=route_model)
+    async def create_model(body: route_model) -> Any:
+        return body
+
+    app = create_versioned_app(
+        version_change(schema(changed_model).field(field_name).had(description="Old field")), router=router
+    )
+
+    for version in ("2000-01-01", "2001-01-01"):
+        client = TestClient(app, headers={app.router.api_version_parameter_name: version})
+        assert client.post("/models", json=valid_body).json() == valid_body
+        if invalid_body is None:
+            assert client.post("/models", json={**valid_body, field_name: 5}).status_code == HTTP_200_OK
+        else:
+            assert client.post("/models", json=invalid_body).status_code == HTTP_422_UNPROCESSABLE_CONTENT
+
+    # The field has the same schema in the older version as in the newer one, except for its description
+    old_openapi, new_openapi = (
+        TestClient(app).get(f"/openapi.json?version={version}").json() for version in ("2000-01-01", "2001-01-01")
+    )
+    old_field_schema = _get_request_body_field_schema(old_openapi, field_name)
+    assert old_field_schema.pop("description") == "Old field"
+    assert old_field_schema == _get_request_body_field_schema(new_openapi, field_name)
+
+
+def _get_request_body_field_schema(openapi: dict[str, Any], field_name: str) -> dict[str, Any]:
+    ref = openapi["paths"]["/models"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    model_schema = openapi["components"]["schemas"][ref.removeprefix("#/components/schemas/")]
+    return model_schema if field_name == "root" else model_schema["properties"][field_name]
+
+
+@pytest.mark.parametrize("version_generic_type_args", [False], ids=["head_generic_args"])
+@pytest.mark.parametrize(
+    ("model", "field_name"),
+    [
+        # Subclasses of parametrizations, which keep the type vars of their bases with every pydantic version
+        pytest.param(_MS, "b", id="subclass_with_sibling_parametrization"),
+        pytest.param(_IntsRoot, "root", id="root_model_subclass"),
+        pytest.param(_IntGenericRoot, "root", id="subclass_of_generic_root_model"),
+    ],
+)
+def test__generate_versioned_models__instruction_on_inherited_generic_field_without_option__should_keep_it_as_before(
+    create_runtime_schemas: Any, model: Any, field_name: str
+):
+    old_model = create_runtime_schemas(version_change(schema(model).field(field_name).had(description="Old")))[
+        "2000-01-01"
+    ][model]
+
+    # Older versions keep the type var of the base that defines the field, as Cadwyn always did
+    assert _contains_type_vars(old_model.model_fields[field_name].annotation)
+    assert not _contains_type_vars(model.model_fields[field_name].annotation)
+
+
+def _contains_type_vars(annotation: Any) -> bool:
+    return isinstance(annotation, TypeVar) or any(_contains_type_vars(arg) for arg in typing.get_args(annotation))
