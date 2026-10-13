@@ -116,6 +116,13 @@ def _render_pydantic_model(
 
     # The same fields as in the copies of the model
     field_attributes, annotations = wrapper.get_field_attributes_and_annotations(generator.model_bundle.schemas)
+    # Only for such models so that we render the others without generating them
+    if wrapper.cls.model_config.get("alias_generator") is not None:
+        generated_model = generator[wrapper.cls]
+        field_attributes = {
+            name: _with_aliases_of_generated_field(attributes, generated_model.model_fields[name])
+            for name, attributes in field_attributes.items()
+        }
     field_definitions = [
         ast.AnnAssign(
             target=ast.Name(name),
@@ -147,6 +154,27 @@ def _render_pydantic_model(
 
 
 _ALIAS_ATTRIBUTES = ("alias", "validation_alias", "serialization_alias")
+
+
+def _with_aliases_of_generated_field(attributes: dict[str, Any], generated_field: FieldInfo) -> dict[str, Any]:
+    """Pass the aliases that the alias generator gave the field explicitly because we do not render model_config.
+
+    So the rendered field has the same aliases as the generated one. The aliases that Field() already gets from the
+    attributes stay as they are.
+    """
+    attributes = attributes.copy()
+    for attr_name in _ALIAS_ATTRIBUTES:
+        generated_value = getattr(generated_field, attr_name)
+        if generated_value is not None and _get_alias_of_field(attributes, attr_name) != generated_value:
+            attributes[attr_name] = generated_value
+    return attributes
+
+
+def _get_alias_of_field(attributes: dict[str, Any], attr_name: str) -> Any:
+    """Return the alias that Field(**attributes) gets. Like in Field(), None means that the alias follows alias"""
+    if attributes.get(attr_name) is None and attr_name != "alias":
+        return attributes.get("alias")
+    return attributes.get(attr_name)
 
 
 def _without_redundant_none_aliases(attributes: dict[str, Any], annotation: Any) -> dict[str, Any]:
