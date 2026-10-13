@@ -398,7 +398,8 @@ class Cadwyn(FastAPI):
     async def openapi_jsons(self, req: Request) -> JSONResponse:
         version = req.query_params.get("version") or req.headers.get(self.router.api_version_parameter_name)
 
-        if version is not None and version in self.router.versioned_routers:
+        is_versioned = version is not None and version in self.router.versioned_routers
+        if is_versioned:
             routes = self.router.versioned_routers[version].routes
             formatted_version = version
         elif version == "unversioned" and self._there_are_public_unversioned_routes():
@@ -438,17 +439,18 @@ class Cadwyn(FastAPI):
             servers=self.servers,
             separate_input_output_schemas=self.separate_input_output_schemas,
         )
-        self._describe_api_version_header_in_openapi(openapi)
+        # The API version header dependency of versioned routes defaults to their version so that requests
+        # without the header still reach them when api_version_default_value or a custom versioning middleware
+        # picks their version. FastAPI therefore documents the header as optional, but without
+        # api_version_default_value the server returns a 404 for requests without it. We keep the default so that
+        # clients generated from OpenAPI keep sending the version of the document.
+        if is_versioned and self._api_version_location == "custom_header" and not self._api_version_has_default_value:
+            self._mark_api_version_header_as_required_in_openapi(openapi)
         return JSONResponse(openapi)
 
-    def _describe_api_version_header_in_openapi(self, openapi: dict[str, Any]) -> None:
-        # The API version header dependency of the routes defaults to their version so that requests
-        # without the header still reach them when api_version_default_value or a custom versioning
-        # middleware picks their version. FastAPI then documents the header as optional, but without
-        # api_version_default_value the server returns a 404 for requests without it, so it is required.
-        # We keep the default so that clients generated from OpenAPI keep sending the version of the document.
-        if self._api_version_has_default_value:
-            return
+    def _mark_api_version_header_as_required_in_openapi(self, openapi: dict[str, Any]) -> None:
+        # Every route of a versioned document is only reachable with this header, so we also mark it as required
+        # when a route declares a header with the same name itself.
         header_name = self.api_version_pythonic_parameter_name.replace("_", "-")
         for path_item in openapi.get("paths", {}).values():
             for operation in path_item.values():

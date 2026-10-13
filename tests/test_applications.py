@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 import pytest
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -671,6 +671,57 @@ def test__get_openapi__route_with_ref_parameters__should_keep_them_and_require_a
                 "examples": {"default": {"value": "2022-11-16"}},
             },
             {"$ref": "#/components/parameters/TenantId"},
+        ]
+    }
+
+
+_OWN_HEADER_WITH_API_VERSION_NAME = {
+    "name": "x-api-version",
+    "in": "header",
+    "required": False,
+    "schema": {"type": "string", "default": "legacy-client", "title": "X-Api-Version"},
+}
+
+
+def test__get_openapi__unversioned_route_with_own_header_named_like_api_version__should_stay_optional():
+    app = Cadwyn(versions=VersionBundle(Version("2023-04-14")))
+
+    @app.get("/health")
+    async def health(client_version: str = Header("legacy-client", alias="x-api-version")):
+        return client_version
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+        openapi = client.get("/openapi.json?version=unversioned").json()
+
+    assert response.json() == "legacy-client"
+    assert openapi["paths"]["/health"]["get"]["parameters"] == [_OWN_HEADER_WITH_API_VERSION_NAME]
+
+
+def test__get_openapi__api_version_in_path_with_own_header_named_like_api_version__should_stay_optional():
+    app = Cadwyn(versions=VersionBundle(Version("2023-04-14")), api_version_location="path")
+    router = VersionedAPIRouter()
+
+    @router.get("/{x_api_version}/items")
+    async def get_items(client_version: str = Header("legacy-client", alias="x-api-version")):
+        return client_version
+
+    app.generate_and_include_versioned_routers(router)
+
+    with TestClient(app) as client:
+        response = client.get("/2023-04-14/items")
+
+    assert response.json() == "legacy-client"
+    assert _get_api_version_parameters_from_openapi(app, "/{x_api_version}/items") == {
+        "2023-04-14": [
+            {
+                "name": "x_api_version",
+                "in": "path",
+                "required": True,
+                "schema": {"type": "string", "format": "date", "title": "X Api Version"},
+                "examples": {"default": {"value": "2023-04-14"}},
+            },
+            _OWN_HEADER_WITH_API_VERSION_NAME,
         ]
     }
 
