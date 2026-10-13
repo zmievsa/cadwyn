@@ -4385,6 +4385,36 @@ def test__request_body_migration__with_required_field_under_optional_field_with_
         assert version_client.post(test_path, json=payload).json() == expected
 
 
+class OuterWithShadowedRequiredInner(BaseModel):
+    # The dumped key "inner" is validated, but only if the higher-priority "j" is missing
+    inner: InnerSchemaWithValidationAlias = Field(validation_alias=AliasChoices("j", "inner"))
+    optional: int = Field(default=0, alias="o", validation_alias="ov")
+
+
+def test__request_body_migration__with_required_field_under_shadowed_validation_key__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: OuterWithShadowedRequiredInner):
+        return body.model_dump()
+
+    @convert_request_to_next_version_for(OuterWithShadowedRequiredInner)
+    def migrator(request: RequestInfo):
+        request.body["j"] = {"v": 1}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # The migration sets the key that the head reads instead of the dumped one, so the head never validates
+    # the required field under the dumped key and the body passes as it is. We leave it as it is,
+    # so the optional field gets its default as before.
+    assert clients["2000-01-01"].post(test_path, json={"inner": {"v": 2}, "ov": 5}).json() == {
+        "inner": {"value": 1},
+        "optional": 0,
+    }
+
+
 def test__request_body_migration__with_optional_field_with_validation_alias__should_stay_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],

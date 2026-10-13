@@ -1229,7 +1229,7 @@ def _restore_data(spec: _RestorerSpec, data: Any) -> Any:
             key, child_spec, child_data = child
             frame[4] = key
             is_validated = frame[5] and (
-                frame[0][0] != "model" or key not in _get_restore_plan(frame[0][1]).renamed_keys
+                frame[0][0] != "model" or _is_nested_key_validated(_get_restore_plan(frame[0][1]), key, frame[1])
             )
             stack.append(
                 [child_spec, child_data, _iter_children_to_restore(child_spec, child_data), None, None, is_validated]
@@ -1304,6 +1304,11 @@ class _RestorePlan:
     failing_keys: frozenset[str] = frozenset()
     # The dumped keys of `renames`
     renamed_keys: frozenset[str] = frozenset()
+    # The other keys that the fields of `nested` validate, by their dumped keys. The model ignores the dumped key of
+    # such a field if the data has one of them, e.g. a key of `AliasChoices` that comes before it.
+    other_validation_keys: dict[str, frozenset[Union[str, int]]] = dataclasses.field(
+        default_factory=dict, compare=False
+    )
 
 
 @functools.cache
@@ -1326,7 +1331,33 @@ def _get_restore_plan(model: type[BaseModel]) -> _RestorePlan:
         keys=keys,
         failing_keys=_get_failing_keys(model, renames),
         renamed_keys=frozenset(key for key, *_ in renames),
+        other_validation_keys=_get_other_validation_keys(model, frozenset(key for key, _ in nested)),
     )
+
+
+def _get_other_validation_keys(
+    model: type[BaseModel], nested_keys: frozenset[str]
+) -> dict[str, frozenset[Union[str, int]]]:
+    other_validation_keys: dict[str, frozenset[Union[str, int]]] = {}
+    for name, field in model.model_fields.items():
+        dumped_key = field.serialization_alias or name
+        if dumped_key in nested_keys:
+            keys = frozenset(path[0] for path in _get_validation_paths(model, name, field) if path[0] != dumped_key)
+            if keys:
+                other_validation_keys[dumped_key] = keys
+    return other_validation_keys
+
+
+def _is_nested_key_validated(plan: _RestorePlan, key: object, data: dict[str, Any]) -> bool:
+    """Whether the model of the plan validates what's under the key of its data, the dumped key of one of its fields.
+
+    It doesn't if it's the key of a field that we rename, or if the data has another key of the field, which might
+    come first.
+    """
+    if key in plan.renamed_keys:
+        return False
+    other_keys = plan.other_validation_keys.get(cast("str", key))
+    return other_keys is None or data.keys().isdisjoint(other_keys)
 
 
 def _get_failing_keys(model: type[BaseModel], renames: tuple["_Rename", ...]) -> frozenset[str]:
