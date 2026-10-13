@@ -4,7 +4,7 @@ import re
 import sys
 import tempfile
 import typing
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
 from contextvars import ContextVar
 from datetime import datetime
 from decimal import Decimal
@@ -46,6 +46,7 @@ from pydantic import (
     ConfigDict,
     Field,
     Json,
+    OnErrorOmit,
     PlainSerializer,
     PlainValidator,
     RootModel,
@@ -69,7 +70,7 @@ from starlette.formparsers import MultiPartParser
 from starlette.responses import StreamingResponse
 from typing_extensions import Self, TypeAliasType, TypedDict, override
 
-from cadwyn import Cadwyn, VersionedAPIRouter
+from cadwyn import Cadwyn, VersionedAPIRouter, current_dependency_solver
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -1375,6 +1376,32 @@ def test__request_body_migration__with_any_kind_of_field_aliases__head_should_ge
     assert clients["2001-01-01"].post(test_path, json=payload).json() == 1
     # Migrations still see the keys of `model_dump(by_alias=True)`
     assert bodies_seen_by_migration == [{dumped_key: 1}]
+
+
+class VariablePostBody(BaseModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+
+    value: Optional[str] = Field(serialization_alias="val")
+    description: Optional[str] = Field(default=None)
+
+
+def test__request_body_migration__with_required_field_with_serialization_alias_and_forbidden_extra_keys__should_work(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.put(test_path, status_code=201)
+    async def endpoint(body: VariablePostBody):
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+
+    # The head surely rejects the dumped body as it is, so we restore it
+    for version_client in clients.values():
+        assert version_client.put(test_path, json={"value": "new_value"}).json() == {
+            "value": "new_value",
+            "description": None,
+        }
 
 
 class InnerSchemaWithValidationAlias(BaseModel):
@@ -2929,6 +2956,22 @@ class MoneyWithSerializerInNestedModel(BaseModel):
     )
 
 
+class Cents(BaseModel):
+    amount: float = Field(default=0, validation_alias="cents", serialization_alias="dollars")
+
+
+class MoneyWithPlainSerializerOnNestedModel(BaseModel):
+    money: Annotated[Cents, PlainSerializer(lambda value: {"dollars": value.amount / 100})] = Field(
+        default_factory=Cents, validation_alias="m", serialization_alias="n"
+    )
+
+
+class MoneyWithWrapSerializerOnNestedModel(BaseModel):
+    money: Annotated[Cents, WrapSerializer(lambda value, handler: {"dollars": handler(value)["dollars"] / 100})] = (
+        Field(default_factory=Cents, validation_alias="m", serialization_alias="n")
+    )
+
+
 @pytest.mark.parametrize(
     ("model", "payload", "expected"),
     [
@@ -2958,19 +3001,85 @@ def test__request_body_migration__with_custom_serialization_or_model_validators_
         assert version_client.post(test_path, json=payload).json() == expected
 
 
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param(MoneyWithSerializerInNestedModel, id="model_serializer"),
+        # The serializer is attached to the reference to the nested model, not to the nested model itself
+        pytest.param(MoneyWithPlainSerializerOnNestedModel, id="plain_serializer_on_nested_model"),
+        pytest.param(MoneyWithWrapSerializerOnNestedModel, id="wrap_serializer_on_nested_model"),
+    ],
+)
 def test__request_body_migration__with_custom_serialization_in_nested_model__should_stay_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
+    model: type[BaseModel],
 ):
     @router.post(test_path)
-    async def endpoint(body: MoneyWithSerializerInNestedModel):
+    async def endpoint(body: model):  # ty: ignore[invalid-type-form]
         return body.money.amount
 
     clients = create_versioned_clients(version_change())
 
     for version_client in clients.values():
         assert version_client.post(test_path, json={"m": {"cents": 100}}).json() == 0
+
+
+class SchemaWithItemsThatAreOmittedOnError(BaseModel):
+    items: list[OnErrorOmit[InnerSchemaWithValidationAlias]] = []
+    # Required, so that the head surely rejects the body as it is and we restore it
+    name: str = Field(validation_alias="n")
+
+
+def test__request_body_migration__with_items_that_are_omitted_on_error__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithItemsThatAreOmittedOnError):
+        return [body.name, len(body.items)]
+
+    clients = create_versioned_clients(version_change())
+
+    # `OnErrorOmit` omits the items that fail validation instead of failing, so we can't tell whether
+    # the dumped keys made them fail. We leave them as before.
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"items": [{"v": 1}], "n": "name"}).json() == ["name", 0]
+
+
+class CentsWithPlainSerializer(BaseModel):
+    amount: Annotated[float, PlainSerializer(lambda value: value / 100)] = 0
+
+
+class MoneyWithSerializerTwoLevelsDeep(BaseModel):
+    with_serializer: CentsWithPlainSerializer = Field(default_factory=CentsWithPlainSerializer)
+    without_serializer: Cents = Field(default_factory=Cents)
+
+
+class MoneyWithSerializerTwoLevelsDeepAndSafeMoney(BaseModel):
+    money: MoneyWithSerializerTwoLevelsDeep = Field(
+        default_factory=MoneyWithSerializerTwoLevelsDeep, validation_alias="m", serialization_alias="n"
+    )
+    # Required, so that the head surely rejects the body as it is and we restore it
+    other_money: Cents = Field(validation_alias="o", serialization_alias="p")
+
+
+def test__request_body_migration__with_custom_serialization_two_levels_deep__should_only_restore_safe_fields(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: MoneyWithSerializerTwoLevelsDeepAndSafeMoney):
+        return [body.money.with_serializer.amount, body.money.without_serializer.amount, body.other_money.amount]
+
+    clients = create_versioned_clients(version_change())
+
+    payload = {"m": {"with_serializer": {"amount": 100}, "without_serializer": {"cents": 100}}, "o": {"cents": 100}}
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == [0, 0, 100]
 
 
 @pytest.mark.parametrize(
@@ -3511,7 +3620,8 @@ def test__request_body_migration__with_defaults_shaped_like_core_schemas__should
 ):
     class SchemaWithCoreSchemaShapedDefault(BaseModel):
         options: dict[str, Any] = default
-        value: Optional[int] = Field(default=None, validation_alias="v")
+        # Required, so that the head surely rejects the body as it is and we restore it
+        value: int = Field(validation_alias="v")
 
     @router.post(test_path)
     async def endpoint(body: SchemaWithCoreSchemaShapedDefault):
@@ -3650,7 +3760,8 @@ def test__request_body_migration__with_field_core_schema_of_unexpected_shape__sh
 ):
     class SchemaWithUnexpectedFieldCoreSchema(BaseModel):
         value: Optional[int] = Field(default=None, validation_alias="v")
-        other: Optional[int] = Field(default=None, validation_alias="o")
+        # Required, so that the head surely rejects the body as it is and we restore it
+        other: int = Field(validation_alias="o")
 
     @router.post(test_path)
     async def endpoint(body: SchemaWithUnexpectedFieldCoreSchema):
@@ -3677,7 +3788,8 @@ def test__request_body_migration__with_nested_model_of_unexpected_core_schema__s
 ):
     class SchemaWithNestedChainCoreSchema(BaseModel):
         inner: SchemaWithChainCoreSchema
-        other: int = Field(default=0, validation_alias="o")
+        # Required, so that the head surely rejects the body as it is and we restore it
+        other: int = Field(validation_alias="o")
 
     @router.post(test_path)
     async def endpoint(body: SchemaWithNestedChainCoreSchema):
@@ -3702,7 +3814,8 @@ class InnerWithV1PostRootValidator(BaseModel):
 
 class SchemaWithV1PostRootValidator(BaseModel):
     inner: Optional[InnerWithV1PostRootValidator] = None
-    value: Optional[int] = Field(default=None, validation_alias="v")
+    # Required, so that the head surely rejects the body as it is and we restore it
+    value: int = Field(validation_alias="v")
 
     @root_validator(skip_on_failure=True)  # ty: ignore[deprecated]  # V1 validators are still supported.
     def check(cls, values: dict[str, Any]) -> dict[str, Any]:
@@ -3753,7 +3866,8 @@ def test__request_body_migration__with_recursive_model__head_should_get_the_valu
     # Python 3.10 keeps forward references inside builtin generics such as `list["Node"]` unevaluated
     # in the field info, so only references that typing evaluates, such as `Optional["Node"]`, are walked into there
     class Node(BaseModel):
-        value: Optional[int] = Field(default=None, validation_alias="vv")
+        # Required, so that the head surely rejects the body as it is and we restore it
+        value: int = Field(validation_alias="vv")
         child: Optional["Node"] = Field(default=None, validation_alias="kid")
 
     @router.post(test_path)
@@ -3879,16 +3993,19 @@ def test__request_body_migration__with_bulk_items_without_the_renamed_keys__head
     class SchemaWithItems(BaseModel):
         items: list[Item]
         by_name: dict[str, Item] = Field(default_factory=dict)
+        # Required, so that the head surely rejects the body as it is and we restore all of it
+        name: str = Field(validation_alias="n")
 
     @router.post(test_path)
     async def endpoint(body: SchemaWithItems):
         return body.model_dump()
 
     clients = create_versioned_clients(version_change())
-    payload = {"items": [{"id": 1}, {"id": 2, "wire": 3}, {"id": 4}], "by_name": {"a": {"id": 5}}}
+    payload = {"items": [{"id": 1}, {"id": 2, "wire": 3}, {"id": 4}], "by_name": {"a": {"id": 5}}, "n": "name"}
 
     for version_client in clients.values():
         assert version_client.post(test_path, json=payload).json() == {
+            "name": "name",
             "items": [{"id": 1, "optional": 0}, {"id": 2, "optional": 3}, {"id": 4, "optional": 0}],
             "by_name": {"a": {"id": 5, "optional": 0}},
         }
@@ -4163,20 +4280,26 @@ def test__request_body_migration__with_bulk_items_with_several_nested_models__he
 
     class SchemaWithItems(BaseModel):
         items: list[Item]
+        # Required, so that the head surely rejects the body as it is and we restore all of it
+        name: str = Field(validation_alias="n")
 
     @router.post(test_path)
     async def endpoint(body: SchemaWithItems):
         return body.model_dump()
 
     clients = create_versioned_clients(version_change())
-    payload = {"items": [{"first": {"id": 1}, "second": {"id": 2, "v": 3}}, {"first": {"id": 4}, "second": {"id": 5}}]}
+    payload = {
+        "items": [{"first": {"id": 1}, "second": {"id": 2, "v": 3}}, {"first": {"id": 4}, "second": {"id": 5}}],
+        "n": "name",
+    }
 
     for version_client in clients.values():
         assert version_client.post(test_path, json=payload).json() == {
+            "name": "name",
             "items": [
                 {"first": {"id": 1, "value": 0}, "second": {"id": 2, "value": 3}},
                 {"first": {"id": 4, "value": 0}, "second": {"id": 5, "value": 0}},
-            ]
+            ],
         }
 
 
@@ -4197,7 +4320,8 @@ def test__request_body_migration__with_safe_model_next_to_unsafe_one__should_res
 
     class SchemaWithWrappers(BaseModel):
         unsafe_wrapper: WrapperWithUnsafeModel = Field(default_factory=WrapperWithUnsafeModel, validation_alias="u")
-        safe_wrapper: WrapperWithSafeModel = Field(default_factory=WrapperWithSafeModel, validation_alias="s")
+        # Required, so that the head surely rejects the body as it is and we restore it
+        safe_wrapper: WrapperWithSafeModel = Field(validation_alias="s")
 
     @router.post(test_path)
     async def endpoint(body: SchemaWithWrappers):
@@ -4225,7 +4349,73 @@ def test__request_body_migration__with_json_form_field__should_stay_as_before(
         assert version_client.post(test_path, data={"v": "[1,2]"}).json() == []
 
 
-def test__request_body_migration__with_value_that_the_head_rejects__should_fail_like_other_fields(
+class OptionalOuterWithRequiredInner(BaseModel):
+    inner: Optional[InnerSchemaWithValidationAlias] = Field(default=None, alias="i", validation_alias="j")
+    name: str = "n"
+
+
+class OptionalOuterListWithRequiredInner(BaseModel):
+    items: list[InnerSchemaWithValidationAlias] = Field(default=[], alias="i", validation_alias="j")
+
+
+@pytest.mark.parametrize(
+    ("model", "payload", "expected"),
+    [
+        pytest.param(OptionalOuterWithRequiredInner, {"j": {"v": 5}}, {"inner": None, "name": "n"}, id="nested_model"),
+        pytest.param(OptionalOuterListWithRequiredInner, {"j": [{"v": 5}]}, {"items": []}, id="nested_list"),
+    ],
+)
+def test__request_body_migration__with_required_field_under_optional_field_with_validation_alias__should_stay(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    model: type[BaseModel],
+    payload: dict[str, Any],
+    expected: dict[str, Any],
+):
+    @router.post(test_path)
+    async def endpoint(body: model):  # ty: ignore[invalid-type-form]
+        return body.model_dump()
+
+    clients = create_versioned_clients(version_change())
+
+    # The head doesn't read the dumped key of the optional field, so it never validates the required field under it,
+    # and the body passes as it is. We leave it as it is, so the optional field gets its default as before.
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == expected
+
+
+class OuterWithShadowedRequiredInner(BaseModel):
+    # The dumped key "inner" is validated, but only if the higher-priority "j" is missing
+    inner: InnerSchemaWithValidationAlias = Field(validation_alias=AliasChoices("j", "inner"))
+    optional: int = Field(default=0, alias="o", validation_alias="ov")
+
+
+def test__request_body_migration__with_required_field_under_shadowed_validation_key__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: OuterWithShadowedRequiredInner):
+        return body.model_dump()
+
+    @convert_request_to_next_version_for(OuterWithShadowedRequiredInner)
+    def migrator(request: RequestInfo):
+        request.body["j"] = {"v": 1}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # The migration sets the key that the head reads instead of the dumped one, so the head never validates
+    # the required field under the dumped key and the body passes as it is. We leave it as it is,
+    # so the optional field gets its default as before.
+    assert clients["2000-01-01"].post(test_path, json={"inner": {"v": 2}, "ov": 5}).json() == {
+        "inner": {"value": 1},
+        "optional": 0,
+    }
+
+
+def test__request_body_migration__with_optional_field_with_validation_alias__should_stay_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -4235,13 +4425,186 @@ def test__request_body_migration__with_value_that_the_head_rejects__should_fail_
 
     @router.post(test_path)
     async def endpoint(body: SchemaWithStricterHead):
-        raise NotImplementedError  # pragma: no cover
+        return body.value
 
     clients = create_versioned_clients(version_change(schema(SchemaWithStricterHead).field("value").had(ge=0)))
 
-    # Main silently dropped the value. Now it reaches the head like any other field, which rejects it
-    with pytest.raises(CadwynHeadRequestValidationError):
+    # The head accepts the body without the value, so we leave it as it is and the field gets its default as before,
+    # even if the head would accept the value too. We only restore bodies that the head surely rejects as they are.
+    assert clients["2000-01-01"].post(test_path, json={"v": 5}).json() == 0
+    assert clients["2000-01-01"].post(test_path, json={"v": 15}).json() == 0
+    assert clients["2001-01-01"].post(test_path, json={"v": 15}).json() == 0
+
+
+def test__request_body_migration__with_value_that_the_head_rejects__should_run_dependencies_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    calls: list[str] = []
+
+    def dependency() -> None:
+        calls.append("dependency")
+
+    def uncached_dependency() -> None:
+        calls.append("uncached_dependency")
+
+    def yield_dependency() -> Iterator[None]:
+        calls.append("enter")
+        yield
+        calls.append("exit")
+
+    def dependency_with_background_task(background_tasks: BackgroundTasks) -> None:
+        background_tasks.add_task(calls.append, "background_task")
+
+    class SchemaWithStricterHead(BaseModel):
+        value: int = Field(alias="x", validation_alias="v", ge=10)
+
+    @router.post(
+        test_path,
+        dependencies=[
+            Depends(dependency),
+            Depends(uncached_dependency, use_cache=False),
+            Depends(yield_dependency),
+            Depends(dependency_with_background_task),
+        ],
+    )
+    async def endpoint(body: SchemaWithStricterHead):
+        return body.value
+
+    clients = create_versioned_clients(version_change(schema(SchemaWithStricterHead).field("value").had(ge=0)))
+
+    # The dependencies run as many times as they did before: once for the version and once for the head
+    assert clients["2000-01-01"].post(test_path, json={"v": 15}).json() == 15
+    assert sorted(calls) == sorted(["dependency", "uncached_dependency", "enter", "exit"] * 2 + ["background_task"])
+
+    # The head rejects the restored body, so we solve the request again with the body as it is to fail as before.
+    # The second solve reuses the dependencies of the first one.
+    calls.clear()
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
         clients["2000-01-01"].post(test_path, json={"v": 5})
+    assert [error["type"] for error in exc_info.value.errors] == ["missing"]
+    assert sorted(call for call in calls if call != "exit") == sorted(
+        ["dependency", "uncached_dependency", "enter"] * 2
+    )
+
+
+def test__request_body_migration__with_form_value_that_the_head_rejects__should_run_dependencies_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    solvers: list[str] = []
+
+    async def dependency(solver: str = Depends(current_dependency_solver)) -> None:
+        solvers.append(solver)
+
+    class FormWithStricterHead(BaseModel):
+        value: int = Field(validation_alias="v", serialization_alias="x", ge=10)
+
+    @router.post(test_path, dependencies=[Depends(dependency)])
+    async def endpoint(body: Annotated[FormWithStricterHead, Form()]):
+        return body.value
+
+    clients = create_versioned_clients(version_change(schema(FormWithStricterHead).field("value").had(ge=0)))
+
+    assert clients["2000-01-01"].post(test_path, data={"v": "15"}).json() == 15
+    assert solvers == ["fastapi", "cadwyn"]
+
+    # The head rejects the restored form, so we solve the request again with the form as it is to fail as before,
+    # reusing the dependencies of the first solve
+    solvers.clear()
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, data={"v": "5"})
+    assert [error["type"] for error in exc_info.value.errors] == ["missing"]
+    assert solvers == ["fastapi", "cadwyn"]
+
+
+def test__request_body_migration__with_required_value_that_the_head_rejects__should_fail_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class RequiredValueWithStricterHead(BaseModel):
+        value: int = Field(validation_alias="v", ge=10)
+
+    @router.post(test_path)
+    async def endpoint(body: RequiredValueWithStricterHead):
+        raise NotImplementedError  # pragma: no cover
+
+    clients = create_versioned_clients(version_change(schema(RequiredValueWithStricterHead).field("value").had(ge=0)))
+
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, json={"v": 5})
+    # The error is the one that the body would get without the value, as before
+    assert [error["type"] for error in exc_info.value.errors] == ["missing"]
+
+
+@pytest.mark.parametrize("fails_on_third_validation", [False, True], ids=["counts", "rejects_third_validation"])
+def test__request_body_migration__with_validation_aliases__should_validate_the_body_as_many_times_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    fails_on_third_validation: bool,
+):
+    validations: list[str] = []
+
+    class SchemaWithStatefulValidator(BaseModel):
+        value: int = Field(alias="x", validation_alias="v")
+        data: Any
+
+        @model_validator(mode="after")
+        def count_validations(self) -> Self:
+            validations.append("validate")
+            if fails_on_third_validation and len(validations) > 2:
+                raise ValueError("Already validated twice")  # pragma: no cover # Only if the test fails
+            self.data["count"] += 1
+            return self
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithStatefulValidator):
+        return {"value": body.value, "count": body.data["count"]}
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        validations.clear()
+        # The version validates the body once, and the head validates the restored body once
+        assert version_client.post(test_path, json={"v": 7, "data": {"count": 0}}).json() == {"value": 7, "count": 2}
+        assert len(validations) == 2
+
+
+_head_dependency_has_run: ContextVar[bool] = ContextVar("_head_dependency_has_run", default=False)
+
+
+async def _set_up_head_validation(solver: str = Depends(current_dependency_solver)) -> None:
+    _head_dependency_has_run.set(solver == "cadwyn")
+
+
+class SchemaValidatedAfterHeadDependency(BaseModel):
+    value: int = Field(alias="x", validation_alias="v")
+
+    @model_validator(mode="after")
+    def check_that_head_dependency_has_run(self) -> Self:
+        if type(self) is SchemaValidatedAfterHeadDependency and self.value and not _head_dependency_has_run.get():
+            raise ValueError("The head dependency hasn't run yet")  # pragma: no cover # Only if the test fails
+        return self
+
+
+def test__request_body_migration__with_validators_that_rely_on_head_dependencies__head_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, dependencies=[Depends(_set_up_head_validation)])
+    async def endpoint(body: SchemaValidatedAfterHeadDependency):
+        return body.value
+
+    clients = create_versioned_clients(version_change())
+
+    # The head validates the restored body while solving its dependencies, like any other body
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"v": 7}).json() == 7
 
 
 class SchemaWithAliasPathsIntoAnotherField(BaseModel):
