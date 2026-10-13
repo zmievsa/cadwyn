@@ -3,6 +3,7 @@ import email.message
 import functools
 import http
 import inspect
+import itertools
 import json
 import os
 import tempfile
@@ -728,7 +729,11 @@ class VersionBundle:
 
                 raise raised_exception
             return response_info._response
-        return response_info.body
+        if route.response_field is None:
+            return response_info.body
+        return _rescue_response(
+            route.response_field, head_route.response_model, response_or_response_body, response_info.body
+        )
 
     async def _convert_endpoint_kwargs_to_version(
         self,
@@ -1084,21 +1089,174 @@ def _restore_validation_aliases(body_field: ModelField, data: Any) -> Any:
     The dump uses serialization aliases, which can differ from what a field validates
     (e.g. `Field(alias="x", validation_alias="v")`), so the head model would silently ignore such values.
     Anything that the restoration plans of the models don't cover is left as is.
+
+    It also restores the response bodies that FastAPI validates with the response field of a versioned route.
     """
-    if not _is_body_field_safe(body_field):
-        return data
     spec = _get_restorer_spec(body_field.field_info.annotation)
-    return data if spec is None else _restore_data(spec, data)
+    if spec is None or not _is_body_field_safe(body_field, spec):
+        return data
+    return _restore_data(spec, data)
+
+
+# Whether the last restoration renamed a key without which the data surely fails validation
+_RESTORATION = threading.local()
+
+
+def _rescue_response(response_field: ModelField, head_response_model: object, content: Any, data: Any) -> Any:
+    """Rescue the migrated `_prepare_response_content` of `content` if it surely fails validation due to dumped keys.
+
+    That's the case when a required field, or a model that forbids extra keys, gets a dumped key instead of
+    a validation key. We validate the response with its validation aliases restored, and use the result only if it
+    passes. FastAPI then validates the result again, which doesn't run any validators of the validated models.
+    Otherwise, FastAPI validates the response as it is, as it always did, and responses that pass stay exactly
+    as they are, even if a field gets its default instead of its value.
+    """
+    annotation = response_field.field_info.annotation
+    # Most responses have no fields without which they fail, so they aren't walked at all
+    if not _annotation_reaches_models_with_failing_renames(annotation):
+        return data
+    # Reaching renames means that the restoration walks into the models of the response
+    spec = cast("_RestorerSpec", _get_restorer_spec(annotation))
+    if not _is_body_field_safe(response_field, spec):
+        return data
+    _RESTORATION.has_failing_renames = False
+    restored = _restore_data(spec, data)
+    if restored is data or not _RESTORATION.has_failing_renames:
+        return data
+    # We only restore the dumps of the models of the head response model that the endpoint returned. FastAPI validates
+    # the dicts that the endpoint returns as they are, and the dump of another model can have the dumped keys of
+    # a response model with values that it doesn't accept.
+    head_spec = _get_restorer_spec(head_response_model)
+    if head_spec is None or not _is_dumped_from_models(content, head_spec):
+        return data
+    # The response fails as it is anyway, so whatever goes wrong while we try to rescue it, we don't swallow
+    # anything new: FastAPI validates the response as it is and raises the original error as before
+    try:
+        value, errors = response_field.validate(restored, {}, loc=("response",))
+    except Exception:  # noqa: BLE001
+        return data
+    return data if errors else value
+
+
+def _restore_model_validation_aliases(model: type[BaseModel], data: Any) -> Any:
+    """Restore the validation aliases in `model_dump(by_alias=True)` data that `model.model_validate` validates"""
+    return _restore_data(("model", model), data)
+
+
+def _is_dumped_from_models(content: Any, spec: "_RestorerSpec") -> bool:
+    """Whether the content holds models of the spec wherever the spec expects a model, and holds at least one.
+
+    Subclasses only count if they dump the fields of the model like the model does. Other values, such as None,
+    mean that whatever is in the migrated data didn't come from the dump of a model. We don't look into the models:
+    their fields hold their own models.
+    """
+    stack: list[tuple[Any, _RestorerSpec]] = [(content, spec)]
+    has_models = False
+    while stack:
+        content, (kind, inner) = stack.pop()
+        if kind == "model":
+            if isinstance(content, BaseModel):
+                if not _dumps_like(type(content), inner):
+                    return False
+                has_models = True
+            elif issubclass(inner, RootModel):
+                root_spec = _get_restorer_spec(inner.model_fields["root"].annotation)
+                if root_spec is None:
+                    return False
+                stack.append((content, root_spec))
+            elif isinstance(content, dict):
+                return False
+        elif isinstance(content, BaseModel):
+            return False
+        elif (kind == "list" and isinstance(content, list)) or (kind == "dict" and isinstance(content, dict)):
+            items = content if kind == "list" else content.values()
+            # Most containers only hold the models themselves, so we check their types in bulk
+            item_types = set(map(type, items))
+            if inner[0] == "model" and all(_dumps_like(item_type, inner[1]) for item_type in item_types):
+                has_models = has_models or bool(item_types)
+            else:
+                stack.extend(zip(items, itertools.repeat(inner)))
+    return has_models
+
+
+@functools.cache
+def _dumps_like(cls: type, model: type[BaseModel]) -> bool:
+    """Whether `model_dump()` of `cls` has the keys and values that a dump of `model` has, for the fields of `model`.
+
+    Subclasses can change how fields are dumped, e.g. with serializers or a `model_dump()` override, and add keys that
+    the model reads. We only compare by identity and strings, so we never call the `__eq__` of user values such as
+    the defaults of fields.
+    """
+    if cls is model:
+        return True
+    if (
+        not issubclass(cls, model)
+        or issubclass(model, RootModel)
+        or _get_model_inner_core_schema(cls) is None
+        or _get_validation_settings(cls)[2] == "allow"
+    ):
+        return False
+    # The keys that the fields of the model are dumped to or validated from
+    model_keys: set[Union[str, int]] = {cf.alias or name for name, cf in model.model_computed_fields.items()}
+    for name, field in model.model_fields.items():
+        model_keys.add(field.serialization_alias or name)
+        model_keys.update(path[0] for path in _get_validation_paths(model, name, field))
+    for name, field in cls.model_fields.items():
+        model_field = model.model_fields.get(name)
+        if model_field is None:
+            if (field.serialization_alias or name) in model_keys:
+                return False
+        elif not _is_field_dumped_like(cls, field, model, model_field, name):
+            return False
+    for name, computed_field_info in cls.model_computed_fields.items():
+        key = computed_field_info.alias or name
+        model_computed_field_info = model.model_computed_fields.get(name)
+        if key in model_keys and (
+            model_computed_field_info is None or (model_computed_field_info.alias or name) != key
+        ):
+            return False
+    return True
+
+
+def _is_field_dumped_like(
+    cls: type[BaseModel], field: FieldInfo, model: type[BaseModel], model_field: FieldInfo, name: str
+) -> bool:
+    """Whether the field of the subclass `cls` is dumped like the field of `model`, judging by what the dump uses.
+
+    Its type (including the metadata of `Annotated`, such as `PlainSerializer`), its serialization alias, and its
+    field serializers. Validators and defaults don't matter because the dumped value has already been validated.
+    """
+    cls_serializers = _get_field_serializers(cls, name)
+    model_serializers = _get_field_serializers(model, name)
+    return (
+        field.annotation is model_field.annotation
+        and field.serialization_alias == model_field.serialization_alias
+        and len(field.metadata) == len(model_field.metadata)
+        and all(item is model_item for item, model_item in zip(field.metadata, model_field.metadata, strict=True))
+        and len(cls_serializers) == len(model_serializers)
+        and all(func is model_func for func, model_func in zip(cls_serializers, model_serializers, strict=True))
+    )
+
+
+def _get_field_serializers(model: type[BaseModel], name: str) -> list[Callable[..., Any]]:
+    """Return the functions of the field serializers of the field in the order of their names"""
+    decorators = model.__pydantic_decorators__.field_serializers
+    return [
+        decorators[var_name].func
+        for var_name in sorted(decorators)
+        if name in decorators[var_name].info.fields or "*" in decorators[var_name].info.fields
+    ]
 
 
 _IS_BODY_FIELD_SAFE: dict[int, tuple[ModelField, bool]] = {}
 
 
-def _is_body_field_safe(body_field: ModelField) -> bool:
-    """Whether the validators of the body parameter itself leave the dumped data as valid input.
+def _is_body_field_safe(body_field: ModelField, spec: "_RestorerSpec") -> bool:
+    """Whether the validators of the body parameter (or response field) itself leave the dumped data as valid input.
 
     They come from the parameter's annotation, such as `Annotated[Model, BeforeValidator(...)]`, and wrap the model
-    in the core schema that FastAPI validates the body with. Its serializers don't matter because we dump the model.
+    (and the lists and dicts around it, which `spec` describes) in the core schema that FastAPI validates the body with.
+    Its serializers don't matter because we dump the model.
     """
     cached = _IS_BODY_FIELD_SAFE.get(id(body_field))
     if cached is not None and cached[0] is body_field:
@@ -1109,17 +1267,24 @@ def _is_body_field_safe(body_field: ModelField) -> bool:
             for definition in schema["definitions"]:
                 _CORE_SCHEMA_DEFINITIONS.setdefault(definition["ref"], definition)
             schema = schema["schema"]
-        # `OnErrorOmit` and other defaults that swallow errors make invalid data pass, so we stop at them
-        while schema["type"] in ("definition-ref", "nullable", "default", "function-after") and (
-            schema.get("on_error", "raise") == "raise"
-        ):
-            schema = (
-                _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
-                if schema["type"] == "definition-ref"
-                else schema["schema"]
-            )
-        # The model's own validators and serializers are covered by its restoration plan
-        is_safe = schema["type"] == "model"
+        while True:
+            # `OnErrorOmit` and other defaults that swallow errors make invalid data pass, so we stop at them
+            while schema["type"] in ("definition-ref", "nullable", "default", "function-after") and (
+                schema.get("on_error", "raise") == "raise"
+            ):
+                schema = (
+                    _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
+                    if schema["type"] == "definition-ref"
+                    else schema["schema"]
+                )
+            kind, inner = spec
+            # The model's own validators and serializers are covered by its restoration plan,
+            # and the keys of dicts are never renamed
+            if kind == "model" or schema["type"] != kind:
+                is_safe = kind == schema["type"] == "model"
+                break
+            schema = schema["items_schema" if kind == "list" else "values_schema"]
+            spec = inner
     except _CORE_SCHEMA_ERRORS:  # pragma: no cover # FastAPI and Pydantic don't build such schemas
         is_safe = False
     _IS_BODY_FIELD_SAFE[id(body_field)] = (body_field, is_safe)
@@ -1218,47 +1383,208 @@ def _restore_data(spec: _RestorerSpec, data: Any) -> Any:
     """
     if not _needs_restoring(spec, data):
         return data
-    # Each frame is [spec, data, children to restore, restored copy of data or None, key of the child being restored]
-    # The 6th item says whether the head validates the data of the frame: it doesn't validate what's under a dumped key
+    if _get_spec_height(spec) is not None:
+        return _restore_shallow_data(spec, data, is_validated=True)
+    # Each frame is [spec, data, children to restore, restored copy of data or None, key of the child being restored,
+    # whether the head validates the data of the frame]. It doesn't validate what's under a dumped key.
     stack: list[list[Any]] = [[spec, data, _iter_children_to_restore(spec, data), None, None, True]]
-    restored_data = data
-    while stack:
+    while True:
         frame = stack[-1]
         child = next(frame[2], None)
         if child is not None:
             key, child_spec, child_data = child
-            frame[4] = key
-            is_validated = frame[5] and (
+            is_child_validated = frame[5] and (
                 frame[0][0] != "model" or _is_nested_key_validated(_get_restore_plan(frame[0][1]), key, frame[1])
             )
-            stack.append(
-                [child_spec, child_data, _iter_children_to_restore(child_spec, child_data), None, None, is_validated]
-            )
+            if _get_spec_height(child_spec) is None:
+                frame[4] = key
+                stack.append(
+                    [
+                        child_spec,
+                        child_data,
+                        _iter_children_to_restore(child_spec, child_data),
+                        None,
+                        None,
+                        is_child_validated,
+                    ]
+                )
+            else:
+                restored_child = _restore_shallow_data(child_spec, child_data, is_validated=is_child_validated)
+                _set_restored_child(frame, key, child_data, restored_child)
             continue
         stack.pop()
         restored_data = _finish_restoring(frame)
-        if stack and restored_data is not frame[1]:
-            parent = stack[-1]
-            if parent[4] is _ROOT_KEY:
-                parent[3] = restored_data
+        if not stack:
+            return restored_data
+        _set_restored_child(stack[-1], stack[-1][4], frame[1], restored_data)
+
+
+def _set_restored_child(parent: list[Any], key: Any, child_data: Any, restored_child: Any) -> None:
+    if restored_child is child_data:
+        return
+    if key is _ROOT_KEY:
+        parent[3] = restored_child
+        return
+    if parent[3] is None:
+        parent[3] = list(parent[1]) if isinstance(parent[1], list) else dict(parent[1])
+    parent[3][key] = restored_child
+
+
+# The greatest number of nested models, lists and dicts that we restore with recursion.
+# Each of them costs a frame or two, so restoring with recursion stays far from the recursion limit.
+_MAX_SHALLOW_HEIGHT = 8
+# The number of nested models, lists and dicts in the data of each model, or None if it can be deeper than the maximum
+_SHALLOW_HEIGHTS: dict[type[BaseModel], Union[int, None]] = {}
+
+
+def _get_spec_height(spec: _RestorerSpec) -> Union[int, None]:
+    """Return how many models, lists and dicts restoring the data of the spec walks into at most.
+
+    It's None if it's more than we restore with recursion, e.g. for models that refer to themselves.
+    """
+    containers, model = _split_spec(spec)
+    height = _get_model_height(model)
+    return None if height is None or containers + height > _MAX_SHALLOW_HEIGHT else containers + height
+
+
+def _split_spec(spec: _RestorerSpec) -> tuple[int, type[BaseModel]]:
+    """Return the number of lists and dicts around the model of the spec, and the model"""
+    containers = 0
+    while spec[0] != "model":
+        containers += 1
+        spec = spec[1]
+    return containers, spec[1]
+
+
+def _get_model_height(root: type[BaseModel]) -> Union[int, None]:
+    """Return the height of the data of the model, computed without recursion so that it never hits the recursion limit.
+
+    We only cache final heights, so other threads never see unfinished ones.
+    """
+    if root in _SHALLOW_HEIGHTS:
+        return _SHALLOW_HEIGHTS[root]
+    # Each frame is [model, the (containers, model) of its nested fields, its height so far, containers of the child]
+    stack: list[list[Any]] = [[root, _iter_nested_models(root), 1, 0]]
+    models_on_stack = {root}
+    child_height: Union[int, None] = 0
+    while True:
+        frame = stack[-1]
+        child = next(frame[1], None)
+        if child is not None:
+            containers, model = child
+            if model in _SHALLOW_HEIGHTS:
+                child_height = _SHALLOW_HEIGHTS[model]
+            # A model that is being computed refers to itself through the frame's model
+            elif model in models_on_stack:
+                child_height = None
             else:
-                if parent[3] is None:
-                    parent[3] = list(parent[1]) if isinstance(parent[1], list) else dict(parent[1])
-                parent[3][parent[4]] = restored_data
-    return restored_data
+                frame[3] = containers
+                stack.append([model, _iter_nested_models(model), 1, 0])
+                models_on_stack.add(model)
+                continue
+        else:
+            stack.pop()
+            models_on_stack.discard(frame[0])
+            child_height = frame[2]
+            _SHALLOW_HEIGHTS[frame[0]] = child_height
+            if not stack:
+                return child_height
+            frame = stack[-1]
+            containers = frame[3]
+        if child_height is None or containers + child_height + 1 > _MAX_SHALLOW_HEIGHT:
+            # The model is as deep as its child, so we finish it right away
+            frame[1] = iter(())
+            frame[2] = None
+        else:
+            frame[2] = max(frame[2], containers + child_height + 1)
+
+
+def _iter_nested_models(model: type[BaseModel]) -> Iterator[tuple[int, type[BaseModel]]]:
+    plan = _get_restore_plan(model)
+    # Root models are always walked
+    if plan.root_spec is not None:
+        return iter([(0, model)])
+    return (_split_spec(child_spec) for _, child_spec in plan.nested)
+
+
+def _restore_shallow_data(spec: _RestorerSpec, data: Any, *, is_validated: bool) -> Any:
+    """Restore the data of a spec that has a height with recursion, which avoids the frames of the walk.
+
+    The result is the same as the walk's: the walk only skips the data that wouldn't change.
+    """
+    kind, inner = spec
+    if kind == "model":
+        plan = _get_restore_plan(inner)
+        if not isinstance(data, dict) or data.keys().isdisjoint(plan.keys):
+            return data
+        return _restore_shallow_model_data(plan, data, is_validated=is_validated)
+    if kind == "list" and isinstance(data, list):
+        items = enumerate(data)
+    elif kind == "dict" and isinstance(data, dict):
+        items = data.items()
+    else:
+        return data
+    restored = None
+    plan = _get_restore_plan(inner[1]) if inner[0] == "model" else None
+    for key, item in items:
+        if plan is None:
+            restored_item = _restore_shallow_data(inner, item, is_validated=is_validated)
+        elif not isinstance(item, dict):
+            continue
+        elif not plan.nested:
+            # Most bodies are lists of models without nested models to restore, so their items only cost the renames
+            restored_item = _rename_keys(plan, item, is_validated=is_validated)
+        # Most bulk items have none of the keys, so they only cost this check
+        elif item.keys().isdisjoint(plan.keys):
+            continue
+        else:
+            restored_item = _restore_shallow_model_data(plan, item, is_validated=is_validated)
+        if restored_item is not item:
+            if restored is None:
+                restored = list(data) if kind == "list" else dict(data)
+            restored[key] = restored_item
+    return data if restored is None else restored
+
+
+def _restore_shallow_model_data(plan: "_RestorePlan", data: dict[str, Any], *, is_validated: bool) -> Any:
+    restored = None
+    for key, child_spec in plan.nested:
+        if key in data:
+            child = data[key]
+            # The head doesn't validate what's under a dumped key, or under a key that another key of its field shadows
+            restored_child = _restore_shallow_data(
+                child_spec, child, is_validated=is_validated and _is_nested_key_validated(plan, key, data)
+            )
+            if restored_child is not child:
+                if restored is None:
+                    restored = dict(data)
+                restored[key] = restored_child
+    return _rename_keys(plan, data, restored, is_validated=is_validated)
 
 
 def _finish_restoring(frame: list[Any]) -> Any:
     (kind, inner), data, _, restored, _, is_validated = frame
     if kind == "model" and (plan := _get_restore_plan(inner)).root_spec is None:
-        for rename in plan.renames:
-            if _does_rename_apply(rename, data):
-                if restored is None:
-                    restored = dict(data)
-                dumped_key, target_key, *_ = rename
-                restored[target_key] = restored.pop(dumped_key)
-                if is_validated and dumped_key in plan.failing_keys:
-                    _RESTORATION.has_failing_renames = True
+        return _rename_keys(plan, data, restored, is_validated=is_validated)
+    return data if restored is None else restored
+
+
+def _rename_keys(plan: "_RestorePlan", data: dict[str, Any], restored: Any = None, *, is_validated: bool) -> Any:
+    """Apply the renames of the plan to the data of a model, or to its restored copy if there is one.
+
+    Only the renames in data that the head validates can make it surely fail.
+    """
+    for rename in plan.renames:
+        # This runs for every bulk item, so it inlines the common case of `_does_rename_apply`
+        dumped_key, target_key, _, validation_keys = rename
+        if dumped_key in data and (
+            data.keys().isdisjoint(validation_keys) if validation_keys is not None else _does_rename_apply(rename, data)
+        ):
+            if restored is None:
+                restored = dict(data)
+            restored[target_key] = restored.pop(dumped_key)
+            if is_validated and dumped_key in plan.failing_keys:
+                _RESTORATION.has_failing_renames = True
     return data if restored is None else restored
 
 

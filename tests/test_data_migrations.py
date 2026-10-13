@@ -1269,85 +1269,84 @@ def _model_with_value_field(
     return DefaultModel
 
 
+# (field, config, validation payload, key of `model_dump(by_alias=True)`)
+_FIELDS_WITH_ANY_KIND_OF_ALIASES = [
+    pytest.param(lambda: Field(alias="x"), None, {"x": 1}, "x", id="alias"),
+    pytest.param(lambda: Field(alias="x", validation_alias="v"), None, {"v": 1}, "x", id="alias+validation_alias"),
+    pytest.param(
+        lambda: Field(validation_alias="v", serialization_alias="s"),
+        None,
+        {"v": 1},
+        "s",
+        id="validation_alias+serialization_alias",
+    ),
+    pytest.param(lambda: Field(validation_alias="v"), None, {"v": 1}, "value", id="validation_alias"),
+    pytest.param(lambda: Field(serialization_alias="s"), None, {"value": 1}, "s", id="serialization_alias"),
+    pytest.param(
+        lambda: Field(alias="x", serialization_alias="s"), None, {"x": 1}, "s", id="alias+serialization_alias"
+    ),
+    pytest.param(lambda: Field(validation_alias=AliasChoices("v", "w")), None, {"w": 1}, "value", id="alias_choices"),
+    pytest.param(
+        lambda: Field(validation_alias=AliasChoices(AliasPath("p", 0), "w")),
+        None,
+        {"p": [1]},
+        "value",
+        id="alias_choices_with_path_and_key",
+    ),
+    pytest.param(
+        lambda: Field(alias="x", validation_alias=AliasChoices("v", "x")),
+        None,
+        {"v": 1},
+        "x",
+        id="alias_choices_with_serialization_alias",
+    ),
+    pytest.param(
+        Field,
+        ConfigDict(alias_generator=str.upper),
+        {"VALUE": 1},
+        "VALUE",
+        id="alias_generator",
+    ),
+    pytest.param(
+        Field,
+        ConfigDict(alias_generator=AliasGenerator(validation_alias=str.upper, serialization_alias=str.title)),
+        {"VALUE": 1},
+        "Value",
+        id="alias_generator_with_different_aliases",
+    ),
+    pytest.param(
+        lambda: Field(validation_alias="v"),
+        ConfigDict(populate_by_name=True),
+        {"v": 1},
+        "value",
+        id="populate_by_name+validation_alias",
+    ),
+    pytest.param(
+        lambda: Field(alias="x", validation_alias="v"),
+        ConfigDict(populate_by_name=True),
+        {"value": 1},
+        "x",
+        id="populate_by_name+alias+validation_alias",
+    ),
+    pytest.param(
+        lambda: Field(alias="x", validation_alias="v"),
+        ConfigDict(validate_by_name=True),
+        {"v": 1},
+        "x",
+        id="validate_by_name+alias+validation_alias",
+    ),
+    pytest.param(
+        lambda: Field(alias="x"),
+        ConfigDict(validate_by_name=True, validate_by_alias=False),
+        {"value": 1},
+        "x",
+        id="validate_by_name_only+alias",
+    ),
+]
+
+
 @pytest.mark.parametrize("annotated", [False, True], ids=["field_default", "annotated"])
-@pytest.mark.parametrize(
-    ("field", "config", "payload", "dumped_key"),
-    [
-        pytest.param(lambda: Field(alias="x"), None, {"x": 1}, "x", id="alias"),
-        pytest.param(lambda: Field(alias="x", validation_alias="v"), None, {"v": 1}, "x", id="alias+validation_alias"),
-        pytest.param(
-            lambda: Field(validation_alias="v", serialization_alias="s"),
-            None,
-            {"v": 1},
-            "s",
-            id="validation_alias+serialization_alias",
-        ),
-        pytest.param(lambda: Field(validation_alias="v"), None, {"v": 1}, "value", id="validation_alias"),
-        pytest.param(lambda: Field(serialization_alias="s"), None, {"value": 1}, "s", id="serialization_alias"),
-        pytest.param(
-            lambda: Field(alias="x", serialization_alias="s"), None, {"x": 1}, "s", id="alias+serialization_alias"
-        ),
-        pytest.param(
-            lambda: Field(validation_alias=AliasChoices("v", "w")), None, {"w": 1}, "value", id="alias_choices"
-        ),
-        pytest.param(
-            lambda: Field(validation_alias=AliasChoices(AliasPath("p", 0), "w")),
-            None,
-            {"p": [1]},
-            "value",
-            id="alias_choices_with_path_and_key",
-        ),
-        pytest.param(
-            lambda: Field(alias="x", validation_alias=AliasChoices("v", "x")),
-            None,
-            {"v": 1},
-            "x",
-            id="alias_choices_with_serialization_alias",
-        ),
-        pytest.param(
-            Field,
-            ConfigDict(alias_generator=str.upper),
-            {"VALUE": 1},
-            "VALUE",
-            id="alias_generator",
-        ),
-        pytest.param(
-            Field,
-            ConfigDict(alias_generator=AliasGenerator(validation_alias=str.upper, serialization_alias=str.title)),
-            {"VALUE": 1},
-            "Value",
-            id="alias_generator_with_different_aliases",
-        ),
-        pytest.param(
-            lambda: Field(validation_alias="v"),
-            ConfigDict(populate_by_name=True),
-            {"v": 1},
-            "value",
-            id="populate_by_name+validation_alias",
-        ),
-        pytest.param(
-            lambda: Field(alias="x", validation_alias="v"),
-            ConfigDict(populate_by_name=True),
-            {"value": 1},
-            "x",
-            id="populate_by_name+alias+validation_alias",
-        ),
-        pytest.param(
-            lambda: Field(alias="x", validation_alias="v"),
-            ConfigDict(validate_by_name=True),
-            {"v": 1},
-            "x",
-            id="validate_by_name+alias+validation_alias",
-        ),
-        pytest.param(
-            lambda: Field(alias="x"),
-            ConfigDict(validate_by_name=True, validate_by_alias=False),
-            {"value": 1},
-            "x",
-            id="validate_by_name_only+alias",
-        ),
-    ],
-)
+@pytest.mark.parametrize(("field", "config", "payload", "dumped_key"), _FIELDS_WITH_ANY_KIND_OF_ALIASES)
 def test__request_body_migration__with_any_kind_of_field_aliases__head_should_get_the_value(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
@@ -1535,6 +1534,635 @@ def test__request_body_migration__with_validation_aliases_in_form_model__head_sh
 
     for version_client in clients.values():
         assert version_client.post(test_path, data={"v": "1"}).json() == 1
+
+
+@pytest.mark.parametrize("annotated", [False, True], ids=["field_default", "annotated"])
+@pytest.mark.parametrize(
+    ("field", "config", "payload", "dumped_key"),
+    [
+        *_FIELDS_WITH_ANY_KIND_OF_ALIASES,
+        pytest.param(
+            lambda: Field(alias="x", validation_alias="v"),
+            ConfigDict(serialize_by_alias=True),
+            {"v": 1},
+            "x",
+            id="serialize_by_alias+alias+validation_alias",
+        ),
+    ],
+)
+def test__response_migration__with_any_kind_of_field_aliases__client_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotated: bool,
+    field: Callable[[], Any],
+    config: Optional[ConfigDict],
+    payload: dict[str, Any],
+    dumped_key: str,
+):
+    model = _model_with_value_field(field, annotated=annotated, config=config)
+
+    @router.get(test_path, response_model=model)
+    async def endpoint():
+        return model.model_validate(payload)
+
+    bodies_seen_by_migration = []
+
+    @convert_response_to_previous_version_for(model)
+    def migrator(response: ResponseInfo):
+        bodies_seen_by_migration.append(response.body)
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].get(test_path).json() == {dumped_key: 1}
+    assert clients["2001-01-01"].get(test_path).json() == {dumped_key: 1}
+    # Migrations still see the keys of `model_dump(by_alias=True)`
+    assert bodies_seen_by_migration == [{dumped_key: 1}]
+
+
+def test__response_migration__with_validation_alias_and_response_model_by_alias_false__client_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(test_path, response_model=InnerSchemaWithValidationAlias, response_model_by_alias=False)
+    async def endpoint():
+        return InnerSchemaWithValidationAlias.model_validate({"v": 1})
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.get(test_path).json() == {"value": 1}
+
+
+class OuterSchemaWithValidationAliases(BaseModel):
+    inner: InnerSchemaWithValidationAlias = Field(alias="i", validation_alias="j")
+    items: list[InnerSchemaWithValidationAlias] = []
+    mapping: dict[str, InnerSchemaWithValidationAlias] = {}
+    optional: Optional[InnerSchemaWithValidationAlias] = None
+
+
+class SubclassOfInnerSchemaWithValidationAlias(InnerSchemaWithValidationAlias):
+    other: int = 2
+
+    @computed_field
+    @property
+    def doubled(self) -> int:
+        return self.value * 2
+
+
+class SchemaWithFieldValidatorAndValidationAlias(BaseModel):
+    value: int = Field(alias="x", validation_alias="v")
+
+    @field_validator("value")
+    @classmethod
+    def check(cls, value: int) -> int:
+        return value
+
+
+class SubclassOfSchemaWithFieldValidatorAndValidationAlias(SchemaWithFieldValidatorAndValidationAlias):
+    other: int = 2
+
+
+def _inner(value: int) -> InnerSchemaWithValidationAlias:
+    return InnerSchemaWithValidationAlias.model_validate({"v": value})
+
+
+@pytest.mark.parametrize(
+    ("response_model", "get_response", "expected"),
+    [
+        pytest.param(InnerSchemaWithValidationAlias, lambda: _inner(1), {"x": 1}, id="model"),
+        pytest.param(
+            InnerSchemaWithValidationAlias,
+            lambda: SubclassOfInnerSchemaWithValidationAlias.model_validate({"v": 1}),
+            {"x": 1},
+            id="subclass",
+        ),
+        pytest.param(
+            SchemaWithFieldValidatorAndValidationAlias,
+            lambda: SubclassOfSchemaWithFieldValidatorAndValidationAlias.model_validate({"v": 1}),
+            {"x": 1},
+            id="subclass_of_model_with_field_validator",
+        ),
+        pytest.param(Optional[InnerSchemaWithValidationAlias], lambda: _inner(1), {"x": 1}, id="optional_model"),
+        pytest.param(Optional[InnerSchemaWithValidationAlias], lambda: None, None, id="optional_model_with_none"),
+        pytest.param(
+            list[InnerSchemaWithValidationAlias], lambda: [_inner(1), _inner(2)], [{"x": 1}, {"x": 2}], id="list"
+        ),
+        pytest.param(dict[str, InnerSchemaWithValidationAlias], lambda: {"a": _inner(1)}, {"a": {"x": 1}}, id="dict"),
+        pytest.param(
+            list[list[InnerSchemaWithValidationAlias]],
+            lambda: [[_inner(1)], []],
+            [[{"x": 1}], []],
+            id="lists",
+        ),
+        pytest.param(Optional[list[InnerSchemaWithValidationAlias]], lambda: None, None, id="optional_list_with_none"),
+        pytest.param(
+            list[Optional[InnerSchemaWithValidationAlias]],
+            lambda: [_inner(1), None],
+            [{"x": 1}, None],
+            id="list_of_optional_models",
+        ),
+        pytest.param(
+            dict[str, Optional[list[InnerSchemaWithValidationAlias]]],
+            lambda: {"a": [_inner(1)], "b": None},
+            {"a": [{"x": 1}], "b": None},
+            id="dict_of_optional_lists",
+        ),
+        pytest.param(
+            RootSchemaWithValidationAliases,
+            lambda: RootSchemaWithValidationAliases([_inner(1)]),
+            [{"x": 1}],
+            id="root_model",
+        ),
+        pytest.param(RootSchemaWithValidationAliases, lambda: [_inner(1)], [{"x": 1}], id="list_as_root_model"),
+        pytest.param(
+            OuterSchemaWithValidationAliases,
+            lambda: OuterSchemaWithValidationAliases.model_validate(
+                {"j": {"v": 1}, "items": [{"v": 2}], "mapping": {"a": {"v": 3}}, "optional": {"v": 4}}
+            ),
+            {"i": {"x": 1}, "items": [{"x": 2}], "mapping": {"a": {"x": 3}}, "optional": {"x": 4}},
+            id="nested_models",
+        ),
+    ],
+)
+def test__response_migration__with_validation_aliases_in_nested_models__client_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    response_model: Any,
+    get_response: Callable[[], Any],
+    expected: Any,
+):
+    @router.get(test_path, response_model=response_model)
+    async def endpoint():
+        return get_response()
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.get(test_path).json() == expected
+
+
+class SchemaWithDefaultAndValidationAlias(BaseModel):
+    value: int = Field(default=0, alias="x", validation_alias="v")
+
+
+class SchemaWithTheDumpedKeyOfAnotherSchema(BaseModel):
+    x: str = "not an int"
+
+
+class SchemaWithRequiredValidationAlias(BaseModel):
+    value: int = Field(alias="x", validation_alias="v")
+
+
+# The response fails like it did before
+FAILS_AS_BEFORE = object()
+
+
+class PageWithItemsThatAreOmittedOnError(BaseModel):
+    items: list[OnErrorOmit[SchemaWithRequiredValidationAlias]] = []
+    total: int = 0
+
+
+class MappingWithItemsThatAreOmittedOnError(BaseModel):
+    items: dict[str, OnErrorOmit[SchemaWithRequiredValidationAlias]] = {}
+
+
+class RootSchemaWithRequiredValidationAlias(RootModel[list[SchemaWithRequiredValidationAlias]]):
+    pass
+
+
+class SubclassOfRootSchemaWithRequiredValidationAlias(RootSchemaWithRequiredValidationAlias):
+    pass
+
+
+class SubclassWithFieldSerializer(SchemaWithRequiredValidationAlias):
+    @field_serializer("value")
+    def redact(self, value: int) -> str:
+        return "redacted"
+
+
+class SubclassWithModelSerializer(SchemaWithRequiredValidationAlias):
+    @model_serializer(mode="wrap")
+    def serialize(self, handler: Callable[[Any], Any]) -> Any:
+        return {**handler(self), "x": "redacted"}
+
+
+class SubclassWithModelDumpOverride(SchemaWithRequiredValidationAlias):
+    @override
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return {**super().model_dump(**kwargs), "x": "redacted"}
+
+
+class SubclassWithRetypedField(SchemaWithRequiredValidationAlias):
+    value: str = Field(default="text", alias="x", validation_alias="v")  # ty: ignore[invalid-attribute-override]
+
+
+class SubclassWithFieldOnTheDumpedKey(SchemaWithRequiredValidationAlias):
+    other: str = Field(default="text", serialization_alias="x")
+
+
+class SubclassWithComputedFieldOnTheDumpedKey(SchemaWithRequiredValidationAlias):
+    @computed_field(alias="x")
+    @property
+    def other(self) -> str:
+        return "text"
+
+
+class SubclassWithExtraAllow(SchemaWithRequiredValidationAlias):
+    model_config = ConfigDict(extra="allow")
+
+
+def _subclass_instance(cls: type[SchemaWithRequiredValidationAlias]) -> SchemaWithRequiredValidationAlias:
+    return cls.model_validate({"v": 1})
+
+
+@pytest.mark.parametrize(
+    ("response_model", "get_response", "expected"),
+    [
+        # The response passes validation with the default, so we keep it as it is
+        pytest.param(
+            SchemaWithDefaultAndValidationAlias,
+            lambda: SchemaWithDefaultAndValidationAlias.model_validate({"v": 1}),
+            {"x": 0},
+            id="response_that_passes_validation",
+        ),
+        # `OnErrorOmit` omits the items that fail validation, so the response passes as it is
+        pytest.param(
+            list[OnErrorOmit[SchemaWithRequiredValidationAlias]],
+            lambda: [SchemaWithRequiredValidationAlias.model_validate({"v": 1})],
+            [],
+            id="list_of_items_that_are_omitted_on_error",
+        ),
+        pytest.param(
+            PageWithItemsThatAreOmittedOnError,
+            lambda: PageWithItemsThatAreOmittedOnError(
+                items=[SchemaWithRequiredValidationAlias.model_validate({"v": 1})], total=1
+            ),
+            {"items": [], "total": 1},
+            id="nested_list_of_items_that_are_omitted_on_error",
+        ),
+        pytest.param(
+            MappingWithItemsThatAreOmittedOnError,
+            lambda: MappingWithItemsThatAreOmittedOnError(
+                items={"a": SchemaWithRequiredValidationAlias.model_validate({"v": 1})}
+            ),
+            {"items": {}},
+            id="nested_dict_of_items_that_are_omitted_on_error",
+        ),
+        # FastAPI validates the dicts that the endpoint returns as they are
+        pytest.param(SchemaWithRequiredValidationAlias, lambda: {"x": 1}, FAILS_AS_BEFORE, id="dict"),
+        pytest.param(
+            list[SchemaWithRequiredValidationAlias],
+            lambda: [SchemaWithRequiredValidationAlias.model_validate({"v": 1}), {"x": 2}],
+            FAILS_AS_BEFORE,
+            id="list_of_model_and_dict",
+        ),
+        # The dump of another model can have the keys of the response model with values that it doesn't accept
+        pytest.param(
+            SchemaWithRequiredValidationAlias,
+            lambda: SchemaWithTheDumpedKeyOfAnotherSchema(),
+            FAILS_AS_BEFORE,
+            id="other_model",
+        ),
+        pytest.param(
+            list[SchemaWithRequiredValidationAlias],
+            lambda: RootSchemaWithRequiredValidationAlias([SchemaWithRequiredValidationAlias.model_validate({"v": 1})]),
+            FAILS_AS_BEFORE,
+            id="root_model_for_list",
+        ),
+        # Subclasses can dump the fields of the response model to other values or add keys that it reads
+        *(
+            pytest.param(
+                SchemaWithRequiredValidationAlias,
+                lambda cls=cls, value=value: cls.model_validate({"v": value}),
+                FAILS_AS_BEFORE,
+                id=id,
+            )
+            for cls, value, id in [
+                (SubclassWithFieldSerializer, 1, "subclass_with_field_serializer"),
+                (SubclassWithModelSerializer, 1, "subclass_with_model_serializer"),
+                (SubclassWithModelDumpOverride, 1, "subclass_with_model_dump_override"),
+                (SubclassWithRetypedField, "text", "subclass_with_retyped_field"),
+                (SubclassWithFieldOnTheDumpedKey, 1, "subclass_with_field_on_the_dumped_key"),
+                (SubclassWithComputedFieldOnTheDumpedKey, 1, "subclass_with_computed_field_on_the_dumped_key"),
+                (SubclassWithExtraAllow, 1, "subclass_with_extra_allow"),
+            ]
+        ),
+        pytest.param(
+            list[SchemaWithRequiredValidationAlias],
+            lambda: [_subclass_instance(SubclassWithFieldSerializer)],
+            FAILS_AS_BEFORE,
+            id="list_of_subclass_with_field_serializer",
+        ),
+        pytest.param(
+            RootSchemaWithRequiredValidationAlias,
+            lambda: SubclassOfRootSchemaWithRequiredValidationAlias(
+                [_subclass_instance(SchemaWithRequiredValidationAlias)]
+            ),
+            FAILS_AS_BEFORE,
+            id="subclass_of_root_model",
+        ),
+        pytest.param(
+            Annotated[list[SchemaWithRequiredValidationAlias], BeforeValidator(lambda value: value)],
+            lambda: [SchemaWithRequiredValidationAlias.model_validate({"v": 1})],
+            FAILS_AS_BEFORE,
+            id="response_model_with_before_validator",
+        ),
+    ],
+)
+def test__response_migration__with_validation_aliases_in_dicts_other_models_or_unsafe_response_models__should_stay(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    response_model: Any,
+    get_response: Callable[[], Any],
+    expected: Any,
+):
+    @router.get(test_path, response_model=response_model)
+    async def endpoint():
+        return get_response()
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        if expected is FAILS_AS_BEFORE:
+            with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+                version_client.get(test_path)
+            assert {error["type"] for error in exc_info.value.errors()} == {"missing"}
+        else:
+            assert version_client.get(test_path).json() == expected
+
+
+@pytest.mark.parametrize("fails_on_third_validation", [False, True], ids=["counts", "rejects_third_validation"])
+def test__response_migration__with_validation_aliases__should_validate_the_response_as_many_times_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    fails_on_third_validation: bool,
+):
+    validations: list[str] = []
+
+    class SchemaWithStatefulValidator(BaseModel):
+        value: int = Field(default=0, alias="x", validation_alias="v")
+        data: Any
+
+        @model_validator(mode="after")
+        def count_validations(self) -> Self:
+            validations.append("validate")
+            if fails_on_third_validation and len(validations) > 2:
+                raise ValueError("Already validated twice")  # pragma: no cover # Only if the test fails
+            self.data["count"] += 1
+            return self
+
+    @router.get(test_path, response_model=SchemaWithStatefulValidator)
+    async def endpoint():
+        return SchemaWithStatefulValidator.model_validate({"v": 7, "data": {"count": 0}})
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        validations.clear()
+        # The endpoint validates the response once and FastAPI validates it once. It passes, so we don't touch it.
+        assert version_client.get(test_path).json() == {"x": 0, "data": {"count": 2}}
+        assert len(validations) == 2
+
+
+class SchemaWithValidatorThatRaisesTypeError(BaseModel):
+    value: int = Field(alias="x", validation_alias="v")
+
+    @field_validator("value")
+    @classmethod
+    def check_value(cls, value: int) -> int:
+        if value < 0:
+            raise TypeError("Negative values cannot be processed")
+        return value
+
+
+def test__response_migration__with_rescue_that_raises__should_fail_with_the_original_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(test_path, response_model=SchemaWithValidatorThatRaisesTypeError)
+    async def endpoint():
+        return SchemaWithValidatorThatRaisesTypeError.model_validate({"v": 7})
+
+    @convert_response_to_previous_version_for(SchemaWithValidatorThatRaisesTypeError)
+    def migrator(response: ResponseInfo):
+        response.body["x"] = -1
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # The restored response makes the validator raise, so the error is the one that the response had before
+    with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+        clients["2000-01-01"].get(test_path)
+    assert [error["type"] for error in exc_info.value.errors()] == ["missing"]
+    assert clients["2001-01-01"].get(test_path).json() == {"x": 7}
+
+
+def test__response_migration__with_value_that_the_version_rejects__should_fail_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(test_path, response_model=InnerSchemaWithValidationAlias)
+    async def endpoint():
+        return _inner(5)
+
+    clients = create_versioned_clients(version_change(schema(InnerSchemaWithValidationAlias).field("value").had(ge=10)))
+
+    # The restored response fails too, so the error is the one that the response had before
+    with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+        clients["2000-01-01"].get(test_path)
+    assert [error["type"] for error in exc_info.value.errors()] == ["missing"]
+    assert clients["2001-01-01"].get(test_path).json() == {"x": 5}
+
+
+class SchemaWithoutAliases(BaseModel):
+    new_value: int
+
+
+class SchemaWithOptionalInnerSchemaWithValidationAlias(BaseModel):
+    inner: Optional[InnerSchemaWithValidationAlias] = None
+
+
+class ValueThatCannotBeCompared:
+    # Like numpy arrays, whose comparisons are element-wise. Cadwyn must never call it.
+    @override
+    def __eq__(self, other: object) -> bool:  # pragma: no cover
+        raise ValueError("The truth value is ambiguous")
+
+    __hash__ = None
+
+
+class SchemaWithDefaultThatCannotBeCompared(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    value: int = Field(alias="x", validation_alias="v")
+    other: ValueThatCannotBeCompared = Field(default=ValueThatCannotBeCompared(), exclude=True)
+
+
+class SubclassWithAnotherDefaultThatCannotBeCompared(SchemaWithDefaultThatCannotBeCompared):
+    other: ValueThatCannotBeCompared = Field(default=ValueThatCannotBeCompared(), exclude=True)
+
+
+def test__response_migration__with_subclass_that_has_defaults_that_cannot_be_compared__client_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(test_path, response_model=SchemaWithDefaultThatCannotBeCompared)
+    async def endpoint():
+        return SubclassWithAnotherDefaultThatCannotBeCompared.model_validate({"v": 1})
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.get(test_path).json() == {"x": 1}
+
+
+def test__response_migration__with_validation_aliases_and_response_model_exclude_unset__client_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(
+        test_path,
+        response_model=list[SchemaWithOptionalInnerSchemaWithValidationAlias],
+        response_model_exclude_unset=True,
+    )
+    async def endpoint():
+        return [
+            SchemaWithOptionalInnerSchemaWithValidationAlias(inner=_inner(1)),
+            SchemaWithOptionalInnerSchemaWithValidationAlias(),
+        ]
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.get(test_path).json() == [{"inner": {"x": 1}}, {}]
+
+
+def test__response_migration__with_validation_aliases_in_response_model_of_older_version__client_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(test_path, response_model=SchemaWithoutAliases)
+    async def endpoint():
+        return SchemaWithoutAliases(new_value=1)
+
+    @convert_response_to_previous_version_for(test_path, ["GET"])
+    def migrator(response: ResponseInfo):
+        response.body = {"x": response.body["new_value"]}
+
+    clients = create_versioned_clients(
+        version_change(
+            cadwyn_endpoint(test_path, ["GET"]).had(response_model=InnerSchemaWithValidationAlias), migrator=migrator
+        )
+    )
+
+    assert clients["2000-01-01"].get(test_path).json() == {"x": 1}
+    assert clients["2001-01-01"].get(test_path).json() == {"new_value": 1}
+
+
+def test__response_migration__with_head_version_changes_and_validation_aliases__client_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(test_path, response_model=OuterSchemaWithValidationAliases)
+    async def endpoint():
+        return OuterSchemaWithValidationAliases.model_validate({"j": {"v": 1}, "items": [{"v": 2}]})
+
+    clients = create_versioned_clients(
+        version_change(),
+        head_version_changes=[
+            version_change(schema(OuterSchemaWithValidationAliases).field("mapping").had(description="Head"))
+        ],
+    )
+
+    for version_client in clients.values():
+        assert version_client.get(test_path).json() == {
+            "i": {"x": 1},
+            "items": [{"x": 2}],
+            "mapping": {},
+            "optional": None,
+        }
+
+
+@pytest.mark.parametrize(
+    ("head_response_model", "head_response", "older_response_model", "older_response"),
+    [
+        pytest.param(
+            Optional[SchemaWithRequiredValidationAlias],
+            None,
+            SchemaWithRequiredValidationAlias,
+            {"x": 5},
+            id="none_replaced_with_dict",
+        ),
+        pytest.param(list[SchemaWithRequiredValidationAlias], [], None, [{"x": 5}], id="empty_list_filled_with_dicts"),
+    ],
+)
+def test__response_migration__that_adds_dicts_where_the_endpoint_returned_no_models__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    head_response_model: Any,
+    head_response: Any,
+    older_response_model: Any,
+    older_response: Any,
+):
+    @router.get(test_path, response_model=head_response_model)
+    async def endpoint():
+        return head_response
+
+    @convert_response_to_previous_version_for(test_path, ["GET"])
+    def migrator(response: ResponseInfo):
+        response.body = older_response
+
+    instructions = (
+        []
+        if older_response_model is None
+        else [cadwyn_endpoint(test_path, ["GET"]).had(response_model=older_response_model)]
+    )
+    clients = create_versioned_clients(version_change(*instructions, migrator=migrator))
+
+    # The endpoint returned no models whose dumps we could restore, so the response fails as before
+    with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+        clients["2000-01-01"].get(test_path)
+    assert {error["type"] for error in exc_info.value.errors()} == {"missing"}
+
+
+@pytest.mark.parametrize(
+    ("head_response_model", "get_response"),
+    [
+        pytest.param(AnyResponseSchema, lambda: [{"x": 1}], id="root_model_of_any"),
+        pytest.param(
+            None, lambda: [SchemaWithRequiredValidationAlias.model_validate({"v": 1})], id="no_head_response_model"
+        ),
+    ],
+)
+def test__response_migration__with_response_model_of_older_version_and_unknown_head_shape__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    head_response_model: Any,
+    get_response: Callable[[], Any],
+):
+    @router.get(test_path, response_model=head_response_model)
+    async def endpoint():
+        return get_response()
+
+    clients = create_versioned_clients(
+        version_change(cadwyn_endpoint(test_path, ["GET"]).had(response_model=list[SchemaWithRequiredValidationAlias]))
+    )
+
+    with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+        clients["2000-01-01"].get(test_path)
+    assert {error["type"] for error in exc_info.value.errors()} == {"missing"}
+    assert clients["2001-01-01"].get(test_path).json() == [{"x": 1}]
 
 
 def _add_embedded_body_endpoint(router: VersionedAPIRouter, path: str) -> None:
@@ -4170,6 +4798,124 @@ def test__request_body_migration__with_body_as_deep_as_pydantic_accepts__head_sh
         assert version_client.post(test_path, json=payload).json() == depth
 
 
+class TreeNodeWithValidationAlias(BaseModel):
+    value: Optional[int] = Field(default=None, alias="x", validation_alias="vv")
+    # Python 3.10 keeps quoted names inside `list[...]` as strings, so we quote the whole annotation
+    kids: "dict[str, list[TreeNodeWithValidationAlias]]" = {}
+
+
+def _make_nested_model_chain(name: str, depth: int) -> tuple[type[BaseModel], dict[str, Any]]:
+    # Required, so that the head surely rejects the body as it is and we restore it
+    model: type[BaseModel] = create_model(f"{name}Leaf", value=(int, Field(alias="x", validation_alias="v")))
+    payload: dict[str, Any] = {"v": 7}
+    for i in range(depth):
+        model = create_model(f"{name}{i}", child=(model, ...), value=(int, Field(alias="x", validation_alias="v")))
+        payload = {"child": payload, "v": 7}
+    return model, payload
+
+
+def test__request_body_migration__with_nested_models_seen_for_the_first_time__should_not_need_a_deeper_stack(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+):
+    """Reading the models of a body for the first time must not take a deeper stack than restoring it afterwards.
+
+    Otherwise, requests with deeply nested bodies could hit the recursion limit only when they come first.
+    """
+    seen_model, seen_payload = _make_nested_model_chain("Seen", depth=50)
+    new_model, new_payload = _make_nested_model_chain("New", depth=50)
+
+    @router.post("/seen")
+    async def seen(body: seen_model):  # ty: ignore[invalid-type-form]
+        return body.value
+
+    @router.post("/new")
+    async def new(body: new_model):  # ty: ignore[invalid-type-form]
+        return body.value
+
+    app = create_versioned_app(version_change())
+    max_depths: list[int] = []
+
+    async def app_with_measured_stack(scope: Any, receive: Any, send: Any) -> None:
+        """Measure how deep the stack gets above the app while it handles the request, in the thread that runs it"""
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+        depth = max_depth = 0
+
+        # Coverage doesn't trace profile hooks
+        def profile(frame: Any, event: str, arg: Any) -> None:  # pragma: no cover
+            nonlocal depth, max_depth
+            if event == "call":
+                depth += 1
+                max_depth = max(max_depth, depth)
+            elif event == "return":
+                depth -= 1
+
+        sys.setprofile(profile)
+        try:
+            await app(scope, receive, send)
+        finally:
+            sys.setprofile(None)
+        max_depths.append(max_depth)
+
+    headers = {app.router.api_version_parameter_name: "2000-01-01"}
+    with TestClient(app_with_measured_stack, headers=headers) as client:
+        assert client.post("/seen", json=seen_payload).json() == 7
+        assert client.post("/seen", json=seen_payload).json() == 7
+        assert client.post("/new", json=new_payload).json() == 7
+    depth_with_known_models, depth_with_new_models = max_depths[1:]
+
+    # Reading the models takes a few frames, but not a frame per nested model
+    assert depth_with_new_models <= depth_with_known_models + 20
+
+
+def test__response_migration__with_self_referencing_response_model_that_passes_validation__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(test_path, response_model=TreeNodeWithValidationAlias, response_model_exclude_unset=True)
+    async def endpoint():
+        return TreeNodeWithValidationAlias.model_validate({"vv": 1, "kids": {"a": [{"vv": 2}]}})
+
+    clients = create_versioned_clients(version_change())
+
+    # The values are lost, but the response passes validation. We only rescue responses that fail validation,
+    # so the responses that work today never change.
+    for version_client in clients.values():
+        assert version_client.get(test_path).json() == {"kids": {"a": [{}]}}
+
+
+class TreeWithValidationAlias(BaseModel):
+    tree: TreeNodeWithValidationAlias = Field(alias="t", validation_alias="tt")
+
+
+def test__response_migration__with_self_referencing_response_model_that_fails_validation__client_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(test_path, response_model=TreeWithValidationAlias, response_model_exclude_unset=True)
+    async def endpoint():
+        return TreeWithValidationAlias.model_validate(
+            {
+                "tt": {
+                    "vv": 1,
+                    "kids": {"a": [{"vv": 2}], "b": [{"vv": 3}], "unset": [{}], "without_values": [{"kids": {}}]},
+                }
+            }
+        )
+
+    clients = create_versioned_clients(version_change())
+
+    # The required tree is missing without its validation alias, so we rescue the response and restore all of it
+    for version_client in clients.values():
+        assert version_client.get(test_path).json() == {
+            "t": {"x": 1, "kids": {"a": [{"x": 2}], "b": [{"x": 3}], "unset": [{}], "without_values": [{"kids": {}}]}}
+        }
+
+
 class SchemaWithAliasChangedInCoreSchema(BaseModel):
     value: int = Field(default=0, validation_alias="v", serialization_alias="s")
 
@@ -4413,6 +5159,59 @@ def test__request_body_migration__with_required_field_under_shadowed_validation_
         "inner": {"value": 1},
         "optional": 0,
     }
+
+
+@pytest.mark.parametrize(
+    ("response_model", "response", "expected"),
+    [
+        pytest.param(
+            OptionalOuterWithRequiredInner,
+            {"j": {"v": 5}},
+            {"i": None, "name": "n"},
+            id="nested_model",
+        ),
+        pytest.param(OptionalOuterListWithRequiredInner, {"j": [{"v": 5}]}, {"i": []}, id="nested_list"),
+    ],
+)
+def test__response_migration__with_required_field_under_optional_field_with_validation_alias__should_stay(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    response_model: type[BaseModel],
+    response: dict[str, Any],
+    expected: dict[str, Any],
+):
+    @router.get(test_path, response_model=response_model)
+    async def endpoint():
+        return response_model.model_validate(response)
+
+    clients = create_versioned_clients(version_change())
+
+    # The response model doesn't read the dumped key of the optional field, so it never validates the required field
+    # under it, and the response passes as it is. We leave it as it is, so the optional field gets its default.
+    for version_client in clients.values():
+        assert version_client.get(test_path).json() == expected
+
+
+def test__response_migration__with_required_field_under_shadowed_validation_key__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(test_path, response_model=OuterWithShadowedRequiredInner)
+    async def endpoint():
+        return OuterWithShadowedRequiredInner.model_validate({"inner": {"v": 2}, "ov": 5})
+
+    @convert_response_to_previous_version_for(OuterWithShadowedRequiredInner)
+    def migrator(response: ResponseInfo):
+        response.body["j"] = {"v": 1}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # The migration sets the key that the response model reads instead of the dumped one, so it never validates
+    # the required field under the dumped key and the response passes as it is. We leave it as it is,
+    # so the optional field gets its default as before.
+    assert clients["2000-01-01"].get(test_path).json() == {"inner": {"x": 1}, "o": 0}
 
 
 def test__request_body_migration__with_optional_field_with_validation_alias__should_stay_as_before(
@@ -4964,6 +5763,72 @@ def test__manual_response_migrations():
         new_response = migrate_response_body(
             version_bundle, EmptySchema, latest_body={"id": "hewwo"}, version="1999-01-01"
         )
+
+
+@pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
+@pytest.mark.parametrize(
+    "latest_body",
+    [
+        pytest.param({"i": {"x": 1}, "items": [{"x": 2}]}, id="dumped_keys"),
+        pytest.param({"j": {"v": 1}, "items": [{"v": 2}]}, id="validation_keys"),
+    ],
+)
+def test__manual_response_migrations__with_validation_aliases__should_get_the_values(
+    version: str, latest_body: dict[str, Any]
+):
+    @convert_response_to_previous_version_for(OuterSchemaWithValidationAliases)
+    def response_converter(response: ResponseInfo):
+        pass
+
+    version_bundle = VersionBundle(
+        Version("2001-01-01", version_change(convert=response_converter)), Version("2000-01-01")
+    )
+
+    migrated = migrate_response_body(
+        version_bundle, OuterSchemaWithValidationAliases, latest_body=latest_body, version=version
+    )
+
+    assert migrated.model_dump(by_alias=True, exclude_unset=True) == {"i": {"x": 1}, "items": [{"x": 2}]}
+
+
+@pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
+def test__manual_response_migrations__with_validation_aliases_that_pass_validation__should_stay_as_before(
+    version: str,
+):
+    version_bundle = VersionBundle(Version("2001-01-01"), Version("2000-01-01"))
+
+    migrated = migrate_response_body(
+        version_bundle, SchemaWithDefaultAndValidationAlias, latest_body={"x": 5}, version=version
+    )
+
+    # The body passes validation with the default, so we keep it as it is
+    assert migrated.model_dump(by_alias=True) == {"x": 0}
+
+
+@pytest.mark.parametrize(
+    "latest_body",
+    [pytest.param({}, id="nothing_to_restore"), pytest.param({"x": "not an int"}, id="invalid_restored_value")],
+)
+def test__manual_response_migrations__with_body_that_fails_with_validation_aliases__should_fail_as_before(
+    latest_body: dict[str, Any],
+):
+    version_bundle = VersionBundle(Version("2001-01-01"), Version("2000-01-01"))
+
+    with pytest.raises(ValidationError) as exc_info:
+        migrate_response_body(
+            version_bundle, InnerSchemaWithValidationAlias, latest_body=latest_body, version="2000-01-01"
+        )
+    assert [error["type"] for error in exc_info.value.errors()] == ["missing"]
+
+
+def test__manual_response_migrations__with_rescue_that_raises__should_fail_with_the_original_error():
+    version_bundle = VersionBundle(Version("2001-01-01"), Version("2000-01-01"))
+
+    with pytest.raises(ValidationError) as exc_info:
+        migrate_response_body(
+            version_bundle, SchemaWithValidatorThatRaisesTypeError, latest_body={"x": -1}, version="2000-01-01"
+        )
+    assert [error["type"] for error in exc_info.value.errors()] == ["missing"]
 
 
 def test__request_and_response_migrations__with_multiple_schemas_in_converters(

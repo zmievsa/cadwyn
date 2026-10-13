@@ -95,7 +95,12 @@ from cadwyn.structure.schemas import (
     ValidatorExistedInstruction,
     _get_model_decorators,
 )
-from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionBundle
+from cadwyn.structure.versions import (
+    _CADWYN_REQUEST_PARAM_NAME,
+    _CADWYN_RESPONSE_PARAM_NAME,
+    VersionBundle,
+    _restore_model_validation_aliases,
+)
 
 from ._utils import iscoroutinefunction
 
@@ -358,7 +363,20 @@ def migrate_response_body(
     versioned_response_model: type[pydantic.BaseModel] = generate_versioned_models(versions)[str(version)][
         latest_response_model
     ]
-    return versioned_response_model.model_validate(migrated_response.body)
+    try:
+        return versioned_response_model.model_validate(migrated_response.body)
+    except pydantic.ValidationError as error:
+        # The body has the keys of `model_dump(by_alias=True)`, like the bodies that routes migrate. Like routes,
+        # we only use its validation aliases to rescue bodies that fail, and only if the restored body passes.
+        # The body fails as it is anyway, so whatever goes wrong while we try to rescue it, we don't swallow
+        # anything new: we raise the original error as before.
+        try:
+            restored_body = _restore_model_validation_aliases(versioned_response_model, migrated_response.body)
+            if restored_body is not migrated_response.body:
+                return versioned_response_model.model_validate(restored_body)
+        except Exception:  # noqa: BLE001, S110
+            pass
+        raise error from None
 
 
 def _unwrap_model(model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
