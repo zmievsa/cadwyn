@@ -88,6 +88,8 @@ def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -
                 if (
                     isinstance(instruction, ValidatorDidntExistInstruction | ValidatorExistedInstruction)
                     or instruction.is_hidden_from_changelog
+                    # The changelog does not describe the changes of the descriptions of schemas, only renamings
+                    or (isinstance(instruction, SchemaHadInstruction) and instruction.name is Sentinel)
                 ):
                     continue
                 changelog_entry = _convert_version_change_instruction_to_changelog_entry(

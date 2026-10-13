@@ -471,6 +471,36 @@ def test__router_generation__generic_response_model_with_versioned_arg__should_u
     }
 
 
+class DocumentedItem(BaseModel):
+    """INTERNAL: head-only implementation note."""
+
+    name: str
+
+
+@versions_generic_type_args
+def test__router_generation__schema_had_description_of_generic_arg__should_change_description_in_older_openapi(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.get("/items", response_model=Page[DocumentedItem])
+    async def list_items() -> dict[str, Any]:
+        raise NotImplementedError
+
+    app = create_versioned_app(
+        version_change(schema(DocumentedItem).had(description="An item in the catalog.")), router=router
+    )
+    client = TestClient(app)
+
+    old_schemas = client.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    new_schemas = client.get("/openapi.json?version=2001-01-01").json()["components"]["schemas"]
+    assert old_schemas["DocumentedItem"]["description"] == "An item in the catalog."
+    assert new_schemas["DocumentedItem"]["description"] == "INTERNAL: head-only implementation note."
+    assert old_schemas["Page_DocumentedItem_"]["properties"]["items"]["items"] == {
+        "$ref": "#/components/schemas/DocumentedItem"
+    }
+
+
 @versions_generic_type_args
 def test__router_generation__generic_using_other_generic_with_its_type_param__should_use_arg_from_requested_version(
     create_versioned_app: CreateVersionedApp,

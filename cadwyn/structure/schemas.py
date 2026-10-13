@@ -310,7 +310,9 @@ AlterSchemaSubInstruction = Union[
 @dataclass(**DATACLASS_SLOTS)
 class SchemaHadInstruction(_HiddenAttributeMixin):
     schema: type[BaseModel]
-    name: str
+    name: str = Sentinel
+    # The docstring of the model (`__doc__`), which pydantic uses as its description. None means no description
+    description: Union[str, None] = Sentinel
 
 
 @dataclass(**DATACLASS_SLOTS)
@@ -345,8 +347,20 @@ class AlterSchemaInstructionFactory:
                 return AlterValidatorInstructionFactory(self.schema, cast("Callable[..., object]", func))
         raise CadwynStructureError("The passed function must be a pydantic validator")
 
-    def had(self, *, name: str) -> SchemaHadInstruction:
-        return SchemaHadInstruction(is_hidden_from_changelog=False, schema=self.schema, name=name)
+    def had(self, *, name: str = Sentinel, description: Union[str, None] = Sentinel) -> SchemaHadInstruction:
+        if name is Sentinel and description is Sentinel:
+            raise CadwynStructureError(
+                f"You must pass at least one of the arguments of schema({self.schema.__name__}).had()"
+            )
+        if isinstance(description, str) and not description.strip():
+            # Pydantic and Python treat such docstrings differently so `cadwyn render` could not render them
+            raise CadwynStructureError(
+                f"The description that you passed to schema({self.schema.__name__}).had() is blank. "
+                "Pass description=None to remove the description instead."
+            )
+        return SchemaHadInstruction(
+            is_hidden_from_changelog=False, schema=self.schema, name=name, description=description
+        )
 
 
 def schema(model: type[BaseModel], /) -> AlterSchemaInstructionFactory:

@@ -139,7 +139,16 @@ def _render_pydantic_model(
         )
     ]
     docstring = pop_docstring_from_cls_body(old_body)
-    original_cls_node.body = docstring + field_definitions + validator_definitions + old_body
+    # We keep the docstring from the source unless an instruction changed it
+    if wrapper.doc != wrapper.cls.__doc__:
+        docstring = [ast.Expr(ast.Constant(wrapper.doc))] if wrapper.doc else []
+    body = field_definitions + validator_definitions + old_body
+    if not docstring:
+        # A string at the start of the body would become the docstring, e.g. the documentation of a ClassVar
+        # whose definition we do not render, so we skip such strings
+        while pop_docstring_from_cls_body(body):
+            pass
+    original_cls_node.body = docstring + body
     if not original_cls_node.body:
         original_cls_node.body = [ast.Pass()]
     return original_cls_node
