@@ -38,7 +38,7 @@ import pydantic
 import pydantic._internal._decorators
 from fastapi import Response
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field, RootModel, SerializationInfo, SerializerFunctionWrapHandler, WrapSerializer
 from pydantic._internal import _decorators
 from pydantic._internal._config import ConfigWrapper
 from pydantic._internal._decorators import (
@@ -886,6 +886,10 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             func = classmethod(validator.func) if validator.is_classmethod else validator.func
             if isinstance(validator, _PerFieldValidatorWrapper):
                 per_field_validators[name] = validator.decorator(*validator.fields, **validator.kwargs)(func)
+            elif validator.decorator is pydantic.computed_field:
+                schema_generator = generator.schema_generator if isinstance(generator, _CycleCopier) else generator
+                return_type = _serialize_versioned_copies_within(validator.kwargs["return_type"], schema_generator)
+                root_validators[name] = validator.decorator(**(validator.kwargs | {"return_type": return_type}))(func)
             else:
                 root_validators[name] = validator.decorator(**validator.kwargs)(func)
         field_attributes, orig_bases, annotations, generic_metadata = self._change_version_of_references(
@@ -912,6 +916,57 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         return cast("type[_T_PYDANTIC_MODEL]", model_copy)
+
+
+def _serialize_versioned_copies_within(annotation: Any, generator: "SchemaGenerator") -> Any:
+    """Make the return type of a computed field serialize the version's copies of the models in it with their shape.
+
+    Pydantic resolves the return types of computed fields on its own so they always keep the latest models, and so
+    does their OpenAPI. The values that a computed field takes from the fields of the copy (e.g. `self.items[0]`)
+    are the version's copies, though, which pydantic serializes field by field with the latest model, so the
+    fields that the version renamed were left out. So the models in the type positions of the return type whose
+    copies differ from them serialize the instances of exactly their copies with the copies' own serializers.
+    All other values (e.g. new instances of the latest models or of their subclasses) are serialized as before.
+    The serializer has no return type so the JSON schema of the computed field stays the same.
+    """
+    # Generic aliases come first because Python 3.10 considers `list[Item]` a type
+    if not isinstance(annotation, (*GenericAliasUnionArgs, UnionType)):
+        if lenient_issubclass(annotation, BaseModel) and generator._copy_differs_from_model(annotation):
+            return generator._get_return_type_that_serializes_versioned_copy(annotation)
+        return annotation
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    new_args = tuple(
+        _serialize_versioned_copies_within(arg, generator) if _is_type_position_in_generic(origin, index) else arg
+        for index, arg in enumerate(args)
+    )
+    if all(new_arg is arg for new_arg, arg in zip(new_args, args, strict=True)):
+        return annotation
+    if isinstance(annotation, UnionType):
+        return typing.Union[new_args]
+    return _rebuild_generic_alias(annotation, new_args)
+
+
+def _make_versioned_copy_serializer(
+    model: type[BaseModel], generator: "SchemaGenerator"
+) -> Callable[[Any, SerializerFunctionWrapHandler, SerializationInfo], Any]:
+    # No return annotation: pydantic would use it as the JSON schema of the computed field
+    def serialize_versioned_copy(value: Any, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
+        if type(value) is not generator.concrete_models.get(model):
+            return handler(value)
+        return value.__pydantic_serializer__.to_python(
+            value,
+            mode=info.mode,
+            by_alias=info.by_alias,
+            exclude_unset=info.exclude_unset,
+            exclude_defaults=info.exclude_defaults,
+            exclude_none=info.exclude_none,
+            round_trip=info.round_trip,
+            serialize_as_any=info.serialize_as_any,
+            context=info.context,
+        )
+
+    return serialize_versioned_copy
 
 
 def _get_signature_parameters(call: Any) -> types.MappingProxyType[str, inspect.Parameter]:
@@ -1925,6 +1980,7 @@ class SchemaGenerator:
         "_model_references",
         "_models_copied_eagerly",
         "_reference_cycles",
+        "_return_types_that_serialize_versioned_copies",
         "_root_models",
         "_route_versioning_thread",
         "_versioning_answers",
@@ -1948,6 +2004,8 @@ class SchemaGenerator:
         self._reference_cycles = reference_cycles
         self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
         self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
+        # By model (see _serialize_versioned_copies_within)
+        self._return_types_that_serialize_versioned_copies: dict[type[BaseModel], Any] = {}
         # The reference cycles among the models that this version copies, or None for the models outside of them
         self._cycles_to_copy: dict[type[BaseModel], Union[frozenset[type[BaseModel]], None]] = {}
         # Whether the instructions of this version add references to models (see _adds_references_to_models)
@@ -2028,6 +2086,18 @@ class SchemaGenerator:
         if lenient_issubclass(model, BaseModel) and not self._reference_cycles.is_in_cycle(model):
             return True
         return self._is_versioned(model)
+
+    def _get_return_type_that_serializes_versioned_copy(self, model: type[BaseModel]) -> Any:
+        if model not in self._return_types_that_serialize_versioned_copies:
+            serializer = WrapSerializer(_make_versioned_copy_serializer(model, self))
+            self._return_types_that_serialize_versioned_copies[model] = _AnnotatedAlias(model, (serializer,))
+        return self._return_types_that_serialize_versioned_copies[model]
+
+    def _copy_differs_from_model(self, model: type[BaseModel]) -> bool:
+        """Whether the copy of the model itself, not of its subclasses, differs from the model in some version"""
+        return bool(self._changed_models) and self._reaches_changed_models(
+            _VersioningQuestion(model, includes_subclasses=False)
+        )
 
     def _is_versioned(self, model: type[Union[BaseModel, Enum]]) -> bool:
         """Whether the copy of the model or of any of its subclasses could differ from them in some version.
