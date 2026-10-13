@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
 from types import GenericAlias
-from typing import Annotated, ClassVar, Literal, NewType, TypeAlias, Union, cast, get_args
+from typing import Annotated, ClassVar, Literal, NewType, Optional, TypeAlias, Union, cast, get_args
 from uuid import UUID
 
 import fastapi.params
@@ -3494,6 +3494,67 @@ def test__router_generation__annotated_dependency_with_unversioned_type__should_
             "title": "Name",
         }
         assert get_enum(get_body_schema("/body")) == ["red"]
+
+
+class ItemOfDependencyWithQuotedAnnotations(BaseModel):
+    name: str
+
+
+class RoleOfDependencyWithQuotedAnnotations(str, Enum):
+    reader = "reader"
+    editor = "editor"
+
+
+def get_tags(items: list["ItemOfDependencyWithQuotedAnnotations"] = Body([])) -> list[str]:
+    return [item.name for item in items]
+
+
+def get_roles_with_quoted_query(
+    role: RoleOfDependencyWithQuotedAnnotations = Query(RoleOfDependencyWithQuotedAnnotations.reader),
+    tags: list["str"] = Query([]),
+) -> list[str]:
+    return [role.value]
+
+
+def get_roles_with_quoted_body(
+    role: RoleOfDependencyWithQuotedAnnotations = Query(RoleOfDependencyWithQuotedAnnotations.reader),
+    item: Optional["ItemOfDependencyWithQuotedAnnotations"] = Body(None),
+) -> list[str]:
+    return [role.value]
+
+
+def get_roles_with_quoted_sub_dependency(
+    tags: Annotated[list[str], Depends(get_tags)],
+    role: RoleOfDependencyWithQuotedAnnotations = Query(RoleOfDependencyWithQuotedAnnotations.reader),
+) -> list[str]:
+    return [role.value]
+
+
+@pytest.mark.parametrize(
+    "dependency",
+    [get_roles_with_quoted_query, get_roles_with_quoted_body, get_roles_with_quoted_sub_dependency],
+)
+def test__router_generation__annotated_dependency_with_quoted_args_in_annotations__should_use_head_dependency(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    dependency: Callable[..., list[str]],
+):
+    @router.get("/roles")
+    async def route(roles: Annotated[list[str], Depends(dependency)]):
+        return roles
+
+    clients = create_versioned_clients(
+        version_change(enum(RoleOfDependencyWithQuotedAnnotations).didnt_have("editor")),
+    )
+    # As in Cadwyn 7.4.0: FastAPI resolves the annotations of the parameters itself, only leaving forward refs within
+    # their args, so every version keeps the head dependency and accepts the role that older versions did not have
+    for version, version_client in clients.items():
+        assert version_client.get("/roles", params={"role": "editor"}).json() == ["editor"]
+        if dependency is get_roles_with_quoted_query:
+            # Pydantic cannot resolve the forward refs to the models in the OpenAPI of the others, as in Cadwyn 7.4.0
+            openapi = version_client.get(f"/openapi.json?version={version}").json()
+            role_schema = openapi["components"]["schemas"]["RoleOfDependencyWithQuotedAnnotations"]
+            assert role_schema["enum"] == ["reader", "editor"]
 
 
 def test__router_generation__with_pydantic_settings_dependency(

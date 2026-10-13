@@ -584,7 +584,7 @@ def _rebuild_generic_alias(annotation: Any, new_args: tuple[Any, ...]) -> Any:
         # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the originals.
         # So in Cadwyn 7.4.0, the annotations whose args did not change (e.g. `Annotated[int, Depends(get_limit)]`)
         # got the original dependencies in every version and we keep them. We only use the versioned ones if FastAPI
-        # cannot resolve the annotations of the original ones by itself because these failed in Cadwyn 7.4.0
+        # cannot resolve the annotation of a parameter of the original ones because these failed in Cadwyn 7.4.0
         if new_args == get_args(annotation):
             original_metadata = tuple(_get_original_dependency(metadata) for metadata in new_args[1:])
             if all(
@@ -606,7 +606,11 @@ def _get_original_dependency(metadata: Any) -> Any:
 
 
 def _fastapi_resolves_annotations(call: Callable[..., Any]) -> bool:
-    """Whether FastAPI resolves the annotations of the dependency and of its sub-dependencies by itself"""
+    """Whether FastAPI resolves the annotations of the parameters of the dependency and of its sub-dependencies.
+
+    E.g. not `item: "Item"` in a partial, which has no globals. Like FastAPI, we leave the forward refs within the
+    annotations (e.g. `list["Item"]`) to pydantic.
+    """
     for parameter in fastapi.dependencies.utils.get_typed_signature(call).parameters.values():
         depends = [
             metadata
@@ -617,7 +621,7 @@ def _fastapi_resolves_annotations(call: Callable[..., Any]) -> bool:
             sub_dependency = depends[-1].dependency
             if sub_dependency is not None and not _fastapi_resolves_annotations(sub_dependency):
                 return False
-        elif _contains_forward_refs(parameter.annotation):
+        elif isinstance(parameter.annotation, str | ForwardRef):
             return False
     return True
 

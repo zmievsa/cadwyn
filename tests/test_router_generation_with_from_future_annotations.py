@@ -1360,6 +1360,12 @@ def get_item_with_type_checking_only_return(item: VersionedItem) -> Decimal:
     raise NotImplementedError
 
 
+async def get_item_through_partial_with_type_checking_only_return(
+    item: Annotated[Any, Depends(functools.partial(get_item_with_type_checking_only_return))],
+) -> Any:
+    raise NotImplementedError
+
+
 def test__router_generation__partial_dependency_with_type_checking_only_annotations__should_use_versioned_models(
     router, create_versioned_clients
 ):
@@ -1367,6 +1373,12 @@ def test__router_generation__partial_dependency_with_type_checking_only_annotati
     # the partial) so we only compare the schemas that each version documents
     @router.post("/test")
     async def route(item: Annotated[Any, Depends(functools.partial(get_item_with_type_checking_only_return))]):
+        raise NotImplementedError
+
+    @router.post("/sub_dependency")
+    async def sub_dependency_route(
+        item: Annotated[Any, Depends(get_item_through_partial_with_type_checking_only_return)],
+    ):
         raise NotImplementedError
 
     clients = create_versioned_clients(version_change(schema(VersionedItem).field("bar").existed_as(type=str)))
@@ -1525,16 +1537,11 @@ _NESTED_QUOTED_DEPENDENCIES = {
 nested_quoted_dependency: Any = None
 
 
-async def get_current_through_nested_quoted_dependency(
-    current: Annotated[str, Depends(nested_quoted_dependency)],
-) -> str:
-    raise NotImplementedError
-
-
 @pytest.mark.parametrize("shape", list(_NESTED_QUOTED_DEPENDENCIES))
-@pytest.mark.parametrize(
-    "style", ["endpoint", "default_dependency", "annotated_dependency", "annotated_dependency_of_sub_dependency"]
-)
+# Not in Annotated[...] because, as in Cadwyn 7.4.0, the ones whose args did not change keep the original dependency
+# in every version when FastAPI resolves the annotations of its parameters, leaving the forward refs within them to
+# pydantic (see the test of annotated dependencies with quoted args in annotations in test_router_generation.py)
+@pytest.mark.parametrize("style", ["endpoint", "default_dependency"])
 def test__router_generation__nested_quoted_parameter_annotations__should_use_versioned_models(
     router, create_versioned_clients, monkeypatch, style, shape
 ):
@@ -1544,24 +1551,10 @@ def test__router_generation__nested_quoted_parameter_annotations__should_use_ver
     monkeypatch.setitem(globals(), "nested_quoted_dependency", dependency)
     if style == "endpoint":
         router.post("/test")(dependency)
-    elif style == "default_dependency":
-
-        @router.post("/test")
-        async def default_dependency_route(current: str = Depends(nested_quoted_dependency)):
-            raise NotImplementedError
-
-    elif style == "annotated_dependency":
-
-        @router.post("/test")
-        async def annotated_dependency_route(current: Annotated[str, Depends(nested_quoted_dependency)]):
-            raise NotImplementedError
-
     else:
 
         @router.post("/test")
-        async def annotated_sub_dependency_route(
-            current: Annotated[str, Depends(get_current_through_nested_quoted_dependency)],
-        ):
+        async def default_dependency_route(current: str = Depends(nested_quoted_dependency)):
             raise NotImplementedError
 
     clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
