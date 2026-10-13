@@ -1,6 +1,7 @@
 import re
+from decimal import Decimal
 from enum import Enum, auto
-from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, Union, get_origin, get_type_hints
+from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, Union, get_args, get_origin, get_type_hints
 
 import pytest
 from pydantic import (
@@ -13,6 +14,7 @@ from pydantic import (
     conint,
     constr,
 )
+from pydantic._internal._known_annotated_metadata import collect_known_metadata
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 from typing_extensions import override
@@ -23,6 +25,7 @@ from cadwyn.exceptions import (
 )
 from cadwyn.schema_generation import SchemaGenerator
 from cadwyn.structure import schema
+from cadwyn.structure.schemas import PossibleFieldAttributes
 from tests._resources.utils import HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED
 from tests.conftest import (
     CreateRuntimeSchemas,
@@ -1995,8 +1998,112 @@ def test__schema_field_had_and_didnt_have__field_info_subclass_in_annotated__sho
             "title": "Foo",
             "type": "string",
         },
-        "bar": {"title": "Bar", "type": "string"},
+        # Cadwyn 7.4.0 also ignored didnt_have() for the constraints of a Field() in the annotation's metadata. Removing
+        # them could make the older versions reject or change the data that they have always accepted or returned, so
+        # it stays ignored. Only the attributes that document the field get removed
+        "bar": {"minLength": 1, "title": "Bar", "type": "string"},
     }
+
+
+class TaggedCat(BaseModel):
+    kind: Literal["cat"] = "cat"
+
+
+class TaggedDog(BaseModel):
+    kind: Literal["dog"] = "dog"
+
+
+def _title_of_field(name: str, field_info: FieldInfo) -> str:
+    return name.upper()
+
+
+# The type and the Field() arguments that set every attribute that field().didnt_have() accepts
+ANNOTATED_FIELDS_WITH_EVERY_ATTRIBUTE: dict[str, tuple[Any, dict[str, Any]]] = {
+    "default": (int, {"default": 1}),
+    "alias": (str, {"alias": "a"}),
+    "alias_priority": (str, {"alias": "a", "alias_priority": 1}),
+    "default_factory": (list[int], {"default_factory": list}),
+    "validation_alias": (str, {"validation_alias": "v"}),
+    "serialization_alias": (str, {"serialization_alias": "s"}),
+    "title": (str, {"title": "Title"}),
+    "field_title_generator": (str, {"field_title_generator": _title_of_field}),
+    "description": (str, {"description": "Description"}),
+    "examples": (str, {"examples": ["example"]}),
+    "exclude": (str, {"exclude": True}),
+    "deprecated": (str, {"deprecated": "Deprecated"}),
+    "frozen": (str, {"frozen": True}),
+    "validate_default": (str, {"validate_default": True}),
+    "repr": (str, {"repr": False}),
+    "init": (str, {"init": False}),
+    "init_var": (str, {"init_var": True}),
+    "kw_only": (str, {"kw_only": True}),
+    "fail_fast": (list[int], {"fail_fast": True}),
+    "gt": (int, {"gt": 1}),
+    "ge": (int, {"ge": 1}),
+    "lt": (int, {"lt": 1}),
+    "le": (int, {"le": 1}),
+    "strict": (int, {"strict": True}),
+    "coerce_numbers_to_str": (str, {"coerce_numbers_to_str": True}),
+    "multiple_of": (int, {"multiple_of": 2}),
+    "allow_inf_nan": (float, {"allow_inf_nan": False}),
+    "max_digits": (Decimal, {"max_digits": 3}),
+    "decimal_places": (Decimal, {"decimal_places": 2}),
+    "min_length": (str, {"min_length": 1}),
+    "max_length": (str, {"max_length": 1}),
+    "union_mode": (Union[int, str], {"union_mode": "left_to_right"}),
+    "pattern": (str, {"pattern": "^a"}),
+    "discriminator": (Union[TaggedCat, TaggedDog], {"discriminator": "kind"}),
+    "json_schema_extra": (str, {"json_schema_extra": {"key": "value"}}),
+}
+# Only pydantic v1 had them, and pydantic v2 rejects them in Field()
+FIELD_ATTRIBUTES_OF_PYDANTIC_V1 = {"const", "allow_mutation"}
+# Cadwyn 7.4.0 ignored didnt_have() for all attributes of a Field() in the annotation's metadata. Removing any
+# attribute but the ones that only document the field could make the older versions reject or change the data that
+# they have always accepted or returned, so only these get removed
+ATTRIBUTES_THAT_DIDNT_HAVE_REMOVES_FROM_FIELD_IN_ANNOTATED = {
+    "title",
+    "description",
+    "examples",
+    "json_schema_extra",
+    "deprecated",
+}
+
+
+def _get_field_attribute(field_info: FieldInfo, attr_name: str) -> Any:
+    if attr_name in FieldInfo.metadata_lookup:
+        return collect_known_metadata(field_info.metadata)[0].get(attr_name)
+    return getattr(field_info, attr_name)
+
+
+def test__schema_field_didnt_have__every_attribute_of_field_in_annotated__should_be_in_the_table():
+    assert set(ANNOTATED_FIELDS_WITH_EVERY_ATTRIBUTE) | FIELD_ATTRIBUTES_OF_PYDANTIC_V1 == set(
+        get_args(PossibleFieldAttributes)
+    )
+    assert set(ANNOTATED_FIELDS_WITH_EVERY_ATTRIBUTE) >= ATTRIBUTES_THAT_DIDNT_HAVE_REMOVES_FROM_FIELD_IN_ANNOTATED
+
+
+@pytest.mark.parametrize("attr_name", ANNOTATED_FIELDS_WITH_EVERY_ATTRIBUTE)
+def test__schema_field_didnt_have__attribute_of_field_in_annotated__should_only_remove_documentation(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    attr_name: Any,
+):
+    field_type, field_kwargs = ANNOTATED_FIELDS_WITH_EVERY_ATTRIBUTE[attr_name]
+
+    class SchemaWithAttributeInAnnotated(BaseModel):
+        foo: Annotated[field_type, Field(**field_kwargs)]  # ty: ignore[invalid-type-form]
+
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithAttributeInAnnotated).field("foo").didnt_have(attr_name)),
+    )
+    head_field = SchemaWithAttributeInAnnotated.model_fields["foo"]
+    old_field = schemas["2000-01-01"][SchemaWithAttributeInAnnotated].model_fields["foo"]
+
+    head_value = _get_field_attribute(head_field, attr_name)
+    assert head_value not in (None, PydanticUndefined)
+    if attr_name in ATTRIBUTES_THAT_DIDNT_HAVE_REMOVES_FROM_FIELD_IN_ANNOTATED:
+        assert _get_field_attribute(old_field, attr_name) == _get_field_attribute(Field(), attr_name)
+    else:
+        assert _get_field_attribute(old_field, attr_name) == head_value
 
 
 def test__schema_field_had_annotated_constrained_field(create_runtime_schemas: CreateRuntimeSchemas):

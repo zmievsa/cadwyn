@@ -3292,17 +3292,11 @@ def _set_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> A
 
 def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
     if isinstance(metadata, FieldInfo):
-        # FieldInfo's attributes get the values of an empty Field()
+        # We only delete the attributes of FieldInfo itself (never its constraints), and they get the values of an
+        # empty Field()
         field_info = _copy_field_info(metadata)
-        field_info.metadata = [
-            _delete_metadata_attribute(sub_metadata, attr_name)
-            if _metadata_sets_constraint(sub_metadata, attr_name)
-            else sub_metadata
-            for sub_metadata in field_info.metadata
-        ]
         field_info._attributes_set.pop(attr_name, None)
-        if attr_name in FieldInfo.__slots__:
-            setattr(field_info, attr_name, dict_of_empty_field_info[attr_name])
+        setattr(field_info, attr_name, dict_of_empty_field_info[attr_name])
         return field_info
     return _set_metadata_attribute(metadata, attr_name, _get_unset_metadata_attribute_value(metadata, attr_name))
 
@@ -3331,29 +3325,14 @@ def _get_unset_metadata_attribute_value(metadata: Any, attr_name: str) -> Any:
 
 
 # The attributes that field().didnt_have() removes from a Field() in the annotation's metadata, such as
-# `Annotated[str, Field(min_length=1)]`. Cadwyn used to leave that Field() unchanged, so we only remove the attributes
-# whose removal can't make the older versions reject or change the data that they have always accepted or returned:
-# the constraints that only narrow down the values and the attributes that only document the field. Removing others
-# would, for example, make a field required (default), rename it in requests or responses (aliases), return a field
-# that was hidden (exclude), or reject the values that strict=False or coerce_numbers_to_str=True allowed.
+# `Annotated[str, Field(description="...")]`. Cadwyn 7.4.0 left that Field() unchanged, so we only remove the
+# attributes that only document the field: removing any other one could make the older versions reject or change
+# the data that they have always accepted or returned. E.g. removing a default makes the field required, removing an
+# alias renames it, removing exclude returns a hidden field, and even removing a constraint such as max_length can
+# make a model-wide limit (`ConfigDict(str_max_length=...)`) or an older had() apply, or change the member that a
+# `left_to_right` union picks.
 _FIELD_INFO_ATTRIBUTES_REMOVED_BY_DIDNT_HAVE = frozenset(
-    (
-        "min_length",
-        "max_length",
-        "gt",
-        "ge",
-        "lt",
-        "le",
-        "multiple_of",
-        "pattern",
-        "max_digits",
-        "decimal_places",
-        "title",
-        "description",
-        "examples",
-        "json_schema_extra",
-        "deprecated",
-    )
+    ("title", "description", "examples", "json_schema_extra", "deprecated")
 )
 
 

@@ -1590,10 +1590,13 @@ def deletable_attributes_router(router: VersionedAPIRouter) -> VersionedAPIRoute
 
 
 @pytest.mark.parametrize(
-    ("path", "schema_name"),
+    ("path", "schema_name", "is_removed"),
     [
-        ("/field_defaults", "DeletableAttributesInFieldDefaults"),
-        ("/annotated", "DeletableAttributesInAnnotated"),
+        ("/field_defaults", "DeletableAttributesInFieldDefaults", True),
+        # Cadwyn 7.4.0 ignored didnt_have() for the constraints of a Field() in the annotation's metadata. Removing
+        # them could make the older versions reject or change the data that they have always accepted or returned
+        # (e.g. through `ConfigDict(str_max_length=...)` or a `left_to_right` union), so it stays ignored
+        ("/annotated", "DeletableAttributesInAnnotated", False),
     ],
 )
 @pytest.mark.parametrize(
@@ -1606,11 +1609,12 @@ def deletable_attributes_router(router: VersionedAPIRouter) -> VersionedAPIRoute
         ("pattern_field", "pattern", "pattern", "bc"),
     ],
 )
-def test__router_generation__field_didnt_have_constraint__should_remove_it(
+def test__router_generation__field_didnt_have_constraint__should_remove_it_unless_field_in_annotation_sets_it(
     deletable_attributes_router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     path: str,
     schema_name: str,
+    is_removed: bool,
     field_name: str,
     attribute: Any,
     json_schema_key: str,
@@ -1630,11 +1634,11 @@ def test__router_generation__field_didnt_have_constraint__should_remove_it(
     )
     payload = PAYLOAD_WITH_DELETABLE_ATTRIBUTES_VALID_IN_ALL_VERSIONS | {field_name: value_valid_only_in_old_version}
 
-    for version, expected_status_code in [("2001-01-01", 422), ("2000-01-01", 200)]:
+    for version, expected_status_code in [("2001-01-01", 422), ("2000-01-01", 200 if is_removed else 422)]:
         client = clients[version]
         openapi = client.get(f"/openapi.json?version={version}").json()
         field_schema = openapi["components"]["schemas"][schema_name]["properties"][field_name]
-        assert (json_schema_key in field_schema) == (version == "2001-01-01")
+        assert (json_schema_key in field_schema) == (version == "2001-01-01" or not is_removed)
 
         assert client.post(path, json=PAYLOAD_WITH_DELETABLE_ATTRIBUTES_VALID_IN_ALL_VERSIONS).status_code == 200
         assert client.post(path, json=payload).status_code == expected_status_code
@@ -1775,11 +1779,22 @@ class SchemaWithLenConstraints(BaseModel):
     field_info_with_len: Annotated[str, FIELD_INFO_WITH_LEN]
 
 
-@pytest.mark.parametrize("field_name", ["annotated_len", "field_info_with_len"])
+@pytest.mark.parametrize(
+    ("field_name", "old_min_length", "old_status_code_of_too_short_value"),
+    [
+        ("annotated_len", None, 200),
+        # Cadwyn 7.4.0 ignored didnt_have() for the constraints of a Field() in the annotation's metadata. Removing
+        # them could make the older versions reject or change the data that they have always accepted or returned,
+        # so it stays ignored
+        ("field_info_with_len", 2, 422),
+    ],
+)
 def test__router_generation__field_didnt_have_min_length_of_len__should_keep_max_length(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     field_name: str,
+    old_min_length: Union[int, None],
+    old_status_code_of_too_short_value: int,
 ):
     @router.post("/test")
     async def route(payload: SchemaWithLenConstraints):
@@ -1796,7 +1811,10 @@ def test__router_generation__field_didnt_have_min_length_of_len__should_keep_max
     )
     payload = {"annotated_len": "abc", "field_info_with_len": "abc"}
 
-    for version, min_length, status_code_of_too_short_value in [("2001-01-01", 2, 422), ("2000-01-01", None, 200)]:
+    for version, min_length, status_code_of_too_short_value in [
+        ("2001-01-01", 2, 422),
+        ("2000-01-01", old_min_length, old_status_code_of_too_short_value),
+    ]:
         versioned_client = clients[version]
         openapi = versioned_client.get(f"/openapi.json?version={version}").json()
         field_schema = openapi["components"]["schemas"]["SchemaWithLenConstraints"]["properties"][field_name]
@@ -1998,6 +2016,8 @@ class StrictSchemaWithLaxFieldInAnnotated(BaseModel):
             )
             for instruction in [lambda field: field.had(min_length=5), lambda field: field.had(max_length=3)]
         ),
+        (SchemaWithWireAttributesInAnnotated, "name", lambda field: field.didnt_have("min_length")),
+        (SchemaWithWireAttributesInAnnotated, "name", lambda field: field.didnt_have("max_length")),
         (SchemaWithWireAttributesInAnnotated, "with_default", lambda field: field.didnt_have("default")),
         (SchemaWithWireAttributesInAnnotated, "with_default_factory", lambda f: f.didnt_have("default_factory")),
         (SchemaWithWireAttributesInAnnotated, "with_validation_alias", lambda f: f.didnt_have("validation_alias")),
