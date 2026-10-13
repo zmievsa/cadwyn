@@ -1035,7 +1035,10 @@ def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_ro
         create_versioned_app(version_change(short_name(LazyItem), short_name(LazyShelf)), router=router)
 
 
-def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_route_copies__should_raise_every_time():
+@versions_generic_type_args
+def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_route_copies__should_raise_every_time(
+    version_generic_type_args: bool,
+):
     """A failed attempt to start the app must not register the routes, or the next attempt would skip the check"""
     router = VersionedAPIRouter()
 
@@ -1045,7 +1048,9 @@ def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_ro
 
     app = Cadwyn(
         versions=VersionBundle(
-            Version("2001-01-01", version_change(short_name(LazyItem), short_name(LazyShelf))), Version("2000-01-01")
+            Version("2001-01-01", version_change(short_name(LazyItem), short_name(LazyShelf))),
+            Version("2000-01-01"),
+            version_generic_type_args=version_generic_type_args,
         )
     )
     app.generate_and_include_versioned_routers(router)
@@ -1841,7 +1846,7 @@ class ComputedCategoryHolder(BaseModel):
 
 @pytest.mark.parametrize("holder_route_first", [True, False], ids=["holder_route_first", "cycle_route_first"])
 def test__router_generation__copy_that_fails_its_check_after_its_cycle_is_copied__should_fail_on_every_attempt(
-    holder_route_first: bool,
+    holder_route_first: bool, version_generic_type_args: bool
 ):
     """Copying the cycle checks the copies generated before it, so a failed check must not leave the cycle copied"""
     router = VersionedAPIRouter()
@@ -1862,7 +1867,9 @@ def test__router_generation__copy_that_fails_its_check_after_its_cycle_is_copied
         add_route()
     app = Cadwyn(
         versions=VersionBundle(
-            Version("2001-01-01", version_change(short_name(ItemOfLatestCategory))), Version("2000-01-01")
+            Version("2001-01-01", version_change(short_name(ItemOfLatestCategory))),
+            Version("2000-01-01"),
+            version_generic_type_args=version_generic_type_args,
         )
     )
     app.generate_and_include_versioned_routers(router)
