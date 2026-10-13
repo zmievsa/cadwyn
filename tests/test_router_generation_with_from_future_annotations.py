@@ -314,7 +314,7 @@ class SiblingWithInheritedField(ParentWithInheritedField):
     pass
 
 
-def test__router_generation__child_had_inherited_field__should_not_change_parent_and_siblings(
+def test__router_generation__child_had_inherited_field__should_change_parent_and_siblings_that_share_it(
     router: VersionedAPIRouter,
     create_versioned_clients,
 ):
@@ -339,15 +339,17 @@ def test__router_generation__child_had_inherited_field__should_not_change_parent
         router=router,
     )
 
-    # The changes of the parent's field in even older versions still apply to the child.
+    # As in Cadwyn 7.4.0: the parent has an instruction of its own (for "bar"), so its subclasses share the field
+    # with it and the child's change also applies to the parent and the sibling. The changes of the parent's field in
+    # even older versions still apply to the child.
     # With postponed annotations, max_length=10 is also in the annotation that pydantic rebuilds from Field() and
     # Cadwyn 7.4.0 ignored had(max_length=3) for it. Applying it would make the older versions reject the requests
-    # and responses that they have always accepted, so it stays ignored (test_router_generation.py checks that it
-    # does not leak into the parent and siblings without postponed annotations)
+    # and responses that they have always accepted, so it stays ignored (test_router_generation.py checks it
+    # without postponed annotations)
     for version, path, schema_name, description, max_length in [
-        ("2001-01-01", "/parent", "ParentWithInheritedField", "Head description", 10),
+        ("2001-01-01", "/parent", "ParentWithInheritedField", "Child description", 10),
         ("2001-01-01", "/child", "ChildWithInheritedField", "Child description", 10),
-        ("2001-01-01", "/sibling", "SiblingWithInheritedField", "Head description", 10),
+        ("2001-01-01", "/sibling", "SiblingWithInheritedField", "Child description", 10),
         ("2000-01-01", "/parent", "ParentWithInheritedField", "Older description", 10),
         ("2000-01-01", "/child", "ChildWithInheritedField", "Older description", 10),
         ("2000-01-01", "/sibling", "SiblingWithInheritedField", "Older description", 10),
