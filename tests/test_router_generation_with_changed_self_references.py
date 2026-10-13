@@ -45,18 +45,6 @@ from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
 from tests.conftest import CreateVersionedApp, version_change
 
-
-@pytest.fixture(params=[False, True], ids=["head_generic_args", "versioned_generic_args"])
-def version_generic_type_args(request: pytest.FixtureRequest) -> bool:
-    """Every test of this module runs with and without VersionBundle(version_generic_type_args=True)"""
-    return request.param
-
-
-# For the tests of the generics whose type args are versioned, which only happens with the option
-versions_generic_type_args = pytest.mark.parametrize(
-    "version_generic_type_args", [True], ids=["versioned_generic_args"]
-)
-
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from decimal import Decimal as OnlyForTypeCheckers
@@ -515,11 +503,10 @@ def test__issue_419_reproduction__renamed_field_of_self_referencing_model__shoul
     assert "title" in changelog.text
 
 
-def test__generate_versioned_models__copies_in_cycle__should_refer_to_each_other(version_generic_type_args: bool):
+def test__generate_versioned_models__copies_in_cycle__should_refer_to_each_other():
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(Book))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
@@ -534,7 +521,6 @@ def test__generate_versioned_models__copies_in_cycle__should_refer_to_each_other
         VersionBundle(
             Version("2001-01-01", version_change(short_name(RegistryEntry))),
             Version("2000-01-01"),
-            version_generic_type_args=version_generic_type_args,
         )
     )["2000-01-01"][RegistryEntry]
     old_registry = typing.get_args(old_entry.model_fields["registry"].annotation)[0]
@@ -596,7 +582,6 @@ def get_request_body_schema(openapi_components: dict[str, Any], openapi: dict[st
         ),
     ],
 )
-@versions_generic_type_args
 def test__router_generation__generic_route_model_around_changed_cycle__should_use_versioned_args(
     model: Any,
     generic_model: Any,
@@ -658,42 +643,6 @@ class CategoryWithItem(BaseModel):
     children: "list[CategoryWithItem]" = []
 
 
-@pytest.mark.parametrize("generic_route_first", [False, True])
-@pytest.mark.parametrize("version_generic_type_args", [False], ids=["head_generic_args"])
-def test__router_generation__generic_route_model_around_changed_cycle_with_head_args__should_keep_latest_args(
-    generic_route_first: bool,
-    create_versioned_app: CreateVersionedApp,
-):
-    """Without version_generic_type_args, generics keep the latest models in their type args, even of copied cycles"""
-    router = VersionedAPIRouter()
-
-    def add_generic_route() -> None:
-        @router.post("/page", response_model=Page[CategoryWithItem])
-        async def create_page(page: Page[CategoryWithItem]) -> Any:
-            return page
-
-    def add_model_route() -> None:
-        @router.post("/category", response_model=CategoryWithItem)
-        async def create_category(category: CategoryWithItem) -> Any:
-            return category
-
-    for add_route in (
-        (add_generic_route, add_model_route) if generic_route_first else (add_model_route, add_generic_route)
-    ):
-        add_route()
-    app = create_versioned_app(version_change(short_name(ItemOfPagedCategory)), router=router)
-    old_client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
-    latest_category = {"name": "a", "item": {"name": "toolong"}, "children": []}
-
-    for _ in range(2):
-        assert old_client.post("/page", json={"items": [latest_category]}).json() == {"items": [latest_category]}
-        response = old_client.post("/category", json=latest_category)
-        assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
-        assert response.json()["detail"][0]["type"] == "string_too_long"
-        old_category = {"name": "a", "item": {"name": "abc"}, "children": []}
-        assert old_client.post("/category", json=old_category).json() == old_category
-
-
 class LatestCategoryPageHolder(BaseModel):
     @computed_field
     @property
@@ -704,7 +653,7 @@ class LatestCategoryPageHolder(BaseModel):
 def test__router_generation__computed_field_with_latest_generic_around_cycle__should_raise(
     create_versioned_app: CreateVersionedApp,
 ):
-    """Pydantic builds the latest Page[CategoryWithItem] on its own, not Cadwyn's copy that keeps the latest args"""
+    """Pydantic builds the latest Page[CategoryWithItem] on its own, not Cadwyn's copy"""
     router = VersionedAPIRouter()
 
     @router.post("/category", response_model=CategoryWithItem)
@@ -751,17 +700,15 @@ class CategoryWithTag(BaseModel):
     ],
     ids=["didnt_exist", "had_type", "had_description"],
 )
-def test__router_generation__generic_arg_whose_copy_drops_reference_to_cycle__should_keep_latest_references(
+def test__router_generation__generic_arg_whose_copy_drops_reference_to_cycle__should_work(
     tag_change: Callable[[Any], Any],
     create_versioned_app: CreateVersionedApp,
-    version_generic_type_args: bool,
 ):
-    """The latest CategoryWithTag in Page[CategoryWithTag] refers to the latest TagWithItem whatever its copy has"""
     router = VersionedAPIRouter()
 
     @router.get("/categories", response_model=Page[CategoryWithTag])
     async def get_categories() -> Any:
-        return {"items": [{"name": "a", "tag": {"label": "t", "item": {"name": "toolong"}}}]}
+        raise NotImplementedError
 
     @router.get("/tag", response_model=TagWithItem)
     async def get_tag() -> Any:
@@ -775,11 +722,6 @@ def test__router_generation__generic_arg_whose_copy_drops_reference_to_cycle__sh
         version_change(short_name(ItemOfTag), tag_change(schema(CategoryWithTag).field("tag"))), router=router
     )
     assert TestClient(app).get("/openapi.json?version=2000-01-01").status_code == HTTP_200_OK
-    if not version_generic_type_args:
-        old_client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
-        tag = {"label": "t", "item": {"name": "toolong"}, "children": []}
-        category = {"name": "a", "tag": tag, "color": "red", "children": []}
-        assert old_client.get("/categories").json() == {"items": [category]}
 
 
 class ValueBox(BaseModel, Generic[ValueT]):
@@ -819,7 +761,7 @@ def test__router_generation__latest_model_of_cycle_in_field_inherited_from_gener
     box_route_first: bool,
     create_versioned_app: CreateVersionedApp,
 ):
-    """Only the parts of a field that come from the type args of a generic keep the latest models without the option"""
+    """Pydantic resolves the latest models in overridden fields and in serializers of inherited fields on its own"""
     router = VersionedAPIRouter()
 
     def add_category_route() -> None:
@@ -852,10 +794,9 @@ class CategoryList(RootModel[list[CategoryWithItem]]):
 @pytest.mark.parametrize(
     "root_model", [GenericCategoryList[CategoryWithItem], CategoryList], ids=["generic_root_model", "root_model"]
 )
-def test__router_generation__root_model_with_type_arg_around_changed_cycle__should_version_it_only_with_option(
+def test__router_generation__root_model_with_type_arg_around_changed_cycle__should_version_it(
     root_model: Any,
     create_versioned_app: CreateVersionedApp,
-    version_generic_type_args: bool,
 ):
     router = VersionedAPIRouter()
 
@@ -874,47 +815,13 @@ def test__router_generation__root_model_with_type_arg_around_changed_cycle__shou
 
     assert old_client.post("/category", json=old_category).json() == old_category
     assert old_client.post("/categories", json=[old_category]).json() == [old_category]
-    response = old_client.post("/categories", json=[latest_category])
-    if version_generic_type_args:
-        assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
-    else:
-        # Like other generics, the root model keeps the latest models in its type args
-        assert response.json() == [latest_category]
-
-
-class LatestCategoryHolder(BaseModel):
-    @computed_field
-    @property
-    def category(self) -> CategoryWithItem:
-        raise NotImplementedError
-
-
-def test__router_generation__computed_field_with_latest_model_of_cycle__should_raise_without_generic_hint(
-    create_versioned_app: CreateVersionedApp,
-):
-    """version_generic_type_args cannot version the return types of computed fields so the error does not suggest it"""
-    router = VersionedAPIRouter()
-
-    @router.post("/category", response_model=CategoryWithItem)
-    async def create_category(category: CategoryWithItem) -> Any:
-        raise NotImplementedError
-
-    @router.get("/holder", response_model=LatestCategoryHolder)
-    async def get_holder() -> Any:
-        raise NotImplementedError
-
-    with pytest.raises(
-        SchemaGenerationError, match="copy of LatestCategoryHolder because it would use the latest"
-    ) as e:
-        create_versioned_app(version_change(short_name(ItemOfPagedCategory)), router=router)
-    assert "version_generic_type_args" not in str(e.value)
+    assert old_client.post("/categories", json=[latest_category]).status_code == HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def get_origin_of_model(model: Any) -> Any:
     return model.__pydantic_generic_metadata__["origin"] or model
 
 
-@versions_generic_type_args
 def test__router_generation__generic_route_model_around_renamed_cycle__should_apply_its_converter(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -999,13 +906,10 @@ def test__router_generation__generic_around_cycle_that_no_route_copies__should_k
     assert old_client.get("/pages").json() == {"items": [{"item": {"name": "x"}, "children": []}]}
 
 
-def test__router_generation__generic_that_kept_head_args_before_routes_that_do_not_use_its_cycle__should_work(
-    version_generic_type_args: bool,
-):
+def test__router_generation__generic_that_kept_head_args_before_routes_that_do_not_use_its_cycle__should_work():
     versions = VersionBundle(
         Version("2001-01-01", version_change(described_name(LazyItem))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     old_page = migrate_response_body(
         versions, Page[LazyTree], latest_body={"items": [{"item": {"name": "x"}}]}, version="2000-01-01"
@@ -1025,7 +929,6 @@ def test__router_generation__generic_that_kept_head_args_before_routes_that_do_n
 
 
 @pytest.mark.parametrize("generic_route_first", [False, True])
-@versions_generic_type_args
 def test__router_generation__generic_around_cycle_that_a_route_copies__should_use_versioned_args(
     generic_route_first: bool, create_versioned_app: CreateVersionedApp
 ):
@@ -1064,7 +967,6 @@ def get_one() -> int:
     return 1
 
 
-@versions_generic_type_args
 def test__router_generation__route_with_unresolvable_dependency_annotation__should_still_copy_cycle_eagerly(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -1094,7 +996,6 @@ def test__router_generation__route_with_unresolvable_dependency_annotation__shou
     assert client.post("/pages", json={"items": [tree]}).json() == {"ok": True}
 
 
-@versions_generic_type_args
 def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_route_copies__should_raise(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -1109,10 +1010,7 @@ def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_ro
         create_versioned_app(version_change(short_name(LazyItem), short_name(LazyShelf)), router=router)
 
 
-@versions_generic_type_args
-def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_route_copies__should_raise_every_time(
-    version_generic_type_args: bool,
-):
+def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_route_copies__should_raise_every_time():
     """A failed attempt to start the app must not register the routes, or the next attempt would skip the check"""
     router = VersionedAPIRouter()
 
@@ -1124,7 +1022,6 @@ def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_ro
         versions=VersionBundle(
             Version("2001-01-01", version_change(short_name(LazyItem), short_name(LazyShelf))),
             Version("2000-01-01"),
-            version_generic_type_args=version_generic_type_args,
         )
     )
     app.generate_and_include_versioned_routers(router)
@@ -1155,16 +1052,13 @@ def test__router_generation__self_referencing_model_changed_in_head_version__sho
         assert client.post("/categories", json=valid_body).json() == valid_body
 
 
-def test__generate_versioned_models__cycle_that_only_exists_in_older_versions__should_be_copied(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__cycle_that_only_exists_in_older_versions__should_be_copied():
     versions = VersionBundle(
         Version(
             "2001-01-01",
             version_change(schema(Leaf).field("parent").existed_as(type=Optional[Leaf], info=Field(default=None))),
         ),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generators = generate_versioned_models(versions)
 
@@ -1176,13 +1070,10 @@ def test__generate_versioned_models__cycle_that_only_exists_in_older_versions__s
     assert "parent" not in generators["2001-01-01"][Leaf].model_fields
 
 
-def test__generate_versioned_models__cycle_that_does_not_exist_in_older_versions__should_be_copied_as_before(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__cycle_that_does_not_exist_in_older_versions__should_be_copied_as_before():
     versions = VersionBundle(
         Version("2001-01-01", version_change(schema(Category).field("children").didnt_exist)),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generators = generate_versioned_models(versions)
 
@@ -1199,9 +1090,7 @@ class DocumentedCategory(BaseModel):
     children: "list[DocumentedCategory]" = []
 
 
-def test__router_generation__description_of_self_referencing_model_changed__should_change_it_at_every_depth(
-    version_generic_type_args: bool,
-):
+def test__router_generation__description_of_self_referencing_model_changed__should_change_it_at_every_depth():
     router = VersionedAPIRouter()
 
     @router.post("/categories", response_model=DocumentedCategory)
@@ -1211,7 +1100,6 @@ def test__router_generation__description_of_self_referencing_model_changed__shou
     versions = VersionBundle(
         Version("2001-01-01", version_change(schema(DocumentedCategory).had(description="A category."))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     app = Cadwyn(versions=versions, changelog_url=None)
     app.generate_and_include_versioned_routers(router)
@@ -1230,13 +1118,10 @@ def test__router_generation__description_of_self_referencing_model_changed__shou
     assert client.post("/categories", json=body, headers={"x-api-version": "2000-01-01"}).json() == body
 
 
-def test__migrate_response_body__changed_self_referencing_model__should_be_validated_with_old_model(
-    version_generic_type_args: bool,
-):
+def test__migrate_response_body__changed_self_referencing_model__should_be_validated_with_old_model():
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(Category))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
 
     body = {"name": "abc", "children": [{"name": "abc", "children": []}]}
@@ -1249,13 +1134,10 @@ def test__migrate_response_body__changed_self_referencing_model__should_be_valid
         )
 
 
-def test__migrate_response_body__changed_self_referencing_model_with_deferred_build__should_be_built(
-    version_generic_type_args: bool,
-):
+def test__migrate_response_body__changed_self_referencing_model_with_deferred_build__should_be_built():
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(DeferredCategory))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
 
     body = {"name": "abc", "children": [{"name": "abc", "children": []}]}
@@ -1290,13 +1172,10 @@ def test__router_generation__request_migration_for_changed_self_referencing_mode
     assert old_client.post("/categories", json=body).json() == {"name": "ABC", "children": body["children"]}
 
 
-def test__generate_versioned_models__cycle_copied_from_several_threads__should_be_copied_once(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__cycle_copied_from_several_threads__should_be_copied_once():
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(ChangedItem))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
     thread_count = 8
@@ -1638,50 +1517,26 @@ class IncompleteCategory(BaseModel):
     ],
 )
 def test__generate_versioned_models__cycle_that_cannot_be_copied__should_raise(
-    model: type[BaseModel], error_message: str, version_generic_type_args: bool
+    model: type[BaseModel], error_message: str
 ):
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(model))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
 
     with pytest.raises(SchemaGenerationError, match=error_message):
         generate_versioned_models(versions)
 
 
-@versions_generic_type_args
-def test__generate_versioned_models__cycle_with_generic_field_whose_args_lead_back__should_raise(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__cycle_with_generic_field_whose_args_lead_back__should_raise():
     """The generic within the cycle keeps the latest MixedCategory in its args because they lead back to the cycle"""
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(MixedCategory))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
 
     with pytest.raises(SchemaGenerationError, match="would use the latest MixedCategory"):
         generate_versioned_models(versions)
-
-
-@pytest.mark.parametrize("version_generic_type_args", [False], ids=["head_generic_args"])
-def test__generate_versioned_models__cycle_with_generic_field_without_versioned_args__should_keep_latest_args(
-    version_generic_type_args: bool,
-):
-    versions = VersionBundle(
-        Version("2001-01-01", version_change(short_name(MixedCategory))),
-        Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
-    )
-
-    old_category = generate_versioned_models(versions)["2000-01-01"][MixedCategory]
-
-    category = old_category.model_validate({"name": "abc", "children": {"items": [{"name": "toolong"}]}})
-    assert category.children is not None
-    assert type(category.children.items[0]) is MixedCategory
-    with pytest.raises(ValueError, match="at most 3 characters"):
-        old_category.model_validate({"name": "toolong"})
 
 
 @pytest.mark.parametrize(
@@ -1786,12 +1641,10 @@ def test__generate_versioned_models__copy_that_would_use_latest_models_of_cycle_
     changed_model: type[BaseModel],
     requested_model: type[BaseModel],
     error_message: str,
-    version_generic_type_args: bool,
 ):
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(changed_model))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
@@ -1799,15 +1652,11 @@ def test__generate_versioned_models__copy_that_would_use_latest_models_of_cycle_
         generator[requested_model]
 
 
-@versions_generic_type_args
-def test__generate_versioned_models__copy_with_generic_that_keeps_latest_models_of_cycle__should_raise(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__copy_with_generic_that_keeps_latest_models_of_cycle__should_raise():
     """The generic keeps the latest LazyTree because the cycle is copied lazily, next to a field with its copy"""
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(LazyItem))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
@@ -1815,34 +1664,11 @@ def test__generate_versioned_models__copy_with_generic_that_keeps_latest_models_
         generator[LazyWebhook]
 
 
-@pytest.mark.parametrize("version_generic_type_args", [False], ids=["head_generic_args"])
-def test__generate_versioned_models__copy_with_generic_without_versioned_args__should_keep_latest_args(
-    version_generic_type_args: bool,
-):
-    versions = VersionBundle(
-        Version("2001-01-01", version_change(short_name(LazyItem))),
-        Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
-    )
-    generator = generate_versioned_models(versions)["2000-01-01"]
-
-    old_webhook = generator[LazyWebhook]
-    tree = {"item": {"name": "toolong"}, "children": []}
-    webhook = old_webhook.model_validate({"tree": {"item": {"name": "abc"}}, "related": {"items": [tree]}})
-    assert type(webhook.tree) is generator[LazyTree]
-    assert type(webhook.related.items[0]) is LazyTree
-    with pytest.raises(ValueError, match="at most 3 characters"):
-        old_webhook.model_validate({"tree": tree, "related": {"items": []}})
-
-
-def test__generate_versioned_models__enum_default_in_cycle__should_work_as_for_other_models(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__enum_default_in_cycle__should_work_as_for_other_models():
     """Enum members are serialized by their values, so Cadwyn uses them as defaults as it always did"""
     versions = VersionBundle(
         Version("2001-01-01", version_change(enum(Status).didnt_have("new"))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     old_node = generate_versioned_models(versions)["2000-01-01"][StatusNode]
 
@@ -1851,16 +1677,13 @@ def test__generate_versioned_models__enum_default_in_cycle__should_work_as_for_o
     assert old_node().children == []
 
 
-def test__generate_versioned_models__defaults_of_fields_that_do_not_reach_copied_cycles__should_work_as_on_main(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__defaults_of_fields_that_do_not_reach_copied_cycles__should_work_as_on_main():
     versions = VersionBundle(
         Version(
             "2001-01-01",
             version_change(short_name(Category), short_name(ChangedItem), enum(Status).didnt_have("new")),
         ),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
@@ -1870,13 +1693,10 @@ def test__generate_versioned_models__defaults_of_fields_that_do_not_reach_copied
     assert old_order().items == []
 
 
-def test__generate_versioned_models__default_factories_that_create_versioned_copies__should_be_allowed(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__default_factories_that_create_versioned_copies__should_be_allowed():
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(Settings), short_name(SafeFactoriesCategory))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     old_category = generate_versioned_models(versions)["2000-01-01"][SafeFactoriesCategory]
 
@@ -1889,14 +1709,10 @@ def test__generate_versioned_models__default_factories_that_create_versioned_cop
     assert category.optional_settings == [None, None]
 
 
-@versions_generic_type_args
-def test__generate_versioned_models__root_model_around_changed_cycle__should_use_its_copies(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__root_model_around_changed_cycle__should_use_its_copies():
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(Category))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     old_root = generate_versioned_models(versions)["2000-01-01"][CategoryRoot]
 
@@ -1905,13 +1721,10 @@ def test__generate_versioned_models__root_model_around_changed_cycle__should_use
         old_root.model_validate([{"name": "toolong"}])
 
 
-def test__generate_versioned_models__copy_that_cannot_be_built_in_version_that_copies_cycles__should_raise(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__copy_that_cannot_be_built_in_version_that_copies_cycles__should_raise():
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(Category))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
 
@@ -1958,7 +1771,7 @@ class ComputedCategoryHolder(BaseModel):
 
 @pytest.mark.parametrize("holder_route_first", [True, False], ids=["holder_route_first", "cycle_route_first"])
 def test__router_generation__copy_that_fails_its_check_after_its_cycle_is_copied__should_fail_on_every_attempt(
-    holder_route_first: bool, version_generic_type_args: bool
+    holder_route_first: bool,
 ):
     """Copying the cycle checks the copies generated before it, so a failed check must not leave the cycle copied"""
     router = VersionedAPIRouter()
@@ -1981,7 +1794,6 @@ def test__router_generation__copy_that_fails_its_check_after_its_cycle_is_copied
         versions=VersionBundle(
             Version("2001-01-01", version_change(short_name(ItemOfLatestCategory))),
             Version("2000-01-01"),
-            version_generic_type_args=version_generic_type_args,
         )
     )
     app.generate_and_include_versioned_routers(router)
@@ -2012,13 +1824,10 @@ class HookedItemTree(AsksForItsCopies, BaseModel):
     children: "list[HookedItemTree]" = []
 
 
-def test__generate_versioned_models__hook_that_asks_for_copy_while_its_cycle_is_copied__should_raise(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__hook_that_asks_for_copy_while_its_cycle_is_copied__should_raise():
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(ChangedItem))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
     HOOK_GENERATORS.append(generator)
@@ -2029,14 +1838,11 @@ def test__generate_versioned_models__hook_that_asks_for_copy_while_its_cycle_is_
         HOOK_GENERATORS.clear()
 
 
-def test__generate_versioned_models__schema_hook_that_reads_cached_copies_from_another_thread__should_work(
-    version_generic_type_args: bool,
-):
+def test__generate_versioned_models__schema_hook_that_reads_cached_copies_from_another_thread__should_work():
     """Rebuilding a model must not wait for Cadwyn's lookups of the copies that it has already generated"""
     versions = VersionBundle(
         Version("2001-01-01", version_change(short_name(ChangedItem))),
         Version("2000-01-01"),
-        version_generic_type_args=version_generic_type_args,
     )
     generator = generate_versioned_models(versions)["2000-01-01"]
     old_item = generator[ChangedItem]
