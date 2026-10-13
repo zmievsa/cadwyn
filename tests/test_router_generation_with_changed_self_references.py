@@ -816,6 +816,26 @@ def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_ro
         create_versioned_app(version_change(short_name(LazyItem), short_name(LazyShelf)), router=router)
 
 
+def test__router_generation__generic_that_keeps_head_args_around_cycle_that_a_route_copies__should_raise_every_time():
+    """A failed attempt to start the app must not register the routes, or the next attempt would skip the check"""
+    router = VersionedAPIRouter()
+
+    @router.get("/tree", response_model=LazyTree)
+    async def get_tree() -> dict[str, Any]:
+        raise NotImplementedError
+
+    app = Cadwyn(
+        versions=VersionBundle(
+            Version("2001-01-01", version_change(short_name(LazyItem), short_name(LazyShelf))), Version("2000-01-01")
+        )
+    )
+    app.generate_and_include_versioned_routers(router)
+
+    for _ in range(3):
+        with pytest.raises(SchemaGenerationError, match=r"LazyTree.* the latest models in the type args of generics"):
+            app._cadwyn_initialize()
+
+
 def test__router_generation__self_referencing_model_changed_in_head_version__should_be_versioned_in_every_version(
     create_versioned_app: CreateVersionedApp,
 ):
@@ -1457,6 +1477,60 @@ def test__router_generation__copy_checked_before_a_route_cycle_is_copied__should
         create_versioned_app(
             version_change(short_name(LazyItem), short_name(RetroFeed), short_name(OptionalCategory)), router=router
         )
+
+
+class ItemOfLatestCategory(BaseModel):
+    name: str
+
+
+class CategoryOfComputedField(BaseModel):
+    name: str
+    item: Optional[ItemOfLatestCategory] = None
+    parent: "Optional[CategoryOfComputedField]" = None
+
+
+class ComputedCategoryHolder(BaseModel):
+    @computed_field
+    @property
+    def category(self) -> CategoryOfComputedField:
+        raise NotImplementedError
+
+
+@pytest.mark.parametrize("holder_route_first", [True, False], ids=["holder_route_first", "cycle_route_first"])
+def test__router_generation__copy_that_fails_its_check_after_its_cycle_is_copied__should_fail_on_every_attempt(
+    holder_route_first: bool,
+):
+    """Copying the cycle checks the copies generated before it, so a failed check must not leave the cycle copied"""
+    router = VersionedAPIRouter()
+
+    def add_holder_route() -> None:
+        @router.get("/holder", response_model=ComputedCategoryHolder)
+        async def get_holder() -> Any:
+            raise NotImplementedError
+
+    def add_category_route() -> None:
+        @router.get("/category", response_model=CategoryOfComputedField)
+        async def get_category() -> Any:
+            raise NotImplementedError
+
+    for add_route in (
+        (add_holder_route, add_category_route) if holder_route_first else (add_category_route, add_holder_route)
+    ):
+        add_route()
+    app = Cadwyn(
+        versions=VersionBundle(
+            Version("2001-01-01", version_change(short_name(ItemOfLatestCategory))), Version("2000-01-01")
+        )
+    )
+    app.generate_and_include_versioned_routers(router)
+
+    # Each request initializes the app again until it succeeds, with the versioned models that the bundle cached
+    for _ in range(3):
+        with pytest.raises(
+            SchemaGenerationError,
+            match="copy of ComputedCategoryHolder because it would use the latest CategoryOfComputedField",
+        ):
+            TestClient(app).get("/holder", headers={app.router.api_version_parameter_name: "2000-01-01"})
 
 
 # The generators that HookedItemTree asks for its copy while pydantic creates its subclasses
