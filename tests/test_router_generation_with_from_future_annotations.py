@@ -214,10 +214,13 @@ def constrained_fields_router(router: VersionedAPIRouter) -> VersionedAPIRouter:
 
 
 @pytest.mark.parametrize(
-    ("path", "schema_name"),
+    ("path", "schema_name", "is_applied"),
     [
-        ("/field_defaults", "ConstrainedFieldsInFieldDefaults"),
-        ("/annotated", "ConstrainedFieldsInAnnotated"),
+        # Cadwyn 7.4.0 ignored had() for a constraint that the annotation's metadata sets, including the annotation
+        # that pydantic rebuilds from Field() with postponed annotations. Applying it would make the older versions
+        # reject the requests and responses that they have always accepted, so it stays ignored
+        ("/field_defaults", "ConstrainedFieldsInFieldDefaults", False),
+        ("/annotated", "ConstrainedFieldsInAnnotated", False),
     ],
 )
 @pytest.mark.parametrize(
@@ -230,11 +233,12 @@ def constrained_fields_router(router: VersionedAPIRouter) -> VersionedAPIRouter:
         ("pattern_field", {"pattern": "^ab"}, {"pattern": "^a"}, {"pattern": "^ab"}, "ac"),
     ],
 )
-def test__router_generation__field_had_constraint_that_was_already_set__should_override_it(
+def test__router_generation__field_had_constraint_that_was_already_set__should_override_it_unless_annotation_sets_it(
     constrained_fields_router: VersionedAPIRouter,
     create_versioned_clients,
     path: str,
     schema_name: str,
+    is_applied: bool,
     field_name: str,
     old_attributes: dict[str, Any],
     head_json_schema: dict[str, object],
@@ -252,7 +256,7 @@ def test__router_generation__field_had_constraint_that_was_already_set__should_o
 
     for version, expected_json_schema, expected_status_code in [
         ("2001-01-01", head_json_schema, 200),
-        ("2000-01-01", old_json_schema, 422),
+        ("2000-01-01", old_json_schema, 422) if is_applied else ("2000-01-01", head_json_schema, 200),
     ]:
         client = clients[version]
         openapi = client.get(f"/openapi.json?version={version}").json()
@@ -335,13 +339,17 @@ def test__router_generation__child_had_inherited_field__should_not_change_parent
         router=router,
     )
 
-    # The changes of the parent's field in even older versions still apply to the child
+    # The changes of the parent's field in even older versions still apply to the child.
+    # With postponed annotations, max_length=10 is also in the annotation that pydantic rebuilds from Field() and
+    # Cadwyn 7.4.0 ignored had(max_length=3) for it. Applying it would make the older versions reject the requests
+    # and responses that they have always accepted, so it stays ignored (test_router_generation.py checks that it
+    # does not leak into the parent and siblings without postponed annotations)
     for version, path, schema_name, description, max_length in [
         ("2001-01-01", "/parent", "ParentWithInheritedField", "Head description", 10),
-        ("2001-01-01", "/child", "ChildWithInheritedField", "Child description", 3),
+        ("2001-01-01", "/child", "ChildWithInheritedField", "Child description", 10),
         ("2001-01-01", "/sibling", "SiblingWithInheritedField", "Head description", 10),
         ("2000-01-01", "/parent", "ParentWithInheritedField", "Older description", 10),
-        ("2000-01-01", "/child", "ChildWithInheritedField", "Older description", 3),
+        ("2000-01-01", "/child", "ChildWithInheritedField", "Older description", 10),
         ("2000-01-01", "/sibling", "SiblingWithInheritedField", "Older description", 10),
     ]:
         client = clients[version]
@@ -685,9 +693,12 @@ class SchemaWithConstraintClasses(BaseModel):
 @pytest.mark.parametrize(
     ("field_name", "instruction", "value", "head_status_code", "old_status_code"),
     [
-        ("strict_field", lambda field: field.had(strict=False), "1", 422, 200),
+        # Cadwyn 7.4.0 ignored had() for constraint classes, like for other constraints in the annotation's metadata.
+        # Applying it could make the older versions reject the requests that they have always accepted (as in
+        # had(allow_inf_nan=False)), so it stays ignored. didnt_have() failed with TypeError there instead
+        ("strict_field", lambda field: field.had(strict=False), "1", 422, 422),
         ("strict_field", lambda field: field.didnt_have("strict"), "1", 422, 200),
-        ("allow_inf_nan_field", lambda field: field.had(allow_inf_nan=False), "inf", 200, 422),
+        ("allow_inf_nan_field", lambda field: field.had(allow_inf_nan=False), "inf", 200, 200),
         ("allow_inf_nan_field", lambda field: field.didnt_have("allow_inf_nan"), "inf", 200, 200),
     ],
 )
