@@ -2,10 +2,11 @@ import ast
 import inspect
 import textwrap
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
 import typer
 from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 
 from cadwyn._asts import get_fancy_repr, pop_docstring_from_cls_body
 from cadwyn._utils import lenient_issubclass
@@ -119,7 +120,7 @@ def _render_pydantic_model(
         ast.AnnAssign(
             target=ast.Name(name),
             annotation=ast.Name(get_fancy_repr(annotations[name])),
-            value=_generate_field_ast(attributes),
+            value=_generate_field_ast(_without_redundant_none_aliases(attributes, annotations[name])),
             simple=1,
         )
         for name, attributes in field_attributes.items()
@@ -143,6 +144,27 @@ def _render_pydantic_model(
     if not original_cls_node.body:
         original_cls_node.body = [ast.Pass()]
     return original_cls_node
+
+
+_ALIAS_ATTRIBUTES = ("alias", "validation_alias", "serialization_alias")
+
+
+def _without_redundant_none_aliases(attributes: dict[str, Any], annotation: Any) -> dict[str, Any]:
+    """Skip the aliases that are None if Field() is the same without them.
+
+    Cadwyn passes the deleted aliases as None so that they override the ones from the Field() in the annotation of
+    the field. Without such a Field() and without an alias for the others to follow, None is the same as no alias.
+    """
+    if attributes.get("alias") is not None or (
+        get_origin(annotation) is Annotated
+        and any(isinstance(metadata, FieldInfo) for metadata in get_args(annotation)[1:])
+    ):
+        return attributes
+    return {
+        attr_name: attr_value
+        for attr_name, attr_value in attributes.items()
+        if not (attr_name in _ALIAS_ATTRIBUTES and attr_value is None)
+    }
 
 
 def _generate_field_ast(field_attributes: dict[str, Any]) -> ast.Call:
