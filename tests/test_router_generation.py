@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import dataclasses
+import datetime as dt
 import functools
 import importlib
 import inspect
@@ -9,6 +10,7 @@ import json
 import re
 import sys
 import typing
+import warnings
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
@@ -39,7 +41,19 @@ from fastapi.security.http import HTTPBasic
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from inline_snapshot import snapshot
-from pydantic import AfterValidator, AllowInfNan, BaseModel, Field, JsonValue, Strict, StringConstraints, conint
+from pydantic import (
+    AfterValidator,
+    AllowInfNan,
+    BaseModel,
+    Field,
+    JsonValue,
+    SerializationInfo,
+    Strict,
+    StringConstraints,
+    computed_field,
+    conint,
+    field_serializer,
+)
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
@@ -58,7 +72,7 @@ from cadwyn.exceptions import (
     RouterPathParamsModifiedError,
 )
 from cadwyn.route_generation import copy_route, generate_versioned_routers
-from cadwyn.schema_generation import generate_versioned_models
+from cadwyn.schema_generation import generate_versioned_models, migrate_response_body
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.data import RequestInfo, ResponseInfo, convert_response_to_previous_version_for
 from cadwyn.structure.enums import enum
@@ -73,6 +87,7 @@ from tests.conftest import (
     client,
     version_change,
 )
+from tests.conftest import versions as versions_of
 
 Default = object()
 Endpoint: TypeAlias = Callable[..., Awaitable[Any]]
@@ -1140,6 +1155,260 @@ def test__router_generation__updating_response_model(
 
     assert get_nested_field_type(routes_2000[1].response_model) == list[str]
     assert get_nested_field_type(routes_2001[1].response_model) == int  # noqa: E721
+
+
+class ItemWithTitle(BaseModel):
+    title: str
+
+
+class HolderWithComputedItems(BaseModel):
+    items: list[ItemWithTitle]
+
+    @computed_field
+    @property
+    def best(self) -> ItemWithTitle:
+        return self.items[0]
+
+    @computed_field(return_type=ItemWithTitle)
+    @property
+    def best_with_explicit_return_type(self):
+        return self.items[0]
+
+    @computed_field
+    @property
+    def optional_best(self) -> Union[ItemWithTitle, None]:
+        return self.items[0]
+
+    @computed_field
+    @property
+    def best_or_none(self) -> ItemWithTitle | None:
+        return self.items[0]
+
+    @computed_field
+    @property
+    def all_items(self) -> list[ItemWithTitle]:
+        return self.items
+
+    @computed_field
+    @property
+    def items_by_title(self) -> dict[str, ItemWithTitle]:
+        return {"a": self.items[0]}
+
+    @computed_field
+    @property
+    def fresh(self) -> ItemWithTitle:
+        return ItemWithTitle(title="fresh")
+
+
+@convert_response_to_previous_version_for(HolderWithComputedItems)
+def rename_titles_of_computed_items(response: ResponseInfo):
+    for item in response.body["items"]:
+        item["name"] = item.pop("title")
+
+
+def test__router_generation__computed_field_returning_existing_items_of_changed_model__should_serialize_their_old_shape(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    @router.get("/test", response_model=HolderWithComputedItems)
+    async def test():
+        return {"items": [{"title": "a"}]}
+
+    app = create_versioned_app(
+        version_change(schema(ItemWithTitle).field("title").had(name="name"), rename=rename_titles_of_computed_items)
+    )
+
+    def expected_body(item: dict[str, str]) -> dict[str, Any]:
+        return {
+            "items": [item],
+            "best": item,
+            "best_with_explicit_return_type": item,
+            "optional_best": item,
+            "best_or_none": item,
+            "all_items": [item],
+            "items_by_title": {"a": item},
+            # The instances that the computed field creates are of the latest model so they keep its shape
+            "fresh": {"title": "fresh"},
+        }
+
+    with TestClient(app) as client:
+        assert client.get("/test", headers={"x-api-version": "2001-01-01"}).json() == expected_body({"title": "a"})
+        assert client.get("/test", headers={"x-api-version": "2000-01-01"}).json() == expected_body({"name": "a"})
+        # OpenAPI keeps describing the computed fields with the latest model, as it always did
+        old_schemas = client.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+        computed_item_ref = old_schemas["HolderWithComputedItems"]["properties"]["best"]["$ref"]
+        assert set(old_schemas[computed_item_ref.rsplit("/", 1)[-1]]["properties"]) == {"title"}
+
+    migrated_body = migrate_response_body(
+        app.versions, HolderWithComputedItems, latest_body={"items": [{"title": "a"}]}, version="2000-01-01"
+    )
+    assert migrated_body.model_dump() == expected_body({"name": "a"})
+    assert migrated_body.model_dump_json() == json.dumps(expected_body({"name": "a"}), separators=(",", ":"))
+
+
+class ItemOwner(BaseModel):
+    name: str = "Ada"
+
+
+class AdminItemOwner(ItemOwner):
+    password_hash: str = "private"
+
+
+class DetailedItem(BaseModel):
+    title: str
+    owner: ItemOwner = Field(default_factory=AdminItemOwner)
+    note: Union[str, None] = None
+    code: int = Field(default=0, serialization_alias="itemCode")
+    created: dt.date = dt.date(2000, 1, 1)
+
+    @computed_field
+    @property
+    def double_code(self) -> int:
+        return self.code * 2
+
+    @field_serializer("code")
+    def serialize_code(self, code: int, info: SerializationInfo) -> Any:
+        return (info.context or {}).get("code_prefix", "") + str(code)
+
+
+class HolderWithComputedDetailedItems(BaseModel):
+    items: list[DetailedItem]
+
+    @computed_field
+    @property
+    def all_items(self) -> list[DetailedItem]:
+        return self.items
+
+
+@pytest.mark.parametrize(
+    "get_dump_options",
+    [
+        pytest.param(lambda _field: {}, id="defaults"),
+        pytest.param(lambda _field: {"mode": "json"}, id="mode"),
+        pytest.param(lambda _field: {"by_alias": True}, id="by_alias"),
+        pytest.param(lambda _field: {"exclude_unset": True}, id="exclude_unset"),
+        pytest.param(lambda _field: {"exclude_defaults": True}, id="exclude_defaults"),
+        pytest.param(lambda _field: {"exclude_none": True}, id="exclude_none"),
+        pytest.param(lambda _field: {"serialize_as_any": True}, id="serialize_as_any"),
+        pytest.param(
+            lambda _field: {"polymorphic_serialization": True},
+            id="polymorphic_serialization",
+            marks=pytest.mark.skipif(
+                "polymorphic_serialization" not in inspect.signature(BaseModel.model_dump).parameters,
+                reason="pydantic 2.13 added the option",
+            ),
+        ),
+        pytest.param(lambda _field: {"context": {"code_prefix": "#"}}, id="context"),
+        pytest.param(lambda field: {"include": {field: {0: {"name", "code"}}}}, id="include"),
+        pytest.param(lambda field: {"exclude": {field: {0: {"name", "double_code"}}}}, id="exclude"),
+    ],
+)
+def test__generate_versioned_models__computed_field_returning_existing_data__should_honor_dump_options(
+    get_dump_options: Callable[[str], dict[str, Any]],
+):
+    versions = VersionBundle(*versions_of(version_change(schema(DetailedItem).field("title").had(name="name"))))
+    old_model = generate_versioned_models(versions)["2000-01-01"][HolderWithComputedDetailedItems]
+    old_holder = old_model.model_validate({"items": [{"name": "a", "code": 1}]})
+
+    # The field holds the same instances of the version's copy, which pydantic serializes without Cadwyn's help
+    dumped_field = old_holder.model_dump(**get_dump_options("items"))["items"]
+    assert old_holder.model_dump(**get_dump_options("all_items"))["all_items"] == dumped_field
+
+
+class KindWithComputedField(str, Enum):
+    a = "a"
+
+
+class ThingWithComputedKind(BaseModel):
+    @computed_field
+    @property
+    def kind(self) -> KindWithComputedField:
+        return KindWithComputedField.a
+
+
+class PublicUser(BaseModel):
+    name: str = "Ada"
+
+
+class InternalUser(PublicUser):
+    password_hash: str = "private"
+
+
+class MetaWithCustomJsonSchema(BaseModel):
+    code: int = 7
+
+    @classmethod
+    @override
+    def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
+        json_schema = handler(core_schema)
+        json_schema["x-custom"] = True
+        return json_schema
+
+
+class MetaWithCustomJsonSchemaChild(MetaWithCustomJsonSchema):
+    note: str = ""
+
+
+class HolderWithUnchangedComputedModels(BaseModel):
+    @computed_field
+    @property
+    def user(self) -> Union[ItemWithTitle, PublicUser]:
+        return InternalUser()
+
+    @computed_field
+    @property
+    def meta(self) -> MetaWithCustomJsonSchema:
+        return MetaWithCustomJsonSchema()
+
+    @computed_field
+    @property
+    def mixed(self) -> Union[ItemWithTitle, MetaWithCustomJsonSchema]:
+        return MetaWithCustomJsonSchema()
+
+    @computed_field
+    @property
+    def metas(self) -> list[MetaWithCustomJsonSchema]:
+        return [MetaWithCustomJsonSchema()]
+
+    @computed_field
+    @property
+    def raw(self) -> JsonValue:
+        return {"code": 7}
+
+
+def test__router_generation__computed_fields_returning_latest_or_unchanged_values__should_work_as_before(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    @router.get("/thing", response_model=ThingWithComputedKind)
+    async def get_thing():
+        return {}
+
+    @router.get("/holder", response_model=HolderWithUnchangedComputedModels)
+    async def get_holder():
+        return {}
+
+    app = create_versioned_app(
+        version_change(
+            enum(KindWithComputedField).had(legacy="legacy"),
+            schema(ItemWithTitle).field("title").had(name="name"),
+            schema(MetaWithCustomJsonSchemaChild).field("note").didnt_exist,
+        )
+    )
+    with TestClient(app) as client, warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for version in ("2001-01-01", "2000-01-01"):
+            assert client.get("/thing", headers={"x-api-version": version}).json() == {"kind": "a"}
+            # The fields of the subclass do not leak into the response
+            assert client.get("/holder", headers={"x-api-version": version}).json() == {
+                "user": {"name": "Ada"},
+                "meta": {"code": 7},
+                "mixed": {"code": 7},
+                "metas": [{"code": 7}],
+                "raw": {"code": 7},
+            }
+            schemas = client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
+            assert schemas["MetaWithCustomJsonSchema"]["x-custom"] is True
 
 
 def test__router_generation__response_model_with_union_return_type(

@@ -43,6 +43,13 @@ MyVersionedSchemaFrom2025 = schema_generators["2025-11-16"][MyVersionedSchema]
 
 Cadwyn generates a copy of every model for every version, except for the enums without enum instructions and the models that refer to themselves (directly or through other models, e.g. `children: "list[Category]"`) when neither they nor the models they refer to have instructions in any version (including `HeadVersion`) and they are not parents of models with versioned copies. Cadwyn uses such enums and models as they are: `schema_generators["2025-11-16"][Category] is Category`. Cadwyn makes this decision when it first needs a model, so the models defined after that (e.g. new subclasses) do not change it.
 
+### Computed fields that return models
+
+Pydantic resolves the return types of computed fields on its own, so the copies of a model keep the latest models in the return types of its computed fields, and the OpenAPI of every version describes these computed fields with the latest models. What a computed field returns is serialized as follows:
+
+* If it returns data of the model's copy itself, e.g. `self.items[0]` in `def best(self) -> Item`, the value is an instance of the version's copy of `Item`, so Cadwyn serializes it with that copy, in the shape of the version. This also covers such values within `Optional`, `Union`, `list`, `tuple`, `set`, and `dict` return types.
+* If it creates new instances of the latest models, e.g. `return Item(title="new")`, they are serialized with the latest models, in the latest shape, as described in OpenAPI.
+
 ### Models that refer to each other
 
 Models can refer to themselves, directly or through other models, e.g. `children: "list[Category]"` or `Author.books: list[Book]` with `Book.author: Author`. When such models need versioning, Cadwyn copies all of them together, and their copies refer to each other. So if `Category` had a `title` field instead of `name` in an older version, that version uses `title` at every depth of the tree. Parametrized generic models such as `Page[Category]` use these copies as their type args when the models with instructions or the routes of the version refer to such models. This requires Pydantic 2.11.5 or newer: with older Pydantic versions, Cadwyn raises a `SchemaGenerationError` for such models.
