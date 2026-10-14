@@ -74,6 +74,7 @@ class FakeDependencyOverridesProvider:
 
 
 class Cadwyn(FastAPI):
+    router: _RootCadwynAPIRouter  # ty: ignore[invalid-mutable-override]  # Plain APIRouter is unsupported.
     _templates = Jinja2Templates(directory=CURR_DIR.parent / "static")
 
     def __init__(
@@ -267,7 +268,7 @@ class Cadwyn(FastAPI):
             self.api_version_validation_data_type = str
         else:
             assert_never(default_version_example)
-        self.router: _RootCadwynAPIRouter = _RootCadwynAPIRouter(
+        self.router = _RootCadwynAPIRouter(
             **self._kwargs_to_router,
             on_startup=on_startup,
             on_shutdown=on_shutdown,
@@ -332,6 +333,7 @@ class Cadwyn(FastAPI):
             self.router.versioned_routers[version.value] = APIRouter(**self._kwargs_to_router)
 
     @property
+    @override
     def dependency_overrides(self) -> dict[Callable[..., Any], Callable[..., Any]]:
         # TODO: Remove this approach as it is no longer necessary
         # This is only necessary because we cannot send self to versioned router generator
@@ -340,6 +342,7 @@ class Cadwyn(FastAPI):
         return self._dependency_overrides_provider.dependency_overrides
 
     @dependency_overrides.setter
+    @override
     def dependency_overrides(
         self,
         value: dict[Callable[..., Any], Callable[..., Any]],
