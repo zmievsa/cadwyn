@@ -54,13 +54,11 @@ T = TypeVar("T", bound=Union[PossibleInstructions, type[VersionChange]])
 @deprecated(_CHANGELOG_DEPRECATION_MESSAGE)
 def hidden(instruction_or_version_change: T) -> T:
     if isinstance(instruction_or_version_change, _HiddenAttributeMixin):
-        # Weird ty bug, or I am dumb.
-        instruction_or_version_change.is_hidden_from_changelog = True  # ty: ignore[possibly-missing-attribute]
+        instruction_or_version_change.is_hidden_from_changelog = True
         return instruction_or_version_change
 
     if isinstance(instruction_or_version_change, type) and issubclass(instruction_or_version_change, VersionChange):
-        # Weird ty bug, or I am dumb.
-        instruction_or_version_change.is_hidden_from_changelog = True  # ty: ignore[possibly-missing-attribute]
+        instruction_or_version_change.is_hidden_from_changelog = True
     return instruction_or_version_change
 
 
