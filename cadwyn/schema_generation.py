@@ -1,19 +1,27 @@
+import collections.abc
+import contextlib
 import copy
 import dataclasses
 import functools
 import inspect
+import itertools
+import operator
+import re
 import sys
+import threading
 import types
 import typing
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
 from datetime import date
-from enum import Enum
+from enum import Enum, auto
 from functools import cache
 from typing import (
     TYPE_CHECKING,
     Annotated,
     ClassVar,
+    ForwardRef,
     Generic,
+    NamedTuple,
     TypeAlias,
     TypeGuard,
     Union,
@@ -22,6 +30,7 @@ from typing import (
     get_origin,
 )
 
+import annotated_types
 import fastapi.params
 import fastapi.security.base
 import fastapi.utils
@@ -31,6 +40,7 @@ from fastapi import Response
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
+from pydantic._internal._config import ConfigWrapper
 from pydantic._internal._decorators import (
     FieldSerializerDecoratorInfo,
     FieldValidatorDecoratorInfo,
@@ -39,7 +49,12 @@ from pydantic._internal._decorators import (
     RootValidatorDecoratorInfo,
     ValidatorDecoratorInfo,
 )
+from pydantic._internal._fields import rebuild_model_fields
+from pydantic._internal._forward_ref import PydanticRecursiveRef
+from pydantic._internal._generics import PydanticGenericMetadata, get_model_typevars_map, replace_types
 from pydantic._internal._known_annotated_metadata import collect_known_metadata
+from pydantic._internal._model_construction import build_lenient_weakvaluedict, unpack_lenient_weakvaluedict
+from pydantic._internal._namespace_utils import NsResolver
 from pydantic._internal._typing_extra import try_eval_type as pydantic_try_eval_type
 from pydantic.fields import ComputedFieldInfo, FieldInfo
 from pydantic_core import PydanticUndefined
@@ -65,7 +80,7 @@ from cadwyn._utils import (
     is_sqlalchemy_model,
     lenient_issubclass,
 )
-from cadwyn.exceptions import CadwynError, InvalidGenerationInstructionError
+from cadwyn.exceptions import CadwynError, InvalidGenerationInstructionError, SchemaGenerationError
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.data import ResponseInfo
 from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
@@ -80,7 +95,12 @@ from cadwyn.structure.schemas import (
     ValidatorExistedInstruction,
     _get_model_decorators,
 )
-from cadwyn.structure.versions import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME, VersionBundle
+from cadwyn.structure.versions import (
+    _CADWYN_REQUEST_PARAM_NAME,
+    _CADWYN_RESPONSE_PARAM_NAME,
+    VersionBundle,
+    _restore_model_validation_aliases,
+)
 
 from ._utils import iscoroutinefunction
 
@@ -140,20 +160,38 @@ class PydanticFieldWrapper:
     name_from_newer_version: str
 
     passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
+    # The model of the last instruction that changed the default or the default factory
+    default_changed_by: Union[type[BaseModel], None] = dataclasses.field(init=False, default=None)
 
     def __post_init__(self, init_model_field: FieldInfo) -> None:
         self.passed_field_attributes = _extract_passed_field_attributes(init_model_field)
 
-    def update_attribute(self, *, name: str, value: Any) -> None:
+    def update_attribute(self, *, name: str, value: Any, changed_by: type[BaseModel]) -> None:
         self.passed_field_attributes[name] = value
+        if name in _OTHER_DEFAULT_ATTRIBUTE:
+            self.default_changed_by = changed_by
 
     def delete_attribute(self, *, name: str) -> None:
         self.passed_field_attributes.pop(name)
 
-    def generate_field_copy(self, generator: "SchemaGenerator") -> pydantic.fields.FieldInfo:
-        return pydantic.Field(
-            **generator.annotation_transformer.change_version_of_annotation(self.passed_field_attributes)
-        )
+
+def _has_default_and_default_factory(attributes: dict[str, Any]) -> bool:
+    """Whether Field(**attributes) fails because it has both. Like pydantic, `...` and `None` mean that it has none"""
+    return _sets_default_attribute(attributes, "default") and _sets_default_attribute(attributes, "default_factory")
+
+
+def _sets_default_attribute(attributes: dict[str, Any], attr_name: str) -> bool:
+    """Whether Field(**attributes) sets default or default_factory: `default=...` and `default_factory=None` don't"""
+    if attr_name not in attributes:
+        return False
+    value = attributes[attr_name]
+    # Identity checks because user defaults can compare in any way (e.g. numpy arrays compare element-wise)
+    if attr_name == "default":
+        return value is not PydanticUndefined and value is not Ellipsis
+    return value is not None
+
+
+_OTHER_DEFAULT_ATTRIBUTE = {"default": "default_factory", "default_factory": "default"}
 
 
 def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]:
@@ -172,13 +210,8 @@ class _ModelBundle:
 
 @dataclasses.dataclass(**DATACLASS_SLOTS, **DATACLASS_KW_ONLY)
 class _RuntimeSchemaGenContext:
-    version_bundle: "VersionBundle"
     current_version: "Union[Version, HeadVersion]"
     models: _ModelBundle
-    latest_version: "Version" = dataclasses.field(init=False)
-
-    def __post_init__(self) -> None:
-        self.latest_version = max(self.version_bundle.versions, key=lambda v: v.value)
 
 
 def migrate_response_body(
@@ -209,7 +242,20 @@ def migrate_response_body(
     versioned_response_model: type[pydantic.BaseModel] = generate_versioned_models(versions)[str(version)][
         latest_response_model
     ]
-    return versioned_response_model.model_validate(migrated_response.body)
+    try:
+        return versioned_response_model.model_validate(migrated_response.body)
+    except pydantic.ValidationError as error:
+        # The body has the keys of `model_dump(by_alias=True)`, like the bodies that routes migrate. Like routes,
+        # we only use its validation aliases to rescue bodies that fail, and only if the restored body passes.
+        # The body fails as it is anyway, so whatever goes wrong while we try to rescue it, we don't swallow
+        # anything new: we raise the original error as before.
+        try:
+            restored_body = _restore_model_validation_aliases(versioned_response_model, migrated_response.body)
+            if restored_body is not migrated_response.body:
+                return versioned_response_model.model_validate(restored_body)
+        except Exception:  # noqa: BLE001, S110
+            pass
+        raise error from None
 
 
 def _unwrap_model(model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
@@ -275,11 +321,275 @@ def _is_dunder(attr_name: str):
     return attr_name.startswith("__") and attr_name.endswith("__")
 
 
-def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
+def _rebuild_model(model: type[BaseModel]) -> None:
     # In case we have a forwardref within one of the fields
     # For example, when "from __future__ import annotations" is used in the file with the schema
     if model is not BaseModel:
-        model.model_rebuild(raise_errors=False)
+        # An empty namespace makes sure that our local variables cannot be used to resolve the forward refs
+        model.model_rebuild(raise_errors=False, _types_namespace={})
+
+
+def _get_annotations_without_evaluating(obj: Any) -> dict[str, Any]:
+    """Return the annotations of a class or a function, keeping the ones that cannot be evaluated as forward refs"""
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        from annotationlib import Format, get_annotations
+
+        # Annotations are evaluated lazily since Python 3.14 so the names that are only imported for type checking
+        # would raise a NameError
+        return get_annotations(obj, format=Format.FORWARDREF)
+    return obj.__annotations__
+
+
+_UNRESOLVED: Any = object()
+_T_EVALUATED = TypeVar("_T_EVALUATED")
+
+
+def _evaluate_user_annotations(evaluate: Callable[[], _T_EVALUATED]) -> _T_EVALUATED:
+    """Evaluate the annotations of the user's code for reference discovery, returning _UNRESOLVED if they fail.
+
+    Discovery evaluates the annotations of models that main may never copy, e.g. the ones in untouched generic args.
+    Any exception from evaluating them, such as a NameError for a name that is not defined yet, a TypeError for
+    a generic that only exists in stubs (`pandas.Series[int]`, Django's `QuerySet[Model]`) or an AttributeError,
+    means that discovery cannot know which models copying would request. The generic args that lead to them then
+    keep their head models, which is exactly main's behavior, so catching every exception here is safe. Only the
+    evaluation of the user's annotations goes through here so the bugs in Cadwyn's own logic still surface.
+    """
+    try:
+        return evaluate()
+    except RecursionError:
+        # This is more likely a bug in Cadwyn than in the user's annotations
+        raise
+    except Exception:  # noqa: BLE001
+        return _UNRESOLVED
+
+
+def _has_undefined_names_in_lazy_annotations(obj: Any) -> bool:
+    """Whether the annotations of a class or a function refer to names that are not defined yet.
+
+    Since Python 3.14, annotations are evaluated lazily and _get_annotations_without_evaluating keeps such names
+    as forward refs, which would resolve to other objects once the names get defined. Earlier versions evaluate
+    annotations when they are defined unless they are strings, which stay strings.
+    """
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        from annotationlib import Format, get_annotations
+
+        return _evaluate_user_annotations(lambda: get_annotations(obj, format=Format.VALUE)) is _UNRESOLVED
+    return False
+
+
+# The models whose copies do not redefine inherited fields (see _ReferenceCycles.get_redefined_fields)
+_NO_REDEFINED_FIELDS: "collections.abc.Mapping[str, Any]" = types.MappingProxyType({})
+
+
+def _get_model_annotations(
+    model: type[BaseModel],
+    fields: Union[dict[str, FieldInfo], None] = None,
+    redefined_fields: "collections.abc.Mapping[str, Any]" = _NO_REDEFINED_FIELDS,
+) -> dict[str, Any]:
+    fields = model.model_fields if fields is None else fields
+
+    def _rebuild_annotated(name: str, value: Any):
+        if field_info := fields.get(name):
+            if not field_info.metadata:
+                return field_info.annotation
+
+            return _AnnotatedAlias(field_info.annotation, tuple(field_info.metadata))
+        return value  # pragma: no cover
+
+    # Pydantic has already resolved the annotations of the fields so we prefer them over unresolved annotations
+    annotations = {
+        name: _rebuild_annotated(name, value) if _is_unresolved_annotation(value) else value
+        for name, value in _get_annotations_without_evaluating(model).items()
+    }
+    # The inherited fields that the copy redefines (see _ReferenceCycles.get_redefined_fields)
+    return annotations | dict(redefined_fields)
+
+
+def _is_unresolved_annotation(annotation: Any) -> bool:
+    """Whether the annotation is a string or a forward ref that annotationlib created for undefined names.
+
+    Forward refs that the user wrote (e.g. `ForwardRef("Model")` in create_model) stay as they are, as on main.
+    """
+    if isinstance(annotation, str):
+        return True
+    return isinstance(annotation, ForwardRef) and getattr(annotation, "__owner__", None) is not None
+
+
+def _get_model_field_names(
+    model: type[BaseModel],
+    fields: Union[dict[str, FieldInfo], None] = None,
+    redefined_field_names: "collections.abc.Iterable[str]" = (),
+) -> list[str]:
+    fields = model.model_fields if fields is None else fields
+    names = [name for name in _get_annotations_without_evaluating(model) if name in fields]
+    return names + [name for name in redefined_field_names if name not in names]
+
+
+# The signature of this private function differs between pydantic versions
+_REBUILD_MODEL_FIELDS_TAKES_CONFIG = "config_wrapper" in inspect.signature(rebuild_model_fields).parameters
+
+
+def _get_rebuilt_model_fields(model: type[BaseModel]) -> Union[dict[str, FieldInfo], None]:
+    """Return the fields that _rebuild_model would give the model without rebuilding it, if they can be resolved.
+
+    model_rebuild first resolves the fields with the same pydantic function and namespaces. Unlike model_rebuild,
+    it does not change the model, build its schema, or call its hooks.
+    """
+    if model.__pydantic_fields_complete__:
+        return model.model_fields
+    ns_resolver = NsResolver(parent_namespace=unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
+    typevars_map = get_model_typevars_map(model)
+    if _REBUILD_MODEL_FIELDS_TAKES_CONFIG:
+        config_wrapper = ConfigWrapper(model.model_config, check=False)
+        # Pydantic evaluates the annotations of the fields in there
+        rebuilt_fields = _evaluate_user_annotations(
+            lambda: rebuild_model_fields(
+                model, config_wrapper=config_wrapper, ns_resolver=ns_resolver, typevars_map=typevars_map
+            )
+        )
+    else:  # pragma: no cover # Pydantic 2.11
+        rebuilt_fields = _rebuild_model_fields_without_changing_them(model, ns_resolver, typevars_map)
+    if rebuilt_fields is _UNRESOLVED:
+        # E.g. some names in the annotations are not defined yet
+        return None
+    # Pydantic >= 2.13 also returns the info about the extra fields
+    return rebuilt_fields[0] if isinstance(rebuilt_fields, tuple) else rebuilt_fields
+
+
+def _rebuild_model_fields_without_changing_them(  # pragma: no cover # Pydantic 2.11
+    model: type[BaseModel], ns_resolver: NsResolver, typevars_map: Any
+) -> Any:
+    """Do what rebuild_model_fields of pydantic 2.11 does without changing the fields of the model.
+
+    Pydantic 2.11 merges the `Annotated` metadata of a field into the FieldInfo assigned to the field in place,
+    so every call would add that metadata (e.g. validators) to the field of the model once more.
+    """
+    from pydantic._internal._typing_extra import eval_type
+    from pydantic_core import PydanticUndefined
+    from typing_inspection.introspection import AnnotationSource
+
+    rebuilt_fields: dict[str, FieldInfo] = {}
+    with ns_resolver.push(model):
+        for name, field_info in model.__pydantic_fields__.items():
+            if field_info._complete:
+                rebuilt_fields[name] = field_info
+                continue
+            types_namespace = ns_resolver.types_namespace
+            evaluated_annotation = _evaluate_user_annotations(
+                lambda field_info=field_info, types_namespace=types_namespace: eval_type(
+                    field_info._original_annotation, *types_namespace
+                )
+            )
+            if evaluated_annotation is _UNRESOLVED:
+                return _UNRESOLVED
+            annotation = replace_types(evaluated_annotation, typevars_map)
+            assignment = field_info._original_assignment
+            if assignment is PydanticUndefined:
+                rebuilt_fields[name] = FieldInfo.from_annotation(annotation, _source=AnnotationSource.CLASS)
+                continue
+            if isinstance(assignment, FieldInfo):
+                assignment = copy.copy(assignment)
+                assignment.metadata = list(assignment.metadata)
+            rebuilt_fields[name] = FieldInfo.from_annotated_attribute(
+                annotation, assignment, _source=AnnotationSource.CLASS
+            )
+    return rebuilt_fields
+
+
+def _get_head_model_references(
+    model: type[BaseModel], redefined_fields: "collections.abc.Mapping[str, Any]" = _NO_REDEFINED_FIELDS
+) -> "_ModelReferences":
+    """Return the models that the copy of a model without instructions would request from the generator.
+
+    Unlike _wrap_pydantic_model, it does not copy anything from the model because the model may never be copied.
+    """
+    fields = _get_rebuilt_model_fields(model)
+    if fields is None or _has_undefined_names_in_lazy_annotations(model):
+        # The models that it refers to are unknown until the missing names get defined
+        return _ModelReferences(frozenset(), frozenset(), frozenset(), is_complete=False)
+    collector = _ReferencedModelCollector()
+    _change_version_of_model_references(
+        collector,
+        model,
+        {
+            name: _extract_passed_field_attributes(fields[name])
+            for name in _get_model_field_names(model, fields, redefined_fields)
+        },
+        _get_model_annotations(model, fields, redefined_fields),
+    )
+    return collector.get_references()
+
+
+def _change_version_of_model_references(
+    generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier]",
+    model: type[BaseModel],
+    field_attributes: dict[str, dict[str, Any]],
+    annotations: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
+    """Version everything in the model that can refer to other models: field attributes, bases, and annotations.
+
+    Only the annotations are type positions (see _AnnotationTransformer.is_in_hard_position). The field attributes,
+    such as default factories, and the generic metadata need the classes themselves, just like the bases.
+    """
+    transformer = generator.annotation_transformer
+    with transformer.hard_position():
+        versioned_field_attributes = {
+            name: transformer.change_version_of_annotation(attributes) for name, attributes in field_attributes.items()
+        }
+    # __orig_bases__ keeps bases such as Generic[T] that __bases__ loses so that the copy stays generic
+    orig_bases = tuple(
+        generator.change_version_of_base(base) if isinstance(base, type) else base
+        for base in model.__dict__.get("__orig_bases__", model.__bases__)
+    )
+    versioned_annotations = transformer.change_version_of_annotation(annotations)
+    with transformer.hard_position():
+        generic_metadata = generator.change_version_of_generic_metadata(model)
+    return versioned_field_attributes, orig_bases, versioned_annotations, generic_metadata
+
+
+# The modules of the generics whose args are types that pydantic resolves, such as list, dict, Optional, or Callable
+_TYPE_POSITION_GENERIC_MODULES = frozenset(
+    {"builtins", "collections", "collections.abc", "types", "typing", "typing_extensions"}
+)
+
+
+def _is_type_position_in_generic(origin: Any, index: int) -> bool:
+    """Whether the arg of the generic at the index is a type that pydantic resolves if it is a forward ref.
+
+    Other generics, such as the ones with a custom __class_getitem__, may need the classes themselves.
+    The args of Literal are values and the metadata of Annotated can be anything.
+    """
+    from typing_inspection.typing_objects import is_annotated, is_literal
+
+    if is_annotated(origin):
+        return index == 0
+    if is_literal(origin):
+        return False
+    return getattr(origin, "__module__", None) in _TYPE_POSITION_GENERIC_MODULES
+
+
+def _rebuild_generic_alias(annotation: Any, new_args: tuple[Any, ...]) -> Any:
+    """Rebuild a generic alias such as list[Item] or Optional[Item] with new args"""
+    from typing_inspection.typing_objects import is_unpack
+
+    origin = get_origin(annotation)
+    # A bare `typing.Callable` has nothing to version and cannot be rebuilt as `Callable[()]`
+    if origin is collections.abc.Callable and not new_args:
+        return annotation
+    # Classvar and Unpack do not support generic tuple arguments
+    if origin is ClassVar or is_unpack(origin):
+        return origin[new_args[0]]
+    if origin is Annotated:
+        # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the
+        # originals so it could return the alias that holds the dependency of another version
+        return _AnnotatedAlias(new_args[0], new_args[1:])
+    return origin[new_args]
+
+
+def _wrap_pydantic_model(
+    model: type[_T_PYDANTIC_MODEL], redefined_fields: "collections.abc.Mapping[str, Any]" = _NO_REDEFINED_FIELDS
+) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
+    _rebuild_model(model)
     decorators = _get_model_decorators(model)
     validators = {}
     for decorator_wrapper in decorators:
@@ -289,28 +599,14 @@ def _wrap_pydantic_model(model: type[_T_PYDANTIC_MODEL]) -> "_PydanticModelWrapp
         wrapped_validator = _wrap_validator(decorator_wrapper.func, decorator_wrapper.shim, decorator_wrapper.info)
         validators[decorator_wrapper.cls_var_name] = wrapped_validator
 
-    def _rebuild_annotated(name: str):
-        if field_info := model.model_fields.get(name):
-            if not field_info.metadata:
-                return field_info.annotation
-
-            return _AnnotatedAlias(field_info.annotation, tuple(field_info.metadata))
-        return model.__annotations__[name]  # pragma: no cover
-
-    annotations = {
-        name: value if not isinstance(value, str) else _rebuild_annotated(name)
-        for name, value in model.__annotations__.items()
-    }
-
-    defined_fields = model.__annotations__
+    annotations = _get_model_annotations(model, redefined_fields=redefined_fields)
     fields = {
         field_name: PydanticFieldWrapper(
             model.model_fields[field_name],
             annotations[field_name],
             field_name,
         )
-        for field_name in model.__annotations__
-        if field_name in defined_fields and field_name in model.model_fields
+        for field_name in _get_model_field_names(model, redefined_field_names=redefined_fields)
     }
 
     main_attributes = fields | validators
@@ -372,6 +668,14 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 )
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
+        for name, field in self.fields.items():
+            # Otherwise, the declaration has both (pydantic<2.12 accepts some) and pydantic fails as before
+            if field.default_changed_by is not None and _has_default_and_default_factory(field.passed_field_attributes):
+                raise InvalidGenerationInstructionError(
+                    f'Instructions leave the field "{name}" with both a default and a default_factory, which '
+                    "pydantic does not allow. The last instruction that changed one of them is for "
+                    f'"{field.default_changed_by.__name__}".'
+                )
         result = _PydanticModelWrapper(
             self.cls,
             name=self.name,
@@ -424,7 +728,36 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         return annotations | self.annotations
 
-    def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_PYDANTIC_MODEL]:
+    def get_references(self) -> "_ModelReferences":
+        """Return the models that generate_model_copy requests from the generator"""
+        collector = _ReferencedModelCollector()
+        self._change_version_of_references(collector)
+        return collector.get_references()
+
+    def _change_version_of_references(
+        self,
+        generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier]",
+    ) -> tuple[dict[str, dict[str, Any]], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
+        field_attributes = {name: field.passed_field_attributes for name, field in self.fields.items()}
+        annotations = self.annotations.copy()
+        for name, attributes in field_attributes.items():
+            for attr_name, other_attr_name in _OTHER_DEFAULT_ATTRIBUTE.items():
+                if _sets_default_attribute(attributes, attr_name) and not _sets_default_attribute(
+                    attributes, other_attr_name
+                ):
+                    # The Field() in the annotation can still set the other one and pydantic would fail with both,
+                    # e.g. with `Annotated[int, Field(default=0)]` (pydantic<2.12 also fills it with the declared
+                    # default) after `had(default=..., default_factory=f)` or after `didnt_have("default")`
+                    annotations[name] = _change_annotated_metadata(
+                        annotations[name],
+                        lambda metadata, other_attr_name=other_attr_name: (
+                            isinstance(metadata, FieldInfo) and other_attr_name in metadata._attributes_set
+                        ),
+                        functools.partial(_delete_metadata_attribute, attr_name=other_attr_name),
+                    )
+        return _change_version_of_model_references(generator, self.cls, field_attributes, annotations)
+
+    def generate_model_copy(self, generator: "Union[SchemaGenerator, _CycleCopier]") -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {}
         root_validators = {}
         for name, validator in self.validators.items():
@@ -435,27 +768,48 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 per_field_validators[name] = validator.decorator(*validator.fields, **validator.kwargs)(func)
             else:
                 root_validators[name] = validator.decorator(**validator.kwargs)(func)
-        fields = {name: field.generate_field_copy(generator) for name, field in self.fields.items()}
+        field_attributes, orig_bases, annotations, generic_metadata = self._change_version_of_references(generator)
+        fields = {name: pydantic.Field(**attributes) for name, attributes in field_attributes.items()}
+        orig_bases_attribute = {"__orig_bases__": orig_bases} if "__orig_bases__" in self.cls.__dict__ else {}
 
         model_copy = type(self.cls)(
             self.name,
-            tuple(generator[cast("type[BaseModel]", base)] for base in self.cls.__bases__ if base is not Generic),
+            types.resolve_bases(orig_bases),
             self.other_attributes
+            | orig_bases_attribute
             | per_field_validators
             | root_validators
             | fields
             | {
-                "__annotations__": generator.annotation_transformer.change_version_of_annotation(
-                    self.annotations,
-                ),
+                "__annotations__": annotations,
                 "__doc__": self.doc,
                 "__qualname__": self.cls.__qualname__.removesuffix(self.cls.__name__) + self.name,
             },
-            __pydantic_generic_metadata__=self.cls.__pydantic_generic_metadata__,
+            __pydantic_generic_metadata__=generic_metadata,
         )
 
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         return cast("type[_T_PYDANTIC_MODEL]", model_copy)
+
+
+def _get_signature_parameters(call: Any) -> types.MappingProxyType[str, inspect.Parameter]:
+    if sys.version_info >= (3, 14):  # pragma: no cover
+        from annotationlib import Format
+
+        # The annotations of the signature are evaluated lazily since Python 3.14 so the names that are only
+        # imported for type checking would raise a NameError. We only need the names and the defaults anyway.
+        return inspect.signature(call, annotation_format=Format.FORWARDREF).parameters
+    return inspect.signature(call).parameters
+
+
+def _get_type_alias_value(alias: Any) -> Any:
+    # The values of typing.TypeAliasType (but not of typing_extensions.TypeAliasType) are evaluated lazily so they
+    # can contain names that are only imported for type checking
+    if sys.version_info >= (3, 14) and hasattr(alias, "evaluate_value"):  # pragma: no cover
+        from annotationlib import Format, call_evaluate_function
+
+        return call_evaluate_function(alias.evaluate_value, Format.FORWARDREF)
+    return alias.__value__
 
 
 def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, types.MethodType]]:
@@ -466,22 +820,133 @@ def _function_globals(call: Union[types.FunctionType, types.MethodType]) -> dict
     return call.__globals__  # ty: ignore[unresolved-attribute]  # MethodType forwards function attributes at runtime.
 
 
+def _unwrap_partial(call: Any) -> Any:
+    # The same as FastAPI's _impartial(), which decides how FastAPI calls the original dependency
+    while isinstance(call, functools.partial):
+        call = call.func
+    return call
+
+
+def _get_function_behind_callable(call: Any) -> Any:
+    """Return the function that runs when the callable is called. It decides how FastAPI must call the callable.
+
+    Partials only pre-fill arguments so we unwrap them. We do not follow decorators (__wrapped__) because the outer
+    decorator is what runs. Classes are returned as is because calling them constructs an instance.
+    """
+    call = _unwrap_partial(call)
+    if is_regular_function(call) or inspect.isclass(call):
+        return call
+    return call.__call__
+
+
+def _get_signature(call: Callable[..., Any]) -> inspect.Signature:
+    """Return the signature of the callable with its postponed (string) annotations evaluated, like FastAPI does.
+
+    inspect.signature() itself evaluates them in the globals of whichever function it reads the signature from,
+    which is the only reliable way to pick the right globals for every kind of wrapper (partials, decorators, etc).
+    It evaluates them only once so the forward references within them (e.g. `body: "Model"` or `list["Model"]`
+    with postponed annotations) are left.
+    """
+    try:
+        return inspect.signature(call, eval_str=True)
+    # This is deliberately narrow: an annotation may use a name that only exists for type checkers
+    # (e.g. one imported under "if TYPE_CHECKING:"). FastAPI handles this the same way. The parameter annotations
+    # that can be resolved individually are resolved later in _modify_callable_annotations
+    except NameError:
+        return _get_unevaluated_signature(call)
+
+
+def _get_unevaluated_signature(call: Callable[..., Any]) -> inspect.Signature:
+    """Return the signature of the callable with its annotations as written, e.g. strings for postponed ones"""
+    if sys.version_info >= (3, 14):
+        from annotationlib import Format
+
+        # Unresolvable names in lazily evaluated annotations become ForwardRefs instead of raising
+        return inspect.signature(call, annotation_format=Format.FORWARDREF)
+    return inspect.signature(call)
+
+
+_PARTIAL_DICT_ACCESSOR = vars(functools.partial)["__dict__"]
+
+
+def _get_best_effort_globals(call: Any) -> dict[str, Any]:
+    """Return the globals of the callable for the string annotations that _get_signature() left.
+
+    Like FastAPI, we take them from the unwrapped callable. Unlike FastAPI, we also unwrap partials that do not
+    carry globals themselves. For callable class instances, __globals__ is on the __call__ method instead.
+    Partial subclasses that override __call__ are treated like other callable instances, just like Cadwyn always did.
+    """
+    unwrapped_call = inspect.unwrap(call)
+    while True:
+        is_partial_with_overridden_call = isinstance(unwrapped_call, functools.partial) and (
+            type(unwrapped_call).__call__ is not functools.partial.__call__
+        )
+        # Proxies can pass the isinstance() check by faking __class__ but they have no partial __dict__ to create
+        if is_partial_with_overridden_call and issubclass(type(unwrapped_call), functools.partial):
+            # This has nothing to do with globals but it must stay: accessing the instance __dict__ of a partial
+            # creates it. Python 3.13+ flattens a partial of a partial (e.g. the one Starlette's run_in_threadpool
+            # makes) into a single partial of the inner .func if the inner partial has no __dict__, which would
+            # silently skip the overridden __call__ of a partial subclass. Cadwyn used to create the __dict__ as
+            # a side effect of inspect.getattr_static(partial, "__call__") so we keep doing it explicitly.
+            # We use the accessor of partial itself so that __getattribute__ or __dict__ of subclasses cannot
+            # interfere, and we do it before anything else so that it also happens for the subclasses that
+            # forward __globals__ to their .func (e.g. through __getattr__)
+            _PARTIAL_DICT_ACCESSOR.__get__(unwrapped_call)
+        unwrapped_call_globals = getattr(unwrapped_call, "__globals__", None)
+        if isinstance(unwrapped_call_globals, dict):
+            return unwrapped_call_globals
+        if not isinstance(unwrapped_call, functools.partial) or is_partial_with_overridden_call:
+            break
+        unwrapped_call = inspect.unwrap(unwrapped_call.func)
+    dunder_call = inspect.getattr_static(unwrapped_call, "__call__", None)
+    return _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
+
+
+def _copy_field_info(field_info: FieldInfo) -> FieldInfo:
+    # The same as pydantic's FieldInfo._copy() (which does not exist in older versions of pydantic):
+    # the mutable attributes must not be shared with the original either
+    field_info_copy = copy.copy(field_info)
+    for attr_name in ("metadata", "_attributes_set", "_qualifiers"):
+        setattr(field_info_copy, attr_name, copy.copy(getattr(field_info, attr_name)))
+    return field_info_copy
+
+
+class _CallableKind(Enum):
+    ENDPOINT = auto()
+    DEPENDENCY = auto()
+    # Callables that FastAPI never calls itself, e.g. pydantic's default factories or callables in Annotated metadata
+    OTHER = auto()
+
+
 class _CallableWrapper:
     __annotations__: dict[str, Any]
     __defaults__: Union[tuple[Any, ...], None]
     __signature__: inspect.Signature
+    # Whether it wraps an endpoint or a dependency rather than a callable that FastAPI never calls itself
+    # (e.g. pydantic's default factories). The latter are wrapped exactly the way Cadwyn always did
+    _is_called_by_fastapi = False
 
     # __eq__ and __hash__ are needed to make sure that dependency overrides work correctly.
     # They are based on putting dependencies (functions) as keys for the dictionary so if we want to be able to
     # override the wrapper, we need to make sure that it is equivalent to the original in __hash__ and __eq__
 
-    def __init__(self, original_callable: Callable[..., Any]) -> None:
+    def __init__(self, original_callable: Callable[..., Any], *, is_called_by_fastapi: bool) -> None:
         super().__init__()
         self._original_callable = original_callable
-        if not is_regular_function(original_callable):
-            original_callable = original_callable.__call__
+        if is_called_by_fastapi:
+            self._is_called_by_fastapi = True
+            # FastAPI follows __wrapped__ to find out how to call a dependency so it must lead to the same place
+            # as it would for the original. We only copy the attributes of functions because copying the ones of
+            # classes and their instances would make us look like them to FastAPI
+            wrapped = _unwrap_partial(original_callable)
+            functools.update_wrapper(
+                self, wrapped, updated=functools.WRAPPER_UPDATES if is_regular_function(wrapped) else ()
+            )
+        else:
+            if not is_regular_function(original_callable):
+                original_callable = original_callable.__call__
 
-        functools.update_wrapper(self, original_callable)
+            functools.update_wrapper(self, original_callable)
 
     @property
     def __globals__(self) -> dict[str, Any]:  # pragma: no cover
@@ -494,6 +959,18 @@ class _CallableWrapper:
         if is_regular_function(dunder_call):
             return _function_globals(dunder_call)
         return {}
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "_CallableWrapper":
+        if not self._is_called_by_fastapi:
+            # The same as the default deepcopy, which is what Cadwyn always did for the other callables
+            wrapper_copy = object.__new__(type(self))
+            memo[id(self)] = wrapper_copy
+            wrapper_copy.__dict__.update(copy.deepcopy(self.__dict__, memo))
+            return wrapper_copy
+        # Copying would also copy the original dependency (e.g. a class instance or a partial) so it would stop
+        # matching the keys of app.dependency_overrides and changes to its state would not be visible in the copy.
+        # Wrappers are never mutated after creation and every version creates its own wrappers anyway.
+        return self
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self._original_callable(*args, **kwargs)
@@ -515,21 +992,56 @@ class _AsyncCallableWrapper(_CallableWrapper):
 
 class _GeneratorCallableWrapper(_CallableWrapper):
     @override
-    def __call__(self, *args: Any, **kwargs: Any) -> typing.Iterator[Any]:  # pragma: no cover
+    def __call__(self, *args: Any, **kwargs: Any) -> typing.Iterator[Any]:
+        # "yield from" forwards send(), throw(), and close() so the wrapped generator handles exceptions itself
         yield from self._original_callable(*args, **kwargs)
 
 
 class _AsyncGeneratorCallableWrapper(_CallableWrapper):
     @override
-    async def __call__(self, *args: Any, **kwargs: Any) -> typing.AsyncIterator[Any]:  # pragma: no cover
-        async for value in self._original_callable(*args, **kwargs):
-            yield value
+    async def __call__(self, *args: Any, **kwargs: Any) -> typing.AsyncGenerator[Any, Any]:
+        # There is no "yield from" for async generators so we forward asend() and athrow() by hand.
+        # Otherwise, exceptions (e.g. the ones raised in the endpoint) would never reach the wrapped generator
+        # so its "except" and "finally" blocks would get skipped until it gets garbage collected.
+        # aclose() is forwarded too because it throws GeneratorExit into us.
+        # The exception is forwarded outside of the "except" block. Otherwise, it would still be the one being handled
+        # while the wrapped generator runs which would change sys.exc_info() and the __context__ of its exceptions.
+        generator = self._original_callable(*args, **kwargs)
+        try:
+            value = await generator.__anext__()
+            while True:
+                sent_value = thrown_exception = None
+                try:
+                    sent_value = yield value
+                except BaseException as e:  # noqa: BLE001
+                    thrown_exception = e
+                if thrown_exception is None:
+                    value = await generator.asend(sent_value)
+                else:
+                    value = await generator.athrow(thrown_exception)
+        except StopAsyncIteration:
+            return
 
 
 @final
 class _AnnotationTransformer:
-    def __init__(self, generator: "SchemaGenerator") -> None:
+    def __init__(
+        self,
+        generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier]",
+        *,
+        record_only: bool = False,
+    ) -> None:
         self.generator = generator
+        # Only request the models from the generator without rebuilding the annotations. This way, we can find
+        # the models that an annotation refers to without failing on annotations that we cannot rebuild
+        self.record_only = record_only
+        # The ids of the type aliases, callables and containers that we are recording, to detect the ones that
+        # lead back to themselves (e.g. a default factory whose default argument is a registry that contains it)
+        self._ids_being_recorded: set[int] = set()
+        # Whether we are recording the routes, whose endpoints and dependencies copying reads like _get_signature
+        self._records_routes = False
+        # How many positions that need the classes themselves we are in right now (see is_in_hard_position)
+        self._hard_position_depth = 0
         self.change_versions_of_a_non_container_annotation = self._change_version_of_a_non_container_annotation
         # This cache cannot be used until something is done regarding https://github.com/fastapi/fastapi/pull/14320
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
@@ -539,6 +1051,25 @@ class _AnnotationTransformer:
         #     self._change_version_of_a_non_container_annotation,
         # )
 
+    @property
+    def is_in_hard_position(self) -> bool:
+        """Whether the annotation that we are versioning right now must use the classes themselves.
+
+        In type positions, such as the annotations of fields and the args of list or Optional within them, pydantic
+        also accepts forward refs to models that it resolves later. Everywhere else, e.g. in default factories,
+        the metadata of Annotated, or the args of unknown generics, the classes themselves are needed. Copying
+        reference cycles relies on this distinction (see _CycleCopier).
+        """
+        return self._hard_position_depth > 0
+
+    @contextlib.contextmanager
+    def hard_position(self) -> Generator[None, None, None]:
+        self._hard_position_depth += 1
+        try:
+            yield
+        finally:
+            self._hard_position_depth -= 1
+
     def change_version_of_annotation(self, annotation: Any) -> Any:
         """Recursively go through all annotations and change them to annotations corresponding to the version passed.
 
@@ -547,12 +1078,18 @@ class _AnnotationTransformer:
 
         """
         if isinstance(annotation, dict):
+            if self.record_only:
+                self._record_without_cycles(annotation, lambda: [*annotation.keys(), *annotation.values()])
+                return annotation
             return {
                 self.change_version_of_annotation(key): self.change_version_of_annotation(value)
                 for key, value in annotation.items()
             }
 
         elif isinstance(annotation, list | tuple):
+            if self.record_only:
+                self._record_without_cycles(annotation, lambda: annotation)
+                return annotation
             return type(annotation)(self.change_version_of_annotation(v) for v in annotation)
         else:
             return self.change_versions_of_a_non_container_annotation(annotation)
@@ -572,68 +1109,207 @@ class _AnnotationTransformer:
                 mode="serialization",
             )
         route.dependencies = self.change_version_of_annotation(route.dependencies)
-        route.endpoint = self.change_version_of_annotation(route.endpoint)
+        route.endpoint = self.change_versions_of_a_non_container_annotation(
+            route.endpoint, callable_kind=_CallableKind.ENDPOINT
+        )
         for callback in route.callbacks or []:
             if not isinstance(callback, fastapi.routing.APIRoute):
                 continue
             self.migrate_route_to_version(callback, ignore_response_model=ignore_response_model)
         self._remake_endpoint_dependencies(route)
 
-    def _change_version_of_a_non_container_annotation(self, annotation: Any) -> Any:
+    def record_route(self, route: fastapi.routing.APIRoute) -> None:
+        """Request the models that migrate_route_to_version requests without changing the route (record-only)"""
+        records_routes = self._records_routes
+        self._records_routes = True
+        try:
+            self._record_route(route)
+        finally:
+            self._records_routes = records_routes
+
+    def _record_route(self, route: fastapi.routing.APIRoute) -> None:
+        if route.response_model is not None:
+            self.change_version_of_annotation(route.response_model)
+        self.change_version_of_annotation(route.dependencies)
+        self.change_versions_of_a_non_container_annotation(route.endpoint, callable_kind=_CallableKind.ENDPOINT)
+        for callback in route.callbacks or []:
+            if isinstance(callback, fastapi.routing.APIRoute):
+                self._record_route(callback)
+
+    def _change_version_of_a_non_container_annotation(
+        self, annotation: Any, *, callable_kind: _CallableKind = _CallableKind.OTHER
+    ) -> Any:
+        """callable_kind tells how FastAPI uses the annotation if it is a callable"""
         from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
 
         if isinstance(annotation, GenericAliasUnionArgs):
-            origin = get_origin(annotation)
-            args = get_args(annotation)
-            # Classvar does not support generic tuple arguments
-            if origin is ClassVar:
-                return ClassVar[self.change_version_of_annotation(args[0])]
-            return origin[tuple(self.change_version_of_annotation(arg) for arg in get_args(annotation))]
+            return self._change_version_of_generic_alias(annotation)
         elif is_typealiastype(annotation):
             if (
                 annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
             ) or annotation.__name__ in _PYDANTIC_ALL_EXPORTED_NAMES:
                 return annotation
-            else:
-                return type(annotation)(
-                    name=annotation.__name__,
-                    value=self.change_version_of_annotation(annotation.__value__),
-                    type_params=self.change_version_of_annotation(annotation.__type_params__),
-                )
-        elif isinstance(annotation, fastapi.params.Security):
-            return fastapi.params.Security(
-                self.change_version_of_annotation(annotation.dependency),
-                scopes=annotation.scopes,
-                use_cache=annotation.use_cache,
-            )
+            # Pydantic resolves the forward refs in the values of type aliases in their own module
+            with self.hard_position():
+                if self.record_only:
+                    self._record_type_alias(annotation)
+                    return annotation
+                value = self.change_version_of_annotation(_get_type_alias_value(annotation))
+                type_params = self.change_version_of_annotation(annotation.__type_params__)
+            return type(annotation)(name=annotation.__name__, value=value, type_params=type_params)
         elif isinstance(annotation, fastapi.params.Depends):
-            return fastapi.params.Depends(
-                self.change_version_of_annotation(annotation.dependency),
-                use_cache=annotation.use_cache,
-            )
+            with self.hard_position():
+                if self.record_only:
+                    self.change_versions_of_a_non_container_annotation(
+                        annotation.dependency, callable_kind=_CallableKind.DEPENDENCY
+                    )
+                    return annotation
+                # This also covers Security. Copying keeps all of their other fields (e.g. use_cache, scope, and
+                # scopes) without calling __init__ which subclasses could have overridden with a different signature
+                annotation_copy = copy.copy(annotation)
+                dependency = self.change_versions_of_a_non_container_annotation(
+                    annotation.dependency, callable_kind=_CallableKind.DEPENDENCY
+                )
+            object.__setattr__(annotation_copy, "dependency", dependency)
+            return annotation_copy
         elif isinstance(annotation, UnionType):  # pragma: no cover
-            return typing.Union[tuple(self.change_version_of_annotation(a) for a in get_args(annotation))]
+            args = tuple(self.change_version_of_annotation(a) for a in get_args(annotation))
+            return annotation if self.record_only else typing.Union[args]
         elif is_any(annotation) or is_newtype(annotation):
             return annotation
         elif isinstance(annotation, type):
             return self._change_version_of_type(annotation)
         elif callable(annotation):
-            if type(annotation).__module__.startswith(
-                ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
-            ) or isinstance(annotation, fastapi.security.base.SecurityBase):
-                return annotation
-
-            def modifier(annotation: Any):
-                return self.change_version_of_annotation(annotation)
-
-            return self._modify_callable_annotations(
-                annotation,
-                modifier,
-                modifier,
-                annotation_modifying_wrapper_factory=self._copy_function_through_class_based_wrapper,
-            )
+            return self._change_version_of_callable(annotation, callable_kind=callable_kind)
         else:
             return annotation
+
+    def _change_version_of_callable(self, annotation: Callable[..., Any], *, callable_kind: _CallableKind) -> Any:
+        # Callables, such as default factories, are called with the classes themselves and their annotations are
+        # not resolved by pydantic
+        with self.hard_position():
+            return self._change_version_of_callable_in_hard_position(annotation, callable_kind=callable_kind)
+
+    def _change_version_of_callable_in_hard_position(
+        self, annotation: Callable[..., Any], *, callable_kind: _CallableKind
+    ) -> Any:
+        if type(annotation).__module__.startswith(
+            ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
+        ) or isinstance(annotation, fastapi.security.base.SecurityBase):
+            return annotation
+        # Special forms such as typing.Self are callable but they are not functions
+        if type(annotation).__module__ in {"typing", "typing_extensions"}:
+            return annotation
+        if callable_kind is _CallableKind.OTHER:
+            try:
+                _get_signature_parameters(annotation)
+            except (ValueError, TypeError):
+                # Callables without an inspectable signature such as `functools.partial(dict, count=1)`
+                # have no annotations or defaults to version
+                return annotation
+
+        def modifier(annotation: Any):
+            return self.change_version_of_annotation(annotation)
+
+        if self.record_only:
+            self._record_without_cycles(
+                annotation, lambda: self._get_annotations_and_defaults_to_record(annotation, callable_kind)
+            )
+            return annotation
+        return self._modify_callable_annotations(
+            annotation,
+            modifier,
+            modifier,
+            annotation_modifying_wrapper_factory=functools.partial(
+                self._copy_function_through_class_based_wrapper,
+                is_called_by_fastapi=callable_kind is not _CallableKind.OTHER,
+            ),
+            callable_kind=callable_kind,
+        )
+
+    def _record_without_cycles(self, obj: Any, get_values_to_record: Callable[[], Any]) -> None:
+        """Record the values within the object unless we are already recording it.
+
+        Copying an object that leads back to itself (e.g. `type Json = dict[str, Json] | int`, or a default
+        factory whose default argument is a registry that contains the factory) would recurse forever, as it does
+        on main, so its references are unknown.
+        """
+        if id(obj) in self._ids_being_recorded:
+            self._record_unknown_references()
+            return
+        self._ids_being_recorded.add(id(obj))
+        try:
+            values = get_values_to_record()
+            if values is not _UNRESOLVED:
+                for value in values:
+                    self.change_version_of_annotation(value)
+        finally:
+            self._ids_being_recorded.discard(id(obj))
+
+    def _get_annotations_and_defaults_to_record(self, call: Callable[..., Any], callable_kind: _CallableKind) -> Any:
+        """Return the annotations and the defaults that _modify_callable_annotations versions, or _UNRESOLVED"""
+        if callable_kind is _CallableKind.OTHER:
+            # The annotations are read from the same wrapper as in _modify_callable_annotations
+            wrapper = self._copy_function_through_class_based_wrapper(call, is_called_by_fastapi=False)
+            if _has_undefined_names_in_lazy_annotations(wrapper):
+                # Copying it fails on Python 3.14, as on main
+                self._record_unknown_references()
+                return _UNRESOLVED
+            callable_annotations, defaults = self._get_callable_annotations_and_defaults(
+                call, _get_annotations_without_evaluating(wrapper), _get_signature_parameters(call)
+            )
+        else:
+            # The models of the routes must include every model that versioning the routes requests (see
+            # SchemaGenerator._add_route_models) so we read their endpoints and dependencies exactly like copying does,
+            # which resolves the annotations one by one if some names are only defined for type checkers. Elsewhere,
+            # we keep the decisions that main made about the models that refer to such callables
+            get_signature = (
+                _get_signature if self._records_routes else functools.partial(inspect.signature, eval_str=True)
+            )
+            signature = _evaluate_user_annotations(lambda: get_signature(call))
+            if signature is _UNRESOLVED:
+                # E.g. some names are not defined yet so copying could request other models once they get defined
+                self._record_unknown_references()
+                return _UNRESOLVED
+            callable_annotations = self._get_annotations_of_callable_called_by_fastapi(
+                call, signature, callable_kind, evaluate=_try_eval_type_for_discovery
+            )
+            defaults = tuple(
+                param.default for param in signature.parameters.values() if param.default is not inspect.Signature.empty
+            )
+        # The string annotations that cannot be evaluated yet stay strings
+        if any(type(value) is str for value in callable_annotations.values()):
+            self._record_unknown_references()
+        return [callable_annotations, defaults]
+
+    def _record_type_alias(self, alias: Any) -> None:
+        # The values of native type aliases are evaluated lazily since Python 3.12
+        if _evaluate_user_annotations(lambda: alias.__value__) is _UNRESOLVED:
+            self._record_unknown_references()
+            return
+        self._record_without_cycles(alias, lambda: [_get_type_alias_value(alias), alias.__type_params__])
+
+    def _record_unknown_references(self) -> None:
+        """Record that we cannot know every model that copying the annotation would request.
+
+        E.g. because the annotation refers to names that are not defined yet, which could refer to any model
+        once they get defined, or because copying it would never finish.
+        """
+        cast("_ReferencedModelCollector", self.generator).is_complete = False
+
+    def _change_version_of_generic_alias(self, annotation: Any) -> Any:
+        origin = get_origin(annotation)
+        args = get_args(annotation)
+        new_args = tuple(self._change_version_of_generic_arg(origin, index, arg) for index, arg in enumerate(args))
+        if self.record_only:
+            return annotation
+        return _rebuild_generic_alias(annotation, new_args)
+
+    def _change_version_of_generic_arg(self, origin: Any, index: int, arg: Any) -> Any:
+        if _is_type_position_in_generic(origin, index):
+            return self.change_version_of_annotation(arg)
+        with self.hard_position():
+            return self.change_version_of_annotation(arg)
 
     def _change_version_of_type(self, annotation: type) -> type:
         if lenient_issubclass(annotation, (BaseModel, Enum)):
@@ -660,15 +1336,109 @@ class _AnnotationTransformer:
         modify_defaults: Callable[[tuple[Any, ...]], tuple[Any, ...]] = lambda a: a,
         *,
         annotation_modifying_wrapper_factory: Callable[[_Call], _CallableWrapper],
+        callable_kind: _CallableKind,
     ) -> _Call:
         annotation_modifying_wrapper = annotation_modifying_wrapper_factory(call)
-        old_params = inspect.signature(call).parameters
-        if sys.version_info >= (3, 14):  # pragma: no cover
-            from annotationlib import get_annotations
+        if callable_kind is _CallableKind.OTHER:
+            # FastAPI never evaluates the annotations of such callables (e.g. pydantic's default factories) and they
+            # may not even be evaluable at runtime (e.g. pandas.Series[int]) so this is exactly what Cadwyn always did
+            old_params = inspect.signature(call).parameters
+            if sys.version_info >= (3, 14):  # pragma: no cover
+                from annotationlib import get_annotations
 
-            callable_annotations = get_annotations(annotation_modifying_wrapper)
+                callable_annotations = get_annotations(annotation_modifying_wrapper)
+            else:
+                callable_annotations = annotation_modifying_wrapper.__annotations__
+            original_call = cls._unwrap_callable(call)
+            # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
+            if is_regular_function(original_call):
+                call_globals = _function_globals(original_call)
+            else:
+                dunder_call = inspect.getattr_static(original_call, "__call__", None)
+                call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
+            callable_annotations = {
+                k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
+            }
+            annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
+            annotation_modifying_wrapper.__defaults__ = modify_defaults(
+                tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
+            )
         else:
-            callable_annotations = annotation_modifying_wrapper.__annotations__
+            # FastAPI evaluates the annotations of endpoints and dependencies the same way so we cannot fail where
+            # FastAPI would not. Unlike __annotations__, the signature also follows functools.partial and __signature__
+            old_signature = _get_signature(call)
+            old_params = old_signature.parameters
+            return_annotation = old_signature.return_annotation
+            callable_annotations = cls._get_annotations_of_callable_called_by_fastapi(
+                call, old_signature, callable_kind
+            )
+            annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
+            if callable_kind is _CallableKind.DEPENDENCY and return_annotation is not inspect.Signature.empty:
+                # FastAPI never looks at the return annotations of dependencies so we neither evaluate nor version them.
+                # Versioning them would generate their models for nothing, which can even fail
+                # (e.g. for default factories without a signature such as time.time before Python 3.13)
+                annotation_modifying_wrapper.__annotations__["return"] = return_annotation
+            annotation_modifying_wrapper.__defaults__ = modify_defaults(
+                tuple(
+                    # FastAPI mutates the FieldInfo objects in defaults (e.g. their annotation) so every version
+                    # (and app) must have its own copies. Otherwise, all of them would use the models of whichever
+                    # got built last
+                    _copy_field_info(p.default) if isinstance(p.default, FieldInfo) else p.default
+                    for p in old_params.values()
+                    if p.default is not inspect.Signature.empty
+                ),
+            )
+        annotation_modifying_wrapper.__signature__ = cls._generate_signature(
+            annotation_modifying_wrapper,
+            old_params,
+        )
+
+        return cast("_Call", annotation_modifying_wrapper)
+
+    @classmethod
+    def _get_annotations_of_callable_called_by_fastapi(
+        cls,
+        call: Any,
+        old_signature: inspect.Signature,
+        callable_kind: _CallableKind,
+        *,
+        evaluate: Union[Callable[[Any, dict[str, Any]], Any], None] = None,
+    ) -> dict[str, Any]:
+        """Return the annotations of an endpoint or a dependency that its versioned copy versions"""
+        callable_annotations = {
+            name: param.annotation
+            for name, param in old_signature.parameters.items()
+            if param.annotation is not inspect.Parameter.empty
+        }
+        return_annotation = old_signature.return_annotation
+        if callable_kind is _CallableKind.ENDPOINT and return_annotation is not inspect.Signature.empty:
+            # FastAPI infers the response model of endpoints from their return annotations
+            callable_annotations["return"] = return_annotation
+        # Cadwyn always evaluated the annotations that were written as strings (e.g. postponed ones) recursively
+        # before versioning them. inspect.signature() evaluates them only once so forward references can be left
+        # within them (e.g. `body: "Model"` or `list["Model"]` with postponed annotations) or they can stay strings
+        # (e.g. if they could not be evaluated or if they come from __signature__). FastAPI would evaluate some of
+        # them itself but in the globals that lead to the head models so we finish evaluating them here
+        unevaluated_signature = _get_unevaluated_signature(call)
+        annotations_written_as_strings = {
+            name for name, param in unevaluated_signature.parameters.items() if type(param.annotation) is str
+        }
+        if type(unevaluated_signature.return_annotation) is str:
+            annotations_written_as_strings.add("return")
+        call_globals = _get_best_effort_globals(cls._unwrap_callable(call))
+        evaluate = evaluate or _try_eval_type
+        return {
+            k: evaluate(v, call_globals) if k in annotations_written_as_strings else v
+            for k, v in callable_annotations.items()
+        }
+
+    @classmethod
+    def _get_callable_annotations_and_defaults(
+        cls,
+        call: Any,
+        callable_annotations: dict[str, Any],
+        parameters: types.MappingProxyType[str, inspect.Parameter],
+    ) -> tuple[dict[str, Any], tuple[Any, ...]]:
         original_call = cls._unwrap_callable(call)
         # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
         if is_regular_function(original_call):
@@ -677,18 +1447,11 @@ class _AnnotationTransformer:
             dunder_call = inspect.getattr_static(original_call, "__call__", None)
             call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
         callable_annotations = {
-            k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
+            k: v if type(v) is not str else _try_eval_type_for_discovery(v, call_globals)
+            for k, v in callable_annotations.items()
         }
-        annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
-        annotation_modifying_wrapper.__defaults__ = modify_defaults(
-            tuple(p.default for p in old_params.values() if p.default is not inspect.Signature.empty),
-        )
-        annotation_modifying_wrapper.__signature__ = cls._generate_signature(
-            annotation_modifying_wrapper,
-            old_params,
-        )
-
-        return cast("_Call", annotation_modifying_wrapper)
+        defaults = tuple(p.default for p in parameters.values() if p.default is not inspect.Signature.empty)
+        return callable_annotations, defaults
 
     @staticmethod
     def _generate_signature(
@@ -727,22 +1490,27 @@ class _AnnotationTransformer:
         )
 
     @classmethod
-    def _copy_function_through_class_based_wrapper(cls, call: _Call) -> _CallableWrapper:
+    def _copy_function_through_class_based_wrapper(cls, call: _Call, *, is_called_by_fastapi: bool) -> _CallableWrapper:
         """Separate from copy_endpoint because endpoints MUST be functions in FastAPI, they cannot be cls instances"""
         call = cls._unwrap_callable(call)
-        if not is_regular_function(call):
+        if is_called_by_fastapi:
+            actual_call = _get_function_behind_callable(call)
+            if inspect.isclass(actual_call):
+                # Like FastAPI, we call classes synchronously because calling them constructs an instance
+                return _CallableWrapper(call, is_called_by_fastapi=True)
+        elif not is_regular_function(call):
             # This means that the callable is actually an instance of a regular class
             actual_call = call.__call__
         else:
             actual_call = call
         if is_async_gen_callable(actual_call):
-            return _AsyncGeneratorCallableWrapper(call)
+            return _AsyncGeneratorCallableWrapper(call, is_called_by_fastapi=is_called_by_fastapi)
         elif is_coroutine_callable(actual_call):
-            return _AsyncCallableWrapper(call)
+            return _AsyncCallableWrapper(call, is_called_by_fastapi=is_called_by_fastapi)
         elif is_gen_callable(actual_call):
-            return _GeneratorCallableWrapper(call)
+            return _GeneratorCallableWrapper(call, is_called_by_fastapi=is_called_by_fastapi)
         else:
-            return _CallableWrapper(call)
+            return _CallableWrapper(call, is_called_by_fastapi=is_called_by_fastapi)
 
     @staticmethod
     def _unwrap_callable(call: Any) -> Any:
@@ -787,41 +1555,1159 @@ def _add_request_and_response_params(route: APIRoute):
         route.dependant.response_param_name = _CADWYN_RESPONSE_PARAM_NAME
 
 
-@final
-class SchemaGenerator:
-    __slots__ = "annotation_transformer", "concrete_models", "model_bundle"
+def _get_subclasses_that_can_be_versioned(model: type[Union[BaseModel, Enum]]) -> tuple[list[type[BaseModel]], bool]:
+    """Return the subclasses of the model that make it versioned if they are, and whether we know all of them.
 
-    def __init__(self, model_bundle: _ModelBundle) -> None:
-        self.annotation_transformer = _AnnotationTransformer(self)
-        self.model_bundle = model_bundle
-        self.concrete_models = {}
-        self.concrete_models = {
-            k: wrapper.generate_model_copy(self)
-            for k, wrapper in (self.model_bundle.schemas | self.model_bundle.enums).items()
-        }
+    The parametrizations of a generic (e.g. Page[Item] for Page) do not count because whether they use versioned
+    args is decided on its own (see SchemaGenerator._should_version_generic_args) but their subclasses
+    (e.g. `class ItemPage(Page[Item])`) do. A class becomes a subclass of its bases before pydantic sets its fields
+    and generic metadata (e.g. while another thread parametrizes a generic) so we do not know yet whether it counts.
+    """
+    if not lenient_issubclass(model, BaseModel):
+        return [], True
+    subclasses = []
+    are_all_known = True
+    classes_to_visit = model.__subclasses__()
+    while classes_to_visit:
+        subclass = classes_to_visit.pop()
+        if "__pydantic_fields__" not in vars(subclass):
+            are_all_known = False
+        elif subclass.__pydantic_generic_metadata__["origin"] is not None:
+            classes_to_visit.extend(subclass.__subclasses__())
+        else:
+            subclasses.append(subclass)
+    # E.g. SQLAlchemy models are never versioned
+    return [subclass for subclass in subclasses if _is_versionable_model(subclass)], are_all_known
+
+
+def _is_versionable_model(model: Any) -> bool:
+    return (
+        isinstance(model, type)
+        and lenient_issubclass(model, (BaseModel, Enum))
+        and model not in _DEFAULT_PYDANTIC_CLASSES
+        and not is_sqlalchemy_model(model)
+    )
+
+
+@final
+class _ReferencedModelCollector:
+    """A generator that records the models requested from it instead of generating their copies"""
+
+    __slots__ = "annotation_transformer", "arg_models", "base_models", "hard_models", "is_complete", "models"
+
+    def __init__(self) -> None:
+        self.annotation_transformer = _AnnotationTransformer(self, record_only=True)
+        self.models: set[type[Union[BaseModel, Enum]]] = set()
+        self.hard_models: set[type[Union[BaseModel, Enum]]] = set()
+        self.arg_models: set[type[Union[BaseModel, Enum]]] = set()
+        self.base_models: set[type[Union[BaseModel, Enum]]] = set()
+        # Whether the annotations that we looked at only refer to names that are already defined
+        self.is_complete = True
 
     def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
-        if (
-            not isinstance(model, type)
-            or not lenient_issubclass(model, (BaseModel, Enum))
-            or model in _DEFAULT_PYDANTIC_CLASSES
-            or is_sqlalchemy_model(model)
+        if _is_versionable_model(model):
+            self.models.add(_unwrap_model(model))
+            if self.annotation_transformer.is_in_hard_position:
+                self.hard_models.add(_unwrap_model(model))
+        return model
+
+    def change_version_of_base(self, base: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
+        if _is_versionable_model(base):
+            self.base_models.add(_unwrap_model(base))
+        return base
+
+    def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
+        generic_metadata = model.__pydantic_generic_metadata__
+        arg_collector = _ReferencedModelCollector()
+        args = _eval_generic_args(model)
+        arg_collector.annotation_transformer.change_version_of_annotation(args)
+        self.arg_models |= arg_collector.models
+        # The quoted args that cannot be evaluated yet stay forward refs
+        if not arg_collector.is_complete or any(_contains_forward_refs(arg) for arg in args):
+            self.is_complete = False
+        if generic_metadata["origin"] is not None:
+            # A parametrized generic is a subclass of its origin
+            self.change_version_of_base(generic_metadata["origin"])
+        return generic_metadata
+
+    def get_references(self) -> "_ModelReferences":
+        return _ModelReferences(
+            frozenset(self.models),
+            frozenset(self.arg_models),
+            frozenset(self.base_models),
+            self.is_complete,
+            frozenset(self.hard_models),
+        )
+
+
+class _ModelReferences(NamedTuple):
+    # The models that are always versioned along with the model: in its fields, annotations, etc
+    models: frozenset[type[Union[BaseModel, Enum]]]
+    # The models in the type args of a parametrized generic (e.g. Item in Page[Item])
+    arg_models: frozenset[type[Union[BaseModel, Enum]]]
+    # The bases of the model and the origin of a parametrized generic (e.g. Page in Page[Item])
+    base_models: frozenset[type[Union[BaseModel, Enum]]]
+    # Whether we know all of the models that copying the model would request. We do not when some names in its
+    # annotations (fields, class variables, quoted generic args, annotations of default factories, values of type
+    # aliases, etc.) are not defined yet: once they get defined, copying the model can request any model. We do not
+    # either when copying it would recurse forever through a type alias that refers to itself. So we always copy
+    # such a model and never version the generic args that lead to it, even after the names get defined, which
+    # keeps them exactly as on main.
+    is_complete: bool = True
+    # The models among `models` that are requested in positions that need the classes themselves rather than
+    # forward refs to them, e.g. default factories (see _AnnotationTransformer.is_in_hard_position)
+    hard_models: frozenset[type[Union[BaseModel, Enum]]] = frozenset()
+
+
+class _GenerationAnalysis(NamedTuple):
+    # Whether generating the copy of the model will not recurse forever
+    terminates: bool
+    # Whether the model or the models that it refers to have schema or enum instructions
+    refers_to_changed_models: bool
+
+
+_T_NODE = TypeVar("_T_NODE")
+
+
+def _find_strongly_connected_components(
+    start: _T_NODE,
+    get_successors: Callable[[_T_NODE], "collections.abc.Iterable[_T_NODE]"],
+    is_known: Callable[[_T_NODE], bool],
+    add_component: Callable[[list[_T_NODE], bool], None],
+) -> None:
+    """Find the strongly connected components reachable from start (Tarjan's algorithm).
+
+    Passes each component to add_component along with whether it is a cycle: whether it has more than one node or
+    a node that is its own successor. add_component must make is_known true for the nodes of the component.
+    The known nodes are skipped because none of them can lead back to the new ones.
+    It is iterative instead of recursive because the chains of references in large apps can be very long.
+    """
+    indices: dict[_T_NODE, int] = {start: 0}
+    lowest_indices = {start: 0}
+    stack = [start]
+    nodes_to_visit = [(start, iter(get_successors(start)))]
+    while nodes_to_visit:
+        current_node, successors = nodes_to_visit[-1]
+        for successor in successors:
+            if is_known(successor):
+                continue
+            if successor not in indices:
+                indices[successor] = lowest_indices[successor] = len(indices)
+                stack.append(successor)
+                nodes_to_visit.append((successor, iter(get_successors(successor))))
+                break
+            # The node is still on the stack because the nodes that are not are in finished components
+            lowest_indices[current_node] = min(lowest_indices[current_node], indices[successor])
+        else:
+            nodes_to_visit.pop()
+            if nodes_to_visit:
+                previous_node = nodes_to_visit[-1][0]
+                lowest_indices[previous_node] = min(lowest_indices[previous_node], lowest_indices[current_node])
+            if lowest_indices[current_node] == indices[current_node]:
+                component = []
+                while not component or component[-1] is not current_node:
+                    component.append(stack.pop())
+                add_component(component, len(component) > 1 or current_node in get_successors(current_node))
+
+
+@final
+class _ReferenceCycles:
+    """The reference cycles among the head models, shared by the generators of all versions.
+
+    SchemaGenerator only uses the head models of the cycles whose models are not versioned, and the references of
+    such models are the same in every version because only instructions change them. So we find the cycles once
+    in the references of the head models. The cycles that only exist in some versions because of instructions
+    contain models with instructions so all of their models are versioned and copied anyway.
+    """
+
+    __slots__ = (
+        "_changed_models",
+        "_changed_parametrizations",
+        "_head_references",
+        "_head_references_with_redefined_fields",
+        "_lock",
+        "_models_in_cycles",
+        "_models_in_cycles_with_redefined_fields",
+        "_parametrizations_built_by_pydantic",
+        "_reaches_changed_parametrizations",
+        "_redefined_field_names",
+        "_redefined_fields",
+        "_requested_models",
+    )
+
+    def __init__(
+        self,
+        changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
+        changed_parametrizations: "frozenset[type[BaseModel]]",
+    ) -> None:
+        # The generators of different versions can ask at the same time
+        self._lock = threading.Lock()
+        self._models_in_cycles: dict[type[Union[BaseModel, Enum]], bool] = {}
+        self._requested_models: dict[type[Union[BaseModel, Enum]], frozenset[type[Union[BaseModel, Enum]]]] = {}
+        # The references of the head models are the same in every version so the generators share them
+        self._head_references: dict[type[BaseModel], _ModelReferences] = {}
+        # The models with schema or enum instructions in any version
+        self._changed_models = changed_models
+        # The parametrizations whose instructions reach the fields of other parametrizations (see
+        # _get_parametrizations_whose_instructions_reach_other_generics). Without them, nothing is redefined.
+        self._changed_parametrizations = changed_parametrizations
+        # See get_redefined_field_names
+        self._parametrizations_built_by_pydantic: dict[
+            type[Union[BaseModel, Enum]], dict[str, frozenset[type[BaseModel]]]
+        ] = {}
+        self._reaches_changed_parametrizations: dict[type[BaseModel], bool] = {}
+        self._models_in_cycles_with_redefined_fields: dict[type[Union[BaseModel, Enum]], bool] = {}
+        self._redefined_field_names: dict[type[BaseModel], tuple[str, ...]] = {}
+        self._redefined_fields: dict[type[BaseModel], collections.abc.Mapping[str, Any]] = {}
+        self._head_references_with_redefined_fields: dict[type[BaseModel], _ModelReferences] = {}
+
+    def is_in_cycle(self, model: type[Union[BaseModel, Enum]]) -> bool:
+        """Whether copying the model would request the model itself again, directly or through other models.
+
+        Copying the generic args never leads back to the model because they are only versioned when they do not
+        (see SchemaGenerator._should_version_generic_args) so only the models in the fields, annotations,
+        and bases count.
+        """
+        with self._lock:
+            if model not in self._models_in_cycles:
+                self._find_cycles(model)
+            return self._models_in_cycles[model]
+
+    def _find_cycles(self, model: type[Union[BaseModel, Enum]]) -> None:
+        def add_component(component: list[type[Union[BaseModel, Enum]]], is_cycle: bool) -> None:
+            self._models_in_cycles.update(dict.fromkeys(component, is_cycle))
+
+        _find_strongly_connected_components(
+            model, self._get_requested_models, self._models_in_cycles.__contains__, add_component
+        )
+
+    def get_requested_models(self, model: type[Union[BaseModel, Enum]]) -> frozenset[type[Union[BaseModel, Enum]]]:
+        """Return the head models that copying the head model would request"""
+        with self._lock:
+            return self._get_requested_models(model)
+
+    def get_head_references(self, model: type[BaseModel]) -> "_ModelReferences":
+        """Return the references of the head model (see _get_head_model_references), with its redefined fields"""
+        with self._lock:
+            redefined_fields = self._get_redefined_fields(model)
+            if not redefined_fields:
+                return self._get_head_references(model)
+            if model not in self._head_references_with_redefined_fields:
+                # They are complete because the fields are only redefined if we know what copying them requests
+                self._head_references_with_redefined_fields[model] = _get_head_model_references(model, redefined_fields)
+            return self._head_references_with_redefined_fields[model]
+
+    def get_redefined_field_names(self, model: type[BaseModel]) -> tuple[str, ...]:
+        """Return the inherited fields that the copies of the parametrization of a generic define themselves.
+
+        Pydantic builds the fields that a parametrization (e.g. `Box[str]`) inherits from its generic
+        (e.g. `pair: Pair[T, int]` in `Box`) by parametrizing their generics itself, through its own cache. So in
+        the copy of `Box[str]`, `pair` gets a `Pair[str, int]` that pydantic builds from the copy of `Pair`
+        instead of the copy of `Pair[str, int]` itself, which is the only one that has the instructions of
+        `schema(Pair[str, int])`. So when such parametrizations lead to parametrizations with their own
+        instructions, the copy defines these fields itself with the annotations that pydantic resolved for the head
+        parametrization, which the generator then versions as usual. Everything else stays as on main: the fields
+        of the parametrizations whose generic, its bases, or the parametrization itself have instructions (their
+        fields can differ from the head ones), and the parametrizations whose redefined fields would lead back to
+        them (copying them would never finish).
+        """
+        with self._lock:
+            return self._get_redefined_field_names(model)
+
+    def get_redefined_fields(self, model: type[BaseModel]) -> "collections.abc.Mapping[str, Any]":
+        """Return the annotations of the fields that the copies of the model redefine (see get_redefined_field_names).
+
+        They are the annotations that pydantic resolved for the head model, with the parametrizations that have
+        instructions instead of the equal ones that pydantic built separately (Pydantic 2.11 builds another
+        `Pair[str, int]` for `Box[str]` if `Box[str]` is created before `Pair[str, int]` itself).
+        """
+        with self._lock:
+            return self._get_redefined_fields(model)
+
+    def _get_redefined_fields(self, model: type[BaseModel]) -> "collections.abc.Mapping[str, Any]":
+        redefined_field_names = self._get_redefined_field_names(model)
+        if not redefined_field_names:
+            return _NO_REDEFINED_FIELDS
+        if model not in self._redefined_fields:
+            # The fields are only redefined if they are known (see _get_parametrizations_built_by_pydantic)
+            fields = cast("dict[str, FieldInfo]", _get_rebuilt_model_fields(model))
+            self._redefined_fields[model] = types.MappingProxyType(
+                {
+                    name: _replace_in_type_positions(
+                        _get_annotation_with_metadata(fields[name]), self._get_changed_parametrization
+                    )
+                    for name in redefined_field_names
+                }
+            )
+        return self._redefined_fields[model]
+
+    def _get_changed_parametrization(self, annotation: Any) -> Any:
+        """Return the parametrization with instructions that is the same as the annotation, or the annotation"""
+        # The type positions can hold anything, including unhashable values such as the list of args of Callable
+        if not (lenient_issubclass(annotation, BaseModel) and _is_parametrization(annotation)) or (
+            annotation in self._changed_parametrizations
         ):
+            return annotation
+        return next(
+            (
+                parametrization
+                for parametrization in self._changed_parametrizations
+                if _is_same_parametrization(annotation, parametrization)
+            ),
+            annotation,
+        )
+
+    def _get_redefined_field_names(self, model: type[BaseModel]) -> tuple[str, ...]:
+        if not self._changed_parametrizations or not lenient_issubclass(model, BaseModel):
+            return ()
+        if model not in self._redefined_field_names:
+            redefined_field_names = tuple(
+                name
+                for name, parametrizations in self._get_parametrizations_built_by_pydantic(model).items()
+                if any(self._reaches_changed_parametrization(parametrization) for parametrization in parametrizations)
+            )
+            if redefined_field_names and self._is_in_cycle_with_redefined_fields(model):
+                redefined_field_names = ()
+            self._redefined_field_names[model] = redefined_field_names
+        return self._redefined_field_names[model]
+
+    def _get_parametrizations_built_by_pydantic(
+        self, model: type[Union[BaseModel, Enum]]
+    ) -> dict[str, frozenset[type[BaseModel]]]:
+        """Return the parametrizations of generics that pydantic builds itself in the inherited fields of the model.
+
+        They are the ones in the fields of a parametrization (e.g. `Pair[str, int]` in `Box[str]`) that are neither
+        in the fields of its generic (e.g. `Pair[T, int]` in `Box`) nor in its type args, which the copy gets from
+        the generator already.
+        """
+        if model in self._parametrizations_built_by_pydantic:
+            return self._parametrizations_built_by_pydantic[model]
+        parametrizations: dict[str, frozenset[type[BaseModel]]] = {}
+        # E.g. enums, which the cycles can have
+        if not lenient_issubclass(model, BaseModel):
+            return parametrizations
+        if not self._can_redefine_fields(model):
+            return parametrizations
+        origin = cast("type[BaseModel]", model.__pydantic_generic_metadata__["origin"])
+        fields = _get_rebuilt_model_fields(model)
+        origin_fields = _get_rebuilt_model_fields(origin)
+        references = self._get_head_references(model)
+        if fields is not None and origin_fields is not None and references.is_complete:
+            # A parametrization inherits all of its fields from its generic
+            for name, field in fields.items():
+                models = _get_models_in_field(field)
+                origin_models = _get_models_in_field(origin_fields[name])
+                if models is None or origin_models is None:
+                    # E.g. a recursive type alias: we cannot know what copying the field would request so the copy
+                    # inherits it as on main
+                    continue
+                field_parametrizations = frozenset(
+                    referenced_model
+                    for referenced_model in models - origin_models - references.arg_models
+                    if lenient_issubclass(referenced_model, BaseModel) and _is_parametrization(referenced_model)
+                )
+                if field_parametrizations:
+                    parametrizations[name] = field_parametrizations
+        self._parametrizations_built_by_pydantic[model] = parametrizations
+        return parametrizations
+
+    def _can_redefine_fields(self, model: type[BaseModel]) -> bool:
+        return _is_parametrization(model) and not any(
+            cls in self._changed_models for cls in model.__mro__ if lenient_issubclass(cls, BaseModel)
+        )
+
+    def _reaches_changed_parametrization(self, model: type[BaseModel]) -> bool:
+        """Whether the model has instructions or leads to such parametrizations through the ones pydantic builds"""
+        if model not in self._reaches_changed_parametrizations:
+            models_to_visit = [model]
+            visited_models: set[type[BaseModel]] = set()
+            answer = False
+            while models_to_visit:
+                current_model = models_to_visit.pop()
+                if current_model in visited_models:
+                    continue
+                visited_models.add(current_model)
+                if self._get_changed_parametrization(current_model) in self._changed_parametrizations:
+                    answer = True
+                    break
+                for parametrizations in self._get_parametrizations_built_by_pydantic(current_model).values():
+                    models_to_visit.extend(parametrizations)
+            self._reaches_changed_parametrizations[model] = answer
+        return self._reaches_changed_parametrizations[model]
+
+    def _is_in_cycle_with_redefined_fields(self, model: type[BaseModel]) -> bool:
+        """Whether copying the model would request the model itself again if every candidate field was redefined.
+
+        The fields are only redefined in the models outside of such cycles so the cycles stay the same as on main.
+        """
+
+        def get_successors(current_model: type[Union[BaseModel, Enum]]) -> "set[type[Union[BaseModel, Enum]]]":
+            successors: set[type[Union[BaseModel, Enum]]] = set(self._get_requested_models(current_model))
+            for parametrizations in self._get_parametrizations_built_by_pydantic(current_model).values():
+                successors.update(
+                    parametrization
+                    for parametrization in parametrizations
+                    if self._reaches_changed_parametrization(parametrization)
+                )
+            return successors
+
+        def add_component(component: list[type[Union[BaseModel, Enum]]], is_cycle: bool) -> None:
+            self._models_in_cycles_with_redefined_fields.update(dict.fromkeys(component, is_cycle))
+
+        if model not in self._models_in_cycles_with_redefined_fields:
+            _find_strongly_connected_components(
+                model, get_successors, self._models_in_cycles_with_redefined_fields.__contains__, add_component
+            )
+        return self._models_in_cycles_with_redefined_fields[model]
+
+    def _get_head_references(self, model: type[BaseModel]) -> "_ModelReferences":
+        if model in self._head_references:
+            return self._head_references[model]
+        references = _get_head_model_references(model)
+        # The references that are not complete can change once the missing names get defined
+        if references.is_complete:
+            self._head_references[model] = references
+        return references
+
+    def _get_requested_models(self, model: type[Union[BaseModel, Enum]]) -> frozenset[type[Union[BaseModel, Enum]]]:
+        if model not in self._requested_models:
+            if lenient_issubclass(model, BaseModel):
+                references = self._get_head_references(model)
+                self._requested_models[model] = references.models | references.base_models
+            else:
+                self._requested_models[model] = frozenset()
+        return self._requested_models[model]
+
+
+class _VersioningQuestion(NamedTuple):
+    """A question about a model that SchemaGenerator._is_versioned answers"""
+
+    model: type[Union[BaseModel, Enum]]
+    # If False: whether the copy of the model would differ from the model.
+    # If True: whether the copy of the model or of any of its subclasses would differ from them.
+    includes_subclasses: bool
+
+
+@final
+class SchemaGenerator:
+    __slots__ = (
+        "_adds_references",
+        "_changed_models",
+        "_copied_cycles",
+        "_cycles_behind_latest_generic_args",
+        "_cycles_being_copied",
+        "_cycles_to_copy",
+        "_generation_analyses",
+        "_has_copied_eager_cycles",
+        "_lock",
+        "_model_references",
+        "_models_copied_eagerly",
+        "_reference_cycles",
+        "_root_models",
+        "_route_versioning_thread",
+        "_versioning_answers",
+        "_versions_of_generic_args",
+        "annotation_transformer",
+        "concrete_models",
+        "model_bundle",
+    )
+
+    def __init__(
+        self,
+        model_bundle: _ModelBundle,
+        changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
+        reference_cycles: "_ReferenceCycles",
+    ) -> None:
+        self.annotation_transformer = _AnnotationTransformer(self)
+        self.model_bundle = model_bundle
+        self._changed_models = changed_models
+        self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
+        self._versioning_answers: dict[_VersioningQuestion, bool] = {}
+        self._reference_cycles = reference_cycles
+        self._generation_analyses: dict[type[Union[BaseModel, Enum]], _GenerationAnalysis] = {}
+        self._versions_of_generic_args: dict[type[BaseModel], bool] = {}
+        # The reference cycles among the models that this version copies, or None for the models outside of them
+        self._cycles_to_copy: dict[type[BaseModel], Union[frozenset[type[BaseModel]], None]] = {}
+        # Whether the instructions of this version add references to models (see _adds_references_to_models)
+        self._adds_references: Union[bool, None] = None
+        # The reference cycles whose copies we are generating right now, innermost last
+        self._cycles_being_copied: list[frozenset[type[BaseModel]]] = []
+        # The models that this version copies in any case: the ones with instructions, which the generator copies
+        # when it is created, and the ones that the routes use (see _add_route_models). Along with all of the models
+        # that they refer to, they are the models copied eagerly (see _is_copied_eagerly)
+        self._root_models: set[type[BaseModel]] = set(self.model_bundle.schemas)
+        self._models_copied_eagerly: Union[set[type[BaseModel]], None] = None
+        # The reference cycles that the generator has copied
+        self._copied_cycles: set[frozenset[type[BaseModel]]] = set()
+        # Whether the generator has copied a cycle that it copies eagerly (see _is_copied_eagerly)
+        self._has_copied_eager_cycles = False
+        # The thread that versions the routes of the version right now, if any (see versioning_routes)
+        self._route_versioning_thread: Union[int, None] = None
+        # The reference cycles that some generics keep the head models of in their type args
+        self._cycles_behind_latest_generic_args: set[frozenset[type[BaseModel]]] = set()
+        # Models are generated lazily (e.g. in migrate_response_body) so several threads can generate them at once
+        self._lock = threading.RLock()
+        self.concrete_models: dict[type[Union[BaseModel, Enum]], type[Union[BaseModel, Enum]]] = {}
+        # Models are generated through __getitem__ so that the copies created along the way are reused
+        # instead of being created again
+        for model in [*self.model_bundle.schemas, *self.model_bundle.enums]:
+            self[model]
+
+    def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
+        if not _is_versionable_model(model):
             return model
         model = _unwrap_model(model)
 
-        if model in self.concrete_models:
-            model_copy = self.concrete_models[model]
-        else:
-            wrapper = self._get_wrapper_for_model(model)
-            model_copy = wrapper.generate_model_copy(self)
+        with self._lock:
+            if not self._needs_copy(model):
+                return model
+            if model not in self.concrete_models:
+                for cycle in self._cycles_being_copied:
+                    if model in cycle:
+                        raise CadwynError(
+                            f"{model.__qualname__} was requested from outside of its reference cycle while Cadwyn "
+                            "was copying the cycle. This is a bug in Cadwyn, or a hook of the model "
+                            "(e.g. __init_subclass__) that asks Cadwyn for its versioned copies."
+                        )
+                cycle = self._get_cycle_to_copy(model)
+                if cycle is None:
+                    wrapper = self._get_wrapper_for_model(model)
+                    model_copy = wrapper.generate_model_copy(self)
+                    if self._copied_cycles and lenient_issubclass(model_copy, BaseModel):
+                        self._check_copy_outside_of_cycles(cast("type[BaseModel]", model), model_copy)
+                    self.concrete_models[model] = model_copy
+                else:
+                    self._copy_cycle(cycle)
+            return cast("type[_T_ANY_MODEL]", self.concrete_models[model])
+
+    def change_version_of_base(self, base: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
+        return self[base]
+
+    def _needs_copy(self, model: type[Union[BaseModel, Enum]]) -> bool:
+        """Whether this version uses a copy of the model instead of the head model.
+
+        Just like Cadwyn always did, we copy every model for every version except for the ones whose copies would
+        be the same as the head models (see _is_versioned) and that we cannot or should not copy:
+        * The enums, whose members must stay the same objects (e.g. strict models reject the members of a copy
+          of their enum)
+        * The models in reference cycles (e.g. `children: "list[Category]"`), whose copying would never finish.
+          The copies of the models that refer to them use the head models too.
+        We copy all other models even if their copies are the same as the head models because their copies
+        differ from them in subtle ways that the older versions rely on, e.g. their OpenAPI names and their
+        dunder methods such as __get_pydantic_json_schema__ that the copies do not have.
+        The decisions are cached so the models that are defined after the generator has decided about the models
+        that they refer to or inherit from do not change these decisions.
+        """
+        if self._cycles_to_copy.get(model) is not None:
+            # We decided to copy its cycle so we keep that decision even if the subclasses that it depended on
+            # change later (see _is_versioned)
+            return True
+        # Finding the cycles is much cheaper than looking at all of the subclasses in _is_versioned
+        if lenient_issubclass(model, BaseModel) and not self._reference_cycles.is_in_cycle(model):
+            return True
+        return self._is_versioned(model)
+
+    def _is_versioned(self, model: type[Union[BaseModel, Enum]]) -> bool:
+        """Whether the copy of the model or of any of its subclasses could differ from them in some version.
+
+        The copy of a model differs from it if the model has schema or enum instructions in any version, or if
+        its bases differ, or if any of the models in its fields, annotations, generic args, etc. are versioned.
+        The subclasses matter for two reasons. The copies of the subclasses must not inherit from the head model
+        (e.g. its __init_subclass__ or __init__). And a model accepts the instances of its subclasses, so the head
+        model would accept the head instances of a versioned subclass (e.g. with SerializeAsAny) while its copy
+        rejects them. The copy of a model only differs from it because of its bases if the bases themselves
+        differ, not if they only have subclasses that differ.
+        If we do not know all of the models that the model refers to (see _ModelReferences.is_complete),
+        we assume that it is versioned.
+        The parametrizations of generics are not subclasses here (see _get_subclasses_that_can_be_versioned).
+        The decision only depends on the references between the models and on the subclasses that exist when
+        the generator first needs the decision, not on the order of generation. We do not keep a decision that
+        depended on the subclasses that were still being created.
+        """
+        if not self._changed_models:
+            # Nothing has instructions so we do not need to look into the models
+            return False
+        return self._reaches_changed_models(_VersioningQuestion(model, includes_subclasses=True))
+
+    def _reaches_changed_models(self, question: "_VersioningQuestion") -> bool:
+        if question in self._versioning_answers:
+            return self._versioning_answers[question]
+        visited_questions: set[_VersioningQuestion] = set()
+        questions_to_visit = [question]
+        answer = False
+        depends_on_unknown_subclasses = False
+        while questions_to_visit:
+            current_question = questions_to_visit.pop()
+            if current_question in visited_questions or self._versioning_answers.get(current_question) is False:
+                continue
+            visited_questions.add(current_question)
+            if self._versioning_answers.get(current_question) or self._is_changed(current_question):
+                answer = True
+                break
+            dependent_questions, are_all_known = self._get_dependent_questions(current_question)
+            depends_on_unknown_subclasses |= not are_all_known
+            questions_to_visit.extend(dependent_questions)
+        if answer:
+            self._versioning_answers[question] = True
+        elif not depends_on_unknown_subclasses:
+            # None of the visited questions lead to changed models either
+            self._versioning_answers.update(dict.fromkeys(visited_questions, False))
+        # Otherwise, we ask again next time because the subclasses that are still being created could change it
+        return answer
+
+    def _is_changed(self, question: "_VersioningQuestion") -> bool:
+        if question.includes_subclasses:
+            return False
+        return question.model in self._changed_models or not self._get_references(question.model).is_complete
+
+    def _get_dependent_questions(self, question: "_VersioningQuestion") -> "tuple[list[_VersioningQuestion], bool]":
+        """Return the questions that the answer depends on, and whether we know all of them"""
+        model = question.model
+        if question.includes_subclasses:
+            subclasses, are_all_known = _get_subclasses_that_can_be_versioned(model)
+            return [
+                _VersioningQuestion(model, includes_subclasses=False),
+                *(_VersioningQuestion(_unwrap_model(subclass), includes_subclasses=True) for subclass in subclasses),
+            ], are_all_known
+        references = self._get_references(model)
+        return [
+            *(
+                _VersioningQuestion(referenced_model, includes_subclasses=True)
+                for referenced_model in references.models | references.arg_models
+            ),
+            *(_VersioningQuestion(base, includes_subclasses=False) for base in references.base_models),
+        ], True
+
+    def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
+        return _change_version_of_generic_metadata(self, self, model)
+
+    def _should_version_generic_args(
+        self, generic: type[BaseModel], generation_stack: list[type[Union[BaseModel, Enum]]]
+    ) -> bool:
+        """Whether the copy of the generic should use the copies of its type args instead of the head ones.
+
+        We only version the args when they refer to models with schema or enum instructions so that all other
+        generics stay exactly as they are. We also keep the head args when their copies could not be generated:
+        when the args refer back to the generic (e.g. `children: Page["Category"]` within `Category`) or when
+        generating their copies would recurse forever (e.g. `children: "list[Tree]"` within a versioned `Tree`).
+        The decision only depends on the references between the models, not on the order of generation.
+        """
+        if not self._changed_models:
+            # Nothing has instructions so no generic args need versioning and we do not need to look into them
+            return False
+        if generic not in self._versions_of_generic_args:
+            references = self._get_references(generic)
+            arg_models = references.arg_models
+            # Versioning the args of a generic whose references are incomplete could request any model
+            if not arg_models or not references.is_complete or self._is_referenced_through_args(generic):
+                should_version = False
+            else:
+                analyses = [self._analyze_generation(model, generation_stack) for model in arg_models]
+                should_version = all(analysis.terminates for analysis in analyses) and any(
+                    analysis.refers_to_changed_models for analysis in analyses
+                )
+            self._versions_of_generic_args[generic] = should_version
+        return self._versions_of_generic_args[generic]
+
+    def _analyze_generation(
+        self, model: type[Union[BaseModel, Enum]], generation_stack: list[type[Union[BaseModel, Enum]]]
+    ) -> _GenerationAnalysis:
+        if not self._needs_copy(model):
+            # We use the head model so nothing gets generated, and it does not refer to models with instructions
+            return _GenerationAnalysis(terminates=True, refers_to_changed_models=False)
+        cycle = self._get_cycle_to_copy(model)
+        if cycle is not None:
+            return self._analyze_generation_of_cycle(cycle)
+        if model in self._generation_analyses:
+            return self._generation_analyses[model]
+        if model in generation_stack:  # pragma: no cover # The cycles of copies are analyzed above
+            # The models that generating this model requests lead back to it so its generation would never finish
+            return _GenerationAnalysis(terminates=False, refers_to_changed_models=False)
+        generation_stack.append(model)
+        references = self._get_references(model)
+        requested_models = set(references.models | references.base_models)
+        if references.arg_models and self._should_version_generic_args(
+            cast("type[BaseModel]", model), generation_stack
+        ):
+            requested_models |= references.arg_models
+        analyses = [self._analyze_generation(requested_model, generation_stack) for requested_model in requested_models]
+        generation_stack.pop()
+        analysis = _GenerationAnalysis(
+            terminates=references.is_complete and all(analysis.terminates for analysis in analyses),
+            refers_to_changed_models=model in self._changed_models
+            or any(analysis.refers_to_changed_models for analysis in analyses),
+        )
+        self._generation_analyses[model] = analysis
+        return analysis
+
+    def _analyze_generation_of_cycle(self, cycle: frozenset[type[BaseModel]]) -> _GenerationAnalysis:
+        """Analyze the generation of the copies of a reference cycle that this version copies when they are needed.
+
+        If this version copies the cycle in any case (see _is_copied_eagerly), where main failed, the generic args
+        that refer to it use its copies like any other versioned args. Otherwise, they keep the head models, exactly
+        as on main, which never copied such a cycle. Copying such a cycle later on its own (e.g. in
+        migrate_response_body, where main failed) does not change them.
+        """
+        if self._is_copied_eagerly(cycle):
+            # Its models need copies so they are versioned
+            return _GenerationAnalysis(terminates=True, refers_to_changed_models=True)
+        self._cycles_behind_latest_generic_args.add(cycle)
+        return _GenerationAnalysis(terminates=False, refers_to_changed_models=False)
+
+    @contextlib.contextmanager
+    def versioning_routes(
+        self, route_models: "collections.abc.Iterable[type[Union[BaseModel, Enum]]]"
+    ) -> Generator[None, None, None]:
+        """Register the models of the routes of the version while its routes are versioned (see _add_route_models)"""
+        self._add_route_models(route_models)
+        with self._lock:
+            self._route_versioning_thread = threading.get_ident()
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._route_versioning_thread = None
+
+    def _add_route_models(self, models: "collections.abc.Iterable[type[Union[BaseModel, Enum]]]") -> None:
+        """Make the generator copy the cycles that the models of the routes refer to eagerly (see _is_copied_eagerly).
+
+        Route generation registers all models of a version's routes before it versions any of them, so the
+        decisions do not depend on the order of the routes.
+        """
+        with self._lock:
+            route_models = {
+                model for model in models if lenient_issubclass(model, BaseModel) and _is_versionable_model(model)
+            }
+            if route_models <= self._root_models:
+                return
+            # The models are only registered after the check so the next attempt to start the app fails the same way.
+            # There are no cycles behind the latest generic args before the models copied eagerly are known because
+            # finding such cycles needs them (see _analyze_generation_of_cycle)
+            if self._models_copied_eagerly is not None:
+                models_copied_eagerly = self._get_models_copied_eagerly(route_models, self._models_copied_eagerly)
+                for cycle in self._cycles_behind_latest_generic_args:
+                    if not cycle.isdisjoint(models_copied_eagerly):
+                        # E.g. a model with instructions has `Page[Category]`, which kept the latest Category when the
+                        # generator was created, and a route uses Category directly
+                        raise _get_latest_generic_args_error(cycle)
+                self._models_copied_eagerly = models_copied_eagerly
+            self._root_models |= route_models
+
+    def _is_copied_eagerly(self, cycle: frozenset[type[BaseModel]]) -> bool:
+        """Whether this version copies the cycle in any case, where main failed.
+
+        This version copies the models with instructions when its generator is created, the models of its routes,
+        and every model that they refer to (except for the generic args that keep the head models). The decision
+        only depends on the references between the models and on the models of the routes, which route generation
+        registers before it versions them, so it does not depend on the order in which the models are requested.
+        """
+        if self._models_copied_eagerly is None:
+            self._models_copied_eagerly = self._get_models_copied_eagerly(self._root_models)
+        return not cycle.isdisjoint(self._models_copied_eagerly)
+
+    def _get_models_copied_eagerly(
+        self,
+        root_models: "collections.abc.Iterable[type[BaseModel]]",
+        models_copied_eagerly: "collections.abc.Set[type[BaseModel]]" = frozenset(),
+    ) -> set[type[BaseModel]]:
+        """Return the models copied eagerly along with the given ones: they and every model that they refer to"""
+        models = set(models_copied_eagerly)
+        models_to_visit = [model for model in root_models if self._needs_copy(model)]
+        while models_to_visit:
+            model = models_to_visit.pop()
+            if model not in models:
+                models.add(model)
+                models_to_visit.extend(self._get_models_that_copying_requests(model))
+        return models
+
+    def _get_models_reached_by_copying(self, model: type[BaseModel]) -> set[type[BaseModel]]:
+        """Return the models that copying the model generates the copies of, directly or through other models"""
+        reached_models: set[type[BaseModel]] = set()
+        models_to_visit = list(self._get_models_that_copying_requests(model))
+        while models_to_visit:
+            reached_model = models_to_visit.pop()
+            if reached_model not in reached_models:
+                reached_models.add(reached_model)
+                models_to_visit.extend(self._get_models_that_copying_requests(reached_model))
+        return reached_models
+
+    def _is_latest_model_of_cycle_used_by(
+        self, cls: type, get_models_reached_by_copying: Callable[[], set[type[BaseModel]]]
+    ) -> bool:
+        """Whether the head class is in a cycle whose copies this version uses instead of it where the model is used.
+
+        That is the case for the cycles that this version copies eagerly, and for the ones that copying the model
+        itself copies (e.g. `category: Category` along with `related: Page[Category]`, whose args are the head
+        models when Category is copied lazily). Other cycles do not count because the generics around them keep
+        their head models, as on main.
+        """
+        return not hasattr(cls, "__cadwyn_original_model__") and self._is_in_cycle_used_by(
+            cls, get_models_reached_by_copying
+        )
+
+    def _is_in_cycle_used_by(
+        self, cls: type, get_models_reached_by_copying: Callable[[], set[type[BaseModel]]]
+    ) -> bool:
+        """Whether the head model of the class (e.g. of a copy) is in a cycle whose copies the model uses"""
+        cls = _unwrap_model(cast("type[BaseModel]", cls))
+        if not _is_versionable_model(cls) or not lenient_issubclass(cls, BaseModel) or not self._needs_copy(cls):
+            return False
+        cycle = self._get_cycle_to_copy(cls)
+        return cycle is not None and (
+            self._is_copied_eagerly(cycle) or not cycle.isdisjoint(get_models_reached_by_copying())
+        )
+
+    def _check_copy_outside_of_cycles(self, model: type[BaseModel], model_copy: type[BaseModel]) -> None:
+        """Check a copy outside of the copied cycles if it can use the head models of these cycles.
+
+        Once a version copies a cycle eagerly, where main failed, we check every copy of the version. Otherwise,
+        we only check the copies that reach the lazily copied cycles, so the copies that work as on main stay so.
+        """
+        get_models_reached_by_copying = functools.cache(lambda: self._get_models_reached_by_copying(model))
+        if self._has_copied_eager_cycles or any(
+            not cycle.isdisjoint(get_models_reached_by_copying()) for cycle in self._copied_cycles
+        ):
+            self._check_copy(
+                model_copy,
+                lambda cls: self._is_latest_model_of_cycle_used_by(cls, get_models_reached_by_copying),
+                lambda cls: self._is_in_cycle_used_by(cls, get_models_reached_by_copying),
+                skipped_classes=set(self.concrete_models.values()),
+            )
+
+    def _check_copy(
+        self,
+        model_copy: type[BaseModel],
+        is_latest_model: Callable[[type], bool],
+        is_checked_field_model: Callable[[type], bool],
+        *,
+        is_latest_cycle_model: Union[Callable[[type], bool], None] = None,
+        skipped_classes: "collections.abc.Set[type]" = frozenset(),
+    ) -> None:
+        """Raise if the copy validates, serializes, or defaults to head models that it should not use.
+
+        Cadwyn only versions what it can see, so the copies would silently keep the head models wherever pydantic
+        finds them on its own, e.g. in the return types of computed fields and serializers, in quoted names within
+        other annotations (`list["Model"]`), or in generics whose args stay the head models. We look at what
+        pydantic has actually built so we do not have to know every such place. We do not look into the schemas of
+        skipped_classes, which are checked on their own. We check the defaults of the fields whose schemas use
+        the classes for which is_checked_field_model is true, and the default values of all other fields for the
+        head models for which is_latest_cycle_model (is_latest_model by default) is true.
+        """
+        if not model_copy.__pydantic_complete__:
+            # E.g. defer_build=True. We only check the copies in the versions that copy cycles, where main failed
+            model_copy.model_rebuild(raise_errors=False, _types_namespace={})
+            if not model_copy.__pydantic_complete__:
+                raise SchemaGenerationError(
+                    f"Cadwyn cannot check the versioned copy of {model_copy.__qualname__} for the latest versions of "
+                    "the models that refer to each other because pydantic cannot build it yet."
+                )
+        core_schema = model_copy.__pydantic_core_schema__
+        skipped_classes = set(skipped_classes) - {model_copy}
+        latest_models = [
+            cls
+            for cls in _get_classes_in_core_schema(core_schema, skipped_classes=skipped_classes)
+            if is_latest_model(cls)
+        ]
+        if latest_models:
+            raise SchemaGenerationError(
+                f"Cadwyn cannot generate the versioned copy of {model_copy.__qualname__} because it would use the "
+                f"latest {_get_cycle_name(latest_models)}, which need versioning, where pydantic resolves them on its "
+                "own: e.g. in the return types of computed fields or serializers, in names quoted within other "
+                'annotations (`list["Model"]`, which you can write as `"list[Model]"` instead), or in the type args '
+                "of generics that keep the latest models."
+            )
+        self._check_defaults(model_copy, core_schema, is_checked_field_model, is_latest_cycle_model or is_latest_model)
+
+    def _check_defaults(
+        self,
+        model_copy: type[BaseModel],
+        core_schema: Any,
+        is_checked_field_model: Callable[[type], bool],
+        is_latest_cycle_model: Callable[[type], bool],
+    ) -> None:
+        """Raise if the default of a field that uses the checked models could be a head model that needs versioning.
+
+        Cadwyn does not version default values, so e.g. `settings: Settings = Settings()` would keep the head
+        Settings and lose the changes of the older versions. We look into the default values themselves, but we
+        cannot know what most default factories return, so we only accept the ones that create the copies.
+        Enum members do not count because they are serialized by their values, as in all other models. The fields
+        that do not use the checked models (e.g. `Any` or `dict`) keep their defaults as on main, except for the
+        head models of the cycles in their values.
+        """
+        definitions = _get_core_schema_definitions(core_schema)
+        field_schemas = _get_field_core_schemas(model_copy, core_schema, definitions)
+        for name, field in model_copy.model_fields.items():
+            field_schema = None if field_schemas is None else field_schemas.get(name)
+            uses_checked_models = field_schema is None or any(
+                is_checked_field_model(cls)
+                for cls in _get_classes_in_core_schema(field_schema, definitions=definitions)
+            )
+            is_latest_value_model = self._is_latest_versioned_model if uses_checked_models else is_latest_cycle_model
+            latest_values = [
+                value
+                for value in _iter_values_within(field.default)
+                if isinstance(value, BaseModel) and is_latest_value_model(type(value))
+            ]
+            if latest_values:
+                raise SchemaGenerationError(
+                    f"Cadwyn cannot generate the versioned copy of {model_copy.__qualname__} because the default of "
+                    f"the field '{name}' of {model_copy.__qualname__} contains an instance of the latest "
+                    f"{type(latest_values[0]).__qualname__}, which needs versioning. Please use a default factory "
+                    "instead, e.g. the class of the field's model itself (`Field(default_factory=Model)`)."
+                )
+            if (
+                uses_checked_models
+                and field.default_factory is not None
+                and not self._is_safe_default_factory(field.default_factory)
+            ):
+                raise SchemaGenerationError(
+                    f"Cadwyn cannot verify what the default factory of the field '{name}' of "
+                    f"{model_copy.__qualname__} returns, so its older versions could get the latest versions of the "
+                    "models that need versioning. Please use `default_factory=list` or `default_factory=dict`, or "
+                    "the class of the field's model itself (`Field(default_factory=Model)`)."
+                )
+
+    def _is_safe_default_factory(self, factory: Any) -> bool:
+        """Whether the default factory provably creates the copies of this version rather than the head models"""
+        factory = getattr(factory, "_original_callable", factory)
+        # Subclasses of partial can override what calling them does
+        if type(factory) is functools.partial:
+            return self._is_safe_default_factory(factory.func) and not any(
+                isinstance(value, BaseModel) and self._is_latest_versioned_model(type(value))
+                for value in _iter_values_within([factory.args, factory.keywords])
+            )
+        if factory in _BUILTIN_CONTAINER_TYPES:
+            return True
+        if isinstance(factory, type):
+            return self._is_class_of_this_version(factory)
+        # Only pydantic's own constructors are known to create instances of the class that they are bound to
+        return (
+            inspect.ismethod(factory)
+            and getattr(factory, "__func__", None) in _PYDANTIC_CONSTRUCTORS
+            and isinstance(factory.__self__, type)
+            and self._is_class_of_this_version(factory.__self__)
+            # E.g. RootModel.model_construct calls the model_construct of the next class in the MRO
+            and not any(
+                factory.__name__ in vars(cls) for cls in factory.__self__.__mro__ if not _is_pydantic_model_class(cls)
+            )
+        )
+
+    def _is_class_of_this_version(self, cls: type) -> bool:
+        """Whether the class is a copy or a head model that this version uses as it is"""
+        return hasattr(cls, "__cadwyn_original_model__") or (
+            _is_versionable_model(cls) and not self._is_versioned(cast("type[BaseModel]", cls))
+        )
+
+    def _is_versioned_class(self, cls: type) -> bool:
+        """Whether the class is a head model that needs versioning or a copy of one"""
+        return _is_versionable_model(cls) and self._is_versioned(_unwrap_model(cast("type[BaseModel]", cls)))
+
+    def _is_latest_versioned_model(self, cls: type) -> bool:
+        """Whether the class is a head model that needs versioning"""
+        return (
+            _is_versionable_model(cls)
+            and not hasattr(cls, "__cadwyn_original_model__")
+            and self._is_versioned(cast("type[BaseModel]", cls))
+        )
+
+    def _is_referenced_through_args(self, generic: type[BaseModel]) -> bool:
+        models_to_visit = list(self._get_references(generic).arg_models)
+        visited_models = set()
+        while models_to_visit:
+            referenced_model = models_to_visit.pop()
+            if _is_same_parametrization(referenced_model, generic):
+                return True
+            if referenced_model not in visited_models:
+                visited_models.add(referenced_model)
+                references = self._get_references(referenced_model)
+                models_to_visit.extend(references.models | references.arg_models | references.base_models)
+        return False
+
+    def _get_cycle_to_copy(self, model: type[Union[BaseModel, Enum]]) -> Union[frozenset[type[BaseModel]], None]:
+        """Return the reference cycle among the models that this version copies that the model is in, if any.
+
+        Copying a model requests the copies of the models that it refers to, so copying a model in such a cycle
+        on its own would never finish. We copy all models of the cycle at once instead (see _copy_cycle).
+        The cycles are found statically in the references between the models that this version copies, which
+        can differ from the head references because of instructions. Without instructions that add references
+        to models, every such cycle is within a cycle among the head models, so we only look for cycles around
+        the models in the head cycles, which keeps all other models exactly as on main.
+        """
+        if not lenient_issubclass(model, BaseModel):
+            return None
+        if model not in self._cycles_to_copy:
+            if not self._reference_cycles.is_in_cycle(model) and not self._adds_references_to_models():
+                self._cycles_to_copy[model] = None
+            else:
+
+                def add_component(component: list[type[BaseModel]], is_cycle: bool) -> None:
+                    self._cycles_to_copy.update(dict.fromkeys(component, frozenset(component) if is_cycle else None))
+
+                _find_strongly_connected_components(
+                    model, self._get_models_that_copying_requests, self._cycles_to_copy.__contains__, add_component
+                )
+        return self._cycles_to_copy[model]
+
+    def _get_models_that_copying_requests(self, model: type[BaseModel]) -> frozenset[type[BaseModel]]:
+        """Return the models whose copies copying the model would generate.
+
+        The models that this version does not copy end the chain of copying because the head models are used.
+        """
+        references = self._get_references(model)
+        return frozenset(
+            referenced_model
+            for referenced_model in references.models | references.base_models
+            if lenient_issubclass(referenced_model, BaseModel) and self._needs_copy(referenced_model)
+        )
+
+    def _adds_references_to_models(self) -> bool:
+        """Whether the instructions of this version make any model refer to models that its head model does not.
+
+        E.g. `schema(Category).field("parent").existed_as(type=Optional[Category])`. Only such instructions can
+        create reference cycles that do not exist among the head models.
+        """
+        if self._adds_references is None:
+            self._adds_references = False
+            for model in self._changed_models:
+                if lenient_issubclass(model, BaseModel) and model in self.model_bundle.schemas:
+                    references = self._get_references(model)
+                    head_references = self._reference_cycles.get_requested_models(model)
+                    if not (references.models | references.base_models) <= head_references:
+                        self._adds_references = True
+                        break
+        return self._adds_references
+
+    def _copy_cycle(self, cycle: frozenset[type[BaseModel]]) -> None:
+        """Generate the copies of all models of a reference cycle at once.
+
+        Copying a model in the cycle refers to the other models of the cycle, and to itself, through forward refs
+        in its annotations. Pydantic resolves them once all of the copies exist (see _CycleCopier).
+        The copies are only published once all of them are complete and every check passed, so no other request
+        can see them before, and a failed check leaves nothing behind: the next attempt fails the same way.
+        """
+        if (
+            self._route_versioning_thread == threading.get_ident() and cycle in self._cycles_behind_latest_generic_args
+        ):  # pragma: no cover # Recording the routes finds every model that versioning them requests (see conftest)
+            raise _get_latest_generic_args_error(cycle)
+        creation_order = self._get_creation_order_of_cycle(cycle)
+        self._cycles_being_copied.append(cycle)
+        try:
+            copies = _CycleCopier(self, cycle).copy(creation_order)
+            for model in creation_order:
+                # The defaults of the models in the cycle are checked for every model that needs versioning
+                self._check_copy(
+                    copies[model],
+                    self._is_latest_versioned_model,
+                    self._is_versioned_class,
+                    is_latest_cycle_model=cycle.__contains__,
+                )
+        finally:
+            self._cycles_being_copied.pop()
+        is_copied_eagerly = self._is_copied_eagerly(cycle)
+        if is_copied_eagerly:
+            # The copies generated before could also use the head models of this cycle. They cannot reach the cycles
+            # that are copied lazily because copying them would have copied these cycles first
+            copied_classes = {*self.concrete_models.values(), *copies.values()}
+            earlier_model_copies = [
+                model_copy for model_copy in self.concrete_models.values() if lenient_issubclass(model_copy, BaseModel)
+            ]
+            for model_copy in earlier_model_copies:
+                self._check_copy(
+                    model_copy,
+                    cycle.__contains__,
+                    lambda cls: _unwrap_model(cast("type[BaseModel]", cls)) in cycle,
+                    skipped_classes=copied_classes,
+                )
+        for model, model_copy in copies.items():
             self.concrete_models[model] = model_copy
-        return cast("type[_T_ANY_MODEL]", model_copy)
+        self._copied_cycles.add(cycle)
+        if is_copied_eagerly:
+            self._has_copied_eager_cycles = True
+
+    def _get_creation_order_of_cycle(self, cycle: frozenset[type[BaseModel]]) -> list[type[BaseModel]]:
+        """Return the order in which to create the copies of the models in the cycle, or raise if we cannot copy it.
+
+        A copy must be created after the copies of the models in the cycle that it needs as classes, e.g. its bases
+        or its default factories. Only its annotations can refer to the others through forward refs.
+        """
+        cycle_name = _get_cycle_name(cycle)
+        if not _PYDANTIC_REBUILDS_FIELDS_WITHOUT_DUPLICATING_METADATA:  # pragma: no cover # Pydantic < 2.11.5
+            raise SchemaGenerationError(
+                f"Cadwyn cannot generate the versioned copies of {cycle_name} because they refer to each other and "
+                "pydantic versions before 2.11.5 apply the validators of their fields twice. "
+                "Please upgrade pydantic to 2.11.5 or newer."
+            )
+        models_needed_as_classes: dict[type[BaseModel], set[type[Union[BaseModel, Enum]]]] = {}
+        for model in sorted(cycle, key=_get_sort_key_of_model):
+            references = self._get_references(model)
+            if not references.is_complete:
+                raise SchemaGenerationError(
+                    f"Cadwyn cannot generate the versioned copies of {cycle_name} because they refer to each other "
+                    f"and the annotations of {model.__qualname__} or of the functions that it uses refer to names "
+                    "that are not defined yet or to type aliases that refer to themselves."
+                )
+            if (
+                references.arg_models
+                and self._should_version_generic_args(model, generation_stack=[])
+                and references.arg_models & cycle
+            ):  # pragma: no cover # _should_version_generic_args never versions args that lead back to the cycle
+                raise CadwynError(f"The generic args of {model.__qualname__} lead back to its reference cycle")
+            models_needed_as_classes[model] = set((references.hard_models | references.base_models) & cycle)
+
+        creation_order = []
+        while models_needed_as_classes:
+            models_to_create = [model for model, needed in models_needed_as_classes.items() if not needed]
+            if not models_to_create:
+                raise SchemaGenerationError(
+                    f"Cadwyn cannot generate the versioned copies of {cycle_name} because they refer to each other "
+                    "in positions that need the classes themselves rather than forward refs to them, e.g. in "
+                    "default factories, in the metadata of Annotated, in type aliases, or in the args of generics "
+                    "that are not from typing or collections.abc. Please refer to these models in the annotations "
+                    "of fields instead."
+                )
+            for model in models_to_create:
+                del models_needed_as_classes[model]
+                for needed in models_needed_as_classes.values():
+                    needed.discard(model)
+            creation_order.extend(models_to_create)
+        return creation_order
+
+    def _is_copied_with_its_cycle(self, model: type[BaseModel]) -> bool:
+        return self._needs_copy(model) and self._get_cycle_to_copy(model) is not None
+
+    def _get_references(self, model: type[Union[BaseModel, Enum]]) -> _ModelReferences:
+        """Return the models that copying the model requests from this generator (reference discovery).
+
+        INVARIANT: discovery must find a superset of the models that copying the model actually requests.
+        The decision to version generic args (the cycle rule) relies on these references to rule out the cycles
+        that would make copying recurse forever, so any model that copying requests and discovery misses can lead
+        to infinite recursion. This is why discovery runs the same function as copying
+        (_change_version_of_model_references) and why tests/conftest.py checks the invariant for every model
+        copied in the test suite. If discovery cannot know all of the references because some names are not defined
+        yet (see _ModelReferences.is_complete), it must say so instead of returning a subset.
+        Discovery must not change the model either because the model may never be copied.
+        The references and the decisions based on them are cached for the lifetime of the generator, just like
+        the copies, so a generic keeps the args that it got when the generator first needed it.
+        """
+        if model not in self._model_references:
+            if lenient_issubclass(model, Enum):
+                references = _ModelReferences(frozenset(), frozenset(), frozenset())
+            elif model in self.model_bundle.schemas:
+                references = self.model_bundle.schemas[model].get_references()
+            else:
+                # We do not wrap the model because wrapping copies parts of it and we may never need its copy
+                references = self._reference_cycles.get_head_references(model)
+            self._model_references[model] = references
+        return self._model_references[model]
 
     @overload
     def _get_wrapper_for_model(self, model: type[BaseModel]) -> "_PydanticModelWrapper[BaseModel]": ...
     @overload
     def _get_wrapper_for_model(self, model: type[Enum]) -> "_EnumWrapper[Enum]": ...
+    @overload
+    def _get_wrapper_for_model(
+        self, model: type[Union[BaseModel, Enum]]
+    ) -> "Union[_PydanticModelWrapper[BaseModel], _EnumWrapper[Enum]]": ...
 
     def _get_wrapper_for_model(
         self, model: type[Union[BaseModel, Enum]]
@@ -833,7 +2719,7 @@ class SchemaGenerator:
                 return self.model_bundle.schemas[model]
             # TODO: My god, what if one of its fields is in our concrete schemas and we don't use it? :O
             # TODO: Add an argument with our concrete schemas for _wrap_pydantic_model
-            wrapper = _wrap_pydantic_model(model)
+            wrapper = _wrap_pydantic_model(model, self._reference_cycles.get_redefined_fields(model))
             self.model_bundle.schemas[model] = wrapper
         elif issubclass(model, Enum):
             if model in self.model_bundle.enums:
@@ -845,17 +2731,303 @@ class SchemaGenerator:
         return wrapper
 
 
+def _parse_version(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", version)[:3])
+
+
+# Pydantic 2.11.0-2.11.4 add the Annotated metadata of an incomplete field (e.g. its validators) to the field again
+# on every rebuild, and copying reference cycles rebuilds their copies once their forward refs can be resolved
+_PYDANTIC_REBUILDS_FIELDS_WITHOUT_DUPLICATING_METADATA = _parse_version(pydantic.VERSION) >= (2, 11, 5)
+
+
+def _get_cycle_name(cycle: "collections.abc.Iterable[type]") -> str:
+    return ", ".join(sorted(model.__qualname__ for model in cycle))
+
+
+def _get_latest_generic_args_error(cycle: frozenset[type[BaseModel]]) -> SchemaGenerationError:
+    return SchemaGenerationError(
+        f"Cadwyn cannot generate the versioned copies of {_get_cycle_name(cycle)} because they refer to each other "
+        "and the same version also keeps the latest models in the type args of generics that refer to them, e.g. "
+        "in `Page[Model]` within a model with instructions that refers to them only through such generics. This is "
+        "a known limitation: Cadwyn decides about the generics of the models with instructions before it knows the "
+        "routes, and a route that uses these models directly needs their own copies. Until it is lifted, use these "
+        "models in the routes only through such generics."
+    )
+
+
+# The keys of the core schemas whose values are not schemas, such as default values, which can be anything
+_CORE_SCHEMA_KEYS_WITHOUT_SCHEMAS = frozenset({"default", "default_factory", "expected", "metadata"})
+
+
+def get_models_that_routes_request(routers: "collections.abc.Iterable[fastapi.routing.APIRouter]") -> set[type[Any]]:
+    """Return the models that versioning the routes of the routers requests from a generator directly"""
+    collector = _ReferencedModelCollector()
+    for router in routers:
+        for route in router.routes:
+            if isinstance(route, fastapi.routing.APIRoute):
+                collector.annotation_transformer.record_route(route)
+    return collector.models
+
+
+def _iter_core_schema_nodes(
+    core_schema: Any,
+    *,
+    definitions: Union[dict[str, Any], None] = None,
+    should_skip_children: Union[Callable[[dict[str, Any]], bool], None] = None,
+) -> "collections.abc.Iterator[dict[str, Any]]":
+    """Iterate over the schemas within the core schema, following its definition refs if definitions are given"""
+    nodes_to_visit = [core_schema]
+    visited_ids: set[int] = set()
+    while nodes_to_visit:
+        node = nodes_to_visit.pop()
+        if id(node) in visited_ids:
+            continue
+        visited_ids.add(id(node))
+        if isinstance(node, dict):
+            yield node
+            if should_skip_children is not None and should_skip_children(node):
+                continue
+            if definitions is not None and node.get("type") == "definition-ref":
+                nodes_to_visit.append(definitions.get(node.get("schema_ref")))
+            nodes_to_visit.extend(value for key, value in node.items() if key not in _CORE_SCHEMA_KEYS_WITHOUT_SCHEMAS)
+        elif isinstance(node, list | tuple):
+            nodes_to_visit.extend(node)
+
+
+def _get_classes_in_core_schema(
+    core_schema: Any,
+    *,
+    definitions: Union[dict[str, Any], None] = None,
+    skipped_classes: "collections.abc.Set[type]" = frozenset(),
+) -> set[type]:
+    """Return the classes that the core schema validates or serializes, e.g. the models in its fields.
+
+    We do not look into the schemas of skipped_classes.
+    """
+
+    def should_skip_children(node: dict[str, Any]) -> bool:
+        cls = node.get("cls")
+        return isinstance(cls, type) and cls in skipped_classes
+
+    return {
+        node["cls"]
+        for node in _iter_core_schema_nodes(
+            core_schema, definitions=definitions, should_skip_children=should_skip_children
+        )
+        if isinstance(node.get("cls"), type)
+    }
+
+
+def _get_core_schema_definitions(core_schema: Any) -> dict[str, Any]:
+    return {node["ref"]: node for node in _iter_core_schema_nodes(core_schema) if isinstance(node.get("ref"), str)}
+
+
+def _get_field_core_schemas(
+    model: type[BaseModel], core_schema: Any, definitions: dict[str, Any]
+) -> Union[dict[str, Any], None]:
+    """Return the core schemas of the fields of the model, or None if we cannot find them (e.g. for RootModel)"""
+    for node in _iter_core_schema_nodes(core_schema, definitions=definitions):
+        if node.get("type") == "model" and node.get("cls") is model:
+            for inner_node in _iter_core_schema_nodes(
+                node.get("schema"), definitions=definitions, should_skip_children=lambda n: n.get("type") == "model"
+            ):
+                if inner_node.get("type") == "model-fields":
+                    return {name: field.get("schema") for name, field in inner_node["fields"].items()}
+            return None
+    return None  # pragma: no cover # The schema of a model always describes the model itself
+
+
+# Unique across all versions and all attempts so that the names of different copies never get mixed up, e.g.
+# through the caches of typing: Optional[ForwardRef("X")] is cached so its ForwardRef("X") is shared.
+_reference_cycle_member_ids = itertools.count()
+
+
+def _get_sort_key_of_model(model: type[BaseModel]) -> tuple[str, str]:
+    return model.__module__, model.__qualname__
+
+
+def _change_version_of_generic_metadata(
+    generator: "Union[SchemaGenerator, _CycleCopier]", schema_generator: "SchemaGenerator", model: type[BaseModel]
+) -> PydanticGenericMetadata:
+    generic_metadata = model.__pydantic_generic_metadata__
+    origin = generic_metadata["origin"]
+    if not schema_generator._should_version_generic_args(model, generation_stack=[]):
+        if origin is not None and schema_generator._is_copied_with_its_cycle(origin):
+            # Pydantic identifies a parametrized generic by its origin and args, so with the head origin, the copy
+            # of e.g. TreeNode[int] would be mistaken for the head TreeNode[int] wherever both of them are used
+            return {**generic_metadata, "origin": generator.change_version_of_base(origin)}
+        return generic_metadata
+    # Pydantic resolves the fields of a parametrized generic (such as Page[Item]) through its origin and args
+    # so they must point to this version's classes too
+    return {
+        "origin": generator.change_version_of_base(origin) if origin is not None else None,
+        "args": generator.annotation_transformer.change_version_of_annotation(_eval_generic_args(model)),
+        "parameters": generic_metadata["parameters"],
+    }
+
+
+@final
+class _CycleCopier:
+    """Generates the copies of all models in a reference cycle at once (see SchemaGenerator._copy_cycle).
+
+    Copying the models goes through it instead of the generator. In the annotations, the models of the cycle are
+    replaced by forward refs to their copies, which pydantic resolves once all of the copies exist. Everywhere else,
+    e.g. in bases and default factories, they are replaced by their copies themselves, which already exist because
+    of the order of creation. All other models are requested from the generator as usual.
+    """
+
+    __slots__ = "_forward_refs", "annotation_transformer", "copies", "model_bundle", "schema_generator"
+
+    def __init__(self, schema_generator: "SchemaGenerator", cycle: frozenset[type[BaseModel]]) -> None:
+        self.schema_generator = schema_generator
+        self.model_bundle = schema_generator.model_bundle
+        self.annotation_transformer = _AnnotationTransformer(self)
+        self.copies: dict[type[BaseModel], type[BaseModel]] = {}
+        self._forward_refs = {
+            model: ForwardRef(f"_CadwynReferenceCycleMember{next(_reference_cycle_member_ids)}") for model in cycle
+        }
+
+    def __getitem__(self, model: type[_T_ANY_MODEL], /) -> Any:
+        if not _is_versionable_model(model) or _unwrap_model(model) not in self._forward_refs:
+            return self.schema_generator[model]
+        member = cast("type[BaseModel]", _unwrap_model(model))
+        if self.annotation_transformer.is_in_hard_position:
+            return self._get_copy(member)
+        return self._forward_refs[member]
+
+    def change_version_of_base(self, base: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
+        if _is_versionable_model(base) and _unwrap_model(base) in self._forward_refs:
+            return cast("type[_T_ANY_MODEL]", self._get_copy(_unwrap_model(base)))
+        return self.schema_generator.change_version_of_base(base)
+
+    def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
+        return _change_version_of_generic_metadata(self, self.schema_generator, model)
+
+    def _get_copy(self, model: Any) -> type[BaseModel]:
+        if model not in self.copies:  # pragma: no cover # The order of creation makes sure that it exists
+            raise CadwynError(f"The copy of {model.__qualname__} was needed before it was created")
+        return self.copies[model]
+
+    def copy(self, creation_order: list[type[BaseModel]]) -> dict[type[BaseModel], type[BaseModel]]:
+        for model in creation_order:
+            wrapper = self.schema_generator._get_wrapper_for_model(model)
+            self.copies[model] = wrapper.generate_model_copy(self)
+        copies_by_name = {
+            self._forward_refs[model].__forward_arg__: model_copy for model, model_copy in self.copies.items()
+        }
+        for model_copy in self.copies.values():
+            # The parent namespace stays with the copy, unlike the namespace passed to model_rebuild, so pydantic
+            # can also resolve the forward refs when it rebuilds the copy or parametrizes it later
+            parent_namespace = unpack_lenient_weakvaluedict(model_copy.__pydantic_parent_namespace__) or {}
+            model_copy.__pydantic_parent_namespace__ = build_lenient_weakvaluedict(parent_namespace | copies_by_name)
+        for model in creation_order:
+            # Pydantic resolves the models nested in a model with the namespace of the outermost model so we cannot
+            # leave it to pydantic to build the copies when they are first used (even with defer_build=True)
+            self.copies[model].model_rebuild(raise_errors=True, _types_namespace={})
+            if not self.copies[model].__pydantic_complete__:  # pragma: no cover # raise_errors=True raises before
+                raise SchemaGenerationError(f"Cadwyn could not build the versioned copy of {model.__qualname__}")
+        for model_copy in self.copies.values():
+            # Pydantic has already resolved the forward refs so the annotations can refer to the copies themselves,
+            # e.g. for typing.get_type_hints
+            annotations = vars(model_copy)["__annotations__"]
+            for name, annotation in annotations.items():
+                annotations[name] = _replace_forward_refs(annotation, copies_by_name)
+        return self.copies
+
+
+_BUILTIN_CONTAINER_TYPES = (list, dict, set, tuple, frozenset)
+# The functions behind pydantic's own constructors, which create instances of the class that they are bound to
+_PYDANTIC_CONSTRUCTORS = frozenset(
+    vars(cls)[name].__func__
+    for cls in (BaseModel, RootModel)
+    for name in ("model_construct", "model_validate", "model_validate_json")
+    if name in vars(cls)
+)
+
+
+def _is_pydantic_model_class(cls: type) -> bool:
+    """Whether the class is BaseModel, RootModel, or a parametrization of RootModel such as RootModel[int]"""
+    return cls in (BaseModel, RootModel) or getattr(cls, "__pydantic_generic_metadata__", {}).get("origin") is RootModel
+
+
+def _iter_values_within(value: Any) -> "collections.abc.Iterator[Any]":
+    """Iterate over the value and the values within it: in its containers and in the fields of its models"""
+    values_to_visit = [value]
+    visited_ids: set[int] = set()
+    while values_to_visit:
+        current_value = values_to_visit.pop()
+        if id(current_value) in visited_ids:
+            continue
+        visited_ids.add(id(current_value))
+        yield current_value
+        if isinstance(current_value, dict):
+            values_to_visit.extend(current_value.values())
+        elif isinstance(current_value, list | tuple | set | frozenset):
+            values_to_visit.extend(current_value)
+        elif isinstance(current_value, BaseModel):
+            values_to_visit.extend(vars(current_value).values())
+            values_to_visit.extend((current_value.__pydantic_extra__ or {}).values())
+
+
+def _replace_forward_refs(annotation: Any, models_by_name: dict[str, type[BaseModel]]) -> Any:
+    """Replace the forward refs to the models in the type positions of the annotation (see _CycleCopier)"""
+    return _replace_in_type_positions(
+        annotation,
+        lambda value: models_by_name.get(value.__forward_arg__, value) if isinstance(value, ForwardRef) else value,
+    )
+
+
+def _replace_in_type_positions(annotation: Any, replace: Callable[[Any], Any]) -> Any:
+    """Replace the values in the type positions of the annotation, keeping the annotation if nothing changes"""
+    replaced = replace(annotation)
+    if replaced is not annotation:
+        return replaced
+    if isinstance(annotation, list):
+        # E.g. the args of Callable[[Item], None]
+        return [_replace_in_type_positions(arg, replace) for arg in annotation]
+    if not isinstance(annotation, (*GenericAliasUnionArgs, UnionType)):
+        return annotation
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    new_args = tuple(
+        _replace_in_type_positions(arg, replace) if _is_type_position_in_generic(origin, index) else arg
+        for index, arg in enumerate(args)
+    )
+    if all(new_arg is arg for new_arg, arg in zip(new_args, args, strict=True)):
+        return annotation
+    if isinstance(annotation, UnionType):
+        return typing.Union[new_args]
+    return _rebuild_generic_alias(annotation, new_args)
+
+
 @cache
 def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGenerator]":
     models = _create_model_bundle(versions)
+    changed_models = frozenset(
+        instruction.schema
+        for version in versions._all_versions
+        for version_change in version.changes
+        for instruction in version_change.alter_schema_instructions
+    ) | frozenset(
+        instruction.enum
+        for version in versions._all_versions
+        for version_change in version.changes
+        for instruction in version_change.alter_enum_instructions
+    )
 
     version_to_context_map = {}
-    context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models, version_bundle=versions)
+    reference_cycles = _ReferenceCycles(
+        changed_models,
+        _get_parametrizations_whose_instructions_reach_other_generics(changed_models),
+    )
+    context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models)
     _migrate_classes(context)
 
     for version in versions.versions:
-        context = _RuntimeSchemaGenContext(current_version=version, models=models, version_bundle=versions)
-        version_to_context_map[str(version.value)] = SchemaGenerator(copy.deepcopy(models))
+        context = _RuntimeSchemaGenContext(current_version=version, models=models)
+        version_to_context_map[str(version.value)] = SchemaGenerator(
+            copy.deepcopy(models), changed_models, reference_cycles
+        )
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
 
@@ -962,13 +3134,33 @@ def _change_model(
     alter_schema_instruction: SchemaHadInstruction,
     version_change_name: str,
 ):
-    if alter_schema_instruction.name == model.name:
+    name = alter_schema_instruction.name
+    description = alter_schema_instruction.description
+    if name is not Sentinel and name == model.name:
         raise InvalidGenerationInstructionError(
             f'You tried to change the name of "{model.name}" in "{version_change_name}" '
             "but it already has the name you tried to assign.",
         )
+    if description is not Sentinel and _get_description(description) == _get_description(model.doc):
+        if description:
+            raise InvalidGenerationInstructionError(
+                f'You tried to change the description of "{model.name}" in "{version_change_name}" '
+                "but it already has the description you tried to assign.",
+            )
+        raise InvalidGenerationInstructionError(
+            f'You tried to remove the description of "{model.name}" in "{version_change_name}" '
+            "but it already doesn't have a description.",
+        )
 
-    model.name = alter_schema_instruction.name
+    if name is not Sentinel:
+        model.name = name
+    if description is not Sentinel:
+        model.doc = description
+
+
+def _get_description(docstring: Union[str, None]) -> Union[str, None]:
+    """Return the description that pydantic generates from the docstring of a model"""
+    return inspect.cleandoc(docstring) if docstring else None
 
 
 def _add_field_to_model(
@@ -1016,6 +3208,10 @@ def _change_field_in_model(
 
     field = defined_fields[alter_schema_instruction.name]
     model.fields[alter_schema_instruction.name] = field
+    if alter_schema_instruction.name not in model.annotations:
+        defined_annotations[alter_schema_instruction.name] = _substitute_type_vars_of_inherited_annotation(
+            model, schemas, alter_schema_instruction.name, defined_annotations[alter_schema_instruction.name]
+        )
     model.annotations[alter_schema_instruction.name] = defined_annotations[alter_schema_instruction.name]
 
     if isinstance(alter_schema_instruction, FieldHadInstruction):
@@ -1036,6 +3232,85 @@ def _change_field_in_model(
             field,
             model.annotations[alter_schema_instruction.name],
         )
+
+
+def _substitute_type_vars_of_inherited_annotation(
+    model: _PydanticModelWrapper[BaseModel],
+    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
+    field_name: str,
+    annotation: Any,
+) -> Any:
+    """Substitute the type vars in the annotation of a field that the model inherits, as pydantic does.
+
+    Pydantic substitutes the type vars of the inherited fields of the parametrizations of generics (e.g. `second: U`
+    of `Pair` in `Pair[str, int]` and in `class StrIntPair(Pair[str, int])`) but not of the fields that a class
+    defines itself. So when the copy of the model defines such a field because of an instruction, it gets the
+    annotation of its parent with the type vars that the parametrizations between them substitute.
+    """
+    parent = next(parent for parent in model._get_parents(schemas) if field_name in parent.annotations).cls
+    # Like pydantic, each class inherits the field from its first base that has it. The other bases, e.g. `A[int]`
+    # in `class M(A[int], B[T])`, do not substitute its type vars even if they reuse them.
+    classes_on_the_way: list[type] = []
+    cls: type = model.cls
+    while cls is not parent:
+        classes_on_the_way.append(cls)
+        cls = next(base for base in cls.__bases__ if lenient_issubclass(base, parent))
+    # From the parametrization closest to the parent to the model itself, as pydantic substitutes them
+    for cls in reversed(classes_on_the_way):
+        origin = getattr(cls, "__pydantic_generic_metadata__", {}).get("origin")
+        if origin is not None:
+            parameters = origin.__pydantic_generic_metadata__["parameters"]
+            type_vars = dict(zip(parameters, _eval_generic_args(cast("type[BaseModel]", cls)), strict=True))
+            substituted_annotation = replace_types(annotation, type_vars)
+            # Pydantic rebuilds Annotated even without type vars in it, which would give it another cache key
+            if substituted_annotation != annotation:
+                annotation = substituted_annotation
+    return annotation
+
+
+def _get_parametrizations_whose_instructions_reach_other_generics(
+    changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
+) -> "frozenset[type[BaseModel]]":
+    """Return the parametrizations whose instructions apply where pydantic builds them in other generics' fields.
+
+    E.g. the instructions of `schema(Pair[str, int])` in `Box[str]` with `pair: Pair[T, int]`
+    (see _ReferenceCycles.get_redefined_field_names).
+    It is decided once for all versions because their generators share the reference cycles.
+    """
+    return frozenset(
+        model for model in changed_models if lenient_issubclass(model, BaseModel) and _is_parametrization(model)
+    )
+
+
+def _is_parametrization(model: type[BaseModel]) -> bool:
+    """Whether the model is the parametrization of a generic, e.g. `Page[Item]` but not `Page` or `ItemPage`"""
+    return model.__pydantic_generic_metadata__["origin"] is not None
+
+
+def _get_models_in_field(field: FieldInfo) -> Union[frozenset[type[Union[BaseModel, Enum]]], None]:
+    """Return the models that copying the field requests (see _change_version_of_model_references), if we know them"""
+    if _contains_pydantic_recursive_refs(field.annotation):
+        # Pydantic refers to the parametrizations that it is still building (e.g. `children: list[Node[T]]` within
+        # `Node[str]`) by their pydantic references, which do not lead to the copies, so we do not know the models
+        return None
+    collector = _ReferencedModelCollector()
+    transformer = collector.annotation_transformer
+    with transformer.hard_position():
+        transformer.change_version_of_annotation(_extract_passed_field_attributes(field))
+    transformer.change_version_of_annotation(_get_annotation_with_metadata(field))
+    return frozenset(collector.models) if collector.is_complete else None
+
+
+def _get_annotation_with_metadata(field: FieldInfo) -> Any:
+    return _AnnotatedAlias(field.annotation, tuple(field.metadata)) if field.metadata else field.annotation
+
+
+def _contains_pydantic_recursive_refs(annotation: Any) -> bool:
+    if isinstance(annotation, PydanticRecursiveRef):
+        return True
+    # E.g. the list of args in Callable[[Item], None]
+    args = annotation if isinstance(annotation, list) else get_args(annotation)
+    return any(_contains_pydantic_recursive_refs(arg) for arg in args)
 
 
 def _change_field(
@@ -1079,7 +3354,113 @@ def _change_field(
                     f'from "{model.name}" to {attr_value!r} in "{version_change_name}" '
                     "but it already has that value.",
                 )
-            field.update_attribute(name=attr_name, value=attr_value)
+            # Like Cadwyn always did, we don't change the annotation's metadata, so a constraint from it (e.g. from
+            # `Annotated[str, Field(min_length=1)]`) still wins over the new value. Changing it would make the older
+            # versions reject the requests and responses that they have always accepted whenever it is stricter.
+            field.update_attribute(name=attr_name, value=attr_value, changed_by=model.cls)
+
+
+def _change_annotated_metadata(
+    annotation: Any, should_change: Callable[[Any], bool], change: Callable[[Any], Any]
+) -> Any:
+    """Change the attribute in the annotation's metadata in the same way it is changed in the field.
+
+    Otherwise, the metadata would override the field. For example, both `x: Annotated[str, Field(min_length=1)]`
+    and `x: str = Field(min_length=1)` with "from __future__ import annotations" (where the annotation is rebuilt
+    from FieldInfo.metadata as `Annotated[str, MinLen(1)]`) keep `min_length=1` in the annotation.
+    We change the metadata instead of removing it to preserve its order relative to validators.
+    """
+    if get_origin(annotation) != Annotated:
+        return annotation
+    sub_annotations = get_args(annotation)
+    return _AnnotatedAlias(
+        sub_annotations[0],
+        tuple(change(sub_ann) if should_change(sub_ann) else sub_ann for sub_ann in sub_annotations[1:]),
+    )
+
+
+def _metadata_sets_constraint(metadata: Any, attr_name: str) -> bool:
+    """Whether the metadata sets the constraint, e.g. annotated_types.MinLen or pydantic.Strict"""
+    # pydantic also allows constraint classes such as `Annotated[int, Strict]`
+    return attr_name in collect_known_metadata([metadata])[0] and (
+        inspect.isclass(metadata) or hasattr(metadata, attr_name)
+    )
+
+
+def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
+    """Whether field().didnt_have() deletes the attribute from the metadata"""
+    if isinstance(metadata, FieldInfo):
+        return hasattr(metadata, attr_name) or attr_name in _extract_passed_field_attributes(metadata)
+    if inspect.isclass(metadata):
+        return _metadata_sets_constraint(metadata, attr_name)
+    # Only attributes that can be set on the object itself, so not str.title from `Annotated[str, "Some doc"]`
+    return hasattr(metadata, attr_name) and (
+        hasattr(metadata, "__dict__")
+        or any(attr_name in getattr(cls, "__slots__", ()) for cls in type(metadata).__mro__)
+    )
+
+
+def _set_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> Any:
+    if inspect.isclass(metadata):
+        # We never change the class itself and use its instance with the same constraints instead
+        constraint = metadata.__new__(metadata)
+        for name, value in collect_known_metadata([metadata])[0].items():
+            object.__setattr__(constraint, name, value)
+    else:
+        # We don't use dataclasses.replace because it would call __init__ that subclasses can override
+        constraint = copy.copy(metadata)
+    object.__setattr__(constraint, attr_name, attr_value)
+    return constraint
+
+
+def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
+    if isinstance(metadata, FieldInfo):
+        # We only delete the attributes of FieldInfo itself (never its constraints), and they get the values of an
+        # empty Field()
+        field_info = _copy_field_info(metadata)
+        field_info._attributes_set.pop(attr_name, None)
+        setattr(field_info, attr_name, dict_of_empty_field_info[attr_name])
+        return field_info
+    return _set_metadata_attribute(metadata, attr_name, _get_unset_metadata_attribute_value(metadata, attr_name))
+
+
+def _get_unset_metadata_attribute_value(metadata: Any, attr_name: str) -> Any:
+    # Grouped metadata can become invalid with None (e.g. annotated_types.Len(min_length=None) fails to iterate)
+    # so we use the default value of its attribute from the library class that defines it because
+    # the default of a user's subclass can be a constraint itself (e.g. `min_length: int = 2`)
+    if isinstance(metadata, annotated_types.GroupedMetadata):
+        library_dataclasses = (
+            cls
+            for cls in type(metadata).__mro__
+            if dataclasses.is_dataclass(cls) and cls.__module__.partition(".")[0] in {"annotated_types", "pydantic"}
+        )
+        return next(
+            (
+                field.default
+                for cls in library_dataclasses
+                for field in dataclasses.fields(cls)
+                if field.name == attr_name and field.default is not dataclasses.MISSING
+            ),
+            None,
+        )
+    # pydantic ignores other constraints that are None
+    return None
+
+
+# The attributes that field().didnt_have() removes from a Field() in the annotation's metadata, such as
+# `Annotated[str, Field(description="...")]`. Cadwyn 7.4.0 left that Field() unchanged, so we only remove the
+# attributes that only document the field: removing any other one could make the older versions reject or change
+# the data that they have always accepted or returned. E.g. removing a default makes the field required, removing an
+# alias renames it, removing exclude returns a hidden field, and even removing a constraint such as max_length can
+# make a model-wide limit (`ConfigDict(str_max_length=...)`) or an older had() apply, or change the member that a
+# `left_to_right` union picks. json_schema_extra holds arbitrary data that validators can read, so it stays as well.
+_FIELD_INFO_ATTRIBUTES_REMOVED_BY_DIDNT_HAVE = frozenset(("title", "description", "examples", "deprecated"))
+
+
+def _metadata_attribute_can_be_deleted(metadata: Any, attr_name: str) -> bool:
+    if isinstance(metadata, FieldInfo) and attr_name not in _FIELD_INFO_ATTRIBUTES_REMOVED_BY_DIDNT_HAVE:
+        return False
+    return _metadata_has_attribute(metadata, attr_name)
 
 
 def _delete_field_attributes(
@@ -1095,13 +3476,17 @@ def _delete_field_attributes(
         if attr_name in field.passed_field_attributes:
             field.delete_attribute(name=attr_name)
             deleted = True
-        if get_origin(annotation) == Annotated and any(  # pragma: no branch
-            hasattr(sub_ann, attr_name) for sub_ann in get_args(annotation)
+        # Any metadata with such an attribute counts (even if it is None) to keep accepting the same instructions
+        if get_origin(annotation) == Annotated and any(
+            _metadata_has_attribute(sub_ann, attr_name) for sub_ann in get_args(annotation)[1:]
         ):
-            for sub_ann in get_args(annotation):
-                if hasattr(sub_ann, attr_name):
-                    object.__setattr__(sub_ann, attr_name, None)
-                    deleted = True
+            annotation = _change_annotated_metadata(
+                annotation,
+                functools.partial(_metadata_attribute_can_be_deleted, attr_name=attr_name),
+                functools.partial(_delete_metadata_attribute, attr_name=attr_name),
+            )
+            model.annotations[alter_schema_instruction.name] = annotation
+            deleted = True
         if not deleted:
             raise InvalidGenerationInstructionError(
                 f'You tried to delete the attribute "{attr_name}" of field "{alter_schema_instruction.name}" '
@@ -1190,9 +3575,96 @@ class _EnumWrapper(Generic[_T_ENUM]):
         }
 
 
+def _is_same_parametrization(model: type[Union[BaseModel, Enum]], generic: type[BaseModel]) -> bool:
+    """Whether the model is the generic or a parametrization of the same origin with the same args.
+
+    E.g. Page[Category] and Page["Category"] are different classes but they mean the same thing
+    """
+    if model is generic:
+        return True
+    origin = generic.__pydantic_generic_metadata__["origin"]
+    return (
+        lenient_issubclass(model, BaseModel)
+        and model.__pydantic_generic_metadata__["origin"] is origin
+        and _eval_generic_args(model) == _eval_generic_args(generic)
+    )
+
+
+def _eval_generic_args(model: type[BaseModel]) -> tuple[Any, ...]:
+    # Generic arguments such as "Item" in Page["Item"] stay strings in pydantic's generic metadata
+    return tuple(_eval_forward_refs(arg, model) for arg in model.__pydantic_generic_metadata__["args"])
+
+
+def _eval_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
+    """Resolve the forward refs in the annotation of a model the way pydantic does, keeping the unresolvable ones"""
+    if not _contains_forward_refs(annotation):
+        return annotation
+    if sys.version_info < (3, 11):
+        annotation = _convert_strings_in_builtin_generics_to_forward_refs(annotation)
+    globalns = getattr(sys.modules.get(model.__module__), "__dict__", None)
+    localns = {model.__name__: model} | (unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
+    evaluated_annotation = _evaluate_user_annotations(lambda: pydantic_try_eval_type(annotation, globalns, localns)[0])
+    # The forward refs that are left make discovery keep the head args, like main
+    return annotation if evaluated_annotation is _UNRESOLVED else evaluated_annotation
+
+
+def _contains_forward_refs(annotation: Any) -> bool:
+    """Whether the annotation has strings or forward refs where typing evaluates them as types.
+
+    So the strings in the args of Literal and in the metadata of Annotated do not count.
+    """
+    from typing_inspection.typing_objects import is_annotated, is_literal
+
+    if isinstance(annotation, str | ForwardRef):
+        return True
+    origin = get_origin(annotation)
+    if is_literal(origin):
+        return False
+    args = get_args(annotation)
+    if is_annotated(origin):
+        args = args[:1]
+    return any(_contains_forward_refs(arg) for arg in args)
+
+
+def _convert_strings_in_builtin_generics_to_forward_refs(annotation: Any) -> Any:
+    """Python 3.10 does not evaluate the strings in the args of builtin generics such as list["Item"].
+
+    Python 3.11+ converts them to forward refs while evaluating, which we do ourselves here.
+    """
+    from typing_inspection.typing_objects import is_annotated, is_literal
+
+    if isinstance(annotation, types.UnionType):
+        # Unlike typing.Union, `X | Y` cannot be rebuilt with copy_with
+        return functools.reduce(
+            operator.or_, (_convert_strings_in_builtin_generics_to_forward_refs(arg) for arg in annotation.__args__)
+        )
+    if isinstance(annotation, types.GenericAlias):
+        args = tuple(
+            ForwardRef(arg) if isinstance(arg, str) else _convert_strings_in_builtin_generics_to_forward_refs(arg)
+            for arg in annotation.__args__
+        )
+        return types.GenericAlias(annotation.__origin__, args)
+    origin = get_origin(annotation)
+    # Bare aliases such as typing.List have no args to convert
+    args = getattr(annotation, "__args__", ())
+    if is_literal(origin) or not args or not hasattr(annotation, "copy_with"):
+        return annotation
+    if is_annotated(origin):
+        return _AnnotatedAlias(
+            _convert_strings_in_builtin_generics_to_forward_refs(annotation.__origin__), annotation.__metadata__
+        )
+    return annotation.copy_with(tuple(_convert_strings_in_builtin_generics_to_forward_refs(arg) for arg in args))
+
+
+def _try_eval_type_for_discovery(value: Any, globals: dict[str, Any]) -> Any:
+    """Like _try_eval_type but keeps the string if evaluating it fails in any way"""
+    evaluated_value = _evaluate_user_annotations(lambda: _try_eval_type(value, globals))
+    return value if evaluated_value is _UNRESOLVED else evaluated_value
+
+
 def _try_eval_type(value: Any, globals: dict[str, Any]) -> Any:
     new_value, success = pydantic_try_eval_type(value, globals)
     if success:
         return new_value
-    else:  # pragma: no cover # Can't imagine when this would happen
+    else:
         return value

@@ -427,6 +427,40 @@ def test__changelog__basic_endpoint_interactions(create_versioned_app: CreateVer
     ]
 
 
+def test__changelog__schema_had_description__should_only_describe_renaming(
+    create_versioned_app: CreateVersionedApp,
+):
+    class DescribedSchema(BaseModel):
+        """INTERNAL: head-only implementation note."""
+
+        some_field: str
+
+    class RenamedSchema(BaseModel):
+        some_field: str
+
+    router = VersionedAPIRouter()
+
+    @router.post("/route1")
+    async def route1(described: DescribedSchema, renamed: RenamedSchema):
+        raise NotImplementedError
+
+    app = create_versioned_app(
+        version_change(
+            schema(DescribedSchema).had(description="A public description."),
+            schema(RenamedSchema).had(name="OldSchema", description="Another public description."),
+        ),
+        router=router,
+    )
+
+    assert app.generate_changelog().model_dump(mode="json")["versions"][0]["changes"][0]["instructions"] == [  # ty: ignore[deprecated]  # Legacy API coverage.
+        {
+            "type": ChangelogEntryType.schema_changed,
+            "model": "OldSchema",
+            "modified_attributes": {"name": "RenamedSchema"},
+        },
+    ]
+
+
 def test__changelog__with_hidden_instructions(create_versioned_app: CreateVersionedApp):
     class SchemaWithSomeField(BaseModel):
         some_field: str = Field(pattern="sasdasd")
@@ -467,7 +501,7 @@ def test__changelog__with_child_overriding_changed_field_in_parent__unused_model
         some_field: str = Field(pattern="sasdasd")
 
     class SchemaChild(SchemaWithSomeField):
-        some_field: int = Field(default=83)
+        some_field: int = Field(default=83)  # ty: ignore[invalid-attribute-override]  # Test a deliberate field type override.
 
     router = VersionedAPIRouter()
 

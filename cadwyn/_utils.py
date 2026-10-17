@@ -6,6 +6,9 @@ from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
 from pydantic._internal._decorators import DecoratedType, unwrap_wrapped_function
 from typing_extensions import ParamSpec, override
 
+if TYPE_CHECKING:
+    from typing_extensions import TypeIs
+
 Sentinel: Any = object()
 
 _P = ParamSpec("_P")
@@ -78,18 +81,18 @@ def fully_unwrap_decorator(
     return unwrap_wrapped_function(func)
 
 
-T = TypeVar("T", bound=type[object])
+_SubclassT = TypeVar("_SubclassT")
 
-if TYPE_CHECKING:
-    lenient_issubclass = issubclass
 
-else:
-
-    def lenient_issubclass(cls: type, other: Union[T, tuple[T, ...]]) -> bool:
-        try:
-            return issubclass(cls, other)
-        except TypeError:  # pragma: no cover
-            return False
+# Unlike issubclass, accepts non-class annotations (unions, generic aliases, etc.) and returns False for them
+def lenient_issubclass(
+    cls: object, other: Union[type[_SubclassT], tuple[type[_SubclassT], ...]]
+) -> "TypeIs[type[_SubclassT]]":
+    try:
+        # Non-class annotations raise TypeError, which is handled below
+        return issubclass(cls, other)  # ty: ignore[invalid-argument-type]
+    except TypeError:  # pragma: no cover
+        return False
 
 
 def _callable_name(call: Callable[..., object]) -> str:

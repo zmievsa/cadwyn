@@ -124,6 +124,18 @@ def test__schema_field_had__field_type_is_narrowed(
     assert_models_are_equal(schemas["2000-01-01"][GenericSchema], ExpectedSchema)
 
 
+def test__schema_had_description__generic_model__should_only_change_description_of_generic_model(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(version_change(schema(GenericSchema).had(description="Old generic description")))
+
+    assert schemas["2000-01-01"][GenericSchema].__doc__ == "Old generic description"
+    assert schemas["2000-01-01"][GenericSchema].model_json_schema()["description"] == "Old generic description"
+    assert "description" not in schemas["2001-01-01"][GenericSchema].model_json_schema()
+    # Like in pydantic, the subclasses of the generic model do not inherit its description
+    assert "description" not in schemas["2000-01-01"][ParametrizedSchema].model_json_schema()
+
+
 ################
 # PARAMETRIZED #
 ################
@@ -175,3 +187,17 @@ def test__schema_field_had__field_parametrized_type_is_replaced(create_runtime_s
         pass
 
     assert_models_are_equal(schemas["2000-01-01"][ParametrizedSchema], ExpectedSchema)
+
+
+def test__schema_had_description__subclass_of_parametrized_model__should_change_its_description(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(ParametrizedSchema).had(description="Old parametrized description"))
+    )
+
+    assert schemas["2000-01-01"][ParametrizedSchema].model_json_schema()["description"] == (
+        "Old parametrized description"
+    )
+    assert "description" not in schemas["2000-01-01"][GenericSchema].model_json_schema()
+    assert_models_are_equal(schemas["2000-01-01"][ParametrizedSchema], ParametrizedSchema)

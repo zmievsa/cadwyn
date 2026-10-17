@@ -92,6 +92,30 @@ An exact match is always preferred to a partial match and a request is never mat
 
 The routing is implemented like this because Cadwyn was born in a microservice architecture and it is extremely convenient to have waterfalling there. Assume that you have two Cadwyn services: Payables and Receivables, each defining its own API versions. Payables service might have ten versions while Receivables service might have only two versions because it did not need as many breaking changes. If a client requests a version that does not exist in Receivables, Cadwyn will waterfall to some earlier version, making Receivables behavior consistent even if API keeps getting new versions.
 
+## Requests without an API version
+
+Cadwyn routes versioned endpoints by the API version, so a request without it gets a 404. That's why the OpenAPI of each version documents the version header as required unless you [set a default API version](#set-a-default-api-version). Some clients cannot send the version header. For example, Swagger UI's "Authorize" button for `OAuth2PasswordBearer(tokenUrl=...)` sends the token request to `tokenUrl` without any custom headers. You have two options for such endpoints.
+
+### Keep the endpoint unversioned
+
+Define the endpoint on a regular `fastapi.APIRouter` and include it with `app.include_router()`, either before or after `generate_and_include_versioned_routers()`. Cadwyn does not version such routes:
+
+```python
+{! ./docs_src/concepts/api_version_parameter/block001.py !}
+```
+
+Unversioned routes are only available to requests **without** the version header, so all clients have to call this endpoint without it. Cadwyn does not migrate unversioned endpoints, so if you ever change this endpoint, keep it compatible with your older clients and cover that with tests.
+
+### Set a default API version
+
+Pass `api_version_default_value` to `Cadwyn` to route the requests without the version header to a specific version:
+
+```python
+{! ./docs_src/concepts/api_version_parameter/block002.py !}
+```
+
+Note that this applies to **every** request without the version header, not only to the token endpoint. `api_version_default_value` can also be an async function that takes the `Request` and returns the version.
+
 ## API version parameter title and description
 
 You can pass a title and/or a description to the `Cadwyn()` constructor. It is equivalent to passing `title` and `description` to `fastapi.Path()` or `fastapi.Header()` constructors.

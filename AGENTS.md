@@ -1,2 +1,3 @@
 - For each new feature (not a bugfix), update the relevant docs
 - Update `CHANGELOG.md` for every user-facing change, including typing, documentation, and performance changes
+- Never close a GitHub issue (or mark it as done) until the fix is released. Merging a fix to `main` is not enough; reference the issue without closing keywords like "fixes"/"closes" in PRs and commits

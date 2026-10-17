@@ -14,6 +14,7 @@ from typing import (
 
 import fastapi.routing
 from fastapi import APIRouter
+from fastapi.datastructures import _Unset
 from fastapi.routing import APIRoute, _EffectiveRouteContext, _iter_routes_with_context
 from pydantic import BaseModel
 from starlette.routing import BaseRoute
@@ -32,6 +33,7 @@ from cadwyn.exceptions import (
 from cadwyn.schema_generation import (
     _add_request_and_response_params,
     generate_versioned_models,
+    get_models_that_routes_request,
 )
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionType
@@ -138,7 +140,9 @@ def copy_route(route: _RouteT, effective_route_context: _EffectiveRouteContext |
     # containing ModelField/TypeAdapter instances instead of recursing into them.
     # These can hold TypeAdapters for recursive types (e.g. JsonValue) that cause
     # infinite recursion during deepcopy.
-    memo: dict[int, Any] = {}
+    # FastAPI checks `example is not _Unset` by identity when building OpenAPI, so a copied sentinel
+    # inside our endpoint wrappers' param defaults would be rendered as `"example": {}`.
+    memo: dict[int, Any] = {id(_Unset): _Unset}
     for attr in ("dependant", _FLAT_DEPENDANT_ATTR, "body_field", "response_model", "dependency_overrides_provider"):
         obj = getattr(route, attr, None)
         if obj is not None:
@@ -212,8 +216,12 @@ class _EndpointTransformer(Generic[_R, _WR]):
         webhook_routers: dict[VersionType, _WR] = {}
 
         for version in self.versions:
-            self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(router)
-            self.schema_generators[str(version.value)].annotation_transformer.migrate_router_to_version(webhook_router)
+            schema_generator = self.schema_generators[str(version.value)]
+            # All routes of the version must be known before any of them is versioned so that the decisions about
+            # the models that refer to each other do not depend on the order of the routes
+            with schema_generator.versioning_routes(get_models_that_routes_request([router, webhook_router])):
+                schema_generator.annotation_transformer.migrate_router_to_version(router)
+                schema_generator.annotation_transformer.migrate_router_to_version(webhook_router)
 
             self._attach_routes_to_data_converters(router, self.head_router, version)
 
@@ -528,7 +536,8 @@ def _validate_no_repetitions_in_routes(routes: list[fastapi.routing.APIRoute]):
 def _add_data_migrations_to_route(
     route: APIRoute,
     head_route: Any,
-    template_body_field: Union[type[BaseModel], None],
+    # A single body parameter can also use a primitive, union, or generic annotation.
+    template_body_field: object,
     template_body_field_name: Union[str, None],
     dependant_for_request_migrations: "Dependant",
     versions: VersionBundle,

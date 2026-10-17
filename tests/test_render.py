@@ -1,11 +1,16 @@
 import re
 import sys
+from datetime import datetime
 from enum import Enum
+from typing import Annotated, Any, ClassVar
 
 import pytest
+from pydantic import AfterValidator, BaseModel, Field
 
+from cadwyn import VersionChange, schema
 from cadwyn._render import render_model, render_model_by_path, render_module_by_path
 from cadwyn.exceptions import ImportFromStringError
+from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure.versions import Version, VersionBundle
 from tests.test_cli import code
 
@@ -116,3 +121,259 @@ def test__render_model__with_wrong_format():
         ),
     ):
         render_model_by_path("tests._resources.render.complex.classes", "", "")
+
+
+class RenderedParent(BaseModel):
+    foo: str = Field(max_length=10)
+    bar: int = 0
+
+
+class RenderedLeftChild(RenderedParent):
+    pass
+
+
+class RenderedRightChild(RenderedParent):
+    pass
+
+
+class RenderedDiamond(RenderedLeftChild, RenderedRightChild):
+    pass
+
+
+class TightenRightChild(VersionChange):
+    description = "Tighten the right child"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedParent).field("bar").had(description="Bar"),
+        schema(RenderedRightChild).field("foo").had(max_length=3),
+    )
+
+
+def test__render_model__diamond_whose_other_parent_changed_inherited_field__should_inherit_it_from_first_base():
+    versions = VersionBundle(Version("2001-01-01", TightenRightChild), Version("2000-01-01"))
+
+    assert code(render_model(RenderedDiamond, versions, "2000-01-01")) == code(
+        """
+class RenderedDiamond(RenderedLeftChild, RenderedRightChild):
+    pass
+"""
+    )
+    # The rendered models behave like the ones that Cadwyn generates
+    rendered_namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field}
+    generated_models = generate_versioned_models(versions)["2000-01-01"]
+    for model in (RenderedParent, RenderedLeftChild, RenderedRightChild, RenderedDiamond):
+        exec(render_model(model, versions, "2000-01-01"), rendered_namespace)
+        rendered_schema = rendered_namespace[model.__name__].model_json_schema()
+        assert rendered_schema["properties"]["foo"] == generated_models[model].model_json_schema()["properties"]["foo"]
+
+
+class ChangeTypeOfLeftChildAndDescriptionOfRightChild(VersionChange):
+    description = "Change the type of the left child and the description of the right child"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedParent).field("bar").had(description="Bar"),
+        schema(RenderedLeftChild).field("foo").had(type=bytes),
+        schema(RenderedRightChild).field("foo").had(description="Right"),
+    )
+
+
+def test__render_model__sibling_changed_type_of_inherited_field__should_render_the_type_of_shared_field():
+    versions = VersionBundle(
+        Version("2001-01-01", ChangeTypeOfLeftChildAndDescriptionOfRightChild), Version("2000-01-01")
+    )
+
+    # As in Cadwyn 7.4.0: the parent has an instruction of its own so its subclasses share the field with it, and
+    # `cadwyn render` renders the type of the shared field
+    assert code(render_model(RenderedRightChild, versions, "2000-01-01")) == code(
+        """
+class RenderedRightChild(RenderedParent):
+    foo: bytes = Field(max_length=10, description='Right')
+"""
+    )
+
+
+def normalize(value: str) -> str:
+    return value.strip()
+
+
+class RenderedValidatedParent(BaseModel):
+    foo: Annotated[str, AfterValidator(normalize)]
+    bar: int = 0
+
+
+class RenderedValidatedLeftChild(RenderedValidatedParent):
+    pass
+
+
+class RenderedValidatedRightChild(RenderedValidatedParent):
+    pass
+
+
+class RenderedValidatedDiamond(RenderedValidatedLeftChild, RenderedValidatedRightChild):
+    pass
+
+
+class DescribeValidatedRightChild(VersionChange):
+    description = "Describe the field of the right child"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedValidatedParent).field("bar").had(description="Bar"),
+        schema(RenderedValidatedRightChild).field("foo").had(description="Right"),
+    )
+
+
+def test__render_model__diamond_with_functional_validator_in_inherited_field__should_render_valid_python():
+    versions = VersionBundle(Version("2001-01-01", DescribeValidatedRightChild), Version("2000-01-01"))
+
+    rendered = render_model(RenderedValidatedDiamond, versions, "2000-01-01")
+
+    compile(rendered, "<rendered>", "exec")
+    generated_diamond = generate_versioned_models(versions)["2000-01-01"][RenderedValidatedDiamond]
+    assert generated_diamond.model_validate({"foo": " value "}).foo == "value"
+    # As in Cadwyn 7.4.0: the parent has an instruction of its own so its subclasses share the field with it
+    assert generated_diamond.model_fields["foo"].description == "Right"
+
+
+class RenderedParentWithFactory(BaseModel):
+    created_at: datetime = Field(default_factory=datetime.now)
+    bar: int = 0
+
+
+class RenderedLeftChildWithFactory(RenderedParentWithFactory):
+    pass
+
+
+class RenderedRightChildWithFactory(RenderedParentWithFactory):
+    pass
+
+
+class RenderedDiamondWithFactory(RenderedLeftChildWithFactory, RenderedRightChildWithFactory):
+    pass
+
+
+class DescribeRightChildWithFactory(VersionChange):
+    description = "Describe the field of the right child"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedParentWithFactory).field("bar").had(description="Bar"),
+        schema(RenderedRightChildWithFactory).field("created_at").had(description="Right"),
+    )
+
+
+def test__render_model__diamond_whose_other_parent_changed_field_with_default_factory__should_render_valid_python():
+    versions = VersionBundle(Version("2001-01-01", DescribeRightChildWithFactory), Version("2000-01-01"))
+
+    rendered = render_model(RenderedDiamondWithFactory, versions, "2000-01-01")
+
+    compile(rendered, "<rendered>", "exec")
+
+
+class RenderedDocumentedModel(BaseModel):
+    """INTERNAL: head-only implementation note."""
+
+    foo: str
+
+
+class RenderedUndocumentedModel(BaseModel):
+    foo: str
+
+
+class DescribeRenderedModels(VersionChange):
+    description = "Describe the rendered models"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedDocumentedModel).had(description="A public description."),
+        schema(RenderedUndocumentedModel).had(description="Another public description."),
+    )
+
+
+class RenderedModelWithMultilineDescription(BaseModel):
+    foo: str
+
+
+class RenderedModelWithDocumentedClassVar(BaseModel):
+    """Head description."""
+
+    internal: ClassVar[str] = "private"
+    """Internal implementation notes."""
+
+
+class RemoveDescriptionOfRenderedModel(VersionChange):
+    description = "Remove the description of the rendered model"
+    instructions_to_migrate_to_previous_version = (
+        schema(RenderedDocumentedModel).had(description=None),
+        schema(RenderedModelWithDocumentedClassVar).had(description=None),
+        schema(RenderedModelWithMultilineDescription).had(description="  First line.\n    Second line.\n"),
+    )
+
+
+# Version changes can only belong to one version bundle
+VERSIONS_WITH_REMOVED_DESCRIPTIONS = VersionBundle(
+    Version("2001-01-01", RemoveDescriptionOfRenderedModel), Version("2000-01-01")
+)
+
+
+def assert_rendered_model_has_the_description_of_generated_model(
+    model: type[BaseModel], versions: VersionBundle, version: str
+) -> None:
+    rendered_namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field, "ClassVar": ClassVar}
+    exec(render_model(model, versions, version), rendered_namespace)
+    generated_model = generate_versioned_models(versions)[version][model]
+    rendered_schema = rendered_namespace[model.__name__].model_json_schema()
+    assert rendered_schema.get("description") == generated_model.model_json_schema().get("description")
+
+
+def test__render_model__schema_had_description__should_render_description_of_the_version():
+    versions = VersionBundle(Version("2001-01-01", DescribeRenderedModels), Version("2000-01-01"))
+
+    assert code(render_model(RenderedDocumentedModel, versions, "2000-01-01")) == code(
+        '''
+class RenderedDocumentedModel(BaseModel):
+    """A public description."""
+    foo: str = Field()
+'''
+    )
+    assert code(render_model(RenderedUndocumentedModel, versions, "2000-01-01")) == code(
+        '''
+class RenderedUndocumentedModel(BaseModel):
+    """Another public description."""
+    foo: str = Field()
+'''
+    )
+    assert code(render_model(RenderedDocumentedModel, versions, "2001-01-01")) == code(
+        '''
+class RenderedDocumentedModel(BaseModel):
+    """INTERNAL: head-only implementation note."""
+    foo: str = Field()
+'''
+    )
+
+
+def test__render_model__schema_had_description_none__should_render_model_without_docstring():
+    versions = VERSIONS_WITH_REMOVED_DESCRIPTIONS
+
+    assert code(render_model(RenderedDocumentedModel, versions, "2000-01-01")) == code(
+        """
+class RenderedDocumentedModel(BaseModel):
+    foo: str = Field()
+"""
+    )
+    assert_rendered_model_has_the_description_of_generated_model(RenderedDocumentedModel, versions, "2000-01-01")
+
+
+def test__render_model__schema_had_description_none__with_documented_class_var__should_not_render_docstring():
+    versions = VERSIONS_WITH_REMOVED_DESCRIPTIONS
+
+    # The documentation of the class var would become the docstring of the class if it was first
+    assert code(render_model(RenderedModelWithDocumentedClassVar, versions, "2000-01-01")) == code(
+        """
+class RenderedModelWithDocumentedClassVar(BaseModel):
+    pass
+"""
+    )
+    assert_rendered_model_has_the_description_of_generated_model(
+        RenderedModelWithDocumentedClassVar, versions, "2000-01-01"
+    )
+
+
+def test__render_model__schema_had_multiline_description__should_render_the_same_description():
+    versions = VERSIONS_WITH_REMOVED_DESCRIPTIONS
+
+    assert_rendered_model_has_the_description_of_generated_model(
+        RenderedModelWithMultilineDescription, versions, "2000-01-01"
+    )

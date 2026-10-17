@@ -294,6 +294,9 @@ Cadwyn can migrate more than just request bodies.
 * `headers: starlette.datastructures.MutableHeaders`
 * `cookies: dict[str, str]`
 * `query_params: dict[str, str]`
+* `form: list[tuple[str, UploadFile | str]] | None` for requests to endpoints that declare their form fields as separate `Form()` or `File()` parameters. Otherwise it is `None`. For example, an endpoint that takes a single model through `Form()` gets the model's fields as a dict in `body` instead
+
+If a migration reads an uploaded file from `form`, it must `seek` the file back to where the latest version should start reading it, usually `upload.file.seek(0)`. Otherwise, the latest version gets the file as the migration left it, e.g. empty.
 
 `ResponseInfo` has the following interfaces to migrate responses:
 
@@ -458,6 +461,8 @@ def my_dependency(
 ```
 
 but the majority of your dependencies will not need this as most dependencies should not have side effects or network calls within them.
+
+Dependencies that read uploaded files or move their position (e.g. to skip a header) need care: both runs see the same files. Do such work in the run that gives your endpoint its arguments, i.e. when `current_dependency_solver` is `"cadwyn"`, or `"fastapi"` for requests that Cadwyn doesn't migrate (requests without an API version). Before the `"cadwyn"` run, Cadwyn moves the files that FastAPI has read for `bytes` params back to their start, so a file that a dependency has moved only in the `"fastapi"` run can be moved back.
 
 ## Version changes with side effects
 
