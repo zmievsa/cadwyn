@@ -19,7 +19,7 @@ app = typer.Typer(
 render_subapp = typer.Typer(
     name="render",
     add_completion=False,
-    help="Render pydantic models and enums from a certainn version and output them to stdout",
+    help="Render pydantic models and enums from a certain version and output them to stdout",
 )
 
 app.add_typer(render_subapp)
