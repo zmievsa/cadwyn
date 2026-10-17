@@ -406,7 +406,7 @@ class Cadwyn(FastAPI):
         else:
             raise HTTPException(
                 status_code=404,
-                detail=f"OpenApi file of with version `{version}` not found",
+                detail=f"OpenApi file with version `{version}` not found",
             )
 
         # Add root path to servers when mounted as sub-app or proxy is used

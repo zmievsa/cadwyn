@@ -477,7 +477,7 @@ def test__get_openapi__api_version_header_has_configured_metadata_and_date_schem
 def test__get_openapi__nonexisting_version__should_return_404():
     resp = client_without_headers.get("/openapi.json?version=2023-01-01")
     assert resp.status_code == 404
-    assert resp.json() == {"detail": "OpenApi file of with version `2023-01-01` not found"}
+    assert resp.json() == {"detail": "OpenApi file with version `2023-01-01` not found"}
 
 
 def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():

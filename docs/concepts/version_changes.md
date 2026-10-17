@@ -257,9 +257,9 @@ That said, schemas are highly recommended, since it is much easier to introduce 
 
 #### Migration of HTTP errors
 
-Often you need to raise `fastapi.HTTPException` in your code to signal some errors to your users. However, if you want to change the status code of some error, it would be a breaking change because your error status codes and sometimes even their bodies are a part of your API contract.
+Often you need to raise `fastapi.HTTPException` in your code to signal an error to your users. However, changing the status code of an error would be a breaking change because your error status codes - and sometimes even the response bodies - are part of your API contract.
 
-By default, Cadwyn's response migrations do not handle errors but you can use the `migrate_http_errors` keyword argument to enable it:
+By default, Cadwyn's response migrations do not handle errors, but you can enable error handling with the `migrate_http_errors` keyword argument:
 
 ```python
 from cadwyn import (
@@ -295,7 +295,7 @@ Cadwyn can migrate more than just request bodies.
 * `cookies: dict[str, str]`
 * `query_params: dict[str, str]`
 
-`ResponseInfo` has the the following interfaces to migrate responses:
+`ResponseInfo` has the following interfaces to migrate responses:
 
 * `body: Any`
 * `status_code: int`
@@ -305,9 +305,9 @@ Cadwyn can migrate more than just request bodies.
 
 #### Internal representations
 
-So far, only simple cases were reviewed above. But what happens if you cannot migrate your data that easily? It can happen because your earlier versions had **more data** than your newer versions. Or that data had more formats.
+So far, only simple cases have been considered. But what happens if you cannot migrate your data that easily? This can happen if your earlier versions stored **more data** than your newer versions. Or if they supported more data formats.
 
-Suppose that previously the `User` schema had a list of addresses but now you want to make a breaking change and turn them into a single address. The naive migration will take the first address from the list for requests and turn that address into a list for responses like this:
+Suppose the `User` schema previously had a list of addresses, but now you want to make a breaking change and replace `addresses` with a single `address`. A naive migration would take the first address from the list in each request and convert that address into a list in each response as follows:
 
 ```python
 from cadwyn import (
@@ -335,7 +335,7 @@ class ReplaceUserAddressesWithAddress(VersionChange):
     @convert_request_to_next_version_for(BaseUser)
     def turn_addresses_into_a_single_item(request: RequestInfo):
         addresses = request.body.pop("addresses")
-        # The list could have been empty in the past so new "address"
+        # The list might have been empty previously so new 'address'
         # field must be nullable.
         request.body["address"] = addresses[0] if addresses else None
 
@@ -344,13 +344,13 @@ class ReplaceUserAddressesWithAddress(VersionChange):
         response.body["addresses"] = [response.body.pop("address")]
 ```
 
-But this will not work. If the user from the old version requests to save three addresses, only one will actually be saved. Old data is also going to be affected: if old users had multiple addresses, only one of them will be returned. This is important: a breaking change has been introduced.
+But this will not work. If the user of the previous version requests to save three addresses, only one will actually be saved. Existing data is also going to be affected: if old users had multiple addresses, only one of them will be returned. This is important: a breaking change has been introduced.
 
-In order to solve this issue, Cadwyn uses a concept of **internal representations**. An internal representation of your data is like a database entry of your data — it is its **latest** version plus all the fields that are incompatible with the latest API version. If the discussion were about classes, then internal representation would be a child of your latest schemas - it has all the same data and a little more, expanding its functionality. Your internal representation of user object can contain much more data than your latest schemas.
+In order to solve this issue, Cadwyn uses a concept of **internal representations**. An internal representation of your data is like a database entry for your data — it consists of its **latest** version plus all the fields that are incompatible with the latest API version. If the discussion were about classes, then internal representation would be a child of your latest schemas - it has all the same data and a little more, expanding its functionality. Your internal representation of user object can contain much more data than your latest schemas.
 
-So all your requests get migrated to HEAD, which is the internal representation of latest, rather the latest itself. Its data is very similar to latest. The same applies to your responses: you do not respond with and migrate from the latest version of your data, instead, you use its **internal representation** which is pretty close to the actual latest schemas.
+So all your requests get migrated to HEAD, which is the internal representation of latest, rather than the latest itself. Its data is very similar to that of latest. The same applies to your responses: instead of responding with and migrating from the latest version of your data, you use its **internal representation** which is pretty similar to the actual latest schemas.
 
-In responses, returning the internal representation is simple: return your database model or a dict with everything you need for all your versions. In the user address example, it is recommended to continue storing the list of addresses in the database and add a single address to a response. The latest schemas will strip it while older schemas will be able to use it.
+For responses, returning the internal representation is simple: return your database model or a dictionary with everything you need for all your versions. In the user address example, it is recommended to continue storing the list of addresses in the database and include a single address in a response. The latest schemas will strip it while previous schemas will be able to use it.
 
 ```python
 # in your business logic
@@ -376,26 +376,27 @@ class ReplaceUserAddressesWithAddress(VersionChange):
     )
 ```
 
-Yes, you do not need any of the migrations anymore because responses are handled automatically. See the how-to section for an example of achieving the same result with requests.
+Yes, you no longer need any of the migrations because responses are handled automatically. See the how-to section for an example of how to achieve the same result with requests.
 
 #### Manual body migrations
 
-Often you will need to migrate your data outside of routing, manually. For example, when you need to send a versioned response to your client via webhook or inside a worker/cronjob. In these instances, you can use `cadwyn.VersionBundle.migrate_response_body`:
+Often you will need to migrate your data outside of routing, manually. For example, you might need to send a versioned response to your client via a webhook or inside a worker/cronjob. In these cases, use `cadwyn.schema_generation.migrate_response_body()`:
+
 
 ```python
+from cadwyn.schema_generation import migrate_response_body
 from users import UserResource
-from versions import version_bundle
 
-body_from_2000_01_01 = version_bundle.migrate_response_body(
+body_from_2000_01_01 = migrate_response_body(
     UserResource, latest_body={"name": "John"}, version="2000-01-01"
 )
 ```
 
-The returned `body_from_2000_01_01` is your data passed through all converters (similar to how it would when a response is returned from your route) and wrapped in `data.v2000_01_01.UserResource`. Because it is wrapped, you can include Pydantic’s defaults.
+The returned `body_from_2000_01_01` is your data passed through all converters (as it would be when returned from your route) and wrapped in `data.v2000_01_01.UserResource`. Because the data is wrapped, you can include Pydantic’s defaults.
 
 #### StreamingResponse and FileResponse migrations
 
-Migrations for the bodies of `fastapi.responses.StreamingResponse` and `fastapi.responses.FileResponse` are not directly supported yet ([1](https://github.com/zmievsa/cadwyn/issues/125), [2](https://github.com/zmievsa/cadwyn/issues/126)). However, you can use `ResponseInfo._response` attribute to get access to the original `StreamingResponse` or `FileResponse` and modify it in any way you wish within your migrations.
+Migrations for the bodies of `fastapi.responses.StreamingResponse` and `fastapi.responses.FileResponse` are not directly supported yet ([1](https://github.com/zmievsa/cadwyn/issues/125), [2](https://github.com/zmievsa/cadwyn/issues/126)). However, you can use `ResponseInfo._response` attribute to get access to the original `StreamingResponse` or `FileResponse` and modify it as needed within your migrations.
 
 ## Pydantic RootModel migration warning
 
