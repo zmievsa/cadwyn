@@ -628,7 +628,7 @@ Versions 3.x.x are still supported in terms of bug and security fixes but all th
 
 ### Changed
 
-- `latest` is now named `head` because it no longer represents the newest version. Instead, it is the the `internally used` version and the version that is used for generating all other versions.
+- `latest` is now named `head` because it no longer represents the newest version. Instead, it is the `internally used` version and the version that is used for generating all other versions.
 - the newest version is not aliased from `latest` anymore. Instead, it is generated like all the rest
 - deprecated `InternalRepresentationOf` and the concept of `internal schemas` in favor of `HeadVersion` migrations
 
