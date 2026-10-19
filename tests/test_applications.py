@@ -768,6 +768,15 @@ def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
     assert "/my_api" in [server["url"] for server in servers]
 
 
+def test__get_openapi__with_openapi_prefix__should_include_it_in_servers():
+    client = TestClient(
+        Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")
+    )
+
+    resp = client.get("/openapi.json?version=2022-11-16")
+    assert resp.json()["servers"] == [{"url": "/my_api"}]
+
+
 def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_urls():
     app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
     with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
