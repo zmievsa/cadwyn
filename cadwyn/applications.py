@@ -172,6 +172,9 @@ class Cadwyn(FastAPI):
                 "This is not currently supported by Cadwyn. "
                 "Please, open an issue on our github if you'd like to have it."
             )
+        # FastAPI 0.145.0 removed openapi_prefix, so only forward it when it is set
+        if openapi_prefix:
+            extra["openapi_prefix"] = openapi_prefix
 
         super().__init__(
             debug=debug,
@@ -197,7 +200,6 @@ class Cadwyn(FastAPI):
             terms_of_service=terms_of_service,
             contact=contact,
             license_info=license_info,
-            openapi_prefix=openapi_prefix,
             root_path=root_path,
             root_path_in_servers=root_path_in_servers,
             responses=responses,
