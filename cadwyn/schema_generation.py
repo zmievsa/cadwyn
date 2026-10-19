@@ -1070,7 +1070,7 @@ class _AnnotationTransformer:
         """Recursively go through all annotations and change them to annotations corresponding to the version passed.
 
         So if we had a annotation "UserResponse" from "head" version, and we passed version of "2022-11-16", it would
-        replace "UserResponse" with the the same class but from the "2022-11-16" version.
+        replace "UserResponse" with the same class but from the "2022-11-16" version.
 
         """
         if isinstance(annotation, dict):
