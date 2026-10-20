@@ -95,6 +95,41 @@ Cadwyn:
 
 The part that causes the aforementioned problem is Cadwyn's use of `exclude_unset=True`. Unfortunately, when Cadwyn uses it, default fields are not set, so `latest` does not receive them. And if latest does not have the same defaults (for example, if the field has no default and is required in latest), then an error will occur. If Cadwyn used `exclude_unset=False`, then `exclude_unset` would lose its purpose for Cadwyn users, so giving it up is impractical. Instead, you should set all extras in step 4 in your request migrations.
 
+### Fields that a schema inherits
+
+`.had(...)` and `.didnt_have(...)` for a field that a schema inherits change the field only in that schema and its subclasses, not in its parents or its siblings:
+
+```python
+from cadwyn import VersionChange, schema
+from pydantic import BaseModel
+
+
+class Invoice(BaseModel):
+    code: str
+
+
+class BusinessInvoice(Invoice):
+    pass
+
+
+class PersonalInvoice(Invoice):
+    pass
+
+
+class AllowLongBusinessInvoiceCodes(VersionChange):
+    """Business invoice codes can now be longer than 5 characters."""
+
+    instructions_to_migrate_to_previous_version = (
+        schema(BusinessInvoice).field("code").had(max_length=5),
+    )
+```
+
+In the older version, `BusinessInvoice.code` has `max_length=5`, while `Invoice.code` and `PersonalInvoice.code` stay unchanged. To change the field in all of these schemas, give the instruction to the parent: `schema(Invoice).field("code").had(max_length=5)`. The changes of a parent's field apply to all of its subclasses, including the ones that changed the field themselves.
+
+The same holds for generic schemas: an instruction for a parametrization such as `schema(Page[Item])` changes `Page[Item]` and its subclasses, but not `Page` or its other parametrizations.
+
+In multiple inheritance, such as `class D(C, B)`, `D` takes each field from its first base that has it, as in pydantic. So if `D` doesn't change the field itself, the instructions given only for `B` don't apply to `D`. Give the instruction to the common parent of `C` and `B`, or to `D` as well.
+
 ## Add a validator to the older version
 
 ```python

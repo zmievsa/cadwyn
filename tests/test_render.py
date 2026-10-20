@@ -175,17 +175,15 @@ class ChangeTypeOfLeftChildAndDescriptionOfRightChild(VersionChange):
     )
 
 
-def test__render_model__sibling_changed_type_of_inherited_field__should_render_the_type_of_shared_field():
+def test__render_model__sibling_changed_type_of_inherited_field__should_render_the_type_of_the_model():
     versions = VersionBundle(
         Version("2001-01-01", ChangeTypeOfLeftChildAndDescriptionOfRightChild), Version("2000-01-01")
     )
 
-    # As in Cadwyn 7.4.0: the parent has an instruction of its own so its subclasses share the field with it, and
-    # `cadwyn render` renders the type of the shared field
     assert code(render_model(RenderedRightChild, versions, "2000-01-01")) == code(
         """
 class RenderedRightChild(RenderedParent):
-    foo: bytes = Field(max_length=10, description='Right')
+    foo: str = Field(max_length=10, description='Right')
 """
     )
 
@@ -227,8 +225,7 @@ def test__render_model__diamond_with_functional_validator_in_inherited_field__sh
     compile(rendered, "<rendered>", "exec")
     generated_diamond = generate_versioned_models(versions)["2000-01-01"][RenderedValidatedDiamond]
     assert generated_diamond.model_validate({"foo": " value "}).foo == "value"
-    # As in Cadwyn 7.4.0: the parent has an instruction of its own so its subclasses share the field with it
-    assert generated_diamond.model_fields["foo"].description == "Right"
+    assert generated_diamond.model_fields["foo"].description is None
 
 
 class RenderedParentWithFactory(BaseModel):

@@ -315,7 +315,7 @@ class SiblingWithInheritedField(ParentWithInheritedField):
     pass
 
 
-def test__router_generation__child_had_inherited_field__should_change_parent_and_siblings_that_share_it(
+def test__router_generation__child_had_inherited_field__should_not_change_parent_and_siblings(
     router: VersionedAPIRouter,
     create_versioned_clients,
 ):
@@ -340,17 +340,15 @@ def test__router_generation__child_had_inherited_field__should_change_parent_and
         router=router,
     )
 
-    # As in Cadwyn 7.4.0: the parent has an instruction of its own (for "bar"), so its subclasses share the field
-    # with it and the child's change also applies to the parent and the sibling. The changes of the parent's field in
-    # even older versions still apply to the child.
+    # The changes of the parent's field in even older versions still apply to the child.
     # With postponed annotations, max_length=10 is also in the annotation that pydantic rebuilds from Field() and
     # Cadwyn 7.4.0 ignored had(max_length=3) for it. Applying it would make the older versions reject the requests
-    # and responses that they have always accepted, so it stays ignored (test_router_generation.py checks it
-    # without postponed annotations)
+    # and responses that they have always accepted, so it stays ignored (test_router_generation.py checks that it
+    # does not leak into the parent and siblings without postponed annotations)
     for version, path, schema_name, description, max_length in [
-        ("2001-01-01", "/parent", "ParentWithInheritedField", "Child description", 10),
+        ("2001-01-01", "/parent", "ParentWithInheritedField", "Head description", 10),
         ("2001-01-01", "/child", "ChildWithInheritedField", "Child description", 10),
-        ("2001-01-01", "/sibling", "SiblingWithInheritedField", "Child description", 10),
+        ("2001-01-01", "/sibling", "SiblingWithInheritedField", "Head description", 10),
         ("2000-01-01", "/parent", "ParentWithInheritedField", "Older description", 10),
         ("2000-01-01", "/child", "ChildWithInheritedField", "Older description", 10),
         ("2000-01-01", "/sibling", "SiblingWithInheritedField", "Older description", 10),
@@ -362,6 +360,48 @@ def test__router_generation__child_had_inherited_field__should_change_parent_and
         field_schema = openapi["components"]["schemas"][schema_name]["properties"]["foo"]
         assert field_schema["description"] == description
         assert field_schema["maxLength"] == max_length
+
+
+class Invoice(BaseModel):
+    code: str
+    amount: int
+
+
+class BusinessInvoice(Invoice):
+    pass
+
+
+class PersonalInvoice(Invoice):
+    pass
+
+
+def test__router_generation__child_had_constraint_of_inherited_field__should_not_change_request_bodies_of_sibling(
+    router: VersionedAPIRouter,
+    create_versioned_clients,
+):
+    @router.post("/business")
+    async def create_business(payload: BusinessInvoice) -> BusinessInvoice:
+        return payload
+
+    @router.post("/personal")
+    async def create_personal(payload: PersonalInvoice) -> PersonalInvoice:
+        return payload
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(Invoice).field("amount").had(description="Amount"),
+            schema(BusinessInvoice).field("code").had(max_length=5),
+        ),
+        router=router,
+    )
+
+    # The parent has an instruction of its own (for "amount"). With postponed annotations, request bodies are
+    # validated with the versioned models, so the leak of #466 would reject the personal invoice too
+    body = {"code": "LONG-CODE", "amount": 1}
+    assert clients["2001-01-01"].post("/business", json=body).status_code == 200
+    assert clients["2001-01-01"].post("/personal", json=body).status_code == 200
+    assert clients["2000-01-01"].post("/business", json=body).status_code == 422
+    assert clients["2000-01-01"].post("/personal", json=body).json() == body
 
 
 class DeletableAttributesInFieldDefaults(BaseModel):

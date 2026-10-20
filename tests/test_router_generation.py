@@ -1574,7 +1574,7 @@ class SiblingWithInheritedField(ParentWithInheritedField):
     pass
 
 
-def test__router_generation__child_had_inherited_field__should_change_parent_and_siblings_that_share_it(
+def test__router_generation__child_had_inherited_field__should_not_change_parent_and_siblings(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
 ):
@@ -1599,16 +1599,14 @@ def test__router_generation__child_had_inherited_field__should_change_parent_and
         router=router,
     )
 
-    # As in Cadwyn 7.4.0: the parent has an instruction of its own (for "bar"), so its subclasses share the field
-    # with it and the child's change also applies to the parent and the sibling. Existing apps rely on it, e.g. for
-    # the keys of their responses. The changes of the parent's field in even older versions still apply to the child
+    # The changes of the parent's field in even older versions still apply to the child
     for version, path, schema_name, description, max_length in [
-        ("2001-01-01", "/parent", "ParentWithInheritedField", "Child description", 3),
+        ("2001-01-01", "/parent", "ParentWithInheritedField", "Head description", 10),
         ("2001-01-01", "/child", "ChildWithInheritedField", "Child description", 3),
-        ("2001-01-01", "/sibling", "SiblingWithInheritedField", "Child description", 3),
-        ("2000-01-01", "/parent", "ParentWithInheritedField", "Older description", 3),
+        ("2001-01-01", "/sibling", "SiblingWithInheritedField", "Head description", 10),
+        ("2000-01-01", "/parent", "ParentWithInheritedField", "Older description", 10),
         ("2000-01-01", "/child", "ChildWithInheritedField", "Older description", 3),
-        ("2000-01-01", "/sibling", "SiblingWithInheritedField", "Older description", 3),
+        ("2000-01-01", "/sibling", "SiblingWithInheritedField", "Older description", 10),
     ]:
         client = clients[version]
         assert client.post(path, json={"foo": "a" * 3}).status_code == 200
@@ -1633,11 +1631,19 @@ class PersonalRecordWithInheritedCode(RecordWithInheritedCode):
 
 
 @pytest.mark.parametrize("in_head_version", [False, True])
-def test__router_generation__child_had_serialization_alias_of_inherited_field__should_change_keys_of_sibling(
+def test__router_generation__child_had_serialization_alias_of_inherited_field__should_not_change_keys_of_sibling(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     in_head_version: bool,
 ):
+    @router.get("/record", response_model=RecordWithInheritedCode)
+    async def get_record():
+        return RecordWithInheritedCode(code="ABC", quantity=1)
+
+    @router.get("/business", response_model=BusinessRecordWithInheritedCode)
+    async def get_business():
+        return BusinessRecordWithInheritedCode(code="ABC", quantity=1)
+
     @router.get("/personal", response_model=PersonalRecordWithInheritedCode)
     async def get_personal():
         return PersonalRecordWithInheritedCode(code="ABC", quantity=1)
@@ -1651,12 +1657,14 @@ def test__router_generation__child_had_serialization_alias_of_inherited_field__s
     else:
         clients = create_versioned_clients(change, router=router)
 
-    # As in Cadwyn 7.4.0: the parent has an instruction of its own (for "quantity"), so the alias that the business
-    # record had also changes the key of the personal record in the responses that clients of the older versions
-    # (or, with HeadVersion, of every version) read
-    assert clients["2000-01-01"].get("/personal").json() == {"legacy_code": "ABC", "quantity": 1}
-    if not in_head_version:
-        assert clients["2001-01-01"].get("/personal").json() == {"code": "ABC", "quantity": 1}
+    # The parent has an instruction of its own (for "quantity"), so Cadwyn 7.4.0 also changed the keys of the parent
+    # and of the personal record in the older versions (or, with HeadVersion, in every version) (#466)
+    versions_with_alias = ["2000-01-01", "2001-01-01"] if in_head_version else ["2000-01-01"]
+    for version, versioned_client in clients.items():
+        assert versioned_client.get("/record").json() == {"code": "ABC", "quantity": 1}
+        assert versioned_client.get("/personal").json() == {"code": "ABC", "quantity": 1}
+        business_key = "legacy_code" if version in versions_with_alias else "code"
+        assert versioned_client.get("/business").json() == {business_key: "ABC", "quantity": 1}
 
 
 class DeletableAttributesInFieldDefaults(BaseModel):
