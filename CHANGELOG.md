@@ -69,8 +69,7 @@ This release fixes many long-standing bugs, most of them reported by users. Most
     - names imported under `TYPE_CHECKING` on Python 3.14;
     - generic fields that parametrize generics with their own type parameters, e.g. `items: list[Wrapper[T]]`.
 - Fixed `TypeError: unhashable type` in older API versions for unhashable request body or response model annotations.
-- Fixed `schema(...).field(...)` instructions on fields declared through `Annotated[..., Field(...)]`:
-    - `didnt_have(...)` had no effect on `title`, `description`, `examples`, and `deprecated`.
+- Fixed `schema(...).field(...).didnt_have(...)` having no effect on `title`, `description`, `examples`, and `deprecated` declared through `Annotated[..., Field(...)]`.
 - Fixed `didnt_have("title")`, `didnt_have("min_length")`, and `didnt_have(...)` failing with `TypeError` on `Annotated` types with validators, `Len`, `Strict`, or `AllowInfNan`.
 - Fixed `had(default=...)` and `had(default_factory=...)` failing with pydantic's `TypeError` at startup when they leave a field with both a default and a default factory. Cadwyn now raises `InvalidGenerationInstructionError`, and the instruction's value replaces the one from `Annotated[..., Field(...)]`.
 - Fixed the deprecated `/changelog` failing with a 500 for self-referencing models, and on every call after the first one for instructions on inherited fields.
