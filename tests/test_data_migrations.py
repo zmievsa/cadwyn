@@ -70,7 +70,7 @@ from starlette.formparsers import MultiPartParser
 from starlette.responses import StreamingResponse
 from typing_extensions import Self, TypeAliasType, TypedDict, override
 
-from cadwyn import Cadwyn, VersionedAPIRouter, current_dependency_solver
+from cadwyn import VersionedAPIRouter, current_dependency_solver
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -88,6 +88,7 @@ from cadwyn.structure.data import RequestInfo, ResponseInfo
 from cadwyn.structure.endpoints import endpoint as cadwyn_endpoint
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import Version, VersionBundle
+from tests._resources.utils import FASTAPI_DISTINGUISHES_NULL_BODIES
 from tests.conftest import (
     CreateVersionedApp,
     CreateVersionedClients,
@@ -447,6 +448,85 @@ class TestRequestMigrations:
         empty_response = clients["2001-01-01"].post(url=test_path)
         assert empty_response.status_code == 200
         assert empty_response.json() is None
+
+    @pytest.mark.parametrize("body_type", [SchemaWithInternalRepresentation, dict[str, int]])
+    def test__request_migration__setting_body_to_none__should_omit_the_body(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+        body_type: Any,
+    ):
+        @router.post(test_path)
+        async def route(payload: body_type = Body(None)):
+            return payload
+
+        @convert_request_to_next_version_for(test_path, ["POST"])
+        def migrator(request: RequestInfo):
+            request.body = None
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        response = clients["2000-01-01"].post(url=test_path, json={"foo": 1})
+        assert response.status_code == 200
+        assert response.json() is None
+        assert clients["2001-01-01"].post(url=test_path, json={"foo": 1}).json() == {"foo": 1}
+
+    @pytest.mark.parametrize("content", [b'{"foo": 1}', b"null"])
+    @pytest.mark.parametrize("fills_body_before_clearing_it", [False, True])
+    def test__request_migration__clearing_body__should_omit_it_so_that_the_default_applies(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+        content: bytes,
+        fills_body_before_clearing_it: bool,
+    ):
+        @router.post(test_path)
+        async def route(payload: Optional[dict[str, int]] = Body({"default": 1})):
+            return payload
+
+        @convert_request_to_next_version_for(test_path, ["POST"])
+        def fill(request: RequestInfo):
+            request.body = {"temporary": 1}
+
+        @convert_request_to_next_version_for(test_path, ["POST"])
+        def clear(request: RequestInfo):
+            request.body = None
+
+        # Even a JSON null body is omitted once a migration has set the body to None
+        changes = [version_change(fill=fill)] if fills_body_before_clearing_it else []
+        clients = create_versioned_clients(*changes, version_change(clear=clear))
+        response = clients["2000-01-01"].post(
+            url=test_path, content=content, headers={"content-type": "application/json"}
+        )
+        assert (response.status_code, response.json()) == (200, {"default": 1})
+
+    @pytest.mark.parametrize("content", [b'{"foo": 1}', b"null"])
+    def test__request_migration__clearing_body_for_a_body_dependency_of_newer_versions__should_omit_it(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+        content: bytes,
+    ):
+        def added_body_dependency(extra: Optional[dict[str, int]] = Body(None)):
+            return extra
+
+        @router.post(test_path, dependencies=[Depends(added_body_dependency)])
+        async def route(payload: Optional[dict[str, int]] = Body(None)):
+            return payload
+
+        @convert_request_to_next_version_for(test_path, ["POST"])
+        def clear(request: RequestInfo):
+            request.body = None
+
+        clients = create_versioned_clients(
+            version_change(cadwyn_endpoint(test_path, ["POST"]).had(dependencies=[]), clear=clear)
+        )
+        response = clients["2000-01-01"].post(
+            url=test_path, content=content, headers={"content-type": "application/json"}
+        )
+        assert (response.status_code, response.json()) == (200, None)
 
     def test__request_migration__when_body_annotation_is_unhashable__should_migrate_by_path(
         self,
@@ -1138,6 +1218,145 @@ def test__request_body_parsing__empty_body_with_optional_params(
 
     assert resp.status_code == 200
     assert resp.json() == {"name": None, "age": None}
+
+
+async def _nullable_body_with_default(payload: Optional[dict[str, int]] = Body({"default": 1})):
+    return {"payload": payload}
+
+
+async def _required_nullable_body(payload: Optional[dict[str, int]] = Body()):
+    return {"payload": payload}
+
+
+async def _non_nullable_body_with_default(payload: dict[str, int] = Body({"default": 1})):
+    return {"payload": payload}
+
+
+async def _non_nullable_body_with_none_default(payload: dict[str, int] = Body(None)):
+    return {"payload": payload}
+
+
+async def _optional_embedded_body(payload: Optional[dict[str, int]] = Body(None, embed=True)):
+    return {"payload": payload}
+
+
+async def _optional_embedded_bodies(name: Optional[str] = Body(None), age: Optional[int] = Body(None)):
+    return {"name": name, "age": age}
+
+
+async def _optional_file(payload: Optional[bytes] = File(None)):
+    return {"payload": payload if payload is None else payload.decode()}
+
+
+def _empty_string_as_none(value: Any) -> Any:
+    return None if value == "" else value
+
+
+async def _validated_body_with_default(
+    payload: Annotated[Optional[dict[str, int]], BeforeValidator(_empty_string_as_none), Body()] = {"default": 1},  # noqa: B006
+):
+    return {"payload": payload}
+
+
+async def _validated_required_body(
+    payload: Annotated[Optional[dict[str, int]], BeforeValidator(_empty_string_as_none), Body()],
+):
+    return {"payload": payload}
+
+
+def _raw_null_as_none(value: Any) -> Any:  # pragma: no cover # FastAPI >= 0.151
+    return None if value == b"null" else value
+
+
+async def _raw_validated_body_with_default(  # pragma: no cover # FastAPI >= 0.151
+    payload: Annotated[Optional[dict[str, int]], BeforeValidator(_raw_null_as_none), Body()] = {"default": 1},  # noqa: B006
+):
+    return {"payload": payload}
+
+
+async def _raw_validated_required_body(  # pragma: no cover # FastAPI >= 0.151
+    payload: Annotated[Optional[dict[str, int]], BeforeValidator(_raw_null_as_none), Body()],
+):
+    return {"payload": payload}
+
+
+async def _read_json_body(request: Request) -> None:
+    if await request.body():
+        await request.json()
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        _nullable_body_with_default,
+        _required_nullable_body,
+        _non_nullable_body_with_default,
+        _non_nullable_body_with_none_default,
+        _optional_embedded_body,
+        _optional_embedded_bodies,
+        _optional_file,
+        _validated_body_with_default,
+        _validated_required_body,
+    ],
+)
+@pytest.mark.parametrize("content", [b"", b"null", b'{"a": 1}'])
+@pytest.mark.parametrize("headers", [{"content-type": "application/json"}, {}])
+# FastAPI only parses bodies without a content type as JSON with `strict_content_type=False`
+@pytest.mark.parametrize("strict_content_type", [True, False])
+# Starlette caches the JSON that a dependency parses, which must not change how Cadwyn sees the body
+@pytest.mark.parametrize("dependencies", [[], [Depends(_read_json_body)]])
+def test__request_body_parsing__omitted_null_and_present_bodies__should_be_handled_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
+    content: bytes,
+    headers: dict[str, str],
+    strict_content_type: bool,
+    dependencies: list[Any],
+):
+    # FastAPI 0.151.0 and newer validate a JSON null body as None and apply defaults only to omitted bodies
+    router = VersionedAPIRouter(strict_content_type=strict_content_type)
+    router.post(test_path, dependencies=dependencies)(endpoint)
+    fastapi_app = fastapi.FastAPI(strict_content_type=strict_content_type)
+    fastapi_app.post(test_path, dependencies=dependencies)(endpoint)
+    clients = create_versioned_clients(version_change(), router=router)
+
+    expected = TestClient(fastapi_app).post(test_path, content=content, headers=headers)
+    for version_client in clients.values():
+        response = version_client.post(test_path, content=content, headers=headers)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.151
+    not FASTAPI_DISTINGUISHES_NULL_BODIES, reason="Before FastAPI 0.151.0, a body that is None is an omitted one"
+)
+@pytest.mark.parametrize(
+    ("endpoint", "content", "headers"),
+    [
+        (_validated_body_with_default, b'""', {"content-type": "application/json"}),
+        (_validated_required_body, b'""', {"content-type": "application/json"}),
+        (_raw_validated_body_with_default, b"null", {"content-type": "text/plain"}),
+        (_raw_validated_required_body, b"null", {"content-type": "text/plain"}),
+    ],
+)
+def test__request_body_parsing__body_that_validators_turn_into_none__should_be_present_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
+    content: bytes,
+    headers: dict[str, str],
+):
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    clients = create_versioned_clients(version_change(), router=router)
+
+    expected = TestClient(fastapi_app).post(test_path, content=content, headers=headers)
+    assert (expected.status_code, expected.json()) == (200, {"payload": None})
+    for version_client in clients.values():
+        response = version_client.post(test_path, content=content, headers=headers)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
 
 
 def test__request_body_parsing__non_application_content_type(
@@ -2674,7 +2893,7 @@ def test__request_body_migration__with_bytes_dependency_overridden__should_keep_
         return [data, other]
 
     clients = create_versioned_clients(version_change())
-    app = cast("Cadwyn", clients["2000-01-01"].app)
+    app = clients["2000-01-01"].app
     app.dependency_overrides[_get_data_from_bytes] = _get_data_header
 
     # The override reads a part of the file for every route as before, while the files of other dependencies
@@ -2705,7 +2924,7 @@ def test__request_body_migration__with_bytes_dependency_and_unhashable_override_
         return [user, data]
 
     clients = create_versioned_clients(version_change())
-    app = cast("Cadwyn", clients["2000-01-01"].app)
+    app = clients["2000-01-01"].app
     # Dataclasses that compare by value aren't hashable
     app.dependency_overrides[_get_user] = _UnhashableUserOverride("alice")
 
@@ -3015,7 +3234,7 @@ def test__request_body_migration__with_bytes_and_old_version_dependency_like_a_h
             )
         )
     )
-    app = cast("Cadwyn", clients["2000-01-01"].app)
+    app = clients["2000-01-01"].app
     app.dependency_overrides.update(dependency_overrides)
 
     # The old version runs one more dependency than the head, even though it looks like the head's one
@@ -3061,7 +3280,7 @@ def test__request_body_migration__with_bytes_and_overridden_old_version_dependen
             cadwyn_endpoint(test_path, ["POST"]).had(dependencies=[Depends(_store_upload), Depends(_skip_nothing)])
         )
     )
-    app = cast("Cadwyn", clients["2000-01-01"].app)
+    app = clients["2000-01-01"].app
     app.dependency_overrides[_skip_nothing] = _skip_legacy_header_in_override
 
     # We can't see which files the override takes, so the files of dependencies stay as before. Here the override

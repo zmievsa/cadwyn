@@ -22,7 +22,7 @@ from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.structure.endpoints import endpoint
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import HeadVersion, Version, VersionBundle, VersionChange
-from tests._resources.utils import BASIC_HEADERS, DEFAULT_API_VERSION
+from tests._resources.utils import BASIC_HEADERS, DEFAULT_API_VERSION, FASTAPI_ACCEPTS_OPENAPI_PREFIX
 from tests._resources.versioned_app.app import (
     client_without_headers,
     client_without_headers_and_with_custom_api_version_var,
@@ -827,13 +827,22 @@ def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
     assert "/my_api" in [server["url"] for server in servers]
 
 
-def test__get_openapi__with_openapi_prefix__should_include_it_in_servers():
-    client = TestClient(
-        Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")
-    )
+@pytest.mark.skipif(not FASTAPI_ACCEPTS_OPENAPI_PREFIX, reason="FastAPI 0.145.0 removed openapi_prefix")
+def test__get_openapi__with_openapi_prefix__should_warn_and_include_it_in_servers():
+    with pytest.warns(DeprecationWarning, match=re.escape("`openapi_prefix` is deprecated")):
+        app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")
+    client = TestClient(app)
 
     resp = client.get("/openapi.json?version=2022-11-16")
     assert resp.json()["servers"] == [{"url": "/my_api"}]
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.145
+    FASTAPI_ACCEPTS_OPENAPI_PREFIX, reason="FastAPI accepts openapi_prefix before 0.145.0"
+)
+def test__cadwyn__with_openapi_prefix_on_fastapi_without_it__should_raise_a_clear_error():
+    with pytest.raises(TypeError, match=re.escape("FastAPI 0.145.0 removed it")):
+        Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")
 
 
 def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_urls():

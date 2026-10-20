@@ -77,7 +77,10 @@ from tests._data.sqlalchemy_models import ImperativelyMappedModel, MappedChild, 
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
-from tests._resources.utils import HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED
+from tests._resources.utils import (
+    FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS,
+    HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED,
+)
 from tests.conftest import (
     CreateVersionedApp,
     CreateVersionedClients,
@@ -2324,7 +2327,7 @@ def test__router_generation__updating_request_depends(
     assert client_2001.post("/test2", json={"my_schema": {"foo": "bar"}}).json() == {}
 
 
-def test__router_generation__enum_member_dependency_default_works_only_in_versions_where_member_exists(
+def test__router_generation__enum_member_dependency_default__fails_without_member_only_if_fastapi_validates_defaults(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
 ):
@@ -2342,20 +2345,20 @@ def test__router_generation__enum_member_dependency_default_works_only_in_versio
 
     assert clients["2002-01-01"].get("/test").json() == "a"
     response = clients["2001-01-01"].get("/test")
-    assert response.status_code == 422
-    assert response.json() == snapshot(
-        {
-            "detail": [
-                {
-                    "type": "is_instance_of",
-                    "loc": ["query", "value"],
-                    "msg": "Input should be an instance of StrEnum",
-                    "input": StrEnum.a.value,
-                    "ctx": {"class": "StrEnum"},
-                }
-            ]
-        }
-    )
+    # This version's enum has no such member, so the default fails only where FastAPI validates it
+    rejected_default = {
+        "detail": [
+            {
+                "type": "is_instance_of",
+                "loc": ["query", "value"],
+                "msg": "Input should be an instance of StrEnum",
+                "input": StrEnum.a.value,
+                "ctx": {"class": "StrEnum"},
+            }
+        ]
+    }
+    expected = (422, rejected_default) if FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS else (200, "a")
+    assert (response.status_code, response.json()) == expected
     assert clients["2000-01-01"].get("/test").json() == "a"
 
 

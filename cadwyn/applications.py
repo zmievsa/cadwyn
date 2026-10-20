@@ -1,3 +1,4 @@
+import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
@@ -48,6 +49,11 @@ if TYPE_CHECKING:
 
 CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
+_OPENAPI_PREFIX_REMOVAL_MESSAGE = (
+    "`openapi_prefix` is deprecated, and FastAPI 0.145.0 removed it, so Cadwyn can only pass it to older versions "
+    "of FastAPI. Configure the root path of your server instead, or use `root_path`."
+)
+_FASTAPI_ACCEPTS_OPENAPI_PREFIX = "openapi_prefix" in inspect.signature(FastAPI.__init__).parameters
 
 
 def _get_effective_include_in_schema(route: BaseRoute, effective_route_context: _EffectiveRouteContext | None) -> bool:
@@ -153,7 +159,7 @@ class Cadwyn(FastAPI):
         terms_of_service: Union[str, None] = None,
         contact: Union[dict[str, Union[str, Any]], None] = None,
         license_info: Union[dict[str, Union[str, Any]], None] = None,
-        openapi_prefix: str = "",
+        openapi_prefix: Annotated[str, deprecated(_OPENAPI_PREFIX_REMOVAL_MESSAGE)] = "",
         root_path: str = "",
         root_path_in_servers: bool = True,
         responses: Union[dict[Union[int, str], dict[str, Any]], None] = None,
@@ -197,8 +203,11 @@ class Cadwyn(FastAPI):
                 "This is not currently supported by Cadwyn. "
                 "Please, open an issue on our github if you'd like to have it."
             )
-        # FastAPI 0.145.0 removed openapi_prefix, so only forward it when it is set
+        # FastAPI 0.145.0 removed openapi_prefix, so we only forward it when it is set
         if openapi_prefix:
+            if not _FASTAPI_ACCEPTS_OPENAPI_PREFIX:  # pragma: no cover # FastAPI >= 0.145
+                raise TypeError(_OPENAPI_PREFIX_REMOVAL_MESSAGE)
+            warnings.warn(_OPENAPI_PREFIX_REMOVAL_MESSAGE, DeprecationWarning, stacklevel=2)
             extra["openapi_prefix"] = openapi_prefix
 
         super().__init__(

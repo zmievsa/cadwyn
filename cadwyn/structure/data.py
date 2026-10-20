@@ -14,11 +14,13 @@ from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_met
 
 
 class RequestInfo:
-    __slots__ = ("_cookies", "_form", "_query_params", "_request", "body", "headers")
+    __slots__ = ("_body", "_body_is_assigned", "_cookies", "_form", "_query_params", "_request", "headers")
 
     def __init__(self, request: Request, body: Any) -> None:
         super().__init__()
-        self.body = body
+        self._body = body
+        # Whether a request migration has assigned the body, so that `None` means an omitted body
+        self._body_is_assigned = False
         self.headers = request.headers.mutablecopy()
         self._cookies = request.cookies
         self._query_params = request.query_params._dict
@@ -27,6 +29,15 @@ class RequestInfo:
             self._form: Union[list[tuple[str, Union[UploadFile, str]]], None] = list(body.multi_items())
         else:
             self._form = None
+
+    @property
+    def body(self) -> Any:
+        return self._body
+
+    @body.setter
+    def body(self, value: Any) -> None:
+        self._body = value
+        self._body_is_assigned = True
 
     @property
     def cookies(self) -> dict[str, str]:
