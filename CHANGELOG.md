@@ -52,6 +52,7 @@ This release fixes many long-standing bugs, most of them reported by users. Most
 - Fixed `/changelog` failing with a 500 (`KeyError`) for changes of models that refer to themselves, including through generic fields such as `children: "Page[Category]"`.
 - Fixed older API versions adding `"example": {}` to the OpenAPI of path, query, header, cookie, and body parameters declared through default values such as `= Query()` (#417).
 - Restored type checking compatibility with Pydantic 2.14 and ty 0.0.86.
+- Restored type checking compatibility with ty 0.0.89. `app.router` now accepts any `APIRouter` when it is assigned, like in FastAPI, and is still typed as Cadwyn's router when it is read. Cadwyn still needs its own router, so do not replace it.
 - Fixed a `TypeError` ("cannot be parametrized because it does not inherit from typing.Generic") in older API versions for generic models whose fields parametrize generic models with their own type parameters, such as `items: list[Wrapper[T]]` or `next: Optional["LinkedPage[T]"]`.
 - Fixed older API versions failing to start when a model uses `typing.Self` in its annotations.
 - Fixed older API versions failing to start when a model uses annotations that cannot be rebuilt from their arguments, such as a bare `typing.Callable` or `Unpack[Ts]`, or a default factory without an inspectable signature, such as `functools.partial(dict, count=1)`.

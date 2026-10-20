@@ -1,10 +1,9 @@
-import dataclasses
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Optional, Union, cast
+from typing import TYPE_CHECKING, Annotated, Any, Optional, Union, cast, overload
 from urllib.parse import quote
 
 import fastapi
@@ -28,7 +27,6 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan, Receive, Scope, Send
 from typing_extensions import Self, assert_never, deprecated, override
 
-from cadwyn._utils import DATACLASS_SLOTS
 from cadwyn.changelogs import _CHANGELOG_DEPRECATION_MESSAGE, CadwynChangelogResource, _generate_changelog
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
@@ -68,13 +66,31 @@ def _materialize_routes(routes: Sequence[BaseRoute]) -> list[BaseRoute]:
     ]
 
 
-@dataclasses.dataclass(**DATACLASS_SLOTS)
-class FakeDependencyOverridesProvider:
-    dependency_overrides: dict[Callable[..., Any], Callable[..., Any]]
+class _RootRouterAttribute:
+    """`Cadwyn.router`: reads return Cadwyn's root router, writes accept any `APIRouter` like `FastAPI.router` does.
+
+    `FastAPI.__init__` assigns a plain `APIRouter` to `router`, and Cadwyn replaces it with its root router right after.
+    So the attribute must keep accepting the writes that FastAPI allows, while reads stay narrowed for Cadwyn and users.
+    A property with a setter would type the same way, but ty 0.0.86 rejects `@override` on its setter and ty 0.0.89
+    requires it.
+    """
+
+    @overload
+    def __get__(self, instance: None, owner: type[Any]) -> Self: ...
+    @overload
+    def __get__(self, instance: "Cadwyn", owner: type[Any]) -> _RootCadwynAPIRouter: ...
+    def __get__(self, instance: "Cadwyn | None", owner: type[Any]) -> "Self | _RootCadwynAPIRouter":
+        if instance is None:
+            return self
+        return instance.__dict__["router"]
+
+    def __set__(self, instance: "Cadwyn", value: APIRouter) -> None:
+        instance.__dict__["router"] = value
 
 
 class Cadwyn(FastAPI):
     _templates = Jinja2Templates(directory=CURR_DIR.parent / "static")
+    router: _RootRouterAttribute = _RootRouterAttribute()
 
     def __init__(
         self,
@@ -149,7 +165,6 @@ class Cadwyn(FastAPI):
         **extra: Any,
     ) -> None:
         self.versions = versions
-        self._dependency_overrides_provider = FakeDependencyOverridesProvider({})
         self._cadwyn_initialized = False
 
         if api_version_header_name is not None:
@@ -214,7 +229,7 @@ class Cadwyn(FastAPI):
         )
 
         self._versioned_webhook_routers: dict[VersionType, APIRouter] = {}
-        self._latest_version_router = APIRouter(dependency_overrides_provider=self._dependency_overrides_provider)
+        self._latest_version_router = APIRouter(dependency_overrides_provider=self)
 
         self.changelog_url = changelog_url
         self.include_changelog_url_in_schema = include_changelog_url_in_schema
@@ -269,7 +284,7 @@ class Cadwyn(FastAPI):
             self.api_version_validation_data_type = str
         else:
             assert_never(default_version_example)
-        self.router: _RootCadwynAPIRouter = _RootCadwynAPIRouter(
+        self.router = _RootCadwynAPIRouter(
             **self._kwargs_to_router,
             on_startup=on_startup,
             on_shutdown=on_shutdown,
@@ -332,21 +347,6 @@ class Cadwyn(FastAPI):
     def _add_default_versioned_routers(self) -> None:
         for version in self.versions:
             self.router.versioned_routers[version.value] = APIRouter(**self._kwargs_to_router)
-
-    @property
-    def dependency_overrides(self) -> dict[Callable[..., Any], Callable[..., Any]]:
-        # TODO: Remove this approach as it is no longer necessary
-        # This is only necessary because we cannot send self to versioned router generator
-        # because it takes a deepcopy of the router and self.versions.head_schemas_package was a module
-        # which couldn't be copied.
-        return self._dependency_overrides_provider.dependency_overrides
-
-    @dependency_overrides.setter
-    def dependency_overrides(
-        self,
-        value: dict[Callable[..., Any], Callable[..., Any]],
-    ) -> None:
-        self._dependency_overrides_provider.dependency_overrides = value
 
     @deprecated(_CHANGELOG_DEPRECATION_MESSAGE)
     def generate_changelog(self) -> CadwynChangelogResource:

@@ -59,15 +59,14 @@ T = TypeVar("T", bound=Union[PossibleInstructions, type[VersionChange]])
 
 @deprecated(_CHANGELOG_DEPRECATION_MESSAGE)
 def hidden(instruction_or_version_change: T) -> T:
-    if isinstance(instruction_or_version_change, _HiddenAttributeMixin):
-        # Weird ty bug, or I am dumb.
-        instruction_or_version_change.is_hidden_from_changelog = True  # ty: ignore[possibly-missing-attribute]
-        return instruction_or_version_change
-
-    if isinstance(instruction_or_version_change, type) and issubclass(instruction_or_version_change, VersionChange):
-        # Weird ty bug, or I am dumb.
-        instruction_or_version_change.is_hidden_from_changelog = True  # ty: ignore[possibly-missing-attribute]
+    _hide_from_changelog(instruction_or_version_change)
     return instruction_or_version_change
+
+
+def _hide_from_changelog(obj: object) -> None:
+    # Narrowing a plain `object` instead of the `T` TypeVar lets type checkers see the attribute
+    if isinstance(obj, _HiddenAttributeMixin) or (isinstance(obj, type) and issubclass(obj, VersionChange)):
+        obj.is_hidden_from_changelog = True
 
 
 def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -> "CadwynChangelogResource":
