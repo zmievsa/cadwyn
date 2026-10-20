@@ -43,7 +43,7 @@ These follow from how Cadwyn works and are not bugs. Changes that try to remove 
 | `Annotated[T, Depends(f)]` | Versioned only in the versions that change the models or enums `f` validates. | Versioning it everywhere gave copies to identity checks in every version (#467). Missing an exotic case (e.g. a recursive type alias) keeps the previous behavior, which is acceptable. |
 | Converters inside nested models | Won't do. Write the converter for the outer schema. | Running nested converters by default would convert data twice for apps that already follow the docs (#468). |
 | Computed fields that return versioned models | Documented limitation. Expose the data as a regular field instead. | Every Pydantic serializer that picks a model by the value's type loses nested JSON config, changes duck-typed values, or re-wraps user exceptions (#469). |
-| `.had(alias=...)` derived aliases | Deferred. | The fix silently changes the wire keys of apps that use it without migrations (#465). |
+| `.had(alias=...)` and `.didnt_have("alias")` | 8.x warns at startup when the instruction leaves the field's validation or serialization alias unchanged. 9.0 changes them too, so the wire key matches the documented one. | Clients of apps without migrations rely on the old key, so fixing it at once would break them (#465). |
 | Fields whose validation and serialization keys differ | Fix only requests and responses that would certainly fail ("rescue-only"). | Responses that passed before must not change at all, even if they lost a value. |
 | Self-referencing models | Copied when that's safe. Otherwise Cadwyn raises `SchemaGenerationError` at startup. | Failing clearly is better than serving wrong shapes silently. |
 | Enum defaults of omitted parameters on FastAPI before 0.148 | Not rewritten. | It would fix a pre-existing bug on old FastAPI only, and every attempt added new edge cases. |
@@ -79,6 +79,7 @@ These are accepted for now. They are listed so that nobody "discovers" and fixes
 * Compare every change against the last release, not against an idea of correct behavior.
 * A change may alter output that is broken today: a crash, a 500, an empty or lost value. It may not alter output that works today, even if that output is wrong, unless the maintainer accepts it as a breaking change with an upgrade note in the CHANGELOG.
 * OpenAPI of every version counts as output, including schema names.
+* When behavior differs from the docs and clients rely on the behavior, a fix toward the docs is a breaking change. Warn about it at startup in the current major version, naming the model, the field, and how to keep working, and change the behavior in the next major version.
 
 **How to fix**
 
