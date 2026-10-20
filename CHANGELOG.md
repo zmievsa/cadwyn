@@ -8,6 +8,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Deprecated
 
 - The deprecated changelog (`/changelog`, `generate_changelog()`, and `hidden()`) will be removed in 9.0.
+- `.had(alias=...)` and `.didnt_have("alias")` now warn at startup (`FutureWarning`) when the field keeps the `validation_alias` or `serialization_alias` that Pydantic copied from its old alias, and so keeps its old key. Cadwyn 9.0 will change them too (#465).
 
 ### Added
 

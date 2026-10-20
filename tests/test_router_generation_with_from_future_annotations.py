@@ -6,6 +6,7 @@ import inspect
 import sys
 import types
 import typing
+import warnings
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Optional
 
@@ -300,6 +301,55 @@ def test__router_generation__field_had_alias_and_description__should_be_applied(
         properties = openapi["components"]["schemas"][schema_name]["properties"]
         assert alias in properties
         assert properties["description_field"]["description"] == description
+
+
+class ItemWithAliasInAnnotated(BaseModel):
+    name: Annotated[str, Field(alias="a")]
+
+
+# With postponed annotations, Cadwyn rebuilds the annotation without the Field() so didnt_have() deletes the alias
+@pytest.mark.parametrize(
+    ("attributes", "expected_warnings", "old_key"),
+    [
+        pytest.param(
+            ("alias",),
+            [
+                (
+                    'schema(ItemWithAliasInAnnotated).field("name").didnt_have("alias") in "MyVersionChange" '
+                    'changes the alias of "ItemWithAliasInAnnotated.name", but in API version "2000-01-01" '
+                    'its validation_alias and serialization_alias are still "a", so that version keeps using '
+                    '"a" instead of the key that the field has without an alias. Cadwyn 9.0 will change them '
+                    "too. To use the key that the field has without an alias now and silence this warning, "
+                    'also pass "validation_alias" and "serialization_alias" to this .didnt_have(). To keep '
+                    '"a", remove "alias" from it instead.'
+                )
+            ],
+            "a",
+            id="alias",
+        ),
+        pytest.param(("alias", "validation_alias", "serialization_alias"), [], "name", id="alias_and_its_keys"),
+    ],
+)
+def test__router_generation__annotated_field_didnt_have_alias__should_warn_unless_its_keys_are_deleted_too(
+    router: VersionedAPIRouter,
+    create_versioned_clients,
+    attributes: tuple[Any, ...],
+    expected_warnings: list[str],
+    old_key: str,
+):
+    @router.post("/items", response_model=ItemWithAliasInAnnotated)
+    async def echo(item: ItemWithAliasInAnnotated):
+        raise NotImplementedError
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        clients = create_versioned_clients(
+            version_change(schema(ItemWithAliasInAnnotated).field("name").didnt_have(*attributes))
+        )
+
+    assert [str(warning.message) for warning in caught if warning.category is FutureWarning] == expected_warnings
+    openapi = clients["2000-01-01"].get("/openapi.json?version=2000-01-01").json()
+    assert list(openapi["components"]["schemas"]["ItemWithAliasInAnnotated"]["properties"]) == [old_key]
 
 
 class ParentWithInheritedField(BaseModel):

@@ -10,6 +10,7 @@ import sys
 import threading
 import types
 import typing
+import warnings
 from collections.abc import Callable, Generator, Sequence
 from datetime import date
 from enum import Enum, auto
@@ -3219,16 +3220,17 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
     version_to_context_map = {}
     reference_cycles = _ReferenceCycles(changed_models)
     context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models)
-    _migrate_classes(context)
+    alias_changes = _migrate_classes(context)
     instructions_that_differ_from_head = _get_instructions_by_model(versions.head_version, {})
 
     for version in versions.versions:
+        _warn_about_alias_changes_that_keep_old_keys(alias_changes, str(version.value))
         context = _RuntimeSchemaGenContext(current_version=version, models=models)
         version_to_context_map[str(version.value)] = SchemaGenerator(
             copy.deepcopy(models), changed_models, reference_cycles, instructions_that_differ_from_head
         )
         # note that the last migration will not contain any version changes so we don't need to save the results
-        _migrate_classes(context)
+        alias_changes = _migrate_classes(context)
         instructions_that_differ_from_head = _get_instructions_by_model(version, instructions_that_differ_from_head)
 
     return version_to_context_map
@@ -3343,9 +3345,17 @@ def _create_model_bundle(versions: "VersionBundle"):
     )
 
 
-def _migrate_classes(context: _RuntimeSchemaGenContext) -> None:
+class _AliasChange(NamedTuple):
+    model: _PydanticModelWrapper[BaseModel]
+    field: PydanticFieldWrapper
+    instruction: Union[FieldHadInstruction, FieldDidntHaveInstruction]
+    version_change_name: str
+
+
+def _migrate_classes(context: _RuntimeSchemaGenContext) -> list[_AliasChange]:
+    alias_changes: list[_AliasChange] = []
     for version_change in context.current_version.changes:
-        _apply_alter_schema_instructions(
+        alias_changes += _apply_alter_schema_instructions(
             context.models.schemas,
             version_change.alter_schema_instructions,
             version_change.__name__,
@@ -3355,24 +3365,87 @@ def _migrate_classes(context: _RuntimeSchemaGenContext) -> None:
             version_change.alter_enum_instructions,
             version_change.__name__,
         )
+    return alias_changes
+
+
+_ALIAS_ATTRIBUTES = frozenset(("alias", "alias_priority", "validation_alias", "serialization_alias"))
+
+
+def _warn_about_alias_changes_that_keep_old_keys(alias_changes: list[_AliasChange], version: str) -> None:
+    """Warn about instructions that change the alias of a field but leave the keys that pydantic copied from it.
+
+    Pydantic copies `alias` into `validation_alias` and `serialization_alias` unless they are passed, and Cadwyn
+    passes them on unchanged, so the field keeps using its old keys. Cadwyn 9.0 will change them too (#465).
+    """
+    for model, field, instruction, version_change_name in alias_changes:
+        field_name = next((name for name, model_field in model.fields.items() if model_field is field), None)
+        old_alias = field.declared_field_attributes.get("alias")
+        # If in doubt, we don't warn: e.g. alias generators can replace the aliases of the field
+        if field_name is None or old_alias is None or model.cls.model_config.get("alias_generator") is not None:
+            continue
+        # The aliases of the field in the copy of the model: pydantic merges its Field() with the one in Annotated
+        attributes = field.get_field_attributes(model.cls)
+        field_info = FieldInfo.from_annotated_attribute(
+            model.annotations[field_name],
+            Field(**{name: value for name, value in attributes.items() if name in _ALIAS_ATTRIBUTES}),
+        )
+        validation_alias = field_info.validation_alias
+        # FastAPI documents the fields whose validation_alias is AliasChoices or AliasPath by their alias
+        if field_info.alias == old_alias or (validation_alias is not None and not isinstance(validation_alias, str)):
+            continue
+        # Pydantic stores the copied aliases in the same way as the ones that were passed with the same value
+        kept_aliases = [
+            name
+            for name in ("validation_alias", "serialization_alias")
+            if getattr(field_info, name) == old_alias
+            and not any(change.name == name and issubclass(model.cls, change.changed_by) for change in field.changes)
+        ]
+        if not kept_aliases:
+            continue
+        alias = field_info.alias
+        if isinstance(instruction, FieldHadInstruction):
+            method, alias_part = "had", f"alias={instruction.field_changes.alias!r}"
+            recipe = " and ".join(f"{name}={alias!r}" for name in kept_aliases)
+        else:
+            method, alias_part = "didnt_have", '"alias"'
+            recipe = " and ".join(f'"{name}"' for name in kept_aliases)
+        new_key = "the key that the field has without an alias" if alias is None else f'"{alias}"'
+        model_name, is_plural = instruction.schema.__name__, len(kept_aliases) > 1
+        warnings.warn(
+            f'schema({model_name}).field("{instruction.name}").{method}({alias_part}) in "{version_change_name}" '
+            f'changes the alias of "{model_name}.{instruction.name}", but in API version "{version}" its '
+            f'{" and ".join(kept_aliases)} {"are" if is_plural else "is"} still "{old_alias}", so that version keeps '
+            f'using "{old_alias}" instead of {new_key}. Cadwyn 9.0 will change {"them" if is_plural else "it"} too. '
+            f"To use {new_key} now and silence this warning, also pass {recipe} to this .{method}(). "
+            f'To keep "{old_alias}", remove {alias_part} from it instead.',
+            FutureWarning,
+            stacklevel=2,
+        )
 
 
 def _apply_alter_schema_instructions(
     modified_schemas: dict[type[BaseModel], _PydanticModelWrapper[BaseModel]],
     alter_schema_instructions: Sequence[Union[AlterSchemaSubInstruction, SchemaHadInstruction]],
     version_change_name: str,
-) -> None:
+) -> list[_AliasChange]:
+    alias_changes: list[_AliasChange] = []
     for alter_schema_instruction in alter_schema_instructions:
         schema_info = modified_schemas[alter_schema_instruction.schema]
         if isinstance(alter_schema_instruction, FieldExistedAsInstruction):
             _add_field_to_model(schema_info, modified_schemas, alter_schema_instruction, version_change_name)
         elif isinstance(alter_schema_instruction, FieldHadInstruction | FieldDidntHaveInstruction):
-            _change_field_in_model(
+            field = _change_field_in_model(
                 schema_info,
                 modified_schemas,
                 alter_schema_instruction,
                 version_change_name,
             )
+            if (
+                alter_schema_instruction.field_changes.alias is not Sentinel
+                if isinstance(alter_schema_instruction, FieldHadInstruction)
+                else "alias" in alter_schema_instruction.attributes
+            ):
+                alias_changes.append(_AliasChange(schema_info, field, alter_schema_instruction, version_change_name))
         elif isinstance(alter_schema_instruction, FieldDidntExistInstruction):
             _delete_field_from_model(schema_info, alter_schema_instruction.name, version_change_name)
         elif isinstance(alter_schema_instruction, ValidatorExistedInstruction):
@@ -3402,6 +3475,7 @@ def _apply_alter_schema_instructions(
             _change_model(schema_info, alter_schema_instruction, version_change_name)
         else:
             assert_never(alter_schema_instruction)
+    return alias_changes
 
 
 def _apply_alter_enum_instructions(
@@ -3499,7 +3573,7 @@ def _change_field_in_model(
     schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
     alter_schema_instruction: Union[FieldHadInstruction, FieldDidntHaveInstruction],
     version_change_name: str,
-):
+) -> PydanticFieldWrapper:
     defined_annotations = model._get_defined_annotations_through_mro(schemas)
     defined_fields = model._get_defined_fields_through_mro(schemas)
     if alter_schema_instruction.name not in defined_fields:
@@ -3538,6 +3612,7 @@ def _change_field_in_model(
             field,
             model.annotations[alter_schema_instruction.name],
         )
+    return field
 
 
 def _substitute_type_vars_of_inherited_annotation(
