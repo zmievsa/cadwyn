@@ -82,10 +82,19 @@ class _RootRouterAttribute:
     def __get__(self, instance: "Cadwyn | None", owner: type[Any]) -> "Self | _RootCadwynAPIRouter":
         if instance is None:
             return self
-        return instance.__dict__["router"]
+        try:
+            return instance.__dict__["router"]
+        except KeyError:
+            raise AttributeError("router") from None
 
     def __set__(self, instance: "Cadwyn", value: APIRouter) -> None:
         instance.__dict__["router"] = value
+
+    def __delete__(self, instance: "Cadwyn") -> None:
+        try:
+            del instance.__dict__["router"]
+        except KeyError:
+            raise AttributeError("router") from None
 
 
 class Cadwyn(FastAPI):
