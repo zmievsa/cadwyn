@@ -14,6 +14,7 @@ from cadwyn import (
     VersionBundle,
     VersionChange,
     endpoint,
+    generate_versioned_models,
     schema,
 )
 from cadwyn.applications import Cadwyn
@@ -538,3 +539,62 @@ def test__changelog__with_child_overriding_changed_field_in_parent__unused_model
             ],
         }
     ]
+
+
+class ParentWithInheritedCode(BaseModel):
+    code: str = Field(max_length=20)
+
+
+class ChildWithInheritedCode(ParentWithInheritedCode):
+    pass
+
+
+class SiblingWithInheritedCode(ParentWithInheritedCode):
+    pass
+
+
+def test__changelog__child_changed_inherited_field__should_not_change_parent_and_siblings(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/child")
+    async def child(body: ChildWithInheritedCode):
+        raise NotImplementedError
+
+    @router.post("/sibling")
+    async def sibling(body: SiblingWithInheritedCode):
+        raise NotImplementedError
+
+    app = create_versioned_app(
+        version_change(
+            schema(ChildWithInheritedCode).field("code").had(max_length=3),
+            schema(ParentWithInheritedCode).field("code").had(max_length=10),
+        ),
+        router=router,
+    )
+
+    expected_instructions = [
+        {
+            "type": ChangelogEntryType.schema_field_attributes_changed,
+            "models": ["ChildWithInheritedCode"],
+            "field": "code",
+            "attribute_changes": [{"name": "maxLength", "status": "changed", "old_value": 3, "new_value": 20}],
+        },
+        {
+            "type": ChangelogEntryType.schema_field_attributes_changed,
+            "models": unordered("ChildWithInheritedCode", "SiblingWithInheritedCode"),
+            "field": "code",
+            "attribute_changes": [{"name": "maxLength", "status": "changed", "old_value": 10, "new_value": 20}],
+        },
+    ]
+    # Generating the changelog must not change the models of the versions, so it also works again
+    for _ in range(2):
+        changelog = app.generate_changelog().model_dump(mode="json")  # ty: ignore[deprecated]  # Legacy API coverage.
+        assert changelog["versions"][0]["changes"][0]["instructions"] == expected_instructions
+    generators = generate_versioned_models(app.versions)
+    for model in (ParentWithInheritedCode, ChildWithInheritedCode, SiblingWithInheritedCode):
+        assert generators["2001-01-01"][model].model_json_schema()["properties"]["code"]["maxLength"] == 20
+    # The parent's instruction comes after the child's one, so it also applies to the child
+    for model in (ParentWithInheritedCode, ChildWithInheritedCode, SiblingWithInheritedCode):
+        assert generators["2000-01-01"][model].model_json_schema()["properties"]["code"]["maxLength"] == 10

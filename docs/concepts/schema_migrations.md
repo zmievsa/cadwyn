@@ -124,11 +124,16 @@ class AllowLongBusinessInvoiceCodes(VersionChange):
     )
 ```
 
-In the older version, `BusinessInvoice.code` has `max_length=5`, while `Invoice.code` and `PersonalInvoice.code` stay unchanged. To change the field in all of these schemas, give the instruction to the parent: `schema(Invoice).field("code").had(max_length=5)`. The changes of a parent's field apply to all of its subclasses, including the ones that changed the field themselves.
+In the older version, `BusinessInvoice.code` has `max_length=5`, while `Invoice.code` and `PersonalInvoice.code` stay unchanged. To change the field in all of these schemas, give the instruction to the parent: `schema(Invoice).field("code").had(max_length=5)`.
+
+The changes of a parent's field also apply to its subclasses, including the ones that changed the field themselves, with these exceptions:
+
+- A subclass that already has an instruction of its own for the field, in a newer version or earlier in the same version change, keeps the type and the `Annotated` metadata that the field had at that point. So a later `had(type=...)` of a parent, listed after it or in an older version, doesn't change the type of the field in that subclass.
+- If the schema that declares the field has no instructions of its own and no request migrations (`convert_request_to_next_version_for(...)`), the changes that a schema between it and the subclass makes in an older version don't reach a subclass that changed the field in a newer version. Any instruction for the declaring schema, e.g. for another field, makes them apply.
 
 The same holds for generic schemas: an instruction for a parametrization such as `schema(Page[Item])` changes `Page[Item]` and its subclasses, but not `Page` or its other parametrizations.
 
-In multiple inheritance, such as `class D(C, B)`, `D` takes each field from its first base that has it, as in pydantic. So if `D` doesn't change the field itself, the instructions given only for `B` don't apply to `D`. Give the instruction to the common parent of `C` and `B`, or to `D` as well.
+In multiple inheritance, such as `class D(C, B)`, `D` takes each field from its first base that has it, as in pydantic. So for a field that both `C` and `B` have, e.g. from their common parent, the instructions given only for `B` don't apply to `D` unless `D` changes that field itself. Give the instruction to the common parent, or to `D` as well. The instructions for a field that only `B` has, e.g. because `B` declares it, apply to `D` as usual.
 
 ## Add a validator to the older version
 

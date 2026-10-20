@@ -446,6 +446,58 @@ def test__schema_field_had__inherited_field_that_a_sibling_changed__should_accep
     assert _get_description_and_max_length(schemas["2000-01-01"][InheritedFieldParent]) == ("Head", 10)
 
 
+@pytest.mark.parametrize(
+    "instructions",
+    [
+        pytest.param(
+            [
+                schema(InheritedFieldChild).field("foo").had(type=bytes),
+                schema(InheritedFieldSibling).field("foo").had(type=bytes),
+            ],
+            id="sibling",
+        ),
+        pytest.param(
+            [
+                schema(InheritedFieldChild).field("foo").had(type=bytes),
+                schema(InheritedFieldParent).field("foo").had(type=bytes),
+            ],
+            id="parent",
+        ),
+    ],
+)
+def test__schema_field_had__type_that_only_another_model_had__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas, instructions: list[Any]
+):
+    # Before #466, Cadwyn rejected the second instruction because the first one also changed the type of the other
+    # models that share the field
+    schemas = create_runtime_schemas(version_change(PARENT_INSTRUCTION, *instructions))
+
+    changed_models = {instruction.schema for instruction in instructions}
+    for model in (InheritedFieldParent, InheritedFieldChild, InheritedFieldSibling):
+        expected_type = bytes if model in changed_models or InheritedFieldParent in changed_models else str
+        assert schemas["2000-01-01"][model].model_fields["foo"].annotation is expected_type
+
+
+def test__schema_field_had__type_that_the_model_already_has_after_sibling_changed_it__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            'You tried to change the type of field "foo" to "<class \'bytes\'>" from "InheritedFieldChild" in '
+            '"MyVersionChange" but it already has type "<class \'bytes\'>"'
+        ),
+    ):
+        create_runtime_schemas(
+            version_change(
+                PARENT_INSTRUCTION,
+                schema(InheritedFieldChild).field("foo").had(type=bytes),
+                schema(InheritedFieldSibling).field("foo").had(type=bytes),
+                schema(InheritedFieldChild).field("foo").had(type=bytes),
+            )
+        )
+
+
 class AnnotatedInheritedFieldParent(BaseModel):
     foo: Annotated[str, Field(description="Head")] = ""
     bar: int = 0

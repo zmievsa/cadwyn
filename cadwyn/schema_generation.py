@@ -171,6 +171,8 @@ class PydanticFieldWrapper:
     # The attributes after the changes of every model that shares this field: the model that defines it and the
     # subclasses that changed it. We keep using them to validate the instructions so that we accept the same ones.
     passed_field_attributes: dict[str, Any] = dataclasses.field(init=False)
+    # The model of the last instruction that changed the type of the field
+    type_changed_by: Union[type[BaseModel], None] = dataclasses.field(init=False, default=None)
     declared_field_attributes: dict[str, Any] = dataclasses.field(init=False)
     changes: list[_FieldAttributeChange] = dataclasses.field(init=False)
     # The same for all copies of the field
@@ -3473,13 +3475,19 @@ def _change_field(
     annotation: Union[Any, None],
 ):
     if alter_schema_instruction.type is not Sentinel:
-        if field.annotation == alter_schema_instruction.type:
+        if field.annotation == alter_schema_instruction.type and (
+            field.type_changed_by is None
+            or issubclass(model.cls, field.type_changed_by)
+            # Another model that shares the field (e.g. a sibling) could have changed its type only for itself
+            or annotation == alter_schema_instruction.type
+        ):
             raise InvalidGenerationInstructionError(
                 f'You tried to change the type of field "{alter_schema_instruction.name}" to '
                 f'"{alter_schema_instruction.type}" from "{model.name}" in "{version_change_name}" '
                 f'but it already has type "{field.annotation}"',
             )
         field.annotation = alter_schema_instruction.type
+        field.type_changed_by = model.cls
         model.annotations[alter_schema_instruction.name] = alter_schema_instruction.type
 
     if alter_schema_instruction.new_name is not Sentinel:

@@ -19,7 +19,13 @@ from cadwyn._asts import GenericAliasUnionArgs
 from cadwyn._utils import Sentinel
 from cadwyn.route_generation import _get_routes
 from cadwyn.routing import _RootCadwynAPIRouter
-from cadwyn.schema_generation import SchemaGenerator, _change_field_in_model, generate_versioned_models
+from cadwyn.schema_generation import (
+    SchemaGenerator,
+    _change_field_in_model,
+    _ModelBundle,
+    _PydanticModelWrapper,
+    generate_versioned_models,
+)
 from cadwyn.structure.common import _HiddenAttributeMixin
 from cadwyn.structure.versions import PossibleInstructions, VersionBundle, VersionChange, VersionChangeWithSideEffects
 
@@ -105,6 +111,18 @@ def _generate_changelog(versions: VersionBundle, router: _RootCadwynAPIRouter) -
             version_changelog.changes.append(version_change_changelog)
         changelog.versions.append(version_changelog)
     return changelog
+
+
+def _copy_model_with_its_parents(
+    model: "_PydanticModelWrapper[BaseModel]", schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]"
+) -> "tuple[_PydanticModelWrapper[BaseModel], dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]]":
+    """Copy the model and its parents so that an instruction for a field that the model inherits only changes copies.
+
+    Otherwise, it would change the field of the parent in the version, and of its other subclasses.
+    """
+    models = [model.cls, *(base for base in model.cls.__mro__[1:] if base in schemas)]
+    copies = copy.deepcopy(_ModelBundle(enums={}, schemas={model: schemas[model] for model in models})).schemas
+    return copies[model.cls], schemas | copies
 
 
 def _get_older_field_name(
@@ -413,10 +431,12 @@ def _convert_version_change_instruction_to_changelog_entry(  # noqa: C901
             old_field_name_from_this_instruction = instruction.name
             attribute_changes = []
         newer_model_wrapper = generator_from_newer_version._get_wrapper_for_model(instruction.schema)
-        newer_model_wrapper_with_migrated_field = copy.deepcopy(newer_model_wrapper)
+        newer_model_wrapper_with_migrated_field, schemas = _copy_model_with_its_parents(
+            newer_model_wrapper, generator_from_newer_version.model_bundle.schemas
+        )
         _change_field_in_model(
             newer_model_wrapper_with_migrated_field,
-            generator_from_newer_version.model_bundle.schemas,
+            schemas,
             alter_schema_instruction=instruction,
             version_change_name=version_change.__name__,
         )
