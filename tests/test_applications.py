@@ -827,9 +827,7 @@ def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
     assert "/my_api" in [server["url"] for server in servers]
 
 
-@pytest.mark.xfail(
-    not FASTAPI_ACCEPTS_OPENAPI_PREFIX, raises=TypeError, strict=True, reason="FastAPI 0.145.0 removed openapi_prefix"
-)
+@pytest.mark.skipif(not FASTAPI_ACCEPTS_OPENAPI_PREFIX, reason="FastAPI 0.145.0 removed openapi_prefix")
 def test__get_openapi__with_openapi_prefix__should_include_it_in_servers():
     client = TestClient(
         Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")
@@ -837,6 +835,12 @@ def test__get_openapi__with_openapi_prefix__should_include_it_in_servers():
 
     resp = client.get("/openapi.json?version=2022-11-16")
     assert resp.json()["servers"] == [{"url": "/my_api"}]
+
+
+@pytest.mark.skipif(FASTAPI_ACCEPTS_OPENAPI_PREFIX, reason="FastAPI accepts openapi_prefix before 0.145.0")
+def test__cadwyn__with_openapi_prefix_on_fastapi_without_it__should_raise_a_clear_error():
+    with pytest.raises(TypeError, match=re.escape("FastAPI 0.145.0 removed it")):
+        Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")
 
 
 def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_urls():

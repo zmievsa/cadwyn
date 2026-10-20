@@ -88,6 +88,7 @@ from cadwyn.structure.data import RequestInfo, ResponseInfo
 from cadwyn.structure.endpoints import endpoint as cadwyn_endpoint
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import Version, VersionBundle
+from tests._resources.utils import FASTAPI_DISTINGUISHES_NULL_BODIES
 from tests.conftest import (
     CreateVersionedApp,
     CreateVersionedClients,
@@ -469,6 +470,63 @@ class TestRequestMigrations:
         assert response.status_code == 200
         assert response.json() is None
         assert clients["2001-01-01"].post(url=test_path, json={"foo": 1}).json() == {"foo": 1}
+
+    @pytest.mark.parametrize("content", [b'{"foo": 1}', b"null"])
+    @pytest.mark.parametrize("fills_body_before_clearing_it", [False, True])
+    def test__request_migration__clearing_body__should_omit_it_so_that_the_default_applies(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+        content: bytes,
+        fills_body_before_clearing_it: bool,
+    ):
+        @router.post(test_path)
+        async def route(payload: Optional[dict[str, int]] = Body({"default": 1})):
+            return payload
+
+        @convert_request_to_next_version_for(test_path, ["POST"])
+        def fill(request: RequestInfo):
+            request.body = {"temporary": 1}
+
+        @convert_request_to_next_version_for(test_path, ["POST"])
+        def clear(request: RequestInfo):
+            request.body = None
+
+        # Even a JSON null body is omitted once a migration has set the body to None
+        changes = [version_change(fill=fill)] if fills_body_before_clearing_it else []
+        clients = create_versioned_clients(*changes, version_change(clear=clear))
+        response = clients["2000-01-01"].post(
+            url=test_path, content=content, headers={"content-type": "application/json"}
+        )
+        assert (response.status_code, response.json()) == (200, {"default": 1})
+
+    @pytest.mark.parametrize("content", [b'{"foo": 1}', b"null"])
+    def test__request_migration__clearing_body_for_a_body_dependency_of_newer_versions__should_omit_it(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+        content: bytes,
+    ):
+        def added_body_dependency(extra: Optional[dict[str, int]] = Body(None)):
+            return extra
+
+        @router.post(test_path, dependencies=[Depends(added_body_dependency)])
+        async def route(payload: Optional[dict[str, int]] = Body(None)):
+            return payload
+
+        @convert_request_to_next_version_for(test_path, ["POST"])
+        def clear(request: RequestInfo):
+            request.body = None
+
+        clients = create_versioned_clients(
+            version_change(cadwyn_endpoint(test_path, ["POST"]).had(dependencies=[]), clear=clear)
+        )
+        response = clients["2000-01-01"].post(
+            url=test_path, content=content, headers={"content-type": "application/json"}
+        )
+        assert (response.status_code, response.json()) == (200, None)
 
     def test__request_migration__when_body_annotation_is_unhashable__should_migrate_by_path(
         self,
@@ -1186,6 +1244,22 @@ async def _optional_embedded_bodies(name: Optional[str] = Body(None), age: Optio
     return {"name": name, "age": age}
 
 
+def _empty_string_as_none(value: Any) -> Any:
+    return None if value == "" else value
+
+
+async def _validated_body_with_default(
+    payload: Annotated[Optional[dict[str, int]], BeforeValidator(_empty_string_as_none), Body()] = {"default": 1},  # noqa: B006
+):
+    return {"payload": payload}
+
+
+async def _validated_required_body(
+    payload: Annotated[Optional[dict[str, int]], BeforeValidator(_empty_string_as_none), Body()],
+):
+    return {"payload": payload}
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [
@@ -1195,28 +1269,54 @@ async def _optional_embedded_bodies(name: Optional[str] = Body(None), age: Optio
         _non_nullable_body_with_none_default,
         _optional_embedded_body,
         _optional_embedded_bodies,
+        _validated_body_with_default,
+        _validated_required_body,
     ],
 )
 @pytest.mark.parametrize("content", [b"", b"null", b'{"a": 1}'])
-# FastAPI doesn't parse bodies without a content type as JSON by default
 @pytest.mark.parametrize("headers", [{"content-type": "application/json"}, {}])
-def test__request_body_parsing__omitted_null_and_object_bodies__should_be_handled_as_in_fastapi(
+# FastAPI only parses bodies without a content type as JSON with `strict_content_type=False`
+@pytest.mark.parametrize("strict_content_type", [True, False])
+def test__request_body_parsing__omitted_null_and_present_bodies__should_be_handled_as_in_fastapi(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
-    router: VersionedAPIRouter,
     endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
     content: bytes,
     headers: dict[str, str],
+    strict_content_type: bool,
 ):
     # FastAPI 0.151.0 and newer validate a JSON null body as None and apply defaults only to omitted bodies
+    router = VersionedAPIRouter(strict_content_type=strict_content_type)
     router.post(test_path)(endpoint)
-    fastapi_app = fastapi.FastAPI()
+    fastapi_app = fastapi.FastAPI(strict_content_type=strict_content_type)
     fastapi_app.post(test_path)(endpoint)
-    clients = create_versioned_clients(version_change())
+    clients = create_versioned_clients(version_change(), router=router)
 
     expected = TestClient(fastapi_app).post(test_path, content=content, headers=headers)
     for version_client in clients.values():
         response = version_client.post(test_path, content=content, headers=headers)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.skipif(
+    not FASTAPI_DISTINGUISHES_NULL_BODIES, reason="Before FastAPI 0.151.0, a body that is None is an omitted one"
+)
+@pytest.mark.parametrize("endpoint", [_validated_body_with_default, _validated_required_body])
+def test__request_body_parsing__body_that_validators_turn_into_none__should_be_present_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
+):
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    clients = create_versioned_clients(version_change(), router=router)
+
+    expected = TestClient(fastapi_app).post(test_path, json="")
+    assert (expected.status_code, expected.json()) == (200, {"payload": None})
+    for version_client in clients.values():
+        response = version_client.post(test_path, json="")
         assert (response.status_code, response.json()) == (expected.status_code, expected.json())
 
 

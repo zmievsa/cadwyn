@@ -61,9 +61,25 @@ _CADWYN_RESPONSE_PARAM_NAME = "cadwyn_response_param"
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _RouteId = int
-# What FastAPI passes to `solve_dependencies` for an omitted body: `None` before FastAPI 0.151.0 and `PydanticUndefined`
-# since then, because FastAPI 0.151.0 validates `None` as a JSON null body
-_OMITTED_BODY: Any = inspect.signature(solve_dependencies).parameters["body"].default
+
+
+def _get_omitted_body_marker() -> Any:
+    """Return what FastAPI passes to `solve_dependencies` for a request without a body.
+
+    It is `None` before FastAPI 0.151.0, and `PydanticUndefined` since then, because FastAPI 0.151.0 validates `None`
+    as a JSON null body.
+    """
+    body_param = inspect.signature(solve_dependencies).parameters.get("body")
+    if body_param is None or body_param.default is inspect.Parameter.empty:  # pragma: no cover
+        raise ImportError(
+            "Cadwyn does not support this version of FastAPI: `fastapi.dependencies.utils.solve_dependencies` has "
+            "no default for its `body` parameter, which Cadwyn uses to pass requests without a body to FastAPI. "
+            "Please, open an issue on Cadwyn's GitHub."
+        )
+    return body_param.default
+
+
+_OMITTED_BODY: Any = _get_omitted_body_marker()
 
 # ty requires staticmethod's type arguments, but runtime isinstance() requires the bare class.
 if TYPE_CHECKING:
@@ -438,7 +454,7 @@ class VersionBundle:
         embed_body_fields: bool,
         background_tasks: Union[BackgroundTasks, None],
         body_is_model_dump: bool,
-        body_is_json_null: bool,
+        body_is_omitted: bool,
         uploads_read_by_fastapi: "Union[_UploadPositions, None]",
     ) -> dict[str, Any]:
         start = self.reversed_version_values.index(current_version)
@@ -468,8 +484,8 @@ class VersionBundle:
             if uploads_read_by_fastapi:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
             body_for_solving = FormData(request_info._form)
-        # Migrations can also omit the body by setting it to None
-        elif request_info.body is None and not body_is_json_null:
+        # A body is omitted if the request had none for FastAPI, or if a migration has set it to None
+        elif request_info.body is None and (request_info._body_is_assigned or body_is_omitted):
             body_for_solving = _OMITTED_BODY
         elif body_is_model_dump:
             body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
@@ -753,6 +769,9 @@ class VersionBundle:
         if api_version is None:
             return kwargs
 
+        # Starlette caches the parsed JSON on the request, so this tells whether FastAPI has got the body as a JSON
+        # value (including null) for the versioned route. We check it before `_get_body` parses the body on its own
+        fastapi_has_parsed_json = hasattr(request, "_json")
         body_is_model_dump = False
         uploads_read_by_fastapi: Union[_UploadPositions, None] = None
         # This is a kind of body param you get when you define a single pydantic schema in your route's body
@@ -779,8 +798,10 @@ class VersionBundle:
             if isinstance(body, FormData):
                 uploads_read_by_fastapi = _get_uploads_read_by_fastapi(route, head_route, head_dependant, body)
 
-        # Migrations see both an omitted body and a JSON null body as None, so we remember which one the request had
-        body_is_json_null = body is None and await _is_json_null_body(request, route.body_field)
+        # A None body is present if FastAPI got a JSON value: a null, or a value that validators turned into None.
+        # Otherwise, FastAPI got no body, or got raw bytes that only `_get_body` parsed as JSON (e.g. without a content
+        # type, which FastAPI only parses with `strict_content_type=False`)
+        body_is_omitted = body is None and not fastapi_has_parsed_json
         request_info = RequestInfo(request, body)
         new_kwargs = await self._migrate_request(
             head_body_field,
@@ -794,7 +815,7 @@ class VersionBundle:
             embed_body_fields=embed_body_fields,
             background_tasks=background_tasks,
             body_is_model_dump=body_is_model_dump,
-            body_is_json_null=body_is_json_null,
+            body_is_omitted=body_is_omitted,
             uploads_read_by_fastapi=uploads_read_by_fastapi,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
@@ -802,22 +823,6 @@ class VersionBundle:
             new_kwargs.pop(_CADWYN_REQUEST_PARAM_NAME)
 
         return new_kwargs
-
-
-async def _is_json_null_body(request: FastapiRequest, body_field: Union[ModelField, None]) -> bool:
-    """Return whether a request whose body Cadwyn sees as None has sent a JSON null rather than no body at all."""
-    # Forms have no JSON body (and their stream is already consumed), and routes without a body field don't read it.
-    # Otherwise, FastAPI has already read the body, so this returns the cached bytes
-    if body_field is None or isinstance(body_field.field_info, params.Form) or not await request.body():
-        return False
-    # Like FastAPI, we only parse the bodies with a JSON content type
-    message = email.message.Message()
-    message["content-type"] = request.headers.get("content-type", "")
-    subtype = message.get_content_subtype()
-    if message.get_content_maintype() != "application" or not (subtype == "json" or subtype.endswith("+json")):
-        return False
-    # FastAPI has already parsed the body, so this returns the cached JSON
-    return await request.json() is None
 
 
 def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body_fields: bool) -> bool:
