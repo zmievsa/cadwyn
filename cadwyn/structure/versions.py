@@ -468,11 +468,12 @@ class VersionBundle:
             if uploads_read_by_fastapi:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
             body_for_solving = FormData(request_info._form)
+        # Migrations can also omit the body by setting it to None
+        elif request_info.body is None and not body_is_json_null:
+            body_for_solving = _OMITTED_BODY
         elif body_is_model_dump:
             body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
             is_body_restored = body_for_solving is not request_info.body
-        elif request_info.body is None and not body_is_json_null:
-            body_for_solving = _OMITTED_BODY
         else:
             body_for_solving = request_info.body
 
@@ -805,11 +806,18 @@ class VersionBundle:
 
 async def _is_json_null_body(request: FastapiRequest, body_field: Union[ModelField, None]) -> bool:
     """Return whether a request whose body Cadwyn sees as None has sent a JSON null rather than no body at all."""
-    # Forms have no JSON body (and their stream is already consumed), and routes without a body field don't read it
-    if body_field is None or isinstance(body_field.field_info, params.Form):
+    # Forms have no JSON body (and their stream is already consumed), and routes without a body field don't read it.
+    # Otherwise, FastAPI has already read the body, so this returns the cached bytes
+    if body_field is None or isinstance(body_field.field_info, params.Form) or not await request.body():
         return False
-    # FastAPI has already read the body, so this returns the cached bytes
-    return bool(await request.body())
+    # Like FastAPI, we only parse the bodies with a JSON content type
+    message = email.message.Message()
+    message["content-type"] = request.headers.get("content-type", "")
+    subtype = message.get_content_subtype()
+    if message.get_content_maintype() != "application" or not (subtype == "json" or subtype.endswith("+json")):
+        return False
+    # FastAPI has already parsed the body, so this returns the cached JSON
+    return await request.json() is None
 
 
 def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body_fields: bool) -> bool:

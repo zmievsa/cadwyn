@@ -448,6 +448,28 @@ class TestRequestMigrations:
         assert empty_response.status_code == 200
         assert empty_response.json() is None
 
+    @pytest.mark.parametrize("body_type", [SchemaWithInternalRepresentation, dict[str, int]])
+    def test__request_migration__setting_body_to_none__should_omit_the_body(
+        self,
+        create_versioned_clients: CreateVersionedClients,
+        test_path: Literal["/test"],
+        router: VersionedAPIRouter,
+        body_type: Any,
+    ):
+        @router.post(test_path)
+        async def route(payload: body_type = Body(None)):
+            return payload
+
+        @convert_request_to_next_version_for(test_path, ["POST"])
+        def migrator(request: RequestInfo):
+            request.body = None
+
+        clients = create_versioned_clients(version_change(migrator=migrator))
+        response = clients["2000-01-01"].post(url=test_path, json={"foo": 1})
+        assert response.status_code == 200
+        assert response.json() is None
+        assert clients["2001-01-01"].post(url=test_path, json={"foo": 1}).json() == {"foo": 1}
+
     def test__request_migration__when_body_annotation_is_unhashable__should_migrate_by_path(
         self,
         create_versioned_clients: CreateVersionedClients,
@@ -1176,12 +1198,15 @@ async def _optional_embedded_bodies(name: Optional[str] = Body(None), age: Optio
     ],
 )
 @pytest.mark.parametrize("content", [b"", b"null", b'{"a": 1}'])
+# FastAPI doesn't parse bodies without a content type as JSON by default
+@pytest.mark.parametrize("headers", [{"content-type": "application/json"}, {}])
 def test__request_body_parsing__omitted_null_and_object_bodies__should_be_handled_as_in_fastapi(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
     endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
     content: bytes,
+    headers: dict[str, str],
 ):
     # FastAPI 0.151.0 and newer validate a JSON null body as None and apply defaults only to omitted bodies
     router.post(test_path)(endpoint)
@@ -1189,7 +1214,6 @@ def test__request_body_parsing__omitted_null_and_object_bodies__should_be_handle
     fastapi_app.post(test_path)(endpoint)
     clients = create_versioned_clients(version_change())
 
-    headers = {"content-type": "application/json"}
     expected = TestClient(fastapi_app).post(test_path, content=content, headers=headers)
     for version_client in clients.values():
         response = version_client.post(test_path, content=content, headers=headers)
