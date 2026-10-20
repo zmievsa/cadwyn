@@ -13,7 +13,20 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
 from types import GenericAlias
-from typing import Annotated, ClassVar, Generic, Literal, NewType, Optional, TypeAlias, TypeVar, Union, cast, get_args
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    ClassVar,
+    Generic,
+    Literal,
+    NewType,
+    Optional,
+    TypeAlias,
+    TypeVar,
+    Union,
+    cast,
+    get_args,
+)
 from uuid import UUID
 
 import fastapi.params
@@ -3840,7 +3853,9 @@ _requires_type_statement = pytest.mark.skipif(sys.version_info < (3, 12), reason
 
 class ModelWithTypedExtras(BaseModel):
     model_config = ConfigDict(extra="allow")
-    __pydantic_extra__: dict[str, RoleOfVersionedDependency] = Field(init=False)
+    # Pydantic documents typing extra fields this way, but type checkers see it as narrowing a writable attribute
+    if not TYPE_CHECKING:
+        __pydantic_extra__: dict[str, RoleOfVersionedDependency] = Field(init=False)
 
     @property
     def role_name(self) -> RoleOfVersionedDependency:
