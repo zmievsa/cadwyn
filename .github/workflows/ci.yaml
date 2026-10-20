@@ -51,6 +51,26 @@ jobs:
           name: coverage-results-${{ matrix.python-version }}
           path: .coverage*
           include-hidden-files: true
+  # The lock pins one FastAPI version, but users get the newest one, and pyproject.toml allows the oldest one.
+  # Only FastAPI changes here, so the other dependencies (including ty) stay as locked.
+  FastAPI-bounds:
+    name: Tests with ${{ matrix.fastapi }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fastapi: "fastapi==0.137.1" # Keep in sync with the lower bound in pyproject.toml
+            python-version: "3.10"
+          - fastapi: "fastapi" # The newest version
+            python-version: "3.14"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-python-uv
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: uv lock --upgrade-package "${{ matrix.fastapi }}"
+      - run: tox run -e py${{ matrix.python-version }}
   Tutorial-tests:
     runs-on: ubuntu-latest
     name: Tutorial tests

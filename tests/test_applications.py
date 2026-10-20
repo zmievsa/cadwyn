@@ -22,7 +22,7 @@ from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.structure.endpoints import endpoint
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import HeadVersion, Version, VersionBundle, VersionChange
-from tests._resources.utils import BASIC_HEADERS, DEFAULT_API_VERSION
+from tests._resources.utils import BASIC_HEADERS, DEFAULT_API_VERSION, FASTAPI_ACCEPTS_OPENAPI_PREFIX
 from tests._resources.versioned_app.app import (
     client_without_headers,
     client_without_headers_and_with_custom_api_version_var,
@@ -827,6 +827,9 @@ def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
     assert "/my_api" in [server["url"] for server in servers]
 
 
+@pytest.mark.xfail(
+    not FASTAPI_ACCEPTS_OPENAPI_PREFIX, raises=TypeError, strict=True, reason="FastAPI 0.145.0 removed openapi_prefix"
+)
 def test__get_openapi__with_openapi_prefix__should_include_it_in_servers():
     client = TestClient(
         Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")

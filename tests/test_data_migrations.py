@@ -70,7 +70,7 @@ from starlette.formparsers import MultiPartParser
 from starlette.responses import StreamingResponse
 from typing_extensions import Self, TypeAliasType, TypedDict, override
 
-from cadwyn import Cadwyn, VersionedAPIRouter, current_dependency_solver
+from cadwyn import VersionedAPIRouter, current_dependency_solver
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -1138,6 +1138,62 @@ def test__request_body_parsing__empty_body_with_optional_params(
 
     assert resp.status_code == 200
     assert resp.json() == {"name": None, "age": None}
+
+
+async def _nullable_body_with_default(payload: Optional[dict[str, int]] = Body({"default": 1})):
+    return {"payload": payload}
+
+
+async def _required_nullable_body(payload: Optional[dict[str, int]] = Body()):
+    return {"payload": payload}
+
+
+async def _non_nullable_body_with_default(payload: dict[str, int] = Body({"default": 1})):
+    return {"payload": payload}
+
+
+async def _non_nullable_body_with_none_default(payload: dict[str, int] = Body(None)):
+    return {"payload": payload}
+
+
+async def _optional_embedded_body(payload: Optional[dict[str, int]] = Body(None, embed=True)):
+    return {"payload": payload}
+
+
+async def _optional_embedded_bodies(name: Optional[str] = Body(None), age: Optional[int] = Body(None)):
+    return {"name": name, "age": age}
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        _nullable_body_with_default,
+        _required_nullable_body,
+        _non_nullable_body_with_default,
+        _non_nullable_body_with_none_default,
+        _optional_embedded_body,
+        _optional_embedded_bodies,
+    ],
+)
+@pytest.mark.parametrize("content", [b"", b"null", b'{"a": 1}'])
+def test__request_body_parsing__omitted_null_and_object_bodies__should_be_handled_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
+    content: bytes,
+):
+    # FastAPI 0.151.0 and newer validate a JSON null body as None and apply defaults only to omitted bodies
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    clients = create_versioned_clients(version_change())
+
+    headers = {"content-type": "application/json"}
+    expected = TestClient(fastapi_app).post(test_path, content=content, headers=headers)
+    for version_client in clients.values():
+        response = version_client.post(test_path, content=content, headers=headers)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
 
 
 def test__request_body_parsing__non_application_content_type(
@@ -2674,7 +2730,7 @@ def test__request_body_migration__with_bytes_dependency_overridden__should_keep_
         return [data, other]
 
     clients = create_versioned_clients(version_change())
-    app = cast("Cadwyn", clients["2000-01-01"].app)
+    app = clients["2000-01-01"].app
     app.dependency_overrides[_get_data_from_bytes] = _get_data_header
 
     # The override reads a part of the file for every route as before, while the files of other dependencies
@@ -2705,7 +2761,7 @@ def test__request_body_migration__with_bytes_dependency_and_unhashable_override_
         return [user, data]
 
     clients = create_versioned_clients(version_change())
-    app = cast("Cadwyn", clients["2000-01-01"].app)
+    app = clients["2000-01-01"].app
     # Dataclasses that compare by value aren't hashable
     app.dependency_overrides[_get_user] = _UnhashableUserOverride("alice")
 
@@ -3015,7 +3071,7 @@ def test__request_body_migration__with_bytes_and_old_version_dependency_like_a_h
             )
         )
     )
-    app = cast("Cadwyn", clients["2000-01-01"].app)
+    app = clients["2000-01-01"].app
     app.dependency_overrides.update(dependency_overrides)
 
     # The old version runs one more dependency than the head, even though it looks like the head's one
@@ -3061,7 +3117,7 @@ def test__request_body_migration__with_bytes_and_overridden_old_version_dependen
             cadwyn_endpoint(test_path, ["POST"]).had(dependencies=[Depends(_store_upload), Depends(_skip_nothing)])
         )
     )
-    app = cast("Cadwyn", clients["2000-01-01"].app)
+    app = clients["2000-01-01"].app
     app.dependency_overrides[_skip_nothing] = _skip_legacy_header_in_override
 
     # We can't see which files the override takes, so the files of dependencies stay as before. Here the override
