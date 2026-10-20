@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Deprecated
+
+- The deprecated changelog (`/changelog`, `generate_changelog()`, and `hidden()`) will be removed in 9.0.
+
 ### Added
 
 - Documented Cadwyn's design decisions, accepted trade-offs, known limitations, and the rules for changing its behavior in [Design decisions and trade-offs](https://docs.cadwyn.dev/theory/design_decisions/) (#202).

@@ -12,6 +12,17 @@ The maintainer's three principles follow from this:
 2. FastAPI and Pydantic features should keep working transparently, but only as far as FastAPI and Pydantic themselves go.
 3. Every change should make Cadwyn simpler if possible. Complexity is the main long-term cost: after 8.0.0, `schema_generation.py` is about 4,000 lines and `structure/versions.py` about 2,000.
 
+Cadwyn also doesn't aim for "pay only for what you use". Every app should run roughly the same Cadwyn: prefer one behavior and one code path for everyone over special paths that only some apps take, so that bugs show up for everyone and get fixed once.
+
+## Supported API
+
+Everything importable from `cadwyn` is supported. So are the internals that Airflow's Task SDK builds on, and changing them counts as a breaking change:
+
+* `VersionBundle.versions` and `VersionBundle.reversed_versions`
+* the `alter_*_instructions` attributes of `VersionChange`
+* calling the instructions in them (`_AlterDataInstruction.__call__`) with any object that has a `body` attribute
+* `generate_versioned_models()`, and indexing its result (`SchemaGenerator.__getitem__` from `cadwyn.schema_generation`)
+
 ## Costs of the architecture
 
 These follow from how Cadwyn works and are not bugs. Changes that try to remove them are almost always rejected.
@@ -21,7 +32,7 @@ These follow from how Cadwyn works and are not bugs. Changes that try to remove 
 * **Requests are validated twice, and dependencies run twice.** A request is validated by its version's route, migrated, and validated again by the latest version's route. Dependencies run in both passes, so their side effects happen twice unless they check `current_dependency_solver`. Uploaded `bytes` files are held in memory twice.
 * **Migrations only run for the schema you name.** Request and response migrations run when their schema is the route's own body or `response_model`, not for that schema nested in other schemas or generics. Schema instructions, on the other hand, change a schema everywhere it's used. This is deliberate: it keeps each migration running exactly once, where it was declared.
 * **Cadwyn relies on FastAPI, Pydantic, and `typing` internals.** For example: `solve_dependencies`, `fastapi._compat`, FastAPI's lazily included routers, `FieldInfo` internals, and `typing`'s alias cache. Upstream minor releases can break Cadwyn. The twice-daily workflow upgrades every dependency and runs the tests to catch this. It must always pass, and failures are fixed in Cadwyn, never by pinning or capping a dependency.
-* **Startup copies every model for every version.** Copying only changed models would make startup much faster, but it changes OpenAPI names and model behavior, so it would be a breaking change.
+* **Startup copies every model for every version.** Copying only changed models would make startup much faster, but it changes OpenAPI names and model behavior. It's too large a change, and it isn't planned.
 
 ## Decisions already made
 
@@ -36,7 +47,10 @@ These follow from how Cadwyn works and are not bugs. Changes that try to remove 
 | Fields whose validation and serialization keys differ | Fix only requests and responses that would certainly fail ("rescue-only"). | Responses that passed before must not change at all, even if they lost a value. |
 | Self-referencing models | Copied when that's safe. Otherwise Cadwyn raises `SchemaGenerationError` at startup. | Failing clearly is better than serving wrong shapes silently. |
 | Enum defaults of omitted parameters on FastAPI before 0.148 | Not rewritten. | It would fix a pre-existing bug on old FastAPI only, and every attempt added new edge cases. |
-| `/changelog` | Deprecated. It gets only crash fixes. | Maintenance cost. |
+| `/changelog` and `generate_changelog()` | Deprecated, and removed in 9.0. Until then, crash fixes only. | Maintenance cost. Apps can now generate a better and more extensible changelog from their version changes themselves, e.g. with a coding agent. |
+| `openapi_prefix` argument of `Cadwyn()` | Deprecated, and kept at least until 2027-01-20. | FastAPI 0.145.0 removed it. |
+| Options and flags | Avoided in 99% of cases, including for shipping a breaking fix early. A breaking fix waits for a major release. | Each one doubles the code paths and the tests. |
+| Minimum supported versions | Raising the FastAPI minimum to drop compatibility code is fine. The Pydantic and Python minimums are raised only when unavoidable. | FastAPI moves fast and Cadwyn depends on its internals. Raising the Pydantic or Python minimums blocks more users. |
 | FastAPI before 0.137.1 | Not supported. | Its router model is different. Supporting both doubles the routing code. |
 
 ## Known limitations
@@ -53,9 +67,12 @@ These are accepted for now. They are listed so that nobody "discovers" and fixes
 
 **Scope**
 
-* Fix the reported bug, not its neighbors. Bugs you find on the way go into an issue, unless the fix is trivial and changes no existing output.
+* Fix the reported bug, not its neighbors.
+* Bugs you find yourself go into an issue. Fix them only if a user reported them or they crash.
+* Features that Cadwyn doesn't support, such as WebSockets, streaming endpoints, and migrations of `StreamingResponse` or `FileResponse`, aren't added as part of a fix.
 * Don't widen a change during review. If a review uncovers a new problem, file it.
-* Don't add options or flags to keep both behaviors unless the maintainer has signed off on them. Each one doubles the code paths and the tests.
+* Don't add options or flags to keep both behaviors unless the maintainer has signed off on them.
+* If a simple workaround exists in user code and the fix in Cadwyn is complex, document the workaround instead.
 
 **What a change may alter**
 
@@ -69,3 +86,6 @@ These are accepted for now. They are listed so that nobody "discovers" and fixes
 * Don't reimplement FastAPI, Pydantic, or CPython logic. Call their functions, and evaluate annotations only where FastAPI itself does.
 * Make safety checks allow-lists. Anything unknown takes the old behavior.
 * Decide statically, not by the order in which models happen to be generated.
+* Invalid instructions or models fail at startup with an error that names the model and the field. Never fail later at request time, and never serve wrong data silently.
+* When you rely on a private FastAPI or Pydantic internal, check that it exists at import time and fail with a clear error if it changed. Never fall back silently.
+* `Cadwyn()` accepts FastAPI's parameters and passes each of them to every router it creates.
