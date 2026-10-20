@@ -79,6 +79,10 @@ class AddDescriptionToMySchemaFoo(VersionChange):
     )
 ```
 
+**ALIAS WARNING:**
+
+Pydantic copies a field's `alias` into its `validation_alias` and `serialization_alias`. For a field that already has an alias, `.had(alias=...)` and `.didnt_have("alias")` currently change only `alias`, so the older version keeps using the old key in requests, responses, and OpenAPI, and Cadwyn warns about it at startup. Cadwyn 9.0 will change the copied aliases too. To use the new key now, change them explicitly, e.g. `.had(alias="old_foo", validation_alias="old_foo", serialization_alias="old_foo")` or `.didnt_have("alias", "validation_alias", "serialization_alias")`, and add request and response migrations for the key. To keep the current key, remove the alias change from the instruction.
+
 **DEFAULTS WARNING:**
 
 If you add `default` or `default_factory` to the old version of a schema, it will not manifest in the code automatically. Instead, you should add both the `default` and `default_factory`, and then also add the default value using a request migration.

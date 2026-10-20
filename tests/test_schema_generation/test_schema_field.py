@@ -1,3 +1,4 @@
+import contextlib
 import re
 from decimal import Decimal
 from enum import Enum, auto
@@ -2140,9 +2141,11 @@ def test__schema_field_didnt_have__attribute_of_field_in_annotated__should_only_
     class SchemaWithAttributeInAnnotated(BaseModel):
         foo: Annotated[field_type, Field(**field_kwargs)]
 
-    schemas = create_runtime_schemas(
-        version_change(schema(SchemaWithAttributeInAnnotated).field("foo").didnt_have(attr_name)),
-    )
+    # Deleting the alias keeps the keys that pydantic copied from it, so Cadwyn warns about it
+    with pytest.warns(FutureWarning) if attr_name == "alias" else contextlib.nullcontext():
+        schemas = create_runtime_schemas(
+            version_change(schema(SchemaWithAttributeInAnnotated).field("foo").didnt_have(attr_name)),
+        )
     head_field = SchemaWithAttributeInAnnotated.model_fields["foo"]
     old_field = schemas["2000-01-01"][SchemaWithAttributeInAnnotated].model_fields["foo"]
 

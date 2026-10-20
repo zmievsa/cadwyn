@@ -9,6 +9,7 @@ import json
 import re
 import sys
 import typing
+import warnings
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
@@ -95,6 +96,7 @@ from tests._resources.utils import (
     HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED,
 )
 from tests.conftest import (
+    CadwynTestClient,
     CreateVersionedApp,
     CreateVersionedClients,
     client,
@@ -1681,6 +1683,286 @@ def test__router_generation__child_had_serialization_alias_of_inherited_field__s
         assert versioned_client.get("/personal").json() == {"code": "ABC", "quantity": 1}
         business_key = "legacy_code" if version in versions_with_alias else "code"
         assert versioned_client.get("/business").json() == {business_key: "ABC", "quantity": 1}
+
+
+class ItemWithAlias(BaseModel):
+    name: str = Field(alias="a")
+
+
+class ItemWithAliasInAnnotated(BaseModel):
+    name: Annotated[str, Field(alias="a")]
+
+
+class ItemWithAliasAndSerializationAlias(BaseModel):
+    name: str = Field(alias="a", serialization_alias="s")
+
+
+class ItemWithoutAlias(BaseModel):
+    name: str
+
+
+class ItemWithAliasAndExplicitKeys(BaseModel):
+    name: str = Field(alias="a", validation_alias="k", serialization_alias="k")
+
+
+class ItemWithAliasThatAliasGeneratorOverrides(BaseModel):
+    model_config = ConfigDict(alias_generator=str.upper)
+    name: str = Field(alias="a", alias_priority=1)
+
+
+def _get_future_warnings(create: Callable[[], object]) -> list[str]:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        create()
+    return [str(warning.message) for warning in caught if warning.category is FutureWarning]
+
+
+@pytest.mark.parametrize(
+    ("model", "change_field", "expected_warning"),
+    [
+        pytest.param(
+            ItemWithAlias,
+            lambda field: field.had(alias="legacy"),
+            'schema(ItemWithAlias).field("name").had(alias=\'legacy\') in "MyVersionChange" changes the alias of '
+            '"ItemWithAlias.name", but in API version "2000-01-01" its validation_alias and serialization_alias are '
+            'still "a", so that version keeps using "a" instead of "legacy". Cadwyn 9.0 will change them too. '
+            "To use \"legacy\" now and silence this warning, also pass validation_alias='legacy' and "
+            "serialization_alias='legacy' to this .had(). To keep \"a\", remove alias='legacy' from it instead.",
+            id="had",
+        ),
+        pytest.param(
+            ItemWithAliasInAnnotated,
+            lambda field: field.had(alias="legacy"),
+            'schema(ItemWithAliasInAnnotated).field("name").had(alias=\'legacy\') in "MyVersionChange" changes '
+            'the alias of "ItemWithAliasInAnnotated.name", but in API version "2000-01-01" its validation_alias and '
+            'serialization_alias are still "a", so that version keeps using "a" instead of "legacy". Cadwyn 9.0 will '
+            "change them too. To use \"legacy\" now and silence this warning, also pass validation_alias='legacy' "
+            "and serialization_alias='legacy' to this .had(). To keep \"a\", remove alias='legacy' from it instead.",
+            id="had_in_annotated",
+        ),
+        pytest.param(
+            ItemWithAlias,
+            lambda field: field.didnt_have("alias"),
+            'schema(ItemWithAlias).field("name").didnt_have("alias") in "MyVersionChange" changes the alias of '
+            '"ItemWithAlias.name", but in API version "2000-01-01" its validation_alias and serialization_alias are '
+            'still "a", so that version keeps using "a" instead of the key that the field has without an alias. '
+            "Cadwyn 9.0 will change them too. To use the key that the field has without an alias now and silence "
+            'this warning, also pass "validation_alias" and "serialization_alias" to this .didnt_have(). To keep '
+            '"a", remove "alias" from it instead.',
+            id="didnt_have",
+        ),
+        pytest.param(
+            ItemWithAliasInAnnotated,
+            lambda field: field.didnt_have("alias"),
+            'schema(ItemWithAliasInAnnotated).field("name").didnt_have("alias") in "MyVersionChange" changes the '
+            'alias of "ItemWithAliasInAnnotated.name", but in API version "2000-01-01" its validation_alias and '
+            'serialization_alias are still "a", so that version keeps using "a" instead of the key that the field '
+            "has without an alias. Cadwyn 9.0 will change them too. To use the key that the field has without an "
+            'alias now and silence this warning, also pass "validation_alias" and "serialization_alias" to this '
+            '.didnt_have(). To keep "a", remove "alias" from it instead.',
+            id="didnt_have_in_annotated",
+        ),
+        pytest.param(
+            ItemWithAliasAndSerializationAlias,
+            lambda field: field.had(alias="legacy"),
+            'schema(ItemWithAliasAndSerializationAlias).field("name").had(alias=\'legacy\') in "MyVersionChange" '
+            'changes the alias of "ItemWithAliasAndSerializationAlias.name", but in API version "2000-01-01" its '
+            'validation_alias is still "a", so that version keeps using "a" instead of "legacy". Cadwyn 9.0 will '
+            "change it too. To use \"legacy\" now and silence this warning, also pass validation_alias='legacy' to "
+            "this .had(). To keep \"a\", remove alias='legacy' from it instead.",
+            id="had_with_explicit_serialization_alias",
+        ),
+    ],
+)
+def test__router_generation__alias_instruction_keeps_keys_derived_from_old_alias__should_warn_and_keep_keys(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    model: type[BaseModel],
+    change_field: Callable[[Any], Any],
+    expected_warning: str,
+):
+    @router.post("/items", response_model=model)
+    async def echo(item: model):  # ty: ignore[invalid-type-form]
+        return item
+
+    clients: dict[str, CadwynTestClient] = {}
+    assert _get_future_warnings(
+        lambda: clients.update(create_versioned_clients(version_change(change_field(schema(model).field("name")))))
+    ) == [expected_warning]
+
+    # The instruction doesn't change the keys of the older version, as before
+    latest_client, old_client = clients["2001-01-01"], clients["2000-01-01"]
+    assert old_client.get("/openapi.json?version=2000-01-01").content == latest_client.get(
+        "/openapi.json?version=2001-01-01"
+    ).content.replace(b"2001-01-01", b"2000-01-01")
+    for body in [{"a": "x"}, {"legacy": "x"}, {"name": "x"}]:
+        old_response = old_client.post("/items", json=body)
+        latest_response = latest_client.post("/items", json=body)
+        assert (old_response.status_code, old_response.content) == (
+            latest_response.status_code,
+            latest_response.content,
+        )
+
+
+@pytest.mark.parametrize(
+    ("model", "change_field", "old_key"),
+    [
+        pytest.param(
+            ItemWithAlias,
+            lambda field: [field.had(alias="legacy", validation_alias="legacy", serialization_alias="legacy")],
+            "legacy",
+            id="had_keys_too",
+        ),
+        pytest.param(
+            ItemWithAliasInAnnotated,
+            lambda field: [field.had(alias="legacy", validation_alias="legacy", serialization_alias="legacy")],
+            "legacy",
+            id="had_keys_too_in_annotated",
+        ),
+        pytest.param(
+            ItemWithAlias,
+            lambda field: [field.didnt_have("alias", "validation_alias", "serialization_alias")],
+            "name",
+            id="didnt_have_keys_too",
+        ),
+        pytest.param(
+            ItemWithAlias,
+            lambda field: [
+                field.had(validation_alias="legacy", serialization_alias="legacy"),
+                field.had(alias="legacy"),
+            ],
+            "legacy",
+            id="another_instruction_had_keys",
+        ),
+        pytest.param(ItemWithoutAlias, lambda field: [field.had(alias="legacy")], "legacy", id="field_without_alias"),
+        pytest.param(ItemWithAliasAndExplicitKeys, lambda field: [field.had(alias="legacy")], "k", id="explicit_keys"),
+        pytest.param(
+            ItemWithAliasThatAliasGeneratorOverrides,
+            lambda field: [field.had(alias="legacy")],
+            "NAME",
+            id="alias_generator_overrides_aliases",
+        ),
+    ],
+)
+def test__router_generation__alias_instruction_doesnt_keep_keys_derived_from_old_alias__should_not_warn(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    model: type[BaseModel],
+    change_field: Callable[[Any], list[Any]],
+    old_key: str,
+):
+    @router.post("/items", response_model=model)
+    async def echo(item: model):  # ty: ignore[invalid-type-form]
+        raise NotImplementedError
+
+    clients: dict[str, CadwynTestClient] = {}
+    assert (
+        _get_future_warnings(
+            lambda: clients.update(create_versioned_clients(version_change(*change_field(schema(model).field("name")))))
+        )
+        == []
+    )
+    openapi = clients["2000-01-01"].get("/openapi.json?version=2000-01-01").json()
+    assert list(openapi["components"]["schemas"][model.__name__]["properties"]) == [old_key]
+
+
+class RecordWithAliasedCode(BaseModel):
+    code: str = Field(alias="c")
+    quantity: int = 0
+
+
+class BusinessRecordWithAliasedCode(RecordWithAliasedCode):
+    pass
+
+
+class PersonalRecordWithAliasedCode(RecordWithAliasedCode):
+    pass
+
+
+@pytest.mark.parametrize("in_head_version", [False, True])
+def test__router_generation__child_had_alias_of_inherited_field__should_warn_once_for_child(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    in_head_version: bool,
+):
+    @router.post("/record", response_model=RecordWithAliasedCode)
+    async def post_record(record: RecordWithAliasedCode):
+        return record
+
+    @router.post("/business", response_model=BusinessRecordWithAliasedCode)
+    async def post_business(record: BusinessRecordWithAliasedCode):
+        return record
+
+    @router.post("/personal", response_model=PersonalRecordWithAliasedCode)
+    async def post_personal(record: PersonalRecordWithAliasedCode):
+        return record
+
+    older_change = version_change(schema(RecordWithAliasedCode).field("quantity").had(description="Units"))
+    change = version_change(schema(BusinessRecordWithAliasedCode).field("code").had(alias="legacy_code"))
+    clients: dict[str, CadwynTestClient] = {}
+    head_version_changes, version_changes = (
+        ([change], [older_change]) if in_head_version else ([], [older_change, change])
+    )
+
+    assert _get_future_warnings(
+        lambda: clients.update(create_versioned_clients(*version_changes, head_version_changes=head_version_changes))
+    ) == [
+        (
+            'schema(BusinessRecordWithAliasedCode).field("code").had(alias=\'legacy_code\') in "MyVersionChange" '
+            'changes the alias of "BusinessRecordWithAliasedCode.code", but in API version "2001-01-01" its '
+            'validation_alias and serialization_alias are still "c", so that version keeps using "c" instead of '
+            '"legacy_code". Cadwyn 9.0 will change them too. To use "legacy_code" now and silence this warning, also '
+            "pass validation_alias='legacy_code' and serialization_alias='legacy_code' to this .had(). To keep \"c\", "
+            "remove alias='legacy_code' from it instead."
+        )
+    ]
+    for versioned_client in clients.values():
+        for path in ["/record", "/business", "/personal"]:
+            assert versioned_client.post(path, json={"c": "ABC"}).json() == {"c": "ABC", "quantity": 0}
+
+
+def test__router_generation__alias_instructions_in_several_versions__should_warn_once_per_instruction(
+    create_versioned_app: CreateVersionedApp,
+):
+    apps: list[Cadwyn] = []
+    assert _get_future_warnings(
+        lambda: apps.append(
+            create_versioned_app(
+                version_change(schema(RecordWithAliasedCode).field("code").had(alias="older_code")),
+                version_change(schema(RecordWithAliasedCode).field("code").had(alias="legacy_code")),
+                version_change(schema(RecordWithAliasedCode).field("quantity").had(description="Units")),
+            )
+        )
+    ) == [
+        (
+            'schema(RecordWithAliasedCode).field("code").had(alias=\'legacy_code\') in "MyVersionChange" changes the '
+            'alias of "RecordWithAliasedCode.code", but in API version "2001-01-01" its validation_alias and '
+            'serialization_alias are still "c", so that version keeps using "c" instead of "legacy_code". Cadwyn 9.0 '
+            'will change them too. To use "legacy_code" now and silence this warning, also pass '
+            "validation_alias='legacy_code' and serialization_alias='legacy_code' to this .had(). To keep \"c\", "
+            "remove alias='legacy_code' from it instead."
+        ),
+        (
+            'schema(RecordWithAliasedCode).field("code").had(alias=\'older_code\') in "MyVersionChange" changes the '
+            'alias of "RecordWithAliasedCode.code", but in API version "2000-01-01" its validation_alias and '
+            'serialization_alias are still "c", so that version keeps using "c" instead of "older_code". Cadwyn 9.0 '
+            'will change them too. To use "older_code" now and silence this warning, also pass '
+            "validation_alias='older_code' and serialization_alias='older_code' to this .had(). To keep \"c\", "
+            "remove alias='older_code' from it instead."
+        ),
+    ]
+
+    # Generating the models again and serving the versions doesn't repeat the warnings
+    app = apps[0]
+    assert (
+        _get_future_warnings(
+            lambda: [
+                generate_versioned_models(app.versions),
+                *(CadwynTestClient(app).get(f"/openapi.json?version={version.value}") for version in app.versions),
+            ]
+        )
+        == []
+    )
 
 
 class DeletableAttributesInFieldDefaults(BaseModel):
