@@ -784,14 +784,9 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                     copy.deepcopy(sub_annotations[0]), tuple(copy.deepcopy(sub_ann) for sub_ann in sub_annotations[1:])
                 )
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
-        result = self.copy_with_schemas(None, collections.defaultdict(dict))
-        memo[id(self)] = result
-        return result
-
     def copy_with_schemas(
         self,
-        schemas: "Union[dict[type[BaseModel], _PydanticModelWrapper[BaseModel]], None]",
+        schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
         memos_of_models: dict[type[BaseModel], dict[int, Any]],
     ) -> "_PydanticModelWrapper[_T_PYDANTIC_MODEL]":
         """Copy the model, sharing copies of its fields' objects as copy.deepcopy(model.fields) did for each model.
@@ -802,7 +797,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         memo_of_model = memos_of_models[self.cls]
         fields_renamed_by_parents = {}
         for name, field in self.fields_renamed_by_parents.items():
-            parent = None if schemas is None else _get_parent_that_renamed_field(self.cls, name, field, schemas)
+            parent = _get_parent_that_renamed_field(self.cls, name, field, schemas)
             memo = {} if parent is None else memos_of_models[parent]
             fields_renamed_by_parents[name] = field.copy_for_model(self.cls, name, memo)
         return _PydanticModelWrapper(
