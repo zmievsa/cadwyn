@@ -2151,10 +2151,10 @@ class SchemaGenerator:
         "_cycles_to_copy",
         "_generation_analyses",
         "_has_copied_eager_cycles",
+        "_instructions_that_differ_from_head",
         "_lock",
         "_model_references",
         "_models_copied_eagerly",
-        "_models_that_differ_from_head",
         "_reference_cycles",
         "_root_models",
         "_route_versioning_thread",
@@ -2170,13 +2170,13 @@ class SchemaGenerator:
         model_bundle: _ModelBundle,
         changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
         reference_cycles: "_ReferenceCycles",
-        models_that_differ_from_head: "frozenset[type[Union[BaseModel, Enum]]]",
+        instructions_that_differ_from_head: "collections.abc.Mapping[type[Union[BaseModel, Enum]], tuple[Any, ...]]",
     ) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
         self._changed_models = changed_models
-        # The models with instructions in HeadVersion or in the versions that are newer than this one
-        self._models_that_differ_from_head = models_that_differ_from_head
+        # The schema and enum instructions of each model in HeadVersion and in the versions that are newer than this one
+        self._instructions_that_differ_from_head = instructions_that_differ_from_head
         self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
         self._versioning_answers: dict[_VersioningQuestion, bool] = {}
         self._reference_cycles = reference_cycles
@@ -2246,10 +2246,12 @@ class SchemaGenerator:
         through sub-dependencies, or through the types of the fields of models. Unlike the references of models
         (see _get_references), this only follows what pydantic validates: the resolved fields of each model, after
         its subclasses override them, so not the fields of bases that a subclass overrides, class variables,
-        field attributes such as default factories, or the type args of generics that no field uses. A model whose
-        bases have instructions differs too because its copy inherits from their copies.
+        field attributes such as default factories, or the type args of generics and generic type aliases that no
+        field uses. The typed extra fields (`__pydantic_extra__`) of models that allow extra fields count as fields.
+        A model also differs if its bases have instructions, because its copy inherits from their copies, unless
+        the instructions only change the fields that the model overrides.
         """
-        if not self._models_that_differ_from_head:
+        if not self._instructions_that_differ_from_head:
             return False
         collector = _ReferencedModelCollector()
         collector.annotation_transformer.record_dependency(dependency)
@@ -2260,13 +2262,23 @@ class SchemaGenerator:
             if model in visited_models:
                 continue
             visited_models.add(model)
-            if model in self._models_that_differ_from_head:
+            if model in self._instructions_that_differ_from_head:
                 return True
             if lenient_issubclass(model, BaseModel):
-                if any(base in self._models_that_differ_from_head for base in model.__mro__):
+                if any(self._base_differs_from_head(model, base_index) for base_index in range(1, len(model.__mro__))):
                     return True
                 models_to_visit.extend(_get_models_validated_by_fields(model))
         return False
+
+    def _base_differs_from_head(self, model: type[BaseModel], base_index: int) -> bool:
+        instructions = self._instructions_that_differ_from_head.get(model.__mro__[base_index])
+        if not instructions:
+            return False
+        # The fields that the model or the bases between them override keep their own definitions in the copy
+        overridden_names = {
+            name for cls in model.__mro__[:base_index] for name in _get_annotations_without_evaluating(cls)
+        }
+        return any(not _only_changes_fields(instruction, overridden_names) for instruction in instructions)
 
     def _needs_copy(self, model: type[Union[BaseModel, Enum]]) -> bool:
         """Whether this version uses a copy of the model instead of the head model.
@@ -3173,27 +3185,103 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
     reference_cycles = _ReferenceCycles(changed_models)
     context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models)
     _migrate_classes(context)
-    models_that_differ_from_head = _get_models_with_instructions(versions.head_version)
+    instructions_that_differ_from_head = _get_instructions_by_model(versions.head_version, {})
 
     for version in versions.versions:
         context = _RuntimeSchemaGenContext(current_version=version, models=models)
         version_to_context_map[str(version.value)] = SchemaGenerator(
-            copy.deepcopy(models), changed_models, reference_cycles, models_that_differ_from_head
+            copy.deepcopy(models), changed_models, reference_cycles, instructions_that_differ_from_head
         )
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
-        models_that_differ_from_head |= _get_models_with_instructions(version)
+        instructions_that_differ_from_head = _get_instructions_by_model(version, instructions_that_differ_from_head)
 
     return version_to_context_map
 
 
+def _get_instructions_by_model(
+    version: "Union[Version, HeadVersion]",
+    instructions_of_newer_versions: "collections.abc.Mapping[type[Union[BaseModel, Enum]], tuple[Any, ...]]",
+) -> "dict[type[Union[BaseModel, Enum]], tuple[Any, ...]]":
+    instructions_by_model = dict(instructions_of_newer_versions)
+    for version_change in version.changes:
+        instructions = [
+            *((instruction.schema, instruction) for instruction in version_change.alter_schema_instructions),
+            *((instruction.enum, instruction) for instruction in version_change.alter_enum_instructions),
+        ]
+        for model, instruction in instructions:
+            instructions_by_model[model] = (*instructions_by_model.get(model, ()), instruction)
+    return instructions_by_model
+
+
+def _only_changes_fields(instruction: Any, field_names: "collections.abc.Set[str]") -> bool:
+    """Whether the schema instruction only changes some of these fields, without renaming them"""
+    if isinstance(instruction, FieldHadInstruction):
+        return instruction.name in field_names and instruction.new_name in {Sentinel, instruction.name}
+    return (
+        isinstance(instruction, FieldDidntHaveInstruction | FieldDidntExistInstruction | FieldExistedAsInstruction)
+        and instruction.name in field_names
+    )
+
+
 def _get_models_validated_by_fields(model: type[BaseModel]) -> set[type[Union[BaseModel, Enum]]]:
-    """Return the models and enums in the types of the resolved fields of the model"""
+    """Return the models and enums in the types of the resolved fields of the model, including typed extras"""
     fields = _get_rebuilt_model_fields(model)
+    annotations = [field.annotation for field in (model.model_fields if fields is None else fields).values()]
+    if model.model_config.get("extra") == "allow":
+        annotations.append(_get_extra_fields_annotation(model))
     collector = _ReferencedModelCollector()
-    for field in (model.model_fields if fields is None else fields).values():
-        collector.annotation_transformer.change_version_of_annotation(field.annotation)
+    for annotation in annotations:
+        collector.annotation_transformer.change_version_of_annotation(_substitute_generic_type_aliases(annotation))
     return collector.models | collector.arg_models
+
+
+def _get_extra_fields_annotation(model: type[BaseModel]) -> Any:
+    """Return the annotation of `__pydantic_extra__` that types the extra fields of the model, if any"""
+    for cls in model.__mro__:
+        if not lenient_issubclass(cls, BaseModel):
+            continue
+        annotation = _get_annotations_without_evaluating(cls).get("__pydantic_extra__")
+        if annotation is not None:
+            return _try_eval_type_for_discovery(annotation, _get_module_globals(cls))
+    return None
+
+
+def _get_module_globals(cls: type) -> dict[str, Any]:
+    module = sys.modules.get(cls.__module__)
+    return {} if module is None else vars(module)
+
+
+def _substitute_generic_type_aliases(annotation: Any) -> Any:
+    """Replace the parametrized generic type aliases within the annotation with their values with the args.
+
+    E.g. `Unused[Role]` with `type Unused[T] = str` becomes `str`, so the args that their values do not use are not
+    validated. The aliases that cannot be substituted stay as they are.
+    """
+    from typing_inspection.typing_objects import is_typealiastype
+
+    if not isinstance(annotation, (*GenericAliasUnionArgs, UnionType)):
+        return annotation
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if is_typealiastype(origin):
+        try:
+            args_by_param = dict(zip(origin.__type_params__, args, strict=True))
+            value = _get_type_alias_value(origin)
+            if isinstance(value, TypeVar):
+                value = args_by_param[value]
+            elif getattr(value, "__parameters__", ()):
+                value = value[tuple(args_by_param[param] for param in value.__parameters__)]
+        except (NameError, KeyError, TypeError, ValueError):
+            # E.g. its value uses names that are not defined yet, or it has a TypeVarTuple that takes several args
+            return annotation
+        return _substitute_generic_type_aliases(value)
+    new_args = tuple(_substitute_generic_type_aliases(arg) for arg in args)
+    if all(new_arg is arg for new_arg, arg in zip(new_args, args, strict=True)):
+        return annotation
+    if isinstance(annotation, UnionType):
+        return typing.Union[new_args]
+    return _rebuild_generic_alias(annotation, new_args)
 
 
 def _get_models_with_instructions(version: "Union[Version, HeadVersion]") -> "frozenset[type[Union[BaseModel, Enum]]]":

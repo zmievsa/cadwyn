@@ -55,7 +55,7 @@ from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from starlette.routing import Route
-from typing_extensions import Any, TypeAliasType, override
+from typing_extensions import Any, TypeAliasType, TypeVarTuple, Unpack, override
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn._utils import _callable_name
@@ -68,7 +68,7 @@ from cadwyn.exceptions import (
     RouterPathParamsModifiedError,
 )
 from cadwyn.route_generation import copy_route, generate_versioned_routers
-from cadwyn.schema_generation import generate_versioned_models
+from cadwyn.schema_generation import _substitute_generic_type_aliases, generate_versioned_models
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.data import RequestInfo, ResponseInfo, convert_response_to_previous_version_for
 from cadwyn.structure.enums import enum
@@ -3780,6 +3780,44 @@ class GenericThatUsesItsArg(BaseModel, Generic[_GenericArgT]):
     role_name: _GenericArgT
 
 
+AliasThatDoesNotUseItsArg = TypeAliasType("AliasThatDoesNotUseItsArg", str, type_params=(_GenericArgT,))
+AliasThatUsesItsArg = TypeAliasType("AliasThatUsesItsArg", Union[_GenericArgT, None], type_params=(_GenericArgT,))
+
+
+class ModelWithUnusedAliasArg(BaseModel):
+    role_name: AliasThatDoesNotUseItsArg[RoleOfVersionedDependency]
+
+
+class ModelWithUsedAliasArg(BaseModel):
+    role_name: AliasThatUsesItsArg[RoleOfVersionedDependency]
+
+
+AliasThatIsItsArg = TypeAliasType("AliasThatIsItsArg", _GenericArgT, type_params=(_GenericArgT,))
+
+
+class ModelWithAliasThatIsItsArg(BaseModel):
+    role_name: AliasThatIsItsArg[RoleOfVersionedDependency]
+
+
+class ModelWithNestedUnusedAliasArg(BaseModel):
+    role_name: str
+    other_role_names: list[AliasThatDoesNotUseItsArg[RoleOfVersionedDependency]] | None = None
+
+
+class ModelWithUntypedExtras(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    role_name: str
+
+
+class ModelWithTypedExtras(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    __pydantic_extra__: dict[str, RoleOfVersionedDependency] = Field(init=False)
+
+    @property
+    def role_name(self) -> RoleOfVersionedDependency:
+        return self.model_extra["role_name"]  # ty: ignore[not-subscriptable]
+
+
 def _make_body_dependency(model: Any) -> Callable[..., str]:
     def dependency(body: Any) -> str:
         assert isinstance(body, model)
@@ -3796,6 +3834,9 @@ def _make_body_dependency(model: Any) -> Callable[..., str]:
         pytest.param(ModelWithChangedEnumInClassVar, id="class_var"),
         pytest.param(GenericThatDoesNotUseItsArg[RoleOfVersionedDependency], id="unused_generic_arg"),
         pytest.param(UserWithDefaultFactoryOfChangedEnum, id="default_factory"),
+        pytest.param(ModelWithUnusedAliasArg, id="unused_generic_alias_arg"),
+        pytest.param(ModelWithNestedUnusedAliasArg, id="nested_unused_generic_alias_arg"),
+        pytest.param(ModelWithUntypedExtras, id="untyped_extras"),
     ],
 )
 def test__router_generation__annotated_dependency_whose_models_do_not_validate_changed_enum__should_not_be_versioned(
@@ -3824,6 +3865,9 @@ def test__router_generation__annotated_dependency_whose_models_do_not_validate_c
     [
         pytest.param(ParentWithChangedEnum, id="field"),
         pytest.param(GenericThatUsesItsArg[RoleOfVersionedDependency], id="used_generic_arg"),
+        pytest.param(ModelWithUsedAliasArg, id="used_generic_alias_arg"),
+        pytest.param(ModelWithAliasThatIsItsArg, id="generic_alias_that_is_its_arg"),
+        pytest.param(ModelWithTypedExtras, id="typed_extras"),
     ],
 )
 def test__router_generation__annotated_dependency_whose_models_validate_changed_enum__should_be_versioned(
@@ -3864,6 +3908,30 @@ def test__router_generation__annotated_dependency_whose_base_has_instructions__s
     assert clients["2001-01-01"].post("/role", json={"role_name": "a"}).json() == "a"
     assert clients["2000-01-01"].post("/role", json={"role_name": "a"}).status_code == 422
     assert clients["2000-01-01"].post("/role", json={"role_name": "a", "legacy": "b"}).json() == "a"
+
+
+def test__router_generation__annotated_dependency_whose_base_changes_only_overridden_fields__should_not_be_versioned(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/role")
+    async def route(role_name: Annotated[str, Depends(_make_body_dependency(ChildThatOverridesChangedEnum))]):
+        return role_name
+
+    clients = create_versioned_clients(
+        version_change(),
+        head_version_changes=[version_change(schema(ParentWithChangedEnum).field("role_name").had(type=int))],
+    )
+    # The child overrides the only field that the instructions of its parent change
+    for version_client in clients.values():
+        assert version_client.post("/role", json={"role_name": "anything"}).json() == "anything"
+
+
+def test__substitute_generic_type_aliases__alias_that_cannot_be_substituted__should_stay_as_is():
+    variadic_args = TypeVarTuple("variadic_args")
+    variadic_alias = TypeAliasType("variadic_alias", tuple[Unpack[variadic_args]], type_params=(variadic_args,))
+    annotation = list[variadic_alias[int, str]]
+    assert _substitute_generic_type_aliases(annotation) is annotation
 
 
 def get_role_name_from_query(role: RoleOfVersionedDependency = Query(RoleOfVersionedDependency.reader)) -> str:
