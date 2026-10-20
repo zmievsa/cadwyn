@@ -143,11 +143,7 @@ IntNode.model_rebuild()
 
 class PagedCategory(BaseModel):
     name: str
-    children: "Optional[CategoryPage]" = None
-
-
-CategoryPage = Page[PagedCategory]
-PagedCategory.model_rebuild()
+    children: "Optional[Page[PagedCategory]]" = None
 
 
 class Leaf(BaseModel):
@@ -1245,11 +1241,7 @@ BoxedCategory.model_rebuild()
 class MixedCategory(BaseModel):
     name: str
     parent: "Optional[MixedCategory]" = None
-    children: "Optional[MixedCategoryPage]" = None
-
-
-MixedCategoryPage = Page[MixedCategory]
-MixedCategory.model_rebuild()
+    children: "Optional[Page[MixedCategory]]" = None
 
 
 class QuotedAuthor(BaseModel):

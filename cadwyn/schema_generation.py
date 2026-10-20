@@ -389,10 +389,7 @@ def _get_model_annotations(
 
     def _rebuild_annotated(name: str, value: Any):
         if field_info := fields.get(name):
-            if not field_info.metadata:
-                return field_info.annotation
-
-            return _AnnotatedAlias(field_info.annotation, tuple(field_info.metadata))
+            return _get_annotation_with_metadata(field_info)
         return value  # pragma: no cover
 
     # Pydantic has already resolved the annotations of the fields so we prefer them over unresolved annotations
@@ -464,7 +461,6 @@ def _rebuild_model_fields_without_changing_them(  # pragma: no cover # Pydantic 
     so every call would add that metadata (e.g. validators) to the field of the model once more.
     """
     from pydantic._internal._typing_extra import eval_type
-    from pydantic_core import PydanticUndefined
     from typing_inspection.introspection import AnnotationSource
 
     rebuilt_fields: dict[str, FieldInfo] = {}
@@ -787,16 +783,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         return cast("type[_T_PYDANTIC_MODEL]", model_copy)
 
 
-def _get_signature_parameters(call: Any) -> types.MappingProxyType[str, inspect.Parameter]:
-    if sys.version_info >= (3, 14):  # pragma: no cover
-        from annotationlib import Format
-
-        # The annotations of the signature are evaluated lazily since Python 3.14 so the names that are only
-        # imported for type checking would raise a NameError. We only need the names and the defaults anyway.
-        return inspect.signature(call, annotation_format=Format.FORWARDREF).parameters
-    return inspect.signature(call).parameters
-
-
 def _get_type_alias_value(alias: Any) -> Any:
     # The values of typing.TypeAliasType (but not of typing_extensions.TypeAliasType) are evaluated lazily so they
     # can contain names that are only imported for type checking
@@ -813,6 +799,14 @@ def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, typ
 
 def _function_globals(call: Union[types.FunctionType, types.MethodType]) -> dict[str, Any]:
     return call.__globals__  # ty: ignore[unresolved-attribute]  # MethodType forwards function attributes at runtime.
+
+
+def _get_globals(call: Any) -> dict[str, Any]:
+    # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
+    if is_regular_function(call):
+        return _function_globals(call)
+    dunder_call = inspect.getattr_static(call, "__call__", None)
+    return _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
 
 
 def _unwrap_partial(call: Any) -> Any:
@@ -895,15 +889,6 @@ def _get_best_effort_globals(call: Any) -> dict[str, Any]:
         unwrapped_call = inspect.unwrap(unwrapped_call.func)
     dunder_call = inspect.getattr_static(unwrapped_call, "__call__", None)
     return _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
-
-
-def _copy_field_info(field_info: FieldInfo) -> FieldInfo:
-    # The same as pydantic's FieldInfo._copy() (which does not exist in older versions of pydantic):
-    # the mutable attributes must not be shared with the original either
-    field_info_copy = copy.copy(field_info)
-    for attr_name in ("metadata", "_attributes_set", "_qualifiers"):
-        setattr(field_info_copy, attr_name, copy.copy(getattr(field_info, attr_name)))
-    return field_info_copy
 
 
 class _CallableKind(Enum):
@@ -1183,44 +1168,39 @@ class _AnnotationTransformer:
         # Callables, such as default factories, are called with the classes themselves and their annotations are
         # not resolved by pydantic
         with self.hard_position():
-            return self._change_version_of_callable_in_hard_position(annotation, callable_kind=callable_kind)
-
-    def _change_version_of_callable_in_hard_position(
-        self, annotation: Callable[..., Any], *, callable_kind: _CallableKind
-    ) -> Any:
-        if type(annotation).__module__.startswith(
-            ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
-        ) or isinstance(annotation, fastapi.security.base.SecurityBase):
-            return annotation
-        # Special forms such as typing.Self are callable but they are not functions
-        if type(annotation).__module__ in {"typing", "typing_extensions"}:
-            return annotation
-        if callable_kind is _CallableKind.OTHER:
-            try:
-                _get_signature_parameters(annotation)
-            except (ValueError, TypeError):
-                # Callables without an inspectable signature such as `functools.partial(dict, count=1)`
-                # have no annotations or defaults to version
+            if type(annotation).__module__.startswith(
+                ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
+            ) or isinstance(annotation, fastapi.security.base.SecurityBase):
                 return annotation
+            # Special forms such as typing.Self are callable but they are not functions
+            if type(annotation).__module__ in {"typing", "typing_extensions"}:
+                return annotation
+            if callable_kind is _CallableKind.OTHER:
+                try:
+                    _get_unevaluated_signature(annotation)
+                except (ValueError, TypeError):
+                    # Callables without an inspectable signature such as `functools.partial(dict, count=1)`
+                    # have no annotations or defaults to version
+                    return annotation
 
-        def modifier(annotation: Any):
-            return self.change_version_of_annotation(annotation)
+            def modifier(annotation: Any):
+                return self.change_version_of_annotation(annotation)
 
-        if self.record_only:
-            self._record_without_cycles(
-                annotation, lambda: self._get_annotations_and_defaults_to_record(annotation, callable_kind)
+            if self.record_only:
+                self._record_without_cycles(
+                    annotation, lambda: self._get_annotations_and_defaults_to_record(annotation, callable_kind)
+                )
+                return annotation
+            return self._modify_callable_annotations(
+                annotation,
+                modifier,
+                modifier,
+                annotation_modifying_wrapper_factory=functools.partial(
+                    self._copy_function_through_class_based_wrapper,
+                    is_called_by_fastapi=callable_kind is not _CallableKind.OTHER,
+                ),
+                callable_kind=callable_kind,
             )
-            return annotation
-        return self._modify_callable_annotations(
-            annotation,
-            modifier,
-            modifier,
-            annotation_modifying_wrapper_factory=functools.partial(
-                self._copy_function_through_class_based_wrapper,
-                is_called_by_fastapi=callable_kind is not _CallableKind.OTHER,
-            ),
-            callable_kind=callable_kind,
-        )
 
     def _record_without_cycles(self, obj: Any, get_values_to_record: Callable[[], Any]) -> None:
         """Record the values within the object unless we are already recording it.
@@ -1250,9 +1230,14 @@ class _AnnotationTransformer:
                 # Copying it fails on Python 3.14, as on main
                 self._record_unknown_references()
                 return _UNRESOLVED
-            callable_annotations, defaults = self._get_callable_annotations_and_defaults(
-                call, _get_annotations_without_evaluating(wrapper), _get_signature_parameters(call)
-            )
+            callable_annotations = _get_annotations_without_evaluating(wrapper)
+            parameters = _get_unevaluated_signature(call).parameters
+            call_globals = _get_globals(self._unwrap_callable(call))
+            callable_annotations = {
+                k: v if type(v) is not str else _try_eval_type_for_discovery(v, call_globals)
+                for k, v in callable_annotations.items()
+            }
+            defaults = tuple(p.default for p in parameters.values() if p.default is not inspect.Signature.empty)
         else:
             # The models of the routes must include every model that versioning the routes requests (see
             # SchemaGenerator._add_route_models) so we read their endpoints and dependencies exactly like copying does,
@@ -1344,13 +1329,7 @@ class _AnnotationTransformer:
                 callable_annotations = get_annotations(annotation_modifying_wrapper)
             else:
                 callable_annotations = annotation_modifying_wrapper.__annotations__
-            original_call = cls._unwrap_callable(call)
-            # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
-            if is_regular_function(original_call):
-                call_globals = _function_globals(original_call)
-            else:
-                dunder_call = inspect.getattr_static(original_call, "__call__", None)
-                call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
+            call_globals = _get_globals(cls._unwrap_callable(call))
             callable_annotations = {
                 k: v if type(v) is not str else _try_eval_type(v, call_globals) for k, v in callable_annotations.items()
             }
@@ -1378,7 +1357,7 @@ class _AnnotationTransformer:
                     # FastAPI mutates the FieldInfo objects in defaults (e.g. their annotation) so every version
                     # (and app) must have its own copies. Otherwise, all of them would use the models of whichever
                     # got built last
-                    _copy_field_info(p.default) if isinstance(p.default, FieldInfo) else p.default
+                    p.default._copy() if isinstance(p.default, FieldInfo) else p.default
                     for p in old_params.values()
                     if p.default is not inspect.Signature.empty
                 ),
@@ -1426,27 +1405,6 @@ class _AnnotationTransformer:
             k: evaluate(v, call_globals) if k in annotations_written_as_strings else v
             for k, v in callable_annotations.items()
         }
-
-    @classmethod
-    def _get_callable_annotations_and_defaults(
-        cls,
-        call: Any,
-        callable_annotations: dict[str, Any],
-        parameters: types.MappingProxyType[str, inspect.Parameter],
-    ) -> tuple[dict[str, Any], tuple[Any, ...]]:
-        original_call = cls._unwrap_callable(call)
-        # For callable class instances, __globals__ is on the __call__ method, not on the instance itself
-        if is_regular_function(original_call):
-            call_globals = _function_globals(original_call)
-        else:
-            dunder_call = inspect.getattr_static(original_call, "__call__", None)
-            call_globals = _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
-        callable_annotations = {
-            k: v if type(v) is not str else _try_eval_type_for_discovery(v, call_globals)
-            for k, v in callable_annotations.items()
-        }
-        defaults = tuple(p.default for p in parameters.values() if p.default is not inspect.Signature.empty)
-        return callable_annotations, defaults
 
     @staticmethod
     def _generate_signature(
@@ -1567,7 +1525,7 @@ def _get_subclasses_that_can_be_versioned(model: type[Union[BaseModel, Enum]]) -
         subclass = classes_to_visit.pop()
         if "__pydantic_fields__" not in vars(subclass):
             are_all_known = False
-        elif subclass.__pydantic_generic_metadata__["origin"] is not None:
+        elif _is_parametrization(subclass):
             classes_to_visit.extend(subclass.__subclasses__())
         else:
             subclasses.append(subclass)
@@ -1662,19 +1620,20 @@ class _GenerationAnalysis(NamedTuple):
 
 
 _T_NODE = TypeVar("_T_NODE")
+_T_COMPONENT_VALUE = TypeVar("_T_COMPONENT_VALUE")
 
 
 def _find_strongly_connected_components(
     start: _T_NODE,
     get_successors: Callable[[_T_NODE], "collections.abc.Iterable[_T_NODE]"],
-    is_known: Callable[[_T_NODE], bool],
-    add_component: Callable[[list[_T_NODE], bool], None],
+    components: dict[_T_NODE, _T_COMPONENT_VALUE],
+    get_value: Callable[[list[_T_NODE], bool], _T_COMPONENT_VALUE],
 ) -> None:
     """Find the strongly connected components reachable from start (Tarjan's algorithm).
 
-    Passes each component to add_component along with whether it is a cycle: whether it has more than one node or
-    a node that is its own successor. add_component must make is_known true for the nodes of the component.
-    The known nodes are skipped because none of them can lead back to the new ones.
+    Maps the nodes of each component in `components` to get_value(component, is_cycle), where is_cycle is whether
+    the component has more than one node or a node that is its own successor.
+    The nodes already in `components` are skipped because none of them can lead back to the new ones.
     It is iterative instead of recursive because the chains of references in large apps can be very long.
     """
     indices: dict[_T_NODE, int] = {start: 0}
@@ -1684,7 +1643,7 @@ def _find_strongly_connected_components(
     while nodes_to_visit:
         current_node, successors = nodes_to_visit[-1]
         for successor in successors:
-            if is_known(successor):
+            if successor in components:
                 continue
             if successor not in indices:
                 indices[successor] = lowest_indices[successor] = len(indices)
@@ -1702,7 +1661,8 @@ def _find_strongly_connected_components(
                 component = []
                 while not component or component[-1] is not current_node:
                     component.append(stack.pop())
-                add_component(component, len(component) > 1 or current_node in get_successors(current_node))
+                is_cycle = len(component) > 1 or current_node in get_successors(current_node)
+                components.update(dict.fromkeys(component, get_value(component, is_cycle)))
 
 
 @final
@@ -1730,11 +1690,7 @@ class _ReferenceCycles:
         "_requested_models",
     )
 
-    def __init__(
-        self,
-        changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
-        changed_parametrizations: "frozenset[type[BaseModel]]",
-    ) -> None:
+    def __init__(self, changed_models: "frozenset[type[Union[BaseModel, Enum]]]") -> None:
         # The generators of different versions can ask at the same time
         self._lock = threading.Lock()
         self._models_in_cycles: dict[type[Union[BaseModel, Enum]], bool] = {}
@@ -1743,9 +1699,12 @@ class _ReferenceCycles:
         self._head_references: dict[type[BaseModel], _ModelReferences] = {}
         # The models with schema or enum instructions in any version
         self._changed_models = changed_models
-        # The parametrizations whose instructions reach the fields of other parametrizations (see
-        # _get_parametrizations_whose_instructions_reach_other_generics). Without them, nothing is redefined.
-        self._changed_parametrizations = changed_parametrizations
+        # The parametrizations with instructions, which also apply where pydantic builds them in the fields of other
+        # generics, e.g. `schema(Pair[str, int])` in `Box[str]` with `pair: Pair[T, int]` (see
+        # get_redefined_field_names). Without them, nothing is redefined.
+        self._changed_parametrizations = frozenset(
+            model for model in changed_models if lenient_issubclass(model, BaseModel) and _is_parametrization(model)
+        )
         # See get_redefined_field_names
         self._parametrizations_built_by_pydantic: dict[
             type[Union[BaseModel, Enum]], dict[str, frozenset[type[BaseModel]]]
@@ -1765,16 +1724,10 @@ class _ReferenceCycles:
         """
         with self._lock:
             if model not in self._models_in_cycles:
-                self._find_cycles(model)
+                _find_strongly_connected_components(
+                    model, self._get_requested_models, self._models_in_cycles, lambda _, is_cycle: is_cycle
+                )
             return self._models_in_cycles[model]
-
-    def _find_cycles(self, model: type[Union[BaseModel, Enum]]) -> None:
-        def add_component(component: list[type[Union[BaseModel, Enum]]], is_cycle: bool) -> None:
-            self._models_in_cycles.update(dict.fromkeys(component, is_cycle))
-
-        _find_strongly_connected_components(
-            model, self._get_requested_models, self._models_in_cycles.__contains__, add_component
-        )
 
     def get_requested_models(self, model: type[Union[BaseModel, Enum]]) -> frozenset[type[Union[BaseModel, Enum]]]:
         """Return the head models that copying the head model would request"""
@@ -1946,12 +1899,9 @@ class _ReferenceCycles:
                 )
             return successors
 
-        def add_component(component: list[type[Union[BaseModel, Enum]]], is_cycle: bool) -> None:
-            self._models_in_cycles_with_redefined_fields.update(dict.fromkeys(component, is_cycle))
-
         if model not in self._models_in_cycles_with_redefined_fields:
             _find_strongly_connected_components(
-                model, get_successors, self._models_in_cycles_with_redefined_fields.__contains__, add_component
+                model, get_successors, self._models_in_cycles_with_redefined_fields, lambda _, is_cycle: is_cycle
             )
         return self._models_in_cycles_with_redefined_fields[model]
 
@@ -2306,39 +2256,22 @@ class SchemaGenerator:
         models_copied_eagerly: "collections.abc.Set[type[BaseModel]]" = frozenset(),
     ) -> set[type[BaseModel]]:
         """Return the models copied eagerly along with the given ones: they and every model that they refer to"""
-        models = set(models_copied_eagerly)
         models_to_visit = [model for model in root_models if self._needs_copy(model)]
+        return self._get_models_reached_by_copying(models_to_visit, models_copied_eagerly)
+
+    def _get_models_reached_by_copying(
+        self,
+        models_to_visit: list[type[BaseModel]],
+        reached_models: "collections.abc.Set[type[BaseModel]]" = frozenset(),
+    ) -> set[type[BaseModel]]:
+        """Return the reached models, the models to visit, and every model whose copy copying them generates"""
+        models = set(reached_models)
         while models_to_visit:
             model = models_to_visit.pop()
             if model not in models:
                 models.add(model)
                 models_to_visit.extend(self._get_models_that_copying_requests(model))
         return models
-
-    def _get_models_reached_by_copying(self, model: type[BaseModel]) -> set[type[BaseModel]]:
-        """Return the models that copying the model generates the copies of, directly or through other models"""
-        reached_models: set[type[BaseModel]] = set()
-        models_to_visit = list(self._get_models_that_copying_requests(model))
-        while models_to_visit:
-            reached_model = models_to_visit.pop()
-            if reached_model not in reached_models:
-                reached_models.add(reached_model)
-                models_to_visit.extend(self._get_models_that_copying_requests(reached_model))
-        return reached_models
-
-    def _is_latest_model_of_cycle_used_by(
-        self, cls: type, get_models_reached_by_copying: Callable[[], set[type[BaseModel]]]
-    ) -> bool:
-        """Whether the head class is in a cycle whose copies this version uses instead of it where the model is used.
-
-        That is the case for the cycles that this version copies eagerly, and for the ones that copying the model
-        itself copies (e.g. `category: Category` along with `related: Page[Category]`, whose args are the head
-        models when Category is copied lazily). Other cycles do not count because the generics around them keep
-        their head models, as on main.
-        """
-        return not hasattr(cls, "__cadwyn_original_model__") and self._is_in_cycle_used_by(
-            cls, get_models_reached_by_copying
-        )
 
     def _is_in_cycle_used_by(
         self, cls: type, get_models_reached_by_copying: Callable[[], set[type[BaseModel]]]
@@ -2358,14 +2291,24 @@ class SchemaGenerator:
         Once a version copies a cycle eagerly, where main failed, we check every copy of the version. Otherwise,
         we only check the copies that reach the lazily copied cycles, so the copies that work as on main stay so.
         """
-        get_models_reached_by_copying = functools.cache(lambda: self._get_models_reached_by_copying(model))
+        get_models_reached_by_copying = functools.cache(
+            lambda: self._get_models_reached_by_copying(list(self._get_models_that_copying_requests(model)))
+        )
         if self._has_copied_eager_cycles or any(
             not cycle.isdisjoint(get_models_reached_by_copying()) for cycle in self._copied_cycles
         ):
+            is_in_cycle_used_by = functools.partial(
+                self._is_in_cycle_used_by, get_models_reached_by_copying=get_models_reached_by_copying
+            )
             self._check_copy(
                 model_copy,
-                lambda cls: self._is_latest_model_of_cycle_used_by(cls, get_models_reached_by_copying),
-                lambda cls: self._is_in_cycle_used_by(cls, get_models_reached_by_copying),
+                # The head classes in the cycles whose copies this version uses instead of them where the model is
+                # used: the cycles that this version copies eagerly, and the ones that copying the model itself copies
+                # (e.g. `category: Category` along with `related: Page[Category]`, whose args are the head models
+                # when Category is copied lazily). Other cycles do not count because the generics around them keep
+                # their head models, as on main.
+                lambda cls: not hasattr(cls, "__cadwyn_original_model__") and is_in_cycle_used_by(cls),
+                is_in_cycle_used_by,
                 skipped_classes=set(self.concrete_models.values()),
             )
 
@@ -2534,12 +2477,11 @@ class SchemaGenerator:
             if not self._reference_cycles.is_in_cycle(model) and not self._adds_references_to_models():
                 self._cycles_to_copy[model] = None
             else:
-
-                def add_component(component: list[type[BaseModel]], is_cycle: bool) -> None:
-                    self._cycles_to_copy.update(dict.fromkeys(component, frozenset(component) if is_cycle else None))
-
                 _find_strongly_connected_components(
-                    model, self._get_models_that_copying_requests, self._cycles_to_copy.__contains__, add_component
+                    model,
+                    self._get_models_that_copying_requests,
+                    self._cycles_to_copy,
+                    lambda component, is_cycle: frozenset(component) if is_cycle else None,
                 )
         return self._cycles_to_copy[model]
 
@@ -2996,10 +2938,7 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
     )
 
     version_to_context_map = {}
-    reference_cycles = _ReferenceCycles(
-        changed_models,
-        _get_parametrizations_whose_instructions_reach_other_generics(changed_models),
-    )
+    reference_cycles = _ReferenceCycles(changed_models)
     context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models)
     _migrate_classes(context)
 
@@ -3248,20 +3187,6 @@ def _substitute_type_vars_of_inherited_annotation(
     return annotation
 
 
-def _get_parametrizations_whose_instructions_reach_other_generics(
-    changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
-) -> "frozenset[type[BaseModel]]":
-    """Return the parametrizations whose instructions apply where pydantic builds them in other generics' fields.
-
-    E.g. the instructions of `schema(Pair[str, int])` in `Box[str]` with `pair: Pair[T, int]`
-    (see _ReferenceCycles.get_redefined_field_names).
-    It is decided once for all versions because their generators share the reference cycles.
-    """
-    return frozenset(
-        model for model in changed_models if lenient_issubclass(model, BaseModel) and _is_parametrization(model)
-    )
-
-
 def _is_parametrization(model: type[BaseModel]) -> bool:
     """Whether the model is the parametrization of a generic, e.g. `Page[Item]` but not `Page` or `ItemPage`"""
     return model.__pydantic_generic_metadata__["origin"] is not None
@@ -3359,20 +3284,13 @@ def _change_annotated_metadata(
     )
 
 
-def _metadata_sets_constraint(metadata: Any, attr_name: str) -> bool:
-    """Whether the metadata sets the constraint, e.g. annotated_types.MinLen or pydantic.Strict"""
-    # pydantic also allows constraint classes such as `Annotated[int, Strict]`
-    return attr_name in collect_known_metadata([metadata])[0] and (
-        inspect.isclass(metadata) or hasattr(metadata, attr_name)
-    )
-
-
 def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
     """Whether field().didnt_have() deletes the attribute from the metadata"""
     if isinstance(metadata, FieldInfo):
         return hasattr(metadata, attr_name) or attr_name in _extract_passed_field_attributes(metadata)
     if inspect.isclass(metadata):
-        return _metadata_sets_constraint(metadata, attr_name)
+        # pydantic also allows constraint classes such as `Annotated[int, Strict]`
+        return attr_name in collect_known_metadata([metadata])[0]
     # Only attributes that can be set on the object itself, so not str.title from `Annotated[str, "Some doc"]`
     return hasattr(metadata, attr_name) and (
         hasattr(metadata, "__dict__")
@@ -3380,7 +3298,15 @@ def _metadata_has_attribute(metadata: Any, attr_name: str) -> bool:
     )
 
 
-def _set_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> Any:
+def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
+    if isinstance(metadata, FieldInfo):
+        # We only delete the attributes of FieldInfo itself (never its constraints), and they get the values of an
+        # empty Field()
+        field_info = metadata._copy()
+        field_info._attributes_set.pop(attr_name, None)
+        setattr(field_info, attr_name, dict_of_empty_field_info[attr_name])
+        return field_info
+    unset_value = _get_unset_metadata_attribute_value(metadata, attr_name)
     if inspect.isclass(metadata):
         # We never change the class itself and use its instance with the same constraints instead
         constraint = metadata.__new__(metadata)
@@ -3389,19 +3315,8 @@ def _set_metadata_attribute(metadata: Any, attr_name: str, attr_value: Any) -> A
     else:
         # We don't use dataclasses.replace because it would call __init__ that subclasses can override
         constraint = copy.copy(metadata)
-    object.__setattr__(constraint, attr_name, attr_value)
+    object.__setattr__(constraint, attr_name, unset_value)
     return constraint
-
-
-def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
-    if isinstance(metadata, FieldInfo):
-        # We only delete the attributes of FieldInfo itself (never its constraints), and they get the values of an
-        # empty Field()
-        field_info = _copy_field_info(metadata)
-        field_info._attributes_set.pop(attr_name, None)
-        setattr(field_info, attr_name, dict_of_empty_field_info[attr_name])
-        return field_info
-    return _set_metadata_attribute(metadata, attr_name, _get_unset_metadata_attribute_value(metadata, attr_name))
 
 
 def _get_unset_metadata_attribute_value(metadata: Any, attr_name: str) -> Any:
