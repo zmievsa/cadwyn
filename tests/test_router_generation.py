@@ -68,7 +68,7 @@ from cadwyn.exceptions import (
     RouterPathParamsModifiedError,
 )
 from cadwyn.route_generation import copy_route, generate_versioned_routers
-from cadwyn.schema_generation import _substitute_generic_type_aliases, generate_versioned_models
+from cadwyn.schema_generation import _UNRESOLVED, _get_value_of_type_alias_with_args, generate_versioned_models
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.data import RequestInfo, ResponseInfo, convert_response_to_previous_version_for
 from cadwyn.structure.enums import enum
@@ -3812,6 +3812,29 @@ class ModelWithUntypedExtras(BaseModel):
     role_name: str
 
 
+AliasOfAliasThatDoesNotUseItsArg = TypeAliasType(
+    "AliasOfAliasThatDoesNotUseItsArg",
+    AliasThatDoesNotUseItsArg[RoleOfVersionedDependency],
+)
+
+
+class ModelWithUnusedArgOfAliasBehindAlias(BaseModel):
+    role_name: AliasOfAliasThatDoesNotUseItsArg
+
+
+if sys.version_info >= (3, 12):
+    # Type aliases that refer to themselves can only be defined with the type statement
+    exec(
+        "type RecursiveAlias[T] = T | list[RecursiveAlias[T]]\n"
+        "class ModelWithRecursiveAliasOfUnchangedArg(BaseModel):\n"
+        "    role_name: RecursiveAlias[str]\n"
+        "class ModelWithRecursiveAliasOfChangedArg(BaseModel):\n"
+        "    role_name: RecursiveAlias[RoleOfVersionedDependency]\n",
+        globals(),
+    )
+_requires_type_statement = pytest.mark.skipif(sys.version_info < (3, 12), reason="Needs the type statement")
+
+
 class ModelWithTypedExtras(BaseModel):
     model_config = ConfigDict(extra="allow")
     __pydantic_extra__: dict[str, RoleOfVersionedDependency] = Field(init=False)
@@ -3840,6 +3863,10 @@ def _make_body_dependency(model: Any) -> Callable[..., str]:
         pytest.param(ModelWithUnusedAliasArg, id="unused_generic_alias_arg"),
         pytest.param(ModelWithNestedUnusedAliasArg, id="nested_unused_generic_alias_arg"),
         pytest.param(ModelWithUntypedExtras, id="untyped_extras"),
+        pytest.param(ModelWithUnusedArgOfAliasBehindAlias, id="unused_generic_alias_arg_behind_alias"),
+        pytest.param(
+            "ModelWithRecursiveAliasOfUnchangedArg", id="recursive_generic_alias", marks=_requires_type_statement
+        ),
     ],
 )
 def test__router_generation__annotated_dependency_whose_models_do_not_validate_changed_enum__should_not_be_versioned(
@@ -3847,6 +3874,8 @@ def test__router_generation__annotated_dependency_whose_models_do_not_validate_c
     create_versioned_clients: CreateVersionedClients,
     model: Any,
 ):
+    model = globals()[model] if isinstance(model, str) else model
+
     @router.post("/role")
     async def route(role_name: Annotated[str, Depends(_make_body_dependency(model))]):
         return role_name
@@ -3871,6 +3900,9 @@ def test__router_generation__annotated_dependency_whose_models_do_not_validate_c
         pytest.param(ModelWithUsedAliasArg, id="used_generic_alias_arg"),
         pytest.param(ModelWithAliasThatIsItsArg, id="generic_alias_that_is_its_arg"),
         pytest.param(ModelWithTypedExtras, id="typed_extras"),
+        pytest.param(
+            "ModelWithRecursiveAliasOfChangedArg", id="recursive_generic_alias", marks=_requires_type_statement
+        ),
     ],
 )
 def test__router_generation__annotated_dependency_whose_models_validate_changed_enum__should_be_versioned(
@@ -3878,6 +3910,8 @@ def test__router_generation__annotated_dependency_whose_models_validate_changed_
     create_versioned_clients: CreateVersionedClients,
     model: Any,
 ):
+    model = globals()[model] if isinstance(model, str) else model
+
     async def dependency(body: Any) -> str:
         return body.role_name.value
 
@@ -3911,6 +3945,29 @@ def test__router_generation__annotated_dependency_whose_base_has_instructions__s
     assert clients["2001-01-01"].post("/role", json={"role_name": "a"}).json() == "a"
     assert clients["2000-01-01"].post("/role", json={"role_name": "a"}).status_code == 422
     assert clients["2000-01-01"].post("/role", json={"role_name": "a", "legacy": "b"}).json() == "a"
+
+
+def test__router_generation__annotated_dependency_with_unused_alias_arg_in_its_params__should_not_be_versioned(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    async def dependency(
+        body: UnrelatedModelOfDependency,
+        unused: AliasThatDoesNotUseItsArg[RoleOfVersionedDependency] = "x",
+    ) -> str:
+        assert isinstance(body, UnrelatedModelOfDependency)
+        return body.foo
+
+    @router.post("/foo")
+    async def route(foo: Annotated[str, Depends(dependency)]):
+        return foo
+
+    clients = create_versioned_clients(
+        version_change(),
+        head_version_changes=[version_change(enum(RoleOfVersionedDependency).didnt_have("editor"))],
+    )
+    for version_client in clients.values():
+        assert version_client.post("/foo", json={"foo": "bar"}).json() == "bar"
 
 
 def test__router_generation__annotated_dependency_whose_base_changes_only_overridden_fields__should_not_be_versioned(
@@ -4038,6 +4095,75 @@ def test__router_generation__removed_enum_member_as_parameter_default__should_st
     assert (response.status_code, response.json() if response.status_code == 200 else None) == expected
 
 
+def _make_route_with_enum_body_default(style: str) -> Callable[..., Any]:
+    if style == "endpoint_body":
+
+        async def endpoint_body(plan: PlainPlanOfDefault = Body(PlainPlanOfDefault.pro)):
+            return [plan.name]
+
+        return endpoint_body
+    if style == "endpoint_body_list":
+
+        async def endpoint_body_list(plans: list[PlainPlanOfDefault] = Body([PlainPlanOfDefault.pro])):
+            return [plan.name for plan in plans]
+
+        return endpoint_body_list
+    if style == "endpoint_plain_list":
+        # FastAPI makes body parameters out of the parameters with plain defaults whose types are not scalar
+
+        async def endpoint_plain_list(plans: list[PlainPlanOfDefault] = [PlainPlanOfDefault.pro]):  # noqa: B006
+            return [plan.name for plan in plans]
+
+        return endpoint_plain_list
+    if style == "endpoint_annotated_body":
+
+        async def endpoint_annotated_body(plan: Annotated[PlainPlanOfDefault, Body()] = PlainPlanOfDefault.pro):
+            return [plan.name]
+
+        return endpoint_annotated_body
+
+    async def dependency(plan: PlainPlanOfDefault = Body(PlainPlanOfDefault.pro, embed=True)):
+        return [plan.name]
+
+    if style == "default_dependency_body":
+
+        async def default_dependency_route(names: list[str] = Depends(dependency)):
+            return names
+
+        return default_dependency_route
+    assert style == "annotated_dependency_body"
+
+    async def annotated_dependency_route(names: Annotated[list[str], Depends(dependency)]):
+        return names
+
+    return annotated_dependency_route
+
+
+@pytest.mark.parametrize(
+    "style",
+    [
+        "endpoint_body",
+        "endpoint_body_list",
+        "endpoint_plain_list",
+        "endpoint_annotated_body",
+        "default_dependency_body",
+        "annotated_dependency_body",
+    ],
+)
+def test__router_generation__enum_member_as_body_default__should_stay_the_latest_member(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    style: str,
+):
+    router.post("/plan")(_make_route_with_enum_body_default(style))
+
+    clients = create_versioned_clients(version_change(enum(PlainPlanOfDefault).didnt_have("team")))
+    # FastAPI doesn't validate the defaults of body parameters, and Cadwyn passes the body that FastAPI solved for
+    # the endpoint to the head route, which validates it with the latest enum
+    for version_client in clients.values():
+        assert version_client.post("/plan").json() == ["pro"]
+
+
 @pytest.mark.parametrize("style", _ENUM_DEFAULT_STYLES)
 def test__router_generation__enum_member_with_changed_value_as_parameter_default__should_use_value_of_its_version(
     router: VersionedAPIRouter,
@@ -4054,11 +4180,10 @@ def test__router_generation__enum_member_with_changed_value_as_parameter_default
         assert parameter["schema"]["default"] == ([expected_default] if style == "endpoint_list" else expected_default)
 
 
-def test__substitute_generic_type_aliases__alias_that_cannot_be_substituted__should_stay_as_is():
+def test__get_value_of_type_alias_with_args__alias_that_cannot_be_substituted__should_be_unresolved():
     variadic_args = TypeVarTuple("variadic_args")
     variadic_alias = TypeAliasType("variadic_alias", tuple[Unpack[variadic_args]], type_params=(variadic_args,))
-    annotation = list[variadic_alias[int, str]]
-    assert _substitute_generic_type_aliases(annotation) is annotation
+    assert _get_value_of_type_alias_with_args(variadic_alias[int, str]) is _UNRESOLVED
 
 
 def get_role_name_from_query(role: RoleOfVersionedDependency = Query(RoleOfVersionedDependency.reader)) -> str:

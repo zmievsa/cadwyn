@@ -1174,11 +1174,17 @@ class _AnnotationTransformer:
         generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier]",
         *,
         record_only: bool = False,
+        expands_type_aliases: bool = False,
     ) -> None:
         self.generator = generator
         # Only request the models from the generator without rebuilding the annotations. This way, we can find
         # the models that an annotation refers to without failing on annotations that we cannot rebuild
         self.record_only = record_only
+        # Record the values of type aliases with their args instead of the args themselves (record-only), so that
+        # the args that the values do not use are not recorded (see SchemaGenerator.dependency_differs_from_head)
+        self._expands_type_aliases = expands_type_aliases
+        # The type aliases whose values we are recording right now, to stop at the ones that refer to themselves
+        self._type_aliases_being_expanded: set[int] = set()
         # The ids of the type aliases, callables and containers that we are recording, to detect the ones that
         # lead back to themselves (e.g. a default factory whose default argument is a registry that contains it)
         self._ids_being_recorded: set[int] = set()
@@ -1295,6 +1301,8 @@ class _AnnotationTransformer:
         """callable_kind tells how FastAPI uses the annotation if it is a callable"""
         from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
 
+        if self._expands_type_aliases and self._record_expanded_type_alias(annotation):
+            return annotation
         if isinstance(annotation, GenericAliasUnionArgs):
             return self._change_version_of_generic_alias(annotation)
         elif is_typealiastype(annotation):
@@ -1364,7 +1372,16 @@ class _AnnotationTransformer:
                 defaults = modifier(defaults)
                 if callable_kind is _CallableKind.OTHER:
                     return defaults
-                return tuple(self._change_version_of_parameter_default(default) for default in defaults)
+                # The same parameters that _modify_callable_annotations takes the defaults from
+                parameters = [
+                    param
+                    for param in _get_signature(annotation).parameters.values()
+                    if param.default is not inspect.Signature.empty
+                ]
+                return tuple(
+                    self._change_version_of_parameter_default(default, param.annotation)
+                    for default, param in zip(defaults, parameters, strict=True)
+                )
 
             if self.record_only:
                 self._record_without_cycles(
@@ -1382,13 +1399,41 @@ class _AnnotationTransformer:
                 callable_kind=callable_kind,
             )
 
-    def _change_version_of_parameter_default(self, default: Any) -> Any:
-        """Use the members of this version's enums in the default of a parameter of an endpoint or a dependency.
+    def _record_expanded_type_alias(self, annotation: Any) -> bool:
+        """Record the value of the type alias with its args, if the annotation is a type alias that we can expand.
 
-        FastAPI validates the defaults of parameters such as `role: Role = Query(Role.reader)` when they are
-        omitted, and the copy of an enum rejects the members of the latest enum unless they equal its values
-        (e.g. str or int enums). The FieldInfo defaults are already copies that belong to this version.
+        E.g. `Unused[Role]` with `type Unused[T] = str` records `str`, and `Alias` with `type Alias = Unused[Role]`
+        records `str` too. A type alias that refers to itself (e.g. `type Tree[T] = T | list[Tree[T]]`) is expanded
+        once: within its value, it is recorded with its args, as usual. The aliases that we cannot expand (e.g.
+        with names that are not defined yet or with a TypeVarTuple) are recorded as usual too.
         """
+        value = _get_value_of_type_alias_with_args(annotation)
+        if (
+            value is _UNRESOLVED
+            or id(value.alias) in self._type_aliases_being_expanded
+            # Pydantic's own type aliases (e.g. JsonValue) are never versioned (see the branch for them below)
+            or (value.alias.__module__ or "").startswith("pydantic.")
+        ):
+            return False
+        self._type_aliases_being_expanded.add(id(value.alias))
+        try:
+            self.change_version_of_annotation(value.value)
+        finally:
+            self._type_aliases_being_expanded.discard(id(value.alias))
+        return True
+
+    def _change_version_of_parameter_default(self, default: Any, annotation: Any) -> Any:
+        """Use the members of this version's enums in the default of a query, header, cookie, or path parameter.
+
+        Before 0.148, FastAPI validates the defaults of such parameters, e.g. `role: Role = Query(Role.reader)`, when
+        they are omitted, and the copy of an enum rejects the members of the latest enum unless they equal its values
+        (e.g. str or int enums). The FieldInfo defaults are already copies that belong to this version.
+        FastAPI never validates the defaults of body parameters (including forms and files), and Cadwyn passes
+        the body that FastAPI solved for an endpoint to the head route, which validates it with the latest models,
+        so their defaults stay the latest members.
+        """
+        if not _is_non_body_param(default, annotation):
+            return default
         if isinstance(default, FieldInfo):
             versioned_default = self._change_version_of_enum_members(default.default)
             if versioned_default is not default.default:
@@ -1785,8 +1830,10 @@ class _ReferencedModelCollector:
 
     __slots__ = "annotation_transformer", "arg_models", "base_models", "hard_models", "is_complete", "models"
 
-    def __init__(self) -> None:
-        self.annotation_transformer = _AnnotationTransformer(self, record_only=True)
+    def __init__(self, *, expands_type_aliases: bool = False) -> None:
+        self.annotation_transformer = _AnnotationTransformer(
+            self, record_only=True, expands_type_aliases=expands_type_aliases
+        )
         self.models: set[type[Union[BaseModel, Enum]]] = set()
         self.hard_models: set[type[Union[BaseModel, Enum]]] = set()
         self.arg_models: set[type[Union[BaseModel, Enum]]] = set()
@@ -2283,7 +2330,7 @@ class SchemaGenerator:
         """
         if not self._instructions_that_differ_from_head:
             return False
-        collector = _ReferencedModelCollector()
+        collector = _ReferencedModelCollector(expands_type_aliases=True)
         collector.annotation_transformer.record_dependency(dependency)
         models_to_visit = [*collector.models, *collector.arg_models]
         visited_models: set[type[Union[BaseModel, Enum]]] = set()
@@ -3254,15 +3301,34 @@ def _only_changes_fields(instruction: Any, field_names: "collections.abc.Set[str
     )
 
 
+def _is_non_body_param(default: Any, annotation: Any) -> bool:
+    """Whether FastAPI makes a query, header, cookie, or path parameter out of a parameter of a dependency
+
+    It's the same decision as in fastapi.dependencies.utils.analyze_param.
+    """
+    from fastapi._compat import field_annotation_is_scalar
+
+    if isinstance(default, FieldInfo):
+        return isinstance(default, fastapi.params.Param)
+    if get_origin(annotation) is Annotated:
+        fastapi_annotations = [
+            arg for arg in get_args(annotation)[1:] if isinstance(arg, FieldInfo | fastapi.params.Depends)
+        ]
+        if fastapi_annotations:
+            return isinstance(fastapi_annotations[-1], fastapi.params.Param)
+        annotation = get_args(annotation)[0]
+    return field_annotation_is_scalar(annotation=annotation)
+
+
 def _get_models_validated_by_fields(model: type[BaseModel]) -> set[type[Union[BaseModel, Enum]]]:
     """Return the models and enums in the types of the resolved fields of the model, including typed extras"""
     fields = _get_rebuilt_model_fields(model)
     annotations = [field.annotation for field in (model.model_fields if fields is None else fields).values()]
     if model.model_config.get("extra") == "allow":
         annotations.append(_get_extra_fields_annotation(model))
-    collector = _ReferencedModelCollector()
+    collector = _ReferencedModelCollector(expands_type_aliases=True)
     for annotation in annotations:
-        collector.annotation_transformer.change_version_of_annotation(_substitute_generic_type_aliases(annotation))
+        collector.annotation_transformer.change_version_of_annotation(annotation)
     return collector.models | collector.arg_models
 
 
@@ -3282,36 +3348,35 @@ def _get_module_globals(cls: type) -> dict[str, Any]:
     return {} if module is None else vars(module)
 
 
-def _substitute_generic_type_aliases(annotation: Any) -> Any:
-    """Replace the parametrized generic type aliases within the annotation with their values with the args.
+class _TypeAliasValue(NamedTuple):
+    alias: Any
+    value: Any
 
-    E.g. `Unused[Role]` with `type Unused[T] = str` becomes `str`, so the args that their values do not use are not
-    validated. The aliases that cannot be substituted stay as they are.
+
+def _get_value_of_type_alias_with_args(annotation: Any) -> "Union[_TypeAliasValue, Any]":
+    """Return the type alias and its value with the args of the annotation, or _UNRESOLVED if we cannot.
+
+    E.g. `list[int]` for `Ints[int]` with `type Ints[T] = list[T]`, or for `Ints` with `type Ints = list[int]`.
     """
     from typing_inspection.typing_objects import is_typealiastype
 
-    if not isinstance(annotation, (*GenericAliasUnionArgs, UnionType)):
-        return annotation
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if is_typealiastype(origin):
-        try:
-            args_by_param = dict(zip(origin.__type_params__, args, strict=True))
-            value = _get_type_alias_value(origin)
-            if isinstance(value, TypeVar):
-                value = args_by_param[value]
-            elif getattr(value, "__parameters__", ()):
-                value = value[tuple(args_by_param[param] for param in value.__parameters__)]
-        except (NameError, KeyError, TypeError, ValueError):
-            # E.g. its value uses names that are not defined yet, or it has a TypeVarTuple that takes several args
-            return annotation
-        return _substitute_generic_type_aliases(value)
-    new_args = tuple(_substitute_generic_type_aliases(arg) for arg in args)
-    if all(new_arg is arg for new_arg, arg in zip(new_args, args, strict=True)):
-        return annotation
-    if isinstance(annotation, UnionType):
-        return typing.Union[new_args]
-    return _rebuild_generic_alias(annotation, new_args)
+    if is_typealiastype(annotation):
+        alias, args = annotation, ()
+    elif isinstance(annotation, GenericAliasUnionArgs) and is_typealiastype(get_origin(annotation)):
+        alias, args = get_origin(annotation), get_args(annotation)
+    else:
+        return _UNRESOLVED
+    try:
+        args_by_param = dict(zip(alias.__type_params__, args, strict=True))
+        value = _get_type_alias_value(alias)
+        if isinstance(value, TypeVar):
+            value = args_by_param[value]
+        elif getattr(value, "__parameters__", ()):
+            value = value[tuple(args_by_param[param] for param in value.__parameters__)]
+    except (NameError, KeyError, TypeError, ValueError):
+        # E.g. its value uses names that are not defined yet, or it has a TypeVarTuple that takes several args
+        return _UNRESOLVED
+    return _TypeAliasValue(alias, value)
 
 
 def _get_models_with_instructions(version: "Union[Version, HeadVersion]") -> "frozenset[type[Union[BaseModel, Enum]]]":
