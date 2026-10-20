@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
 from types import GenericAlias
-from typing import Annotated, ClassVar, Literal, NewType, Optional, TypeAlias, Union, cast, get_args
+from typing import Annotated, ClassVar, Generic, Literal, NewType, Optional, TypeAlias, TypeVar, Union, cast, get_args
 from uuid import UUID
 
 import fastapi.params
@@ -55,7 +55,7 @@ from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from starlette.routing import Route
-from typing_extensions import Any, TypeAliasType, override
+from typing_extensions import Any, TypeAliasType, TypeVarTuple, Unpack, override
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn._utils import _callable_name
@@ -68,7 +68,7 @@ from cadwyn.exceptions import (
     RouterPathParamsModifiedError,
 )
 from cadwyn.route_generation import copy_route, generate_versioned_routers
-from cadwyn.schema_generation import generate_versioned_models
+from cadwyn.schema_generation import _UNRESOLVED, _get_value_of_type_alias_with_args, generate_versioned_models
 from cadwyn.structure import Version, convert_request_to_next_version_for, endpoint, schema
 from cadwyn.structure.data import RequestInfo, ResponseInfo, convert_response_to_previous_version_for
 from cadwyn.structure.enums import enum
@@ -2830,8 +2830,7 @@ def test__router_generation__async_generator_dependency__should_forward_everythi
         if cleanup_failed:
             raise RuntimeError("cleanup failed")
 
-    # Not in Annotated[...] because, as in Cadwyn 7.4.0, the ones whose args did not change keep the original
-    # dependency in every version
+    # Not in Annotated[...] because such dependencies only get versioned where the version changes their models
     @router.get("/test")
     async def route(value: str = Depends(dependency)):
         raise NotImplementedError
@@ -2918,11 +2917,9 @@ def test__router_generation__query_model_defaults__should_stay_isolated_between_
         version_change(schema(Filters).field("limit").had(default=30)),
         version_change(schema(Filters).field("limit").had(default=20)),
     )
-    # The endpoint always gets the head default because Cadwyn migrates requests to head before solving them again.
-    # As in Cadwyn 7.4.0, the Annotated dependencies whose args did not change keep the original dependencies, and so
-    # the head defaults, in every version
+    # The endpoint always gets the head default because Cadwyn migrates requests to head before solving them again
     expected_limits = {
-        (version, path): (10, 10 if path in {"/annotated_dependency", "/instance_dependency"} else openapi_default)
+        (version, path): (10, openapi_default)
         for version, openapi_default in {"2002-01-01": 10, "2001-01-01": 20, "2000-01-01": 30}.items()
         for path in paths
     }
@@ -3131,11 +3128,8 @@ def test__router_generation__depends_subclass_with_custom_init__should_be_versio
     clients = create_versioned_clients(
         version_change(schema(SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
-    assert clients["2000-01-01"].post("/default", json={"foo": 1}).status_code == 422
-    # As in Cadwyn 7.4.0, the Annotated dependency whose args did not change keeps the original dependency with the
-    # head model in every version
-    assert clients["2000-01-01"].post("/annotated", json={"foo": 1}).json() == {"foo": 1}
     for path in ("/annotated", "/default"):
+        assert clients["2000-01-01"].post(path, json={"foo": 1}).status_code == 422
         assert clients["2000-01-01"].post(path, json={"foo": 1, "bar": "baz"}).json() == {"foo": 1}
         assert clients["2001-01-01"].post(path, json={"foo": 1}).json() == {"foo": 1}
 
@@ -3216,13 +3210,9 @@ def test__router_generation__partial_dependency__should_keep_annotations_of_wrap
         version_change(schema(SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
     for path in ("/default", "/annotated"):
-        # As in Cadwyn 7.4.0, the Annotated dependency whose args did not change keeps the original partial with the
-        # head model in every version
-        uses_head_model = path == "/annotated"
-        if not uses_head_model:
-            assert clients["2000-01-01"].post(path, json={"foo": 1}).json() == {
-                "detail": [{"type": "missing", "loc": ["body", "bar"], "msg": "Field required", "input": {"foo": 1}}]
-            }
+        assert clients["2000-01-01"].post(path, json={"foo": 1}).json() == {
+            "detail": [{"type": "missing", "loc": ["body", "bar"], "msg": "Field required", "input": {"foo": 1}}]
+        }
         assert clients["2000-01-01"].post(path, json={"foo": 1, "bar": "baz"}).json() == {
             "role": "admin",
             "user": "alice",
@@ -3240,13 +3230,11 @@ def test__router_generation__partial_dependency__should_keep_annotations_of_wrap
         clients["2001-01-01"].app.dependency_overrides.clear()
 
         for version, version_client in clients.items():
-            openapi = version_client.get(f"/openapi.json?version={version}").json()
-            operation = openapi["paths"][path]["post"]
+            operation = version_client.get(f"/openapi.json?version={version}").json()["paths"][path]["post"]
             assert [param["name"] for param in operation["parameters"]] == ["x-api-version"]
-            ref = operation["requestBody"]["content"]["application/json"]["schema"]["$ref"]
-            body_schema = openapi["components"]["schemas"][ref.removeprefix("#/components/schemas/")]
-            assert body_schema["title"] == "SchemaWithOneIntField"
-            assert ("bar" in body_schema["properties"]) == (version == "2000-01-01" and not uses_head_model)
+            assert operation["requestBody"]["content"]["application/json"]["schema"] == {
+                "$ref": "#/components/schemas/SchemaWithOneIntField"
+            }
 
 
 class _CachedFactory:
@@ -3502,7 +3490,7 @@ def test__router_generation__dependency_with_parameters_only_in_signature__shoul
     assert clients["2000-01-01"].post("/test", params={"limit": 5}, json={"foo": 1}).status_code == 422
 
 
-def test__router_generation__annotated_dependency_with_unversioned_type__should_use_head_dependency(
+def test__router_generation__annotated_dependency_with_unversioned_type__should_use_dependency_of_its_version(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
 ):
@@ -3535,33 +3523,522 @@ def test__router_generation__annotated_dependency_with_unversioned_type__should_
     min_lengths = {"2002-01-01": 5, "2001-01-01": 5, "2000-01-01": 10}
     for version, version_client in clients.items():
         min_length = min_lengths[version]
-        # As in Cadwyn 7.4.0: typing caches Annotated[...] by equality and the versioned dependency is equal to the
-        # original one, so every version gets the head dependency, whose body has no min_length and accepts "blue".
-        # Existing clients rely on the values that it accepts
-        for name, color in [("a", "red"), ("a" * min_length, "red"), ("a" * min_length, "blue")]:
-            assert version_client.post("/dependency", json={"name": name, "color": color}).json() == [len(name)]
-        assert version_client.post("/body", json={"name": "a" * min_length, "color": "red"}).json() == [min_length]
-        assert version_client.post("/body", json={"name": "a" * (min_length - 1), "color": "red"}).status_code == 422
-        assert version_client.post("/body", json={"name": "a" * min_length, "color": "blue"}).status_code == 422
+        for path in ("/dependency", "/body"):
+            response = version_client.post(path, json={"name": "a" * min_length, "color": "red"})
+            assert response.json() == [min_length]
+            response = version_client.post(path, json={"name": "a" * (min_length - 1), "color": "red"})
+            assert response.status_code == 422
+            response = version_client.post(path, json={"name": "a" * min_length, "color": "blue"})
+            assert response.status_code == 422
 
         openapi = version_client.get(f"/openapi.json?version={version}").json()
-        schemas = openapi["components"]["schemas"]
-
-        def get_body_schema(path: str, openapi: dict[str, Any] = openapi, schemas: dict[str, Any] = schemas):
-            ref = openapi["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
-            return schemas[ref.removeprefix("#/components/schemas/")]
-
-        def get_enum(item_schema: dict[str, Any], schemas: dict[str, Any] = schemas) -> list[str]:
-            return schemas[item_schema["properties"]["color"]["$ref"].removeprefix("#/components/schemas/")]["enum"]
-
-        assert get_body_schema("/dependency")["properties"]["name"] == {"type": "string", "title": "Name"}
-        assert get_enum(get_body_schema("/dependency")) == ["red", "blue"]
-        assert get_body_schema("/body")["properties"]["name"] == {
+        assert openapi["components"]["schemas"]["Item"]["properties"]["name"] == {
             "type": "string",
             "minLength": min_length,
             "title": "Name",
         }
-        assert get_enum(get_body_schema("/body")) == ["red"]
+        assert openapi["components"]["schemas"]["Color"]["enum"] == ["red"]
+        for path in ("/dependency", "/body"):
+            assert openapi["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"] == {
+                "$ref": "#/components/schemas/Item"
+            }
+
+
+class RoleOfVersionedDependency(str, Enum):
+    reader = "reader"
+    editor = "editor"
+
+
+def get_allowed_roles(
+    role: RoleOfVersionedDependency = Query(RoleOfVersionedDependency.reader),
+) -> list[str]:
+    return [role.value]
+
+
+def get_allowed_roles_with_sub_dependency(roles: Annotated[list[str], Depends(get_allowed_roles)]) -> list[str]:
+    return roles
+
+
+def get_allowed_roles_with_scopes(
+    security_scopes: SecurityScopes,
+    role: RoleOfVersionedDependency = Query(RoleOfVersionedDependency.reader),
+) -> list[str]:
+    return [role.value, *security_scopes.scopes]
+
+
+AllowedRoles: TypeAlias = Annotated[list[str], Depends(get_allowed_roles)]
+
+
+def _make_permissions_route(style: str) -> Callable[..., Any]:
+    if style == "default":
+
+        async def default_route(roles: list[str] = Depends(get_allowed_roles)):
+            return roles
+
+        return default_route
+    if style == "annotated":
+
+        async def annotated_route(roles: Annotated[list[str], Depends(get_allowed_roles)]):
+            return roles
+
+        return annotated_route
+    if style == "annotated_with_other_metadata":
+
+        async def annotated_with_other_metadata_route(
+            roles: Annotated[list[str], "roles", Depends(get_allowed_roles)],
+        ):
+            return roles
+
+        return annotated_with_other_metadata_route
+    if style == "annotated_alias":
+
+        async def annotated_alias_route(roles: AllowedRoles):
+            return roles
+
+        return annotated_alias_route
+    if style == "nested_annotated_dependency":
+
+        async def nested_annotated_dependency_route(
+            roles: Annotated[list[str], Depends(get_allowed_roles_with_sub_dependency)],
+        ):
+            return roles
+
+        return nested_annotated_dependency_route
+    if style == "annotated_security":
+
+        async def annotated_security_route(roles: Annotated[list[str], Security(get_allowed_roles_with_scopes)]):
+            return roles
+
+        return annotated_security_route
+    assert style == "annotated_security_with_scopes"
+
+    async def annotated_security_with_scopes_route(
+        roles: Annotated[list[str], Security(get_allowed_roles_with_scopes, scopes=["roles:read"])],
+    ):
+        return roles
+
+    return annotated_security_with_scopes_route
+
+
+@pytest.mark.parametrize(
+    "style",
+    [
+        "default",
+        "annotated",
+        "annotated_with_other_metadata",
+        "annotated_alias",
+        "nested_annotated_dependency",
+        "annotated_security",
+        "annotated_security_with_scopes",
+    ],
+)
+def test__router_generation__dependency_with_versioned_enum_in_its_params__should_use_dependency_of_its_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    style: str,
+):
+    router.get("/permissions")(_make_permissions_route(style))
+    clients = create_versioned_clients(version_change(enum(RoleOfVersionedDependency).didnt_have("editor")))
+    scopes = ["roles:read"] if style == "annotated_security_with_scopes" else []
+
+    assert clients["2001-01-01"].get("/permissions", params={"role": "editor"}).json() == ["editor", *scopes]
+    assert clients["2000-01-01"].get("/permissions", params={"role": "reader"}).json() == ["reader", *scopes]
+    assert clients["2000-01-01"].get("/permissions", params={"role": "editor"}).status_code == 422
+    for version, enum_values in {"2001-01-01": ["reader", "editor"], "2000-01-01": ["reader"]}.items():
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["RoleOfVersionedDependency"]["enum"] == enum_values
+
+
+class PlanOfDependency(Enum):
+    free = "free"
+    pro = "pro"
+    team = "team"
+
+
+PRICES_OF_PLANS = {PlanOfDependency.free: 0, PlanOfDependency.pro: 10, PlanOfDependency.team: 30}
+
+
+class AddonOfDependency(BaseModel):
+    plan: PlanOfDependency
+
+
+class SubscriptionOfDependency(BaseModel):
+    # Has no instructions itself but refers to an enum that has them, directly and through another model
+    plan: PlanOfDependency
+    addons: list[AddonOfDependency] = []
+
+
+class UnrelatedModelOfDependency(BaseModel):
+    foo: str
+
+
+def get_price_from_query(plan: PlanOfDependency = Query(PlanOfDependency.free)) -> int:
+    return PRICES_OF_PLANS[plan]
+
+
+def get_price_from_body(subscription: SubscriptionOfDependency) -> int:
+    assert isinstance(subscription, SubscriptionOfDependency)
+    return PRICES_OF_PLANS[subscription.plan]
+
+
+def get_price_from_sub_dependency(price: Annotated[int, Depends(get_price_from_query)]) -> int:
+    return price
+
+
+_PRICE_DEPENDENCIES: dict[str, tuple[Callable[..., int], Callable[[TestClient, str], Any]]] = {
+    "query": (get_price_from_query, lambda client, plan: client.get("/price", params={"plan": plan})),
+    "body": (get_price_from_body, lambda client, plan: client.post("/price", json={"plan": plan})),
+    "sub_dependency": (
+        get_price_from_sub_dependency,
+        lambda client, plan: client.get("/price", params={"plan": plan}),
+    ),
+}
+
+
+def _add_price_route(router: VersionedAPIRouter, dependency: Callable[..., int]) -> None:
+    async def route(price: Annotated[int, Depends(dependency)]):
+        return price
+
+    method = "POST" if dependency is get_price_from_body else "GET"
+    router.api_route("/price", methods=[method])(route)
+
+
+@pytest.mark.parametrize("source", list(_PRICE_DEPENDENCIES))
+@pytest.mark.parametrize(
+    "make_version_change",
+    [
+        pytest.param(version_change, id="no_instructions"),
+        pytest.param(
+            lambda: version_change(schema(UnrelatedModelOfDependency).field("foo").had(name="bar")),
+            id="unrelated_instructions",
+        ),
+    ],
+)
+def test__router_generation__annotated_dependency_without_changed_models__should_get_original_classes(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    source: str,
+    make_version_change: Callable[[], type[VersionChange]],
+):
+    dependency, send = _PRICE_DEPENDENCIES[source]
+    _add_price_route(router, dependency)
+
+    clients = create_versioned_clients(make_version_change())
+    for version_client in clients.values():
+        # The dependency gets the original classes, so lookups by enum members and isinstance work
+        assert send(version_client, "pro").json() == 10
+        assert send(version_client, "team").json() == 30
+
+
+@pytest.mark.parametrize("source", list(_PRICE_DEPENDENCIES))
+def test__router_generation__annotated_dependency_with_changed_enum__should_be_versioned_only_where_it_changes(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    source: str,
+):
+    dependency, send = _PRICE_DEPENDENCIES[source]
+    _add_price_route(router, dependency)
+
+    clients = create_versioned_clients(version_change(enum(PlanOfDependency).didnt_have("team")))
+    # The latest version validates the same as head so the dependency gets the original classes there
+    assert send(clients["2001-01-01"], "pro").json() == 10
+    assert send(clients["2001-01-01"], "team").json() == 30
+    # The older version uses its own copy of the dependency, which rejects the plan that it did not have
+    assert send(clients["2000-01-01"], "team").status_code == 422
+    for version, enum_values in {"2001-01-01": ["free", "pro", "team"], "2000-01-01": ["free", "pro"]}.items():
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["PlanOfDependency"]["enum"] == enum_values
+
+
+def get_default_role_name() -> RoleOfVersionedDependency:
+    return RoleOfVersionedDependency.reader
+
+
+class UserWithDefaultFactoryOfChangedEnum(BaseModel):
+    # Only the default factory refers to the changed enum so it does not change what the model validates
+    role_name: str = Field(default_factory=get_default_role_name)
+
+
+class ParentWithChangedEnum(BaseModel):
+    role_name: RoleOfVersionedDependency
+
+
+class ChildThatOverridesChangedEnum(ParentWithChangedEnum):
+    role_name: str  # ty: ignore[invalid-attribute-override]
+
+
+class ModelWithChangedEnumInClassVar(BaseModel):
+    default_role: ClassVar[RoleOfVersionedDependency] = RoleOfVersionedDependency.reader
+    role_name: str
+
+
+_GenericArgT = TypeVar("_GenericArgT")
+
+
+class GenericThatDoesNotUseItsArg(BaseModel, Generic[_GenericArgT]):
+    role_name: str
+
+
+class GenericThatUsesItsArg(BaseModel, Generic[_GenericArgT]):
+    role_name: _GenericArgT
+
+
+AliasThatDoesNotUseItsArg = TypeAliasType("AliasThatDoesNotUseItsArg", str, type_params=(_GenericArgT,))
+AliasThatUsesItsArg = TypeAliasType("AliasThatUsesItsArg", Union[_GenericArgT, None], type_params=(_GenericArgT,))
+
+
+class ModelWithUnusedAliasArg(BaseModel):
+    role_name: AliasThatDoesNotUseItsArg[RoleOfVersionedDependency]
+
+
+class ModelWithUsedAliasArg(BaseModel):
+    role_name: AliasThatUsesItsArg[RoleOfVersionedDependency]
+
+
+AliasThatIsItsArg = TypeAliasType("AliasThatIsItsArg", _GenericArgT, type_params=(_GenericArgT,))
+
+
+class ModelWithAliasThatIsItsArg(BaseModel):
+    role_name: AliasThatIsItsArg[RoleOfVersionedDependency]
+
+
+class ModelWithNestedUnusedAliasArg(BaseModel):
+    role_name: str
+    other_role_names: list[AliasThatDoesNotUseItsArg[RoleOfVersionedDependency]] | None = None
+
+
+class ModelWithUntypedExtras(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    role_name: str
+
+
+AliasOfAliasThatDoesNotUseItsArg = TypeAliasType(
+    "AliasOfAliasThatDoesNotUseItsArg",
+    AliasThatDoesNotUseItsArg[RoleOfVersionedDependency],
+)
+
+
+class ModelWithUnusedArgOfAliasBehindAlias(BaseModel):
+    role_name: AliasOfAliasThatDoesNotUseItsArg
+
+
+if sys.version_info >= (3, 12):
+    # Type aliases that refer to themselves can only be defined with the type statement
+    exec(
+        "type RecursiveAlias[T] = T | list[RecursiveAlias[T]]\n"
+        "type RecursiveAliasThatDoesNotUseItsArg[T] = str | list[RecursiveAliasThatDoesNotUseItsArg[T]]\n"
+        "class ModelWithRecursiveAliasThatDoesNotUseItsArg(BaseModel):\n"
+        "    role_name: RecursiveAliasThatDoesNotUseItsArg[RoleOfVersionedDependency]\n"
+        "class ModelWithRecursiveAliasOfUnchangedArg(BaseModel):\n"
+        "    role_name: RecursiveAlias[str]\n"
+        "class ModelWithRecursiveAliasOfChangedArg(BaseModel):\n"
+        "    role_name: RecursiveAlias[RoleOfVersionedDependency]\n",
+        globals(),
+    )
+_requires_type_statement = pytest.mark.skipif(sys.version_info < (3, 12), reason="Needs the type statement")
+
+
+class ModelWithTypedExtras(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    __pydantic_extra__: dict[str, RoleOfVersionedDependency] = Field(init=False)
+
+    @property
+    def role_name(self) -> RoleOfVersionedDependency:
+        return self.model_extra["role_name"]  # ty: ignore[not-subscriptable]
+
+
+def _make_body_dependency(model: Any) -> Callable[..., str]:
+    def dependency(body: Any) -> str:
+        assert isinstance(body, model)
+        return body.role_name
+
+    dependency.__annotations__["body"] = model
+    return dependency
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param(ChildThatOverridesChangedEnum, id="overridden_field"),
+        pytest.param(ModelWithChangedEnumInClassVar, id="class_var"),
+        pytest.param(GenericThatDoesNotUseItsArg[RoleOfVersionedDependency], id="unused_generic_arg"),
+        pytest.param(UserWithDefaultFactoryOfChangedEnum, id="default_factory"),
+        pytest.param(ModelWithUnusedAliasArg, id="unused_generic_alias_arg"),
+        pytest.param(ModelWithNestedUnusedAliasArg, id="nested_unused_generic_alias_arg"),
+        pytest.param(ModelWithUntypedExtras, id="untyped_extras"),
+        pytest.param(ModelWithUnusedArgOfAliasBehindAlias, id="unused_generic_alias_arg_behind_alias"),
+        pytest.param(
+            "ModelWithRecursiveAliasOfUnchangedArg", id="recursive_generic_alias", marks=_requires_type_statement
+        ),
+        pytest.param(
+            "ModelWithRecursiveAliasThatDoesNotUseItsArg",
+            id="recursive_generic_alias_that_does_not_use_its_arg",
+            marks=_requires_type_statement,
+        ),
+    ],
+)
+def test__router_generation__annotated_dependency_whose_models_do_not_validate_changed_enum__should_not_be_versioned(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    model: Any,
+):
+    model = globals()[model] if isinstance(model, str) else model
+
+    @router.post("/role")
+    async def route(role_name: Annotated[str, Depends(_make_body_dependency(model))]):
+        return role_name
+
+    # HeadVersion changes the enum in every version, including the latest one
+    clients = create_versioned_clients(
+        version_change(),
+        head_version_changes=[version_change(enum(RoleOfVersionedDependency).didnt_have("editor"))],
+    )
+    # The models refer to the changed enum without validating it so the dependency gets the original classes
+    for version_client in clients.values():
+        assert version_client.post("/role", json={"role_name": "anything"}).json() == "anything"
+        if model is UserWithDefaultFactoryOfChangedEnum:
+            assert version_client.post("/role", json={}).json() == "reader"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param(ParentWithChangedEnum, id="field"),
+        pytest.param(GenericThatUsesItsArg[RoleOfVersionedDependency], id="used_generic_arg"),
+        pytest.param(ModelWithUsedAliasArg, id="used_generic_alias_arg"),
+        pytest.param(ModelWithAliasThatIsItsArg, id="generic_alias_that_is_its_arg"),
+        pytest.param(ModelWithTypedExtras, id="typed_extras"),
+        pytest.param(
+            "ModelWithRecursiveAliasOfChangedArg", id="recursive_generic_alias", marks=_requires_type_statement
+        ),
+    ],
+)
+def test__router_generation__annotated_dependency_whose_models_validate_changed_enum__should_be_versioned(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    model: Any,
+):
+    model = globals()[model] if isinstance(model, str) else model
+
+    async def dependency(body: Any) -> str:
+        return body.role_name.value
+
+    dependency.__annotations__["body"] = model
+
+    @router.post("/role")
+    async def route(role_name: Annotated[str, Depends(dependency)]):
+        return role_name
+
+    clients = create_versioned_clients(version_change(enum(RoleOfVersionedDependency).didnt_have("editor")))
+    assert clients["2001-01-01"].post("/role", json={"role_name": "editor"}).json() == "editor"
+    assert clients["2000-01-01"].post("/role", json={"role_name": "editor"}).status_code == 422
+    assert clients["2000-01-01"].post("/role", json={"role_name": "reader"}).json() == "reader"
+
+
+def test__router_generation__annotated_dependency_whose_base_has_instructions__should_be_versioned(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    async def dependency(body: ChildThatOverridesChangedEnum) -> str:
+        return body.role_name
+
+    @router.post("/role")
+    async def route(role_name: Annotated[str, Depends(dependency)]):
+        return role_name
+
+    clients = create_versioned_clients(
+        version_change(schema(ParentWithChangedEnum).field("legacy").existed_as(type=str)),
+    )
+    # The copy of the child inherits the field from the copy of its parent
+    assert clients["2001-01-01"].post("/role", json={"role_name": "a"}).json() == "a"
+    assert clients["2000-01-01"].post("/role", json={"role_name": "a"}).status_code == 422
+    assert clients["2000-01-01"].post("/role", json={"role_name": "a", "legacy": "b"}).json() == "a"
+
+
+def test__router_generation__annotated_dependency_with_unused_alias_arg_in_its_params__should_not_be_versioned(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    async def dependency(
+        body: UnrelatedModelOfDependency,
+        unused: AliasThatDoesNotUseItsArg[RoleOfVersionedDependency] = "x",
+    ) -> str:
+        assert isinstance(body, UnrelatedModelOfDependency)
+        return body.foo
+
+    @router.post("/foo")
+    async def route(foo: Annotated[str, Depends(dependency)]):
+        return foo
+
+    clients = create_versioned_clients(
+        version_change(),
+        head_version_changes=[version_change(enum(RoleOfVersionedDependency).didnt_have("editor"))],
+    )
+    for version_client in clients.values():
+        assert version_client.post("/foo", json={"foo": "bar"}).json() == "bar"
+
+
+def test__router_generation__annotated_dependency_whose_base_changes_only_overridden_fields__should_not_be_versioned(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/role")
+    async def route(role_name: Annotated[str, Depends(_make_body_dependency(ChildThatOverridesChangedEnum))]):
+        return role_name
+
+    clients = create_versioned_clients(
+        version_change(),
+        head_version_changes=[version_change(schema(ParentWithChangedEnum).field("role_name").had(type=int))],
+    )
+    # The child overrides the only field that the instructions of its parent change
+    for version_client in clients.values():
+        assert version_client.post("/role", json={"role_name": "anything"}).json() == "anything"
+
+
+def test__get_value_of_type_alias_with_args__alias_that_cannot_be_substituted__should_be_unresolved():
+    variadic_args = TypeVarTuple("variadic_args")
+    variadic_alias = TypeAliasType("variadic_alias", tuple[Unpack[variadic_args]], type_params=(variadic_args,))
+    assert _get_value_of_type_alias_with_args(variadic_alias[int, str]) is _UNRESOLVED
+
+
+def get_role_name_from_query(role: RoleOfVersionedDependency = Query(RoleOfVersionedDependency.reader)) -> str:
+    return role.value
+
+
+def test__router_generation__inferred_annotated_dependency__should_use_dependency_of_its_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.get("/role")
+    async def route(role_name: Annotated[get_role_name_from_query, Depends()]):  # ty: ignore[invalid-type-form]
+        return role_name
+
+    clients = create_versioned_clients(version_change(enum(RoleOfVersionedDependency).didnt_have("editor")))
+    assert clients["2001-01-01"].get("/role", params={"role": "editor"}).json() == "editor"
+    assert clients["2000-01-01"].get("/role", params={"role": "reader"}).json() == "reader"
+    assert clients["2000-01-01"].get("/role", params={"role": "editor"}).status_code == 422
+    for version, enum_values in {"2001-01-01": ["reader", "editor"], "2000-01-01": ["reader"]}.items():
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["RoleOfVersionedDependency"]["enum"] == enum_values
+
+
+def test__router_generation__annotated_dependency_with_enum_changed_by_head_version__should_be_versioned_in_latest(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.get("/permissions")
+    async def route(roles: Annotated[list[str], Depends(get_allowed_roles)]):
+        return roles
+
+    clients = create_versioned_clients(
+        head_version_changes=[version_change(enum(RoleOfVersionedDependency).didnt_have("editor"))]
+    )
+    # HeadVersion changes the latest published version too, so it is versioned there
+    client = clients["2000-01-01"]
+    assert client.get("/permissions", params={"role": "reader"}).json() == ["reader"]
+    assert client.get("/permissions", params={"role": "editor"}).status_code == 422
+    openapi = client.get("/openapi.json?version=2000-01-01").json()
+    assert openapi["components"]["schemas"]["RoleOfVersionedDependency"]["enum"] == ["reader"]
 
 
 class ItemOfDependencyWithQuotedAnnotations(BaseModel):
@@ -3602,7 +4079,7 @@ def get_roles_with_quoted_sub_dependency(
     "dependency",
     [get_roles_with_quoted_query, get_roles_with_quoted_body, get_roles_with_quoted_sub_dependency],
 )
-def test__router_generation__annotated_dependency_with_quoted_args_in_annotations__should_use_head_dependency(
+def test__router_generation__annotated_dependency_with_quoted_args_in_annotations__should_use_dependency_of_its_version(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     dependency: Callable[..., list[str]],
@@ -3614,19 +4091,19 @@ def test__router_generation__annotated_dependency_with_quoted_args_in_annotation
     clients = create_versioned_clients(
         version_change(enum(RoleOfDependencyWithQuotedAnnotations).didnt_have("editor")),
     )
-    # As in Cadwyn 7.4.0: typing caches Annotated[...] by equality and the versioned dependency is equal to the
-    # original one, so every version gets the head dependency and accepts the role that older versions did not have
-    for version, version_client in clients.items():
-        assert version_client.get("/roles", params={"role": "editor"}).json() == ["editor"]
-        if dependency is get_roles_with_quoted_query:
-            # Pydantic cannot resolve the forward refs to the models in the OpenAPI of the others, as in Cadwyn 7.4.0
-            openapi = version_client.get(f"/openapi.json?version={version}").json()
-            role_schema = openapi["components"]["schemas"]["RoleOfDependencyWithQuotedAnnotations"]
-            assert role_schema["enum"] == ["reader", "editor"]
+    assert clients["2001-01-01"].get("/roles", params={"role": "editor"}).json() == ["editor"]
+    assert clients["2000-01-01"].get("/roles", params={"role": "reader"}).json() == ["reader"]
+    assert clients["2000-01-01"].get("/roles", params={"role": "editor"}).status_code == 422
+    if dependency is not get_roles_with_quoted_query:
+        # Pydantic cannot resolve the forward refs to the models in the OpenAPI, just like without Cadwyn
+        return
+    for version, enum_values in {"2001-01-01": ["reader", "editor"], "2000-01-01": ["reader"]}.items():
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["RoleOfDependencyWithQuotedAnnotations"]["enum"] == enum_values
 
 
 class _MetadataWhoseEqualityRaises:
-    # Cadwyn versions callable metadata so typing compares it with its versioned copy
+    # Callable metadata gets versioned, so typing's Annotated cache would compare it with its versioned copy
     def __call__(self) -> None:
         raise NotImplementedError
 
@@ -3636,9 +4113,7 @@ class _MetadataWhoseEqualityRaises:
 
     @override
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, type | _MetadataWhoseEqualityRaises):
-            raise TypeError("metadata comparison requires the same class")
-        return self is other
+        raise TypeError("metadata cannot be compared")
 
 
 class _MetadataWithChangingHash:
@@ -3659,7 +4134,7 @@ def get_payload(payload: PayloadOfAnnotatedDependency) -> dict[str, Any]:
 
 
 def _make_dependency_with_many_annotated_parameters() -> Callable[..., Any]:
-    # More distinct Annotated[...] than typing caches, so the original one is not cached when Cadwyn rebuilds it
+    # More distinct Annotated[...] than typing caches
     parameters = ", ".join(f'p{i}: Annotated[int, "parameter {i}"] = 0' for i in range(150))
     namespace: dict[str, Any] = {"Annotated": Annotated, "get_payload": get_payload}
     payload_annotation = "get_payload.__annotations__['payload']"
@@ -3670,16 +4145,17 @@ def _make_dependency_with_many_annotated_parameters() -> Callable[..., Any]:
 @pytest.mark.parametrize(
     "make_annotation",
     [
+        pytest.param(lambda: Annotated[dict, Depends(get_payload)], id="plain"),
         pytest.param(lambda: Annotated[dict, Depends(get_payload), {"description": "Value"}], id="unhashable_metadata"),
         pytest.param(lambda: Annotated[dict, Depends(get_payload), _MetadataWhoseEqualityRaises()], id="eq_raises"),
         pytest.param(lambda: Annotated[dict, Depends(get_payload), _MetadataWithChangingHash()], id="changing_hash"),
         pytest.param(
             lambda: Annotated[dict, Depends(_make_dependency_with_many_annotated_parameters())],
-            id="evicted_from_typing_cache",
+            id="many_annotated_parameters",
         ),
     ],
 )
-def test__router_generation__annotated_dependency_that_typing_does_not_cache__should_use_dependency_of_its_version(
+def test__router_generation__annotated_dependency_with_any_metadata__should_use_dependency_of_its_version(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     make_annotation: Callable[[], Any],
@@ -3699,8 +4175,7 @@ def test__router_generation__annotated_dependency_that_typing_does_not_cache__sh
     clients = create_versioned_clients(
         version_change(schema(PayloadOfAnnotatedDependency).field("value").had(name="legacy_value"), migrate=migrate),
     )
-    # As in Cadwyn 7.4.0: typing returns its cached Annotated[...] with the original dependency only if it can hash
-    # and compare the args and still has it in its cache. Otherwise, every version gets its own dependency
+    # Whether typing would cache Annotated[...] with these args or not, every version gets its own dependency
     assert clients["2001-01-01"].post("/value", json={"value": "ok"}).json() == {"value": "ok"}
     assert clients["2000-01-01"].post("/value", json={"legacy_value": "ok"}).json() == {"value": "ok"}
     for version, field_name in [("2001-01-01", "value"), ("2000-01-01", "legacy_value")]:

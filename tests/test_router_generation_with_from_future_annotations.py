@@ -1424,19 +1424,20 @@ def test__router_generation__partial_dependency_with_type_checking_only_annotati
             raise NotImplementedError
 
     clients = create_versioned_clients(version_change(schema(VersionedItem).field("bar").existed_as(type=str)))
-    if style == "annotated_dependency":
-        # A known limitation of Cadwyn 7.4.0 that we keep: typing caches Annotated[...] by equality and the versioned
-        # dependency is equal to the original one, so every version gets the original partial, whose annotation
-        # FastAPI cannot resolve in OpenAPI either
-        for version, version_client in clients.items():
-            with pytest.raises(PydanticUserError):
-                version_client.get(f"/openapi.json?version={version}")
-        return
     required_fields = {}
     for version, version_client in clients.items():
+        if style == "annotated_dependency" and version == "2001-01-01":
+            # The latest version changes nothing that the dependency uses so, as before, it keeps the original
+            # partial, whose annotation FastAPI cannot resolve
+            with pytest.raises(PydanticUserError):
+                version_client.get(f"/openapi.json?version={version}")
+            continue
         openapi = version_client.get(f"/openapi.json?version={version}").json()
         required_fields[version] = openapi["components"]["schemas"]["VersionedItem"]["required"]
-    assert required_fields == {"2001-01-01": ["foo"], "2000-01-01": ["foo", "bar"]}
+    if style == "default_dependency":
+        assert required_fields == {"2001-01-01": ["foo"], "2000-01-01": ["foo", "bar"]}
+    else:
+        assert required_fields == {"2000-01-01": ["foo", "bar"]}
 
 
 class NotSubscriptableAtRuntime:
@@ -1537,20 +1538,14 @@ def test__router_generation__quoted_parameter_annotations__should_use_versioned_
             return current
 
     clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
-    # As in Cadwyn 7.4.0, the Annotated dependency whose args did not change keeps the original dependency, whose
-    # annotations FastAPI resolves by itself, with the head model in every version
-    uses_head_model = style == "annotated_dependency"
     assert clients["2001-01-01"].post("/test", json={"current": "ok"}).json() == "ok"
-    assert clients["2000-01-01"].post("/test", json={"current": "ok"}).status_code == (200 if uses_head_model else 422)
+    assert clients["2000-01-01"].post("/test", json={"current": "ok"}).status_code == 422
     assert clients["2000-01-01"].post("/test", json={"current": "ok", "legacy": "ok"}).json() == "ok"
     required_fields = {}
     for version, version_client in clients.items():
         openapi = version_client.get(f"/openapi.json?version={version}").json()
         required_fields[version] = openapi["components"]["schemas"]["QuotedPayload"]["required"]
-    assert required_fields == {
-        "2001-01-01": ["current"],
-        "2000-01-01": ["current"] if uses_head_model else ["current", "legacy"],
-    }
+    assert required_fields == {"2001-01-01": ["current"], "2000-01-01": ["current", "legacy"]}
 
 
 # With postponed annotations, evaluating these once leaves forward references within them
@@ -1611,22 +1606,23 @@ def test__router_generation__nested_quoted_parameter_annotations__should_use_ver
             raise NotImplementedError
 
     clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
-    if style == "annotated_dependency":
-        # A known limitation of Cadwyn 7.4.0 that we keep: typing caches Annotated[...] by equality and the versioned
-        # dependency is equal to the original one, so every version gets the original dependency, whose forward refs
-        # pydantic cannot resolve
-        for version, version_client in clients.items():
-            with pytest.raises(PydanticUserError):
-                version_client.get(f"/openapi.json?version={version}")
-        return
     # FastAPI itself cannot evaluate such forward references in the head route that Cadwyn validates requests
     # against after migrating them so we only check what each version validates and documents on its own
     assert clients["2000-01-01"].post("/test", json=make_body({"current": "ok"})).status_code == 422
     required_fields = {}
     for version, version_client in clients.items():
+        if style == "annotated_dependency" and version == "2001-01-01":
+            # The latest version changes nothing that the dependency uses so, as before, it keeps the original
+            # dependency, whose forward refs pydantic cannot resolve
+            with pytest.raises(PydanticUserError):
+                version_client.get(f"/openapi.json?version={version}")
+            continue
         openapi = version_client.get(f"/openapi.json?version={version}").json()
         required_fields[version] = openapi["components"]["schemas"]["QuotedPayload"]["required"]
-    assert required_fields == {"2001-01-01": ["current"], "2000-01-01": ["current", "legacy"]}
+    if style == "annotated_dependency":
+        assert required_fields == {"2000-01-01": ["current", "legacy"]}
+    else:
+        assert required_fields == {"2001-01-01": ["current"], "2000-01-01": ["current", "legacy"]}
 
 
 def _with_signature_of_unevaluated_annotations(function: Any) -> Any:
@@ -1667,20 +1663,14 @@ def test__router_generation__signatures_with_unevaluated_annotations__should_use
             return current
 
     clients = create_versioned_clients(version_change(schema(QuotedPayload).field("legacy").existed_as(type=str)))
-    # As in Cadwyn 7.4.0, the Annotated dependency whose args did not change keeps the original dependency, whose
-    # annotations FastAPI resolves by itself, with the head model in every version
-    uses_head_model = style == "annotated_dependency"
     assert clients["2001-01-01"].post("/test", json={"current": "ok"}).json() == "ok"
-    assert clients["2000-01-01"].post("/test", json={"current": "ok"}).status_code == (200 if uses_head_model else 422)
+    assert clients["2000-01-01"].post("/test", json={"current": "ok"}).status_code == 422
     assert clients["2000-01-01"].post("/test", json={"current": "ok", "legacy": "ok"}).json() == "ok"
     required_fields = {}
     for version, version_client in clients.items():
         openapi = version_client.get(f"/openapi.json?version={version}").json()
         required_fields[version] = openapi["components"]["schemas"]["QuotedPayload"]["required"]
-    assert required_fields == {
-        "2001-01-01": ["current"],
-        "2000-01-01": ["current"] if uses_head_model else ["current", "legacy"],
-    }
+    assert required_fields == {"2001-01-01": ["current"], "2000-01-01": ["current", "legacy"]}
 
 
 def make_values_with_annotations_set_by_hand() -> Any:
