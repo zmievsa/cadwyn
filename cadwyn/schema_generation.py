@@ -891,6 +891,15 @@ def _get_best_effort_globals(call: Any) -> dict[str, Any]:
     return _function_globals(dunder_call) if is_regular_function(dunder_call) else {}
 
 
+def _copy_field_info(field_info: FieldInfo) -> FieldInfo:
+    # The same as pydantic's FieldInfo._copy() (which does not exist in older versions of pydantic):
+    # the mutable attributes must not be shared with the original either
+    field_info_copy = copy.copy(field_info)
+    for attr_name in ("metadata", "_attributes_set", "_qualifiers"):
+        setattr(field_info_copy, attr_name, copy.copy(getattr(field_info, attr_name)))
+    return field_info_copy
+
+
 class _CallableKind(Enum):
     ENDPOINT = auto()
     DEPENDENCY = auto()
@@ -1177,7 +1186,8 @@ class _AnnotationTransformer:
                 return annotation
             if callable_kind is _CallableKind.OTHER:
                 try:
-                    _get_unevaluated_signature(annotation)
+                    # A custom __signature__ can also fail when its parameters are read
+                    _get_unevaluated_signature(annotation).parameters  # noqa: B018
                 except (ValueError, TypeError):
                     # Callables without an inspectable signature such as `functools.partial(dict, count=1)`
                     # have no annotations or defaults to version
@@ -1357,7 +1367,7 @@ class _AnnotationTransformer:
                     # FastAPI mutates the FieldInfo objects in defaults (e.g. their annotation) so every version
                     # (and app) must have its own copies. Otherwise, all of them would use the models of whichever
                     # got built last
-                    p.default._copy() if isinstance(p.default, FieldInfo) else p.default
+                    _copy_field_info(p.default) if isinstance(p.default, FieldInfo) else p.default
                     for p in old_params.values()
                     if p.default is not inspect.Signature.empty
                 ),
@@ -3302,7 +3312,7 @@ def _delete_metadata_attribute(metadata: Any, attr_name: str) -> Any:
     if isinstance(metadata, FieldInfo):
         # We only delete the attributes of FieldInfo itself (never its constraints), and they get the values of an
         # empty Field()
-        field_info = metadata._copy()
+        field_info = _copy_field_info(metadata)
         field_info._attributes_set.pop(attr_name, None)
         setattr(field_info, attr_name, dict_of_empty_field_info[attr_name])
         return field_info

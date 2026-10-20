@@ -19,7 +19,7 @@ from uuid import UUID
 import fastapi.params
 import pytest
 import svcs
-from annotated_types import Len, MinLen
+from annotated_types import Ge, Len, MinLen
 from fastapi import (
     APIRouter,
     Body,
@@ -2921,6 +2921,35 @@ def test__router_generation__query_model_defaults__should_stay_isolated_between_
     assert get_limits(app) == expected_limits
 
 
+class _QueryWithCustomCopy(fastapi.params.Query):
+    def __copy__(self) -> "_QueryWithCustomCopy":
+        query_copy = type(self).__new__(type(self))
+        query_copy.__dict__.update(self.__dict__)
+        for name in FieldInfo.__slots__:
+            setattr(query_copy, name, getattr(self, name))
+        query_copy.metadata = [Ge(10)]
+        return query_copy
+
+
+def test__router_generation__param_default_with_custom_copy__should_keep_its_own_metadata(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+):
+    """Versions copy the FieldInfo defaults of params but keep the metadata of the original, not of its __copy__"""
+
+    @router.get("/test")
+    async def route(x: int = cast("Any", _QueryWithCustomCopy(ge=0))):
+        return x
+
+    app = create_versioned_app(version_change())
+    with TestClient(app) as client:
+        for version in app.router.versioned_routers:
+            assert client.get("/test?x=5", headers={"x-api-version": version}).json() == 5
+            openapi = client.get(f"/openapi.json?version={version}").json()
+            (parameter,) = [p for p in openapi["paths"]["/test"]["get"]["parameters"] if p["name"] == "x"]
+            assert parameter["schema"]["minimum"] == 0
+
+
 def _async_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
     @functools.wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -3228,6 +3257,34 @@ def test__router_generation__cached_callable_default_factory__should_work(
 
     for version_client in create_versioned_clients(version_change()).values():
         assert version_client.post("/test", json={}).json() == 42
+
+
+@pytest.mark.parametrize("error_type", [ValueError, TypeError])
+def test__router_generation__annotated_metadata_whose_signature_parameters_raise__should_be_kept(
+    error_type: type[Exception],
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    class OpaqueSignature(inspect.Signature):
+        @property
+        @override
+        def parameters(self) -> Any:
+            raise error_type("opaque signature")
+
+    class Metadata:
+        __signature__ = OpaqueSignature()
+
+        def __call__(self) -> None: ...
+
+    class Payload(BaseModel):
+        value: Annotated[int, Metadata()]
+
+    @router.post("/test")
+    async def route(body: Payload):
+        return body.value
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.post("/test", json={"value": 5}).json() == 5
 
 
 class _ModelWithUnsignaturedDefaultFactory(BaseModel):
