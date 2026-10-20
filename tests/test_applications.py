@@ -1,4 +1,5 @@
 import functools
+import inspect
 import re
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -17,6 +18,7 @@ from cadwyn import Cadwyn
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import VersionPickingMiddleware
 from cadwyn.route_generation import VersionedAPIRouter
+from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.structure.endpoints import endpoint
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import HeadVersion, Version, VersionBundle, VersionChange
@@ -1187,3 +1189,55 @@ def test__cadwyn__loaded_by_uvicorn__should_not_be_mistaken_for_an_app_factory()
     config.load()
 
     assert config.loaded_app is app
+
+
+def test__cadwyn__reassigned_dependency_overrides__should_be_applied_in_all_versions():
+    def dependency() -> str:
+        raise NotImplementedError
+
+    router = VersionedAPIRouter()
+
+    @router.get("/versioned")
+    async def versioned(value: Annotated[str, Depends(dependency)]):
+        return value
+
+    app = Cadwyn(versions=VersionBundle(HeadVersion(), *versions(version_change())))
+
+    @app.get("/unversioned")
+    async def unversioned(value: Annotated[str, Depends(dependency)]):
+        return value
+
+    app.generate_and_include_versioned_routers(router)
+    app.dependency_overrides[dependency] = lambda: "initial"
+
+    with TestClient(app) as client:
+        # Cadwyn generates the versioned routers on the first request
+        assert client.get("/versioned", headers={"x-api-version": "2000-01-01"}).json() == "initial"
+        app.dependency_overrides = {dependency: lambda: "overridden"}
+
+        assert client.get("/unversioned").json() == "overridden"
+        for version in ("2001-01-01", "2000-01-01"):
+            assert client.get("/versioned", headers={"x-api-version": version}).json() == "overridden"
+
+
+def test__cadwyn_router__accessed_on_the_class__should_not_break_introspection():
+    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+
+    assert isinstance(app.router, _RootCadwynAPIRouter)
+    assert dict(inspect.getmembers(Cadwyn))["router"] is not None
+
+
+def test__cadwyn_router__before_init__should_be_missing():
+    app = Cadwyn.__new__(Cadwyn)
+
+    assert not hasattr(app, "router")
+    with pytest.raises(AttributeError, match="router"):
+        del app.router
+
+
+def test__cadwyn_router__deleted__should_be_missing():
+    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+
+    del app.router
+
+    assert not hasattr(app, "router")
