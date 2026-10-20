@@ -3368,6 +3368,9 @@ def _migrate_classes(context: _RuntimeSchemaGenContext) -> list[_AliasChange]:
     return alias_changes
 
 
+_ALIAS_ATTRIBUTES = frozenset(("alias", "alias_priority", "validation_alias", "serialization_alias"))
+
+
 def _warn_about_alias_changes_that_keep_old_keys(alias_changes: list[_AliasChange], version: str) -> None:
     """Warn about instructions that change the alias of a field but leave the keys that pydantic copied from it.
 
@@ -3375,30 +3378,36 @@ def _warn_about_alias_changes_that_keep_old_keys(alias_changes: list[_AliasChang
     passes them on unchanged, so the field keeps using its old keys. Cadwyn 9.0 will change them too (#465).
     """
     for model, field, instruction, version_change_name in alias_changes:
+        field_name = next((name for name, model_field in model.fields.items() if model_field is field), None)
         old_alias = field.declared_field_attributes.get("alias")
+        # If in doubt, we don't warn: e.g. alias generators can replace the aliases of the field
+        if field_name is None or old_alias is None or model.cls.model_config.get("alias_generator") is not None:
+            continue
+        # The aliases of the field in the copy of the model: pydantic merges its Field() with the one in Annotated
         attributes = field.get_field_attributes(model.cls)
-        if (
-            old_alias is None
-            or attributes.get("alias") == old_alias
-            # The alias generator replaces all aliases of such fields
-            or (attributes.get("alias_priority") == 1 and model.cls.model_config.get("alias_generator") is not None)
-        ):
+        field_info = FieldInfo.from_annotated_attribute(
+            model.annotations[field_name],
+            Field(**{name: value for name, value in attributes.items() if name in _ALIAS_ATTRIBUTES}),
+        )
+        validation_alias = field_info.validation_alias
+        # FastAPI documents the fields whose validation_alias is AliasChoices or AliasPath by their alias
+        if field_info.alias == old_alias or (validation_alias is not None and not isinstance(validation_alias, str)):
             continue
         # Pydantic stores the copied aliases in the same way as the ones that were passed with the same value
         kept_aliases = [
             name
             for name in ("validation_alias", "serialization_alias")
-            if field.declared_field_attributes.get(name) == old_alias
+            if getattr(field_info, name) == old_alias
             and not any(change.name == name and issubclass(model.cls, change.changed_by) for change in field.changes)
         ]
         if not kept_aliases:
             continue
+        alias = field_info.alias
         if isinstance(instruction, FieldHadInstruction):
-            alias = instruction.field_changes.alias
-            method, alias_part = "had", f"alias={alias!r}"
+            method, alias_part = "had", f"alias={instruction.field_changes.alias!r}"
             recipe = " and ".join(f"{name}={alias!r}" for name in kept_aliases)
         else:
-            alias, method, alias_part = None, "didnt_have", '"alias"'
+            method, alias_part = "didnt_have", '"alias"'
             recipe = " and ".join(f'"{name}"' for name in kept_aliases)
         new_key = "the key that the field has without an alias" if alias is None else f'"{alias}"'
         model_name, is_plural = instruction.schema.__name__, len(kept_aliases) > 1

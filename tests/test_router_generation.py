@@ -55,6 +55,7 @@ from fastapi.testclient import TestClient
 from inline_snapshot import snapshot
 from pydantic import (
     AfterValidator,
+    AliasChoices,
     AllowInfNan,
     BaseModel,
     ConfigDict,
@@ -1705,6 +1706,10 @@ class ItemWithAliasAndExplicitKeys(BaseModel):
     name: str = Field(alias="a", validation_alias="k", serialization_alias="k")
 
 
+class ItemWithAliasChoices(BaseModel):
+    name: str = Field(alias="a", validation_alias=AliasChoices("a", "b"))
+
+
 class ItemWithAliasThatAliasGeneratorOverrides(BaseModel):
     model_config = ConfigDict(alias_generator=str.upper)
     name: str = Field(alias="a", alias_priority=1)
@@ -1752,17 +1757,6 @@ def _get_future_warnings(create: Callable[[], object]) -> list[str]:
             id="didnt_have",
         ),
         pytest.param(
-            ItemWithAliasInAnnotated,
-            lambda field: field.didnt_have("alias"),
-            'schema(ItemWithAliasInAnnotated).field("name").didnt_have("alias") in "MyVersionChange" changes the '
-            'alias of "ItemWithAliasInAnnotated.name", but in API version "2000-01-01" its validation_alias and '
-            'serialization_alias are still "a", so that version keeps using "a" instead of the key that the field '
-            "has without an alias. Cadwyn 9.0 will change them too. To use the key that the field has without an "
-            'alias now and silence this warning, also pass "validation_alias" and "serialization_alias" to this '
-            '.didnt_have(). To keep "a", remove "alias" from it instead.',
-            id="didnt_have_in_annotated",
-        ),
-        pytest.param(
             ItemWithAliasAndSerializationAlias,
             lambda field: field.had(alias="legacy"),
             'schema(ItemWithAliasAndSerializationAlias).field("name").had(alias=\'legacy\') in "MyVersionChange" '
@@ -1805,24 +1799,24 @@ def test__router_generation__alias_instruction_keeps_keys_derived_from_old_alias
 
 
 @pytest.mark.parametrize(
-    ("model", "change_field", "old_key"),
+    ("model", "change_field", "expected_keys"),
     [
         pytest.param(
             ItemWithAlias,
             lambda field: [field.had(alias="legacy", validation_alias="legacy", serialization_alias="legacy")],
-            "legacy",
+            ["legacy"],
             id="had_keys_too",
         ),
         pytest.param(
             ItemWithAliasInAnnotated,
             lambda field: [field.had(alias="legacy", validation_alias="legacy", serialization_alias="legacy")],
-            "legacy",
+            ["legacy"],
             id="had_keys_too_in_annotated",
         ),
         pytest.param(
             ItemWithAlias,
             lambda field: [field.didnt_have("alias", "validation_alias", "serialization_alias")],
-            "name",
+            ["name"],
             id="didnt_have_keys_too",
         ),
         pytest.param(
@@ -1831,16 +1825,33 @@ def test__router_generation__alias_instruction_keeps_keys_derived_from_old_alias
                 field.had(validation_alias="legacy", serialization_alias="legacy"),
                 field.had(alias="legacy"),
             ],
-            "legacy",
+            ["legacy"],
             id="another_instruction_had_keys",
         ),
-        pytest.param(ItemWithoutAlias, lambda field: [field.had(alias="legacy")], "legacy", id="field_without_alias"),
-        pytest.param(ItemWithAliasAndExplicitKeys, lambda field: [field.had(alias="legacy")], "k", id="explicit_keys"),
+        pytest.param(ItemWithoutAlias, lambda field: [field.had(alias="legacy")], ["legacy"], id="field_without_alias"),
+        pytest.param(
+            ItemWithAliasAndExplicitKeys, lambda field: [field.had(alias="legacy")], ["k"], id="explicit_keys"
+        ),
         pytest.param(
             ItemWithAliasThatAliasGeneratorOverrides,
             lambda field: [field.had(alias="legacy")],
-            "NAME",
+            ["NAME"],
             id="alias_generator_overrides_aliases",
+        ),
+        # Cadwyn keeps the Field() in Annotated, so the field keeps its alias as well
+        pytest.param(
+            ItemWithAliasInAnnotated,
+            lambda field: [field.didnt_have("alias")],
+            ["a"],
+            id="didnt_have_alias_that_annotated_keeps",
+        ),
+        # FastAPI documents such fields by their alias in query, header, and cookie models
+        pytest.param(ItemWithAliasChoices, lambda field: [field.had(alias="legacy")], ["a"], id="alias_choices"),
+        pytest.param(
+            ItemWithAlias,
+            lambda field: [field.had(alias="legacy"), field.didnt_exist],
+            [],
+            id="field_deleted_later",
         ),
     ],
 )
@@ -1849,7 +1860,7 @@ def test__router_generation__alias_instruction_doesnt_keep_keys_derived_from_old
     create_versioned_clients: CreateVersionedClients,
     model: type[BaseModel],
     change_field: Callable[[Any], list[Any]],
-    old_key: str,
+    expected_keys: list[str],
 ):
     @router.post("/items", response_model=model)
     async def echo(item: model):  # ty: ignore[invalid-type-form]
@@ -1863,7 +1874,7 @@ def test__router_generation__alias_instruction_doesnt_keep_keys_derived_from_old
         == []
     )
     openapi = clients["2000-01-01"].get("/openapi.json?version=2000-01-01").json()
-    assert list(openapi["components"]["schemas"][model.__name__]["properties"]) == [old_key]
+    assert list(openapi["components"]["schemas"][model.__name__].get("properties", {})) == expected_keys
 
 
 class RecordWithAliasedCode(BaseModel):
