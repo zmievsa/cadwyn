@@ -6,7 +6,6 @@ import functools
 import inspect
 import itertools
 import operator
-import re
 import sys
 import threading
 import types
@@ -2627,12 +2626,6 @@ class SchemaGenerator:
         or its default factories. Only its annotations can refer to the others through forward refs.
         """
         cycle_name = _get_cycle_name(cycle)
-        if not _PYDANTIC_REBUILDS_FIELDS_WITHOUT_DUPLICATING_METADATA:  # pragma: no cover # Pydantic < 2.11.5
-            raise SchemaGenerationError(
-                f"Cadwyn cannot generate the versioned copies of {cycle_name} because they refer to each other and "
-                "pydantic versions before 2.11.5 apply the validators of their fields twice. "
-                "Please upgrade pydantic to 2.11.5 or newer."
-            )
         models_needed_as_classes: dict[type[BaseModel], set[type[Union[BaseModel, Enum]]]] = {}
         for model in sorted(cycle, key=_get_sort_key_of_model):
             references = self._get_references(model)
@@ -2725,15 +2718,6 @@ class SchemaGenerator:
         else:
             assert_never(model)
         return wrapper
-
-
-def _parse_version(version: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in re.findall(r"\d+", version)[:3])
-
-
-# Pydantic 2.11.0-2.11.4 add the Annotated metadata of an incomplete field (e.g. its validators) to the field again
-# on every rebuild, and copying reference cycles rebuilds their copies once their forward refs can be resolved
-_PYDANTIC_REBUILDS_FIELDS_WITHOUT_DUPLICATING_METADATA = _parse_version(pydantic.VERSION) >= (2, 11, 5)
 
 
 def _get_cycle_name(cycle: "collections.abc.Iterable[type]") -> str:

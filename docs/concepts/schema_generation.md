@@ -114,7 +114,7 @@ If older versions need the older shape of such data, expose it as a regular fiel
 
 ### Models that refer to each other
 
-Models can refer to themselves, directly or through other models, e.g. `children: "list[Category]"` or `Author.books: list[Book]` with `Book.author: Author`. When such models need versioning, Cadwyn copies all of them together, and their copies refer to each other. So if `Category` had a `title` field instead of `name` in an older version, that version uses `title` at every depth of the tree. This requires Pydantic 2.11.5 or newer: with older Pydantic versions, Cadwyn raises a `SchemaGenerationError` for such models.
+Models can refer to themselves, directly or through other models, e.g. `children: "list[Category]"` or `Author.books: list[Book]` with `Book.author: Author`. When such models need versioning, Cadwyn copies all of them together, and their copies refer to each other. So if `Category` had a `title` field instead of `name` in an older version, that version uses `title` at every depth of the tree.
 
 [Parametrized generic models](#generic-models) such as `Page[Category]` use these copies as their type args when the models with instructions or the routes of the version refer to such models. Otherwise, e.g. when such models only need versioning because they refer to a model with instructions and only `migrate_response_body` uses them directly, the type args of generics keep the latest models, as they always did. If a model with instructions refers to such models only through the type args of a generic, while a route uses them directly, Cadwyn raises a `SchemaGenerationError` instead of using both the latest and the older versions of them in one version.
 
