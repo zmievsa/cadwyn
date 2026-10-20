@@ -13,7 +13,7 @@ This release fixes many long-standing bugs, most of them reported by users. Most
 - Older API versions use their own versions of the models inside generic models such as `Page[Item]`.
 - Older API versions of endpoints with postponed annotations validate request bodies with their own models.
 - `schema(Child).field(...)` instructions for inherited fields no longer leak into parent and sibling models.
-- `Annotated[T, Depends(f)]` dependencies use the versions of models and enums that the request's API version has.
+- `Annotated[T, Depends(f)]` dependencies use the versions of models and enums that the request's API version has, in the versions that change them.
 
 ### Added
 
@@ -27,11 +27,11 @@ This release fixes many long-standing bugs, most of them reported by users. Most
 
 - **Breaking:** Cadwyn now requires Pydantic 2.11.5 or newer.
 - **Breaking:** generic models such as `Page[Item]` now use the versioned copies of their type args in requests, responses, and OpenAPI (#416, #420). Older versions validate and serialize these args with their own models, so older clients that relied on the latest models inside generics may need converters for the generics: converters for `Item` don't run for the items of `Page[Item]`. The OpenAPI names of some generics change, and `migrate_response_body` no longer accepts instances of the latest models inside them. See [Generic models](https://docs.cadwyn.dev/concepts/schema_generation/#generic-models) for details.
-- **Breaking:** `schema(Child).field(...).had(...)` and `.didnt_have(...)` for an inherited field now change it only in `Child` and its subclasses, not in its parent and siblings (#466). To keep the old behavior, give the instruction to the parent instead. See [Fields that a schema inherits](https://docs.cadwyn.dev/concepts/schema_migrations/#fields-that-a-schema-inherits) for diamonds, renames, and generics.
+- **Breaking:** `schema(Child).field(...).had(...)` and `.didnt_have(...)` for an inherited field now change it only in `Child` and its subclasses, not in its parent and siblings (#466). To keep the old behavior, give the instruction to the parent instead. If a parent renames such a field, the subclass's changes follow the new name only through single, non-generic inheritance. `cadwyn render` now renders each model's own attributes in each version. See [Fields that a schema inherits](https://docs.cadwyn.dev/concepts/schema_migrations/#fields-that-a-schema-inherits) for diamonds and generics.
 - **Breaking:** dependencies declared as `Annotated[T, Depends(f)]`, `Annotated[T, Security(f)]`, or `Annotated[f, Depends()]` now use the version's own copy of `f` in the versions that change the models or enums its parameters validate (#467). Requests that relied on the latest dependency can now get a 422, and in these versions the dependency receives the version's copies of models and enums, so compare them by value rather than with `isinstance` or `is`. See [Versioned dependencies](https://docs.cadwyn.dev/concepts/version_changes/#versioned-dependencies).
-- Self-referencing models without instructions are no longer copied for every version: `generate_versioned_models(versions)[version][Category] is Category`.
+- Self-referencing models that don't have, refer to, or pass on any instructions are no longer copied for every version: `generate_versioned_models(versions)[version][Category] is Category`.
 - `app.dependency_overrides` is now FastAPI's plain attribute. Removed the undocumented `cadwyn.applications.FakeDependencyOverridesProvider` and the `Cadwyn.dependency_overrides` property.
-- Type checkers now accept assigning an `APIRouter` to `app.router`, as in FastAPI.
+- Type checkers now accept assigning an `APIRouter` to `app.router`, as in FastAPI. Cadwyn still needs its own router there, so don't replace it.
 
 ### Deprecated
 
@@ -45,10 +45,10 @@ This release fixes many long-standing bugs, most of them reported by users. Most
 - Fixed OpenAPI documenting the API version header as optional when `api_version_default_value` isn't set (#277).
 - Fixed older API versions adding `"example": {}` to the OpenAPI of parameters declared with defaults such as `= Query()` (#417).
 - Fixed `Cadwyn()` failing on FastAPI 0.145.0 and newer (#462).
-- Fixed requests without a body failing with a 500 on FastAPI 0.151.0 and newer when the endpoint has optional body params.
+- Fixed requests without a body failing with a 500 on FastAPI 0.151.0 and newer when the endpoint or its dependencies have embedded optional body params, a `None` default that their type rejects, or a quoted body annotation.
 - Fixed apps served with `uvicorn module:app` returning a 500 for every request since 7.1.1.
 - Fixed `Cadwyn(strict_content_type=False)` having no effect.
-- Fixed uploaded files declared as `bytes`, in endpoints and dependencies, arriving empty in non-head versions. These versions now hold such uploads in memory twice per request.
+- Fixed uploaded files declared as `bytes`, in endpoints and dependencies, arriving empty in non-head versions. These versions now hold such uploads in memory twice per request. Dependencies that move an upload only when `current_dependency_solver` is `"fastapi"` may now see it moved back to its start; see [Dependency re-execution warning](https://docs.cadwyn.dev/concepts/version_changes/#dependency-re-execution-warning).
 - Fixed embedded request bodies failing in non-head versions when the endpoint has a parameter named `body` or a body alias that matches another parameter's name.
 - Fixed enums without enum instructions being copied for every version, which broke strict models.
 - Fixed versioned dependencies:
@@ -56,7 +56,7 @@ This release fixes many long-standing bugs, most of them reported by users. Most
     - dependencies described only by `__signature__` lost their parameter types;
     - async generator dependencies didn't receive exceptions raised after `yield`;
     - `Depends(scope=...)` was lost;
-    - `app.dependency_overrides` was ignored for class instances, bound methods, and partials;
+    - `app.dependency_overrides` was ignored in older API versions for class instances, bound methods, and partials;
     - parameter defaults such as `= Query()` were shared between versions and apps.
 - Fixed startup failures for:
     - `functools.lru_cache` dependencies with postponed annotations;
@@ -70,8 +70,8 @@ This release fixes many long-standing bugs, most of them reported by users. Most
     - generic fields that parametrize generics with their own type parameters, e.g. `items: list[Wrapper[T]]`.
 - Fixed `TypeError: unhashable type` in older API versions for unhashable request body or response model annotations.
 - Fixed `schema(...).field(...)` instructions on fields declared through `Annotated[..., Field(...)]`:
-    - `didnt_have(...)` had no effect on `title`, `description`, `examples`, and `deprecated`;
-    - `didnt_have(...)` failed with `TypeError` on `Annotated` types with validators, `Len`, `Strict`, or `AllowInfNan`.
+    - `didnt_have(...)` had no effect on `title`, `description`, `examples`, and `deprecated`.
+- Fixed `didnt_have("title")`, `didnt_have("min_length")`, and `didnt_have(...)` failing with `TypeError` on `Annotated` types with validators, `Len`, `Strict`, or `AllowInfNan`.
 - Fixed `had(default=...)` and `had(default_factory=...)` failing with pydantic's `TypeError` at startup when they leave a field with both a default and a default factory. Cadwyn now raises `InvalidGenerationInstructionError`, and the instruction's value replaces the one from `Annotated[..., Field(...)]`.
 - Fixed the deprecated `/changelog` failing with a 500 for self-referencing models, and on every call after the first one for instructions on inherited fields.
 - Fixed type checking with Pydantic 2.14 and ty 0.0.86.
