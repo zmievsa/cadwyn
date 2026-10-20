@@ -1,4 +1,5 @@
 import functools
+import inspect
 import re
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -17,6 +18,7 @@ from cadwyn import Cadwyn
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import VersionPickingMiddleware
 from cadwyn.route_generation import VersionedAPIRouter
+from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.structure.endpoints import endpoint
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import HeadVersion, Version, VersionBundle, VersionChange
@@ -433,6 +435,63 @@ def test__default_version__unversioned_included_route_added_late_still_has_prior
     assert default_response.json() == {"source": "unversioned"}
     assert versioned_response.status_code == 200, versioned_response.json()
     assert versioned_response.json() == {"source": "versioned"}
+
+
+@pytest.mark.parametrize("router_location", ["versioned", "versioned_parent", "unversioned"])
+@pytest.mark.parametrize(
+    ("app_kwargs", "router_kwargs", "route_kwargs", "expected_status_code"),
+    [
+        ({"strict_content_type": False}, {}, {}, 200),
+        ({"strict_content_type": False}, {"strict_content_type": True}, {}, 422),
+        ({"strict_content_type": False}, {}, {"strict_content_type": True}, 422),
+        ({}, {"strict_content_type": False}, {}, 200),
+        ({}, {}, {"strict_content_type": False}, 200),
+    ],
+)
+def test__strict_content_type__should_propagate_from_app_and_routers_to_routes_like_in_fastapi(
+    router_location: Literal["versioned", "versioned_parent", "unversioned"],
+    app_kwargs: dict[str, Any],
+    router_kwargs: dict[str, Any],
+    route_kwargs: dict[str, Any],
+    expected_status_code: int,
+):
+    class Item(BaseModel):
+        a: int
+
+    def make_router() -> APIRouter:
+        if router_location == "versioned_parent":
+            router = VersionedAPIRouter(**router_kwargs)
+            child_router = VersionedAPIRouter()
+            router.include_router(child_router)
+        else:
+            router = child_router = VersionedAPIRouter(**router_kwargs)
+
+        async def create_item(item: Item):
+            return item
+
+        # FastAPI's route decorators don't accept strict_content_type
+        child_router.add_api_route("/items", create_item, methods=["POST"], **route_kwargs)
+        return router
+
+    fastapi_app = FastAPI(**app_kwargs)
+    fastapi_app.include_router(make_router())
+    cadwyn_app = Cadwyn(versions=VersionBundle(Version("2022-11-16")), **app_kwargs)
+    if router_location == "unversioned":
+        cadwyn_app.include_router(make_router())
+        headers = {}
+    else:
+        cadwyn_app.generate_and_include_versioned_routers(make_router())
+        headers = {"x-api-version": "2022-11-16"}
+
+    # No Content-Type header
+    with TestClient(fastapi_app) as fastapi_client, TestClient(cadwyn_app) as cadwyn_client:
+        fastapi_response = fastapi_client.post("/items", content=b'{"a": 1}')
+        cadwyn_response = cadwyn_client.post("/items", content=b'{"a": 1}', headers=headers)
+
+    assert fastapi_response.status_code == expected_status_code, fastapi_response.json()
+    assert cadwyn_response.status_code == expected_status_code, cadwyn_response.json()
+    if expected_status_code == 200:
+        assert cadwyn_response.json() == {"a": 1}
 
 
 def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empty__version_should_not_have_any_routes():
@@ -1130,3 +1189,55 @@ def test__cadwyn__loaded_by_uvicorn__should_not_be_mistaken_for_an_app_factory()
     config.load()
 
     assert config.loaded_app is app
+
+
+def test__cadwyn__reassigned_dependency_overrides__should_be_applied_in_all_versions():
+    def dependency() -> str:
+        raise NotImplementedError
+
+    router = VersionedAPIRouter()
+
+    @router.get("/versioned")
+    async def versioned(value: Annotated[str, Depends(dependency)]):
+        return value
+
+    app = Cadwyn(versions=VersionBundle(HeadVersion(), *versions(version_change())))
+
+    @app.get("/unversioned")
+    async def unversioned(value: Annotated[str, Depends(dependency)]):
+        return value
+
+    app.generate_and_include_versioned_routers(router)
+    app.dependency_overrides[dependency] = lambda: "initial"
+
+    with TestClient(app) as client:
+        # Cadwyn generates the versioned routers on the first request
+        assert client.get("/versioned", headers={"x-api-version": "2000-01-01"}).json() == "initial"
+        app.dependency_overrides = {dependency: lambda: "overridden"}
+
+        assert client.get("/unversioned").json() == "overridden"
+        for version in ("2001-01-01", "2000-01-01"):
+            assert client.get("/versioned", headers={"x-api-version": version}).json() == "overridden"
+
+
+def test__cadwyn_router__accessed_on_the_class__should_not_break_introspection():
+    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+
+    assert isinstance(app.router, _RootCadwynAPIRouter)
+    assert dict(inspect.getmembers(Cadwyn))["router"] is not None
+
+
+def test__cadwyn_router__before_init__should_be_missing():
+    app = Cadwyn.__new__(Cadwyn)
+
+    assert not hasattr(app, "router")
+    with pytest.raises(AttributeError, match="router"):
+        del app.router
+
+
+def test__cadwyn_router__deleted__should_be_missing():
+    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+
+    del app.router
+
+    assert not hasattr(app, "router")
