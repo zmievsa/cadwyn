@@ -57,15 +57,10 @@ These follow from how Cadwyn works, which [Architecture](architecture.md) descri
 
 These are accepted for now. They are listed so that nobody "discovers" and fixes them as a side quest. A fix for any of them is a separate, deliberate change with its own issue.
 
-* Generic models: cyclic generic args, quoted args from other modules, and recursive native type aliases keep the latest models in older versions. A PEP 695 generic model that refers to itself through a quoted annotation, such as `nxt: Optional["Wrap[X]"]` in `class Wrap[X](BaseModel)`, fails in every version, including the latest one.
+* Generic models: cyclic generic args, quoted args from other modules, and recursive native type aliases keep the latest models in older versions. A PEP 695 generic model that refers to itself through a quoted annotation, such as `nxt: Optional["Wrap[X]"]` in `class Wrap[X](BaseModel)`, returns a 500 in every version, including the latest one, instead of failing at startup.
 * Dependencies: class dependencies (except Pydantic models) are not versioned. `Flag` and `IntFlag` parameters fail. WebSocket routes and streaming (generator or server-sent-event) endpoints don't work in versioned routes.
 * Uploads: an upload parameter named `body` returns a 500 in every version.
-* Schema instructions:
-    * diamond inheritance takes the field from the first base, like Pydantic does. A parent's rename reaches a subclass's own changes only through single, non-generic inheritance;
-    * `schema(Child).field("x").had(name="y")` for a field that `Child` inherits leaves both `x` and `y` in the older versions of `Child`;
-    * `had(default=PydanticUndefined)` doesn't make a field required when its default is declared in `Annotated[..., Field(default=...)]`;
-    * `didnt_have(...)` fails with an `AttributeError` when the attribute is a read-only property of an `Annotated` metadata object;
-    * `schema(Model).validator(...).existed` for a computed field fails on Python versions before 3.13.
+* Schema instructions: diamond inheritance takes the field from the first base, like Pydantic does. A parent's rename reaches a subclass's own changes only through single, non-generic inheritance. `schema(Child).field("x").had(name="y")` for a field that `Child` inherits leaves both `x` and `y` in the older versions of `Child`. `had(default=PydanticUndefined)` doesn't make a field required when its default is declared in `Annotated[..., Field(default=...)]`. `didnt_have(...)` fails with an `AttributeError` when the attribute is a read-only property of an `Annotated` metadata object. `schema(Model).validator(...).existed` for a computed field fails on Python versions before 3.13.
 * `cadwyn render` doesn't render `model_config`, and it renders `AliasChoices` and `AliasPath` as calls that raise a `TypeError`.
 * Bodies sent without a `Content-Type` are parsed as JSON by Cadwyn but ignored by FastAPI.
 
@@ -92,7 +87,7 @@ These are accepted for now. They are listed so that nobody "discovers" and fixes
 **How to fix**
 
 * Prefer doing less. Narrow the fix, apply it only when the old path fails ("retry on failure", not an extra validation pass), or go back to the last release's code path.
-* If every review round finds new edge cases in the same part of a fix, remove that part instead of patching it again. In 8.0.0, this is how placeholder models for generic args, field synthesis for diamond inheritance, extra namespaces for dependency annotations, and constraint deduplication ended.
+* If every review round finds new edge cases in the same part of a fix, remove that part instead of patching it again.
 * Don't reimplement FastAPI, Pydantic, or CPython logic. Call their functions, and evaluate annotations only where FastAPI itself does.
 * Make safety checks allow-lists. Anything unknown takes the old behavior.
 * Decide statically, not by the order in which models happen to be generated.
@@ -108,7 +103,6 @@ These are accepted for now. They are listed so that nobody "discovers" and fixes
 
 * Run the same requests and OpenAPI of every version against the last release in its own checkout or virtual environment, and compare the results.
 * Run the tests on the minimum supported and the latest Pydantic, and on Python 3.10 and 3.14. Check CI on every operating system before merging: recursion and stack limits differ on Windows and macOS.
-* `uv run --with pydantic==X pytest` and its xdist workers silently use the project's Pydantic. Use a dedicated virtual environment instead, and check the version inside a worker.
-* `tox -e docs` writes `site/` into the repository root, which shadows the standard `site` module when the root is on `PYTHONPATH`. Delete it before comparing runs.
+* `tox -e docs` writes `site/` into the repository root, which shadows the standard `site` module on Python 3.10 when the root is on `PYTHONPATH`. Delete it before comparing runs.
 * Pytest puts the root of the checkout it runs from first on `sys.path`, so run a test file from the checkout that you want to test.
 * After merging `main` into a branch, look for top-level functions that are now defined twice. The later definition silently wins.
