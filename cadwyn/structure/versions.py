@@ -769,9 +769,6 @@ class VersionBundle:
         if api_version is None:
             return kwargs
 
-        # Starlette caches the parsed JSON on the request, so this tells whether FastAPI has got the body as a JSON
-        # value (including null) for the versioned route. We check it before `_get_body` parses the body on its own
-        fastapi_has_parsed_json = hasattr(request, "_json")
         body_is_model_dump = False
         uploads_read_by_fastapi: Union[_UploadPositions, None] = None
         # This is a kind of body param you get when you define a single pydantic schema in your route's body
@@ -798,10 +795,9 @@ class VersionBundle:
             if isinstance(body, FormData):
                 uploads_read_by_fastapi = _get_uploads_read_by_fastapi(route, head_route, head_dependant, body)
 
-        # A None body is present if FastAPI got a JSON value: a null, or a value that validators turned into None.
-        # Otherwise, FastAPI got no body, or got raw bytes that only `_get_body` parsed as JSON (e.g. without a content
-        # type, which FastAPI only parses with `strict_content_type=False`)
-        body_is_omitted = body is None and not fastapi_has_parsed_json
+        body_is_omitted = body is None and await _fastapi_got_no_body(
+            request, route, embed_body_fields=embed_body_fields
+        )
         request_info = RequestInfo(request, body)
         new_kwargs = await self._migrate_request(
             head_body_field,
@@ -823,6 +819,23 @@ class VersionBundle:
             new_kwargs.pop(_CADWYN_REQUEST_PARAM_NAME)
 
         return new_kwargs
+
+
+async def _fastapi_got_no_body(request: FastapiRequest, route: APIRoute, *, embed_body_fields: bool) -> bool:
+    """Return whether FastAPI has solved the versioned route without a body, given that Cadwyn sees its body as None.
+
+    Like FastAPI, we only look at the raw request: FastAPI passes a body if the route has a body field and the request
+    has a form or non-empty bytes.
+    """
+    if route.body_field is None:
+        return True
+    is_form = isinstance(route.body_field.field_info, params.Form)
+    # FastAPI always passes forms. It has already read other bodies, so this returns the cached bytes
+    if not is_form and not await request.body():
+        return True
+    # Embedded body fields get None only if `_get_body` has parsed a body without a content type as JSON null.
+    # FastAPI rejects a JSON null for them, so it has got these raw bytes instead, which it ignores like no body
+    return embed_body_fields and not is_form
 
 
 def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body_fields: bool) -> bool:

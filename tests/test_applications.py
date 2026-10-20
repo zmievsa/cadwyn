@@ -828,10 +828,10 @@ def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
 
 
 @pytest.mark.skipif(not FASTAPI_ACCEPTS_OPENAPI_PREFIX, reason="FastAPI 0.145.0 removed openapi_prefix")
-def test__get_openapi__with_openapi_prefix__should_include_it_in_servers():
-    client = TestClient(
-        Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")
-    )
+def test__get_openapi__with_openapi_prefix__should_warn_and_include_it_in_servers():
+    with pytest.warns(DeprecationWarning, match=re.escape("`openapi_prefix` is deprecated")):
+        app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")
+    client = TestClient(app)
 
     resp = client.get("/openapi.json?version=2022-11-16")
     assert resp.json()["servers"] == [{"url": "/my_api"}]

@@ -207,6 +207,7 @@ class Cadwyn(FastAPI):
         if openapi_prefix:
             if not _FASTAPI_ACCEPTS_OPENAPI_PREFIX:  # pragma: no cover # FastAPI >= 0.145
                 raise TypeError(_OPENAPI_PREFIX_REMOVAL_MESSAGE)
+            warnings.warn(_OPENAPI_PREFIX_REMOVAL_MESSAGE, DeprecationWarning, stacklevel=2)
             extra["openapi_prefix"] = openapi_prefix
 
         super().__init__(
