@@ -146,6 +146,7 @@ class Cadwyn(FastAPI):
             generate_unique_id
         ),
         separate_input_output_schemas: bool = True,
+        strict_content_type: bool = True,
         **extra: Any,
     ) -> None:
         self.versions = versions
@@ -210,6 +211,7 @@ class Cadwyn(FastAPI):
             swagger_ui_parameters=swagger_ui_parameters,
             generate_unique_id_function=generate_unique_id_function,
             separate_input_output_schemas=separate_input_output_schemas,
+            strict_content_type=strict_content_type,
             **extra,
         )
 
@@ -245,6 +247,7 @@ class Cadwyn(FastAPI):
             "include_in_schema": include_in_schema,
             "responses": responses,
             "generate_unique_id_function": generate_unique_id_function,
+            "strict_content_type": strict_content_type,
         }
         self.api_version_format = api_version_format
         self._api_version_location: APIVersionLocation = api_version_location

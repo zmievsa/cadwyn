@@ -435,6 +435,63 @@ def test__default_version__unversioned_included_route_added_late_still_has_prior
     assert versioned_response.json() == {"source": "versioned"}
 
 
+@pytest.mark.parametrize("router_location", ["versioned", "versioned_parent", "unversioned"])
+@pytest.mark.parametrize(
+    ("app_kwargs", "router_kwargs", "route_kwargs", "expected_status_code"),
+    [
+        ({"strict_content_type": False}, {}, {}, 200),
+        ({"strict_content_type": False}, {"strict_content_type": True}, {}, 422),
+        ({"strict_content_type": False}, {}, {"strict_content_type": True}, 422),
+        ({}, {"strict_content_type": False}, {}, 200),
+        ({}, {}, {"strict_content_type": False}, 200),
+    ],
+)
+def test__strict_content_type__should_propagate_from_app_and_routers_to_routes_like_in_fastapi(
+    router_location: Literal["versioned", "versioned_parent", "unversioned"],
+    app_kwargs: dict[str, Any],
+    router_kwargs: dict[str, Any],
+    route_kwargs: dict[str, Any],
+    expected_status_code: int,
+):
+    class Item(BaseModel):
+        a: int
+
+    def make_router() -> APIRouter:
+        if router_location == "versioned_parent":
+            router = VersionedAPIRouter(**router_kwargs)
+            child_router = VersionedAPIRouter()
+            router.include_router(child_router)
+        else:
+            router = child_router = VersionedAPIRouter(**router_kwargs)
+
+        async def create_item(item: Item):
+            return item
+
+        # FastAPI's route decorators don't accept strict_content_type
+        child_router.add_api_route("/items", create_item, methods=["POST"], **route_kwargs)
+        return router
+
+    fastapi_app = FastAPI(**app_kwargs)
+    fastapi_app.include_router(make_router())
+    cadwyn_app = Cadwyn(versions=VersionBundle(Version("2022-11-16")), **app_kwargs)
+    if router_location == "unversioned":
+        cadwyn_app.include_router(make_router())
+        headers = {}
+    else:
+        cadwyn_app.generate_and_include_versioned_routers(make_router())
+        headers = {"x-api-version": "2022-11-16"}
+
+    # No Content-Type header
+    with TestClient(fastapi_app) as fastapi_client, TestClient(cadwyn_app) as cadwyn_client:
+        fastapi_response = fastapi_client.post("/items", content=b'{"a": 1}')
+        cadwyn_response = cadwyn_client.post("/items", content=b'{"a": 1}', headers=headers)
+
+    assert fastapi_response.status_code == expected_status_code, fastapi_response.json()
+    assert cadwyn_response.status_code == expected_status_code, cadwyn_response.json()
+    if expected_status_code == 200:
+        assert cadwyn_response.json() == {"a": 1}
+
+
 def test__header_routing_fastapi_add_header_versioned_routers__apirouter_is_empty__version_should_not_have_any_routes():
     app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
