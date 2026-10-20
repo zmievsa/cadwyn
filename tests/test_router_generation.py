@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
 from types import GenericAlias
-from typing import Annotated, ClassVar, Literal, NewType, TypeAlias, Union, cast, get_args
+from typing import Annotated, ClassVar, Literal, NewType, Optional, TypeAlias, Union, cast, get_args
 from uuid import UUID
 
 import fastapi.params
@@ -3538,6 +3538,253 @@ def test__router_generation__annotated_dependency_with_unversioned_type__should_
             assert openapi["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"] == {
                 "$ref": "#/components/schemas/Item"
             }
+
+
+class RoleOfVersionedDependency(str, Enum):
+    reader = "reader"
+    editor = "editor"
+
+
+def get_allowed_roles(
+    role: RoleOfVersionedDependency = Query(RoleOfVersionedDependency.reader),
+) -> list[str]:
+    return [role.value]
+
+
+def get_allowed_roles_with_sub_dependency(roles: Annotated[list[str], Depends(get_allowed_roles)]) -> list[str]:
+    return roles
+
+
+def get_allowed_roles_with_scopes(
+    security_scopes: SecurityScopes,
+    role: RoleOfVersionedDependency = Query(RoleOfVersionedDependency.reader),
+) -> list[str]:
+    return [role.value, *security_scopes.scopes]
+
+
+AllowedRoles: TypeAlias = Annotated[list[str], Depends(get_allowed_roles)]
+
+
+def _make_permissions_route(style: str) -> Callable[..., Any]:
+    if style == "default":
+
+        async def default_route(roles: list[str] = Depends(get_allowed_roles)):
+            return roles
+
+        return default_route
+    if style == "annotated":
+
+        async def annotated_route(roles: Annotated[list[str], Depends(get_allowed_roles)]):
+            return roles
+
+        return annotated_route
+    if style == "annotated_with_other_metadata":
+
+        async def annotated_with_other_metadata_route(
+            roles: Annotated[list[str], "roles", Depends(get_allowed_roles)],
+        ):
+            return roles
+
+        return annotated_with_other_metadata_route
+    if style == "annotated_alias":
+
+        async def annotated_alias_route(roles: AllowedRoles):
+            return roles
+
+        return annotated_alias_route
+    if style == "nested_annotated_dependency":
+
+        async def nested_annotated_dependency_route(
+            roles: Annotated[list[str], Depends(get_allowed_roles_with_sub_dependency)],
+        ):
+            return roles
+
+        return nested_annotated_dependency_route
+    if style == "annotated_security":
+
+        async def annotated_security_route(roles: Annotated[list[str], Security(get_allowed_roles_with_scopes)]):
+            return roles
+
+        return annotated_security_route
+    assert style == "annotated_security_with_scopes"
+
+    async def annotated_security_with_scopes_route(
+        roles: Annotated[list[str], Security(get_allowed_roles_with_scopes, scopes=["roles:read"])],
+    ):
+        return roles
+
+    return annotated_security_with_scopes_route
+
+
+@pytest.mark.parametrize(
+    "style",
+    [
+        "default",
+        "annotated",
+        "annotated_with_other_metadata",
+        "annotated_alias",
+        "nested_annotated_dependency",
+        "annotated_security",
+        "annotated_security_with_scopes",
+    ],
+)
+def test__router_generation__dependency_with_versioned_enum_in_its_params__should_use_dependency_of_its_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    style: str,
+):
+    router.get("/permissions")(_make_permissions_route(style))
+    clients = create_versioned_clients(version_change(enum(RoleOfVersionedDependency).didnt_have("editor")))
+    scopes = ["roles:read"] if style == "annotated_security_with_scopes" else []
+
+    assert clients["2001-01-01"].get("/permissions", params={"role": "editor"}).json() == ["editor", *scopes]
+    assert clients["2000-01-01"].get("/permissions", params={"role": "reader"}).json() == ["reader", *scopes]
+    assert clients["2000-01-01"].get("/permissions", params={"role": "editor"}).status_code == 422
+    for version, enum_values in {"2001-01-01": ["reader", "editor"], "2000-01-01": ["reader"]}.items():
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["RoleOfVersionedDependency"]["enum"] == enum_values
+
+
+class ItemOfDependencyWithQuotedAnnotations(BaseModel):
+    name: str
+
+
+class RoleOfDependencyWithQuotedAnnotations(str, Enum):
+    reader = "reader"
+    editor = "editor"
+
+
+def get_tags(items: list["ItemOfDependencyWithQuotedAnnotations"] = Body([])) -> list[str]:
+    return [item.name for item in items]
+
+
+def get_roles_with_quoted_query(
+    role: RoleOfDependencyWithQuotedAnnotations = Query(RoleOfDependencyWithQuotedAnnotations.reader),
+    tags: list["str"] = Query([]),
+) -> list[str]:
+    return [role.value]
+
+
+def get_roles_with_quoted_body(
+    role: RoleOfDependencyWithQuotedAnnotations = Query(RoleOfDependencyWithQuotedAnnotations.reader),
+    item: Optional["ItemOfDependencyWithQuotedAnnotations"] = Body(None),
+) -> list[str]:
+    return [role.value]
+
+
+def get_roles_with_quoted_sub_dependency(
+    tags: Annotated[list[str], Depends(get_tags)],
+    role: RoleOfDependencyWithQuotedAnnotations = Query(RoleOfDependencyWithQuotedAnnotations.reader),
+) -> list[str]:
+    return [role.value]
+
+
+@pytest.mark.parametrize(
+    "dependency",
+    [get_roles_with_quoted_query, get_roles_with_quoted_body, get_roles_with_quoted_sub_dependency],
+)
+def test__router_generation__annotated_dependency_with_quoted_args_in_annotations__should_use_dependency_of_its_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    dependency: Callable[..., list[str]],
+):
+    @router.get("/roles")
+    async def route(roles: Annotated[list[str], Depends(dependency)]):
+        return roles
+
+    clients = create_versioned_clients(
+        version_change(enum(RoleOfDependencyWithQuotedAnnotations).didnt_have("editor")),
+    )
+    assert clients["2001-01-01"].get("/roles", params={"role": "editor"}).json() == ["editor"]
+    assert clients["2000-01-01"].get("/roles", params={"role": "reader"}).json() == ["reader"]
+    assert clients["2000-01-01"].get("/roles", params={"role": "editor"}).status_code == 422
+    if dependency is not get_roles_with_quoted_query:
+        # Pydantic cannot resolve the forward refs to the models in the OpenAPI, just like without Cadwyn
+        return
+    for version, enum_values in {"2001-01-01": ["reader", "editor"], "2000-01-01": ["reader"]}.items():
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["RoleOfDependencyWithQuotedAnnotations"]["enum"] == enum_values
+
+
+class _MetadataWhoseEqualityRaises:
+    # Callable metadata gets versioned, so typing's Annotated cache would compare it with its versioned copy
+    def __call__(self) -> None:
+        raise NotImplementedError
+
+    @override
+    def __hash__(self) -> int:
+        return 123
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        raise TypeError("metadata cannot be compared")
+
+
+class _MetadataWithChangingHash:
+    counter = 0
+
+    @override
+    def __hash__(self) -> int:
+        self.counter += 1
+        return self.counter
+
+
+class PayloadOfAnnotatedDependency(BaseModel):
+    value: str
+
+
+def get_payload(payload: PayloadOfAnnotatedDependency) -> dict[str, Any]:
+    return payload.model_dump()
+
+
+def _make_dependency_with_many_annotated_parameters() -> Callable[..., Any]:
+    # More distinct Annotated[...] than typing caches
+    parameters = ", ".join(f'p{i}: Annotated[int, "parameter {i}"] = 0' for i in range(150))
+    namespace: dict[str, Any] = {"Annotated": Annotated, "get_payload": get_payload}
+    payload_annotation = "get_payload.__annotations__['payload']"
+    exec(f"def dependency(payload: {payload_annotation}, {parameters}):\n    return get_payload(payload)", namespace)
+    return namespace["dependency"]
+
+
+@pytest.mark.parametrize(
+    "make_annotation",
+    [
+        pytest.param(lambda: Annotated[dict, Depends(get_payload)], id="plain"),
+        pytest.param(lambda: Annotated[dict, Depends(get_payload), {"description": "Value"}], id="unhashable_metadata"),
+        pytest.param(lambda: Annotated[dict, Depends(get_payload), _MetadataWhoseEqualityRaises()], id="eq_raises"),
+        pytest.param(lambda: Annotated[dict, Depends(get_payload), _MetadataWithChangingHash()], id="changing_hash"),
+        pytest.param(
+            lambda: Annotated[dict, Depends(_make_dependency_with_many_annotated_parameters())],
+            id="many_annotated_parameters",
+        ),
+    ],
+)
+def test__router_generation__annotated_dependency_with_any_metadata__should_use_dependency_of_its_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    make_annotation: Callable[[], Any],
+):
+    annotation = make_annotation()
+
+    async def route(value: Any):
+        return value
+
+    route.__annotations__["value"] = annotation
+    router.post("/value")(route)
+
+    @convert_request_to_next_version_for("/value", ["POST"])
+    def migrate(request: RequestInfo):
+        request.body["value"] = request.body.pop("legacy_value")
+
+    clients = create_versioned_clients(
+        version_change(schema(PayloadOfAnnotatedDependency).field("value").had(name="legacy_value"), migrate=migrate),
+    )
+    # Whether typing would cache Annotated[...] with these args or not, every version gets its own dependency
+    assert clients["2001-01-01"].post("/value", json={"value": "ok"}).json() == {"value": "ok"}
+    assert clients["2000-01-01"].post("/value", json={"legacy_value": "ok"}).json() == {"value": "ok"}
+    for version, field_name in [("2001-01-01", "value"), ("2000-01-01", "legacy_value")]:
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert list(openapi["components"]["schemas"]["PayloadOfAnnotatedDependency"]["properties"]) == [field_name]
 
 
 def test__router_generation__with_pydantic_settings_dependency(

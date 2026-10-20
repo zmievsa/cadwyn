@@ -695,7 +695,8 @@ def _rebuild_generic_alias(annotation: Any, new_args: tuple[Any, ...]) -> Any:
         return origin[new_args[0]]
     if origin is Annotated:
         # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the
-        # originals so it could return the alias that holds the dependency of another version
+        # originals (so that dependency_overrides match them), so it could return the alias that holds the
+        # dependency of another version (#467)
         return _AnnotatedAlias(new_args[0], new_args[1:])
     return origin[new_args]
 

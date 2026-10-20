@@ -444,6 +444,8 @@ or to specify migrations using [endpoint path](#path-based-migration-specificati
 
 Notice that whenever a request reaches Cadwyn, it is first validated against the request's version of the schema, then it is migrated to the latest version, and then validated again to prevent migrations from creating invalid requests.
 
+The first validation also covers the parameters of your dependencies: their request bodies, query parameters, and other parameters are validated and documented in OpenAPI with the request's version of their models and enums, whether you declare a dependency as `value: T = Depends(f)` or as `value: Annotated[T, Depends(f)]`.
+
 This means that if you have a dependency that is executed during the request validation, **it will be executed twice**. For example, if you have a dependency that checks whether a user exists in the database, it will be executed twice. This is not an issue if the dependency is idempotent, but it becomes one if it is not.
 
 To solve this issue, you can use the `cadwyn.current_dependency_solver` dependency which tells you whether your dependency is called before or after the request is migrated. If you want to run it after Cadwyn has migrated the request to the latest version, ensure that `current_dependency_solver` is set to `"cadwyn"`. If you want your dependency to run at the very beginning of handling the request, you should run it when `current_dependency_solver` is `"fastapi"`.

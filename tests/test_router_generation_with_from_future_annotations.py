@@ -1400,14 +1400,27 @@ def get_item_with_type_checking_only_return(item: VersionedItem) -> Decimal:
     raise NotImplementedError
 
 
+@pytest.mark.parametrize("style", ["default_dependency", "annotated_dependency"])
 def test__router_generation__partial_dependency_with_type_checking_only_annotations__should_use_versioned_models(
-    router, create_versioned_clients
+    router, create_versioned_clients, style
 ):
     # FastAPI itself cannot resolve "VersionedItem" for such partials at request time (it looks for the globals on
     # the partial) so we only compare the schemas that each version documents
-    @router.post("/test")
-    async def route(item: Annotated[Any, Depends(functools.partial(get_item_with_type_checking_only_return))]):
-        raise NotImplementedError
+    if style == "default_dependency":
+
+        @router.post("/test")
+        async def default_dependency_route(
+            item: Any = Depends(functools.partial(get_item_with_type_checking_only_return)),
+        ):
+            raise NotImplementedError
+
+    else:
+
+        @router.post("/test")
+        async def annotated_dependency_route(
+            item: Annotated[Any, Depends(functools.partial(get_item_with_type_checking_only_return))],
+        ):
+            raise NotImplementedError
 
     clients = create_versioned_clients(version_change(schema(VersionedItem).field("bar").existed_as(type=str)))
     required_fields = {}
