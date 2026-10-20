@@ -5,6 +5,14 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+## [8.0.0]
+
+This release fixes many long-standing bugs, most of them reported by users. Most apps can upgrade without changes. It is still a major release: some of these fixes change behavior that was wrong but that existing apps or their clients may rely on. Before upgrading, check the **Breaking** entries under "Changed" and the **Upgrade note** under "Fixed". In short:
+
+- Cadwyn now requires Pydantic 2.11.5 or newer.
+- Older API versions now use their own versions of the models inside generic models such as `Page[Item]`.
+- Older API versions of endpoints with postponed annotations (`from __future__ import annotations`) now validate request bodies with their own versions of the models, as documented, instead of the latest ones.
+
 ### Added
 
 - Added `schema(Model).had(description=...)` to give the older versions of a model their own description in OpenAPI instead of the docstring of the latest model, and `had(description=None)` to remove it. Blank descriptions are rejected. In `HeadVersion`, it also replaces the description of the latest version, e.g. to keep internal notes in the docstring out of OpenAPI. `cadwyn render` renders the description of the version as the docstring, and the deprecated changelog does not describe these changes. Apps that do not use it are not affected (#168).
