@@ -465,7 +465,7 @@ class VersionBundle:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
             body_for_solving = FormData(request_info._form)
         elif body_is_model_dump:
-            body_for_solving = _rescue_request_body(head_dependant.body_params[0], request_info.body)
+            body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
             is_body_restored = body_for_solving is not request_info.body
         else:
             body_for_solving = request_info.body
@@ -1056,38 +1056,25 @@ def _get_schema_migration_key(annotation: object) -> object:
 _RESTORATION = threading.local()
 
 
-def _rescue_request_body(body_field: ModelField, data: Any) -> Any:
-    """Restore the validation aliases of a `model_dump(by_alias=True)` body only if the head surely rejects it as it is.
-
-    That's the case when a required field, or a model that forbids extra keys, gets a dumped key instead of
-    a validation key. Bodies that the head accepts as they are stay exactly as they are, even if a field gets its
-    default instead of its value.
-    """
-    # Most bodies have no fields without which they fail, so they aren't walked at all
-    if not _annotation_reaches_models_with_failing_renames(body_field.field_info.annotation):
-        return data
-    _RESTORATION.has_failing_renames = False
-    restored = _restore_validation_aliases(body_field, data)
-    return restored if _RESTORATION.has_failing_renames else data
-
-
-def _restore_validation_aliases(body_field: ModelField, data: Any) -> Any:
-    """Rename the keys of `model_dump(by_alias=True)` data to the keys that the models of the body validate.
+def _rescue_body(body_field: ModelField, data: Any) -> Any:
+    """Restore the validation aliases of a `model_dump(by_alias=True)` body only if it surely fails validation as is.
 
     The dump uses serialization aliases, which can differ from what a field validates
-    (e.g. `Field(alias="x", validation_alias="v")`), so the head model would silently ignore such values.
-    Anything that the restoration plans of the models don't cover is left as is.
-
-    It also restores the response bodies that FastAPI validates with the response field of a versioned route.
+    (e.g. `Field(alias="x", validation_alias="v")`), so the model would silently ignore such values.
+    That makes the body surely fail when a required field, or a model that forbids extra keys, gets a dumped key
+    instead of a validation key. Bodies that the field accepts as they are stay exactly as they are, even if a field
+    gets its default instead of its value. Anything that the restoration plans of the models don't cover is left as is.
     """
-    spec = _get_restorer_spec(body_field.field_info.annotation)
+    annotation = body_field.field_info.annotation
+    # Most bodies have no fields without which they fail, so they aren't walked at all
+    if not _annotation_reaches_models_with(annotation, _get_failing_renames, all_fields=False):
+        return data
+    spec = _get_restorer_spec(annotation)
     if spec is None or not _is_body_field_safe(body_field, spec):
         return data
-    return _restore_data(spec, data)
-
-
-# Whether the last restoration renamed a key without which the data surely fails validation
-_RESTORATION = threading.local()
+    _RESTORATION.has_failing_renames = False
+    restored = _restore_data(spec, data)
+    return restored if _RESTORATION.has_failing_renames else data
 
 
 def _rescue_response(response_field: ModelField, head_response_model: object, content: Any, data: Any) -> Any:
@@ -1099,17 +1086,8 @@ def _rescue_response(response_field: ModelField, head_response_model: object, co
     Otherwise, FastAPI validates the response as it is, as it always did, and responses that pass stay exactly
     as they are, even if a field gets its default instead of its value.
     """
-    annotation = response_field.field_info.annotation
-    # Most responses have no fields without which they fail, so they aren't walked at all
-    if not _annotation_reaches_models_with_failing_renames(annotation):
-        return data
-    # Reaching renames means that the restoration walks into the models of the response
-    spec = cast("_RestorerSpec", _get_restorer_spec(annotation))
-    if not _is_body_field_safe(response_field, spec):
-        return data
-    _RESTORATION.has_failing_renames = False
-    restored = _restore_data(spec, data)
-    if restored is data or not _RESTORATION.has_failing_renames:
+    restored = _rescue_body(response_field, data)
+    if restored is data:
         return data
     # We only restore the dumps of the models of the head response model that the endpoint returned. FastAPI validates
     # the dicts that the endpoint returns as they are, and the dump of another model can have the dumped keys of
@@ -1250,11 +1228,7 @@ def _is_body_field_safe(body_field: ModelField, spec: "_RestorerSpec") -> bool:
     if cached is not None and cached[0] is body_field:
         return cached[1]
     try:
-        schema = cast("dict[str, Any]", body_field._type_adapter.core_schema)
-        if schema["type"] == "definitions":
-            for definition in schema["definitions"]:
-                _CORE_SCHEMA_DEFINITIONS.setdefault(definition["ref"], definition)
-            schema = schema["schema"]
+        schema = _register_core_schema_definitions(cast("dict[str, Any]", body_field._type_adapter.core_schema))
         while True:
             # `OnErrorOmit` and other defaults that swallow errors make invalid data pass, so we stop at them
             while schema["type"] in ("definition-ref", "nullable", "default", "function-after") and (
@@ -1634,7 +1608,8 @@ def _get_restore_plan(model: type[BaseModel]) -> _RestorePlan:
     nested = tuple(
         (key, spec)
         for key, annotation in traversable
-        if (spec := _get_restorer_spec(annotation)) is not None and _annotation_reaches_renames(annotation)
+        if (spec := _get_restorer_spec(annotation)) is not None
+        and _annotation_reaches_models_with(annotation, _get_renames, all_fields=False)
     )
     if issubclass(model, RootModel):
         return _RestorePlan(root_spec=nested[0][1] if nested else None)
@@ -1687,10 +1662,12 @@ def _get_failing_renames(model: type[BaseModel]) -> tuple[object, ...]:
     return tuple(_get_restore_plan(model).failing_keys)
 
 
-def _annotation_reaches_models_with_failing_renames(annotation: object) -> bool:
+def _annotation_reaches_models_with(
+    annotation: object, get_items: Callable[[type[BaseModel]], tuple[object, ...]], *, all_fields: bool
+) -> bool:
+    """Whether walking into the data of `annotation` reaches a model for which `get_items` returns anything"""
     return any(
-        _reaches_models_with(model, _get_failing_renames, all_fields=False)
-        for model in _get_restorable_models(annotation)
+        _reaches_models_with(model, get_items, all_fields=all_fields) for model in _get_restorable_models(annotation)
     )
 
 
@@ -1714,12 +1691,6 @@ def _iter_restorable_models(annotation: object) -> Iterator[type[BaseModel]]:
         node = _get_restorable_node(node[1])
     if node is not None:
         yield node[1]
-
-
-def _annotation_reaches_renames(annotation: object) -> bool:
-    return any(
-        _reaches_models_with(model, _get_renames, all_fields=False) for model in _get_restorable_models(annotation)
-    )
 
 
 def _get_renames(model: type[BaseModel]) -> tuple[object, ...]:
@@ -1832,10 +1803,7 @@ def _get_renames_and_traversable_fields(
             # Fields that neither need a rename nor lead to one don't need their core schemas read
             or (
                 is_validated
-                and not any(
-                    _reaches_models_with(m, _get_rename_candidates, all_fields=True)
-                    for m in _get_restorable_models(annotation)
-                )
+                and not _annotation_reaches_models_with(annotation, _get_rename_candidates, all_fields=True)
             )
             or not _is_field_schema_safe(field_schemas, name)
         ):
@@ -1895,6 +1863,15 @@ _CORE_SCHEMA_UNIT_SUMMARIES: dict[_CoreSchemaUnit, tuple[bool, tuple[_CoreSchema
 _IS_CORE_SCHEMA_UNIT_SAFE: dict[_CoreSchemaUnit, bool] = {}
 
 
+def _register_core_schema_definitions(schema: dict[str, Any]) -> dict[str, Any]:
+    """Remember the definitions of a "definitions" core schema and return the schema that refers to them"""
+    if schema["type"] != "definitions":
+        return schema
+    for definition in schema["definitions"]:
+        _CORE_SCHEMA_DEFINITIONS.setdefault(definition["ref"], definition)
+    return schema["schema"]
+
+
 def _do_compiled_aliases_match(field: FieldInfo, field_schema: object) -> bool:
     """Whether the compiled schema validates and dumps the field by the aliases of its field info.
 
@@ -1926,11 +1903,7 @@ def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any]
     or if its core schema isn't shaped like the one of a plain model.
     """
     try:
-        schema = cast("dict[str, Any]", model.__pydantic_core_schema__)
-        if schema["type"] == "definitions":
-            for definition in schema["definitions"]:
-                _CORE_SCHEMA_DEFINITIONS.setdefault(definition["ref"], definition)
-            schema = schema["schema"]
+        schema = _register_core_schema_definitions(cast("dict[str, Any]", model.__pydantic_core_schema__))
         if schema["type"] == "definition-ref":
             schema = _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
         # "after" model validators wrap the model schema and only get the validated model
@@ -2094,12 +2067,9 @@ def _get_validation_paths(model: type[BaseModel], name: str, field: FieldInfo) -
     paths: list[list[Union[str, int]]] = []
     if not validate_by_alias or alias is None:
         paths.append([name])
-    elif isinstance(alias, str):
-        paths.append([alias])
-    elif isinstance(alias, AliasPath):
-        paths.append(alias.convert_to_aliases())
     else:
-        paths.extend(alias.convert_to_aliases())
+        # Pydantic only accepts strings, `AliasPath`, and `AliasChoices`, which this turns into lists of paths
+        paths.extend(cast("list[list[Union[str, int]]]", _normalize_validation_alias(alias)))
     if validate_by_name:
         paths.append([name])
     return paths
