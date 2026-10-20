@@ -11,7 +11,7 @@ import sys
 import typing
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from enum import Enum, auto
+from enum import Enum, IntEnum, auto
 from types import GenericAlias
 from typing import Annotated, ClassVar, Generic, Literal, NewType, Optional, TypeAlias, TypeVar, Union, cast, get_args
 from uuid import UUID
@@ -3925,6 +3925,127 @@ def test__router_generation__annotated_dependency_whose_base_changes_only_overri
     # The child overrides the only field that the instructions of its parent change
     for version_client in clients.values():
         assert version_client.post("/role", json={"role_name": "anything"}).json() == "anything"
+
+
+class PlainPlanOfDefault(Enum):
+    free = "free"
+    pro = "pro"
+    team = "team"
+
+
+class StrPlanOfDefault(str, Enum):
+    free = "free"
+    pro = "pro"
+    team = "team"
+
+
+class IntPlanOfDefault(IntEnum):
+    free = 0
+    pro = 1
+    team = 2
+
+
+def _make_route_with_enum_default(plan_enum: Any, style: str, member_name: str) -> Callable[..., Any]:
+    default = plan_enum[member_name]
+    if style == "endpoint_query":
+
+        async def endpoint_query(plan: plan_enum = Query(default)):
+            return [plan.name]
+
+        return endpoint_query
+    if style == "endpoint_plain_default":
+
+        async def endpoint_plain_default(plan: plan_enum = default):
+            return [plan.name]
+
+        return endpoint_plain_default
+    if style == "endpoint_header":
+
+        async def endpoint_header(plan: plan_enum = Header(default)):
+            return [plan.name]
+
+        return endpoint_header
+    if style == "endpoint_list":
+
+        async def endpoint_list(plans: list[plan_enum] = Query([default])):
+            return [plan.name for plan in plans]
+
+        return endpoint_list
+
+    async def dependency(plan: plan_enum = Query(default)):
+        return [plan.name]
+
+    if style == "default_dependency":
+
+        async def default_dependency_route(names: list[str] = Depends(dependency)):
+            return names
+
+        return default_dependency_route
+    assert style == "annotated_dependency"
+
+    async def annotated_dependency_route(names: Annotated[list[str], Depends(dependency)]):
+        return names
+
+    return annotated_dependency_route
+
+
+_ENUM_DEFAULT_STYLES = [
+    "endpoint_query",
+    "endpoint_plain_default",
+    "endpoint_header",
+    "endpoint_list",
+    "default_dependency",
+    "annotated_dependency",
+]
+
+
+@pytest.mark.parametrize("plan_enum", [PlainPlanOfDefault, StrPlanOfDefault, IntPlanOfDefault])
+@pytest.mark.parametrize("style", _ENUM_DEFAULT_STYLES)
+def test__router_generation__enum_member_as_parameter_default__should_be_the_member_of_its_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    plan_enum: Any,
+    style: str,
+):
+    router.get("/plan")(_make_route_with_enum_default(plan_enum, style, "pro"))
+
+    clients = create_versioned_clients(version_change(enum(plan_enum).didnt_have("team")))
+    for version, version_client in clients.items():
+        assert version_client.get("/plan").json() == ["pro"]
+        openapi = version_client.get(f"/openapi.json?version={version}").json()
+        (parameter,) = [p for p in openapi["paths"]["/plan"]["get"]["parameters"] if p["name"] != "x-api-version"]
+        expected_default = plan_enum.pro.value
+        assert parameter["schema"]["default"] == ([expected_default] if style == "endpoint_list" else expected_default)
+
+
+@pytest.mark.parametrize("style", _ENUM_DEFAULT_STYLES)
+def test__router_generation__removed_enum_member_as_parameter_default__should_stay_the_latest_member(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    style: str,
+):
+    router.get("/plan")(_make_route_with_enum_default(PlainPlanOfDefault, style, "team"))
+
+    clients = create_versioned_clients(version_change(enum(PlainPlanOfDefault).didnt_have("team")))
+    assert clients["2001-01-01"].get("/plan").json() == ["team"]
+    # The older version doesn't have the member so the default stays the latest one, which it rejects, as before
+    assert clients["2000-01-01"].get("/plan").status_code == 422
+
+
+@pytest.mark.parametrize("style", _ENUM_DEFAULT_STYLES)
+def test__router_generation__enum_member_with_changed_value_as_parameter_default__should_use_value_of_its_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    style: str,
+):
+    router.get("/plan")(_make_route_with_enum_default(PlainPlanOfDefault, style, "pro"))
+
+    clients = create_versioned_clients(version_change(enum(PlainPlanOfDefault).had(pro="PRO")))
+    for version, expected_default in {"2001-01-01": "pro", "2000-01-01": "PRO"}.items():
+        assert clients[version].get("/plan").json() == ["pro"]
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        (parameter,) = [p for p in openapi["paths"]["/plan"]["get"]["parameters"] if p["name"] != "x-api-version"]
+        assert parameter["schema"]["default"] == ([expected_default] if style == "endpoint_list" else expected_default)
 
 
 def test__substitute_generic_type_aliases__alias_that_cannot_be_substituted__should_stay_as_is():

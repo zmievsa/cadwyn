@@ -1360,6 +1360,12 @@ class _AnnotationTransformer:
             def modifier(annotation: Any):
                 return self.change_version_of_annotation(annotation)
 
+            def defaults_modifier(defaults: tuple[Any, ...]) -> tuple[Any, ...]:
+                defaults = modifier(defaults)
+                if callable_kind is _CallableKind.OTHER:
+                    return defaults
+                return tuple(self._change_version_of_parameter_default(default) for default in defaults)
+
             if self.record_only:
                 self._record_without_cycles(
                     annotation, lambda: self._get_annotations_and_defaults_to_record(annotation, callable_kind)
@@ -1368,13 +1374,37 @@ class _AnnotationTransformer:
             return self._modify_callable_annotations(
                 annotation,
                 modifier,
-                modifier,
+                defaults_modifier,
                 annotation_modifying_wrapper_factory=functools.partial(
                     self._copy_function_through_class_based_wrapper,
                     is_called_by_fastapi=callable_kind is not _CallableKind.OTHER,
                 ),
                 callable_kind=callable_kind,
             )
+
+    def _change_version_of_parameter_default(self, default: Any) -> Any:
+        """Use the members of this version's enums in the default of a parameter of an endpoint or a dependency.
+
+        FastAPI validates the defaults of parameters such as `role: Role = Query(Role.reader)` when they are
+        omitted, and the copy of an enum rejects the members of the latest enum unless they equal its values
+        (e.g. str or int enums). The FieldInfo defaults are already copies that belong to this version.
+        """
+        if isinstance(default, FieldInfo):
+            versioned_default = self._change_version_of_enum_members(default.default)
+            if versioned_default is not default.default:
+                # pydantic merges FieldInfo objects (e.g. with the ones in Annotated) by their _attributes_set
+                default.default = default._attributes_set["default"] = versioned_default
+            return default
+        return self._change_version_of_enum_members(default)
+
+    def _change_version_of_enum_members(self, value: Any) -> Any:
+        if isinstance(value, Enum):
+            versioned_enum = self.change_version_of_annotation(type(value))
+            # The members that this version does not have stay the latest ones
+            return versioned_enum.__members__.get(value.name, value)
+        if type(value) in {list, tuple, set, frozenset}:
+            return type(value)(self._change_version_of_enum_members(item) for item in value)
+        return value
 
     def _record_without_cycles(self, obj: Any, get_values_to_record: Callable[[], Any]) -> None:
         """Record the values within the object unless we are already recording it.
