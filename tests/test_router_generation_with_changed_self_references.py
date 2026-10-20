@@ -4,7 +4,6 @@ The unchanged ones are reused as they are (see test_router_generation_with_self_
 """
 
 import functools
-import importlib.metadata
 import re
 import threading
 import typing
@@ -50,11 +49,6 @@ if TYPE_CHECKING:
     from decimal import Decimal as OnlyForTypeCheckers
 
 ValueT = TypeVar("ValueT")
-PYDANTIC_VERSION = tuple(int(part) for part in re.findall(r"\d+", importlib.metadata.version("pydantic"))[:3])
-REQUIRES_PYDANTIC_THAT_REBUILDS_METADATA_ONCE = pytest.mark.skipif(
-    PYDANTIC_VERSION < (2, 11, 5), reason="Copying reference cycles requires pydantic 2.11.5+"
-)
-pytestmark = REQUIRES_PYDANTIC_THAT_REBUILDS_METADATA_ONCE
 
 
 class Category(BaseModel):
@@ -152,7 +146,6 @@ class PagedCategory(BaseModel):
     children: "Optional[CategoryPage]" = None
 
 
-# Pydantic 2.11.0 cannot parametrize a generic with the model that it is creating
 CategoryPage = Page[PagedCategory]
 PagedCategory.model_rebuild()
 
