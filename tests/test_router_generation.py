@@ -3854,7 +3854,7 @@ _requires_type_statement = pytest.mark.skipif(sys.version_info < (3, 12), reason
 class ModelWithTypedExtras(BaseModel):
     model_config = ConfigDict(extra="allow")
     # Pydantic documents typing extra fields this way, but type checkers see it as narrowing a writable attribute
-    if not TYPE_CHECKING:
+    if not TYPE_CHECKING:  # pragma: no branch
         __pydantic_extra__: dict[str, RoleOfVersionedDependency] = Field(init=False)
 
     @property
