@@ -693,6 +693,10 @@ def _rebuild_generic_alias(annotation: Any, new_args: tuple[Any, ...]) -> Any:
     # Classvar and Unpack do not support generic tuple arguments
     if origin is ClassVar or is_unpack(origin):
         return origin[new_args[0]]
+    if origin is Annotated:
+        # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the
+        # originals so it could return the alias that holds the dependency of another version
+        return _AnnotatedAlias(new_args[0], new_args[1:])
     return origin[new_args]
 
 

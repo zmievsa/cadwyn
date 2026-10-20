@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
 from types import GenericAlias
-from typing import Annotated, ClassVar, Literal, NewType, Optional, TypeAlias, Union, cast, get_args
+from typing import Annotated, ClassVar, Literal, NewType, TypeAlias, Union, cast, get_args
 from uuid import UUID
 
 import fastapi.params
@@ -2827,10 +2827,8 @@ def test__router_generation__async_generator_dependency__should_forward_everythi
         if cleanup_failed:
             raise RuntimeError("cleanup failed")
 
-    # Not in Annotated[...] because, as in Cadwyn 7.4.0, the ones whose args did not change keep the original
-    # dependency in every version
     @router.get("/test")
-    async def route(value: str = Depends(dependency)):
+    async def route(value: Annotated[str, Depends(dependency)]):
         raise NotImplementedError
 
     app = create_versioned_app(version_change())
@@ -2915,11 +2913,9 @@ def test__router_generation__query_model_defaults__should_stay_isolated_between_
         version_change(schema(Filters).field("limit").had(default=30)),
         version_change(schema(Filters).field("limit").had(default=20)),
     )
-    # The endpoint always gets the head default because Cadwyn migrates requests to head before solving them again.
-    # As in Cadwyn 7.4.0, the Annotated dependencies whose args did not change keep the original dependencies, and so
-    # the head defaults, in every version
+    # The endpoint always gets the head default because Cadwyn migrates requests to head before solving them again
     expected_limits = {
-        (version, path): (10, 10 if path in {"/annotated_dependency", "/instance_dependency"} else openapi_default)
+        (version, path): (10, openapi_default)
         for version, openapi_default in {"2002-01-01": 10, "2001-01-01": 20, "2000-01-01": 30}.items()
         for path in paths
     }
@@ -3128,11 +3124,8 @@ def test__router_generation__depends_subclass_with_custom_init__should_be_versio
     clients = create_versioned_clients(
         version_change(schema(SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
-    assert clients["2000-01-01"].post("/default", json={"foo": 1}).status_code == 422
-    # As in Cadwyn 7.4.0, the Annotated dependency whose args did not change keeps the original dependency with the
-    # head model in every version
-    assert clients["2000-01-01"].post("/annotated", json={"foo": 1}).json() == {"foo": 1}
     for path in ("/annotated", "/default"):
+        assert clients["2000-01-01"].post(path, json={"foo": 1}).status_code == 422
         assert clients["2000-01-01"].post(path, json={"foo": 1, "bar": "baz"}).json() == {"foo": 1}
         assert clients["2001-01-01"].post(path, json={"foo": 1}).json() == {"foo": 1}
 
@@ -3213,13 +3206,9 @@ def test__router_generation__partial_dependency__should_keep_annotations_of_wrap
         version_change(schema(SchemaWithOneIntField).field("bar").existed_as(type=str)),
     )
     for path in ("/default", "/annotated"):
-        # As in Cadwyn 7.4.0, the Annotated dependency whose args did not change keeps the original partial with the
-        # head model in every version
-        uses_head_model = path == "/annotated"
-        if not uses_head_model:
-            assert clients["2000-01-01"].post(path, json={"foo": 1}).json() == {
-                "detail": [{"type": "missing", "loc": ["body", "bar"], "msg": "Field required", "input": {"foo": 1}}]
-            }
+        assert clients["2000-01-01"].post(path, json={"foo": 1}).json() == {
+            "detail": [{"type": "missing", "loc": ["body", "bar"], "msg": "Field required", "input": {"foo": 1}}]
+        }
         assert clients["2000-01-01"].post(path, json={"foo": 1, "bar": "baz"}).json() == {
             "role": "admin",
             "user": "alice",
@@ -3237,13 +3226,11 @@ def test__router_generation__partial_dependency__should_keep_annotations_of_wrap
         clients["2001-01-01"].app.dependency_overrides.clear()
 
         for version, version_client in clients.items():
-            openapi = version_client.get(f"/openapi.json?version={version}").json()
-            operation = openapi["paths"][path]["post"]
+            operation = version_client.get(f"/openapi.json?version={version}").json()["paths"][path]["post"]
             assert [param["name"] for param in operation["parameters"]] == ["x-api-version"]
-            ref = operation["requestBody"]["content"]["application/json"]["schema"]["$ref"]
-            body_schema = openapi["components"]["schemas"][ref.removeprefix("#/components/schemas/")]
-            assert body_schema["title"] == "SchemaWithOneIntField"
-            assert ("bar" in body_schema["properties"]) == (version == "2000-01-01" and not uses_head_model)
+            assert operation["requestBody"]["content"]["application/json"]["schema"] == {
+                "$ref": "#/components/schemas/SchemaWithOneIntField"
+            }
 
 
 class _CachedFactory:
@@ -3499,7 +3486,7 @@ def test__router_generation__dependency_with_parameters_only_in_signature__shoul
     assert clients["2000-01-01"].post("/test", params={"limit": 5}, json={"foo": 1}).status_code == 422
 
 
-def test__router_generation__annotated_dependency_with_unversioned_type__should_use_head_dependency(
+def test__router_generation__annotated_dependency_with_unversioned_type__should_use_dependency_of_its_version(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
 ):
@@ -3532,177 +3519,25 @@ def test__router_generation__annotated_dependency_with_unversioned_type__should_
     min_lengths = {"2002-01-01": 5, "2001-01-01": 5, "2000-01-01": 10}
     for version, version_client in clients.items():
         min_length = min_lengths[version]
-        # As in Cadwyn 7.4.0: typing caches Annotated[...] by equality and the versioned dependency is equal to the
-        # original one, so every version gets the head dependency, whose body has no min_length and accepts "blue".
-        # Existing clients rely on the values that it accepts
-        for name, color in [("a", "red"), ("a" * min_length, "red"), ("a" * min_length, "blue")]:
-            assert version_client.post("/dependency", json={"name": name, "color": color}).json() == [len(name)]
-        assert version_client.post("/body", json={"name": "a" * min_length, "color": "red"}).json() == [min_length]
-        assert version_client.post("/body", json={"name": "a" * (min_length - 1), "color": "red"}).status_code == 422
-        assert version_client.post("/body", json={"name": "a" * min_length, "color": "blue"}).status_code == 422
+        for path in ("/dependency", "/body"):
+            response = version_client.post(path, json={"name": "a" * min_length, "color": "red"})
+            assert response.json() == [min_length]
+            response = version_client.post(path, json={"name": "a" * (min_length - 1), "color": "red"})
+            assert response.status_code == 422
+            response = version_client.post(path, json={"name": "a" * min_length, "color": "blue"})
+            assert response.status_code == 422
 
         openapi = version_client.get(f"/openapi.json?version={version}").json()
-        schemas = openapi["components"]["schemas"]
-
-        def get_body_schema(path: str, openapi: dict[str, Any] = openapi, schemas: dict[str, Any] = schemas):
-            ref = openapi["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
-            return schemas[ref.removeprefix("#/components/schemas/")]
-
-        def get_enum(item_schema: dict[str, Any], schemas: dict[str, Any] = schemas) -> list[str]:
-            return schemas[item_schema["properties"]["color"]["$ref"].removeprefix("#/components/schemas/")]["enum"]
-
-        assert get_body_schema("/dependency")["properties"]["name"] == {"type": "string", "title": "Name"}
-        assert get_enum(get_body_schema("/dependency")) == ["red", "blue"]
-        assert get_body_schema("/body")["properties"]["name"] == {
+        assert openapi["components"]["schemas"]["Item"]["properties"]["name"] == {
             "type": "string",
             "minLength": min_length,
             "title": "Name",
         }
-        assert get_enum(get_body_schema("/body")) == ["red"]
-
-
-class ItemOfDependencyWithQuotedAnnotations(BaseModel):
-    name: str
-
-
-class RoleOfDependencyWithQuotedAnnotations(str, Enum):
-    reader = "reader"
-    editor = "editor"
-
-
-def get_tags(items: list["ItemOfDependencyWithQuotedAnnotations"] = Body([])) -> list[str]:
-    return [item.name for item in items]
-
-
-def get_roles_with_quoted_query(
-    role: RoleOfDependencyWithQuotedAnnotations = Query(RoleOfDependencyWithQuotedAnnotations.reader),
-    tags: list["str"] = Query([]),
-) -> list[str]:
-    return [role.value]
-
-
-def get_roles_with_quoted_body(
-    role: RoleOfDependencyWithQuotedAnnotations = Query(RoleOfDependencyWithQuotedAnnotations.reader),
-    item: Optional["ItemOfDependencyWithQuotedAnnotations"] = Body(None),
-) -> list[str]:
-    return [role.value]
-
-
-def get_roles_with_quoted_sub_dependency(
-    tags: Annotated[list[str], Depends(get_tags)],
-    role: RoleOfDependencyWithQuotedAnnotations = Query(RoleOfDependencyWithQuotedAnnotations.reader),
-) -> list[str]:
-    return [role.value]
-
-
-@pytest.mark.parametrize(
-    "dependency",
-    [get_roles_with_quoted_query, get_roles_with_quoted_body, get_roles_with_quoted_sub_dependency],
-)
-def test__router_generation__annotated_dependency_with_quoted_args_in_annotations__should_use_head_dependency(
-    router: VersionedAPIRouter,
-    create_versioned_clients: CreateVersionedClients,
-    dependency: Callable[..., list[str]],
-):
-    @router.get("/roles")
-    async def route(roles: Annotated[list[str], Depends(dependency)]):
-        return roles
-
-    clients = create_versioned_clients(
-        version_change(enum(RoleOfDependencyWithQuotedAnnotations).didnt_have("editor")),
-    )
-    # As in Cadwyn 7.4.0: typing caches Annotated[...] by equality and the versioned dependency is equal to the
-    # original one, so every version gets the head dependency and accepts the role that older versions did not have
-    for version, version_client in clients.items():
-        assert version_client.get("/roles", params={"role": "editor"}).json() == ["editor"]
-        if dependency is get_roles_with_quoted_query:
-            # Pydantic cannot resolve the forward refs to the models in the OpenAPI of the others, as in Cadwyn 7.4.0
-            openapi = version_client.get(f"/openapi.json?version={version}").json()
-            role_schema = openapi["components"]["schemas"]["RoleOfDependencyWithQuotedAnnotations"]
-            assert role_schema["enum"] == ["reader", "editor"]
-
-
-class _MetadataWhoseEqualityRaises:
-    # Cadwyn versions callable metadata so typing compares it with its versioned copy
-    def __call__(self) -> None:
-        raise NotImplementedError
-
-    @override
-    def __hash__(self) -> int:
-        return 123
-
-    @override
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, type | _MetadataWhoseEqualityRaises):
-            raise TypeError("metadata comparison requires the same class")
-        return self is other
-
-
-class _MetadataWithChangingHash:
-    counter = 0
-
-    @override
-    def __hash__(self) -> int:
-        self.counter += 1
-        return self.counter
-
-
-class PayloadOfAnnotatedDependency(BaseModel):
-    value: str
-
-
-def get_payload(payload: PayloadOfAnnotatedDependency) -> dict[str, Any]:
-    return payload.model_dump()
-
-
-def _make_dependency_with_many_annotated_parameters() -> Callable[..., Any]:
-    # More distinct Annotated[...] than typing caches, so the original one is not cached when Cadwyn rebuilds it
-    parameters = ", ".join(f'p{i}: Annotated[int, "parameter {i}"] = 0' for i in range(150))
-    namespace: dict[str, Any] = {"Annotated": Annotated, "get_payload": get_payload}
-    payload_annotation = "get_payload.__annotations__['payload']"
-    exec(f"def dependency(payload: {payload_annotation}, {parameters}):\n    return get_payload(payload)", namespace)
-    return namespace["dependency"]
-
-
-@pytest.mark.parametrize(
-    "make_annotation",
-    [
-        pytest.param(lambda: Annotated[dict, Depends(get_payload), {"description": "Value"}], id="unhashable_metadata"),
-        pytest.param(lambda: Annotated[dict, Depends(get_payload), _MetadataWhoseEqualityRaises()], id="eq_raises"),
-        pytest.param(lambda: Annotated[dict, Depends(get_payload), _MetadataWithChangingHash()], id="changing_hash"),
-        pytest.param(
-            lambda: Annotated[dict, Depends(_make_dependency_with_many_annotated_parameters())],
-            id="evicted_from_typing_cache",
-        ),
-    ],
-)
-def test__router_generation__annotated_dependency_that_typing_does_not_cache__should_use_dependency_of_its_version(
-    router: VersionedAPIRouter,
-    create_versioned_clients: CreateVersionedClients,
-    make_annotation: Callable[[], Any],
-):
-    annotation = make_annotation()
-
-    async def route(value: Any):
-        return value
-
-    route.__annotations__["value"] = annotation
-    router.post("/value")(route)
-
-    @convert_request_to_next_version_for("/value", ["POST"])
-    def migrate(request: RequestInfo):
-        request.body["value"] = request.body.pop("legacy_value")
-
-    clients = create_versioned_clients(
-        version_change(schema(PayloadOfAnnotatedDependency).field("value").had(name="legacy_value"), migrate=migrate),
-    )
-    # As in Cadwyn 7.4.0: typing returns its cached Annotated[...] with the original dependency only if it can hash
-    # and compare the args and still has it in its cache. Otherwise, every version gets its own dependency
-    assert clients["2001-01-01"].post("/value", json={"value": "ok"}).json() == {"value": "ok"}
-    assert clients["2000-01-01"].post("/value", json={"legacy_value": "ok"}).json() == {"value": "ok"}
-    for version, field_name in [("2001-01-01", "value"), ("2000-01-01", "legacy_value")]:
-        openapi = clients[version].get(f"/openapi.json?version={version}").json()
-        assert list(openapi["components"]["schemas"]["PayloadOfAnnotatedDependency"]["properties"]) == [field_name]
+        assert openapi["components"]["schemas"]["Color"]["enum"] == ["red"]
+        for path in ("/dependency", "/body"):
+            assert openapi["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"] == {
+                "$ref": "#/components/schemas/Item"
+            }
 
 
 def test__router_generation__with_pydantic_settings_dependency(
