@@ -138,6 +138,7 @@ nav:
       - "How we got here": "theory/how_we_got_here.md"
       - "References": "theory/references.md"
       - "How to build a versioning framework": "theory/how_to_build_versioning_framework.md"
+      - "Design decisions and trade-offs": "theory/design_decisions.md"
 
 watch:
   - docs

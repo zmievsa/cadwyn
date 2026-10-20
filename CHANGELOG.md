@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Documented Cadwyn's design decisions, accepted trade-offs, known limitations, and the rules for changing its behavior in [Design decisions and trade-offs](https://docs.cadwyn.dev/theory/design_decisions/) (#202).
+
 ## [8.0.0]
 
 This release fixes many long-standing bugs, most of them reported by users. Most apps can upgrade without changes. It is a major release because some fixes change wrong behavior that apps or their clients may rely on. Before upgrading, check the **Breaking** entries and the **Upgrade note** below. In short:
