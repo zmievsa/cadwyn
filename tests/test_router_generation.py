@@ -77,7 +77,10 @@ from tests._data.sqlalchemy_models import ImperativelyMappedModel, MappedChild, 
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
-from tests._resources.utils import HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED
+from tests._resources.utils import (
+    FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS,
+    HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED,
+)
 from tests.conftest import (
     CreateVersionedApp,
     CreateVersionedClients,
@@ -4028,8 +4031,11 @@ def test__router_generation__removed_enum_member_as_parameter_default__should_st
 
     clients = create_versioned_clients(version_change(enum(PlainPlanOfDefault).didnt_have("team")))
     assert clients["2001-01-01"].get("/plan").json() == ["team"]
-    # The older version doesn't have the member so the default stays the latest one, which it rejects, as before
-    assert clients["2000-01-01"].get("/plan").status_code == 422
+    # The older version doesn't have the member so the default stays the latest one, as before. FastAPI rejects it
+    # if it validates the defaults of omitted params, and passes it on as it is otherwise
+    response = clients["2000-01-01"].get("/plan")
+    expected = (422, None) if FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS else (200, ["team"])
+    assert (response.status_code, response.json() if response.status_code == 200 else None) == expected
 
 
 @pytest.mark.parametrize("style", _ENUM_DEFAULT_STYLES)
