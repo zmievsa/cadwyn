@@ -2,7 +2,7 @@
 
 !!! warning "Deprecated"
 
-    Cadwyn's changelog feature is deprecated and will be removed in a future version. It remains available for backwards compatibility, but new applications should maintain and expose their own changelog instead. Pass `changelog_url=None` to `Cadwyn()` to disable the deprecated endpoint.
+    Cadwyn's changelog feature is deprecated and will be removed in Cadwyn 9.0. It remains available for backwards compatibility, but new applications should maintain and expose their own changelog instead. Pass `changelog_url=None` to `Cadwyn()` to disable the deprecated endpoint.
 
 Cadwyn can automatically generate API changelogs for your versions. By default, they are available through the deprecated unversioned endpoint `GET /changelog`. You can also access it via the deprecated `Cadwyn.generate_changelog()` method.
 
