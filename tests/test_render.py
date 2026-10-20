@@ -12,6 +12,7 @@ from cadwyn._render import render_model, render_model_by_path, render_module_by_
 from cadwyn.exceptions import ImportFromStringError
 from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure.versions import Version, VersionBundle
+from tests.conftest import version_change
 from tests.test_cli import code
 
 
@@ -175,17 +176,15 @@ class ChangeTypeOfLeftChildAndDescriptionOfRightChild(VersionChange):
     )
 
 
-def test__render_model__sibling_changed_type_of_inherited_field__should_render_the_type_of_shared_field():
+def test__render_model__sibling_changed_type_of_inherited_field__should_render_the_type_of_the_model():
     versions = VersionBundle(
         Version("2001-01-01", ChangeTypeOfLeftChildAndDescriptionOfRightChild), Version("2000-01-01")
     )
 
-    # As in Cadwyn 7.4.0: the parent has an instruction of its own so its subclasses share the field with it, and
-    # `cadwyn render` renders the type of the shared field
     assert code(render_model(RenderedRightChild, versions, "2000-01-01")) == code(
         """
 class RenderedRightChild(RenderedParent):
-    foo: bytes = Field(max_length=10, description='Right')
+    foo: str = Field(max_length=10, description='Right')
 """
     )
 
@@ -227,8 +226,7 @@ def test__render_model__diamond_with_functional_validator_in_inherited_field__sh
     compile(rendered, "<rendered>", "exec")
     generated_diamond = generate_versioned_models(versions)["2000-01-01"][RenderedValidatedDiamond]
     assert generated_diamond.model_validate({"foo": " value "}).foo == "value"
-    # As in Cadwyn 7.4.0: the parent has an instruction of its own so its subclasses share the field with it
-    assert generated_diamond.model_fields["foo"].description == "Right"
+    assert generated_diamond.model_fields["foo"].description is None
 
 
 class RenderedParentWithFactory(BaseModel):
@@ -377,3 +375,27 @@ def test__render_model__schema_had_multiline_description__should_render_the_same
     assert_rendered_model_has_the_description_of_generated_model(
         RenderedModelWithMultilineDescription, versions, "2000-01-01"
     )
+
+
+class RenderedModelWithDescriptionInAnnotated(BaseModel):
+    foo: Annotated[str, Field(description="Foo")] = "x"
+
+
+def test__render_model__didnt_have_description_in_annotated__should_render_annotation_without_it():
+    versions = VersionBundle(
+        Version(
+            "2001-01-01",
+            version_change(schema(RenderedModelWithDescriptionInAnnotated).field("foo").didnt_have("description")),
+        ),
+        Version("2000-01-01"),
+    )
+
+    # Like the generated model. Before, `cadwyn render` kept the description in the annotation
+    assert (
+        generate_versioned_models(versions)["2000-01-01"][RenderedModelWithDescriptionInAnnotated]
+        .model_fields["foo"]
+        .description
+        is None
+    )
+    assert "Foo" in render_model(RenderedModelWithDescriptionInAnnotated, versions, "2001-01-01")
+    assert "Foo" not in render_model(RenderedModelWithDescriptionInAnnotated, versions, "2000-01-01")

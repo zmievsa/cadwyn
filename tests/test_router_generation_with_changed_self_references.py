@@ -21,6 +21,7 @@ from pydantic import (
     Field,
     PrivateAttr,
     RootModel,
+    ValidationError,
     computed_field,
     field_serializer,
 )
@@ -1847,3 +1848,151 @@ def test__generate_versioned_models__schema_hook_that_reads_cached_copies_from_a
     ReadsCachedCopiesInSchemaHook.model_rebuild()
 
     assert worker_results == [old_item]
+
+
+class NodeWithInheritedName(BaseModel):
+    name: str
+    children: "list[NodeWithInheritedName]" = []
+
+
+class ShortNamedNode(NodeWithInheritedName):
+    child: "Optional[ShortNamedNode]" = None
+
+
+class OtherNode(NodeWithInheritedName):
+    pass
+
+
+class CategoryOfSubcategories(BaseModel):
+    title: str
+    subcategories: "list[Subcategory]" = []
+
+
+class Subcategory(CategoryOfSubcategories):
+    pass
+
+
+class OtherSubcategory(CategoryOfSubcategories):
+    pass
+
+
+class GenericTree(BaseModel, Generic[ValueT]):
+    value: ValueT
+    label: str = ""
+    children: "list[GenericTree[ValueT]]" = []
+
+
+class IntTree(GenericTree[int]):
+    pass
+
+
+class OtherIntTree(GenericTree[int]):
+    pass
+
+
+def test__router_generation__subclass_of_self_referencing_model_changed_inherited_field__should_not_change_others(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/nodes", response_model=NodeWithInheritedName)
+    async def create_node(node: NodeWithInheritedName) -> NodeWithInheritedName:
+        return node
+
+    @router.post("/short_named_nodes", response_model=ShortNamedNode)
+    async def create_short_named_node(node: ShortNamedNode) -> ShortNamedNode:
+        return node
+
+    @router.post("/other_nodes", response_model=OtherNode)
+    async def create_other_node(node: OtherNode) -> OtherNode:
+        return node
+
+    app = create_versioned_app(
+        version_change(
+            schema(NodeWithInheritedName).field("children").had(description="Children"),
+            schema(ShortNamedNode).field("name").had(max_length=3),
+        ),
+        router=router,
+    )
+    client = TestClient(app, headers={app.router.api_version_parameter_name: "2000-01-01"})
+
+    long_names = {"name": "long", "children": [{"name": "longer", "children": []}]}
+    assert client.post("/nodes", json=long_names).json() == long_names
+    assert client.post("/other_nodes", json=long_names).json() == long_names
+    # The children of the subclass are parents, so they don't have the change
+    short_named = {"name": "abc", "children": [{"name": "longer", "children": []}], "child": None}
+    assert client.post("/short_named_nodes", json=short_named).json() == short_named
+    for invalid_body in ({**short_named, "name": "long"}, {**short_named, "child": {"name": "long"}}):
+        response = client.post("/short_named_nodes", json=invalid_body)
+        assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    schemas = client.get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert schemas["ShortNamedNode-Input"]["properties"]["name"]["maxLength"] == 3
+    assert "maxLength" not in schemas["NodeWithInheritedName-Input"]["properties"]["name"]
+    assert "maxLength" not in schemas["OtherNode-Input"]["properties"]["name"]
+
+
+def test__generate_versioned_models__subclass_in_cycle_with_parent_changed_inherited_field__should_change_only_it():
+    versions = VersionBundle(
+        Version(
+            "2001-01-01",
+            version_change(
+                schema(CategoryOfSubcategories).field("subcategories").had(description="Subcategories"),
+                schema(Subcategory).field("title").had(max_length=3),
+            ),
+        ),
+        Version("2000-01-01"),
+    )
+    old_models = generate_versioned_models(versions)["2000-01-01"]
+
+    old_category = old_models[CategoryOfSubcategories]
+    old_subcategory = old_models[Subcategory]
+    assert old_category.model_fields["subcategories"].annotation == list[old_subcategory]  # ty: ignore[invalid-type-form]
+    assert old_category.model_validate({"title": "long", "subcategories": [{"title": "abc"}]}).title == "long"
+    with pytest.raises(ValidationError):
+        old_category.model_validate({"title": "long", "subcategories": [{"title": "long"}]})
+    assert old_models[OtherSubcategory].model_validate({"title": "long"}).title == "long"
+
+
+def test__generate_versioned_models__subclass_of_self_referencing_parametrization_changed_inherited_field__should_not_change_others():  # noqa: E501
+    versions = VersionBundle(
+        Version(
+            "2001-01-01",
+            version_change(
+                schema(GenericTree).field("value").had(description="Value"),
+                schema(IntTree).field("label").had(max_length=3),
+            ),
+        ),
+        Version("2000-01-01"),
+    )
+    old_models = generate_versioned_models(versions)["2000-01-01"]
+
+    with pytest.raises(ValidationError):
+        old_models[IntTree].model_validate({"value": 1, "label": "long"})
+    # The children of IntTree are parametrizations of its parent, so they don't have the change
+    tree: Any = old_models[IntTree].model_validate(
+        {"value": 1, "label": "abc", "children": [{"value": 2, "label": "long"}]}
+    )
+    assert tree.children[0].label == "long"
+    for model in (GenericTree, GenericTree[int], OtherIntTree):
+        assert old_models[model].model_validate({"value": 1, "label": "long"}).label == "long"
+
+
+def test__generate_versioned_models__self_referencing_parent_renamed_field_that_subclass_changed__should_keep_change():
+    versions = VersionBundle(
+        Version(
+            "2002-01-01",
+            version_change(schema(ShortNamedNode).field("children").had(description="Short named children")),
+        ),
+        Version("2001-01-01", version_change(schema(NodeWithInheritedName).field("children").had(name="kids"))),
+        Version("2000-01-01"),
+    )
+    old_models = generate_versioned_models(versions)["2000-01-01"]
+
+    old_node = old_models[NodeWithInheritedName]
+    old_short_named_node = old_models[ShortNamedNode]
+    assert old_node.model_fields["kids"].description is None
+    assert old_models[OtherNode].model_fields["kids"].description is None
+    assert old_short_named_node.model_fields["kids"].description == "Short named children"
+    assert old_short_named_node.model_fields["kids"].annotation == list[old_node]  # ty: ignore[invalid-type-form]
+    node: Any = old_short_named_node.model_validate({"name": "a", "kids": [{"name": "b", "kids": [{"name": "c"}]}]})
+    assert type(node.kids[0].kids[0]) is old_node
