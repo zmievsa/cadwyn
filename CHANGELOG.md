@@ -10,6 +10,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Added `schema(Model).had(description=...)` to give the older versions of a model their own description in OpenAPI instead of the docstring of the latest model, and `had(description=None)` to remove it. Blank descriptions are rejected. In `HeadVersion`, it also replaces the description of the latest version, e.g. to keep internal notes in the docstring out of OpenAPI. `cadwyn render` renders the description of the version as the docstring, and the deprecated changelog does not describe these changes. Apps that do not use it are not affected (#168).
 - Documented how to serve endpoints to requests without an API version, such as the OAuth2 token endpoint that Swagger UI's "Authorize" button calls without the version header: keep the endpoint unversioned or set `api_version_default_value` (#230).
 - Documented how to use fastapi-pagination with Cadwyn: call `add_pagination()` on the `VersionedAPIRouter` instead of the app, or pass the pagination params to `paginate()` explicitly (#191).
+- Documented that request and response migrations only run for the schema that the route uses directly, not for that schema nested in other schemas or generics, while schema instructions apply everywhere.
 - Documented that computed fields that return versioned models keep the latest versions of these models in older API versions, in both serialization and OpenAPI, and how to expose such data as a regular field instead.
 
 ### Changed

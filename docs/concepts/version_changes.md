@@ -213,6 +213,9 @@ class RenameInvoiceCreationDateToCreatedAt(VersionChange):
 
 Did you notice how the schema for `InvoiceResource` is specified in the migration above? This instructs Cadwyn to apply it to all routes with this schema as their `response_model`. Also notice that `BaseInvoice` is now used in the instructions. Here, `BaseInvoice` is the parent of both `InvoiceCreateRequest` and `InvoiceResource`, so renaming it in the instructions will rename the field in those schemas as well. You can, however, apply the instructions to both individual schemas instead of their parent if you prefer.
 
+!!! note "Migrations only run for the schema you name"
+    Instructions such as `schema(InvoiceResource).field(...).had(...)` change the schema everywhere it is used, including inside other schemas and generics. Request and response migrations are different: a schema-based migration only runs when its schema is the request body or the `response_model` of the route itself. It does not run for that schema nested in another one, e.g. in a field of another schema or inside a generic such as `Page[InvoiceResource]`, so write the migration for the outer schema instead. This is a deliberate choice: each migration runs exactly where you declared it and never twice for the same data.
+
 When a request comes in, Cadwyn migrates it to the latest version using the request migration. You then handle your business logic, return the latest response, and Cadwyn migrates it back to the requested API version. Does your business logic or database know that you have two versions? No, not at all. It is zero-cost. Consider the benefits of supporting not just two, but two hundred versions.
 
 ![The diagram showing how it works](../img/simplified_migration_model.png)
