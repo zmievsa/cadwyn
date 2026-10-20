@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from enum import Enum, auto
 from types import GenericAlias
-from typing import Annotated, ClassVar, Literal, NewType, Optional, TypeAlias, Union, cast, get_args
+from typing import Annotated, ClassVar, Generic, Literal, NewType, Optional, TypeAlias, TypeVar, Union, cast, get_args
 from uuid import UUID
 
 import fastapi.params
@@ -3745,6 +3745,146 @@ def test__router_generation__annotated_dependency_with_changed_enum__should_be_v
     for version, enum_values in {"2001-01-01": ["free", "pro", "team"], "2000-01-01": ["free", "pro"]}.items():
         openapi = clients[version].get(f"/openapi.json?version={version}").json()
         assert openapi["components"]["schemas"]["PlanOfDependency"]["enum"] == enum_values
+
+
+def get_default_role_name() -> RoleOfVersionedDependency:
+    return RoleOfVersionedDependency.reader
+
+
+class UserWithDefaultFactoryOfChangedEnum(BaseModel):
+    # Only the default factory refers to the changed enum so it does not change what the model validates
+    role_name: str = Field(default_factory=get_default_role_name)
+
+
+class ParentWithChangedEnum(BaseModel):
+    role_name: RoleOfVersionedDependency
+
+
+class ChildThatOverridesChangedEnum(ParentWithChangedEnum):
+    role_name: str  # ty: ignore[invalid-attribute-override]
+
+
+class ModelWithChangedEnumInClassVar(BaseModel):
+    default_role: ClassVar[RoleOfVersionedDependency] = RoleOfVersionedDependency.reader
+    role_name: str
+
+
+_GenericArgT = TypeVar("_GenericArgT")
+
+
+class GenericThatDoesNotUseItsArg(BaseModel, Generic[_GenericArgT]):
+    role_name: str
+
+
+class GenericThatUsesItsArg(BaseModel, Generic[_GenericArgT]):
+    role_name: _GenericArgT
+
+
+def _make_body_dependency(model: Any) -> Callable[..., str]:
+    def dependency(body: Any) -> str:
+        assert isinstance(body, model)
+        return body.role_name
+
+    dependency.__annotations__["body"] = model
+    return dependency
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param(ChildThatOverridesChangedEnum, id="overridden_field"),
+        pytest.param(ModelWithChangedEnumInClassVar, id="class_var"),
+        pytest.param(GenericThatDoesNotUseItsArg[RoleOfVersionedDependency], id="unused_generic_arg"),
+        pytest.param(UserWithDefaultFactoryOfChangedEnum, id="default_factory"),
+    ],
+)
+def test__router_generation__annotated_dependency_whose_models_do_not_validate_changed_enum__should_not_be_versioned(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    model: Any,
+):
+    @router.post("/role")
+    async def route(role_name: Annotated[str, Depends(_make_body_dependency(model))]):
+        return role_name
+
+    # HeadVersion changes the enum in every version, including the latest one
+    clients = create_versioned_clients(
+        version_change(),
+        head_version_changes=[version_change(enum(RoleOfVersionedDependency).didnt_have("editor"))],
+    )
+    # The models refer to the changed enum without validating it so the dependency gets the original classes
+    for version_client in clients.values():
+        assert version_client.post("/role", json={"role_name": "anything"}).json() == "anything"
+        if model is UserWithDefaultFactoryOfChangedEnum:
+            assert version_client.post("/role", json={}).json() == "reader"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param(ParentWithChangedEnum, id="field"),
+        pytest.param(GenericThatUsesItsArg[RoleOfVersionedDependency], id="used_generic_arg"),
+    ],
+)
+def test__router_generation__annotated_dependency_whose_models_validate_changed_enum__should_be_versioned(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    model: Any,
+):
+    async def dependency(body: Any) -> str:
+        return body.role_name.value
+
+    dependency.__annotations__["body"] = model
+
+    @router.post("/role")
+    async def route(role_name: Annotated[str, Depends(dependency)]):
+        return role_name
+
+    clients = create_versioned_clients(version_change(enum(RoleOfVersionedDependency).didnt_have("editor")))
+    assert clients["2001-01-01"].post("/role", json={"role_name": "editor"}).json() == "editor"
+    assert clients["2000-01-01"].post("/role", json={"role_name": "editor"}).status_code == 422
+    assert clients["2000-01-01"].post("/role", json={"role_name": "reader"}).json() == "reader"
+
+
+def test__router_generation__annotated_dependency_whose_base_has_instructions__should_be_versioned(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    async def dependency(body: ChildThatOverridesChangedEnum) -> str:
+        return body.role_name
+
+    @router.post("/role")
+    async def route(role_name: Annotated[str, Depends(dependency)]):
+        return role_name
+
+    clients = create_versioned_clients(
+        version_change(schema(ParentWithChangedEnum).field("legacy").existed_as(type=str)),
+    )
+    # The copy of the child inherits the field from the copy of its parent
+    assert clients["2001-01-01"].post("/role", json={"role_name": "a"}).json() == "a"
+    assert clients["2000-01-01"].post("/role", json={"role_name": "a"}).status_code == 422
+    assert clients["2000-01-01"].post("/role", json={"role_name": "a", "legacy": "b"}).json() == "a"
+
+
+def get_role_name_from_query(role: RoleOfVersionedDependency = Query(RoleOfVersionedDependency.reader)) -> str:
+    return role.value
+
+
+def test__router_generation__inferred_annotated_dependency__should_use_dependency_of_its_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.get("/role")
+    async def route(role_name: Annotated[get_role_name_from_query, Depends()]):  # ty: ignore[invalid-type-form]
+        return role_name
+
+    clients = create_versioned_clients(version_change(enum(RoleOfVersionedDependency).didnt_have("editor")))
+    assert clients["2001-01-01"].get("/role", params={"role": "editor"}).json() == "editor"
+    assert clients["2000-01-01"].get("/role", params={"role": "reader"}).json() == "reader"
+    assert clients["2000-01-01"].get("/role", params={"role": "editor"}).status_code == 422
+    for version, enum_values in {"2001-01-01": ["reader", "editor"], "2000-01-01": ["reader"]}.items():
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["RoleOfVersionedDependency"]["enum"] == enum_values
 
 
 def test__router_generation__annotated_dependency_with_enum_changed_by_head_version__should_be_versioned_in_latest(

@@ -1457,21 +1457,39 @@ class _AnnotationTransformer:
         new_args = tuple(self._change_version_of_generic_arg(origin, index, arg) for index, arg in enumerate(args))
         if self.record_only:
             return annotation
-        if origin is Annotated and self._has_dependency_that_differs_from_head(args[1:]):
+        if origin is Annotated and self._has_dependency_that_differs_from_head(args):
             # typing caches Annotated[...] by "==" and "hash", and our dependency wrappers are equal to the originals
             # (so that dependency_overrides match them), so typing would usually return the alias that holds
             # the original dependency (#467). We bypass its cache only where the original dependency would validate
             # requests differently, so everywhere else the dependency keeps getting the original classes, as before
+            if self._has_inferred_dependency(args) and not isinstance(args[0], type):
+                # FastAPI uses the first arg as the dependency (e.g. `Annotated[get_roles, Depends()]`)
+                with self.hard_position():
+                    dependency = self.change_versions_of_a_non_container_annotation(
+                        args[0], callable_kind=_CallableKind.DEPENDENCY
+                    )
+                new_args = (dependency, *new_args[1:])
             return _AnnotatedAlias(new_args[0], new_args[1:])
         return _rebuild_generic_alias(annotation, new_args)
 
-    def _has_dependency_that_differs_from_head(self, metadata: tuple[Any, ...]) -> bool:
+    def _has_dependency_that_differs_from_head(self, annotated_args: tuple[Any, ...]) -> bool:
         generator = self.generator
-        return isinstance(generator, SchemaGenerator) and any(
-            isinstance(value, fastapi.params.Depends)
-            and value.dependency is not None
-            and generator.dependency_differs_from_head(value.dependency)
-            for value in metadata
+        return (
+            isinstance(generator, SchemaGenerator)
+            and any(
+                isinstance(value, fastapi.params.Depends)
+                # FastAPI infers the dependency from the type when it is not set (e.g. `Annotated[Params, Depends()]`)
+                and generator.dependency_differs_from_head(
+                    annotated_args[0] if value.dependency is None else value.dependency
+                )
+                for value in annotated_args[1:]
+            )
+        )
+
+    @staticmethod
+    def _has_inferred_dependency(annotated_args: tuple[Any, ...]) -> bool:
+        return any(
+            isinstance(value, fastapi.params.Depends) and value.dependency is None for value in annotated_args[1:]
         )
 
     def _change_version_of_generic_arg(self, origin: Any, index: int, arg: Any) -> Any:
@@ -2222,10 +2240,14 @@ class SchemaGenerator:
         return self[base]
 
     def dependency_differs_from_head(self, dependency: Callable[..., Any]) -> bool:
-        """Whether the dependency's parameters refer to models or enums that this version changes.
+        """Whether this version's copy of the dependency could validate requests differently from the dependency.
 
-        This includes the models and enums that the parameters reach through sub-dependencies, fields, generic args
-        and bases. Only then does this version's copy of the dependency validate requests differently.
+        That is, whether the dependency's parameters validate models or enums that this version changes, directly,
+        through sub-dependencies, or through the types of the fields of models. Unlike the references of models
+        (see _get_references), this only follows what pydantic validates: the resolved fields of each model, after
+        its subclasses override them, so not the fields of bases that a subclass overrides, class variables,
+        field attributes such as default factories, or the type args of generics that no field uses. A model whose
+        bases have instructions differs too because its copy inherits from their copies.
         """
         if not self._models_that_differ_from_head:
             return False
@@ -2233,16 +2255,17 @@ class SchemaGenerator:
         collector.annotation_transformer.record_dependency(dependency)
         models_to_visit = [*collector.models, *collector.arg_models]
         visited_models: set[type[Union[BaseModel, Enum]]] = set()
-        with self._lock:
-            while models_to_visit:
-                model = models_to_visit.pop()
-                if model in visited_models:
-                    continue
-                visited_models.add(model)
-                if model in self._models_that_differ_from_head:
+        while models_to_visit:
+            model = models_to_visit.pop()
+            if model in visited_models:
+                continue
+            visited_models.add(model)
+            if model in self._models_that_differ_from_head:
+                return True
+            if lenient_issubclass(model, BaseModel):
+                if any(base in self._models_that_differ_from_head for base in model.__mro__):
                     return True
-                references = self._get_references(model)
-                models_to_visit.extend(references.models | references.arg_models | references.base_models)
+                models_to_visit.extend(_get_models_validated_by_fields(model))
         return False
 
     def _needs_copy(self, model: type[Union[BaseModel, Enum]]) -> bool:
@@ -3162,6 +3185,15 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
         models_that_differ_from_head |= _get_models_with_instructions(version)
 
     return version_to_context_map
+
+
+def _get_models_validated_by_fields(model: type[BaseModel]) -> set[type[Union[BaseModel, Enum]]]:
+    """Return the models and enums in the types of the resolved fields of the model"""
+    fields = _get_rebuilt_model_fields(model)
+    collector = _ReferencedModelCollector()
+    for field in (model.model_fields if fields is None else fields).values():
+        collector.annotation_transformer.change_version_of_annotation(field.annotation)
+    return collector.models | collector.arg_models
 
 
 def _get_models_with_instructions(version: "Union[Version, HeadVersion]") -> "frozenset[type[Union[BaseModel, Enum]]]":
