@@ -459,18 +459,6 @@ def _get_annotations_without_evaluating(obj: Any) -> dict[str, Any]:
 
 
 _UNRESOLVED: Any = object()
-# Before 0.148, FastAPI validates the defaults of the query, header, cookie, and form params that the client omits,
-# which rejected enum defaults that were the latest members (see _change_version_of_parameter_default). Since
-# 0.148, it passes such defaults on as they are, so we don't change them there
-_FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS = tuple(int(part) for part in fastapi.__version__.split(".")[:2]) < (
-    0,
-    148,
-)
-try:
-    # Private, so it can move. It's only needed for the defaults above
-    from fastapi._compat import field_annotation_is_scalar as _field_annotation_is_scalar
-except ImportError:  # pragma: no cover # It exists in every FastAPI version that we support
-    _field_annotation_is_scalar = None
 _T_EVALUATED = TypeVar("_T_EVALUATED")
 
 
@@ -1195,8 +1183,9 @@ class _AnnotationTransformer:
         # Record the values of type aliases with their args instead of the args themselves (record-only), so that
         # the args that the values do not use are not recorded (see SchemaGenerator.dependency_differs_from_head)
         self._expands_type_aliases = expands_type_aliases
-        # The type aliases whose values we are recording right now, to stop at the ones that refer to themselves
-        self._type_aliases_being_expanded: set[int] = set()
+        # The type aliases whose values we are recording right now (by their ids) with the args of each expansion,
+        # to stop at the ones that refer to themselves
+        self._type_aliases_being_expanded: dict[int, list[tuple[Any, ...]]] = {}
         # The ids of the type aliases, callables and containers that we are recording, to detect the ones that
         # lead back to themselves (e.g. a default factory whose default argument is a registry that contains it)
         self._ids_being_recorded: set[int] = set()
@@ -1380,21 +1369,6 @@ class _AnnotationTransformer:
             def modifier(annotation: Any):
                 return self.change_version_of_annotation(annotation)
 
-            def defaults_modifier(defaults: tuple[Any, ...]) -> tuple[Any, ...]:
-                defaults = modifier(defaults)
-                if callable_kind is _CallableKind.OTHER or not _FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS:
-                    return defaults
-                # The same parameters that _modify_callable_annotations takes the defaults from
-                parameters = [
-                    param
-                    for param in _get_signature(annotation).parameters.values()
-                    if param.default is not inspect.Signature.empty
-                ]
-                return tuple(
-                    self._change_version_of_parameter_default(default, param.annotation)
-                    for default, param in zip(defaults, parameters, strict=True)
-                )
-
             if self.record_only:
                 self._record_without_cycles(
                     annotation, lambda: self._get_annotations_and_defaults_to_record(annotation, callable_kind)
@@ -1403,7 +1377,7 @@ class _AnnotationTransformer:
             return self._modify_callable_annotations(
                 annotation,
                 modifier,
-                defaults_modifier,
+                modifier,
                 annotation_modifying_wrapper_factory=functools.partial(
                     self._copy_function_through_class_based_wrapper,
                     is_called_by_fastapi=callable_kind is not _CallableKind.OTHER,
@@ -1415,62 +1389,25 @@ class _AnnotationTransformer:
         """Record the value of the type alias with its args, if the annotation is a type alias that we can expand.
 
         E.g. `Unused[Role]` with `type Unused[T] = str` records `str`, and `Alias` with `type Alias = Unused[Role]`
-        records `str` too. A type alias that refers to itself (e.g. `type Tree[T] = T | list[Tree[T]]`) is expanded
-        once: within its value, it is recorded with its args, as usual. The aliases that we cannot expand (e.g.
-        with names that are not defined yet or with a TypeVarTuple) are recorded as usual too.
+        records `str` too. A type alias that refers to itself is expanded once. Within its value, a reference to it
+        with the same args (e.g. `Tree[Role]` within `type Tree[T] = str | list[Tree[T]]` for `Tree[Role]`) records
+        nothing because the expansion that we are in already records all of its types. A reference to it with other
+        args is recorded with these args, as usual, and so are the aliases that we cannot expand (e.g. with names
+        that are not defined yet or with a TypeVarTuple).
         """
         value = _get_value_of_type_alias_with_args(annotation)
-        if (
-            value is _UNRESOLVED
-            or id(value.alias) in self._type_aliases_being_expanded
-            # Pydantic's own type aliases (e.g. JsonValue) are never versioned (see the branch for them below)
-            or (value.alias.__module__ or "").startswith("pydantic.")
-        ):
+        # Pydantic's own type aliases (e.g. JsonValue) are never versioned (see the branch for them below)
+        if value is _UNRESOLVED or (value.alias.__module__ or "").startswith("pydantic."):
             return False
-        self._type_aliases_being_expanded.add(id(value.alias))
+        expanded_args = self._type_aliases_being_expanded.get(id(value.alias))
+        if expanded_args is not None:
+            return any(_are_same_args(value.args, args) for args in expanded_args)
+        self._type_aliases_being_expanded[id(value.alias)] = [value.args]
         try:
             self.change_version_of_annotation(value.value)
         finally:
-            self._type_aliases_being_expanded.discard(id(value.alias))
+            del self._type_aliases_being_expanded[id(value.alias)]
         return True
-
-    def _change_version_of_parameter_default(self, default: Any, annotation: Any) -> Any:
-        """Use the members of this version's enums in the default of a query, header, cookie, or path parameter.
-
-        Only for FastAPI before 0.148, which validates the defaults of such parameters, e.g.
-        `role: Role = Query(Role.reader)`, when they are omitted: the copy of an enum rejects the members of the
-        latest enum unless they equal its values (e.g. str or int enums), which made such requests fail with a 422.
-        We only replace the members that this validation rejects. The FieldInfo defaults are already copies that
-        belong to this version.
-        FastAPI never validates the defaults of body parameters (including forms and files), and Cadwyn passes
-        the body that FastAPI solved for an endpoint to the head route, which validates it with the latest models,
-        so their defaults stay the latest members.
-        """
-        if not _is_non_body_param(default, annotation):
-            return default
-        if isinstance(default, FieldInfo):
-            versioned_default = self._change_version_of_enum_members(default.default)
-            if versioned_default is not default.default:
-                # pydantic merges FieldInfo objects (e.g. with the ones in Annotated) by their _attributes_set
-                default.default = default._attributes_set["default"] = versioned_default
-            return default
-        return self._change_version_of_enum_members(default)
-
-    def _change_version_of_enum_members(self, value: Any) -> Any:
-        if isinstance(value, Enum):
-            versioned_enum = self.change_version_of_annotation(type(value))
-            if _is_valid_enum_member(versioned_enum, value):
-                # FastAPI's validation turns it into the same member of this version as before (e.g. by the value
-                # of a str enum), so we keep it to change nothing that worked before
-                return value
-            # The members that this version does not have stay the latest ones
-            return versioned_enum.__members__.get(value.name, value)
-        if type(value) in {list, tuple, set, frozenset}:
-            items = [self._change_version_of_enum_members(item) for item in value]
-            if all(new_item is item for new_item, item in zip(items, value, strict=True)):
-                return value
-            return type(value)(items)
-        return value
 
     def _record_without_cycles(self, obj: Any, get_values_to_record: Callable[[], Any]) -> None:
         """Record the values within the object unless we are already recording it.
@@ -3322,35 +3259,6 @@ def _only_changes_fields(instruction: Any, field_names: "collections.abc.Set[str
     )
 
 
-def _is_non_body_param(default: Any, annotation: Any) -> bool:
-    """Whether FastAPI makes a query, header, cookie, or path parameter out of a parameter of a dependency
-
-    It's the same decision as in fastapi.dependencies.utils.analyze_param. If FastAPI's private helper for it is
-    missing, we treat the parameters with plain defaults as body parameters, whose defaults we do not change.
-    """
-    if isinstance(default, FieldInfo):
-        return isinstance(default, fastapi.params.Param)
-    if get_origin(annotation) is Annotated:
-        fastapi_annotations = [
-            arg for arg in get_args(annotation)[1:] if isinstance(arg, FieldInfo | fastapi.params.Depends)
-        ]
-        if fastapi_annotations:
-            return isinstance(fastapi_annotations[-1], fastapi.params.Param)
-        annotation = get_args(annotation)[0]
-    if _field_annotation_is_scalar is None:  # pragma: no cover # It exists in every FastAPI version that we support
-        return False
-    return _field_annotation_is_scalar(annotation=annotation)
-
-
-def _is_valid_enum_member(enum_class: type[Enum], member: Enum) -> bool:
-    """Whether pydantic accepts the member as a member of the enum (e.g. the member of a copy of the enum)"""
-    try:
-        pydantic.TypeAdapter(enum_class).validate_python(member)
-    except pydantic.ValidationError:
-        return False
-    return True
-
-
 def _get_models_validated_by_fields(model: type[BaseModel]) -> set[type[Union[BaseModel, Enum]]]:
     """Return the models and enums in the types of the resolved fields of the model, including typed extras"""
     fields = _get_rebuilt_model_fields(model)
@@ -3381,7 +3289,15 @@ def _get_module_globals(cls: type) -> dict[str, Any]:
 
 class _TypeAliasValue(NamedTuple):
     alias: Any
+    args: tuple[Any, ...]
     value: Any
+
+
+def _are_same_args(args: tuple[Any, ...], other_args: tuple[Any, ...]) -> bool:
+    try:
+        return bool(args == other_args)
+    except Exception:  # noqa: BLE001  # pragma: no cover # E.g. Annotated metadata whose __eq__ raises
+        return False
 
 
 def _get_value_of_type_alias_with_args(annotation: Any) -> "Union[_TypeAliasValue, Any]":
@@ -3407,7 +3323,7 @@ def _get_value_of_type_alias_with_args(annotation: Any) -> "Union[_TypeAliasValu
     except (NameError, KeyError, TypeError, ValueError):
         # E.g. its value uses names that are not defined yet, or it has a TypeVarTuple that takes several args
         return _UNRESOLVED
-    return _TypeAliasValue(alias, value)
+    return _TypeAliasValue(alias, args, value)
 
 
 def _get_models_with_instructions(version: "Union[Version, HeadVersion]") -> "frozenset[type[Union[BaseModel, Enum]]]":

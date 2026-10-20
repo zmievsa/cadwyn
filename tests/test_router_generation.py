@@ -11,7 +11,7 @@ import sys
 import typing
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from enum import Enum, IntEnum, auto
+from enum import Enum, auto
 from types import GenericAlias
 from typing import Annotated, ClassVar, Generic, Literal, NewType, Optional, TypeAlias, TypeVar, Union, cast, get_args
 from uuid import UUID
@@ -77,10 +77,7 @@ from tests._data.sqlalchemy_models import ImperativelyMappedModel, MappedChild, 
 from tests._data.unversioned_schema_dir import UnversionedSchema2
 from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSchema1
 from tests._data.unversioned_schemas import UnversionedSchema3
-from tests._resources.utils import (
-    FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS,
-    HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED,
-)
+from tests._resources.utils import HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED
 from tests.conftest import (
     CreateVersionedApp,
     CreateVersionedClients,
@@ -3826,6 +3823,9 @@ if sys.version_info >= (3, 12):
     # Type aliases that refer to themselves can only be defined with the type statement
     exec(
         "type RecursiveAlias[T] = T | list[RecursiveAlias[T]]\n"
+        "type RecursiveAliasThatDoesNotUseItsArg[T] = str | list[RecursiveAliasThatDoesNotUseItsArg[T]]\n"
+        "class ModelWithRecursiveAliasThatDoesNotUseItsArg(BaseModel):\n"
+        "    role_name: RecursiveAliasThatDoesNotUseItsArg[RoleOfVersionedDependency]\n"
         "class ModelWithRecursiveAliasOfUnchangedArg(BaseModel):\n"
         "    role_name: RecursiveAlias[str]\n"
         "class ModelWithRecursiveAliasOfChangedArg(BaseModel):\n"
@@ -3866,6 +3866,11 @@ def _make_body_dependency(model: Any) -> Callable[..., str]:
         pytest.param(ModelWithUnusedArgOfAliasBehindAlias, id="unused_generic_alias_arg_behind_alias"),
         pytest.param(
             "ModelWithRecursiveAliasOfUnchangedArg", id="recursive_generic_alias", marks=_requires_type_statement
+        ),
+        pytest.param(
+            "ModelWithRecursiveAliasThatDoesNotUseItsArg",
+            id="recursive_generic_alias_that_does_not_use_its_arg",
+            marks=_requires_type_statement,
         ),
     ],
 )
@@ -3985,235 +3990,6 @@ def test__router_generation__annotated_dependency_whose_base_changes_only_overri
     # The child overrides the only field that the instructions of its parent change
     for version_client in clients.values():
         assert version_client.post("/role", json={"role_name": "anything"}).json() == "anything"
-
-
-class PlainPlanOfDefault(Enum):
-    free = "free"
-    pro = "pro"
-    team = "team"
-
-
-class StrPlanOfDefault(str, Enum):
-    free = "free"
-    pro = "pro"
-    team = "team"
-
-
-class IntPlanOfDefault(IntEnum):
-    free = 0
-    pro = 1
-    team = 2
-
-
-def _make_route_with_enum_default(plan_enum: Any, style: str, member_name: str) -> Callable[..., Any]:
-    default = plan_enum[member_name]
-    if style == "endpoint_query":
-
-        async def endpoint_query(plan: plan_enum = Query(default)):
-            return [plan.name]
-
-        return endpoint_query
-    if style == "endpoint_plain_default":
-
-        async def endpoint_plain_default(plan: plan_enum = default):
-            return [plan.name]
-
-        return endpoint_plain_default
-    if style == "endpoint_header":
-
-        async def endpoint_header(plan: plan_enum = Header(default)):
-            return [plan.name]
-
-        return endpoint_header
-    if style == "endpoint_list":
-
-        async def endpoint_list(plans: list[plan_enum] = Query([default])):
-            return [plan.name for plan in plans]
-
-        return endpoint_list
-
-    async def dependency(plan: plan_enum = Query(default)):
-        return [plan.name]
-
-    if style == "default_dependency":
-
-        async def default_dependency_route(names: list[str] = Depends(dependency)):
-            return names
-
-        return default_dependency_route
-    assert style == "annotated_dependency"
-
-    async def annotated_dependency_route(names: Annotated[list[str], Depends(dependency)]):
-        return names
-
-    return annotated_dependency_route
-
-
-_ENUM_DEFAULT_STYLES = [
-    "endpoint_query",
-    "endpoint_plain_default",
-    "endpoint_header",
-    "endpoint_list",
-    "default_dependency",
-    "annotated_dependency",
-]
-
-
-@pytest.mark.parametrize("plan_enum", [PlainPlanOfDefault, StrPlanOfDefault, IntPlanOfDefault])
-@pytest.mark.parametrize("style", _ENUM_DEFAULT_STYLES)
-def test__router_generation__enum_member_as_parameter_default__should_be_the_member_of_its_version(
-    router: VersionedAPIRouter,
-    create_versioned_clients: CreateVersionedClients,
-    plan_enum: Any,
-    style: str,
-):
-    router.get("/plan")(_make_route_with_enum_default(plan_enum, style, "pro"))
-
-    clients = create_versioned_clients(version_change(enum(plan_enum).didnt_have("team")))
-    for version, version_client in clients.items():
-        assert version_client.get("/plan").json() == ["pro"]
-        openapi = version_client.get(f"/openapi.json?version={version}").json()
-        (parameter,) = [p for p in openapi["paths"]["/plan"]["get"]["parameters"] if p["name"] != "x-api-version"]
-        expected_default = plan_enum.pro.value
-        assert parameter["schema"]["default"] == ([expected_default] if style == "endpoint_list" else expected_default)
-
-
-@pytest.mark.parametrize("style", _ENUM_DEFAULT_STYLES)
-def test__router_generation__removed_enum_member_as_parameter_default__should_stay_the_latest_member(
-    router: VersionedAPIRouter,
-    create_versioned_clients: CreateVersionedClients,
-    style: str,
-):
-    router.get("/plan")(_make_route_with_enum_default(PlainPlanOfDefault, style, "team"))
-
-    clients = create_versioned_clients(version_change(enum(PlainPlanOfDefault).didnt_have("team")))
-    assert clients["2001-01-01"].get("/plan").json() == ["team"]
-    # The older version doesn't have the member so the default stays the latest one, as before. FastAPI rejects it
-    # if it validates the defaults of omitted params, and passes it on as it is otherwise
-    response = clients["2000-01-01"].get("/plan")
-    expected = (422, None) if FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS else (200, ["team"])
-    assert (response.status_code, response.json() if response.status_code == 200 else None) == expected
-
-
-def _make_route_with_enum_body_default(style: str) -> Callable[..., Any]:
-    if style == "endpoint_body":
-
-        async def endpoint_body(plan: PlainPlanOfDefault = Body(PlainPlanOfDefault.pro)):
-            return [plan.name]
-
-        return endpoint_body
-    if style == "endpoint_body_list":
-
-        async def endpoint_body_list(plans: list[PlainPlanOfDefault] = Body([PlainPlanOfDefault.pro])):
-            return [plan.name for plan in plans]
-
-        return endpoint_body_list
-    if style == "endpoint_plain_list":
-        # FastAPI makes body parameters out of the parameters with plain defaults whose types are not scalar
-
-        async def endpoint_plain_list(plans: list[PlainPlanOfDefault] = [PlainPlanOfDefault.pro]):  # noqa: B006
-            return [plan.name for plan in plans]
-
-        return endpoint_plain_list
-    if style == "endpoint_annotated_body":
-
-        async def endpoint_annotated_body(plan: Annotated[PlainPlanOfDefault, Body()] = PlainPlanOfDefault.pro):
-            return [plan.name]
-
-        return endpoint_annotated_body
-
-    async def dependency(plan: PlainPlanOfDefault = Body(PlainPlanOfDefault.pro, embed=True)):
-        return [plan.name]
-
-    if style == "default_dependency_body":
-
-        async def default_dependency_route(names: list[str] = Depends(dependency)):
-            return names
-
-        return default_dependency_route
-    assert style == "annotated_dependency_body"
-
-    async def annotated_dependency_route(names: Annotated[list[str], Depends(dependency)]):
-        return names
-
-    return annotated_dependency_route
-
-
-@pytest.mark.parametrize(
-    "style",
-    [
-        "endpoint_body",
-        "endpoint_body_list",
-        "endpoint_plain_list",
-        "endpoint_annotated_body",
-        "default_dependency_body",
-        "annotated_dependency_body",
-    ],
-)
-def test__router_generation__enum_member_as_body_default__should_stay_the_latest_member(
-    router: VersionedAPIRouter,
-    create_versioned_clients: CreateVersionedClients,
-    style: str,
-):
-    router.post("/plan")(_make_route_with_enum_body_default(style))
-
-    clients = create_versioned_clients(version_change(enum(PlainPlanOfDefault).didnt_have("team")))
-    # FastAPI doesn't validate the defaults of body parameters, and Cadwyn passes the body that FastAPI solved for
-    # the endpoint to the head route, which validates it with the latest enum
-    for version_client in clients.values():
-        assert version_client.post("/plan").json() == ["pro"]
-
-
-@pytest.mark.parametrize("style", _ENUM_DEFAULT_STYLES)
-def test__router_generation__enum_member_with_changed_value_as_parameter_default__should_use_value_of_its_version(
-    router: VersionedAPIRouter,
-    create_versioned_clients: CreateVersionedClients,
-    style: str,
-):
-    router.get("/plan")(_make_route_with_enum_default(PlainPlanOfDefault, style, "pro"))
-
-    clients = create_versioned_clients(version_change(enum(PlainPlanOfDefault).had(pro="PRO")))
-    # Newer FastAPI versions don't validate the defaults of omitted params, so Cadwyn doesn't change them there
-    older_default = "PRO" if FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS else "pro"
-    for version, expected_default in {"2001-01-01": "pro", "2000-01-01": older_default}.items():
-        assert clients[version].get("/plan").json() == ["pro"]
-        openapi = clients[version].get(f"/openapi.json?version={version}").json()
-        (parameter,) = [p for p in openapi["paths"]["/plan"]["get"]["parameters"] if p["name"] != "x-api-version"]
-        assert parameter["schema"]["default"] == ([expected_default] if style == "endpoint_list" else expected_default)
-
-
-@pytest.mark.parametrize("style", ["default_dependency", "annotated_dependency"])
-def test__router_generation__enum_member_default_that_the_version_accepts__should_stay_as_validated_before(
-    router: VersionedAPIRouter,
-    create_versioned_clients: CreateVersionedClients,
-    style: str,
-):
-    first_run_names = []
-
-    async def dependency(
-        solver: Annotated[str, Depends(current_dependency_solver)],
-        plan: StrPlanOfDefault = Query(StrPlanOfDefault.pro),
-    ):
-        if solver == "fastapi":
-            first_run_names.append(plan.name)
-
-    if style == "default_dependency":
-
-        @router.get("/plan")
-        async def default_dependency_route(value: None = Depends(dependency)):
-            return value
-
-    else:
-
-        @router.get("/plan")
-        async def annotated_dependency_route(value: Annotated[None, Depends(dependency)]):
-            return value
-
-    # In the older version, the value of the latest `pro` member belongs to its `premium` member
-    clients = create_versioned_clients(version_change(enum(StrPlanOfDefault).had(pro="PRO", premium="pro")))
-    assert clients["2000-01-01"].get("/plan").status_code == 200
-    # FastAPI validated the default by its value before, so the dependency still gets the member that it gave
-    assert first_run_names == ["premium" if FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS else "pro"]
 
 
 def test__get_value_of_type_alias_with_args__alias_that_cannot_be_substituted__should_be_unresolved():
