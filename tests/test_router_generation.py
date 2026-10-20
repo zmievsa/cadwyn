@@ -2827,8 +2827,9 @@ def test__router_generation__async_generator_dependency__should_forward_everythi
         if cleanup_failed:
             raise RuntimeError("cleanup failed")
 
+    # Not in Annotated[...] because such dependencies only get versioned where the version changes their models
     @router.get("/test")
-    async def route(value: Annotated[str, Depends(dependency)]):
+    async def route(value: str = Depends(dependency)):
         raise NotImplementedError
 
     app = create_versioned_app(version_change())
@@ -3643,6 +3644,126 @@ def test__router_generation__dependency_with_versioned_enum_in_its_params__shoul
     for version, enum_values in {"2001-01-01": ["reader", "editor"], "2000-01-01": ["reader"]}.items():
         openapi = clients[version].get(f"/openapi.json?version={version}").json()
         assert openapi["components"]["schemas"]["RoleOfVersionedDependency"]["enum"] == enum_values
+
+
+class PlanOfDependency(Enum):
+    free = "free"
+    pro = "pro"
+    team = "team"
+
+
+PRICES_OF_PLANS = {PlanOfDependency.free: 0, PlanOfDependency.pro: 10, PlanOfDependency.team: 30}
+
+
+class AddonOfDependency(BaseModel):
+    plan: PlanOfDependency
+
+
+class SubscriptionOfDependency(BaseModel):
+    # Has no instructions itself but refers to an enum that has them, directly and through another model
+    plan: PlanOfDependency
+    addons: list[AddonOfDependency] = []
+
+
+class UnrelatedModelOfDependency(BaseModel):
+    foo: str
+
+
+def get_price_from_query(plan: PlanOfDependency = Query(PlanOfDependency.free)) -> int:
+    return PRICES_OF_PLANS[plan]
+
+
+def get_price_from_body(subscription: SubscriptionOfDependency) -> int:
+    assert isinstance(subscription, SubscriptionOfDependency)
+    return PRICES_OF_PLANS[subscription.plan]
+
+
+def get_price_from_sub_dependency(price: Annotated[int, Depends(get_price_from_query)]) -> int:
+    return price
+
+
+_PRICE_DEPENDENCIES: dict[str, tuple[Callable[..., int], Callable[[TestClient, str], Any]]] = {
+    "query": (get_price_from_query, lambda client, plan: client.get("/price", params={"plan": plan})),
+    "body": (get_price_from_body, lambda client, plan: client.post("/price", json={"plan": plan})),
+    "sub_dependency": (
+        get_price_from_sub_dependency,
+        lambda client, plan: client.get("/price", params={"plan": plan}),
+    ),
+}
+
+
+def _add_price_route(router: VersionedAPIRouter, dependency: Callable[..., int]) -> None:
+    async def route(price: Annotated[int, Depends(dependency)]):
+        return price
+
+    method = "POST" if dependency is get_price_from_body else "GET"
+    router.api_route("/price", methods=[method])(route)
+
+
+@pytest.mark.parametrize("source", list(_PRICE_DEPENDENCIES))
+@pytest.mark.parametrize(
+    "make_version_change",
+    [
+        pytest.param(version_change, id="no_instructions"),
+        pytest.param(
+            lambda: version_change(schema(UnrelatedModelOfDependency).field("foo").had(name="bar")),
+            id="unrelated_instructions",
+        ),
+    ],
+)
+def test__router_generation__annotated_dependency_without_changed_models__should_get_original_classes(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    source: str,
+    make_version_change: Callable[[], type[VersionChange]],
+):
+    dependency, send = _PRICE_DEPENDENCIES[source]
+    _add_price_route(router, dependency)
+
+    clients = create_versioned_clients(make_version_change())
+    for version_client in clients.values():
+        # The dependency gets the original classes, so lookups by enum members and isinstance work
+        assert send(version_client, "pro").json() == 10
+        assert send(version_client, "team").json() == 30
+
+
+@pytest.mark.parametrize("source", list(_PRICE_DEPENDENCIES))
+def test__router_generation__annotated_dependency_with_changed_enum__should_be_versioned_only_where_it_changes(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    source: str,
+):
+    dependency, send = _PRICE_DEPENDENCIES[source]
+    _add_price_route(router, dependency)
+
+    clients = create_versioned_clients(version_change(enum(PlanOfDependency).didnt_have("team")))
+    # The latest version validates the same as head so the dependency gets the original classes there
+    assert send(clients["2001-01-01"], "pro").json() == 10
+    assert send(clients["2001-01-01"], "team").json() == 30
+    # The older version uses its own copy of the dependency, which rejects the plan that it did not have
+    assert send(clients["2000-01-01"], "team").status_code == 422
+    for version, enum_values in {"2001-01-01": ["free", "pro", "team"], "2000-01-01": ["free", "pro"]}.items():
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["PlanOfDependency"]["enum"] == enum_values
+
+
+def test__router_generation__annotated_dependency_with_enum_changed_by_head_version__should_be_versioned_in_latest(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.get("/permissions")
+    async def route(roles: Annotated[list[str], Depends(get_allowed_roles)]):
+        return roles
+
+    clients = create_versioned_clients(
+        head_version_changes=[version_change(enum(RoleOfVersionedDependency).didnt_have("editor"))]
+    )
+    # HeadVersion changes the latest published version too, so it is versioned there
+    client = clients["2000-01-01"]
+    assert client.get("/permissions", params={"role": "reader"}).json() == ["reader"]
+    assert client.get("/permissions", params={"role": "editor"}).status_code == 422
+    openapi = client.get("/openapi.json?version=2000-01-01").json()
+    assert openapi["components"]["schemas"]["RoleOfVersionedDependency"]["enum"] == ["reader"]
 
 
 class ItemOfDependencyWithQuotedAnnotations(BaseModel):

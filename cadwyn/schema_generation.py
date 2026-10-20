@@ -693,11 +693,6 @@ def _rebuild_generic_alias(annotation: Any, new_args: tuple[Any, ...]) -> Any:
     # Classvar and Unpack do not support generic tuple arguments
     if origin is ClassVar or is_unpack(origin):
         return origin[new_args[0]]
-    if origin is Annotated:
-        # Annotated[...] is cached based on "==" and "hash" while our dependency wrappers are equal to the
-        # originals (so that dependency_overrides match them), so it could return the alias that holds the
-        # dependency of another version (#467)
-        return _AnnotatedAlias(new_args[0], new_args[1:])
     return origin[new_args]
 
 
@@ -1276,6 +1271,15 @@ class _AnnotationTransformer:
         finally:
             self._records_routes = records_routes
 
+    def record_dependency(self, dependency: Callable[..., Any]) -> None:
+        """Request the models that versioning the dependency requests without changing it (record-only)"""
+        records_routes = self._records_routes
+        self._records_routes = True
+        try:
+            self.change_versions_of_a_non_container_annotation(dependency, callable_kind=_CallableKind.DEPENDENCY)
+        finally:
+            self._records_routes = records_routes
+
     def _record_route(self, route: fastapi.routing.APIRoute) -> None:
         if route.response_model is not None:
             self.change_version_of_annotation(route.response_model)
@@ -1453,7 +1457,22 @@ class _AnnotationTransformer:
         new_args = tuple(self._change_version_of_generic_arg(origin, index, arg) for index, arg in enumerate(args))
         if self.record_only:
             return annotation
+        if origin is Annotated and self._has_dependency_that_differs_from_head(args[1:]):
+            # typing caches Annotated[...] by "==" and "hash", and our dependency wrappers are equal to the originals
+            # (so that dependency_overrides match them), so typing would usually return the alias that holds
+            # the original dependency (#467). We bypass its cache only where the original dependency would validate
+            # requests differently, so everywhere else the dependency keeps getting the original classes, as before
+            return _AnnotatedAlias(new_args[0], new_args[1:])
         return _rebuild_generic_alias(annotation, new_args)
+
+    def _has_dependency_that_differs_from_head(self, metadata: tuple[Any, ...]) -> bool:
+        generator = self.generator
+        return isinstance(generator, SchemaGenerator) and any(
+            isinstance(value, fastapi.params.Depends)
+            and value.dependency is not None
+            and generator.dependency_differs_from_head(value.dependency)
+            for value in metadata
+        )
 
     def _change_version_of_generic_arg(self, origin: Any, index: int, arg: Any) -> Any:
         if _is_type_position_in_generic(origin, index):
@@ -2117,6 +2136,7 @@ class SchemaGenerator:
         "_lock",
         "_model_references",
         "_models_copied_eagerly",
+        "_models_that_differ_from_head",
         "_reference_cycles",
         "_root_models",
         "_route_versioning_thread",
@@ -2132,10 +2152,13 @@ class SchemaGenerator:
         model_bundle: _ModelBundle,
         changed_models: "frozenset[type[Union[BaseModel, Enum]]]",
         reference_cycles: "_ReferenceCycles",
+        models_that_differ_from_head: "frozenset[type[Union[BaseModel, Enum]]]",
     ) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self.model_bundle = model_bundle
         self._changed_models = changed_models
+        # The models with instructions in HeadVersion or in the versions that are newer than this one
+        self._models_that_differ_from_head = models_that_differ_from_head
         self._model_references: dict[type[Union[BaseModel, Enum]], _ModelReferences] = {}
         self._versioning_answers: dict[_VersioningQuestion, bool] = {}
         self._reference_cycles = reference_cycles
@@ -2197,6 +2220,30 @@ class SchemaGenerator:
 
     def change_version_of_base(self, base: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
         return self[base]
+
+    def dependency_differs_from_head(self, dependency: Callable[..., Any]) -> bool:
+        """Whether the dependency's parameters refer to models or enums that this version changes.
+
+        This includes the models and enums that the parameters reach through sub-dependencies, fields, generic args
+        and bases. Only then does this version's copy of the dependency validate requests differently.
+        """
+        if not self._models_that_differ_from_head:
+            return False
+        collector = _ReferencedModelCollector()
+        collector.annotation_transformer.record_dependency(dependency)
+        models_to_visit = [*collector.models, *collector.arg_models]
+        visited_models: set[type[Union[BaseModel, Enum]]] = set()
+        with self._lock:
+            while models_to_visit:
+                model = models_to_visit.pop()
+                if model in visited_models:
+                    continue
+                visited_models.add(model)
+                if model in self._models_that_differ_from_head:
+                    return True
+                references = self._get_references(model)
+                models_to_visit.extend(references.models | references.arg_models | references.base_models)
+        return False
 
     def _needs_copy(self, model: type[Union[BaseModel, Enum]]) -> bool:
         """Whether this version uses a copy of the model instead of the head model.
@@ -3095,32 +3142,36 @@ def _replace_in_type_positions(annotation: Any, replace: Callable[[Any], Any]) -
 @cache
 def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGenerator]":
     models = _create_model_bundle(versions)
-    changed_models = frozenset(
-        instruction.schema
-        for version in versions._all_versions
-        for version_change in version.changes
-        for instruction in version_change.alter_schema_instructions
-    ) | frozenset(
-        instruction.enum
-        for version in versions._all_versions
-        for version_change in version.changes
-        for instruction in version_change.alter_enum_instructions
+    changed_models = frozenset[type[Union[BaseModel, Enum]]]().union(
+        *(_get_models_with_instructions(version) for version in versions._all_versions)
     )
 
     version_to_context_map = {}
     reference_cycles = _ReferenceCycles(changed_models)
     context = _RuntimeSchemaGenContext(current_version=versions.head_version, models=models)
     _migrate_classes(context)
+    models_that_differ_from_head = _get_models_with_instructions(versions.head_version)
 
     for version in versions.versions:
         context = _RuntimeSchemaGenContext(current_version=version, models=models)
         version_to_context_map[str(version.value)] = SchemaGenerator(
-            copy.deepcopy(models), changed_models, reference_cycles
+            copy.deepcopy(models), changed_models, reference_cycles, models_that_differ_from_head
         )
         # note that the last migration will not contain any version changes so we don't need to save the results
         _migrate_classes(context)
+        models_that_differ_from_head |= _get_models_with_instructions(version)
 
     return version_to_context_map
+
+
+def _get_models_with_instructions(version: "Union[Version, HeadVersion]") -> "frozenset[type[Union[BaseModel, Enum]]]":
+    return frozenset(
+        instruction.schema
+        for version_change in version.changes
+        for instruction in version_change.alter_schema_instructions
+    ) | frozenset(
+        instruction.enum for version_change in version.changes for instruction in version_change.alter_enum_instructions
+    )
 
 
 def _create_model_bundle(versions: "VersionBundle"):

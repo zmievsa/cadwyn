@@ -444,8 +444,6 @@ or to specify migrations using [endpoint path](#path-based-migration-specificati
 
 Notice that whenever a request reaches Cadwyn, it is first validated against the request's version of the schema, then it is migrated to the latest version, and then validated again to prevent migrations from creating invalid requests.
 
-The first validation also covers the parameters of your dependencies: their request bodies, query parameters, and other parameters are validated and documented in OpenAPI with the request's version of their models and enums, whether you declare a dependency as `value: T = Depends(f)` or as `value: Annotated[T, Depends(f)]`.
-
 This means that if you have a dependency that is executed during the request validation, **it will be executed twice**. For example, if you have a dependency that checks whether a user exists in the database, it will be executed twice. This is not an issue if the dependency is idempotent, but it becomes one if it is not.
 
 To solve this issue, you can use the `cadwyn.current_dependency_solver` dependency which tells you whether your dependency is called before or after the request is migrated. If you want to run it after Cadwyn has migrated the request to the latest version, ensure that `current_dependency_solver` is set to `"cadwyn"`. If you want your dependency to run at the very beginning of handling the request, you should run it when `current_dependency_solver` is `"fastapi"`.
@@ -468,6 +466,16 @@ def my_dependency(
 but the majority of your dependencies will not need this as most dependencies should not have side effects or network calls within them.
 
 Dependencies that read uploaded files or move their position (e.g. to skip a header) need care: both runs see the same files. Do such work in the run that gives your endpoint its arguments, i.e. when `current_dependency_solver` is `"cadwyn"`, or `"fastapi"` for requests that Cadwyn doesn't migrate (requests without an API version). Before the `"cadwyn"` run, Cadwyn moves the files that FastAPI has read for `bytes` params back to their start, so a file that a dependency has moved only in the `"fastapi"` run can be moved back.
+
+### Versioned dependencies
+
+In the first run, Cadwyn can give a dependency its version's copy, whose parameters (request bodies, query parameters, and so on) are validated and documented in OpenAPI with the request's version of their models and enums. Whether it does depends on how you declare the dependency:
+
+* `value: T = Depends(f)`: every version, including the latest one, uses its copy of `f`.
+* `value: Annotated[T, Depends(f)]` (or `Security(f)`): a version uses its copy of `f` only if the models or enums that the parameters of `f` use, including through sub-dependencies and the fields of models, have instructions in a newer version or in `HeadVersion`. So the latest version uses its copy only if `HeadVersion` has such instructions. All other versions use `f` itself, with the latest models and enums. As before, every version also uses its copy of `f` when `T` refers to Pydantic models that Cadwyn copies for every version (most of them), or when the other `Annotated` metadata cannot be hashed (e.g. `Security(f, scopes=[...])`).
+* Dependencies that are classes, such as `Depends(RoleChecker)`, are never versioned: the parameters of their `__init__` use the latest models and enums in every version.
+
+Where a version uses its copy of a dependency, the dependency receives that version's copies of the models and enums in the first run, not the classes themselves. So `isinstance(item, Item)`, `role is Role.admin`, `==` between the members of a plain `Enum`, and dicts keyed by enum members do not match them. Compare by value instead (e.g. `role.value == "admin"`), or do such work only when `current_dependency_solver` is `"cadwyn"`, where the dependency gets the latest classes.
 
 ## Version changes with side effects
 
