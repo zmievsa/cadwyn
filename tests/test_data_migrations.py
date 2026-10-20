@@ -1298,7 +1298,7 @@ def test__request_body_parsing__omitted_null_and_present_bodies__should_be_handl
         assert (response.status_code, response.json()) == (expected.status_code, expected.json())
 
 
-@pytest.mark.skipif(
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.151
     not FASTAPI_DISTINGUISHES_NULL_BODIES, reason="Before FastAPI 0.151.0, a body that is None is an omitted one"
 )
 @pytest.mark.parametrize("endpoint", [_validated_body_with_default, _validated_required_body])

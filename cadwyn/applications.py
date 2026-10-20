@@ -205,7 +205,7 @@ class Cadwyn(FastAPI):
             )
         # FastAPI 0.145.0 removed openapi_prefix, so we only forward it when it is set
         if openapi_prefix:
-            if not _FASTAPI_ACCEPTS_OPENAPI_PREFIX:
+            if not _FASTAPI_ACCEPTS_OPENAPI_PREFIX:  # pragma: no cover # FastAPI >= 0.145
                 raise TypeError(_OPENAPI_PREFIX_REMOVAL_MESSAGE)
             extra["openapi_prefix"] = openapi_prefix
 

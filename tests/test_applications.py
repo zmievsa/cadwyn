@@ -837,7 +837,9 @@ def test__get_openapi__with_openapi_prefix__should_include_it_in_servers():
     assert resp.json()["servers"] == [{"url": "/my_api"}]
 
 
-@pytest.mark.skipif(FASTAPI_ACCEPTS_OPENAPI_PREFIX, reason="FastAPI accepts openapi_prefix before 0.145.0")
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.145
+    FASTAPI_ACCEPTS_OPENAPI_PREFIX, reason="FastAPI accepts openapi_prefix before 0.145.0"
+)
 def test__cadwyn__with_openapi_prefix_on_fastapi_without_it__should_raise_a_clear_error():
     with pytest.raises(TypeError, match=re.escape("FastAPI 0.145.0 removed it")):
         Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")
