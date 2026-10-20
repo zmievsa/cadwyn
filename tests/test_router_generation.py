@@ -4173,11 +4173,47 @@ def test__router_generation__enum_member_with_changed_value_as_parameter_default
     router.get("/plan")(_make_route_with_enum_default(PlainPlanOfDefault, style, "pro"))
 
     clients = create_versioned_clients(version_change(enum(PlainPlanOfDefault).had(pro="PRO")))
-    for version, expected_default in {"2001-01-01": "pro", "2000-01-01": "PRO"}.items():
+    # Newer FastAPI versions don't validate the defaults of omitted params, so Cadwyn doesn't change them there
+    older_default = "PRO" if FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS else "pro"
+    for version, expected_default in {"2001-01-01": "pro", "2000-01-01": older_default}.items():
         assert clients[version].get("/plan").json() == ["pro"]
         openapi = clients[version].get(f"/openapi.json?version={version}").json()
         (parameter,) = [p for p in openapi["paths"]["/plan"]["get"]["parameters"] if p["name"] != "x-api-version"]
         assert parameter["schema"]["default"] == ([expected_default] if style == "endpoint_list" else expected_default)
+
+
+@pytest.mark.parametrize("style", ["default_dependency", "annotated_dependency"])
+def test__router_generation__enum_member_default_that_the_version_accepts__should_stay_as_validated_before(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    style: str,
+):
+    first_run_names = []
+
+    async def dependency(
+        solver: Annotated[str, Depends(current_dependency_solver)],
+        plan: StrPlanOfDefault = Query(StrPlanOfDefault.pro),
+    ):
+        if solver == "fastapi":
+            first_run_names.append(plan.name)
+
+    if style == "default_dependency":
+
+        @router.get("/plan")
+        async def default_dependency_route(value: None = Depends(dependency)):
+            return value
+
+    else:
+
+        @router.get("/plan")
+        async def annotated_dependency_route(value: Annotated[None, Depends(dependency)]):
+            return value
+
+    # In the older version, the value of the latest `pro` member belongs to its `premium` member
+    clients = create_versioned_clients(version_change(enum(StrPlanOfDefault).had(pro="PRO", premium="pro")))
+    assert clients["2000-01-01"].get("/plan").status_code == 200
+    # FastAPI validated the default by its value before, so the dependency still gets the member that it gave
+    assert first_run_names == ["premium" if FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS else "pro"]
 
 
 def test__get_value_of_type_alias_with_args__alias_that_cannot_be_substituted__should_be_unresolved():

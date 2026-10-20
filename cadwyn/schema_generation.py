@@ -459,6 +459,18 @@ def _get_annotations_without_evaluating(obj: Any) -> dict[str, Any]:
 
 
 _UNRESOLVED: Any = object()
+# Before 0.148, FastAPI validates the defaults of the query, header, cookie, and form params that the client omits,
+# which rejected enum defaults that were the latest members (see _change_version_of_parameter_default). Since
+# 0.148, it passes such defaults on as they are, so we don't change them there
+_FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS = tuple(int(part) for part in fastapi.__version__.split(".")[:2]) < (
+    0,
+    148,
+)
+try:
+    # Private, so it can move. It's only needed for the defaults above
+    from fastapi._compat import field_annotation_is_scalar as _field_annotation_is_scalar
+except ImportError:  # pragma: no cover # It exists in every FastAPI version that we support
+    _field_annotation_is_scalar = None
 _T_EVALUATED = TypeVar("_T_EVALUATED")
 
 
@@ -1370,7 +1382,7 @@ class _AnnotationTransformer:
 
             def defaults_modifier(defaults: tuple[Any, ...]) -> tuple[Any, ...]:
                 defaults = modifier(defaults)
-                if callable_kind is _CallableKind.OTHER:
+                if callable_kind is _CallableKind.OTHER or not _FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS:
                     return defaults
                 # The same parameters that _modify_callable_annotations takes the defaults from
                 parameters = [
@@ -1425,9 +1437,11 @@ class _AnnotationTransformer:
     def _change_version_of_parameter_default(self, default: Any, annotation: Any) -> Any:
         """Use the members of this version's enums in the default of a query, header, cookie, or path parameter.
 
-        Before 0.148, FastAPI validates the defaults of such parameters, e.g. `role: Role = Query(Role.reader)`, when
-        they are omitted, and the copy of an enum rejects the members of the latest enum unless they equal its values
-        (e.g. str or int enums). The FieldInfo defaults are already copies that belong to this version.
+        Only for FastAPI before 0.148, which validates the defaults of such parameters, e.g.
+        `role: Role = Query(Role.reader)`, when they are omitted: the copy of an enum rejects the members of the
+        latest enum unless they equal its values (e.g. str or int enums), which made such requests fail with a 422.
+        We only replace the members that this validation rejects. The FieldInfo defaults are already copies that
+        belong to this version.
         FastAPI never validates the defaults of body parameters (including forms and files), and Cadwyn passes
         the body that FastAPI solved for an endpoint to the head route, which validates it with the latest models,
         so their defaults stay the latest members.
@@ -1445,10 +1459,17 @@ class _AnnotationTransformer:
     def _change_version_of_enum_members(self, value: Any) -> Any:
         if isinstance(value, Enum):
             versioned_enum = self.change_version_of_annotation(type(value))
+            if _is_valid_enum_member(versioned_enum, value):
+                # FastAPI's validation turns it into the same member of this version as before (e.g. by the value
+                # of a str enum), so we keep it to change nothing that worked before
+                return value
             # The members that this version does not have stay the latest ones
             return versioned_enum.__members__.get(value.name, value)
         if type(value) in {list, tuple, set, frozenset}:
-            return type(value)(self._change_version_of_enum_members(item) for item in value)
+            items = [self._change_version_of_enum_members(item) for item in value]
+            if all(new_item is item for new_item, item in zip(items, value, strict=True)):
+                return value
+            return type(value)(items)
         return value
 
     def _record_without_cycles(self, obj: Any, get_values_to_record: Callable[[], Any]) -> None:
@@ -3304,10 +3325,9 @@ def _only_changes_fields(instruction: Any, field_names: "collections.abc.Set[str
 def _is_non_body_param(default: Any, annotation: Any) -> bool:
     """Whether FastAPI makes a query, header, cookie, or path parameter out of a parameter of a dependency
 
-    It's the same decision as in fastapi.dependencies.utils.analyze_param.
+    It's the same decision as in fastapi.dependencies.utils.analyze_param. If FastAPI's private helper for it is
+    missing, we treat the parameters with plain defaults as body parameters, whose defaults we do not change.
     """
-    from fastapi._compat import field_annotation_is_scalar
-
     if isinstance(default, FieldInfo):
         return isinstance(default, fastapi.params.Param)
     if get_origin(annotation) is Annotated:
@@ -3317,7 +3337,18 @@ def _is_non_body_param(default: Any, annotation: Any) -> bool:
         if fastapi_annotations:
             return isinstance(fastapi_annotations[-1], fastapi.params.Param)
         annotation = get_args(annotation)[0]
-    return field_annotation_is_scalar(annotation=annotation)
+    if _field_annotation_is_scalar is None:  # pragma: no cover # It exists in every FastAPI version that we support
+        return False
+    return _field_annotation_is_scalar(annotation=annotation)
+
+
+def _is_valid_enum_member(enum_class: type[Enum], member: Enum) -> bool:
+    """Whether pydantic accepts the member as a member of the enum (e.g. the member of a copy of the enum)"""
+    try:
+        pydantic.TypeAdapter(enum_class).validate_python(member)
+    except pydantic.ValidationError:
+        return False
+    return True
 
 
 def _get_models_validated_by_fields(model: type[BaseModel]) -> set[type[Union[BaseModel, Enum]]]:
