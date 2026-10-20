@@ -12,6 +12,8 @@ This release fixes many long-standing bugs, most of them reported by users. Most
 - Cadwyn now requires Pydantic 2.11.5 or newer.
 - Older API versions now use their own versions of the models inside generic models such as `Page[Item]`.
 - Older API versions of endpoints with postponed annotations (`from __future__ import annotations`) now validate request bodies with their own versions of the models, as documented, instead of the latest ones.
+- Instructions for a field that a subclass inherits (`schema(Child).field(...)`) now change it only in that subclass and its own subclasses, not in its parent and sibling models.
+- Dependencies declared as `Annotated[T, Depends(f)]` now use the versions of models and enums that the request's API version has, like `= Depends(f)` already did, in the versions where those models or enums change.
 
 ### Added
 
