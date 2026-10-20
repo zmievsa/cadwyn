@@ -120,7 +120,7 @@ def _copy_model_with_its_parents(
 
     Otherwise, it would change the field of the parent in the version, and of its other subclasses.
     """
-    models = [model.cls, *(base for base in model.cls.__mro__[1:] if base in schemas)]
+    models = [model.cls, *(cast("type[BaseModel]", base) for base in model.cls.__mro__[1:] if base in schemas)]
     copies = copy.deepcopy(_ModelBundle(enums={}, schemas={model: schemas[model] for model in models})).schemas
     return copies[model.cls], schemas | copies
 
