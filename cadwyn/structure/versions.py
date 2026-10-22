@@ -893,7 +893,7 @@ def _get_form_model_aliases(head_dependant: Dependant, head_route: APIRoute) -> 
 def _get_aliases_of_body_params(  # pragma: no cover # FastAPI >= 0.159
     head_dependant: Dependant, head_route: APIRoute
 ) -> tuple[str, ...]:
-    """Return the aliases that FastAPI looks the body params up under in the tree that it solves for the head.
+    """Return the aliases that FastAPI looks the form models up under in the tree that it solves for the head.
 
     Like FastAPI, we solve the dependant of an override instead of the overridden dependency.
     """
@@ -903,7 +903,8 @@ def _get_aliases_of_body_params(  # pragma: no cover # FastAPI >= 0.159
     while dependants:
         dependant = dependants.pop()
         for field in dependant.body_params:
-            aliases.update(dict.fromkeys(alias for alias, _ in _get_param_aliases(field)))
+            if _get_form_model(field):
+                aliases.update(dict.fromkeys(alias for alias, _ in _get_param_aliases(field)))
         for sub_dependant in dependant.dependencies:
             if dependency_overrides and (call := dependency_overrides.get(sub_dependant.call)) is not None:
                 sub_dependant = get_dependant(
@@ -914,7 +915,16 @@ def _get_aliases_of_body_params(  # pragma: no cover # FastAPI >= 0.159
 
 
 def _embed_form_model(body: Any, form_model_aliases: tuple[str, ...]) -> Any:
-    return dict.fromkeys(form_model_aliases, body) if form_model_aliases else body
+    """Return the body with the form models embedded under their aliases.
+
+    Other form fields, e.g. the ones that only a dependency override declares, look their values up in the body itself,
+    as they did before FastAPI 0.159.0.
+    """
+    return (
+        {**(body if isinstance(body, dict) else {}), **dict.fromkeys(form_model_aliases, body)}
+        if form_model_aliases
+        else body
+    )
 
 
 def _unembed_form_model_errors(errors: list[Any], form_model_aliases: tuple[str, ...]) -> list[Any]:

@@ -22,3 +22,5 @@ FASTAPI_DISTINGUISHES_NULL_BODIES = _FASTAPI_MINOR_VERSION >= (0, 151)
 FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES = _FASTAPI_MINOR_VERSION >= (0, 157)
 # Before FastAPI 0.159.0, FastAPI embeds `Optional` form models, so it looks their fields up under the param's alias
 FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS = _FASTAPI_MINOR_VERSION >= (0, 159)
+# Before FastAPI 0.158.0, FastAPI validates the whole form against a form field that only a dependency override declares
+FASTAPI_VALIDATES_FORM_FIELDS_OF_OVERRIDES = _FASTAPI_MINOR_VERSION >= (0, 158)
