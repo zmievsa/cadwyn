@@ -17,3 +17,6 @@ FASTAPI_ACCEPTS_OPENAPI_PREFIX = _FASTAPI_MINOR_VERSION < (0, 145)
 FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS = _FASTAPI_MINOR_VERSION < (0, 148)
 # Before FastAPI 0.151.0, FastAPI treats a body that is None as an omitted one, so it can't tell it from a JSON null
 FASTAPI_DISTINGUISHES_NULL_BODIES = _FASTAPI_MINOR_VERSION >= (0, 151)
+# Before FastAPI 0.157.0, FastAPI reads the uploaded files of `bytes` params to the end, so other params get them empty.
+# Since FastAPI 0.157.0, it puts them back where they were, which requires their streams to be seekable
+FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES = _FASTAPI_MINOR_VERSION >= (0, 157)

@@ -480,6 +480,7 @@ class VersionBundle:
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
         is_body_restored = False
+        form_model_alias = None
         if request_info._form is not None:
             if uploads_read_by_fastapi:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
@@ -490,6 +491,7 @@ class VersionBundle:
         elif body_is_model_dump:
             body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
             is_body_restored = body_for_solving is not request_info.body
+            form_model_alias = _get_form_model_alias(head_dependant.body_params[0])
         else:
             body_for_solving = request_info.body
 
@@ -501,17 +503,21 @@ class VersionBundle:
             dependant=head_dependant,
             dependency_overrides_provider=head_route.dependency_overrides_provider,
             async_exit_stack=exit_stack,
-            embed_body_fields=embed_body_fields,
+            # FastAPI 0.159.0 and newer only validate a form model from a dict if it's embedded under its alias
+            embed_body_fields=embed_body_fields or form_model_alias is not None,
             background_tasks=background_tasks,
         )
-        result = await solve(body=body_for_solving)
+        result = await solve(body=_embed_form_model(body_for_solving, form_model_alias))
         # We only restore bodies that would fail as they are. If the head rejects the restored body too, we solve the
         # request again with the body as it is, so that it fails with the same error as before. The second solve reuses
         # the dependencies of the first one, so they run as many times as before.
         if result.errors and is_body_restored:
-            result = await solve(body=request_info.body, dependency_cache=result.dependency_cache)
+            result = await solve(
+                body=_embed_form_model(request_info.body, form_model_alias), dependency_cache=result.dependency_cache
+            )
         if result.errors:
-            raise CadwynHeadRequestValidationError(result.errors, body=request_info.body, version=current_version)
+            errors = _unembed_form_model_errors(result.errors, form_model_alias)
+            raise CadwynHeadRequestValidationError(errors, body=request_info.body, version=current_version)
         return result.values
 
     def _migrate_response(
@@ -853,6 +859,33 @@ def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body
     return body_field_alias == route.dependant.body_params[0].name or any(
         dependency.name == body_field_alias for dependency in route.dependant.dependencies
     )
+
+
+def _get_form_model_alias(body_field: ModelField) -> Union[str, None]:
+    """Return the alias of the head's body param if it's a form, which we embed the body under for FastAPI.
+
+    Before FastAPI 0.159.0, a single form param validates a dict body as it is. Since then, a form model looks it up
+    under its alias instead. Both versions look up embedded bodies under their aliases, so we always embed.
+    """
+    if isinstance(body_field.field_info, params.Form):
+        return get_validation_alias(body_field)
+    return None
+
+
+def _embed_form_model(body: Any, form_model_alias: Union[str, None]) -> Any:
+    return body if form_model_alias is None else {form_model_alias: body}
+
+
+def _unembed_form_model_errors(errors: list[Any], form_model_alias: Union[str, None]) -> list[Any]:
+    """Return the errors at the locations that FastAPI reports for a form body that isn't embedded."""
+    if form_model_alias is None:
+        return errors
+    return [
+        {**error, "loc": ("body", *error["loc"][2:])}
+        if tuple(error["loc"][:2]) == ("body", form_model_alias)
+        else error
+        for error in errors
+    ]
 
 
 @dataclasses.dataclass(frozen=True)

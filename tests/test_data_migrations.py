@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from io import BytesIO, RawIOBase, StringIO
+from io import BytesIO, RawIOBase, StringIO, UnsupportedOperation
 from typing import Annotated, Any, Literal, Optional, Union, cast
 from uuid import UUID
 
@@ -88,7 +88,7 @@ from cadwyn.structure.data import RequestInfo, ResponseInfo
 from cadwyn.structure.endpoints import endpoint as cadwyn_endpoint
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import Version, VersionBundle
-from tests._resources.utils import FASTAPI_DISTINGUISHES_NULL_BODIES
+from tests._resources.utils import FASTAPI_DISTINGUISHES_NULL_BODIES, FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES
 from tests.conftest import (
     CreateVersionedApp,
     CreateVersionedClients,
@@ -2850,12 +2850,17 @@ async def _bytes_in_endpoint_and_dependency_endpoint(
         ),
         # Same as in FastAPI itself: the files get read once, and the cache gives the dependency's result again
         pytest.param(_cached_bytes_dependency_endpoint, {"files": {"data": b"first"}}, ["first", "first"], id="cached"),
-        # Same as in FastAPI itself: only the first param that reads the file gets its contents
-        pytest.param(_uncached_bytes_dependency_endpoint, {"files": {"data": b"first"}}, ["first", ""], id="uncached"),
+        # Same as in FastAPI itself: before FastAPI 0.157.0, only the first param that reads the file gets its contents
+        pytest.param(
+            _uncached_bytes_dependency_endpoint,
+            {"files": {"data": b"first"}},
+            ["first", "first" if FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES else ""],
+            id="uncached",
+        ),
         pytest.param(
             _bytes_in_endpoint_and_dependency_endpoint,
             {"files": {"data": b"first"}},
-            ["", "first"],
+            ["first" if FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES else "", "first"],
             id="in_endpoint_and_dependency",
         ),
     ],
@@ -2936,7 +2941,10 @@ async def _read_upload_as_bytes_in_old_version(upload: bytes = File()) -> None:
     assert upload == b"first"
 
 
-@pytest.mark.parametrize(("annotation", "expected_in_old_version"), [(bytes, "first"), (UploadFile, "")])
+@pytest.mark.parametrize(
+    ("annotation", "expected_in_old_version"),
+    [(bytes, "first"), (UploadFile, "first" if FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES else "")],
+)
 def test__request_body_migration__with_bytes_read_by_old_version_dependency__head_should_get_them_only_as_bytes(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
@@ -2980,9 +2988,15 @@ def test__request_body_migration__with_bytes_alias_shared_by_dependency_and_endp
     clients = create_versioned_clients(version_change(migrator=migrator))
     files = [("f", b"A"), ("f", b"B")]
 
-    # The dependency reads the last file first, so the endpoint gets it empty as in FastAPI itself
-    assert clients["2000-01-01"].post(test_path, files=files).json() == ["NEW", ["A", "B", ""]]
-    assert clients["2001-01-01"].post(test_path, files=files).json() == ["B", ["A", ""]]
+    # The dependency reads the last file first, so the endpoint gets it empty before FastAPI 0.157.0, as in FastAPI
+    assert clients["2000-01-01"].post(test_path, files=files).json() == [
+        "NEW",
+        ["A", "B", "NEW" if FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES else ""],
+    ]
+    assert clients["2001-01-01"].post(test_path, files=files).json() == [
+        "B",
+        ["A", "B" if FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES else ""],
+    ]
 
 
 async def _read_and_close_upload(request: Request, upload: bytes = File()) -> str:
@@ -3193,24 +3207,28 @@ _shared_dependency = _EqualDependency()
 
 
 @pytest.mark.parametrize(
-    ("head_dependency", "added_dependency", "dependency_overrides"),
+    ("head_dependency", "added_dependency", "dependency_overrides", "expected_in_old_version"),
     [
         pytest.param(
             Depends(_check_upload),
             Depends(_strip_legacy_header),
             {_check_upload: _prepare_upload_in_second_run, _strip_legacy_header: _prepare_upload_in_second_run},
+            "",
             id="same_override",
         ),
+        # Only FastAPI before 0.157.0 leaves the file at its end here
         pytest.param(
             Depends(_prepare_upload_in_second_run),
             Depends(_prepare_upload_in_second_run, use_cache=False),
             {},
+            "or" if FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES else "",
             id="uncached_copy",
         ),
         pytest.param(
             Depends(_shared_dependency, use_cache=False),
             Depends(_EqualDependency(), use_cache=False),
             {},
+            "or" if FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES else "",
             id="equal_callable",
         ),
     ],
@@ -3222,6 +3240,7 @@ def test__request_body_migration__with_bytes_and_old_version_dependency_like_a_h
     head_dependency: Any,
     added_dependency: Any,
     dependency_overrides: dict[Any, Any],
+    expected_in_old_version: str,
 ):
     @router.post(test_path, dependencies=[Depends(_store_upload), head_dependency])
     async def endpoint(request: Request):
@@ -3238,7 +3257,7 @@ def test__request_body_migration__with_bytes_and_old_version_dependency_like_a_h
     app.dependency_overrides.update(dependency_overrides)
 
     # The old version runs one more dependency than the head, even though it looks like the head's one
-    assert clients["2000-01-01"].post(test_path, files={"upload": b"or"}).json() == ""
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"or"}).json() == expected_in_old_version
     assert clients["2001-01-01"].post(test_path, files={"upload": b"or"}).json() == "or"
 
 
@@ -3346,9 +3365,16 @@ def _replace_with_non_seekable_stream(request: RequestInfo):
     request.form[:] = [("upload", UploadFile(cast("Any", _ReadOnlyStream(b"payload")), filename="replacement"))]
 
 
-@pytest.mark.parametrize("annotation", [bytes, UploadFile])
 @pytest.mark.parametrize(
-    "migration", [_skip_legacy_header, _replace_with_skipped_header, _replace_with_non_seekable_stream]
+    ("annotation", "migration"),
+    [
+        (bytes, _skip_legacy_header),
+        (UploadFile, _skip_legacy_header),
+        (bytes, _replace_with_skipped_header),
+        (UploadFile, _replace_with_skipped_header),
+        # Non-seekable streams for `bytes` params are tested separately because FastAPI 0.157.0 stopped supporting them
+        (UploadFile, _replace_with_non_seekable_stream),
+    ],
 )
 def test__form_migration__with_file_positions_set_by_migration__head_should_keep_them(
     create_versioned_clients: CreateVersionedClients,
@@ -3387,11 +3413,32 @@ def _swap_stream_for_one_at_the_same_position(request: RequestInfo):
         value.file.seek(len(b"12345"))
 
 
+def test__form_migration__with_bytes_upload_stream_swapped_by_migration__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(upload: bytes = File()):
+        return upload.decode()
+
+    clients = create_versioned_clients(
+        version_change(
+            migrator=convert_request_to_next_version_for(test_path, ["POST"])(_swap_stream_for_one_at_the_same_position)
+        )
+    )
+
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"12345"}).json() == "TA"
+
+
+@pytest.mark.skipif(
+    FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES, reason="Since FastAPI 0.157.0, `bytes` params require seekable files"
+)
 @pytest.mark.parametrize(
     ("migration", "expected"),
-    [(_swap_stream_for_non_seekable_one, "decoded"), (_swap_stream_for_one_at_the_same_position, "TA")],
+    [(_replace_with_non_seekable_stream, "payload"), (_swap_stream_for_non_seekable_one, "decoded")],
 )
-def test__form_migration__with_bytes_upload_stream_swapped_by_migration__should_stay_as_before(
+def test__form_migration__with_non_seekable_stream_for_bytes_param__head_should_read_it_as_is(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -3406,7 +3453,30 @@ def test__form_migration__with_bytes_upload_stream_swapped_by_migration__should_
         version_change(migrator=convert_request_to_next_version_for(test_path, ["POST"])(migration))
     )
 
-    assert clients["2000-01-01"].post(test_path, files={"upload": b"12345"}).json() == expected
+    assert clients["2000-01-01"].post(test_path, files={"upload": b"HDR:payload"}).json() == expected
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.157
+    not FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES, reason="Before FastAPI 0.157.0, `bytes` params take any stream"
+)
+@pytest.mark.parametrize("migration", [_replace_with_non_seekable_stream, _swap_stream_for_non_seekable_one])
+def test__form_migration__with_non_seekable_stream_for_bytes_param__should_raise_unsupported_operation_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    migration: Callable[[RequestInfo], None],
+):
+    @router.post(test_path)
+    async def endpoint(upload: bytes = File()):
+        raise NotImplementedError
+
+    clients = create_versioned_clients(
+        version_change(migrator=convert_request_to_next_version_for(test_path, ["POST"])(migration))
+    )
+
+    # Cadwyn passes the stream on as is, and FastAPI can't put a non-seekable stream back where it was after reading it
+    with pytest.raises(UnsupportedOperation):
+        clients["2000-01-01"].post(test_path, files={"upload": b"HDR:payload"})
 
 
 def _move_upload_to_attachment(request: RequestInfo):
@@ -3428,9 +3498,13 @@ def _reuse_upload_as_attachment(request: RequestInfo):
 @pytest.mark.parametrize(
     ("migration", "expected"),
     [
-        (_move_upload_to_attachment, ["converted", ""]),
-        (_shadow_upload_and_reuse_it_as_attachment, ["converted", ""]),
-        (_reuse_upload_as_attachment, ["", ""]),
+        # Before FastAPI 0.157.0, FastAPI leaves the file empty after reading it as `bytes` for the versioned route
+        (_move_upload_to_attachment, ["converted", "legacy" if FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES else ""]),
+        (
+            _shadow_upload_and_reuse_it_as_attachment,
+            ["converted", "legacy" if FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES else ""],
+        ),
+        (_reuse_upload_as_attachment, ["legacy", "legacy"] if FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES else ["", ""]),
     ],
 )
 def test__form_migration__with_bytes_upload_moved_to_another_field__should_stay_as_before(
@@ -3473,7 +3547,10 @@ def test__form_migration__with_bytes_upload_stream_shared_with_another_upload__s
     clients = create_versioned_clients(version_change(migrator=migrator))
     files = [("attachment", b"old"), ("upload", b"legacy")]
 
-    assert clients["2000-01-01"].post(test_path, files=files).json() == ["", ""]
+    # Before FastAPI 0.157.0, FastAPI leaves the file empty after reading it as `bytes` for the versioned route
+    assert clients["2000-01-01"].post(test_path, files=files).json() == (
+        ["legacy", "legacy"] if FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES else ["", ""]
+    )
 
 
 def test__form_migration__with_bytes_upload_closed_by_migration__should_stay_as_before(
@@ -5534,7 +5611,7 @@ def test__request_body_migration__with_form_value_that_the_head_rejects__should_
     solvers.clear()
     with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
         clients["2000-01-01"].post(test_path, data={"v": "5"})
-    assert [error["type"] for error in exc_info.value.errors] == ["missing"]
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [("missing", ("body", "v"))]
     assert solvers == ["fastapi", "cadwyn"]
 
 
