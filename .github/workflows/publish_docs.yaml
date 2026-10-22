@@ -1,19 +1,38 @@
 name: Publish documentation
+# Each release gets its own docs at docs.cadwyn.dev/<major.minor>/ (via mike).
+# "latest" points at the newest release and is the default page; "dev" tracks main.
 on:
   push:
     branches:
       - main
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git tag to build docs from (e.g. 7.4.0)"
+        required: true
+      version:
+        description: "Docs version name (e.g. 7.4)"
+        required: true
 permissions:
   contents: write
+concurrency:
+  group: publish-docs
+  cancel-in-progress: false
 jobs:
   publish-documentation:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.ref || github.ref }}
       - name: Configure Git Credentials
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin gh-pages --depth=1 || true
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
@@ -25,4 +44,15 @@ jobs:
           restore-keys: |
             mkdocs-material-
       - uses: ./.github/actions/setup-python-uv
-      - run: uv run mkdocs gh-deploy --force
+      - name: Deploy dev docs from main
+        if: github.event_name == 'push'
+        run: uv run mike deploy --push dev
+      - name: Deploy release docs
+        if: github.event_name == 'release'
+        run: |
+          version="$(echo '${{ github.event.release.tag_name }}' | sed -E 's/^v?([0-9]+\.[0-9]+).*/\1/')"
+          uv run mike deploy --push --update-aliases "$version" latest
+          uv run mike set-default --push latest
+      - name: Deploy an older release (backfill)
+        if: github.event_name == 'workflow_dispatch'
+        run: uv run mike deploy --push "${{ github.event.inputs.version }}"
