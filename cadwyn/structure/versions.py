@@ -6,6 +6,7 @@ import inspect
 import itertools
 import json
 import os
+import re
 import tempfile
 import threading
 from collections import Counter, defaultdict
@@ -16,13 +17,14 @@ from datetime import date
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, BinaryIO, ClassVar, TypeAlias, Union, cast, get_args, get_origin
 
+import fastapi.dependencies.utils
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
 from fastapi._compat import ModelField, is_bytes_or_nonable_bytes_annotation, is_bytes_sequence_annotation
 from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
-from fastapi.dependencies.utils import get_validation_alias, solve_dependencies
+from fastapi.dependencies.utils import get_dependant, get_validation_alias, solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
@@ -80,6 +82,22 @@ def _get_omitted_body_marker() -> Any:
 
 
 _OMITTED_BODY: Any = _get_omitted_body_marker()
+# Since FastAPI 0.159.0, FastAPI looks the dict body of a form model up under the param's aliases. We use its private
+# functions for picking form models and their aliases, so that we pick exactly the same ones
+_FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS = tuple(map(int, re.findall(r"\d+", fastapi.__version__)[:2])) >= (0, 159)
+_get_form_model = cast(
+    "Callable[[ModelField], Union[type[BaseModel], None]]",
+    getattr(fastapi.dependencies.utils, "_get_form_model", None),
+)
+_get_param_aliases = cast(
+    "Callable[[ModelField], list[tuple[str, str]]]", getattr(fastapi.dependencies.utils, "_get_param_aliases", None)
+)
+if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and None in (_get_form_model, _get_param_aliases):  # pragma: no cover
+    raise ImportError(
+        "Cadwyn does not support this version of FastAPI: `_get_form_model` or `_get_param_aliases` is missing from "
+        "`fastapi.dependencies.utils`. Cadwyn uses them to pass form models to FastAPI. "
+        "Please, open an issue on Cadwyn's GitHub."
+    )
 
 # ty requires staticmethod's type arguments, but runtime isinstance() requires the bare class.
 if TYPE_CHECKING:
@@ -480,6 +498,7 @@ class VersionBundle:
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
         is_body_restored = False
+        form_model_aliases: tuple[str, ...] = ()
         if request_info._form is not None:
             if uploads_read_by_fastapi:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
@@ -490,6 +509,7 @@ class VersionBundle:
         elif body_is_model_dump:
             body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
             is_body_restored = body_for_solving is not request_info.body
+            form_model_aliases = _get_form_model_aliases(head_dependant, head_route)
         else:
             body_for_solving = request_info.body
 
@@ -504,14 +524,17 @@ class VersionBundle:
             embed_body_fields=embed_body_fields,
             background_tasks=background_tasks,
         )
-        result = await solve(body=body_for_solving)
+        result = await solve(body=_embed_form_model(body_for_solving, form_model_aliases))
         # We only restore bodies that would fail as they are. If the head rejects the restored body too, we solve the
         # request again with the body as it is, so that it fails with the same error as before. The second solve reuses
         # the dependencies of the first one, so they run as many times as before.
         if result.errors and is_body_restored:
-            result = await solve(body=request_info.body, dependency_cache=result.dependency_cache)
+            result = await solve(
+                body=_embed_form_model(request_info.body, form_model_aliases), dependency_cache=result.dependency_cache
+            )
         if result.errors:
-            raise CadwynHeadRequestValidationError(result.errors, body=request_info.body, version=current_version)
+            errors = _unembed_form_model_errors(result.errors, form_model_aliases)
+            raise CadwynHeadRequestValidationError(errors, body=request_info.body, version=current_version)
         return result.values
 
     def _migrate_response(
@@ -855,6 +878,65 @@ def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body
     )
 
 
+def _get_form_model_aliases(head_dependant: Dependant, head_route: APIRoute) -> tuple[str, ...]:
+    """Return the keys that FastAPI looks the dict body of the head's form model up under, if it does.
+
+    Before FastAPI 0.159.0, FastAPI validates the dict body of a single form model as it is. Since then, the endpoint
+    and every dependency that shares the form model look it up under their own aliases instead.
+    """
+    body_field = head_dependant.body_params[0]
+    if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and _get_form_model(body_field):  # pragma: no cover # FastAPI >= 0.159
+        return _get_aliases_of_body_params(head_dependant, head_route)
+    return ()
+
+
+def _get_aliases_of_body_params(  # pragma: no cover # FastAPI >= 0.159
+    head_dependant: Dependant, head_route: APIRoute
+) -> tuple[str, ...]:
+    """Return the aliases that FastAPI looks the form models up under in the tree that it solves for the head.
+
+    Like FastAPI, we solve the dependant of an override instead of the overridden dependency.
+    """
+    dependency_overrides = _get_dependency_overrides(head_route)
+    aliases: dict[str, None] = {}
+    dependants = [head_dependant]
+    while dependants:
+        dependant = dependants.pop()
+        for field in dependant.body_params:
+            if _get_form_model(field):
+                aliases.update(dict.fromkeys(alias for alias, _ in _get_param_aliases(field)))
+        for sub_dependant in dependant.dependencies:
+            if dependency_overrides and (call := dependency_overrides.get(sub_dependant.call)) is not None:
+                sub_dependant = get_dependant(
+                    path=cast("str", sub_dependant.path), call=call, name=sub_dependant.name, scope=sub_dependant.scope
+                )
+            dependants.append(sub_dependant)
+    return tuple(aliases)
+
+
+def _embed_form_model(body: Any, form_model_aliases: tuple[str, ...]) -> Any:
+    """Return the body with the form models embedded under their aliases.
+
+    Other form fields, e.g. the ones that only a dependency override declares, look their values up in the body itself,
+    as they did before FastAPI 0.159.0.
+    """
+    return (
+        {**(body if isinstance(body, dict) else {}), **dict.fromkeys(form_model_aliases, body)}
+        if form_model_aliases
+        else body
+    )
+
+
+def _unembed_form_model_errors(errors: list[Any], form_model_aliases: tuple[str, ...]) -> list[Any]:
+    """Return the errors at the locations that FastAPI reports for form models that it validates from forms."""
+    return [
+        {**error, "loc": ("body", *error["loc"][2:])}
+        if len(error["loc"]) > 1 and error["loc"][0] == "body" and error["loc"][1] in form_model_aliases
+        else error
+        for error in errors
+    ]
+
+
 @dataclasses.dataclass(frozen=True)
 class _UploadReadByFastapi:
     form_key: str
@@ -874,7 +956,9 @@ def _get_uploads_read_by_fastapi(
 ) -> _UploadPositions:
     """Return the uploaded files that FastAPI has read for the `bytes` file params of the versioned route.
 
-    FastAPI reads these files to the end, so the head route would get them empty if we passed them on as is.
+    Before FastAPI 0.157.0, FastAPI reads these files to the end, so the head route would get them empty if we passed
+    them on as is. Since then, FastAPI puts them back where they were, and rewinding them replays what the versioned
+    route did with them.
     These params can be declared by the endpoint or by any of its dependencies. We only take the params
     that the head route also has, look the files up the same way FastAPI does, and only consider the spooled
     files that starlette creates.
@@ -897,8 +981,9 @@ def _get_uploads_read_by_fastapi(
 def _iter_uploads_read_to_the_end(form: FormData, alias: str, *, is_sequence: bool) -> Iterator[tuple[UploadFile, int]]:
     """Yield the open spooled files that FastAPI picks for the param, with their positions, if they are at the end.
 
-    FastAPI reads these files to the end. A file that is elsewhere was moved by a dependency after that,
-    e.g. to skip a header, so we leave it as it is. We check the end by seeking, which doesn't read the file.
+    Before FastAPI 0.157.0, FastAPI reads these files to the end. A file that is elsewhere was moved by a
+    dependency after that, e.g. to skip a header, so we leave it as it is. We check the end by seeking, which doesn't
+    read the file.
     """
     for value in _get_form_values(form, alias, is_sequence=is_sequence):
         if (

@@ -14,6 +14,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 - Documented Cadwyn's design decisions, accepted trade-offs, known limitations, and the rules for changing its behavior in [Design decisions and trade-offs](https://docs.cadwyn.dev/theory/design_decisions/) (#202).
 
+### Fixed
+
+- With FastAPI 0.159.0 or newer, endpoints that take a form model (e.g. `body: Annotated[MyModel, Form()]`) no longer fail with a 500 error in every API version.
+
 ## [8.0.0]
 
 This release fixes many long-standing bugs, most of them reported by users. Most apps can upgrade without changes. It is a major release because some fixes change wrong behavior that apps or their clients may rely on. Before upgrading, check the **Breaking** entries and the **Upgrade note** below. In short:
