@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Added
+
+- The documentation now has a separate version for each Cadwyn release, with a version selector in the header. `latest` points to the newest release and `dev` to the `main` branch.
+
 ## [8.1.0]
 
 ### Deprecated
