@@ -6,6 +6,7 @@ import inspect
 import itertools
 import json
 import os
+import re
 import tempfile
 import threading
 from collections import Counter, defaultdict
@@ -16,14 +17,14 @@ from datetime import date
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, BinaryIO, ClassVar, TypeAlias, Union, cast, get_args, get_origin
 
-import fastapi
+import fastapi.dependencies.utils
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
 from fastapi._compat import ModelField, is_bytes_or_nonable_bytes_annotation, is_bytes_sequence_annotation
 from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
-from fastapi.dependencies.utils import get_validation_alias, solve_dependencies
+from fastapi.dependencies.utils import get_dependant, get_validation_alias, solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
@@ -81,8 +82,22 @@ def _get_omitted_body_marker() -> Any:
 
 
 _OMITTED_BODY: Any = _get_omitted_body_marker()
-# Since FastAPI 0.159.0, FastAPI looks the dict body of a form model up under the param's alias
-_FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS = tuple(int(part) for part in fastapi.__version__.split(".")[:2]) >= (0, 159)
+# Since FastAPI 0.159.0, FastAPI looks the dict body of a form model up under the param's aliases. We use its private
+# functions for picking form models and their aliases, so that we pick exactly the same ones
+_FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS = tuple(map(int, re.findall(r"\d+", fastapi.__version__)[:2])) >= (0, 159)
+_get_form_model = cast(
+    "Callable[[ModelField], Union[type[BaseModel], None]]",
+    getattr(fastapi.dependencies.utils, "_get_form_model", None),
+)
+_get_param_aliases = cast(
+    "Callable[[ModelField], list[tuple[str, str]]]", getattr(fastapi.dependencies.utils, "_get_param_aliases", None)
+)
+if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and None in (_get_form_model, _get_param_aliases):  # pragma: no cover
+    raise ImportError(
+        "Cadwyn does not support this version of FastAPI: `_get_form_model` or `_get_param_aliases` is missing from "
+        "`fastapi.dependencies.utils`. Cadwyn uses them to pass form models to FastAPI. "
+        "Please, open an issue on Cadwyn's GitHub."
+    )
 
 # ty requires staticmethod's type arguments, but runtime isinstance() requires the bare class.
 if TYPE_CHECKING:
@@ -870,12 +885,7 @@ def _get_form_model_aliases(head_dependant: Dependant, head_route: APIRoute) -> 
     and every dependency that shares the form model look it up under their own aliases instead.
     """
     body_field = head_dependant.body_params[0]
-    if (  # pragma: no cover # FastAPI >= 0.159
-        _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS
-        and isinstance(body_field.field_info, params.Form)
-        and not body_field.field_info.embed
-        and lenient_issubclass(body_field.field_info.annotation, BaseModel)
-    ):
+    if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and _get_form_model(body_field):  # pragma: no cover # FastAPI >= 0.159
         return _get_aliases_of_body_params(head_dependant, head_route)
     return ()
 
@@ -883,21 +893,23 @@ def _get_form_model_aliases(head_dependant: Dependant, head_route: APIRoute) -> 
 def _get_aliases_of_body_params(  # pragma: no cover # FastAPI >= 0.159
     head_dependant: Dependant, head_route: APIRoute
 ) -> tuple[str, ...]:
-    dependants = [
-        head_dependant,
-        *(dependant for _, dependant in _iter_dependencies(head_dependant, _get_dependency_overrides(head_route))),
-    ]
+    """Return the aliases that FastAPI looks the body params up under in the tree that it solves for the head.
+
+    Like FastAPI, we solve the dependant of an override instead of the overridden dependency.
+    """
+    dependency_overrides = _get_dependency_overrides(head_route)
     aliases: dict[str, None] = {}
-    for dependant in dependants:
-        if dependant is not None:
-            for field in dependant.body_params:
-                validation_alias = field.field_info.validation_alias
-                if isinstance(validation_alias, AliasChoices):
-                    aliases.update(
-                        dict.fromkeys(choice for choice in validation_alias.choices if isinstance(choice, str))
-                    )
-                else:
-                    aliases[get_validation_alias(field)] = None
+    dependants = [head_dependant]
+    while dependants:
+        dependant = dependants.pop()
+        for field in dependant.body_params:
+            aliases.update(dict.fromkeys(alias for alias, _ in _get_param_aliases(field)))
+        for sub_dependant in dependant.dependencies:
+            if dependency_overrides and (call := dependency_overrides.get(sub_dependant.call)) is not None:
+                sub_dependant = get_dependant(
+                    path=cast("str", sub_dependant.path), call=call, name=sub_dependant.name, scope=sub_dependant.scope
+                )
+            dependants.append(sub_dependant)
     return tuple(aliases)
 
 

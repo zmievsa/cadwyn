@@ -20,3 +20,5 @@ FASTAPI_DISTINGUISHES_NULL_BODIES = _FASTAPI_MINOR_VERSION >= (0, 151)
 # Before FastAPI 0.157.0, FastAPI reads the uploaded files of `bytes` params to the end, so other params get them empty.
 # Since FastAPI 0.157.0, it puts them back where they were, which requires their streams to be seekable
 FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES = _FASTAPI_MINOR_VERSION >= (0, 157)
+# Before FastAPI 0.159.0, FastAPI embeds `Optional` form models, so it looks their fields up under the param's alias
+FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS = _FASTAPI_MINOR_VERSION >= (0, 159)

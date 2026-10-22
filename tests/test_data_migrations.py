@@ -88,7 +88,11 @@ from cadwyn.structure.data import RequestInfo, ResponseInfo
 from cadwyn.structure.endpoints import endpoint as cadwyn_endpoint
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import Version, VersionBundle
-from tests._resources.utils import FASTAPI_DISTINGUISHES_NULL_BODIES, FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES
+from tests._resources.utils import (
+    FASTAPI_DISTINGUISHES_NULL_BODIES,
+    FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES,
+    FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS,
+)
 from tests.conftest import (
     CreateVersionedApp,
     CreateVersionedClients,
@@ -1755,13 +1759,36 @@ def test__request_body_migration__with_validation_aliases_in_form_model__head_sh
         assert version_client.post(test_path, data={"v": "1"}).json() == 1
 
 
-def test__request_body_migration__with_alias_choices_of_form_model_param__head_should_get_the_value(
+def test__request_body_migration__with_optional_form_model__head_should_get_the_value_as_in_fastapi(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
 ):
     @router.post(test_path)
-    async def endpoint(body: Annotated[InnerSchemaWithValidationAlias, Form(validation_alias=AliasChoices("p", "q"))]):
+    async def endpoint(body: Annotated[Optional[InnerSchemaWithValidationAlias], Form()] = None):
+        return None if body is None else body.value
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, data={"v": "1"}).json() == (
+            1 if FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS else None
+        )
+
+
+@pytest.mark.parametrize(
+    "alias_choices",
+    [AliasChoices("p", "q"), AliasChoices("p", AliasPath("q", "r"))],
+    ids=["names", "names_and_paths"],
+)
+def test__request_body_migration__with_alias_choices_of_form_model_param__head_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    alias_choices: AliasChoices,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[InnerSchemaWithValidationAlias, Form(validation_alias=alias_choices)]):
         return body.value
 
     clients = create_versioned_clients(version_change())
@@ -1789,6 +1816,28 @@ def test__request_body_migration__with_form_model_shared_by_dependency_under_oth
         return [body.value, from_dependency]
 
     clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, data={"v": "1"}).json() == [1, 1]
+
+
+async def _get_value() -> int:
+    raise NotImplementedError
+
+
+def test__request_body_migration__with_form_model_shared_by_dependency_override__head_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(
+        body: Annotated[InnerSchemaWithValidationAlias, Form()], from_dependency: int = Depends(_get_value)
+    ):
+        return [body.value, from_dependency]
+
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_value] = _get_value_from_form_under_other_alias
 
     for version_client in clients.values():
         assert version_client.post(test_path, data={"v": "1"}).json() == [1, 1]
