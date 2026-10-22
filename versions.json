@@ -25,5 +25,10 @@
     "version": "6.2",
     "title": "6.2",
     "aliases": []
+  },
+  {
+    "version": "5.6",
+    "title": "5.6",
+    "aliases": []
   }
 ]
