@@ -1755,6 +1755,68 @@ def test__request_body_migration__with_validation_aliases_in_form_model__head_sh
         assert version_client.post(test_path, data={"v": "1"}).json() == 1
 
 
+def test__request_body_migration__with_alias_choices_of_form_model_param__head_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[InnerSchemaWithValidationAlias, Form(validation_alias=AliasChoices("p", "q"))]):
+        return body.value
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, data={"v": "1"}).json() == 1
+
+
+async def _get_value_from_form_under_other_alias(
+    body: Annotated[InnerSchemaWithValidationAlias, Form(alias="other")],
+) -> int:
+    return body.value
+
+
+def test__request_body_migration__with_form_model_shared_by_dependency_under_other_alias__head_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(
+        body: Annotated[InnerSchemaWithValidationAlias, Form()],
+        from_dependency: int = Depends(_get_value_from_form_under_other_alias),
+    ):
+        return [body.value, from_dependency]
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, data={"v": "1"}).json() == [1, 1]
+
+
+class SchemaWithUpload(BaseModel):
+    upload: UploadFile
+
+
+async def _get_body_with_upload(upload: UploadFile = File()) -> SchemaWithUpload:
+    return SchemaWithUpload(upload=upload)
+
+
+def test__request_body_migration__with_upload_and_dependency_named_like_the_body__head_should_get_the_upload(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(upload: UploadFile = File(), body: SchemaWithUpload = Depends(_get_body_with_upload)):
+        return (await upload.read()).decode()
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, files={"upload": b"first"}).json() == "first"
+
+
 @pytest.mark.parametrize("annotated", [False, True], ids=["field_default", "annotated"])
 @pytest.mark.parametrize(
     ("field", "config", "payload", "dumped_key"),
