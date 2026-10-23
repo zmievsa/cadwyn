@@ -682,7 +682,7 @@ class MixinWithField:
     foo: int = 0
 
 
-class LeftChildWithMixin(MixinWithField, ParentOfDiamondWithMixin):
+class LeftChildWithMixin(MixinWithField, ParentOfDiamondWithMixin):  # ty: ignore[invalid-attribute-override]  # The mixin deliberately retypes `foo`.
     pass
 
 
