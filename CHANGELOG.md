@@ -9,6 +9,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 - The documentation now has a separate version for each Cadwyn release, with a version selector in the header. `latest` points to the newest release and `dev` to the `main` branch.
 
+### Fixed
+
+- When the app has a root path (e.g. `--root-path /prefix`, or a parent app with a root path that mounts the Cadwyn app), the version links on `/docs` and `/redoc` no longer repeat the root path (`/prefix/prefix/docs?version=...`) and lead to a 404 (#501).
+
 ## [8.1.0]
 
 ### Deprecated
