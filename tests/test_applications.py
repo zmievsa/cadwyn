@@ -873,13 +873,34 @@ def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_
     assert "http://testserver/redoc?version=unversioned" not in resp.text
 
 
-def test__get_docs__with_mounted_app__should_return_all_versioned_doc_urls():
-    root_app = FastAPI()
-    root_app.mount("/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16"))))
-    client = TestClient(root_app)
+@pytest.mark.parametrize("docs_url", ["/docs", "/redoc"])
+@pytest.mark.parametrize(
+    ("server_root_path", "mount_path"),
+    [
+        pytest.param("", "/my_api", id="mounted"),
+        pytest.param("/prefix", "", id="server_root_path"),
+        pytest.param("/prefix", "/my_api", id="server_root_path_and_mounted"),
+    ],
+)
+def test__get_docs__with_root_path__should_link_to_reachable_versioned_docs(
+    server_root_path: str, mount_path: str, docs_url: str
+):
+    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    if mount_path:
+        root_app = FastAPI()
+        root_app.mount(mount_path, app)
+    else:
+        root_app = app
+    client = TestClient(root_app, root_path=server_root_path)
+    app_url = f"http://testserver{server_root_path}{mount_path}"
 
-    resp = client.get("/my_api/docs")
-    assert "http://testserver/my_api/docs?version=2022-11-16" in resp.content.decode()
+    resp = client.get(f"{app_url}{docs_url}")
+
+    assert resp.status_code == 200
+    assert re.findall(r'href="(http://testserver[^"]*)"', resp.text) == [f"{app_url}{docs_url}?version=2022-11-16"]
+    versioned_docs = client.get(f"{app_url}{docs_url}?version=2022-11-16")
+    assert versioned_docs.status_code == 200
+    assert f"{server_root_path}{mount_path}/openapi.json?version=2022-11-16" in versioned_docs.text
 
 
 def test__mount__static_files__should_serve_file(tmp_path):

@@ -538,9 +538,8 @@ class Cadwyn(FastAPI):
         return req.scope.get("root_path", "").rstrip("/")
 
     def _render_docs_dashboard(self, req: Request, docs_url: str):
-        base_host = str(req.base_url).rstrip("/")
-        root_path = self._extract_root_path(req)
-        base_url = base_host + root_path
+        # req.base_url already contains the app root path, so we only take the scheme and host from it
+        base_url = f"{req.url.scheme}://{req.url.netloc}{self._extract_root_path(req)}"
         table = {version: f"{base_url}{docs_url}?version={version}" for version in self.router.versions}
         if self._there_are_public_unversioned_routes():
             table |= {"unversioned": f"{base_url}{docs_url}?version=unversioned"}
