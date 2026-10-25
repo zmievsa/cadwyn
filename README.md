@@ -36,3 +36,7 @@ Whether you are a newbie in API versioning, a pro looking for a sophisticated to
 ## Get started
 
 The [documentation](https://docs.cadwyn.dev) has everything you need to succeed.
+
+## Author
+
+Cadwyn is created and maintained by [Stanislav Zmiev](https://zmievsa.org) ([blog](https://zmievsa.org), [X](https://x.com/zmievsa)).

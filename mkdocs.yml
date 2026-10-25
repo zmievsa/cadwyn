@@ -145,7 +145,16 @@ watch:
   - CHANGELOG.md
   - mkdocs.yml
 
+copyright: Created by <a href="https://zmievsa.org">Stanislav Zmiev</a>
+
 extra:
+  social:
+    - icon: fontawesome/solid/globe
+      link: https://zmievsa.org
+      name: Stanislav Zmiev's blog
+    - icon: fontawesome/brands/x-twitter
+      link: https://x.com/zmievsa
+      name: Stanislav Zmiev on X
   version:
     provider: mike
     default: latest
