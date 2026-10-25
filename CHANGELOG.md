@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Added
+
+- The README and the documentation now link to the author's blog and X.
+
 ## [8.1.1]
 
 ### Added
