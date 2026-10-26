@@ -480,9 +480,9 @@ def test__issue_419_reproduction__renamed_field_of_self_referencing_model__shoul
     old_category = generate_versioned_models(app.versions)["2000-01-01"][Category]
     assert old_category is not Category
     assert set(old_category.model_fields) == {"title", "children"}
-    assert old_category.model_fields["children"].annotation == list[old_category]
+    assert old_category.model_fields["children"].annotation == list[old_category]  # ty: ignore[invalid-type-form]
     # The copies refer to each other by their classes, not by the names that Cadwyn resolves them with
-    assert typing.get_type_hints(old_category) == {"title": str, "children": list[old_category]}
+    assert typing.get_type_hints(old_category) == {"title": str, "children": list[old_category]}  # ty: ignore[invalid-type-form]
     old_openapi = old_client.get("/openapi.json?version=2000-01-01").json()
     old_response = old_openapi["paths"]["/categories"]["get"]["responses"]["200"]["content"]["application/json"]
     old_schema = old_openapi["components"]["schemas"][old_response["schema"]["$ref"].rsplit("/", 1)[-1]]
@@ -517,10 +517,10 @@ def test__generate_versioned_models__copies_in_cycle__should_refer_to_each_other
     assert old_registry is not Registry
     assert typing.get_type_hints(old_entry) == {
         "name": str,
-        "registry": Optional[old_registry],
-        "default_registry": ClassVar[Optional[old_registry]],
-        "_cached_registry": Optional[old_registry],
-        "on_change": ClassVar[Optional[Callable[[old_registry], None]]],
+        "registry": Optional[old_registry],  # ty: ignore[invalid-type-form]
+        "default_registry": ClassVar[Optional[old_registry]],  # ty: ignore[invalid-type-form]
+        "_cached_registry": Optional[old_registry],  # ty: ignore[invalid-type-form]
+        "on_change": ClassVar[Optional[Callable[[old_registry], None]]],  # ty: ignore[invalid-type-form]
     }
 
 
@@ -1070,7 +1070,7 @@ def test__generate_versioned_models__cycle_that_does_not_exist_in_older_versions
     assert list(generators["2000-01-01"][Category].model_fields) == ["name"]
     new_category = generators["2001-01-01"][Category]
     assert new_category is not Category
-    assert new_category.model_fields["children"].annotation == list[new_category]
+    assert new_category.model_fields["children"].annotation == list[new_category]  # ty: ignore[invalid-type-form]
 
 
 class DocumentedCategory(BaseModel):
@@ -1185,7 +1185,7 @@ def test__generate_versioned_models__cycle_copied_from_several_threads__should_b
     assert len(results) == thread_count
     assert len({id(result) for result in results}) == 1
     old_item_tree = results[0]
-    assert old_item_tree.model_fields["children"].annotation == list[old_item_tree]
+    assert old_item_tree.model_fields["children"].annotation == list[old_item_tree]  # ty: ignore[invalid-type-form]
     assert old_item_tree.model_fields["item"].annotation is generator[ChangedItem]
     assert typing.get_args(old_item_tree.model_fields["note"].annotation)[0] is generator[Note]
     tree = old_item_tree.model_validate({"item": {"name": "abc"}, "children": [{"item": {"name": "abc"}}]})

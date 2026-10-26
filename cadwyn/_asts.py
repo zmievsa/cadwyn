@@ -111,7 +111,7 @@ def transform_auto(_: auto) -> Any:  # pragma: no cover # it works but we no lon
     return PlainRepr("auto()")
 
 
-def transform_union(value: UnionType) -> Any:
+def transform_union(value: Any) -> Any:
     return "typing.Union[" + (", ".join(get_fancy_repr(a) for a in get_args(value))) + "]"
 
 
