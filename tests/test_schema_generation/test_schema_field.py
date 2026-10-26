@@ -2138,7 +2138,7 @@ def test__schema_field_didnt_have__attribute_of_field_in_annotated__should_only_
     field_type, field_kwargs = ANNOTATED_FIELDS_WITH_EVERY_ATTRIBUTE[attr_name]
 
     class SchemaWithAttributeInAnnotated(BaseModel):
-        foo: Annotated[field_type, Field(**field_kwargs)]
+        foo: Annotated[field_type, Field(**field_kwargs)]  # ty: ignore[invalid-type-form]
 
     schemas = create_runtime_schemas(
         version_change(schema(SchemaWithAttributeInAnnotated).field("foo").didnt_have(attr_name)),
