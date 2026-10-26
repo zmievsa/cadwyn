@@ -57,10 +57,11 @@ These follow from how Cadwyn works and are not bugs. Changes that try to remove 
 
 These are accepted for now. They are listed so that nobody "discovers" and fixes them as a side quest. A fix for any of them is a separate, deliberate change with its own issue.
 
-* Generic models: cyclic generic args, quoted args from other modules, and recursive native type aliases keep the latest models in older versions.
+* Generic models: cyclic generic args, quoted args from other modules, and recursive native type aliases keep the latest models in older versions. A PEP 695 generic model that refers to itself through a quoted annotation, such as `nxt: Optional["Wrap[X]"]` in `class Wrap[X](BaseModel)`, returns a 500 in every version, including the latest one, instead of failing at startup.
 * Dependencies: class dependencies (except Pydantic models) are not versioned. `Flag` and `IntFlag` parameters fail. WebSocket routes and streaming (generator or server-sent-event) endpoints don't work in versioned routes.
-* Schema instructions: diamond inheritance takes the field from the first base, like Pydantic does. A parent's rename reaches a subclass's own changes only through single, non-generic inheritance.
-* `cadwyn render` doesn't render `model_config`.
+* Uploads: an upload parameter named `body` returns a 500 in every version.
+* Schema instructions: diamond inheritance takes the field from the first base, like Pydantic does. A parent's rename reaches a subclass's own changes only through single, non-generic inheritance. `schema(Child).field("x").had(name="y")` for a field that `Child` inherits leaves both `x` and `y` in the older versions of `Child`. `had(default=PydanticUndefined)` doesn't make a field required when its default is declared in `Annotated[..., Field(default=...)]`. `didnt_have(...)` fails with an `AttributeError` when the attribute is a read-only property of an `Annotated` metadata object. `schema(Model).validator(...).existed` for a computed field fails on Python versions before 3.13.
+* `cadwyn render` doesn't render `model_config`, and it renders `AliasChoices` and `AliasPath` as calls that raise a `TypeError`.
 * Bodies sent without a `Content-Type` are parsed as JSON by Cadwyn but ignored by FastAPI.
 
 ## Rules for changing Cadwyn
@@ -73,6 +74,8 @@ These are accepted for now. They are listed so that nobody "discovers" and fixes
 * Don't widen a change during review. If a review uncovers a new problem, file it.
 * Don't add options or flags to keep both behaviors unless the maintainer has signed off on them.
 * If a simple workaround exists in user code and the fix in Cadwyn is complex, document the workaround instead.
+* Rank review findings by how likely they are in real apps. A contrived case that breaks working output still gets fixed, but it shouldn't drive the design.
+* Decide which breaking changes a major release takes when the work starts, not in the audit before the release. 8.0.0 rolled two fixes back and redesigned them late (#457 and #475, #458 and #474).
 
 **What a change may alter**
 
@@ -84,9 +87,22 @@ These are accepted for now. They are listed so that nobody "discovers" and fixes
 **How to fix**
 
 * Prefer doing less. Narrow the fix, apply it only when the old path fails ("retry on failure", not an extra validation pass), or go back to the last release's code path.
+* If every review round finds new edge cases in the same part of a fix, remove that part instead of patching it again.
 * Don't reimplement FastAPI, Pydantic, or CPython logic. Call their functions, and evaluate annotations only where FastAPI itself does.
 * Make safety checks allow-lists. Anything unknown takes the old behavior.
 * Decide statically, not by the order in which models happen to be generated.
+* Use one traversal to find what needs versioning and to copy it, never two that must agree. Finding must not copy, wrap, or rebuild the models that it leaves unchanged.
+* Keep the user's objects as they are, and copy only what FastAPI or Pydantic would mutate. `deepcopy` isn't a way to isolate things: it goes through `typing`'s caches and breaks objects compared with `is`, such as FastAPI's sentinels.
+* Caches may share structure but never user-visible state, such as a stateful default factory, between models or versions.
 * Invalid instructions or models fail at startup with an error that names the model and the field. Never fail later at request time, and never serve wrong data silently.
 * When you rely on a private FastAPI or Pydantic internal, check that it exists at import time and fail with a clear error if it changed. Never fall back silently.
 * `Cadwyn()` accepts FastAPI's parameters and passes each of them to every router it creates.
+* In the user docs, describe the common case and its workaround. The full list of shapes that a rule covers belongs in the tests.
+
+**How to check a change**
+
+* Run the same requests and OpenAPI of every version against the last release in its own checkout or virtual environment, and compare the results.
+* Run the tests on the minimum supported and the latest Pydantic, and on Python 3.10 and 3.14. Check CI on every operating system before merging: recursion and stack limits differ on Windows and macOS.
+* `tox -e docs` writes `site/` into the repository root, which shadows the standard `site` module on Python 3.10 when the root is on `PYTHONPATH`. Delete it before comparing runs.
+* Pytest puts the root of the checkout it runs from first on `sys.path`, so run a test file from the checkout that you want to test.
+* After merging `main` into a branch, look for top-level functions that are now defined twice. The later definition silently wins.
