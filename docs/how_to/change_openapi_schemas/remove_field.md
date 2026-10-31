@@ -8,37 +8,13 @@ Let's say that our API has a mandatory `UserResource.date_of_birth` field. Let's
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
-    from cadwyn import VersionChange, schema
-    from users import UserResource
-    from pydantic import Field
-
-
-    class RemoveZodiacSignFromUser(VersionChange):
-        """User responses no longer include 'zodiac_sign' because it can be
-        derived from 'date_of_birth' and is rarely used.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            schema(UserResource)
-            .field("zodiac_sign")
-            .existed_as(type=str, info=Field(description="User's magical sign")),
-        )
+    {!> ./docs_src/how_to/change_openapi_schemas/remove_field/from_response/versions/v2001_01_01.py [ln:2-16] !}
     ```
 
 3. Add this migration into the version bundle:
 
     ```python
-    # versions/__init__.py
-
-    from cadwyn import Version, VersionBundle, HeadVersion
-    from datetime import date
-    from .v2001_01_01 import RemoveZodiacSignFromUser
-
-    version_bundle = VersionBundle(
-        HeadVersion(),
-        Version("2001-01-01", RemoveZodiacSignFromUser),
-        Version("2000-01-01"),
-    )
+    {!> ./docs_src/how_to/change_openapi_schemas/remove_field/from_response/versions/__init__.py !}
     ```
 
 Thanks to the version change above, your old schemas will now include `zodiac_sign` field but your new schemas will stay the same. Don't remove the zodiac business logic from your router because the old version will still need it. So you always return the zodiac sign but the schemas of the latest version will ignore it.
@@ -55,60 +31,19 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
 1. Add the following migration to `versions.v2001_01_01` to remove `middle_name` from the latest version:
 
     ```python
-    from cadwyn import VersionChange, schema
-    from users import BaseUser
-
-
-    class RemoveUserMiddleNameFromLatestVersion(VersionChange):
-        """User requests and responses no longer include 'middle_name' because
-        the product no longer uses it.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            schema(BaseUser).field("middle_name").didnt_exist,
-        )
+    {!> ./docs_src/how_to/change_openapi_schemas/remove_field/optional_from_request_and_response/versions/v2001_01_01.py [ln:3-14] !}
     ```
 
 2. Add the following migration to `versions.v2001_01_01` to leave support for `middle_name` in the older versions:
 
     ```python
-    from cadwyn import VersionChange, schema
-    from pydantic import Field
-    from users import BaseUser
-
-
-    class RemoveMiddleNameFromUser(VersionChange):
-        """User requests and responses no longer include 'middle_name' because
-        the product no longer uses it.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            schema(BaseUser)
-            .field("middle_name")
-            .existed_as(
-                type=str | None,
-                info=Field(description="User's Middle Name", default=None),
-            ),
-        )
+    {!> ./docs_src/how_to/change_openapi_schemas/remove_field/optional_from_request_and_response/versions/v2001_01_01.py [ln:17-34] !}
     ```
 
 3. Add these migrations into the version bundle:
 
     ```python
-    # versions/__init__.py
-
-    from cadwyn import Version, VersionBundle, HeadVersion
-    from datetime import date
-    from .v2001_01_01 import (
-        RemoveMiddleNameFromUser,
-        RemoveUserMiddleNameFromLatestVersion,
-    )
-
-    version_bundle = VersionBundle(
-        HeadVersion(RemoveUserMiddleNameFromLatestVersion),
-        Version("2001-01-01", RemoveMiddleNameFromUser),
-        Version("2000-01-01"),
-    )
+    {!> ./docs_src/how_to/change_openapi_schemas/remove_field/optional_from_request_and_response/versions/__init__.py !}
     ```
 
 We added a new version with a breaking change but neither the HEAD schema that we use in business logic, neither has the business logic itself have changed one bit.

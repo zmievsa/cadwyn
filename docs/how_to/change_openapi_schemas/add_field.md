@@ -26,41 +26,13 @@ Let's say that our users had a field `country` that defaulted to `USA` but our p
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
-    from cadwyn import (
-        RequestInfo,
-        VersionChange,
-        schema,
-        convert_request_to_next_version_for,
-    )
-    from users import UserCreateRequest, UserResource
-
-
-    class MakeUserCountryRequired(VersionChange):
-        """'country' is now required when creating a user because the API
-        serves users outside the United States and can no longer assume 'USA'.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            schema(UserCreateRequest).field("country").had(default="USA"),
-        )
-
-        @convert_request_to_next_version_for(UserCreateRequest)
-        def add_default_value_to_country_field_in_request(request: RequestInfo):
-            request.body["country"] = request.body.get("country", "USA")
+    {!> ./docs_src/how_to/change_openapi_schemas/add_field/required_with_compatible_default/versions/v2001_01_01.py [ln:2-22] !}
     ```
 
 3. Add this migration into the version bundle:
 
     ```python
-    from cadwyn import Version, VersionBundle, HeadVersion
-    from datetime import date
-    from .v2001_01_01 import MakeUserCountryRequired
-
-    version_bundle = VersionBundle(
-        HeadVersion(),
-        Version("2001-01-01", MakeUserCountryRequired),
-        Version("2000-01-01"),
-    )
+    {!> ./docs_src/how_to/change_openapi_schemas/add_field/required_with_compatible_default/versions/__init__.py !}
     ```
 
 That's it. Our old schemas will now contain a default but in HEAD country will be required. You might notice a weirdness: if we set a default in the old version, why would we also write a migration? That's because of a sad implementation detail of pydantic that [prevents us](../../concepts/schema_migrations.md#change-a-field-in-the-older-version) from using defaults from old versions.
@@ -76,52 +48,19 @@ So we will make `phone` nullable in HEAD, then make it required in `latest`, and
 3. Add the following migration to `versions.v2001_01_01` which will make sure that `phone` is not nullable in 2001_01_01:
 
     ```python
-    from cadwyn import VersionChange, schema
-    from users import UserCreateRequest
-
-
-    class MakeUserPhoneNonNullableInLatest(VersionChange):
-        """New user requests now require a phone number so accounts can support
-        SMS verification and two-factor authentication.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            schema(UserCreateRequest).field("phone").had(type=str),
-            schema(UserCreateRequest).field("phone").didnt_have("default"),
-        )
+    {!> ./docs_src/how_to/change_openapi_schemas/add_field/required_with_incompatible_default/versions/v2001_01_01.py [ln:2-14] !}
     ```
 
 4. Add the following version change to `versions.v2001_01_01` (right under the version change above) which will make sure that `phone` is nullable in 2000_01_01:
 
     ```python
-    class AddRequiredPhoneToUser(VersionChange):
-        """New user requests now require a phone number so accounts can support
-        SMS verification and two-factor authentication.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            schema(UserCreateRequest)
-            .field("phone")
-            .had(type=str | None, default=None),
-        )
+    {!> ./docs_src/how_to/change_openapi_schemas/add_field/required_with_incompatible_default/versions/v2001_01_01.py [ln:17-26] !}
     ```
 
 5. Add both migrations into our VersionBundle:
 
     ```python
-    from cadwyn import Version, VersionBundle, HeadVersion
-    from datetime import date
-    from .v2001_01_01 import (
-        MakeUserPhoneNonNullableInLatest,
-        AddRequiredPhoneToUser,
-    )
-
-
-    version_bundle = VersionBundle(
-        HeadVersion(MakeUserPhoneNonNullableInLatest),
-        Version("2001-01-01", AddRequiredPhoneToUser),
-        Version("2000-01-01"),
-    )
+    {!> ./docs_src/how_to/change_openapi_schemas/add_field/required_with_incompatible_default/versions/__init__.py !}
     ```
 
 See how we didn't remove the `phone` field from old versions? Instead, we allowed a nullable `phone` field to be passed into both old `UserResource` and old `UserCreateRequest`. This gives our users new functionality without needing to update their API version. It is one of the best parts of Cadwyn's approach: our users can get years worth of updates without switching their API version and without their integration getting broken.

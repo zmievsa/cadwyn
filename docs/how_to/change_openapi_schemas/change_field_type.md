@@ -14,28 +14,7 @@ This is not a breaking change in terms of requests but it [**can be**](#why-enum
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
-    from cadwyn import (
-        ResponseInfo,
-        VersionChange,
-        convert_response_to_previous_version_for,
-        enum,
-    )
-    from users import UserResource, UserRoleEnum
-
-
-    class AddModeratorRoleToUser(VersionChange):
-        """Users can now have a 'moderator' role with administrative access but
-        without permission to create or remove admins, enabling safer delegation.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            enum(UserRoleEnum).didnt_have("moderator"),
-        )
-
-        @convert_response_to_previous_version_for(UserResource)
-        def change_moderator_to_regular(response: ResponseInfo):
-            if response.body["role"] == "moderator":
-                response.body["role"] = "regular"
+    {!> ./docs_src/how_to/change_openapi_schemas/change_field_type/expand_the_type/versions/v2001_01_01.py [ln:2-23] !}
     ```
 
 You convert moderators to regulars in older versions because it is a safer choice for your users.
@@ -64,57 +43,19 @@ Suppose that previously users could specify their date of birth as a datetime in
 1. Add the following migration to `versions.v2001_01_01` which will turn `date_of_birth` into a date in 2001_01_01. Note how the validator is used to make sure that `date_of_birth` is converted to date in the latest version. It is only necessary in Pydantic 2 because it has no implicit casting from datetime to date.
 
     ```python
-    import datetime
-
-    from cadwyn import VersionChange, schema
-    from pydantic import field_validator
-    from users import BaseUser
-
-
-    @field_validator("date_of_birth", mode="before")
-    def convert_date_of_birth_to_date(cls, v: datetime.date | datetime.datetime):
-        if isinstance(v, datetime.datetime):
-            return v.date()
-        return v
-
-
-    class ChangeUserDateOfBirthFromDatetimeToDateInLatest(VersionChange):
-        """'User.date_of_birth' is now a calendar date instead of a timestamp
-        because a time of day is not meaningful for a birth date.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            schema(BaseUser).field("date_of_birth").had(type=datetime.date),
-            # This step is only necessary in Pydantic 2 because datetime
-            # won't be converted to date automatically.
-            schema(BaseUser).validator(convert_date_of_birth_to_date).existed,
-        )
+    {!> ./docs_src/how_to/change_openapi_schemas/change_field_type/narrow_the_type/versions/v2001_01_01.py [ln:2-26] !}
     ```
 
 2. Add the following version change to `versions.v2001_01_01` (right under the version change above) which will make sure that `date_of_birth` is a datetime in 2000_01_01:
 
     ```python
-    class ChangeUserDateOfBirthFromDatetimeToDate(VersionChange):
-        """'User.date_of_birth' is now a calendar date instead of a timestamp
-        because a time of day is not meaningful for a birth date.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            schema(BaseUser).field("date_of_birth").had(type=datetime.datetime),
-            schema(BaseUser).validator(convert_date_of_birth_to_date).didnt_exist,
-        )
+    {!> ./docs_src/how_to/change_openapi_schemas/change_field_type/narrow_the_type/versions/v2001_01_01.py [ln:29-37] !}
     ```
 
 3. Add both migrations into the VersionBundle:
 
     ```python
-    from cadwyn import Version, VersionBundle, HeadVersion
-
-    version_bundle = VersionBundle(
-        HeadVersion(ChangeUserDateOfBirthFromDatetimeToDateInLatest),
-        Version("2001-01-01", ChangeUserDateOfBirthFromDatetimeToDate),
-        Version("2000-01-01"),
-    )
+    {!> ./docs_src/how_to/change_openapi_schemas/change_field_type/narrow_the_type/versions/__init__.py !}
     ```
 
 The process above is a bit complex, so let us break it down:

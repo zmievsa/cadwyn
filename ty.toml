@@ -22,3 +22,12 @@ include = ["tests/**"]
 missing-type-argument = "ignore"
 possibly-missing-attribute = "ignore"
 unsupported-base = "ignore"
+
+[[overrides]]
+# The how-to examples are small apps that import their own modules
+# (`from users import ...`) the way an app run from its own directory does
+include = ["docs_src/how_to/change_openapi_schemas/*/*/**"]
+exclude = ["docs_src/how_to/change_openapi_schemas/*/tests/**"]
+
+[overrides.rules]
+unresolved-import = "ignore"
