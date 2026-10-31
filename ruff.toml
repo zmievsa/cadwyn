@@ -293,12 +293,17 @@ ignore = [
     "B008",   # Do not perform function call in argument defaults
 ]
 "docs_src/**" = [
+    "ANN001", # Missing type annotation for function argument in concise documentation examples
     "ANN201", # Missing return type annotation for public function in concise documentation examples
     "ANN204", # Missing return type annotation for special method in concise documentation examples
     "ANN205", # Missing return type annotation for staticmethod in concise documentation examples
     "ANN206", # Missing return type annotation for classmethod in concise documentation examples
+    "D205",   # Documentation examples wrap the prose docstrings of version changes like regular paragraphs
     "E501",   # Documentation examples can contain intentionally indivisible lines longer than 80 characters
     "RUF012", # Mutable class attributes should be annotated with `typing.ClassVar`
+]
+"docs_src/concepts/endpoint_migrations/block005.py" = [
+    "D401", # The docstrings of the example endpoints stand in for their code
 ]
 "cadwyn/_utils.py" = [
     "ERA001", # Found commented-out code (it's not actually commented out. It's just comments)

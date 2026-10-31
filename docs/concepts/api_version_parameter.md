@@ -12,37 +12,19 @@ A version parameter can be passed in two different ways:
 Cadwyn uses the following defaults:
 
 ```python
-from cadwyn import Cadwyn, Version, VersionBundle
-
-app = Cadwyn(
-    api_version_location="custom_header",
-    api_version_parameter_name="x-api-version",
-    versions=VersionBundle(Version("2022-01-02")),
-)
+{! ./docs_src/concepts/api_version_parameter/block003.py !}
 ```
 
 but you can change the header name if you want to:
 
 ```python
-from cadwyn import Cadwyn, Version, VersionBundle
-
-app = Cadwyn(
-    api_version_location="custom_header",
-    api_version_parameter_name="MY-GREAT-HEADER",
-    versions=VersionBundle(Version("2022-01-02")),
-)
+{! ./docs_src/concepts/api_version_parameter/block004.py !}
 ```
 
 or you can use a path parameter:
 
 ```python
-from cadwyn import Cadwyn, Version, VersionBundle
-
-app = Cadwyn(
-    api_version_location="path",
-    api_version_parameter_name="api_version",
-    versions=VersionBundle(Version("2022-01-02")),
-)
+{! ./docs_src/concepts/api_version_parameter/block005.py !}
 ```
 
 With a path parameter, add it to the paths of your versioned routes, e.g. `@router.get("/{api_version}/users")`.
@@ -57,12 +39,7 @@ A version parameter can be formatted in two different ways:
 Cadwyn uses the following default:
 
 ```python
-from cadwyn import Cadwyn, Version, VersionBundle
-
-app = Cadwyn(
-    api_version_format="date",
-    versions=VersionBundle(Version("2022-01-02")),
-)
+{! ./docs_src/concepts/api_version_parameter/block006.py !}
 ```
 
 In the example above only dates are accepted as valid versions.
@@ -70,16 +47,7 @@ In the example above only dates are accepted as valid versions.
 You can also use an arbitrary string:
 
 ```python
-from cadwyn import Cadwyn, Version, VersionBundle
-
-app = Cadwyn(
-    api_version_format="string",
-    versions=VersionBundle(
-        Version("v2"),
-        Version("anything_can_be_a_version"),
-        Version("v1"),
-    ),
-)
+{! ./docs_src/concepts/api_version_parameter/block007.py !}
 ```
 
 In the example above any arbitrary string is accepted as a valid version. Cadwyn does not sort them, Cadwyn assumes that their actual order matches the order of the versions in the `VersionBundle`.
@@ -123,11 +91,7 @@ Note that this applies to **every** request without the version header, not only
 You can pass a title and/or a description to the `Cadwyn()` constructor. It is equivalent to passing `title` and `description` to `fastapi.Path()` or `fastapi.Header()` constructors.
 
 ```python
-app = Cadwyn(
-    ...,
-    api_version_title="My Great API version parameter",
-    api_version_description="Description of my great API version parameter",
-)
+{! ./docs_src/concepts/api_version_parameter/block008.py !}
 ```
 
 ## API version context variables

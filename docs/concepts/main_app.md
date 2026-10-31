@@ -8,25 +8,7 @@ Cadwyn's standard usage involves a single customized FastAPI app: `cadwyn.Cadwyn
 After you have defined the main app, you can add versioned API routers to it using `Cadwyn.generate_and_include_versioned_routers(*routers)`
 
 ```python
-from cadwyn import VersionedAPIRouter, Cadwyn
-from versions import my_version_bundle
-
-
-router = VersionedAPIRouter()
-
-
-@router.get("/users/", tags=["users"])
-async def read_users():
-    return [{"username": "Rick"}, {"username": "Morty"}]
-
-
-@router.get("/users/{username}", tags=["users"])
-async def read_user(username: str):
-    return {"username": username}
-
-
-app = Cadwyn(versions=my_version_bundle)
-app.generate_and_include_versioned_routers(router)
+{! ./docs_src/concepts/main_app/block001.py !}
 ```
 
 That's it. `generate_and_include_versioned_routers()` will generate all versions of your routers based on the `versions` argument.
@@ -46,32 +28,19 @@ Cadwyn has its own API Router class: `cadwyn.VersionedAPIRouter`. You are free t
 `add_pagination(app)` from [fastapi-pagination](https://github.com/uriyyo/fastapi-pagination) does not work with Cadwyn's versioned routes: either the app fails to start with `AttributeError: __params_type__`, or paginated endpoints fail with `UninitializedConfigurationError`. Instead, call `add_pagination()` on your `VersionedAPIRouter` before you include it:
 
 ```python
-from fastapi_pagination import Page, add_pagination, paginate
+{! ./docs_src/concepts/main_app/block002.py [ln:9] !}
 
-router = VersionedAPIRouter()
-
-
-@router.get("/users")
-async def list_users() -> Page[User]:
-    return paginate(get_users())
-
-
-add_pagination(router)
-app.generate_and_include_versioned_routers(router)
+{! ./docs_src/concepts/main_app/block002.py [ln:27-36] !}
 ```
 
 Alternatively, pass the pagination params to `paginate()` explicitly:
 
 ```python
-from typing import Annotated
-
-from fastapi import Depends
-from fastapi_pagination import Page, Params, paginate
+{! ./docs_src/concepts/main_app/block003.py [ln:1-2] !}
+{! ./docs_src/concepts/main_app/block003.py [ln:11-12] !}
 
 
-@router.get("/users")
-async def list_users(params: Annotated[Params, Depends()]) -> Page[User]:
-    return paginate(get_users(), params)
+{! ./docs_src/concepts/main_app/block003.py [ln:33-35] !}
 ```
 
 ## Custom docs static assets
@@ -79,12 +48,5 @@ async def list_users(params: Annotated[Params, Depends()]) -> Page[User]:
 By default, Swagger UI and ReDoc load JavaScript and CSS from CDNs. You can override these URLs to serve assets locally:
 
 ```python
-app = Cadwyn(
-    versions=my_version_bundle,
-    swagger_js_url="/static/swagger-ui-bundle.js",
-    swagger_css_url="/static/swagger-ui.css",
-    swagger_favicon_url="/static/favicon.png",
-    redoc_js_url="/static/redoc.standalone.js",
-    redoc_favicon_url="/static/favicon.png",
-)
+{! ./docs_src/concepts/main_app/block004.py [ln:5-12] !}
 ```
