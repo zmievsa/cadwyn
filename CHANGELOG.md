@@ -9,6 +9,11 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 - The README and the documentation now link to the author's blog and X.
 
+### Fixed
+
+- Fixed documentation examples that failed or did the opposite of what they described: reversed field renames in the data migration and rename-a-field examples, the `migrate_response_body()` call without its `versions` argument, swapped "adding" and "removing" enum member examples, a `VersionChangeWithSideEffects` example without `instructions_to_migrate_to_previous_version`, and missing or wrong imports in several examples.
+- Fixed documentation claims that contradicted Cadwyn's behavior: that Cadwyn only supports date-based versions, that `api_version_parameter_name` defaults to `"X-API-VERSION"`, that a schema can have both `default` and `default_factory`, that validators can reject values with `TypeError`, and references to the `data.vXXXX_XX_XX` packages that Cadwyn no longer generates.
+
 ## [8.1.1]
 
 ### Added

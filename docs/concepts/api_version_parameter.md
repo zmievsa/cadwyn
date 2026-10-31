@@ -16,7 +16,7 @@ from cadwyn import Cadwyn, Version, VersionBundle
 
 app = Cadwyn(
     api_version_location="custom_header",
-    api_version_parameter_name="X-API-VERSION",
+    api_version_parameter_name="x-api-version",
     versions=VersionBundle(Version("2022-01-02")),
 )
 ```
@@ -44,6 +44,8 @@ app = Cadwyn(
     versions=VersionBundle(Version("2022-01-02")),
 )
 ```
+
+With a path parameter, add it to the paths of your versioned routes, e.g. `@router.get("/{api_version}/users")`.
 
 ## API version format
 

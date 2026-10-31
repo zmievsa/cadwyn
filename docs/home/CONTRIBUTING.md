@@ -39,7 +39,7 @@ setting. You can still run every hook manually with `make lint`.
   * If something cannot be typed correctly due to the limitations of the type checkers, use [typing.cast](https://docs.python.org/3/library/typing.html#typing.cast) to resolve the issue. However, use `typing.cast` only as a last resort, after exhausting all other options of [type narrowing](https://mypy.readthedocs.io/en/stable/type_narrowing.html), such as [isinstance()](https://docs.python.org/3/library/functions.html#isinstance) checks and [type guards](https://docs.python.org/3/library/typing.html#typing.TypeGuard)
   * Use `ty: ignore` once you have verified that the line is correct, but ty has issues with it
 * If you are adding or modifying existing code, make sure that it's fully tested. 100% test coverage is mandatory, and will be checked on the PR using [Github Actions](https://github.com/features/actions)
-* When adding a new public interface, make sure you have included it in the concept documentation located in `docs/concepts.md`. If applicable, add or modify examples in the docs related to the new functionality
+* When adding a new public interface, make sure you have included it in the concept documentation located in `docs/concepts/`. If applicable, add or modify examples in the docs related to the new functionality
 
 ### Writing and running tests
 

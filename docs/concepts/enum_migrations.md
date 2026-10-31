@@ -9,24 +9,6 @@ Note that adding `enum` members **can** be a breaking change in contrast to addi
 It is recommended to add `enum` members in new versions as well.
 
 ```python
-from enum import auto
-
-from cadwyn import VersionChange, enum
-
-
-class RemoveFooAndBarFromMyEnum(VersionChange):
-    """'foo' and 'bar' are no longer returned in 'my_enum' because those
-    legacy states are no longer supported.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        enum(my_enum).had(foo="baz", bar=auto()),
-    )
-```
-
-## Removing enum members
-
-```python
 from cadwyn import VersionChange, enum
 
 
@@ -37,5 +19,21 @@ class AddFooAndBarToMyEnum(VersionChange):
 
     instructions_to_migrate_to_previous_version = (
         enum(my_enum).didnt_have("foo", "bar"),
+    )
+```
+
+## Removing enum members
+
+```python
+from cadwyn import VersionChange, enum
+
+
+class RemoveFooAndBarFromMyEnum(VersionChange):
+    """'foo' and 'bar' are no longer returned in 'my_enum' because those
+    legacy states are no longer supported.
+    """
+
+    instructions_to_migrate_to_previous_version = (
+        enum(my_enum).had(foo="baz", bar="bar"),
     )
 ```

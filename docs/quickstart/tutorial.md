@@ -12,7 +12,7 @@ This tutorial will show how to prepare an environment for working with Cadwyn ef
 
 ## Step 0: Setting up
 
-Here is an initial API setup where a User has a single address. The example implements two routes - one for creating a User and the other for retrieving User details. User ID is implemented as `int` for simplicity. Please note that a `dict` is used in place of a database for simplicity but do not ever do it in real life.
+Here is an initial API setup where a User has a single address. The example implements two routes - one for creating a User and the other for retrieving User details. User ID is implemented as `uuid.UUID`. Please note that a `dict` is used in place of a database for simplicity but do not ever do it in real life.
 
 The first API one comes up with usually doesn't require more than one address -- why bother?
 
@@ -30,7 +30,7 @@ The app is ready for use. To call its endpoints, pass `X-API-VERSION` header wit
 
 Assume that during the development you realize that the initial API design is wrong and that `address` should be `addresses` so that the User can have several addresses to choose from. So now you want to change the type of the `addresses` field to a list of strings.
 
-```python hl_lines="2 4 15 20 30 39"
+```python hl_lines="2 10 14 19 29 38"
 {! ./docs_src/quickstart/tutorial/block002.py !}
 ```
 
@@ -54,7 +54,7 @@ To fix the old integrations of your clients, you need to add back the `2000-01-0
 
 For every endpoint whose `response_model` is `UserResource`, this migration will convert the list of addresses back to a single address when migrating to the previous version. Your goal is to have an app of [HEAD version](../concepts/version_changes.md#headversion) and to describe what older versions looked like in comparison to it. That way the old versions are frozen in migrations and you can **almost** safely forget about them.
 
-```python hl_lines="8-9 12 14-16 45-66"
+```python hl_lines="6-7 10 12-14 44-68"
 {! ./docs_src/quickstart/tutorial/block003.py !}
 ```
 

@@ -11,7 +11,7 @@ Cadwyn can automatically generate API changelogs for your versions. By default, 
 Sometimes you might want to make private internal version changes or instructions within the version changes that should not be visible to the public. You can do this by using the deprecated `cadwyn.hidden()` function. Consider the example below:
 
 ```python
-from cadwyn import VersionChange, endpoint, hidden
+from cadwyn import VersionChange, endpoint, hidden, schema
 
 
 class RenameUserIdPathParameter(VersionChange):

@@ -107,7 +107,7 @@ versions = VersionBundle(
 
 ### VersionChange.description
 
-Write the description of your version change as its class docstring. Cadwyn uses this docstring as the **name** and the **summary** of the version change for your clients.
+Write the description of your version change as its class docstring. Cadwyn uses this docstring as the `description` of the version change.
 
 The description should clearly communicate to your clients **what happened** and **why**. Make it grammatically correct, detailed, specific, and written for humans. Note that you do not have to use a strict machine-readable format: it is a piece of documentation, not a set of instructions. As a reference, consider the following [version change description from Stripe](https://stripe.com/blog/api-versioning):
 
@@ -162,8 +162,8 @@ class RenameInvoiceCreationDateToCreatedAt(VersionChange):
 
     instructions_to_migrate_to_previous_version = (
         schema(InvoiceCreateRequest)
-        .field("creation_date")
-        .had(name="created_at"),
+        .field("created_at")
+        .had(name="creation_date"),
     )
 
     @convert_request_to_next_version_for(InvoiceCreateRequest)
@@ -201,7 +201,7 @@ class RenameInvoiceCreationDateToCreatedAt(VersionChange):
     """
 
     instructions_to_migrate_to_previous_version = (
-        schema(BaseInvoice).field("creation_date").had(name="created_at"),
+        schema(BaseInvoice).field("created_at").had(name="creation_date"),
     )
 
     @convert_request_to_next_version_for(InvoiceCreateRequest)
@@ -246,7 +246,7 @@ class RenameInvoiceCreationDateToCreatedAt(VersionChange):
     """
 
     instructions_to_migrate_to_previous_version = (
-        schema(BaseInvoice).field("creation_date").had(name="created_at"),
+        schema(BaseInvoice).field("created_at").had(name="creation_date"),
     )
 
     @convert_request_to_next_version_for("/v1/invoices", ["POST"])
@@ -394,13 +394,14 @@ Often you will need to migrate your data outside of routing, manually. For examp
 ```python
 from cadwyn.schema_generation import migrate_response_body
 from users import UserResource
+from versions import versions
 
 body_from_2000_01_01 = migrate_response_body(
-    UserResource, latest_body={"name": "John"}, version="2000-01-01"
+    versions, UserResource, latest_body={"name": "John"}, version="2000-01-01"
 )
 ```
 
-The returned `body_from_2000_01_01` is your data passed through all converters (as it would be when returned from your route) and wrapped in `data.v2000_01_01.UserResource`. Because the data is wrapped, you can include Pydantic’s defaults.
+The returned `body_from_2000_01_01` is your data passed through all converters (as it would be when returned from your route) and wrapped in the `2000-01-01` version of `UserResource`. Because the data is wrapped, you can include Pydantic’s defaults.
 
 #### StreamingResponse and FileResponse migrations
 
@@ -504,6 +505,8 @@ class RejectUserAddressesMissingFromExternalService(
     """User addresses are now verified by an external service during creation;
     invalid addresses return 400 to prevent storing undeliverable locations.
     """
+
+    instructions_to_migrate_to_previous_version = ()
 ```
 
 Then you will have the following check in your business logic:

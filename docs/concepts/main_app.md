@@ -1,6 +1,6 @@
 # Main App
 
-Cadwyn's standard usage involves a single customized FastAPI app: `cadwyn.Cadwyn`. It accepts the same arguments as `fastapi.FastAPI` plus two additional keyword-only arguments:
+Cadwyn's standard usage involves a single customized FastAPI app: `cadwyn.Cadwyn`. It accepts the same arguments as `fastapi.FastAPI` plus several additional keyword-only arguments. The most important ones are:
 
 * Required `versions: VersionBundle` describes [all versions](./version_changes.md#versionbundle) of your app
 * Optional `api_version_parameter_name: str = "x-api-version"` is the parameter that Cadwyn uses for [routing](#routing) to different API versions of your app
@@ -12,7 +12,7 @@ from cadwyn import VersionedAPIRouter, Cadwyn
 from versions import my_version_bundle
 
 
-router = VersionedAPIRouter(prefix="/users")
+router = VersionedAPIRouter()
 
 
 @router.get("/users/", tags=["users"])
@@ -33,9 +33,9 @@ That's it. `generate_and_include_versioned_routers()` will generate all versions
 
 ## Routing
 
-Cadwyn is built on header-based routing. First, requests are routed to the appropriate API version based on the version header (`x-api-version` by default). Second, requests are routed by the appropriate url path and method. Currently, Cadwyn works only with ISO 8601 date-based versions (such as `2022-11-16`). If a user provides a date that does not match any of the versions exactly, Cadwyn selects the closest earlier applicable version. For example, `2022-11-16` in a request can be matched by `2022-11-15` or `2000-01-01` but not by `2022-11-17`.
+Cadwyn is built on header-based routing. First, requests are routed to the appropriate API version based on the version header (`x-api-version` by default). Second, requests are routed by the appropriate url path and method. By default, Cadwyn uses ISO 8601 date-based versions (such as `2022-11-16`), but it also supports [arbitrary strings](./api_version_parameter.md#api-version-format) as versions. If a user provides a date that does not match any of the versions exactly, Cadwyn selects the closest earlier applicable version. For example, `2022-11-16` in a request can be matched by `2022-11-15` or `2000-01-01` but not by `2022-11-17`.
 
-However, header-based routing is the default way to use Cadwyn. If you want to use any other form of routing, you can use Cadwyn directly through `cadwyn.generate_versioned_routers()` or subclass `cadwyn.Cadwyn` with a different router and middleware. Remember to update the `VersionBundle.api_version_var` variable each time you route a request to a version. This variable allows Cadwyn to do [side effects](./version_changes.md#version-changes-with-side-effects) and [data migrations](./version_changes.md#data-migrations).
+However, header-based routing is the default way to use Cadwyn. Cadwyn can also take the version from a [URL path parameter](./api_version_parameter.md#api-version-location). If you want to use any other form of routing, you can use Cadwyn directly through `cadwyn.generate_versioned_routers()` or subclass `cadwyn.Cadwyn` with a different router and middleware. Remember to update the `VersionBundle.api_version_var` variable each time you route a request to a version. This variable allows Cadwyn to do [side effects](./version_changes.md#version-changes-with-side-effects) and [data migrations](./version_changes.md#data-migrations).
 
 ### VersionedAPIRouter
 

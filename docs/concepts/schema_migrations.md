@@ -93,7 +93,7 @@ warnings.filterwarnings("ignore", r".* changes the alias of ", FutureWarning)
 
 **DEFAULTS WARNING:**
 
-If you add `default` or `default_factory` to the old version of a schema, it will not manifest in the code automatically. Instead, you should add both the `default` and `default_factory`, and then also add the default value using a request migration.
+If you add `default` or `default_factory` to the old version of a schema, it will not manifest in the code automatically. Instead, you should add the `default` or `default_factory`, and then also add the default value using a request migration.
 
 The reason for such behaviour is the way Cadwyn works with Pydantic and unfortunately this cannot be changed:
 
@@ -101,7 +101,7 @@ Cadwyn:
 
 1. Receives a request for API version `V`
 2. Validates the request using the schemas from `V`
-3. Marshalls the unmarshalled request body into a raw data structure using `BaseModel.dict` (`BaseModel.model_dump` in Pydantic v2) with **exclude_unset=True**
+3. Marshalls the unmarshalled request body into a raw data structure using `BaseModel.model_dump` with **exclude_unset=True**
 4. Passes the request through all request migrations from `V` to `latest`
 5. Validates the request using `latest` schemas
 
@@ -157,7 +157,7 @@ from pydantic import Field, field_validator
 @field_validator("foo")
 def validate_foo(cls, value):
     if not ":" in value:
-        raise TypeError
+        raise ValueError("foo must contain a colon")
     return value
 
 

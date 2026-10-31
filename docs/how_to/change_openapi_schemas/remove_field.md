@@ -73,6 +73,7 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
 
     ```python
     from cadwyn import VersionChange, schema
+    from pydantic import Field
     from users import BaseUser
 
 
@@ -98,7 +99,10 @@ Let's say that we had a nullable `middle_name` field but we decided that it does
 
     from cadwyn import Version, VersionBundle, HeadVersion
     from datetime import date
-    from .v2001_01_01 import RemoveZodiacSignFromUser
+    from .v2001_01_01 import (
+        RemoveMiddleNameFromUser,
+        RemoveUserMiddleNameFromLatestVersion,
+    )
 
     version_bundle = VersionBundle(
         HeadVersion(RemoveUserMiddleNameFromLatestVersion),

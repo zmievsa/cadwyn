@@ -14,7 +14,7 @@ Now you have everything you need at your disposal: field `created_at` is availab
 
 Let's say we want our users to be able to specify a middle name but it is nullable. It is not a breaking change so no new version is necessary whether it is requests or responses.
 
-You just need to add a nullable `middle_name` field into `users.BaseUser` as if you were working with a barebones FastAPI app.
+You just need to add an optional `middle_name: str | None = None` field into `users.BaseUser` as if you were working with a barebones FastAPI app.
 
 ### Field is required
 
@@ -22,11 +22,12 @@ You just need to add a nullable `middle_name` field into `users.BaseUser` as if 
 
 Let's say that our users had a field `country` that defaulted to `USA` but our product is now used well beyond United States so we want to make this field required in the HEAD version.
 
-1. Remove `default="US"` from `users.UserCreateRequest`
+1. Remove `default="USA"` from `users.UserCreateRequest`
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
     from cadwyn import (
+        RequestInfo,
         VersionChange,
         schema,
         convert_request_to_next_version_for,
@@ -70,7 +71,7 @@ Let's say that we want to add a required field `phone` to our users. However, ol
 
 So we will make `phone` nullable in HEAD, then make it required in `latest`, and then make it nullable again in older versions, thus making it possible to convert all of our requests to HEAD.
 
-1. Add `phone` field of type `str | None` to `users.BaseUser`
+1. Add `phone` field of type `str | None` with a `default=None` to `users.BaseUser`
 2. Add `phone` field of type `str | None` with a `default=None` to `users.UserResource` because all users created with older versions of our API won't have phone numbers.
 3. Add the following migration to `versions.v2001_01_01` which will make sure that `phone` is not nullable in 2001_01_01:
 
