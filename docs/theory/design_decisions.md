@@ -57,12 +57,14 @@ These follow from how Cadwyn works, which [Architecture](architecture.md) descri
 
 These are accepted for now. They are listed so that nobody "discovers" and fixes them as a side quest. A fix for any of them is a separate, deliberate change with its own issue.
 
-* Generic models: cyclic generic args, quoted args from other modules, and recursive native type aliases keep the latest models in older versions. A PEP 695 generic model that refers to itself through a quoted annotation, such as `nxt: Optional["Wrap[X]"]` in `class Wrap[X](BaseModel)`, returns a 500 in every version, including the latest one, instead of failing at startup. On Pydantic 2.14.2 and newer, this happens only when a version change alters its type arg.
-* Dependencies: class dependencies (except Pydantic models) are not versioned. `Flag` and `IntFlag` parameters fail. WebSocket routes and streaming (generator or server-sent-event) endpoints don't work in versioned routes.
-* Uploads: an upload parameter named `body` returns a 500 in every version.
+* Generic models keep the latest models in older versions when a type arg refers back to its own model through a quoted annotation, such as `Optional[Page["Category"]]` in `Category`, or when it uses a recursive native `type` alias. A PEP 695 generic model that refers to itself through a quoted annotation, such as `nxt: Optional["Wrap[X]"]` in `class Wrap[X](BaseModel)`, returns a 500 in every version, including the latest one, instead of failing at startup. On Pydantic 2.14.2 and newer, this happens only when a version change alters its type arg.
+* Type aliases: a response model with a field typed by a recursive native `type` alias, such as `type JsonData = list[JsonData] | Leaf | int`, fails with a `RecursionError`, so every request returns a 500.
+* Enums: `enum(...)` instructions on a `Flag` or `IntFlag` enum make every route and the OpenAPI return a 500. `enum(...)` instructions on a plain `Enum` (`class Kind(Enum)`, not `class Kind(str, Enum)`) make the request bodies that use it return a 500 in every version.
+* Dependencies: class dependencies (except Pydantic models) are not versioned. WebSocket routes and streaming (generator or server-sent-event) endpoints don't work in versioned routes.
+* Uploads and forms: an upload parameter named `body` returns a 500 in every version, and so does a form model with a `Json[...]` field.
 * Schema instructions: diamond inheritance takes the field from the first base, like Pydantic does. A parent's rename reaches a subclass's own changes only through single, non-generic inheritance. `schema(Child).field("x").had(name="y")` for a field that `Child` inherits leaves both `x` and `y` in the older versions of `Child`. `had(default=PydanticUndefined)` doesn't make a field required when its default is declared in `Annotated[..., Field(default=...)]`. `didnt_have(...)` fails with an `AttributeError` when the attribute is a read-only property of an `Annotated` metadata object. `schema(Model).validator(...).existed` for a computed field fails on Python versions before 3.13.
 * `cadwyn render` doesn't render `model_config`, and it renders `AliasChoices` and `AliasPath` as calls that raise a `TypeError`.
-* Bodies sent without a `Content-Type` are parsed as JSON by Cadwyn but ignored by FastAPI.
+* When a request has no `Content-Type` header, Cadwyn parses its body as JSON for an endpoint with several `Body()` params, while FastAPI ignores the body.
 
 ## Rules for changing Cadwyn
 
