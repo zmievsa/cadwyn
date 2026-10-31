@@ -2347,6 +2347,67 @@ def test__request_body_migration__with_form_model_union_of_override_named_like_f
     }
 
 
+async def _form_model_union(text: Annotated[Union[SchemaWithText, OtherSchemaWithText], Form()]):
+    return text.model_dump()
+
+
+async def _optional_form_model_union(
+    text: Annotated[Optional[Union[SchemaWithText, OtherSchemaWithText]], Form()] = None,
+):
+    return None if text is None else text.model_dump()
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "data"),
+    [
+        pytest.param(_form_model_union, {"text": "1"}, id="with_form_data_of_first_member"),
+        pytest.param(_form_model_union, {"other_text": "1"}, id="with_form_data_of_second_member"),
+        pytest.param(_optional_form_model_union, {"other_text": "1"}, id="optional_with_form_data_of_second_member"),
+        pytest.param(_optional_form_model_union, None, id="optional_without_form_data"),
+        pytest.param(_optional_form_model_union, {"unrelated": "1"}, id="optional_with_unrelated_form_data"),
+    ],
+)
+def test__request_body_migration__with_form_model_union__head_should_get_it_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
+    data: Optional[dict[str, str]],
+):
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    clients = create_versioned_clients(version_change())
+
+    expected = TestClient(fastapi_app).post(test_path, data=data)
+    for version_client in clients.values():
+        response = version_client.post(test_path, data=data)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.parametrize("field_name", ["text", "other_text"])
+def test__request_body_migration__with_form_model_union__migration_should_change_the_supplied_member(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    field_name: str,
+):
+    router.post(test_path)(_form_model_union)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body[field_name] = "migrated"
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert {
+        version: client.post(test_path, data={field_name: "sent"}).json() for version, client in clients.items()
+    } == {
+        "2000-01-01": {field_name: "migrated"},
+        "2001-01-01": {field_name: "sent"},
+    }
+
+
 class SchemaWithTextDumpedAsString(BaseModel):
     text: str
 

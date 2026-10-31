@@ -116,10 +116,17 @@ _is_form_model_supplied = cast(
 _should_embed_body_fields = cast(
     "Callable[[list[ModelField]], bool]", getattr(fastapi.dependencies.utils, "_should_embed_body_fields", None)
 )
-# Since FastAPI 0.161.0, unions of form models are form models too
+
+
+def _get_form_models_before_fastapi_0_161(field: ModelField) -> list[type[BaseModel]]:  # pragma: no cover
+    model = _get_form_model(field)
+    return [] if model is None else [model]
+
+
+# Since FastAPI 0.161.0, unions of form models are form models too, and `_get_form_model` returns None for them
 _get_form_models = cast(
-    "Union[Callable[[ModelField], list[type[BaseModel]]], None]",
-    getattr(fastapi.dependencies.utils, "_get_form_models", None),
+    "Callable[[ModelField], list[type[BaseModel]]]",
+    getattr(fastapi.dependencies.utils, "_get_form_models", _get_form_models_before_fastapi_0_161),
 )
 if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and None in (  # pragma: no cover
     _get_form_model,
@@ -929,25 +936,20 @@ async def _form_has_no_fields_of_omittable_form_model(  # pragma: no cover # Fas
     """Return whether the body param is a form model with a default, and FastAPI has given every body param its default.
 
     The kwarg is the body param only if it has the param's name, and not a dependency or another param named after
-    the body's alias. FastAPI only skips the form models that can be None, i.e. whose annotation isn't the model
-    itself, if the form doesn't supply them. Dependencies and their overrides can have such form models too, but if
-    anything else in the tree reads the form, we take the previous path, so that the head can't lose its values when
-    it gets no body.
+    the body's alias. FastAPI only skips the form models (or unions of them) that can be None if the form doesn't
+    supply any of them. Dependencies and their overrides can have such form models too, but if anything else in the
+    tree reads the form, we take the previous path, so that the head can't lose its values when it gets no body.
     """
     body_param = route.dependant.body_params[0]
-    if (
-        _get_form_model(body_param) is None
-        or body_param.name != body_field_alias
-        or body_param.field_info.is_required()
-    ):
+    if not _get_form_models(body_param) or body_param.name != body_field_alias or body_param.field_info.is_required():
         return False
     models: list[type[BaseModel]] = []
     for dependant in _iter_dependants_that_fastapi_solves(route.dependant, route):
         for field in dependant.body_params:
-            model = _get_form_model(field)
-            if model is None or field.field_info.annotation is model:
+            field_models = _get_form_models(field)
+            if not field_models or type(None) not in get_args(field.field_info.annotation):
                 return False
-            models.append(model)
+            models.extend(field_models)
     # FastAPI has already parsed the form, so this returns its cached form without reading it again or closing it
     form = await request.form()
     return not any(_form_supplies_form_model(model, form) for model in models)
@@ -997,7 +999,7 @@ def _get_form_model_lookup(
     see the key. Otherwise we take the last release's path.
     """
     body_field = head_dependant.body_params[0]
-    if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and _get_form_model(body_field):  # pragma: no cover # FastAPI >= 0.158.2
+    if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and _get_form_models(body_field):  # pragma: no cover # FastAPI >= 0.158.2
         lookups = _get_body_lookups(head_dependant, head_route, embed_body_fields=embed_body_fields)
         form_model_aliases = tuple(lookups.form_model_aliases)
         clashing_params = [
@@ -1016,21 +1018,16 @@ def _get_form_model_lookup(
     return head_dependant, ()
 
 
-def _is_form_model(field: ModelField) -> bool:  # pragma: no cover # FastAPI >= 0.158.2
-    return bool(_get_form_models(field)) if _get_form_models is not None else _get_form_model(field) is not None
-
-
 def _with_form_models_under_own_key(dependant: Dependant) -> Dependant:  # pragma: no cover # FastAPI >= 0.158.2
     """Return a copy of the dependant whose own form models FastAPI looks up under `_FORM_MODEL_BODY_KEY`.
 
     If the app has dependency overrides, FastAPI builds the dependants of all dependencies again while solving, so the
     form models of dependencies keep their aliases.
     """
-    # The head's single body param has passed `_get_form_model`, so unions of form models never get here
     return dataclasses.replace(
         dependant,
         body_params=[
-            _with_form_model_under_own_key(field) if _get_form_model(field) else field
+            _with_form_model_under_own_key(field) if _get_form_models(field) else field
             for field in dependant.body_params
         ],
     )
@@ -1074,7 +1071,7 @@ def _get_body_lookups(  # pragma: no cover # FastAPI >= 0.158.2
         is_embedded = embed_body_fields or _should_embed_body_fields(dependant.body_params)
         for field in dependant.body_params:
             aliases = [alias for alias, _ in _get_param_aliases(field)]
-            if _is_form_model(field):
+            if _get_form_models(field):
                 lookups.form_model_aliases.update(dict.fromkeys(aliases))
             elif is_embedded:
                 lookups.other_params.append(_BodyParamLookup(aliases, has_default=not field.field_info.is_required()))
