@@ -1777,6 +1777,365 @@ def test__request_body_migration__with_optional_form_model__head_should_get_the_
         )
 
 
+async def _optional_form_model(body: Annotated[Optional[InnerSchemaWithValidationAlias], Form()] = None):
+    return None if body is None else body.value
+
+
+async def _optional_form_model_from_dependency(
+    body: Annotated[Optional[InnerSchemaWithValidationAlias], Form()] = None,
+) -> Optional[int]:
+    return None if body is None else body.value
+
+
+async def _optional_form_model_shared_by_dependency(
+    body: Annotated[Optional[InnerSchemaWithValidationAlias], Form()] = None,
+    from_dependency: Optional[int] = Depends(_optional_form_model_from_dependency),
+):
+    return [None if body is None else body.value, from_dependency]
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "data"),
+    [
+        pytest.param(_optional_form_model, None, id="without_form_data"),
+        pytest.param(_optional_form_model, {"unrelated": "1"}, id="with_unrelated_form_data"),
+        pytest.param(_optional_form_model, {"v": "1", "unrelated": "1"}, id="with_its_form_data"),
+        pytest.param(_optional_form_model_shared_by_dependency, None, id="shared_by_dependency_without_form_data"),
+        pytest.param(
+            _optional_form_model_shared_by_dependency, {"v": "1"}, id="shared_by_dependency_with_its_form_data"
+        ),
+    ],
+)
+def test__request_body_migration__with_optional_form_model__head_should_get_it_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
+    data: Optional[dict[str, str]],
+):
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    clients = create_versioned_clients(version_change())
+
+    expected = TestClient(fastapi_app).post(test_path, data=data)
+    for version_client in clients.values():
+        response = version_client.post(test_path, data=data)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+async def _get_current_user() -> str:
+    raise NotImplementedError
+
+
+async def _get_fake_user() -> str:
+    return "fake"
+
+
+async def _get_optional_form_model_value_in_override(
+    body: Annotated[Optional[InnerSchemaWithValidationAlias], Form()] = None,
+) -> Optional[int]:
+    return None if body is None else body.value
+
+
+async def _optional_form_model_next_to_overridden_dependency(
+    body: Annotated[Optional[InnerSchemaWithValidationAlias], Form()] = None,
+    from_dependency: Any = Depends(_get_current_user),
+):
+    return [None if body is None else body.value, from_dependency]
+
+
+@pytest.mark.parametrize(
+    ("override", "data"),
+    [
+        pytest.param(_get_fake_user, None, id="override_without_params_and_no_form_data"),
+        pytest.param(_get_fake_user, {"unrelated": "1"}, id="override_without_params_and_unrelated_form_data"),
+        pytest.param(
+            _get_optional_form_model_value_in_override, None, id="override_sharing_form_model_and_no_form_data"
+        ),
+        pytest.param(
+            _get_optional_form_model_value_in_override, {"v": "1"}, id="override_sharing_form_model_and_its_form_data"
+        ),
+    ],
+)
+def test__request_body_migration__with_optional_form_model_and_dependency_override__head_should_get_it_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    override: Callable[..., Coroutine[Any, Any, Any]],
+    data: Optional[dict[str, str]],
+):
+    router.post(test_path)(_optional_form_model_next_to_overridden_dependency)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(_optional_form_model_next_to_overridden_dependency)
+    fastapi_app.dependency_overrides[_get_current_user] = override
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_current_user] = override
+
+    expected = TestClient(fastapi_app).post(test_path, data=data)
+    for version_client in clients.values():
+        response = version_client.post(test_path, data=data)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, migrations get the form of the request"
+)
+def test__request_body_migration__with_optional_form_model_that_the_form_does_not_supply__migration_should_get_none(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    router.post(test_path)(_optional_form_model)
+    bodies_seen_by_migration: list[Any] = []
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        bodies_seen_by_migration.append(request.body)
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    response = clients["2000-01-01"].post(test_path, data={"unrelated": "1"})
+    assert (response.status_code, response.json()) == (200, None)
+    assert bodies_seen_by_migration == [None]
+
+
+class _RequiredFormModelThatWrapsEmptyFormsAsNone(RootModel[Optional[dict[str, str]]]):
+    @model_validator(mode="wrap")
+    @classmethod
+    def _empty_form_as_none(  # pragma: no cover # FastAPI >= 0.158.2
+        cls, value: Any, handler: Callable[[Any], Any]
+    ) -> Any:
+        return None if value in ({}, None) else handler(value)
+
+
+class _FormModelWithExtraFields(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    value: Optional[int] = Field(default=None, validation_alias="v")
+
+
+def _none_for_zero(  # pragma: no cover # FastAPI >= 0.158.2
+    value: Optional[InnerSchemaWithValidationAlias],
+) -> Optional[InnerSchemaWithValidationAlias]:
+    return None if value is not None and value.value == 0 else value
+
+
+def _none_without_value(  # pragma: no cover # FastAPI >= 0.158.2
+    value: Optional[_FormModelWithExtraFields],
+) -> Optional[_FormModelWithExtraFields]:
+    return None if value is not None and value.value is None else value
+
+
+async def _none_dependency() -> None:  # pragma: no cover # FastAPI >= 0.158.2
+    return None
+
+
+async def _get_extra_from_form(
+    extra: Optional[str] = Form(None),
+) -> Optional[str]:  # pragma: no cover # FastAPI >= 0.158.2
+    return extra
+
+
+def _add_required_form_model_that_validates_to_none_endpoint(  # pragma: no cover # FastAPI >= 0.158.2
+    router: VersionedAPIRouter, path: str
+) -> None:
+    @router.post(path)
+    async def endpoint(body: Annotated[_RequiredFormModelThatWrapsEmptyFormsAsNone, Form()]):
+        raise NotImplementedError
+
+
+def _add_form_model_that_validates_to_none_with_non_none_default_endpoint(  # pragma: no cover # FastAPI >= 0.158.2
+    router: VersionedAPIRouter, path: str
+) -> None:
+    @router.post(path)
+    async def endpoint(
+        body: Annotated[Optional[InnerSchemaWithValidationAlias], Form(), AfterValidator(_none_for_zero)] = (
+            InnerSchemaWithValidationAlias(v=1)
+        ),
+    ):
+        raise NotImplementedError
+
+
+def _add_form_model_with_extra_fields_that_validates_to_none_endpoint(  # pragma: no cover # FastAPI >= 0.158.2
+    router: VersionedAPIRouter, path: str
+) -> None:
+    @router.post(path)
+    async def endpoint(
+        body: Annotated[Optional[_FormModelWithExtraFields], Form(), AfterValidator(_none_without_value)] = None,
+    ):
+        raise NotImplementedError
+
+
+class _FormModelWithDefaults(BaseModel):
+    value: int = Field(default=0, validation_alias="v")
+
+
+def _always_none(value: Any) -> None:  # pragma: no cover # FastAPI >= 0.158.2
+    return None
+
+
+def _add_non_nullable_form_model_that_validates_to_none_endpoint(  # pragma: no cover # FastAPI >= 0.158.2
+    router: VersionedAPIRouter, path: str
+) -> None:
+    @router.post(path)
+    async def endpoint(
+        body: Annotated[_FormModelWithDefaults, Form(), AfterValidator(_always_none)] = _FormModelWithDefaults(v=7),
+    ):
+        raise NotImplementedError
+
+
+def _add_form_model_next_to_form_field_of_dependency_override_endpoint(  # pragma: no cover # FastAPI >= 0.158.2
+    router: VersionedAPIRouter, path: str
+) -> None:
+    @router.post(path)
+    async def endpoint(
+        body: Annotated[Optional[InnerSchemaWithValidationAlias], Form()] = None,
+        extra: Optional[str] = Depends(_none_dependency),
+    ):
+        raise NotImplementedError
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, Cadwyn takes the same path as before"
+)
+@pytest.mark.parametrize(
+    ("add_endpoint", "data", "dependency_overrides"),
+    [
+        pytest.param(_add_required_form_model_that_validates_to_none_endpoint, None, {}, id="required_form_model"),
+        pytest.param(
+            _add_form_model_that_validates_to_none_with_non_none_default_endpoint,
+            {"v": "0"},
+            {},
+            id="form_model_with_its_form_data_and_non_none_default",
+        ),
+        pytest.param(
+            _add_form_model_with_extra_fields_that_validates_to_none_endpoint,
+            {"unrelated": "1"},
+            {},
+            id="form_model_with_extra_fields",
+        ),
+        pytest.param(
+            _add_non_nullable_form_model_that_validates_to_none_endpoint,
+            None,
+            {},
+            id="non_nullable_form_model_without_form_data",
+        ),
+        pytest.param(
+            _add_non_nullable_form_model_that_validates_to_none_endpoint,
+            {"unrelated": "1"},
+            {},
+            id="non_nullable_form_model_with_unrelated_form_data",
+        ),
+        pytest.param(
+            _add_form_model_next_to_form_field_of_dependency_override_endpoint,
+            {"extra": "1"},
+            {_none_dependency: _get_extra_from_form},
+            id="optional_form_model_next_to_form_field_of_dependency_override",
+        ),
+    ],
+)
+def test__request_body_migration__with_form_model_that_fastapi_validates_to_none__should_fail_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    add_endpoint: Callable[[VersionedAPIRouter, str], None],
+    data: Optional[dict[str, str]],
+    dependency_overrides: dict[Any, Any],
+):
+    add_endpoint(router, test_path)
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides.update(dependency_overrides)
+
+    # FastAPI has validated the form, so the head doesn't get an omitted body that would lose the form's values
+    for version_client in clients.values():
+        with pytest.raises(CadwynHeadRequestValidationError):
+            version_client.post(test_path, data=data)
+
+
+class _FormModelThatValidatesEmptyFormsAsNone(RootModel[Optional[dict[str, str]]]):
+    @model_validator(mode="before")
+    @classmethod
+    def _empty_form_as_none(cls, value: Any) -> Any:  # pragma: no cover # FastAPI >= 0.151
+        return None if value == {} else value
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.151
+    not FASTAPI_DISTINGUISHES_NULL_BODIES, reason="Before FastAPI 0.151.0, a body that is None is an omitted one"
+)
+def test__request_body_migration__with_supplied_form_model_that_dumps_to_none__head_should_get_it_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[_FormModelThatValidatesEmptyFormsAsNone, Form()]):
+        return body.root
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        response = version_client.post(test_path)
+        assert (response.status_code, response.json()) == (200, None)
+
+
+def _add_optional_file_next_to_query_param_named_body_endpoint(  # pragma: no cover # FastAPI >= 0.151
+    router: VersionedAPIRouter, path: str
+) -> None:
+    @router.post(path)
+    async def endpoint(upload: Optional[bytes] = File(None), body: Optional[str] = Query(None)):
+        raise NotImplementedError
+
+
+def _add_optional_form_model_aliased_as_dependency_named_body_endpoint(  # pragma: no cover # FastAPI >= 0.158.2
+    router: VersionedAPIRouter, path: str
+) -> None:
+    @router.post(path)
+    async def endpoint(
+        payload: Annotated[Optional[InnerSchemaWithValidationAlias], Form(alias="body")] = None,
+        body: None = Depends(_none_dependency),
+    ):
+        raise NotImplementedError
+
+
+@pytest.mark.parametrize(  # pragma: no cover # FastAPI >= 0.151
+    ("add_endpoint", "request_kwargs"),
+    [
+        pytest.param(
+            _add_optional_file_next_to_query_param_named_body_endpoint,
+            {"files": {"upload": ("file.txt", b"content")}},
+            id="optional_file_next_to_query_param_named_body",
+            marks=pytest.mark.skipif(
+                not FASTAPI_DISTINGUISHES_NULL_BODIES,
+                reason="Before FastAPI 0.151.0, a body that is None is an omitted one",
+            ),
+        ),
+        pytest.param(
+            _add_optional_form_model_aliased_as_dependency_named_body_endpoint,
+            {"data": {"v": "1"}},
+            id="optional_form_model_aliased_as_dependency_named_body",
+            marks=pytest.mark.skipif(
+                not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS,
+                reason="Before FastAPI 0.158.2, FastAPI embeds `Optional` form models",
+            ),
+        ),
+    ],
+)
+def test__request_body_migration__with_none_kwarg_named_body_that_is_not_the_body__should_not_drop_the_body(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    add_endpoint: Callable[[VersionedAPIRouter, str], None],
+    request_kwargs: dict[str, Any],
+):
+    add_endpoint(router, test_path)
+    clients = create_versioned_clients(version_change())
+
+    # Cadwyn takes the kwarg for the body, so it fails as before instead of passing the head no body
+    for version_client in clients.values():
+        with pytest.raises(CadwynHeadRequestValidationError):
+            version_client.post(test_path, **request_kwargs)
+
+
 @pytest.mark.parametrize(
     "alias_choices",
     [AliasChoices("p", "q"), AliasChoices("p", AliasPath("q", "r"))],

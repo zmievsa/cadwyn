@@ -13,6 +13,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 - Fixed documentation examples that failed or did the opposite of what they described: reversed field renames in the data migration and rename-a-field examples, the `migrate_response_body()` call without its `versions` argument, swapped "adding" and "removing" enum member examples, a `VersionChangeWithSideEffects` example without `instructions_to_migrate_to_previous_version`, a `hidden()` example that changed path params (which Cadwyn rejects), a "remove a required field" recipe that left HEAD without the default it needs, and missing or wrong imports in several examples.
 - Fixed documentation claims that contradicted Cadwyn's behavior: that Cadwyn only supports date-based versions, that `api_version_parameter_name` defaults to `"X-API-VERSION"`, that a schema can have both `default` and `default_factory`, that validators can reject values with `TypeError`, and references to the `data.vXXXX_XX_XX` packages that Cadwyn no longer generates.
+- With FastAPI 0.158.2 or newer, endpoints with an optional form model (e.g. `body: Annotated[Optional[MyModel], Form()] = None`) no longer fail with a 500 error in every API version when the request has none of the model's form fields. Request migrations get `None` as the body, and the endpoint gets the param's default (#495).
+- With FastAPI 0.158.2, endpoints that take a form model no longer fail with a 500 error, and endpoints that take an optional form model now get its form data instead of `None`. Cadwyn handled the way FastAPI looks up form models only from FastAPI 0.159.0, while FastAPI changed it in 0.158.2 (#495).
 
 ## [8.1.1]
 
