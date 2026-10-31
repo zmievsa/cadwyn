@@ -14,35 +14,13 @@ Migration instructions for reverting breaking changes should be grouped to simpl
 Each such group is called a **version change**:
 
 ```python
-# versions/v2023_02_10.py
-
-from cadwyn import VersionChange, endpoint
-
-
-class RemoveTaxIdEndpoints(VersionChange):
-    """The 'GET /v1/tax_ids' and 'POST /v1/tax_ids' endpoints have been
-    removed because tax IDs are now managed on customer records.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        endpoint("/v1/tax_ids", ["GET", "POST"]).existed,
-    )
+{! ./docs_src/concepts/version_changes/block001.py !}
 ```
 
 After describing the groups, add your version change class(es) to your version bundle to activate them:
 
 ```python
-# versions/__init__.py
-
-from cadwyn import HeadVersion, Version, VersionBundle
-
-from .v2023_02_10 import RemoveTaxIdEndpoints
-
-versions = VersionBundle(
-    HeadVersion(),
-    Version("2023-02-10", RemoveTaxIdEndpoints),
-    Version("2022-11-16"),
-)
+{! ./docs_src/concepts/version_changes/block002.py !}
 ```
 
 This instructs Cadwyn to **un**delete these endpoints in all versions before 2023-02-10.
@@ -54,17 +32,7 @@ The following explains what each part does and why:
 `VersionBundle` is the single source of truth for your list of versions. It stores all versions and all [version changes](#version-changes) associated with them. Each version change represents a group of breaking changes. Each `Version` contains a group of version changes that led to its creation. For example, if you delete the `POST /v1/tax_ids` endpoint in version `2023-02-10`, you need to add a corresponding version change to the `2023-02-10` version. For example:
 
 ```python
-# versions/__init__.py
-
-from cadwyn import HeadVersion, Version, VersionBundle
-
-from .v2023_02_10 import RemoveTaxIdEndpoints
-
-versions = VersionBundle(
-    HeadVersion(),
-    Version("2023-02-10", RemoveTaxIdEndpoints),
-    Version("2022-11-16"),
-)
+{! ./docs_src/concepts/version_changes/block002.py !}
 ```
 
 Did you notice that the initial `2022-11-16` version has no version changes? That is intentional. How could it have breaking changes if there were no prior versions?
@@ -97,12 +65,7 @@ Note, however, that a migration is required only if it is a breaking change for 
 The name of a version change should clearly describe the breaking change it introduces. For example, `RemoveTaxIdEndpoints` immediately communicates what has changed. The name should begin with a verb and serve as the primary clue for developers unfamiliar with the history of the project to understand the difference between versions. Do not hesitate to use long, descriptive names. It is better to choose a verbose name that precisely conveys the change than a short, generic one. For example `RenameCreationDatetimeAndUpdateDatetimeToCreatedAtAndUpdatedAt` is far more informative than `RefactorFields`. After only a few poorly named version changes, the entire versioning history can become difficult to read and understand:
 
 ```python
-versions = VersionBundle(
-    Version("2023-05-09", ChangeCreateLogic, AddRequiredFields),
-    Version("2023-04-02", DeleteEndpoint, ChangeFields, RenameFields),
-    Version("2023-02-10", RenameEndpoints, RefactorFields),
-    Version("2022-11-16"),
-)
+{! ./docs_src/concepts/version_changes/block003.py [ln:46-] !}
 ```
 
 ### VersionChange.description
@@ -146,29 +109,7 @@ Suppose you need to know what your code looked like two weeks ago. You would use
 Consider a scenario where you rename the `creation_date` field to `created_at`. You have updated your schemas — that's great! However, clients using previous versions of the API will continue to send requests containing `creation_date` instead of `created_at`. How do you handle this? Well, in Cadwyn your business logic never receives requests from the previous versions. Instead, it receives only the requests of the latest version. So whenever you define a version change that renames a field, you also need to specify how to convert the request body from the previous version to the new one. For example:
 
 ```python
-from cadwyn import (
-    RequestInfo,
-    VersionChange,
-    convert_request_to_next_version_for,
-    schema,
-)
-from invoices import InvoiceCreateRequest
-
-
-class RenameInvoiceCreationDateToCreatedAt(VersionChange):
-    """Invoice creation timestamps are now returned as 'created_at' instead of
-    'creation_date' to align with the API's other timestamp fields.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(InvoiceCreateRequest)
-        .field("created_at")
-        .had(name="creation_date"),
-    )
-
-    @convert_request_to_next_version_for(InvoiceCreateRequest)
-    def rename_creation_date_to_created_at(request: RequestInfo):
-        request.body["created_at"] = request.body.pop("creation_date")
+{! ./docs_src/concepts/version_changes/block004.py !}
 ```
 
 Did you notice how the schema for `InvoiceCreateRequest` is specified in the migration above? This instructs Cadwyn to apply it to all routes that use this schema as their request body.
@@ -180,40 +121,10 @@ A request migration can also remove a body that is not a form: if it sets `reque
 But wait... What happens to the `Invoice` responses? Your business logic now returns `created_at`, which means clients using previous API versions will be affected. Cadwyn solves this as well by allowing you to define response migrations. Requests are migrated forward in versions while responses are migrated backward in versions. In other words, your business logic returns a response of the latest version and Cadwyn will use your response migrations to migrate the response back to the version of your client's request:
 
 ```python
-from cadwyn import (
-    RequestInfo,
-    ResponseInfo,
-    VersionChange,
-    convert_request_to_next_version_for,
-    convert_response_to_previous_version_for,
-    schema,
-)
-from invoices import (
-    BaseInvoice,
-    InvoiceCreateRequest,
-    InvoiceResource,
-)
-
-
-class RenameInvoiceCreationDateToCreatedAt(VersionChange):
-    """Invoice creation timestamps are now returned as 'created_at' instead of
-    'creation_date' to align with the API's other timestamp fields.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(BaseInvoice).field("created_at").had(name="creation_date"),
-    )
-
-    @convert_request_to_next_version_for(InvoiceCreateRequest)
-    def rename_creation_date_to_created_at(request: RequestInfo):
-        request.body["created_at"] = request.body.pop("creation_date")
-
-    @convert_response_to_previous_version_for(InvoiceResource)
-    def rename_created_at_to_creation_date(response: ResponseInfo):
-        response.body["creation_date"] = response.body.pop("created_at")
+{! ./docs_src/concepts/version_changes/block005.py !}
 ```
 
-Did you notice how the schema for `InvoiceResource` is specified in the migration above? This instructs Cadwyn to apply it to all routes with this schema as their `response_model`. Also notice that `BaseInvoice` is now used in the instructions. Here, `BaseInvoice` is the parent of both `InvoiceCreateRequest` and `InvoiceResource`, so renaming it in the instructions will rename the field in those schemas as well. You can, however, apply the instructions to both individual schemas instead of their parent if you prefer.
+Did you notice how the schema for `InvoiceResource` is specified in the migration above? This instructs Cadwyn to apply it to all routes with this schema as their `response_model`. Also notice that `BaseInvoice` is now used in the instructions. Here, `BaseInvoice` is the parent of both `InvoiceCreateRequest` and `InvoiceResource`, so renaming it in the instructions will rename the field in those schemas as well. Rename an inherited field in the parent like this, because renaming it in a child schema keeps the old field next to the new one.
 
 !!! note "Migrations only run for the schema you name"
     Instructions such as `schema(InvoiceResource).field(...).had(...)` change the schema everywhere it is used, including inside other schemas and generics. Request and response migrations are different: a schema-based migration only runs when its schema is the request body or the `response_model` of the route itself. It does not run for that schema nested in another one, e.g. in a field of another schema or inside a generic such as `Page[InvoiceResource]`, so write the migration for the outer schema instead. This is a deliberate choice: each migration runs exactly where you declared it and never twice for the same data.
@@ -229,33 +140,7 @@ Did you **notice** how the **latest** versions of the schemas are used in the mi
 Often you need to migrate based on the endpoint path rather than the request body or response model. This happens when, for example, an endpoint does not have a request body, or its response model is used in other places that you do not want to migrate. Consider the example [above](#data-migrations), but use paths instead of schemas:
 
 ```python
-from cadwyn import (
-    RequestInfo,
-    ResponseInfo,
-    VersionChange,
-    convert_request_to_next_version_for,
-    convert_response_to_previous_version_for,
-    schema,
-)
-from invoices import BaseInvoice
-
-
-class RenameInvoiceCreationDateToCreatedAt(VersionChange):
-    """Invoice creation timestamps are now returned as 'created_at' instead of
-    'creation_date' to align with the API's other timestamp fields.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(BaseInvoice).field("created_at").had(name="creation_date"),
-    )
-
-    @convert_request_to_next_version_for("/v1/invoices", ["POST"])
-    def rename_creation_date_to_created_at(request: RequestInfo):
-        request.body["created_at"] = request.body.pop("creation_date")
-
-    @convert_response_to_previous_version_for("/v1/invoices", ["GET"])
-    def rename_created_at_to_creation_date(response: ResponseInfo):
-        response.body["creation_date"] = response.body.pop("created_at")
+{! ./docs_src/concepts/version_changes/block006.py !}
 ```
 
 That said, schemas are highly recommended, since it is much easier to introduce inconsistencies when using paths. For example, if you have ten endpoints sharing the same response body schema, you might forget to add migrations for three of them because you are using paths instead of schemas.
@@ -267,26 +152,7 @@ Often you need to raise `fastapi.HTTPException` in your code to signal an error 
 By default, Cadwyn's response migrations do not handle errors, but you can enable error handling with the `migrate_http_errors` keyword argument:
 
 ```python
-from cadwyn import (
-    ResponseInfo,
-    VersionChange,
-    convert_response_to_previous_version_for,
-)
-
-
-class ReplaceInvoiceNotFoundStatusCode400With404(VersionChange):
-    """Missing invoices from 'GET /v1/invoices' now return 404 instead of 400
-    so clients can distinguish absent resources from invalid requests.
-    """
-
-    instructions_to_migrate_to_previous_version = ()
-
-    @convert_response_to_previous_version_for(
-        "/v1/invoices", ["GET"], migrate_http_errors=True
-    )
-    def replace_400_with_404(response: ResponseInfo):
-        if response.status_code == 400:
-            response.status_code = 404
+{! ./docs_src/concepts/version_changes/block007.py !}
 ```
 
 #### Migration of non-body attributes
@@ -318,38 +184,7 @@ So far, only simple cases have been considered. But what happens if you cannot m
 Suppose the `User` schema previously had a list of addresses, but now you want to make a breaking change and replace `addresses` with a single `address`. A naive migration would take the first address from the list in each request and convert that address into a list in each response as follows:
 
 ```python
-from cadwyn import (
-    RequestInfo,
-    ResponseInfo,
-    VersionChange,
-    convert_request_to_next_version_for,
-    convert_response_to_previous_version_for,
-    schema,
-)
-from users import BaseUser
-
-
-# AN EXAMPLE OF A POOR MIGRATION
-class ReplaceUserAddressesWithAddress(VersionChange):
-    """Users now expose a single 'address' instead of 'addresses' because only
-    one mailing address is supported.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(BaseUser).field("address").didnt_exist,
-        schema(BaseUser).field("addresses").existed_as(type=list[str]),
-    )
-
-    @convert_request_to_next_version_for(BaseUser)
-    def turn_addresses_into_a_single_item(request: RequestInfo):
-        addresses = request.body.pop("addresses")
-        # The list might have been empty previously so new 'address'
-        # field must be nullable.
-        request.body["address"] = addresses[0] if addresses else None
-
-    @convert_response_to_previous_version_for(BaseUser)
-    def turn_address_into_a_list(response: ResponseInfo):
-        response.body["addresses"] = [response.body.pop("address")]
+{! ./docs_src/concepts/version_changes/block008.py !}
 ```
 
 But this will not work. If the user of the previous version requests to save three addresses, only one will actually be saved. Existing data is also going to be affected: if old users had multiple addresses, only one of them will be returned. This is important: a breaking change has been introduced.
@@ -361,27 +196,13 @@ So all your requests get migrated to HEAD, which is the internal representation 
 For responses, returning the internal representation is simple: return your database model or a dictionary with everything you need for all your versions. In the user address example, it is recommended to continue storing the list of addresses in the database and include a single address in a response. The latest schemas will strip it while previous schemas will be able to use it.
 
 ```python
-# in your business logic
-
-return {"address": user.addresses[0] if user.addresses else None, **user}
+{! ./docs_src/concepts/version_changes/block009.py [ln:18-] !}
 ```
 
 So now your migration will look like the following:
 
 ```python
-from cadwyn import VersionChange, schema
-from users import User
-
-
-class ReplaceUserAddressesWithAddress(VersionChange):
-    """Users now expose a single 'address' instead of 'addresses' because only
-    one mailing address is supported.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(User).field("address").didnt_exist,
-        schema(User).field("addresses").existed_as(type=list[str]),
-    )
+{! ./docs_src/concepts/version_changes/block010.py !}
 ```
 
 Yes, you no longer need any of the migrations because responses are handled automatically. See the how-to section for an example of how to achieve the same result with requests.
@@ -392,13 +213,7 @@ Often you will need to migrate your data outside of routing, manually. For examp
 
 
 ```python
-from cadwyn.schema_generation import migrate_response_body
-from users import UserResource
-from versions import versions
-
-body_from_2000_01_01 = migrate_response_body(
-    versions, UserResource, latest_body={"name": "John"}, version="2000-01-01"
-)
+{! ./docs_src/concepts/version_changes/block011.py !}
 ```
 
 The returned `body_from_2000_01_01` is your data passed through all converters (as it would be when returned from your route) and wrapped in the `2000-01-01` version of `UserResource`. Because the data is wrapped, you can include Pydantic’s defaults.
@@ -412,33 +227,13 @@ Migrations for the bodies of `fastapi.responses.StreamingResponse` and `fastapi.
 Pydantic has an implementation detail: `pydantic.RootModel` instances are memoized. So the following code is going to output `True`:
 
 ```python
-from pydantic import RootModel
-from users import User
-
-BulkCreateUsersRequestBody = RootModel[list[User]]
-BulkCreateUsersResponseBody = RootModel[list[User]]
-
-print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # True
+{! ./docs_src/concepts/version_changes/block012.py !}
 ```
 
 A migration intended for one of these schemas will affect both. A recommended alternative is to either use subclassing:
 
 ```python
-from pydantic import RootModel
-from users import User
-
-UserList = RootModel[list[User]]
-
-
-class BulkCreateUsersRequestBody(UserList):
-    pass
-
-
-class BulkCreateUsersResponseBody(UserList):
-    pass
-
-
-print(BulkCreateUsersRequestBody is BulkCreateUsersResponseBody)  # False
+{! ./docs_src/concepts/version_changes/block013.py !}
 ```
 
 or to specify migrations using [endpoint path](#path-based-migration-specification) instead of a schema.
@@ -452,18 +247,7 @@ This means that if you have a dependency that is executed during the request val
 To solve this issue, you can use the `cadwyn.current_dependency_solver` dependency which tells you whether your dependency is called before or after the request is migrated. If you want to run it after Cadwyn has migrated the request to the latest version, ensure that `current_dependency_solver` is set to `"cadwyn"`. If you want your dependency to run at the very beginning of handling the request, you should run it when `current_dependency_solver` is `"fastapi"`.
 
 ```python
-from cadwyn import current_dependency_solver
-
-
-def my_dependency(
-    dependency_solver: Annotated[
-        Literal["fastapi", "cadwyn"], Depends(current_dependency_solver)
-    ]
-):
-    if dependency_solver == "fastapi":  # Before migration
-        ...
-    else:  # After migration
-        ...
+{! ./docs_src/concepts/version_changes/block014.py !}
 ```
 
 but the majority of your dependencies will not need this as most dependencies should not have side effects or network calls within them.
@@ -496,29 +280,13 @@ Instead, Cadwyn provides a special `VersionChangeWithSideEffects` class for hand
 As an example, let's use the tutorial section's case with the user and their address. Suppose you use an external service to check whether user's address is listed in it and return 400 response if it is not. Also suppose that you have only added this check in the newest version.
 
 ```python
-from cadwyn import VersionChangeWithSideEffects
-
-
-class RejectUserAddressesMissingFromExternalService(
-    VersionChangeWithSideEffects
-):
-    """User addresses are now verified by an external service during creation;
-    invalid addresses return 400 to prevent storing undeliverable locations.
-    """
-
-    instructions_to_migrate_to_previous_version = ()
+{! ./docs_src/concepts/version_changes/block015.py !}
 ```
 
 Then you will have the following check in your business logic:
 
 ```python
-from src.versions import versions, RejectUserAddressesMissingFromExternalService
-
-
-async def create_user(payload):
-    if RejectUserAddressesMissingFromExternalService.is_applied:
-        check_user_address_exists_in_an_external_service(payload.address)
-    ...
+{! ./docs_src/concepts/version_changes/block016.py [ln:2-2,12-] !}
 ```
 
 So this change can be contained in any version. Your business logic doesn't know which version it has. And shouldn't.

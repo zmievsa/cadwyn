@@ -1,2 +1,13 @@
 extend = "../ruff.toml"
 line-length = 80
+
+[lint.extend-per-file-ignores]
+# The multi-line docstrings of these version changes are descriptions for API clients
+"concepts/version_changes/block00[145678].py" = ["D205"]
+"concepts/version_changes/block01[05].py" = ["D205"]
+"concepts/changelogs/block001.py" = ["D205"]
+"concepts/enum_migrations/block00[12].py" = ["D205"]
+# These examples show what `print` outputs
+"concepts/version_changes/block01[23].py" = ["T201"]
+# This example shows only the versioning part of a function
+"concepts/version_changes/block016.py" = ["ANN001", "PIE790"]
