@@ -6,6 +6,7 @@ they import `data.schemas` and `main` from it.
 
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -17,9 +18,12 @@ PROJECT_DIR = PAGE_DIR / "render_project"
 def _run_command_from(block: str) -> list[str]:
     [command] = (PAGE_DIR / block).read_text().splitlines()
     executable, *args = shlex.split(command)
-    assert executable == "python"
+    # The `cadwyn` console script lives next to the Python of the project venv
+    # (in bin/ or, on Windows, in Scripts/).
+    console_script = shutil.which(executable, path=Path(sys.executable).parent)
+    assert console_script is not None
     result = subprocess.run(
-        [sys.executable, *args],
+        [console_script, *args],
         cwd=PROJECT_DIR,
         capture_output=True,
         text=True,
