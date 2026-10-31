@@ -12,6 +12,8 @@
         <link rel="prev" href="../how_to_build_versioning_framework/">
       
       
+        <link rel="next" href="../architecture/">
+      
       
         
       
@@ -1524,6 +1526,8 @@
       
         
       
+        
+      
     
     
     
@@ -1795,6 +1799,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1940,7 +1972,7 @@
 <li><code>generate_versioned_models()</code>, and indexing its result (<code>SchemaGenerator.__getitem__</code> from <code>cadwyn.schema_generation</code>)</li>
 </ul>
 <h2 id="costs-of-the-architecture">Costs of the architecture<a class="headerlink" href="#costs-of-the-architecture" title="Permanent link">&para;</a></h2>
-<p>These follow from how Cadwyn works and are not bugs. Changes that try to remove them are almost always rejected.</p>
+<p>These follow from how Cadwyn works, which <a href="../architecture/">Architecture</a> describes, and are not bugs. Changes that try to remove them are almost always rejected.</p>
 <ul>
 <li><strong>Business logic sees only the latest version.</strong> Older versions are generated copies of the latest models, and migrations are written against the latest models.</li>
 <li><strong>Older versions use copies, not the original classes.</strong> Cadwyn copies models and changed enums for every version. Code that compares by identity (<code>isinstance</code>, <code>is</code>, dicts keyed by enum members) can see these copies, e.g. in the first run of a versioned dependency. Objects that can't be deep-copied (e.g. a validator holding a <code>threading.Lock</code>) fail when their models are versioned.</li>
@@ -2119,6 +2151,22 @@
             </div>
           </a>
         
+        
+          
+          <a href="../architecture/" class="md-footer__link md-footer__link--next" aria-label="Next: Architecture">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Architecture
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
         
       </nav>
     
