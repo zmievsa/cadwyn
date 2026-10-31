@@ -1839,21 +1839,6 @@
 <h2 id="adding-enum-members">Adding enum members<a class="headerlink" href="#adding-enum-members" title="Permanent link">&para;</a></h2>
 <p>Note that adding <code>enum</code> members <strong>can</strong> be a breaking change in contrast to adding optional fields to a schema. For example, if you return a list of entities, each of which has some type, and you add a new type, then your clients' code is likely to break.</p>
 <p>It is recommended to add <code>enum</code> members in new versions as well.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">enum</span><span class="w"> </span><span class="kn">import</span> <span class="n">auto</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">enum</span>
-
-
-<span class="k">class</span><span class="w"> </span><span class="nc">RemoveFooAndBarFromMyEnum</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;&#39;foo&#39; and &#39;bar&#39; are no longer returned in &#39;my_enum&#39; because those</span>
-<span class="sd">    legacy states are no longer supported.</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-
-    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">enum</span><span class="p">(</span><span class="n">my_enum</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">foo</span><span class="o">=</span><span class="s2">&quot;baz&quot;</span><span class="p">,</span> <span class="n">bar</span><span class="o">=</span><span class="n">auto</span><span class="p">()),</span>
-    <span class="p">)</span>
-</code></pre></div>
-<h2 id="removing-enum-members">Removing enum members<a class="headerlink" href="#removing-enum-members" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">enum</span>
 
 
@@ -1864,6 +1849,19 @@
 
     <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
         <span class="n">enum</span><span class="p">(</span><span class="n">my_enum</span><span class="p">)</span><span class="o">.</span><span class="n">didnt_have</span><span class="p">(</span><span class="s2">&quot;foo&quot;</span><span class="p">,</span> <span class="s2">&quot;bar&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+</code></pre></div>
+<h2 id="removing-enum-members">Removing enum members<a class="headerlink" href="#removing-enum-members" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">enum</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RemoveFooAndBarFromMyEnum</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;&#39;foo&#39; and &#39;bar&#39; are no longer returned in &#39;my_enum&#39; because those</span>
+<span class="sd">    legacy states are no longer supported.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">enum</span><span class="p">(</span><span class="n">my_enum</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">foo</span><span class="o">=</span><span class="s2">&quot;baz&quot;</span><span class="p">,</span> <span class="n">bar</span><span class="o">=</span><span class="s2">&quot;bar&quot;</span><span class="p">),</span>
     <span class="p">)</span>
 </code></pre></div>
 

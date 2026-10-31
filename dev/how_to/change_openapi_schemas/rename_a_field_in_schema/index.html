@@ -1817,12 +1817,12 @@
     <span class="p">)</span>
 
     <span class="nd">@convert_request_to_next_version_for</span><span class="p">(</span><span class="n">UserCreateRequest</span><span class="p">)</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">rename_bio_to_summary</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">RequestInfo</span><span class="p">):</span>
-        <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;summary&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;bio&quot;</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">rename_summary_to_bio</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">RequestInfo</span><span class="p">):</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;bio&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;summary&quot;</span><span class="p">)</span>
 
     <span class="nd">@convert_response_to_previous_version_for</span><span class="p">(</span><span class="n">UserResource</span><span class="p">)</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">rename_bio_to_summary</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="n">ResponseInfo</span><span class="p">):</span>
-        <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;bio&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;summary&quot;</span><span class="p">)</span>
+        <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;summary&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;bio&quot;</span><span class="p">)</span>
 </code></pre></div>
 </li>
 </ol>

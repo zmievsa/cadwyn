@@ -2347,7 +2347,7 @@
 <span class="p">)</span>
 </code></pre></div>
 <h3 id="versionchangedescription">VersionChange.description<a class="headerlink" href="#versionchangedescription" title="Permanent link">&para;</a></h3>
-<p>Write the description of your version change as its class docstring. Cadwyn uses this docstring as the <strong>name</strong> and the <strong>summary</strong> of the version change for your clients.</p>
+<p>Write the description of your version change as its class docstring. Cadwyn uses this docstring as the <code>description</code> of the version change.</p>
 <p>The description should clearly communicate to your clients <strong>what happened</strong> and <strong>why</strong>. Make it grammatically correct, detailed, specific, and written for humans. Note that you do not have to use a strict machine-readable format: it is a piece of documentation, not a set of instructions. As a reference, consider the following <a href="https://stripe.com/blog/api-versioning">version change description from Stripe</a>:</p>
 <div class="highlight"><pre><span></span><code>Event objects (and webhooks) will now render a <span class="sb">`request`</span> subobject that contains a request Id and idempotency key instead of a string request Id.
 </code></pre></div>
@@ -2389,8 +2389,8 @@ Changes:
 
     <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
         <span class="n">schema</span><span class="p">(</span><span class="n">InvoiceCreateRequest</span><span class="p">)</span>
-        <span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;creation_date&quot;</span><span class="p">)</span>
-        <span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;created_at&quot;</span><span class="p">),</span>
+        <span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;created_at&quot;</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;creation_date&quot;</span><span class="p">),</span>
     <span class="p">)</span>
 
     <span class="nd">@convert_request_to_next_version_for</span><span class="p">(</span><span class="n">InvoiceCreateRequest</span><span class="p">)</span>
@@ -2422,7 +2422,7 @@ Changes:
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">schema</span><span class="p">(</span><span class="n">BaseInvoice</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;creation_date&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;created_at&quot;</span><span class="p">),</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">BaseInvoice</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;created_at&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;creation_date&quot;</span><span class="p">),</span>
     <span class="p">)</span>
 
     <span class="nd">@convert_request_to_next_version_for</span><span class="p">(</span><span class="n">InvoiceCreateRequest</span><span class="p">)</span>
@@ -2460,7 +2460,7 @@ Changes:
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">schema</span><span class="p">(</span><span class="n">BaseInvoice</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;creation_date&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;created_at&quot;</span><span class="p">),</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">BaseInvoice</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;created_at&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;creation_date&quot;</span><span class="p">),</span>
     <span class="p">)</span>
 
     <span class="nd">@convert_request_to_next_version_for</span><span class="p">(</span><span class="s2">&quot;/v1/invoices&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;POST&quot;</span><span class="p">])</span>
@@ -2579,12 +2579,13 @@ Changes:
 <p>Often you will need to migrate your data outside of routing, manually. For example, you might need to send a versioned response to your client via a webhook or inside a worker/cronjob. In these cases, use <code>cadwyn.schema_generation.migrate_response_body()</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn.schema_generation</span><span class="w"> </span><span class="kn">import</span> <span class="n">migrate_response_body</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">users</span><span class="w"> </span><span class="kn">import</span> <span class="n">UserResource</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">versions</span><span class="w"> </span><span class="kn">import</span> <span class="n">versions</span>
 
 <span class="n">body_from_2000_01_01</span> <span class="o">=</span> <span class="n">migrate_response_body</span><span class="p">(</span>
-    <span class="n">UserResource</span><span class="p">,</span> <span class="n">latest_body</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;John&quot;</span><span class="p">},</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;2000-01-01&quot;</span>
+    <span class="n">versions</span><span class="p">,</span> <span class="n">UserResource</span><span class="p">,</span> <span class="n">latest_body</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;John&quot;</span><span class="p">},</span> <span class="n">version</span><span class="o">=</span><span class="s2">&quot;2000-01-01&quot;</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>The returned <code>body_from_2000_01_01</code> is your data passed through all converters (as it would be when returned from your route) and wrapped in <code>data.v2000_01_01.UserResource</code>. Because the data is wrapped, you can include Pydantic’s defaults.</p>
+<p>The returned <code>body_from_2000_01_01</code> is your data passed through all converters (as it would be when returned from your route) and wrapped in the <code>2000-01-01</code> version of <code>UserResource</code>. Because the data is wrapped, you can include Pydantic’s defaults.</p>
 <h4 id="streamingresponse-and-fileresponse-migrations">StreamingResponse and FileResponse migrations<a class="headerlink" href="#streamingresponse-and-fileresponse-migrations" title="Permanent link">&para;</a></h4>
 <p>Migrations for the bodies of <code>fastapi.responses.StreamingResponse</code> and <code>fastapi.responses.FileResponse</code> are not directly supported yet (<a href="https://github.com/zmievsa/cadwyn/issues/125">1</a>, <a href="https://github.com/zmievsa/cadwyn/issues/126">2</a>). However, you can use <code>ResponseInfo._response</code> attribute to get access to the original <code>StreamingResponse</code> or <code>FileResponse</code> and modify it as needed within your migrations.</p>
 <h2 id="pydantic-rootmodel-migration-warning">Pydantic RootModel migration warning<a class="headerlink" href="#pydantic-rootmodel-migration-warning" title="Permanent link">&para;</a></h2>
@@ -2660,6 +2661,8 @@ Changes:
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;User addresses are now verified by an external service during creation;</span>
 <span class="sd">    invalid addresses return 400 to prevent storing undeliverable locations.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">()</span>
 </code></pre></div>
 <p>Then you will have the following check in your business logic:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">src.versions</span><span class="w"> </span><span class="kn">import</span> <span class="n">versions</span><span class="p">,</span> <span class="n">RejectUserAddressesMissingFromExternalService</span>

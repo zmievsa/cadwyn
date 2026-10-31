@@ -2003,7 +2003,7 @@
 
 <span class="n">app</span> <span class="o">=</span> <span class="n">Cadwyn</span><span class="p">(</span>
     <span class="n">api_version_location</span><span class="o">=</span><span class="s2">&quot;custom_header&quot;</span><span class="p">,</span>
-    <span class="n">api_version_parameter_name</span><span class="o">=</span><span class="s2">&quot;X-API-VERSION&quot;</span><span class="p">,</span>
+    <span class="n">api_version_parameter_name</span><span class="o">=</span><span class="s2">&quot;x-api-version&quot;</span><span class="p">,</span>
     <span class="n">versions</span><span class="o">=</span><span class="n">VersionBundle</span><span class="p">(</span><span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2022-01-02&quot;</span><span class="p">)),</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -2025,6 +2025,7 @@
     <span class="n">versions</span><span class="o">=</span><span class="n">VersionBundle</span><span class="p">(</span><span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2022-01-02&quot;</span><span class="p">)),</span>
 <span class="p">)</span>
 </code></pre></div>
+<p>With a path parameter, add it to the paths of your versioned routes, e.g. <code>@router.get("/{api_version}/users")</code>.</p>
 <h2 id="api-version-format">API version format<a class="headerlink" href="#api-version-format" title="Permanent link">&para;</a></h2>
 <p>A version parameter can be formatted in two different ways:</p>
 <ul>

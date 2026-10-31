@@ -2081,7 +2081,7 @@ setting. You can still run every hook manually with <code>make lint</code>.</p>
 <li>If something cannot be typed correctly due to the limitations of the type checkers, use <a href="https://docs.python.org/3/library/typing.html#typing.cast">typing.cast</a> to resolve the issue. However, use <code>typing.cast</code> only as a last resort, after exhausting all other options of <a href="https://mypy.readthedocs.io/en/stable/type_narrowing.html">type narrowing</a>, such as <a href="https://docs.python.org/3/library/functions.html#isinstance">isinstance()</a> checks and <a href="https://docs.python.org/3/library/typing.html#typing.TypeGuard">type guards</a></li>
 <li>Use <code>ty: ignore</code> once you have verified that the line is correct, but ty has issues with it</li>
 <li>If you are adding or modifying existing code, make sure that it's fully tested. 100% test coverage is mandatory, and will be checked on the PR using <a href="https://github.com/features/actions">Github Actions</a></li>
-<li>When adding a new public interface, make sure you have included it in the concept documentation located in <code>docs/concepts.md</code>. If applicable, add or modify examples in the docs related to the new functionality</li>
+<li>When adding a new public interface, make sure you have included it in the concept documentation located in <code>docs/concepts/</code>. If applicable, add or modify examples in the docs related to the new functionality</li>
 </ul>
 <h3 id="writing-and-running-tests">Writing and running tests<a class="headerlink" href="#writing-and-running-tests" title="Permanent link">&para;</a></h3>
 <p>Tests are contained within the <code>tests</code> directory, and follow roughly the same

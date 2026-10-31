@@ -1865,7 +1865,7 @@
 </ol>
 <p>This tutorial will show how to prepare an environment for working with Cadwyn effectively in a basic usage example, how to make a breaking change, and how Cadwyn can help to keep the old API versions untouched.</p>
 <h2 id="step-0-setting-up">Step 0: Setting up<a class="headerlink" href="#step-0-setting-up" title="Permanent link">&para;</a></h2>
-<p>Here is an initial API setup where a User has a single address. The example implements two routes - one for creating a User and the other for retrieving User details. User ID is implemented as <code>int</code> for simplicity. Please note that a <code>dict</code> is used in place of a database for simplicity but do not ever do it in real life.</p>
+<p>Here is an initial API setup where a User has a single address. The example implements two routes - one for creating a User and the other for retrieving User details. User ID is implemented as <code>uuid.UUID</code>. Please note that a <code>dict</code> is used in place of a database for simplicity but do not ever do it in real life.</p>
 <p>The first API one comes up with usually doesn't require more than one address -- why bother?</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">uuid</span>
 
@@ -1914,24 +1914,24 @@
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">uuid</span>
 <span class="hll"><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotated</span>
 </span>
-<span class="hll"><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-</span>    <span class="n">Cadwyn</span><span class="p">,</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Cadwyn</span><span class="p">,</span>
     <span class="n">Version</span><span class="p">,</span>
     <span class="n">VersionBundle</span><span class="p">,</span>
     <span class="n">VersionedAPIRouter</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
-
+<span class="hll"><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
+</span>
 
 <span class="k">class</span><span class="w"> </span><span class="nc">UserCreateRequest</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
-    <span class="n">addresses</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
-<span class="hll">
+<span class="hll">    <span class="n">addresses</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
 </span>
+
 <span class="k">class</span><span class="w"> </span><span class="nc">UserResource</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
     <span class="nb">id</span><span class="p">:</span> <span class="n">uuid</span><span class="o">.</span><span class="n">UUID</span>
-    <span class="n">addresses</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">Field</span><span class="p">(</span><span class="n">min_length</span><span class="o">=</span><span class="mi">1</span><span class="p">)]</span>
-<span class="hll">
+<span class="hll">    <span class="n">addresses</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">Field</span><span class="p">(</span><span class="n">min_length</span><span class="o">=</span><span class="mi">1</span><span class="p">)]</span>
 </span>
+
 <span class="n">database_parody</span> <span class="o">=</span> <span class="p">{}</span>
 <span class="n">router</span> <span class="o">=</span> <span class="n">VersionedAPIRouter</span><span class="p">()</span>
 
@@ -1939,18 +1939,18 @@
 <span class="nd">@router</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">create_user</span><span class="p">(</span><span class="n">payload</span><span class="p">:</span> <span class="n">UserCreateRequest</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">UserResource</span><span class="p">:</span>
     <span class="n">id_</span> <span class="o">=</span> <span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()</span>
-    <span class="n">database_parody</span><span class="p">[</span><span class="n">id_</span><span class="p">]</span> <span class="o">=</span> <span class="n">UserResource</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">id_</span><span class="p">,</span> <span class="n">addresses</span><span class="o">=</span><span class="n">payload</span><span class="o">.</span><span class="n">addresses</span><span class="p">)</span>
-<span class="hll">    <span class="k">return</span> <span class="n">database_parody</span><span class="p">[</span><span class="n">id_</span><span class="p">]</span>
-</span>
+<span class="hll">    <span class="n">database_parody</span><span class="p">[</span><span class="n">id_</span><span class="p">]</span> <span class="o">=</span> <span class="n">UserResource</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">id_</span><span class="p">,</span> <span class="n">addresses</span><span class="o">=</span><span class="n">payload</span><span class="o">.</span><span class="n">addresses</span><span class="p">)</span>
+</span>    <span class="k">return</span> <span class="n">database_parody</span><span class="p">[</span><span class="n">id_</span><span class="p">]</span>
+
 
 <span class="nd">@router</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/users/</span><span class="si">{user_id}</span><span class="s2">&quot;</span><span class="p">)</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_user</span><span class="p">(</span><span class="n">user_id</span><span class="p">:</span> <span class="n">uuid</span><span class="o">.</span><span class="n">UUID</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">UserResource</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">database_parody</span><span class="p">[</span><span class="n">user_id</span><span class="p">]</span>
 
 
-<span class="n">app</span> <span class="o">=</span> <span class="n">Cadwyn</span><span class="p">(</span><span class="n">versions</span><span class="o">=</span><span class="n">VersionBundle</span><span class="p">(</span><span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2001-01-01&quot;</span><span class="p">)))</span>
-<span class="hll"><span class="n">app</span><span class="o">.</span><span class="n">generate_and_include_versioned_routers</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
-</span></code></pre></div>
+<span class="hll"><span class="n">app</span> <span class="o">=</span> <span class="n">Cadwyn</span><span class="p">(</span><span class="n">versions</span><span class="o">=</span><span class="n">VersionBundle</span><span class="p">(</span><span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2001-01-01&quot;</span><span class="p">)))</span>
+</span><span class="n">app</span><span class="o">.</span><span class="n">generate_and_include_versioned_routers</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
+</code></pre></div>
 <p>Now your users will have their API integration broken. To prevent that, introduce API versioning. There aren't many methods of doing that. Most of them force you to either duplicate your schemas, your endpoints, or your entire app instance. And it makes sense, really: duplication is the only way to make sure that you will not break old versions with your new versions; the bigger the piece you are duplicating, the safer. Of course, the safest being duplicating the entire app instance and even having a separate database. But that is expensive and makes it either impossible to make breaking changes often or to support many versions. As a result, either you need infinite resources, very long development cycles, or your users need to migrate often from version to version.</p>
 <p>Stripe has come up <a href="https://stripe.com/blog/api-versioning">with a solution</a>: to have one HEAD app version whose responses get migrated to older versions and to describe changes between these versions using migrations. This approach allows Stripe to keep versions for <strong>years</strong> without dropping them. Obviously, each breaking change still hurts and each version still makes the system more complex and expensive, but their approach gives you a chance to minimize this complexity. Additionally, it allows you to backport features and bugfixes to older versions. However, you will also be backporting bugs, which is a sad consequence of eliminating duplication.</p>
 <p>Assume you need to know what your code looked like two weeks ago. You may use <code>git checkout</code> or <code>git reset</code> with an older commit because <code>git</code> stores the latest version of your code (which is also called HEAD) and the differences between it and each previous version as a chain of changes. This is exactly how Stripe's approach works. They store the latest version and use the diffs to regenerate the older versions.</p>
@@ -1969,18 +1969,18 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">Cadwyn</span><span class="p">,</span>
-    <span class="n">RequestInfo</span><span class="p">,</span>
-    <span class="n">ResponseInfo</span><span class="p">,</span>
-<span class="hll">    <span class="n">Version</span><span class="p">,</span>
-</span><span class="hll">    <span class="n">VersionBundle</span><span class="p">,</span>
-</span>    <span class="n">VersionChange</span><span class="p">,</span>
-    <span class="n">VersionedAPIRouter</span><span class="p">,</span>
+<span class="hll">    <span class="n">RequestInfo</span><span class="p">,</span>
+</span><span class="hll">    <span class="n">ResponseInfo</span><span class="p">,</span>
+</span>    <span class="n">Version</span><span class="p">,</span>
+    <span class="n">VersionBundle</span><span class="p">,</span>
+<span class="hll">    <span class="n">VersionChange</span><span class="p">,</span>
+</span>    <span class="n">VersionedAPIRouter</span><span class="p">,</span>
 <span class="hll">    <span class="n">convert_request_to_next_version_for</span><span class="p">,</span>
-</span>    <span class="n">convert_response_to_previous_version_for</span><span class="p">,</span>
-<span class="hll">    <span class="n">schema</span><span class="p">,</span>
-</span><span class="hll"><span class="p">)</span>
-</span><span class="hll"><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
-</span>
+</span><span class="hll">    <span class="n">convert_response_to_previous_version_for</span><span class="p">,</span>
+</span><span class="hll">    <span class="n">schema</span><span class="p">,</span>
+</span><span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
+
 
 <span class="k">class</span><span class="w"> </span><span class="nc">UserCreateRequest</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
     <span class="n">addresses</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
@@ -2007,8 +2007,8 @@
     <span class="k">return</span> <span class="n">database_parody</span><span class="p">[</span><span class="n">user_id</span><span class="p">]</span>
 
 
-<span class="k">class</span><span class="w"> </span><span class="nc">ReplaceUserAddressWithListOfAddresses</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
-<span class="hll"><span class="w">    </span><span class="sd">&quot;&quot;&quot;Users can now store multiple addresses instead of a single address so they can choose among delivery locations.&quot;&quot;&quot;</span>
+<span class="hll"><span class="k">class</span><span class="w"> </span><span class="nc">ReplaceUserAddressWithListOfAddresses</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+</span><span class="hll"><span class="w">    </span><span class="sd">&quot;&quot;&quot;Users can now store multiple addresses instead of a single address so they can choose among delivery locations.&quot;&quot;&quot;</span>
 </span><span class="hll">
 </span><span class="hll">    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
 </span><span class="hll">        <span class="n">schema</span><span class="p">(</span><span class="n">UserCreateRequest</span><span class="p">)</span>
@@ -2030,9 +2030,9 @@
 </span><span class="hll">    <span class="n">versions</span><span class="o">=</span><span class="n">VersionBundle</span><span class="p">(</span>
 </span><span class="hll">        <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2001-01-01&quot;</span><span class="p">,</span> <span class="n">ReplaceUserAddressWithListOfAddresses</span><span class="p">),</span>
 </span><span class="hll">        <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2000-01-01&quot;</span><span class="p">),</span>
-</span>    <span class="p">)</span>
-<span class="p">)</span>
-<span class="n">app</span><span class="o">.</span><span class="n">generate_and_include_versioned_routers</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
+</span><span class="hll">    <span class="p">)</span>
+</span><span class="hll"><span class="p">)</span>
+</span><span class="n">app</span><span class="o">.</span><span class="n">generate_and_include_versioned_routers</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
 </code></pre></div>
 <p>See how the first address is popped from the list? This is guaranteed to be possible if you specified earlier that <code>min_length</code> for <code>addresses</code> must be <code>1</code>. If you didn't, then a user would be able to create a User in a newer version that would be impossible to represent in the older version. I.e. if anyone tried to get that user from the older version, they would get a <code>ResponseValidationError</code> because the user wouldn't have data for a mandatory <code>address</code> field. You need to always keep in mind that API versioning is only for versioning your <strong>API</strong>, your interface. Your versions must still be completely compatible in terms of data. If they are not, then you are versioning your data and you should go with a separate app instance. Otherwise, your users will have a hard time migrating back and forth between API versions and many unexpected errors.</p>
 <p>Also note that the migration was added not only for the response but also for the request. This will allow your business logic to stay completely the same, no matter which version it was called from. Cadwyn will always give your business logic the request model from the HEAD version by wrapping each request in it.</p>

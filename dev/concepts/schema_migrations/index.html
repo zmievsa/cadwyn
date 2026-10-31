@@ -2070,13 +2070,13 @@
 <span class="n">warnings</span><span class="o">.</span><span class="n">filterwarnings</span><span class="p">(</span><span class="s2">&quot;ignore&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;.* changes the alias of &quot;</span><span class="p">,</span> <span class="ne">FutureWarning</span><span class="p">)</span>
 </code></pre></div>
 <p><strong>DEFAULTS WARNING:</strong></p>
-<p>If you add <code>default</code> or <code>default_factory</code> to the old version of a schema, it will not manifest in the code automatically. Instead, you should add both the <code>default</code> and <code>default_factory</code>, and then also add the default value using a request migration.</p>
+<p>If you add <code>default</code> or <code>default_factory</code> to the old version of a schema, it will not manifest in the code automatically. Instead, you should add the <code>default</code> or <code>default_factory</code>, and then also add the default value using a request migration.</p>
 <p>The reason for such behaviour is the way Cadwyn works with Pydantic and unfortunately this cannot be changed:</p>
 <p>Cadwyn:</p>
 <ol>
 <li>Receives a request for API version <code>V</code></li>
 <li>Validates the request using the schemas from <code>V</code></li>
-<li>Marshalls the unmarshalled request body into a raw data structure using <code>BaseModel.dict</code> (<code>BaseModel.model_dump</code> in Pydantic v2) with <strong>exclude_unset=True</strong></li>
+<li>Marshalls the unmarshalled request body into a raw data structure using <code>BaseModel.model_dump</code> with <strong>exclude_unset=True</strong></li>
 <li>Passes the request through all request migrations from <code>V</code> to <code>latest</code></li>
 <li>Validates the request using <code>latest</code> schemas</li>
 </ol>
@@ -2122,7 +2122,7 @@
 <span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;foo&quot;</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">validate_foo</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="s2">&quot;:&quot;</span> <span class="ow">in</span> <span class="n">value</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">TypeError</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;foo must contain a colon&quot;</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">value</span>
 
 

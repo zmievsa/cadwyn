@@ -1972,7 +1972,7 @@
 </ol>
 <p>You convert moderators to regulars in older versions because it is a safer choice for your users.</p>
 <h3 id="why-enum-expansion-is-a-breaking-change-for-responses">Why enum expansion is a breaking change for responses<a class="headerlink" href="#why-enum-expansion-is-a-breaking-change-for-responses" title="Permanent link">&para;</a></h3>
-<p>Suppose your schema contained a list that contains euros and/or dollars. To unmarshal the JSON, Cadwyn takes the JSON string and tries to convert it to a list of euros and/or dollars. If there appears Georgian lari in the list, Cadwyn will fail to unmarshal such a list, which makes adding an enum value a breaking change for a list of items.</p>
+<p>Suppose your schema contained a list that contains euros and/or dollars. To unmarshal the JSON, your client takes the JSON string and tries to convert it to a list of euros and/or dollars. If there appears Georgian lari in the list, the client will fail to unmarshal such a list, which makes adding an enum value a breaking change for a list of items.</p>
 <p>If an API client expects <code>Array&lt;Euro | Dollar&gt;</code>, then <code>Array&lt;Euro&gt;</code> and <code>Array&lt;Dollar&gt;</code> would both be considered compatible responses but <code>Array&lt;Euro | Dollar | Lari&gt;</code> would not. That happens because <code>Array&lt;Euro | Dollar | Lari&gt;</code> is not a subtype of <code>Array&lt;Euro | Dollar&gt;</code> while <code>Array&lt;Euro&gt;</code> is.</p>
 <p>In a sense, extending an enum that has <code>USD</code> with <code>USD | EUR</code> is equivalent to turning an <code>int</code> field into an <code>int | str</code> field, which is a breaking change. Hence extending an enum is often a breaking change and thus you might not need to solve this problem at all.</p>
 <p>Additional resources:</p>
@@ -1987,11 +1987,11 @@
 <ol>
 <li>Continue storing <code>date_of_birth</code> as a datetime in your database to avoid breaking any old behavior</li>
 <li>
-<p>Add the following migration to <code>versions.v2001_01_01</code> which will turn <code>date_of_birth</code> into a date in 2001_01_01. Note how the validator is used to make sure that <code>date_of_birth</code> is converted to date in the latest version. It is only necessary in Pydantic 2 because it has no implicit casting from datetime to date. Note also how strings are used for types: this is not always necessary; it just allows you to control how Cadwyn is going to render your types. Most of the time you won't need to use strings for types.</p>
+<p>Add the following migration to <code>versions.v2001_01_01</code> which will turn <code>date_of_birth</code> into a date in 2001_01_01. Note how the validator is used to make sure that <code>date_of_birth</code> is converted to date in the latest version. It is only necessary in Pydantic 2 because it has no implicit casting from datetime to date.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">datetime</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">validator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">field_validator</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">users</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseUser</span>
 
 

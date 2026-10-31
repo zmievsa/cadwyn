@@ -1864,16 +1864,18 @@
 <p>Cadwyn can automatically generate API changelogs for your versions. By default, they are available through the deprecated unversioned endpoint <code>GET /changelog</code>. You can also access it via the deprecated <code>Cadwyn.generate_changelog()</code> method.</p>
 <h2 id="hiding-version-changes-and-instructions">Hiding version changes and instructions<a class="headerlink" href="#hiding-version-changes-and-instructions" title="Permanent link">&para;</a></h2>
 <p>Sometimes you might want to make private internal version changes or instructions within the version changes that should not be visible to the public. You can do this by using the deprecated <code>cadwyn.hidden()</code> function. Consider the example below:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">endpoint</span><span class="p">,</span> <span class="n">hidden</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">endpoint</span><span class="p">,</span> <span class="n">hidden</span><span class="p">,</span> <span class="n">schema</span>
 
 
-<span class="k">class</span><span class="w"> </span><span class="nc">RenameUserIdPathParameter</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;User lookup routes now use consistent path-parameter names to make</span>
-<span class="sd">    generated clients easier to use.</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">RenameUserLookupPath</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The user lookup route is now &#39;/users/{user_id}&#39; instead of</span>
+<span class="sd">    &#39;/user/{user_id}&#39; to match the other user routes.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">hidden</span><span class="p">(</span><span class="n">endpoint</span><span class="p">(</span><span class="s2">&quot;/users/</span><span class="si">{user_id}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;GET&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;/users/</span><span class="si">{uid}</span><span class="s2">&quot;</span><span class="p">)),</span>
+        <span class="n">hidden</span><span class="p">(</span>
+            <span class="n">endpoint</span><span class="p">(</span><span class="s2">&quot;/users/</span><span class="si">{user_id}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;GET&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;/user/</span><span class="si">{user_id}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="p">),</span>
     <span class="p">)</span>
 
 

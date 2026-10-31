@@ -1999,15 +1999,16 @@
 <h2 id="to-both-request-and-response-schemas">To both request and response schemas<a class="headerlink" href="#to-both-request-and-response-schemas" title="Permanent link">&para;</a></h2>
 <h3 id="field-is-optional">Field is optional<a class="headerlink" href="#field-is-optional" title="Permanent link">&para;</a></h3>
 <p>Let's say we want our users to be able to specify a middle name but it is nullable. It is not a breaking change so no new version is necessary whether it is requests or responses.</p>
-<p>You just need to add a nullable <code>middle_name</code> field into <code>users.BaseUser</code> as if you were working with a barebones FastAPI app.</p>
+<p>You just need to add an optional <code>middle_name: str | None = None</code> field into <code>users.BaseUser</code> as if you were working with a barebones FastAPI app.</p>
 <h3 id="field-is-required">Field is required<a class="headerlink" href="#field-is-required" title="Permanent link">&para;</a></h3>
 <h4 id="with-compatible-default-value-in-older-versions">With compatible default value in older versions<a class="headerlink" href="#with-compatible-default-value-in-older-versions" title="Permanent link">&para;</a></h4>
 <p>Let's say that our users had a field <code>country</code> that defaulted to <code>USA</code> but our product is now used well beyond United States so we want to make this field required in the HEAD version.</p>
 <ol>
-<li>Remove <code>default="US"</code> from <code>users.UserCreateRequest</code></li>
+<li>Remove <code>default="USA"</code> from <code>users.UserCreateRequest</code></li>
 <li>
 <p>Add the following migration to <code>versions.v2001_01_01</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">RequestInfo</span><span class="p">,</span>
     <span class="n">VersionChange</span><span class="p">,</span>
     <span class="n">schema</span><span class="p">,</span>
     <span class="n">convert_request_to_next_version_for</span><span class="p">,</span>
@@ -2048,7 +2049,7 @@
 <p>Let's say that we want to add a required field <code>phone</code> to our users. However, older versions did not have such a field at all. This means that the field is going to be nullable (or nonexistent) in the old versions but required in the HEAD version. This also means that older versions contain a wider type (<code>str | None</code>) than the HEAD version (<code>str</code>). So when we try to migrate request bodies from the older versions to HEAD -- we might receive a <code>ValidationError</code> because <code>None</code> is not an acceptable value for <code>phone</code> field in the new version. Whenever we have a problem like this, when older version contains more data or a wider type set of data,  we can simply define a wider type in our HEAD version and then narrow it in latest.</p>
 <p>So we will make <code>phone</code> nullable in HEAD, then make it required in <code>latest</code>, and then make it nullable again in older versions, thus making it possible to convert all of our requests to HEAD.</p>
 <ol>
-<li>Add <code>phone</code> field of type <code>str | None</code> to <code>users.BaseUser</code></li>
+<li>Add <code>phone</code> field of type <code>str | None</code> with a <code>default=None</code> to <code>users.BaseUser</code></li>
 <li>Add <code>phone</code> field of type <code>str | None</code> with a <code>default=None</code> to <code>users.UserResource</code> because all users created with older versions of our API won't have phone numbers.</li>
 <li>
 <p>Add the following migration to <code>versions.v2001_01_01</code> which will make sure that <code>phone</code> is not nullable in 2001_01_01:</p>
