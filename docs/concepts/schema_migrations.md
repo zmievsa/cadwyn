@@ -70,7 +70,7 @@ The part that causes the aforementioned problem is Cadwyn's use of `exclude_unse
 {! ./docs_src/concepts/schema_migrations/block006.py !}
 ```
 
-In the older version, `BusinessInvoice.code` has `max_length=5`, while `Invoice.code` and `PersonalInvoice.code` stay unchanged. To change the field in all of these schemas, give the instruction to the parent: `schema(Invoice).field("code").had(max_length=5)`.
+In the older version, `BusinessInvoice.code` has `max_length=5`, while `Invoice.code` and `PersonalInvoice.code` stay unchanged. To change the field in all of these schemas, give the instruction to the parent: `schema(Invoice).field("code").had(max_length=5)`. Renames don't work this way: `had(name=...)` for an inherited field keeps the old field next to the renamed one in that schema, so rename the field in the schema that declares it.
 
 The changes of a parent's field also apply to its subclasses, including the ones that changed the field themselves, with these exceptions:
 

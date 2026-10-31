@@ -7,6 +7,12 @@ line-length = 80
 "concepts/version_changes/block01[05].py" = ["D205"]
 "concepts/changelogs/block001.py" = ["D205"]
 "concepts/enum_migrations/block00[12].py" = ["D205"]
+"concepts/schema_migrations/block00[123489].py" = ["D205"]
+"concepts/endpoint_migrations/block00[2346].py" = ["D205"]
+# This example shows a validator outside of a class, as `schema().validator()` takes it
+"concepts/schema_migrations/block007.py" = ["ANN001", "D205"]
+# The docstrings of these example endpoints stand in for their code
+"concepts/endpoint_migrations/block005.py" = ["D401"]
 # These examples show what `print` outputs
 "concepts/version_changes/block01[23].py" = ["T201"]
 # This example shows only the versioning part of a function
