@@ -14,13 +14,15 @@ Sometimes you might want to make private internal version changes or instruction
 from cadwyn import VersionChange, endpoint, hidden, schema
 
 
-class RenameUserIdPathParameter(VersionChange):
-    """User lookup routes now use consistent path-parameter names to make
-    generated clients easier to use.
+class RenameUserLookupPath(VersionChange):
+    """The user lookup route is now '/users/{user_id}' instead of
+    '/user/{user_id}' to match the other user routes.
     """
 
     instructions_to_migrate_to_previous_version = (
-        hidden(endpoint("/users/{user_id}", ["GET"]).had(path="/users/{uid}")),
+        hidden(
+            endpoint("/users/{user_id}", ["GET"]).had(path="/user/{user_id}")
+        ),
     )
 
 

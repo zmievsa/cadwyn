@@ -120,7 +120,7 @@ There are two main cases with required fields:
 1. Remove a required field with a simple fake default (created_at)
 2. Remove a required field with an impossible default (tax id)
 
-The first one is simple to solve: just use the approach [above](#optional-field) but use a `default_factory=datetime.datetime.now` instead of `default=None`.
+The first one is simple to solve: just use the approach [above](#optional-field) but use a `default_factory=datetime.datetime.now` instead of `default=None`. Add the same `default_factory` to the field in HEAD too: Cadwyn doesn't pass the defaults of older versions to HEAD (see [the defaults warning](../../concepts/schema_migrations.md#change-a-field-in-the-older-version)), and the requests of the latest version don't have the field at all, so without a default in HEAD such requests fail.
 
 Now what about case 2?
 
