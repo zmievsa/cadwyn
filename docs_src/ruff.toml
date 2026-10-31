@@ -1,2 +1,10 @@
 extend = "../ruff.toml"
 line-length = 80
+
+[lint.extend-per-file-ignores]
+# Version change docstrings are descriptions for API clients, not code summaries
+"**/*.py" = ["D205"]
+# These examples show what `print` outputs
+"concepts/version_changes/block01[23].py" = ["T201"]
+# This example shows only the versioning part of a function
+"concepts/version_changes/block016.py" = ["ANN001", "PIE790"]
