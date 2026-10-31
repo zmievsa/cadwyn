@@ -2106,7 +2106,7 @@
         <span class="n">schema</span><span class="p">(</span><span class="n">BusinessInvoice</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;code&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">max_length</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
     <span class="p">)</span>
 </code></pre></div>
-<p>In the older version, <code>BusinessInvoice.code</code> has <code>max_length=5</code>, while <code>Invoice.code</code> and <code>PersonalInvoice.code</code> stay unchanged. To change the field in all of these schemas, give the instruction to the parent: <code>schema(Invoice).field("code").had(max_length=5)</code>.</p>
+<p>In the older version, <code>BusinessInvoice.code</code> has <code>max_length=5</code>, while <code>Invoice.code</code> and <code>PersonalInvoice.code</code> stay unchanged. To change the field in all of these schemas, give the instruction to the parent: <code>schema(Invoice).field("code").had(max_length=5)</code>. Renames don't work this way: <code>had(name=...)</code> for an inherited field keeps the old field next to the renamed one in that schema, so rename the field in the schema that declares it.</p>
 <p>The changes of a parent's field also apply to its subclasses, including the ones that changed the field themselves, with these exceptions:</p>
 <ul>
 <li>A subclass that already has an instruction of its own for the field, in a newer version or earlier in the same version change, keeps the type and the <code>Annotated</code> metadata that the field had at that point. So a later <code>had(type=...)</code> of a parent, listed after it or in an older version, doesn't change the type of the field in that subclass.</li>
@@ -2116,12 +2116,12 @@
 <p>In multiple inheritance, such as <code>class D(C, B)</code>, <code>D</code> takes each field from its first base that has it, as in pydantic. So for a field that both <code>C</code> and <code>B</code> have, e.g. from their common parent, the instructions given only for <code>B</code> don't apply to <code>D</code> unless <code>D</code> changes that field itself. Give the instruction to the common parent, or to <code>D</code> as well. The instructions for a field that only <code>B</code> has, e.g. because <code>B</code> declares it, apply to <code>D</code> as usual.</p>
 <h2 id="add-a-validator-to-the-older-version">Add a validator to the older version<a class="headerlink" href="#add-a-validator-to-the-older-version" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">Field</span><span class="p">,</span> <span class="n">field_validator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">field_validator</span>
 
 
 <span class="nd">@field_validator</span><span class="p">(</span><span class="s2">&quot;foo&quot;</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">validate_foo</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="s2">&quot;:&quot;</span> <span class="ow">in</span> <span class="n">value</span><span class="p">:</span>
+    <span class="k">if</span> <span class="s2">&quot;:&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">value</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;foo must contain a colon&quot;</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">value</span>
 
@@ -2137,7 +2137,6 @@
 </code></pre></div>
 <h2 id="remove-a-validator-from-the-older-version">Remove a validator from the older version<a class="headerlink" href="#remove-a-validator-from-the-older-version" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">Field</span><span class="p">,</span> <span class="n">validator</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">AddFooValidatorToMySchema</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>

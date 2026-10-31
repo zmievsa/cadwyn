@@ -2131,8 +2131,10 @@
 <p>Note that this applies to <strong>every</strong> request without the version header, not only to the token endpoint. <code>api_version_default_value</code> can also be an async function that takes the <code>Request</code> and returns the version.</p>
 <h2 id="api-version-parameter-title-and-description">API version parameter title and description<a class="headerlink" href="#api-version-parameter-title-and-description" title="Permanent link">&para;</a></h2>
 <p>You can pass a title and/or a description to the <code>Cadwyn()</code> constructor. It is equivalent to passing <code>title</code> and <code>description</code> to <code>fastapi.Path()</code> or <code>fastapi.Header()</code> constructors.</p>
-<div class="highlight"><pre><span></span><code><span class="n">app</span> <span class="o">=</span> <span class="n">Cadwyn</span><span class="p">(</span>
-    <span class="o">...</span><span class="p">,</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">Cadwyn</span><span class="p">,</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">Cadwyn</span><span class="p">(</span>
+    <span class="n">versions</span><span class="o">=</span><span class="n">VersionBundle</span><span class="p">(</span><span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2022-01-02&quot;</span><span class="p">)),</span>
     <span class="n">api_version_title</span><span class="o">=</span><span class="s2">&quot;My Great API version parameter&quot;</span><span class="p">,</span>
     <span class="n">api_version_description</span><span class="o">=</span><span class="s2">&quot;Description of my great API version parameter&quot;</span><span class="p">,</span>
 <span class="p">)</span>

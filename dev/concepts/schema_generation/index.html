@@ -1975,21 +1975,38 @@
 <p><strong>NOTICE</strong> that <code>cadwyn render</code> does not guarantee rendering correct schemas. It provides a close enough approximation for manual validation, but it is not yet ready for production code generation. For example, it doesn't handle schema renaming in a class's <code>__bases__</code> yet.</p>
 <h3 id="rendering-a-module">Rendering a module<a class="headerlink" href="#rendering-a-module" title="Permanent link">&para;</a></h3>
 <p>Here's a way to render the entire module with the schemas:</p>
-<div class="highlight"><pre><span></span><code>cadwyn<span class="w"> </span>render<span class="w"> </span>module<span class="w"> </span>data.schemas<span class="w"> </span>--app<span class="o">=</span>main:app<span class="w"> </span>--version<span class="o">=</span><span class="m">2024</span>-05-26
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>cadwyn<span class="w"> </span>render<span class="w"> </span>module<span class="w"> </span>data.schemas<span class="w"> </span>--app<span class="o">=</span>main:app<span class="w"> </span>--version<span class="o">=</span><span class="m">2024</span>-05-26
 </code></pre></div>
 <!-- TODO: Add an option to use a callable instead of a variable -->
-<p>This command prints to stdout how the schemas would look in version 2024-05-26 if they were written by hand rather than generated at runtime by Cadwyn. This command takes the schemas from <code>data/schemas.py</code> module and knows what the schemas would look based on the version changes from <code>Cadwyn</code> app instance named <code>app</code> and located in <code>main.py</code>.</p>
+<p>This command prints to stdout how the schemas would look in version 2024-05-26 if they were written by hand rather than generated at runtime by Cadwyn. This command takes the schemas from <code>data/schemas.py</code> module and knows what the schemas would look based on the version changes from <code>Cadwyn</code> app instance named <code>app</code> and located in <code>main.py</code>. Run it from the directory that contains <code>main.py</code> and <code>data/</code>: <code>python -m cadwyn</code> imports the modules from there.</p>
 <h3 id="rendering-a-single-model">Rendering a single model<a class="headerlink" href="#rendering-a-single-model" title="Permanent link">&para;</a></h3>
 <p>Here's a way to render a single Pydantic model or enum with the schemas:</p>
-<div class="highlight"><pre><span></span><code>cadwyn<span class="w"> </span>render<span class="w"> </span>model<span class="w"> </span>data.schemas:UserCreateRequest<span class="w"> </span>--app<span class="o">=</span>main:app<span class="w"> </span>--version<span class="o">=</span><span class="m">2024</span>-05-26
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>cadwyn<span class="w"> </span>render<span class="w"> </span>model<span class="w"> </span>data.schemas:UserCreateRequest<span class="w"> </span>--app<span class="o">=</span>main:app<span class="w"> </span>--version<span class="o">=</span><span class="m">2024</span>-05-26
 </code></pre></div>
 <p>This command prints to stdout how the <code>UserCreateRequest</code> schema would look in version 2024-05-26 if it was written by hand rather than generated at runtime by Cadwyn. This command takes the <code>UserCreateRequest</code> schema from <code>data/schemas.py</code> module and knows what the schema would look based on the version changes from <code>Cadwyn</code> app instance named <code>app</code> and located in <code>main.py</code>.</p>
 <p>The rendered fields are the ones that the schema has in that version. When a schema has instructions for a field that it inherits, it is rendered with its own version of that field, and its parents and siblings are rendered with theirs (see <a href="../schema_migrations/#fields-that-a-schema-inherits">Fields that a schema inherits</a>).</p>
 <h2 id="generating-schemas-without-fastapi">Generating schemas without FastAPI<a class="headerlink" href="#generating-schemas-without-fastapi" title="Permanent link">&para;</a></h2>
 <p>Cadwyn can generate versioned schemas from its version changes even without FastAPI:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">cadwyn</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span><span class="p">,</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn.schema_generation</span><span class="w"> </span><span class="kn">import</span> <span class="n">generate_versioned_models</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">my_versions</span><span class="w"> </span><span class="kn">import</span> <span class="n">MyVersionedSchema</span><span class="p">,</span> <span class="n">version_bundle</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MyVersionedSchema</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">full_name</span><span class="p">:</span> <span class="nb">str</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RenameNameToFullName</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;Renamed `name` to `full_name`&quot;</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">MyVersionedSchema</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;full_name&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;name&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="n">version_bundle</span> <span class="o">=</span> <span class="n">VersionBundle</span><span class="p">(</span>
+    <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span> <span class="n">RenameNameToFullName</span><span class="p">),</span>
+    <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2025-11-16&quot;</span><span class="p">),</span>
+<span class="p">)</span>
 
 <span class="n">schema_generators</span> <span class="o">=</span> <span class="n">generate_versioned_models</span><span class="p">(</span><span class="n">version_bundle</span><span class="p">)</span>
 <span class="n">MyVersionedSchemaFrom2025</span> <span class="o">=</span> <span class="n">schema_generators</span><span class="p">[</span><span class="s2">&quot;2025-11-16&quot;</span><span class="p">][</span><span class="n">MyVersionedSchema</span><span class="p">]</span>
@@ -1999,9 +2016,8 @@
 <p>Parametrized generic models such as <code>Page[Item]</code> use the versioned copies of their type args in every version. For example, take the app from <a href="https://github.com/zmievsa/cadwyn/issues/416">issue #416</a>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Generic</span><span class="p">,</span> <span class="n">TypeVar</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
-
 <span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">Cadwyn</span><span class="p">,</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span><span class="p">,</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
 
 <span class="n">T</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;T&quot;</span><span class="p">)</span>
 

@@ -1918,8 +1918,7 @@
 <p>If you have an endpoint in an old version <strong>but want to delete it in a new version</strong>, define it as usual with all your other endpoints but mark it as deleted...</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@router</span><span class="o">.</span><span class="n">only_exists_in_older_versions</span>
 <span class="nd">@router</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/users/</span><span class="si">{user_id}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">my_old_endpoint</span><span class="p">():</span>
-    <span class="o">...</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">my_old_endpoint</span><span class="p">():</span> <span class="o">...</span>
 </code></pre></div>
 <p>and then define it as existing in one of the older versions:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">endpoint</span>

@@ -1897,10 +1897,9 @@
 <li>Optional <code>api_version_parameter_name: str = "x-api-version"</code> is the parameter that Cadwyn uses for <a href="#routing">routing</a> to different API versions of your app</li>
 </ul>
 <p>After you have defined the main app, you can add versioned API routers to it using <code>Cadwyn.generate_and_include_versioned_routers(*routers)</code></p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionedAPIRouter</span><span class="p">,</span> <span class="n">Cadwyn</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">versions</span><span class="w"> </span><span class="kn">import</span> <span class="n">my_version_bundle</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">Cadwyn</span><span class="p">,</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span><span class="p">,</span> <span class="n">VersionedAPIRouter</span>
 
-
+<span class="n">my_version_bundle</span> <span class="o">=</span> <span class="n">VersionBundle</span><span class="p">(</span><span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2022-11-16&quot;</span><span class="p">))</span>
 <span class="n">router</span> <span class="o">=</span> <span class="n">VersionedAPIRouter</span><span class="p">()</span>
 
 
