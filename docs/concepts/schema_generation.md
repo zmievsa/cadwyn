@@ -13,17 +13,17 @@ If you have many versions and schemas, it is quite challenging to know what vali
 Here's a way to render the entire module with the schemas:
 
 ```bash
-cadwyn render module data.schemas --app=main:app --version=2024-05-26
+{! ./docs_src/concepts/schema_generation/block003.sh !}
 ```
 <!-- TODO: Add an option to use a callable instead of a variable -->
-This command prints to stdout how the schemas would look in version 2024-05-26 if they were written by hand rather than generated at runtime by Cadwyn. This command takes the schemas from `data/schemas.py` module and knows what the schemas would look based on the version changes from `Cadwyn` app instance named `app` and located in `main.py`.
+This command prints to stdout how the schemas would look in version 2024-05-26 if they were written by hand rather than generated at runtime by Cadwyn. This command takes the schemas from `data/schemas.py` module and knows what the schemas would look based on the version changes from `Cadwyn` app instance named `app` and located in `main.py`. Run it from the directory that contains `main.py` and `data/`: `python -m cadwyn` imports the modules from there.
 
 ### Rendering a single model
 
 Here's a way to render a single Pydantic model or enum with the schemas:
 
 ```bash
-cadwyn render model data.schemas:UserCreateRequest --app=main:app --version=2024-05-26
+{! ./docs_src/concepts/schema_generation/block004.sh !}
 ```
 
 This command prints to stdout how the `UserCreateRequest` schema would look in version 2024-05-26 if it was written by hand rather than generated at runtime by Cadwyn. This command takes the `UserCreateRequest` schema from `data/schemas.py` module and knows what the schema would look based on the version changes from `Cadwyn` app instance named `app` and located in `main.py`.
