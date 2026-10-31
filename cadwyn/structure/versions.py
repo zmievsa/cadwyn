@@ -116,6 +116,9 @@ _is_form_model_supplied = cast(
 _should_embed_body_fields = cast(
     "Callable[[list[ModelField]], bool]", getattr(fastapi.dependencies.utils, "_should_embed_body_fields", None)
 )
+_get_multidict_value = cast(
+    "Callable[[ModelField, FormData, str], Any]", getattr(fastapi.dependencies.utils, "_get_multidict_value", None)
+)
 
 
 def _get_form_models_before_fastapi_0_161(field: ModelField) -> list[type[BaseModel]]:  # pragma: no cover
@@ -126,18 +129,21 @@ def _get_form_models_before_fastapi_0_161(field: ModelField) -> list[type[BaseMo
 # Since FastAPI 0.161.0, unions of form models are form models too, and `_get_form_model` returns None for them
 _get_form_models = cast(
     "Callable[[ModelField], list[type[BaseModel]]]",
-    getattr(fastapi.dependencies.utils, "_get_form_models", _get_form_models_before_fastapi_0_161),
+    getattr(fastapi.dependencies.utils, "_get_form_models", None)
+    or (_get_form_models_before_fastapi_0_161 if _get_form_model is not None else None),
 )
 if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and None in (  # pragma: no cover
-    _get_form_model,
+    _get_form_models,
     _get_param_aliases,
     _get_cached_model_fields,
     _should_embed_body_fields,
+    _get_multidict_value,
 ):
     raise ImportError(
-        "Cadwyn does not support this version of FastAPI: `_get_form_model`, `_get_param_aliases`, "
-        "`get_cached_model_fields`, or `_should_embed_body_fields` is missing from `fastapi.dependencies.utils`. "
-        "Cadwyn uses them to pass form models to FastAPI. Please, open an issue on Cadwyn's GitHub."
+        "Cadwyn does not support this version of FastAPI: `_get_form_models` (or `_get_form_model` before FastAPI "
+        "0.161.0), `_get_param_aliases`, `get_cached_model_fields`, `_should_embed_body_fields`, or "
+        "`_get_multidict_value` is missing from `fastapi.dependencies.utils`. Cadwyn uses them to pass form models to "
+        "FastAPI. Please, open an issue on Cadwyn's GitHub."
     )
 if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and not (  # pragma: no cover
     dataclasses.is_dataclass(Dependant)
@@ -551,8 +557,7 @@ class VersionBundle:
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
         is_body_restored = False
-        dependant_for_solving = head_dependant
-        form_model_aliases: tuple[str, ...] = ()
+        form_model_lookup = _FormModelLookup(head_dependant)
         if request_info._form is not None:
             if uploads_read_by_fastapi:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
@@ -563,7 +568,7 @@ class VersionBundle:
         elif body_is_model_dump:
             body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
             is_body_restored = body_for_solving is not request_info.body
-            dependant_for_solving, form_model_aliases = _get_form_model_lookup(
+            form_model_lookup = _get_form_model_lookup(
                 head_dependant, head_route, body_for_solving, embed_body_fields=embed_body_fields
             )
         else:
@@ -574,22 +579,22 @@ class VersionBundle:
             solve_dependencies,
             request=request,
             response=response,
-            dependant=dependant_for_solving,
+            dependant=form_model_lookup.dependant,
             dependency_overrides_provider=head_route.dependency_overrides_provider,
             async_exit_stack=exit_stack,
             embed_body_fields=embed_body_fields,
             background_tasks=background_tasks,
         )
-        result = await solve(body=_embed_form_model(body_for_solving, form_model_aliases))
+        result = await solve(body=_embed_form_model(body_for_solving, form_model_lookup))
         # We only restore bodies that would fail as they are. If the head rejects the restored body too, we solve the
         # request again with the body as it is, so that it fails with the same error as before. The second solve reuses
         # the dependencies of the first one, so they run as many times as before.
         if result.errors and is_body_restored:
             result = await solve(
-                body=_embed_form_model(request_info.body, form_model_aliases), dependency_cache=result.dependency_cache
+                body=_embed_form_model(request_info.body, form_model_lookup), dependency_cache=result.dependency_cache
             )
         if result.errors:
-            errors = _unembed_form_model_errors(result.errors, form_model_aliases)
+            errors = _unembed_form_model_errors(result.errors, form_model_lookup.aliases)
             raise CadwynHeadRequestValidationError(errors, body=request_info.body, version=current_version)
         return result.values
 
@@ -983,9 +988,20 @@ def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body
     )
 
 
+class _FormModelLookup(NamedTuple):
+    """The dependant to solve for the head, and how to pass the dict body of its form model to FastAPI."""
+
+    dependant: Dependant
+    # The keys to put the dict body of the form model under
+    aliases: tuple[str, ...] = ()
+    # Since FastAPI 0.161.0, FastAPI validates every model of a union of form models from the dict body as if it were
+    # form data, so it takes any value that isn't a list as a single form value
+    is_union: bool = False
+
+
 def _get_form_model_lookup(
     head_dependant: Dependant, head_route: APIRoute, body: Any, *, embed_body_fields: bool
-) -> tuple[Dependant, tuple[str, ...]]:
+) -> _FormModelLookup:
     """Return the dependant to solve for the head, and the keys to put the dict body of its form model under, if any.
 
     Before FastAPI 0.158.2, FastAPI validates the dict body of a single form model as it is. Since then, the endpoint
@@ -999,7 +1015,9 @@ def _get_form_model_lookup(
     see the key. Otherwise we take the last release's path.
     """
     body_field = head_dependant.body_params[0]
-    if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and _get_form_models(body_field):  # pragma: no cover # FastAPI >= 0.158.2
+    form_models = _get_form_models(body_field) if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS else []
+    if form_models:  # pragma: no cover # FastAPI >= 0.158.2
+        is_union = len(form_models) > 1
         lookups = _get_body_lookups(head_dependant, head_route, embed_body_fields=embed_body_fields)
         form_model_aliases = tuple(lookups.form_model_aliases)
         clashing_params = [
@@ -1011,11 +1029,11 @@ def _get_form_model_lookup(
             or not isinstance(body, dict)
             or not all(param.has_default or not body.keys().isdisjoint(param.aliases) for param in clashing_params)
         ):
-            return head_dependant, form_model_aliases
+            return _FormModelLookup(head_dependant, form_model_aliases, is_union)
         dependant = _with_form_models_under_own_key(head_dependant)
         lookups = _get_body_lookups(dependant, head_route, embed_body_fields=embed_body_fields)
-        return dependant, tuple(lookups.form_model_aliases)
-    return head_dependant, ()
+        return _FormModelLookup(dependant, tuple(lookups.form_model_aliases), is_union)
+    return _FormModelLookup(head_dependant)
 
 
 def _with_form_models_under_own_key(dependant: Dependant) -> Dependant:  # pragma: no cover # FastAPI >= 0.158.2
@@ -1100,15 +1118,22 @@ def _iter_dependants_that_fastapi_solves(  # pragma: no cover # FastAPI >= 0.158
             dependants.append(sub_dependant)
 
 
-def _embed_form_model(body: Any, form_model_aliases: tuple[str, ...]) -> Any:
+def _embed_form_model(body: Any, form_model_lookup: _FormModelLookup) -> Any:
     """Return the body with the form models embedded under their aliases.
 
     Other form fields, e.g. the ones that only a dependency override declares, look their values up in the body itself,
     as they did before FastAPI 0.158.2. A form model of an override wins over a form field with the same alias.
+
+    The dump of a union member has sets and tuples where FastAPI would get repeated form values, so we pass them as
+    lists, which is what FastAPI takes as repeated form values.
     """
+    if form_model_lookup.is_union and isinstance(body, dict):  # pragma: no cover # FastAPI >= 0.161
+        body = {
+            key: list(value) if isinstance(value, (set, frozenset, tuple)) else value for key, value in body.items()
+        }
     return (
-        {**(body if isinstance(body, dict) else {}), **dict.fromkeys(form_model_aliases, body)}
-        if form_model_aliases
+        {**(body if isinstance(body, dict) else {}), **dict.fromkeys(form_model_lookup.aliases, body)}
+        if form_model_lookup.aliases
         else body
     )
 

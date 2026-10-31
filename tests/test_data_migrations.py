@@ -95,6 +95,7 @@ from tests._resources.utils import (
     FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
     FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS,
     FASTAPI_VALIDATES_FORM_FIELDS_OF_OVERRIDES,
+    FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA,
 )
 from tests.conftest import (
     CreateVersionedApp,
@@ -2357,12 +2358,34 @@ async def _optional_form_model_union(
     return None if text is None else text.model_dump()
 
 
+class SchemaWithCollections(BaseModel):
+    tags: set[str]
+    frozen_tags: frozenset[str]
+    numbers: tuple[int, ...]
+
+
+async def _form_model_union_with_collections(
+    body: Annotated[Union[SchemaWithCollections, OtherSchemaWithText], Form()],
+):
+    return body.model_dump(mode="json")
+
+
 @pytest.mark.parametrize(
     ("endpoint", "data"),
     [
         pytest.param(_form_model_union, {"text": "1"}, id="with_form_data_of_first_member"),
         pytest.param(_form_model_union, {"other_text": "1"}, id="with_form_data_of_second_member"),
+        pytest.param(_optional_form_model_union, {"text": "1"}, id="optional_with_form_data_of_first_member"),
         pytest.param(_optional_form_model_union, {"other_text": "1"}, id="optional_with_form_data_of_second_member"),
+        pytest.param(
+            _form_model_union_with_collections,
+            {"tags": ["x", "y"], "frozen_tags": ["x", "y"], "numbers": ["1", "2"]},
+            id="with_set_frozenset_and_tuple_fields",
+            marks=pytest.mark.skipif(
+                FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA and not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
+                reason="On FastAPI 0.153 to 0.160, Cadwyn passes the dump of the union member to FastAPI as it is",
+            ),
+        ),
         pytest.param(_optional_form_model_union, None, id="optional_without_form_data"),
         pytest.param(_optional_form_model_union, {"unrelated": "1"}, id="optional_with_unrelated_form_data"),
     ],
@@ -2572,6 +2595,34 @@ def test__request_body_migration__with_required_form_field_of_override_named_lik
     clients["2000-01-01"].app.dependency_overrides[_get_text] = get_any_from_form_field
 
     assert clients["2000-01-01"].post(test_path, data={"text": "sent", "other": "y"}).json() == [None, {"other": "y"}]
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
+    not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
+    reason="Before FastAPI 0.161.0, a union of form models isn't a form model",
+)
+def test__request_body_migration__with_form_model_union_and_form_field_of_override_named_like_it__head_should_get_both(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(
+        text: Annotated[Union[SchemaWithText, OtherSchemaWithText], Form()], from_dependency: str = Depends(_get_text)
+    ):
+        return [text.model_dump(), from_dependency]
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body["text"] = "migrated"
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = _get_text_from_form_field
+
+    assert {version: client.post(test_path, data={"text": "sent"}).json() for version, client in clients.items()} == {
+        "2000-01-01": [{"text": "migrated"}, "migrated"],
+        "2001-01-01": [{"text": "sent"}, "sent"],
+    }
 
 
 class SchemaWithUpload(BaseModel):
