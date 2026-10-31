@@ -33,6 +33,7 @@ setting. You can still run every hook manually with `make lint`.
 ## Guidelines for writing code
 
 * Before changing Cadwyn's behavior, read [Design decisions and trade-offs](../theory/design_decisions.md). It lists what Cadwyn has already accepted, what it deliberately doesn't do, and when a change counts as breaking
+* To find your way around the code, read [Architecture](../theory/architecture.md). It describes how Cadwyn generates the models and routes of every version and what happens during a request
 * Code should be [Pythonic and zen](https://peps.python.org/pep-0020/)
 * All code should be fully [typed](https://peps.python.org/pep-0484/). This is enforced via [ruff](https://github.com/astral-sh/ruff) and [ty](https://github.com/astral-sh/ty)
   * When complex types are required, use [type aliases](https://docs.python.org/3/library/typing.html#type-aliases)

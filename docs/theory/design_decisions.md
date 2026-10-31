@@ -25,7 +25,7 @@ Everything importable from `cadwyn` is supported. So are the internals that Airf
 
 ## Costs of the architecture
 
-These follow from how Cadwyn works and are not bugs. Changes that try to remove them are almost always rejected.
+These follow from how Cadwyn works, which [Architecture](architecture.md) describes, and are not bugs. Changes that try to remove them are almost always rejected.
 
 * **Business logic sees only the latest version.** Older versions are generated copies of the latest models, and migrations are written against the latest models.
 * **Older versions use copies, not the original classes.** Cadwyn copies models and changed enums for every version. Code that compares by identity (`isinstance`, `is`, dicts keyed by enum members) can see these copies, e.g. in the first run of a versioned dependency. Objects that can't be deep-copied (e.g. a validator holding a `threading.Lock`) fail when their models are versioned.
