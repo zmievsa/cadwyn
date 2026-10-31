@@ -6,31 +6,5 @@ Assume you had a `summary` field before but now you want to rename it to `bio`.
 2. Add the following migration to `versions.v2001_01_01`:
 
     ```python
-    from cadwyn import (
-        RequestInfo,
-        ResponseInfo,
-        VersionChange,
-        convert_request_to_next_version_for,
-        convert_response_to_previous_version_for,
-        schema,
-    )
-    from users import BaseUser, UserCreateRequest, UserResource
-
-
-    class RenameUserSummaryToBio(VersionChange):
-        """The user profile field 'summary' is now named 'bio' to match familiar
-        profile terminology.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            schema(BaseUser).field("bio").had(name="summary"),
-        )
-
-        @convert_request_to_next_version_for(UserCreateRequest)
-        def rename_summary_to_bio(request: RequestInfo):
-            request.body["bio"] = request.body.pop("summary")
-
-        @convert_response_to_previous_version_for(UserResource)
-        def rename_bio_to_summary(response: ResponseInfo):
-            response.body["summary"] = response.body.pop("bio")
+    {!> ./docs_src/how_to/change_openapi_schemas/rename_a_field_in_schema/rename_summary_to_bio/versions/v2001_01_01.py [ln:2-28] !}
     ```

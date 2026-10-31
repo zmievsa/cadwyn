@@ -1,0 +1,28 @@
+# ruff: noqa: D205
+from cadwyn import (
+    RequestInfo,
+    ResponseInfo,
+    VersionChange,
+    convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
+    schema,
+)
+from users import BaseUser, UserCreateRequest, UserResource
+
+
+class RenameUserSummaryToBio(VersionChange):
+    """The user profile field 'summary' is now named 'bio' to match familiar
+    profile terminology.
+    """
+
+    instructions_to_migrate_to_previous_version = (
+        schema(BaseUser).field("bio").had(name="summary"),
+    )
+
+    @convert_request_to_next_version_for(UserCreateRequest)
+    def rename_summary_to_bio(request: RequestInfo):
+        request.body["bio"] = request.body.pop("summary")
+
+    @convert_response_to_previous_version_for(UserResource)
+    def rename_bio_to_summary(response: ResponseInfo):
+        response.body["summary"] = response.body.pop("bio")

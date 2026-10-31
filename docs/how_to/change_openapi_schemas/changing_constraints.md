@@ -7,48 +7,19 @@ Suppose you previously allowed users to have a name of arbitrary length but now 
 1. Change `max_length` of `users.UserCreateRequest.name` to 250 in version 2001-01-01 by adding the following migration to `versions.v2001_01_01`. We do this instead of just adding the constraint to HEAD to make sure that old requests will get converted to HEAD successfully -- without facing the constraint:
 
     ```python
-    from cadwyn import VersionChange, schema
-    from users import UserCreateRequest
-
-
-    class LimitUserNamesTo250CharactersInLatest(VersionChange):
-        """User names in creation requests are now limited to 250 characters
-        to prevent impractically large values.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            schema(UserCreateRequest).field("name").had(max_length=250),
-        )
+    {!> ./docs_src/how_to/change_openapi_schemas/changing_constraints/add_or_narrow_constraints/versions/v2001_01_01.py [ln:2-13] !}
     ```
 
 2. Then add the following migration under the migration above in the same file:
 
     ```python
-    class LimitUserNamesTo250Characters(VersionChange):
-        """User names in creation requests are now limited to 250 characters
-        to prevent impractically large values.
-        """
-
-        instructions_to_migrate_to_previous_version = (
-            schema(UserCreateRequest).field("name").didnt_have("max_length"),
-        )
+    {!> ./docs_src/how_to/change_openapi_schemas/changing_constraints/add_or_narrow_constraints/versions/v2001_01_01.py [ln:16-23] !}
     ```
 
 3. Add both of these migrations to the version bundle:
 
     ```python
-    from cadwyn import HeadVersion, Version, VersionBundle
-
-    from .v2001_01_01 import (
-        LimitUserNamesTo250CharactersInLatest,
-        LimitUserNamesTo250Characters,
-    )
-
-    version_bundle = VersionBundle(
-        HeadVersion(LimitUserNamesTo250CharactersInLatest),
-        Version("2001-01-01", LimitUserNamesTo250Characters),
-        Version("2000-01-01"),
-    )
+    {!> ./docs_src/how_to/change_openapi_schemas/changing_constraints/add_or_narrow_constraints/versions/__init__.py !}
     ```
 
 So the HEAD version does not have this constraint, the latest does, and earlier versions do not.
