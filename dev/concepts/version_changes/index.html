@@ -2433,7 +2433,7 @@ Changes:
     <span class="k">def</span><span class="w"> </span><span class="nf">rename_created_at_to_creation_date</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="n">ResponseInfo</span><span class="p">):</span>
         <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;creation_date&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;created_at&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>Did you notice how the schema for <code>InvoiceResource</code> is specified in the migration above? This instructs Cadwyn to apply it to all routes with this schema as their <code>response_model</code>. Also notice that <code>BaseInvoice</code> is now used in the instructions. Here, <code>BaseInvoice</code> is the parent of both <code>InvoiceCreateRequest</code> and <code>InvoiceResource</code>, so renaming it in the instructions will rename the field in those schemas as well. You can, however, apply the instructions to both individual schemas instead of their parent if you prefer.</p>
+<p>Did you notice how the schema for <code>InvoiceResource</code> is specified in the migration above? This instructs Cadwyn to apply it to all routes with this schema as their <code>response_model</code>. Also notice that <code>BaseInvoice</code> is now used in the instructions. Here, <code>BaseInvoice</code> is the parent of both <code>InvoiceCreateRequest</code> and <code>InvoiceResource</code>, so renaming it in the instructions will rename the field in those schemas as well. Rename an inherited field in the parent like this, because renaming it in a child schema keeps the old field next to the new one.</p>
 <div class="admonition note">
 <p class="admonition-title">Migrations only run for the schema you name</p>
 <p>Instructions such as <code>schema(InvoiceResource).field(...).had(...)</code> change the schema everywhere it is used, including inside other schemas and generics. Request and response migrations are different: a schema-based migration only runs when its schema is the request body or the <code>response_model</code> of the route itself. It does not run for that schema nested in another one, e.g. in a field of another schema or inside a generic such as <code>Page[InvoiceResource]</code>, so write the migration for the outer schema instead. This is a deliberate choice: each migration runs exactly where you declared it and never twice for the same data.</p>
@@ -2492,9 +2492,9 @@ Changes:
     <span class="nd">@convert_response_to_previous_version_for</span><span class="p">(</span>
         <span class="s2">&quot;/v1/invoices&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;GET&quot;</span><span class="p">],</span> <span class="n">migrate_http_errors</span><span class="o">=</span><span class="kc">True</span>
     <span class="p">)</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">replace_400_with_404</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="n">ResponseInfo</span><span class="p">):</span>
-        <span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">400</span><span class="p">:</span>
-            <span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">=</span> <span class="mi">404</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">replace_404_with_400</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="n">ResponseInfo</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">404</span><span class="p">:</span>
+            <span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">=</span> <span class="mi">400</span>
 </code></pre></div>
 <h4 id="migration-of-non-body-attributes">Migration of non-body attributes<a class="headerlink" href="#migration-of-non-body-attributes" title="Permanent link">&para;</a></h4>
 <p>Cadwyn can migrate more than just request bodies.</p>
@@ -2556,8 +2556,13 @@ Changes:
 <p>So all your requests get migrated to HEAD, which is the internal representation of latest, rather than the latest itself. Its data is very similar to that of latest. The same applies to your responses: instead of responding with and migrating from the latest version of your data, you use its <strong>internal representation</strong> which is pretty similar to the actual latest schemas.</p>
 <p>For responses, returning the internal representation is simple: return your database model or a dictionary with everything you need for all your versions. In the user address example, it is recommended to continue storing the list of addresses in the database and include a single address in a response. The latest schemas will strip it while previous schemas will be able to use it.</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># in your business logic</span>
-
-<span class="k">return</span> <span class="p">{</span><span class="s2">&quot;address&quot;</span><span class="p">:</span> <span class="n">user</span><span class="o">.</span><span class="n">addresses</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">user</span><span class="o">.</span><span class="n">addresses</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">user</span><span class="p">}</span>
+<span class="nd">@router</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/users/</span><span class="si">{user_id}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">response_model</span><span class="o">=</span><span class="n">User</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_user</span><span class="p">(</span><span class="n">user_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+    <span class="n">user</span> <span class="o">=</span> <span class="n">database</span><span class="p">[</span><span class="n">user_id</span><span class="p">]</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;address&quot;</span><span class="p">:</span> <span class="n">user</span><span class="o">.</span><span class="n">addresses</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">user</span><span class="o">.</span><span class="n">addresses</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">user</span><span class="o">.</span><span class="n">model_dump</span><span class="p">(),</span>
+    <span class="p">}</span>
 </code></pre></div>
 <p>So now your migration will look like the following:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
@@ -2620,13 +2625,16 @@ Changes:
 <p>Notice that whenever a request reaches Cadwyn, it is first validated against the request's version of the schema, then it is migrated to the latest version, and then validated again to prevent migrations from creating invalid requests.</p>
 <p>This means that if you have a dependency that is executed during the request validation, <strong>it will be executed twice</strong>. For example, if you have a dependency that checks whether a user exists in the database, it will be executed twice. This is not an issue if the dependency is idempotent, but it becomes one if it is not.</p>
 <p>To solve this issue, you can use the <code>cadwyn.current_dependency_solver</code> dependency which tells you whether your dependency is called before or after the request is migrated. If you want to run it after Cadwyn has migrated the request to the latest version, ensure that <code>current_dependency_solver</code> is set to <code>"cadwyn"</code>. If you want your dependency to run at the very beginning of handling the request, you should run it when <code>current_dependency_solver</code> is <code>"fastapi"</code>.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">current_dependency_solver</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotated</span><span class="p">,</span> <span class="n">Literal</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">current_dependency_solver</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">Depends</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">my_dependency</span><span class="p">(</span>
     <span class="n">dependency_solver</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span>
         <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;fastapi&quot;</span><span class="p">,</span> <span class="s2">&quot;cadwyn&quot;</span><span class="p">],</span> <span class="n">Depends</span><span class="p">(</span><span class="n">current_dependency_solver</span><span class="p">)</span>
-    <span class="p">]</span>
+    <span class="p">],</span>
 <span class="p">):</span>
     <span class="k">if</span> <span class="n">dependency_solver</span> <span class="o">==</span> <span class="s2">&quot;fastapi&quot;</span><span class="p">:</span>  <span class="c1"># Before migration</span>
         <span class="o">...</span>
@@ -2665,7 +2673,7 @@ Changes:
     <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">()</span>
 </code></pre></div>
 <p>Then you will have the following check in your business logic:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">src.versions</span><span class="w"> </span><span class="kn">import</span> <span class="n">versions</span><span class="p">,</span> <span class="n">RejectUserAddressesMissingFromExternalService</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">src.versions</span><span class="w"> </span><span class="kn">import</span> <span class="n">RejectUserAddressesMissingFromExternalService</span>
 
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">create_user</span><span class="p">(</span><span class="n">payload</span><span class="p">):</span>
