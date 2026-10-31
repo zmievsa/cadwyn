@@ -27,10 +27,10 @@ Assume you had a `summary` field before but now you want to rename it to `bio`.
         )
 
         @convert_request_to_next_version_for(UserCreateRequest)
-        def rename_bio_to_summary(request: RequestInfo):
-            request.body["summary"] = request.body.pop("bio")
+        def rename_summary_to_bio(request: RequestInfo):
+            request.body["bio"] = request.body.pop("summary")
 
         @convert_response_to_previous_version_for(UserResource)
         def rename_bio_to_summary(response: ResponseInfo):
-            response.body["bio"] = response.body.pop("summary")
+            response.body["summary"] = response.body.pop("bio")
     ```

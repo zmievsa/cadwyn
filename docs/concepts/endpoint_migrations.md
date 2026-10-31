@@ -83,7 +83,7 @@ Sometimes, when making advanced changes between versions, you need to rewrite yo
 from typing import Annotated
 
 from cadwyn import VersionedAPIRouter
-from fastapi.headers import Header
+from fastapi import Header
 from fastapi.params import Param
 
 router = VersionedAPIRouter()

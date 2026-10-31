@@ -42,7 +42,7 @@ You convert moderators to regulars in older versions because it is a safer choic
 
 ### Why enum expansion is a breaking change for responses
 
-Suppose your schema contained a list that contains euros and/or dollars. To unmarshal the JSON, Cadwyn takes the JSON string and tries to convert it to a list of euros and/or dollars. If there appears Georgian lari in the list, Cadwyn will fail to unmarshal such a list, which makes adding an enum value a breaking change for a list of items.
+Suppose your schema contained a list that contains euros and/or dollars. To unmarshal the JSON, your client takes the JSON string and tries to convert it to a list of euros and/or dollars. If there appears Georgian lari in the list, the client will fail to unmarshal such a list, which makes adding an enum value a breaking change for a list of items.
 
 If an API client expects `Array<Euro | Dollar>`, then `Array<Euro>` and `Array<Dollar>` would both be considered compatible responses but `Array<Euro | Dollar | Lari>` would not. That happens because `Array<Euro | Dollar | Lari>` is not a subtype of `Array<Euro | Dollar>` while `Array<Euro>` is.
 
@@ -61,13 +61,13 @@ In these sections, we'll be working with Cadwyn's user response model: `users.Us
 Suppose that previously users could specify their date of birth as a datetime instead of a date. You are planning to change that. You can solve this by making it a datetime in HEAD version, converting it to date in latest version, and then making it a datetime again in the old versions. So whenever you receive a request in an old version, it will get converted to HEAD version where it is a datetime. And whenever you receive a request in latest version, it will also be converted to HEAD where date will simply be casted to datetime with time = 00:00:00.
 
 0. Continue storing `date_of_birth` as a datetime in your database to avoid breaking any old behavior
-1. Add the following migration to `versions.v2001_01_01` which will turn `date_of_birth` into a date in 2001_01_01. Note how the validator is used to make sure that `date_of_birth` is converted to date in the latest version. It is only necessary in Pydantic 2 because it has no implicit casting from datetime to date. Note also how strings are used for types: this is not always necessary; it just allows you to control how Cadwyn is going to render your types. Most of the time you won't need to use strings for types.
+1. Add the following migration to `versions.v2001_01_01` which will turn `date_of_birth` into a date in 2001_01_01. Note how the validator is used to make sure that `date_of_birth` is converted to date in the latest version. It is only necessary in Pydantic 2 because it has no implicit casting from datetime to date.
 
     ```python
     import datetime
 
     from cadwyn import VersionChange, schema
-    from pydantic import validator
+    from pydantic import field_validator
     from users import BaseUser
 
 

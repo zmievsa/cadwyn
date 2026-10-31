@@ -4,7 +4,7 @@
 
 Suppose you previously allowed users to have a name of arbitrary length but now you want to limit it to 250 characters because you are worried that some users may use inadequate lengths. You can't do this easily: if you simply add a `max_length` constraint to `User.name`, the existing data in your database might become incompatible with this field in `UserResource`. So as long as incompatible data is there or can get there from some version, you cannot add such a constraint to your responses. However, you **can** add it to your requests to prevent the creation of new user accounts with long names.
 
-1. Change `max_length` of `data.v2001_01_01.users.UserCreateRequest.name` to 250 by adding the following migration to `versions.v2001_01_01`. We do this instead of just adding the constraint to HEAD to make sure that old requests will get converted to HEAD successfully -- without facing the constraint:
+1. Change `max_length` of `users.UserCreateRequest.name` to 250 in version 2001-01-01 by adding the following migration to `versions.v2001_01_01`. We do this instead of just adding the constraint to HEAD to make sure that old requests will get converted to HEAD successfully -- without facing the constraint:
 
     ```python
     from cadwyn import VersionChange, schema
@@ -60,7 +60,7 @@ Note, however, that anyone using the old API versions will still be able to use 
 
 0. Check whether any users have names longer than 250 characters. If there are few or no users with such long names, then it may make sense to skip step 1. The other steps, however, cannot be skipped if you want to guarantee that your API gives no 500s at any point in the process
 1. Issue a 3-6 month warning to all users stating that you will make a breaking change affecting older versions. Mention that you will truncate old names that are longer than 250 characters and that users will no longer be able to create such long names even in old API versions
-2. After the deadline, add a `max_length` constraint to `users.UserCreateRequest.name`
+2. After the deadline, add a `max_length` constraint to `users.UserCreateRequest.name` and remove the instructions of `LimitUserNamesTo250CharactersInLatest` and `LimitUserNamesTo250Characters`
 3. Release it to production
 4. Truncate all names that are too long in the database (preferably using a migration and a separate release)
 5. Remove the `max_length` constraint from `users.UserCreateRequest.name`
