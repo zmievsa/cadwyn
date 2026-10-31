@@ -2030,7 +2030,12 @@
 </li>
 <li>
 <p>Add both migrations into the VersionBundle:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span><span class="p">,</span> <span class="n">HeadVersion</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">HeadVersion</span><span class="p">,</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.v2001_01_01</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">ChangeUserDateOfBirthFromDatetimeToDate</span><span class="p">,</span>
+    <span class="n">ChangeUserDateOfBirthFromDatetimeToDateInLatest</span><span class="p">,</span>
+<span class="p">)</span>
 
 <span class="n">version_bundle</span> <span class="o">=</span> <span class="n">VersionBundle</span><span class="p">(</span>
     <span class="n">HeadVersion</span><span class="p">(</span><span class="n">ChangeUserDateOfBirthFromDatetimeToDateInLatest</span><span class="p">),</span>

@@ -1943,8 +1943,8 @@
 <li>
 <p>Add the following migration to <code>versions.v2001_01_01</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">users</span><span class="w"> </span><span class="kn">import</span> <span class="n">UserResource</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">Field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">users</span><span class="w"> </span><span class="kn">import</span> <span class="n">UserResource</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">RemoveZodiacSignFromUser</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
@@ -1963,8 +1963,8 @@
 <p>Add this migration into the version bundle:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># versions/__init__.py</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span><span class="p">,</span> <span class="n">HeadVersion</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">date</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">HeadVersion</span><span class="p">,</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span>
+
 <span class="kn">from</span><span class="w"> </span><span class="nn">.v2001_01_01</span><span class="w"> </span><span class="kn">import</span> <span class="n">RemoveZodiacSignFromUser</span>
 
 <span class="n">version_bundle</span> <span class="o">=</span> <span class="n">VersionBundle</span><span class="p">(</span>
@@ -2024,8 +2024,8 @@
 <p>Add these migrations into the version bundle:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># versions/__init__.py</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span><span class="p">,</span> <span class="n">HeadVersion</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">date</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">HeadVersion</span><span class="p">,</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span>
+
 <span class="kn">from</span><span class="w"> </span><span class="nn">.v2001_01_01</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">RemoveMiddleNameFromUser</span><span class="p">,</span>
     <span class="n">RemoveUserMiddleNameFromLatestVersion</span><span class="p">,</span>
