@@ -1824,6 +1824,60 @@ def test__request_body_migration__with_optional_form_model__head_should_get_it_a
         assert (response.status_code, response.json()) == (expected.status_code, expected.json())
 
 
+async def _get_current_user() -> str:
+    raise NotImplementedError
+
+
+async def _get_fake_user() -> str:
+    return "fake"
+
+
+async def _get_optional_form_model_value_in_override(
+    body: Annotated[Optional[InnerSchemaWithValidationAlias], Form()] = None,
+) -> Optional[int]:
+    return None if body is None else body.value
+
+
+async def _optional_form_model_next_to_overridden_dependency(
+    body: Annotated[Optional[InnerSchemaWithValidationAlias], Form()] = None,
+    from_dependency: Any = Depends(_get_current_user),
+):
+    return [None if body is None else body.value, from_dependency]
+
+
+@pytest.mark.parametrize(
+    ("override", "data"),
+    [
+        pytest.param(_get_fake_user, None, id="override_without_params_and_no_form_data"),
+        pytest.param(_get_fake_user, {"unrelated": "1"}, id="override_without_params_and_unrelated_form_data"),
+        pytest.param(
+            _get_optional_form_model_value_in_override, None, id="override_sharing_form_model_and_no_form_data"
+        ),
+        pytest.param(
+            _get_optional_form_model_value_in_override, {"v": "1"}, id="override_sharing_form_model_and_its_form_data"
+        ),
+    ],
+)
+def test__request_body_migration__with_optional_form_model_and_dependency_override__head_should_get_it_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    override: Callable[..., Coroutine[Any, Any, Any]],
+    data: Optional[dict[str, str]],
+):
+    router.post(test_path)(_optional_form_model_next_to_overridden_dependency)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(_optional_form_model_next_to_overridden_dependency)
+    fastapi_app.dependency_overrides[_get_current_user] = override
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_current_user] = override
+
+    expected = TestClient(fastapi_app).post(test_path, data=data)
+    for version_client in clients.values():
+        response = version_client.post(test_path, data=data)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
 @pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
     not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, migrations get the form of the request"
 )
@@ -1912,6 +1966,24 @@ def _add_form_model_with_extra_fields_that_validates_to_none_endpoint(  # pragma
         raise NotImplementedError
 
 
+class _FormModelWithDefaults(BaseModel):
+    value: int = Field(default=0, validation_alias="v")
+
+
+def _always_none(value: Any) -> None:  # pragma: no cover # FastAPI >= 0.158.2
+    return None
+
+
+def _add_non_nullable_form_model_that_validates_to_none_endpoint(  # pragma: no cover # FastAPI >= 0.158.2
+    router: VersionedAPIRouter, path: str
+) -> None:
+    @router.post(path)
+    async def endpoint(
+        body: Annotated[_FormModelWithDefaults, Form(), AfterValidator(_always_none)] = _FormModelWithDefaults(v=7),
+    ):
+        raise NotImplementedError
+
+
 def _add_form_model_next_to_form_field_of_dependency_override_endpoint(  # pragma: no cover # FastAPI >= 0.158.2
     router: VersionedAPIRouter, path: str
 ) -> None:
@@ -1941,6 +2013,18 @@ def _add_form_model_next_to_form_field_of_dependency_override_endpoint(  # pragm
             {"unrelated": "1"},
             {},
             id="form_model_with_extra_fields",
+        ),
+        pytest.param(
+            _add_non_nullable_form_model_that_validates_to_none_endpoint,
+            None,
+            {},
+            id="non_nullable_form_model_without_form_data",
+        ),
+        pytest.param(
+            _add_non_nullable_form_model_that_validates_to_none_endpoint,
+            {"unrelated": "1"},
+            {},
+            id="non_nullable_form_model_with_unrelated_form_data",
         ),
         pytest.param(
             _add_form_model_next_to_form_field_of_dependency_override_endpoint,

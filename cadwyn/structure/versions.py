@@ -96,6 +96,11 @@ _get_cached_model_fields = cast(
     "Callable[[type[BaseModel]], list[ModelField]]",
     getattr(fastapi.dependencies.utils, "get_cached_model_fields", None),
 )
+# Since FastAPI 0.159.1, FastAPI checks with this function whether the form supplies an optional form model
+_is_form_model_supplied = cast(
+    "Union[Callable[[type[BaseModel], FormData], bool], None]",
+    getattr(fastapi.dependencies.utils, "_is_form_model_supplied", None),
+)
 if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and None in (  # pragma: no cover
     _get_form_model,
     _get_param_aliases,
@@ -885,31 +890,42 @@ async def _form_model_is_omitted(request: FastapiRequest, route: APIRoute, body_
 async def _form_has_no_fields_of_omittable_form_model(  # pragma: no cover # FastAPI >= 0.158.2
     request: FastapiRequest, route: APIRoute, body_field_alias: str
 ) -> bool:
-    """Return whether the body param is a form model with a default, and the form has none of the model's fields.
+    """Return whether the body param is a form model with a default, and FastAPI has given every body param its default.
 
     The kwarg is the body param only if it has the param's name, and not a dependency or another param named after
-    the body's alias. Anything else in the tree that reads the form, e.g. an override, takes the previous path,
-    so that the head can't lose its values when it gets no body.
+    the body's alias. FastAPI only skips the form models that can be None, i.e. whose annotation isn't the model
+    itself, if the form doesn't supply them. Dependencies and their overrides can have such form models too, but if
+    anything else in the tree reads the form, we take the previous path, so that the head can't lose its values when
+    it gets no body.
     """
     body_param = route.dependant.body_params[0]
-    model = _get_form_model(body_param)
-    if model is None or body_param.name != body_field_alias or body_param.field_info.is_required():
-        return False
-    dependants = [
-        route.dependant,
-        *(dependant for _, dependant in _iter_dependencies(route.dependant, _get_dependency_overrides(route))),
-    ]
-    if any(
-        dependant is None or any(_get_form_model(field) is not model for field in dependant.body_params)
-        for dependant in dependants
+    if (
+        _get_form_model(body_param) is None
+        or body_param.name != body_field_alias
+        or body_param.field_info.is_required()
     ):
         return False
+    models: list[type[BaseModel]] = []
+    for dependant in _iter_dependants_that_fastapi_solves(route.dependant, route):
+        for field in dependant.body_params:
+            model = _get_form_model(field)
+            if model is None or field.field_info.annotation is model:
+                return False
+            models.append(model)
     # FastAPI has already parsed the form, so this returns its cached form without reading it again or closing it
     form = await request.form()
-    # Like FastAPI, we take a form model with extra fields as supplied if the form has any field
+    return not any(_form_supplies_form_model(model, form) for model in models)
+
+
+def _form_supplies_form_model(model: type[BaseModel], form: FormData) -> bool:  # pragma: no cover # FastAPI >= 0.158.2
+    """Return whether FastAPI validates the optional form model from the form instead of giving it its default."""
+    if _is_form_model_supplied is not None:
+        return _is_form_model_supplied(model, form)
+    # Before FastAPI 0.159.1, FastAPI checks the same inline. It takes a form model with extra fields as supplied
+    # if the form has fields that no param declares, while we take it as supplied if the form has any field
     if model.model_config.get("extra") in ("allow", "forbid") and form:
-        return False
-    return not any(alias in form for field in _get_cached_model_fields(model) for alias, _ in _get_param_aliases(field))
+        return True
+    return any(alias in form for field in _get_cached_model_fields(model) for alias, _ in _get_param_aliases(field))
 
 
 def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body_fields: bool) -> bool:
@@ -944,25 +960,33 @@ def _get_form_model_aliases(head_dependant: Dependant, head_route: APIRoute) -> 
 def _get_aliases_of_body_params(  # pragma: no cover # FastAPI >= 0.158.2
     head_dependant: Dependant, head_route: APIRoute
 ) -> tuple[str, ...]:
-    """Return the aliases that FastAPI looks the form models up under in the tree that it solves for the head.
-
-    Like FastAPI, we solve the dependant of an override instead of the overridden dependency.
-    """
-    dependency_overrides = _get_dependency_overrides(head_route)
+    """Return the aliases that FastAPI looks the form models up under in the tree that it solves for the head."""
     aliases: dict[str, None] = {}
-    dependants = [head_dependant]
-    while dependants:
-        dependant = dependants.pop()
+    for dependant in _iter_dependants_that_fastapi_solves(head_dependant, head_route):
         for field in dependant.body_params:
             if _get_form_model(field):
                 aliases.update(dict.fromkeys(alias for alias, _ in _get_param_aliases(field)))
+    return tuple(aliases)
+
+
+def _iter_dependants_that_fastapi_solves(  # pragma: no cover # FastAPI >= 0.158.2
+    dependant: Dependant, route: APIRoute
+) -> Iterator[Dependant]:
+    """Yield the dependant and every sub-dependant in the tree that FastAPI solves for the route.
+
+    Like FastAPI, we solve the dependant of an override instead of the overridden dependency.
+    """
+    dependency_overrides = _get_dependency_overrides(route)
+    dependants = [dependant]
+    while dependants:
+        dependant = dependants.pop()
+        yield dependant
         for sub_dependant in dependant.dependencies:
             if dependency_overrides and (call := dependency_overrides.get(sub_dependant.call)) is not None:
                 sub_dependant = get_dependant(
                     path=cast("str", sub_dependant.path), call=call, name=sub_dependant.name, scope=sub_dependant.scope
                 )
             dependants.append(sub_dependant)
-    return tuple(aliases)
 
 
 def _embed_form_model(body: Any, form_model_aliases: tuple[str, ...]) -> Any:
