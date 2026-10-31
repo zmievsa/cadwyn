@@ -2378,17 +2378,18 @@ async def _form_model_union_with_collections(
 
 
 def _split_by_commas(value: Any) -> Any:
-    return value.split(",") if isinstance(value, str) else value
+    return value.split(",") if isinstance(value, str) else value  # pragma: no cover # FastAPI >= 0.161
 
 
 class SchemaWithSplitValue(BaseModel):
     value: Annotated[Any, BeforeValidator(_split_by_commas)]
 
 
+# The head rejects the bodies that these endpoints get in the tests
 async def _form_model_union_with_split_value(
     body: Annotated[Union[SchemaWithSplitValue, OtherSchemaWithText], Form()],
 ):
-    return body.model_dump()
+    return body.model_dump()  # pragma: no cover
 
 
 class SchemaWithListValue(BaseModel):
@@ -2403,7 +2404,7 @@ class SchemaWithSplitValueOfKind(SchemaWithSplitValue):
 async def _form_model_union_with_list_and_split_value(
     body: Annotated[Union[SchemaWithListValue, SchemaWithSplitValueOfKind], Form()],
 ):
-    return body.model_dump()
+    return body.model_dump()  # pragma: no cover
 
 
 @pytest.mark.parametrize(
@@ -2418,23 +2419,6 @@ async def _form_model_union_with_list_and_split_value(
             {"tags": ["x", "y"], "frozen_tags": ["x", "y"], "numbers": ["1", "2"]},
             id="with_set_frozenset_and_tuple_fields",
             marks=_SKIP_IF_CADWYN_PASSES_FORM_MODEL_UNION_DUMPS_AS_THEY_ARE,
-        ),
-        pytest.param(
-            _form_model_union_with_split_value,
-            {"value": "a,b"},
-            id="with_list_in_field_of_any_type",
-            marks=_SKIP_IF_CADWYN_PASSES_FORM_MODEL_UNION_DUMPS_AS_THEY_ARE,
-        ),
-        pytest.param(
-            _form_model_union_with_list_and_split_value,
-            {"kind": "split", "value": "a,b"},
-            id="with_list_in_field_of_any_type_that_another_member_has_as_list",
-            marks=_SKIP_IF_CADWYN_PASSES_FORM_MODEL_UNION_DUMPS_AS_THEY_ARE,
-        ),
-        pytest.param(
-            _form_model_union_with_list_and_split_value,
-            {"kind": "list", "value": ["a", "b"]},
-            id="with_list_field_that_another_member_has_as_any_type",
         ),
         pytest.param(_optional_form_model_union, None, id="optional_without_form_data"),
         pytest.param(_optional_form_model_union, {"unrelated": "1"}, id="optional_with_unrelated_form_data"),
@@ -2481,28 +2465,58 @@ def test__request_body_migration__with_form_model_union__migration_should_change
     }
 
 
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
+    not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
+    reason="Before FastAPI 0.161.0, a union of form models isn't a form model",
+)
 @pytest.mark.parametrize(
-    "migrated_value",
+    ("endpoint", "data", "migrated_body"),
     [
-        pytest.param((1, 2), id="tuple"),
-        pytest.param([1, 2], id="list", marks=_SKIP_IF_CADWYN_PASSES_FORM_MODEL_UNION_DUMPS_AS_THEY_ARE),
+        pytest.param(_form_model_union_with_split_value, {"value": "a,b"}, {}, id="list_from_validator"),
+        pytest.param(
+            _form_model_union_with_split_value, {"value": "a"}, {"value": ["p", "q"]}, id="list_from_migration"
+        ),
+        pytest.param(_form_model_union_with_split_value, {"value": "a"}, {"value": (1, 2)}, id="tuple_from_migration"),
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "split", "value": "a,b"},
+            {},
+            id="list_in_member_whose_field_takes_any_value",
+        ),
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "list", "value": ["a", "b"]},
+            {},
+            id="list_in_member_whose_field_takes_lists",
+        ),
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "split", "value": "a"},
+            {"kind": "list", "value": ["p", "q"]},
+            id="migration_that_switches_member",
+        ),
     ],
 )
-def test__request_body_migration__with_form_model_union_and_collection_in_field_of_any_type__head_should_get_it(
+def test__request_body_migration__with_form_model_union_and_collection_in_field_that_takes_any_value__should_fail(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
-    migrated_value: Any,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
+    data: dict[str, str],
+    migrated_body: dict[str, Any],
 ):
-    router.post(test_path)(_form_model_union_with_split_value)
+    router.post(test_path)(endpoint)
 
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
-        request.body["value"] = migrated_value
+        request.body.update(migrated_body)
 
     clients = create_versioned_clients(version_change(migrator=migrator))
 
-    assert clients["2000-01-01"].post(test_path, data={"value": "a"}).json() == {"value": [1, 2]}
+    # FastAPI would give only one of the values of the collection to a member whose field takes a single value,
+    # so we pass the body as the last release does, which fails
+    with pytest.raises(CadwynHeadRequestValidationError):
+        clients["2000-01-01"].post(test_path, data=data)
 
 
 class SchemaWithTextDumpedAsString(BaseModel):
