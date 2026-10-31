@@ -91,6 +91,8 @@ from cadwyn.structure.versions import Version, VersionBundle
 from tests._resources.utils import (
     FASTAPI_DISTINGUISHES_NULL_BODIES,
     FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES,
+    FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
     FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS,
     FASTAPI_VALIDATES_FORM_FIELDS_OF_OVERRIDES,
 )
@@ -2237,6 +2239,278 @@ def test__request_body_migration__with_form_model_and_form_field_of_dependency_o
                 ]
             }
         )
+
+
+class SchemaWithText(BaseModel):
+    text: str
+
+
+async def _get_text() -> str:
+    raise NotImplementedError
+
+
+async def _get_text_from_form_field(text: str = Form()) -> str:
+    return text  # pragma: no cover # FastAPI >= 0.158
+
+
+@pytest.mark.parametrize(
+    "form_model_param",
+    [Form(), Form(validation_alias=AliasChoices("other", "text"))],
+    ids=["name", "alias_choices"],
+)
+def test__request_body_migration__with_form_field_of_dependency_override_named_like_form_model__head_should_get_both(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    form_model_param: Any,
+):
+    @router.post(test_path)
+    async def endpoint(text: Annotated[SchemaWithText, form_model_param], from_dependency: str = Depends(_get_text)):
+        return [text.text, from_dependency]  # pragma: no cover # FastAPI >= 0.158
+
+    @convert_request_to_next_version_for(SchemaWithText)
+    def migrator(request: RequestInfo):
+        request.body["text"] = "migrated"  # pragma: no cover # FastAPI >= 0.158
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = _get_text_from_form_field
+
+    error = {"type": "string_type", "loc": ["body"], "msg": "Input should be a valid string", "input": {"text": "sent"}}
+    assert {version: client.post(test_path, data={"text": "sent"}).json() for version, client in clients.items()} == (
+        {"2000-01-01": ["migrated", "migrated"], "2001-01-01": ["sent", "sent"]}
+        if FASTAPI_VALIDATES_FORM_FIELDS_OF_OVERRIDES
+        else {"2000-01-01": {"detail": [error]}, "2001-01-01": {"detail": [error]}}
+    )
+
+
+async def _get_text_from_embedded_body(text: str = Body(embed=True)) -> str:
+    return text  # pragma: no cover # FastAPI >= 0.158
+
+
+def test__request_body_migration__with_embedded_body_param_of_override_named_like_form_model__head_should_get_both(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(text: Annotated[SchemaWithText, Form()], from_dependency: str = Depends(_get_text)):
+        return [text.text, from_dependency]  # pragma: no cover # FastAPI >= 0.158
+
+    @convert_request_to_next_version_for(SchemaWithText)
+    def migrator(request: RequestInfo):
+        request.body["text"] = "migrated"  # pragma: no cover # FastAPI >= 0.158
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = _get_text_from_embedded_body
+
+    error = {"type": "string_type", "loc": ["body"], "msg": "Input should be a valid string", "input": {"text": "sent"}}
+    assert {version: client.post(test_path, data={"text": "sent"}).json() for version, client in clients.items()} == (
+        {"2000-01-01": ["migrated", "migrated"], "2001-01-01": ["sent", "sent"]}
+        if FASTAPI_VALIDATES_FORM_FIELDS_OF_OVERRIDES
+        else {"2000-01-01": {"detail": [error]}, "2001-01-01": {"detail": [error]}}
+    )
+
+
+class OtherSchemaWithText(BaseModel):
+    other_text: str
+
+
+async def _get_text_from_form_model_union(
+    text: Annotated[Union[SchemaWithText, OtherSchemaWithText], Form()],
+) -> dict[str, str]:
+    return text.model_dump()
+
+
+@pytest.mark.skipif(
+    FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
+    reason="On FastAPI 0.158.2 to 0.160, a union of form models isn't a form model, so it can't get the dict body",
+)
+def test__request_body_migration__with_form_model_union_of_override_named_like_form_model__head_should_get_it(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(text: Annotated[SchemaWithText, Form()], from_dependency: Any = Depends(_get_text)):
+        return [text.text, from_dependency]
+
+    @convert_request_to_next_version_for(SchemaWithText)
+    def migrator(request: RequestInfo):
+        request.body["text"] = "migrated"
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = _get_text_from_form_model_union
+
+    assert {version: client.post(test_path, data={"text": "sent"}).json() for version, client in clients.items()} == {
+        "2000-01-01": ["migrated", {"text": "migrated"}],
+        "2001-01-01": ["sent", {"text": "sent"}],
+    }
+
+
+class SchemaWithTextDumpedAsString(BaseModel):
+    text: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def from_string(cls, value: Any) -> Any:
+        return {"text": value} if isinstance(value, str) else value  # pragma: no cover # FastAPI >= 0.158.2
+
+    @model_serializer
+    def to_string(self) -> str:
+        return self.text  # pragma: no cover # FastAPI >= 0.158.2
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so form fields can't look values up in it",
+)
+def test__request_body_migration__with_scalar_form_model_and_form_field_of_override_named_like_it__head_should_get_both(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(
+        text: Annotated[SchemaWithTextDumpedAsString, Form()], from_dependency: str = Depends(_get_text)
+    ):
+        return [text.text, from_dependency]
+
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = _get_text_from_form_field
+
+    assert {version: client.post(test_path, data={"text": "sent"}).json() for version, client in clients.items()} == {
+        "2000-01-01": ["sent", "sent"],
+        "2001-01-01": ["sent", "sent"],
+    }
+
+
+async def _get_body() -> Any:
+    raise NotImplementedError
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so no param looks values up in it",
+)
+def test__request_body_migration__with_whole_body_param_of_override_and_clashing_body_param__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    async def get_text_from_embedded_body(text: Union[str, dict[str, str]] = Body(embed=True)) -> Any:
+        return text
+
+    async def get_body_keys(body: dict[str, Any] = Body()) -> list[str]:
+        return sorted(body)
+
+    @router.post(test_path)
+    async def endpoint(
+        text: Annotated[SchemaWithText, Form()],
+        from_dependency: Any = Depends(_get_text),
+        body_keys: Any = Depends(_get_body),
+    ):
+        return [text.text, from_dependency, body_keys]
+
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides.update(
+        {_get_text: get_text_from_embedded_body, _get_body: get_body_keys}
+    )
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, data={"text": "sent"}).json() == ["sent", {"text": "sent"}, ["text"]]
+
+
+class SchemaWithOptionalText(BaseModel):
+    text: Optional[str] = None
+    other: str
+
+
+class SchemaWithDefaultText(BaseModel):
+    text: str = "model default"
+    other: str
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so no param looks values up in it",
+)
+@pytest.mark.parametrize(
+    ("form_model", "form_field_default", "expected"),
+    [
+        (SchemaWithOptionalText, None, [None, None]),
+        (SchemaWithDefaultText, "dependency default", ["model default", "dependency default"]),
+    ],
+    ids=["optional", "default"],
+)
+def test__request_body_migration__with_form_field_of_override_named_like_unset_form_model_field__should_get_default(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    form_model: Any,
+    form_field_default: Optional[str],
+    expected: list[Optional[str]],
+):
+    async def get_text_from_form_field(text: Optional[str] = Form(form_field_default)) -> Optional[str]:
+        return text
+
+    @router.post(test_path)
+    async def endpoint(text: Annotated[form_model, Form()], from_dependency: Any = Depends(_get_text)):
+        return [text.text, from_dependency]
+
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = get_text_from_form_field
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, data={"other": "sent"}).json() == expected
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so no param looks values up in it",
+)
+def test__request_body_migration__with_form_field_of_override_with_alias_choices_of_unset_field__should_get_next_one(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    async def get_value_from_form_field(value: str = Form(validation_alias=AliasChoices("text", "other"))) -> str:
+        return value
+
+    @router.post(test_path)
+    async def endpoint(text: Annotated[SchemaWithOptionalText, Form()], from_dependency: Any = Depends(_get_text)):
+        return [text.text, from_dependency]
+
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = get_value_from_form_field
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, data={"other": "sent"}).json() == [None, "sent"]
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so no param looks values up in it",
+)
+def test__request_body_migration__with_required_form_field_of_override_named_like_removed_field__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    async def get_any_from_form_field(text: Any = Form()) -> Any:
+        return text
+
+    @router.post(test_path)
+    async def endpoint(text: Annotated[SchemaWithOptionalText, Form()], from_dependency: Any = Depends(_get_text)):
+        return [text.text, from_dependency]
+
+    @convert_request_to_next_version_for(SchemaWithOptionalText)
+    def migrator(request: RequestInfo):
+        del request.body["text"]
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = get_any_from_form_field
+
+    assert clients["2000-01-01"].post(test_path, data={"text": "sent", "other": "y"}).json() == [None, {"other": "y"}]
 
 
 class SchemaWithUpload(BaseModel):

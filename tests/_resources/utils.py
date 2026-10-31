@@ -28,3 +28,7 @@ FASTAPI_KEEPS_POSITIONS_OF_BYTES_FILES = _FASTAPI_MINOR_VERSION >= (0, 157)
 FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS = _FASTAPI_VERSION >= (0, 158, 2)
 # Before FastAPI 0.158.0, FastAPI validates the whole form against a form field that only a dependency override declares
 FASTAPI_VALIDATES_FORM_FIELDS_OF_OVERRIDES = _FASTAPI_MINOR_VERSION >= (0, 158)
+# Since FastAPI 0.158.2, FastAPI also looks the dict body of a form model up under the param's aliases
+FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS = FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS
+# Before FastAPI 0.161.0, a union of form models isn't a form model
+FASTAPI_SUPPORTS_FORM_MODEL_UNIONS = _FASTAPI_MINOR_VERSION >= (0, 161)
