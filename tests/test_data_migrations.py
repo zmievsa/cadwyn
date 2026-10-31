@@ -2597,6 +2597,31 @@ def test__request_body_migration__with_required_form_field_of_override_named_lik
     assert clients["2000-01-01"].post(test_path, data={"text": "sent", "other": "y"}).json() == [None, {"other": "y"}]
 
 
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so no param looks values up in it",
+)
+def test__request_body_migration__with_form_field_of_override_sent_outside_of_form_model__should_fail_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    async def get_text_from_form_field(text: str = Form("dependency default")) -> str:
+        return text
+
+    @router.post(test_path)
+    async def endpoint(text: Annotated[OtherSchemaWithText, Form()], from_dependency: Any = Depends(_get_text)):
+        return [text.other_text, from_dependency]
+
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = get_text_from_form_field
+
+    # The form model can't carry the value of the form field, so it would silently get its default instead
+    for version_client in clients.values():
+        with pytest.raises(CadwynHeadRequestValidationError):
+            version_client.post(test_path, data={"other_text": "x", "text": "sent"})
+
+
 @pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
     not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
     reason="Before FastAPI 0.161.0, a union of form models isn't a form model",

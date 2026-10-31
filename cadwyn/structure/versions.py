@@ -568,8 +568,8 @@ class VersionBundle:
         elif body_is_model_dump:
             body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
             is_body_restored = body_for_solving is not request_info.body
-            form_model_lookup = _get_form_model_lookup(
-                head_dependant, head_route, body_for_solving, embed_body_fields=embed_body_fields
+            form_model_lookup = await _get_form_model_lookup(
+                request, head_dependant, head_route, body_for_solving, embed_body_fields=embed_body_fields
             )
         else:
             body_for_solving = request_info.body
@@ -999,8 +999,8 @@ class _FormModelLookup(NamedTuple):
     is_union: bool = False
 
 
-def _get_form_model_lookup(
-    head_dependant: Dependant, head_route: APIRoute, body: Any, *, embed_body_fields: bool
+async def _get_form_model_lookup(
+    request: FastapiRequest, head_dependant: Dependant, head_route: APIRoute, body: Any, *, embed_body_fields: bool
 ) -> _FormModelLookup:
     """Return the dependant to solve for the head, and the keys to put the dict body of its form model under, if any.
 
@@ -1012,7 +1012,9 @@ def _get_form_model_lookup(
     In that case, we solve a copy of the head's dependant whose form model looks the body up under a key that no
     form field has, but only if it surely gives every such param a better value: the body is a dict, each such param
     finds a value of its own under one of its aliases or has a default, and no param takes the whole body, which would
-    see the key. Otherwise we take the last release's path.
+    see the key. A param gets its default only if the form has no value for it either, apart from the form fields
+    that the form models take: the body can't carry such a value, so the param would silently lose it. Otherwise we
+    take the last release's path.
     """
     body_field = head_dependant.body_params[0]
     form_models = _get_form_models(body_field) if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS else []
@@ -1023,11 +1025,13 @@ def _get_form_model_lookup(
         clashing_params = [
             param for param in lookups.other_params if not lookups.form_model_aliases.keys().isdisjoint(param.aliases)
         ]
-        if (
-            not clashing_params
-            or lookups.is_whole_body_read
-            or not isinstance(body, dict)
-            or not all(param.has_default or not body.keys().isdisjoint(param.aliases) for param in clashing_params)
+        if not clashing_params or lookups.is_whole_body_read or not isinstance(body, dict):
+            return _FormModelLookup(head_dependant, form_model_aliases, is_union)
+        params_without_value = [param for param in clashing_params if body.keys().isdisjoint(param.aliases)]
+        # FastAPI has already parsed the form, so this returns its cached form without reading it again or closing it
+        if not all(param.has_default for param in params_without_value) or (
+            params_without_value
+            and _form_has_values_outside_of_form_models(await request.form(), params_without_value, lookups)
         ):
             return _FormModelLookup(head_dependant, form_model_aliases, is_union)
         dependant = _with_form_models_under_own_key(head_dependant)
@@ -1062,8 +1066,9 @@ def _with_form_model_under_own_key(field: ModelField) -> ModelField:  # pragma: 
 
 
 class _BodyParamLookup(NamedTuple):  # pragma: no cover # FastAPI >= 0.158.2
-    """The aliases that FastAPI looks a body param up under in a dict body, and whether the param has a default."""
+    """A body param, the aliases that FastAPI looks it up under in a dict body, and whether it has a default."""
 
+    field: ModelField
     aliases: list[str]
     has_default: bool
 
@@ -1073,6 +1078,8 @@ class _BodyLookups:  # pragma: no cover # FastAPI >= 0.158.2
     """How the tree that FastAPI solves for the head reads a dict body."""
 
     form_model_aliases: dict[str, None] = dataclasses.field(default_factory=dict)
+    # The aliases of the fields of the form models, i.e. the form fields whose values the form models take
+    form_model_field_aliases: set[str] = dataclasses.field(default_factory=set)
     # Every other body param that FastAPI looks up in the body
     other_params: list[_BodyParamLookup] = dataclasses.field(default_factory=list)
     # Whether a body param gets the whole body instead of looking its alias up
@@ -1089,13 +1096,33 @@ def _get_body_lookups(  # pragma: no cover # FastAPI >= 0.158.2
         is_embedded = embed_body_fields or _should_embed_body_fields(dependant.body_params)
         for field in dependant.body_params:
             aliases = [alias for alias, _ in _get_param_aliases(field)]
-            if _get_form_models(field):
+            if form_models := _get_form_models(field):
                 lookups.form_model_aliases.update(dict.fromkeys(aliases))
+                lookups.form_model_field_aliases.update(
+                    alias
+                    for model in form_models
+                    for model_field in _get_cached_model_fields(model)
+                    for alias, _ in _get_param_aliases(model_field)
+                )
             elif is_embedded:
-                lookups.other_params.append(_BodyParamLookup(aliases, has_default=not field.field_info.is_required()))
+                lookups.other_params.append(
+                    _BodyParamLookup(field, aliases, has_default=not field.field_info.is_required())
+                )
             else:
                 lookups.is_whole_body_read = True
     return lookups
+
+
+def _form_has_values_outside_of_form_models(  # pragma: no cover # FastAPI >= 0.158.2
+    form: FormData, params: list[_BodyParamLookup], lookups: _BodyLookups
+) -> bool:
+    """Return whether FastAPI would give any of the params a value from the form that no form model takes."""
+    return any(
+        _get_multidict_value(param.field, form, alias) is not PydanticUndefined
+        for param in params
+        for alias in param.aliases
+        if alias not in lookups.form_model_field_aliases
+    )
 
 
 def _iter_dependants_that_fastapi_solves(  # pragma: no cover # FastAPI >= 0.158.2
