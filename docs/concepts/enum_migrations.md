@@ -9,11 +9,11 @@ Note that adding `enum` members **can** be a breaking change in contrast to addi
 It is recommended to add `enum` members in new versions as well.
 
 ```python
-{! ./docs_src/concepts/enum_migrations/block001.py [ln:3-3,15-] !}
+{! ./docs_src/concepts/enum_migrations/block001.py !}
 ```
 
 ## Removing enum members
 
 ```python
-{! ./docs_src/concepts/enum_migrations/block002.py [ln:3-3,13-] !}
+{! ./docs_src/concepts/enum_migrations/block002.py !}
 ```
