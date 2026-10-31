@@ -13,36 +13,13 @@ Cadwyn leaves SQLAlchemy and SQLModel classes unchanged when generating API vers
 ## Add a field to the older version
 
 ```python
-from cadwyn import VersionChange, schema
-from pydantic import Field
-
-
-class RemoveFooFromMySchema(VersionChange):
-    """'MySchema.foo' has been removed because clients no longer need the
-    legacy list of values.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema)
-        .field("foo")
-        .existed_as(type=list[str], info=Field(description="Foo")),
-    )
+{! ./docs_src/concepts/schema_migrations/block001.py [ln:1-2,7-16] !}
 ```
 
 ## Remove a field from the older version
 
 ```python
-from cadwyn import VersionChange, schema
-
-
-class AddFooToMySchema(VersionChange):
-    """'MySchema.foo' is now available so clients can read the value directly
-    instead of deriving it from other fields.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).field("foo").didnt_exist,
-    )
+{! ./docs_src/concepts/schema_migrations/block002.py [ln:1,6-13] !}
 ```
 
 ## Change a field in the older version
@@ -50,33 +27,13 @@ class AddFooToMySchema(VersionChange):
 The following code sets an attribute of a field, such as a description:
 
 ```python
-from cadwyn import VersionChange, schema
-
-
-class ChangeMySchemaFooDescription(VersionChange):
-    """The documentation for 'MySchema.foo' now explains the field's purpose
-    so clients can interpret its value correctly.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).field("foo").had(description="Foo"),
-    )
+{! ./docs_src/concepts/schema_migrations/block003.py [ln:1,6-13] !}
 ```
 
 The following code un-sets an attribute of a field, as if it never existed:
 
 ```python
-from cadwyn import VersionChange, schema
-
-
-class AddDescriptionToMySchemaFoo(VersionChange):
-    """'MySchema.foo' now has a documented meaning so clients do not need to
-    infer how to use it.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).field("foo").didnt_have("description"),
-    )
+{! ./docs_src/concepts/schema_migrations/block004.py [ln:1,6-13] !}
 ```
 
 **ALIAS WARNING:**
@@ -86,9 +43,7 @@ Pydantic copies a field's `alias` into its `validation_alias` and `serialization
 Cadwyn generates the versioned models when the app first runs, at startup or on the first request, so with `-W error` or pytest's `filterwarnings = ["error"]` this warning fails the app there. Fix the instruction if you can. Otherwise, filter the warning:
 
 ```python
-import warnings
-
-warnings.filterwarnings("ignore", r".* changes the alias of ", FutureWarning)
+{! ./docs_src/concepts/schema_migrations/block005.py !}
 ```
 
 **DEFAULTS WARNING:**
@@ -112,31 +67,10 @@ The part that causes the aforementioned problem is Cadwyn's use of `exclude_unse
 `.had(...)` and `.didnt_have(...)` for a field that a schema inherits change the field only in that schema and its subclasses, not in its parents or its siblings:
 
 ```python
-from cadwyn import VersionChange, schema
-from pydantic import BaseModel
-
-
-class Invoice(BaseModel):
-    code: str
-
-
-class BusinessInvoice(Invoice):
-    pass
-
-
-class PersonalInvoice(Invoice):
-    pass
-
-
-class AllowLongBusinessInvoiceCodes(VersionChange):
-    """Business invoice codes can now be longer than 5 characters."""
-
-    instructions_to_migrate_to_previous_version = (
-        schema(BusinessInvoice).field("code").had(max_length=5),
-    )
+{! ./docs_src/concepts/schema_migrations/block006.py !}
 ```
 
-In the older version, `BusinessInvoice.code` has `max_length=5`, while `Invoice.code` and `PersonalInvoice.code` stay unchanged. To change the field in all of these schemas, give the instruction to the parent: `schema(Invoice).field("code").had(max_length=5)`.
+In the older version, `BusinessInvoice.code` has `max_length=5`, while `Invoice.code` and `PersonalInvoice.code` stay unchanged. To change the field in all of these schemas, give the instruction to the parent: `schema(Invoice).field("code").had(max_length=5)`. Renames don't work this way: `had(name=...)` for an inherited field keeps the old field next to the renamed one in that schema, so rename the field in the schema that declares it.
 
 The changes of a parent's field also apply to its subclasses, including the ones that changed the field themselves, with these exceptions:
 
@@ -150,42 +84,13 @@ In multiple inheritance, such as `class D(C, B)`, `D` takes each field from its 
 ## Add a validator to the older version
 
 ```python
-from cadwyn import VersionChange, schema
-from pydantic import Field, field_validator
-
-
-@field_validator("foo")
-def validate_foo(cls, value):
-    if not ":" in value:
-        raise ValueError("foo must contain a colon")
-    return value
-
-
-class RemoveFooValidatorFromMySchema(VersionChange):
-    """'MySchema.foo' no longer requires colon-separated values because the
-    field now accepts plain text.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).validator(validate_foo).existed,
-    )
+{! ./docs_src/concepts/schema_migrations/block007.py [ln:1-2,7-21] !}
 ```
 
 ## Remove a validator from the older version
 
 ```python
-from cadwyn import VersionChange, schema
-from pydantic import Field, validator
-
-
-class AddFooValidatorToMySchema(VersionChange):
-    """'MySchema.foo' must now contain a colon to distinguish the value's two
-    components.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).validator(MySchema.validate_foo).didnt_exist,
-    )
+{! ./docs_src/concepts/schema_migrations/block008.py [ln:1,6-13] !}
 ```
 
 ## Rename a schema in the older version
@@ -194,17 +99,7 @@ The following code replaces all schema name occurrences with a new one to ensure
 
 
 ```python
-from cadwyn import VersionChange, schema
-
-
-class RenameOtherSchemaToMySchema(VersionChange):
-    """'OtherSchema' has been renamed to 'MySchema' to match the resource name
-    used throughout the API.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).had(name="OtherSchema"),
-    )
+{! ./docs_src/concepts/schema_migrations/block009.py [ln:1,6-13] !}
 ```
 
 ## Change the description of a schema in the older version
@@ -212,24 +107,7 @@ class RenameOtherSchemaToMySchema(VersionChange):
 Pydantic uses the docstring of a schema as its description in openapi.json, and Cadwyn copies it into every version of the schema. Use `had(description=...)` to give the older versions a different description:
 
 ```python
-from cadwyn import VersionChange, schema
-from pydantic import BaseModel
-
-
-class User(BaseModel):
-    """A user of the API who can belong to several organizations."""
-
-    name: str
-
-
-class AllowUsersToBelongToSeveralOrganizations(VersionChange):
-    """Users can now belong to several organizations."""
-
-    instructions_to_migrate_to_previous_version = (
-        schema(User).had(
-            description="A user of the API who belongs to one organization."
-        ),
-    )
+{! ./docs_src/concepts/schema_migrations/block010.py !}
 ```
 
 Pass `description=None` to remove the description from the older versions. Cadwyn rejects blank descriptions such as `" "`. You can also pass `name` and `description` together, e.g. `schema(User).had(name="OldUser", description="An old user.")`.
@@ -239,20 +117,7 @@ Like `name`, the description only applies to the schema itself, not to its subcl
 The latest version keeps the docstring from your code, so if the docstring contains internal notes that no version should show, put the public description into [`HeadVersion`](./version_changes.md#headversion), which applies it to every version, including the latest one:
 
 ```python
-from cadwyn import HeadVersion, Version, VersionBundle, VersionChange, schema
-
-
-class HideInternalNotesOfUser(VersionChange):
-    description = "Hide the internal notes of 'User' from the API reference"
-    instructions_to_migrate_to_previous_version = (
-        schema(User).had(description="A user of the API."),
-    )
-
-
-versions = VersionBundle(
-    HeadVersion(HideInternalNotesOfUser),
-    Version("2001-01-01"),
-)
+{! ./docs_src/concepts/schema_migrations/block011.py [ln:1,6-16] !}
 ```
 
 The [changelog](./changelogs.md) does not describe changes of schema descriptions.

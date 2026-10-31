@@ -7,26 +7,13 @@ Note that the `endpoint(...)` constructor contains a second argument that descri
 If you have an endpoint in an old version **but want to delete it in a new version**, define it as usual with all your other endpoints but mark it as deleted...
 
 ```python
-@router.only_exists_in_older_versions
-@router.get("/users/{user_id}")
-async def my_old_endpoint():
-    ...
+{! ./docs_src/concepts/endpoint_migrations/block001.py [ln:6-8] !}
 ```
 
 and then define it as existing in one of the older versions:
 
 ```python
-from cadwyn import VersionChange, endpoint
-
-
-class RemoveGetUserByIdEndpoint(VersionChange):
-    """The 'GET /users/{user_id}' endpoint has been removed because user
-    profiles are now retrieved through the users collection.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        endpoint("/users/{user_id}", ["GET"]).existed,
-    )
+{! ./docs_src/concepts/endpoint_migrations/block002.py !}
 ```
 
 ## Defining endpoints that did not exist for old versions
@@ -34,17 +21,7 @@ class RemoveGetUserByIdEndpoint(VersionChange):
 If you have an endpoint in a new version that should not exist in older versions, define it as usual and then mark it as "nonexistent" in old versions. Note that this approach is [not recommended for adding new endpoints](../how_to/change_endpoints/index.md#add-a-new-endpoint).
 
 ```python
-from cadwyn import VersionChange, endpoint
-
-
-class AddGetCompanyByIdEndpoint(VersionChange):
-    """Clients can now retrieve an individual company with
-    'GET /companies/{company_id}' instead of filtering the company list.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        endpoint("/companies/{company_id}", ["GET"]).didnt_exist,
-    )
+{! ./docs_src/concepts/endpoint_migrations/block003.py !}
 ```
 
 ## Changing endpoint attributes
@@ -52,19 +29,7 @@ class AddGetCompanyByIdEndpoint(VersionChange):
 If you want to change an endpoint attribute (like description) in a new version, you can return its value in all older versions like this:
 
 ```python
-from cadwyn import VersionChange, endpoint
-
-
-class ChangeGetUserByIdEndpointDescription(VersionChange):
-    """The 'GET /users/{user_id}' documentation now clarifies the returned
-    user data so clients can interpret the response correctly.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        endpoint("/users/{user_id}", ["GET"]).had(
-            description="My old description",
-        ),
-    )
+{! ./docs_src/concepts/endpoint_migrations/block004.py !}
 ```
 
 However, a migration is required only if it is a breaking change for your users.
@@ -80,50 +45,12 @@ Also note that if some of your dependencies are added at app/router level, they 
 Sometimes, when making advanced changes between versions, you need to rewrite your endpoint function entirely. So essentially you would have the following structure:
 
 ```python
-from typing import Annotated
-
-from cadwyn import VersionedAPIRouter
-from fastapi import Header
-from fastapi.params import Param
-
-router = VersionedAPIRouter()
-
-
-@router.only_exists_in_older_versions
-@router.get("/users")
-def get_users_by_name_before_starting_to_use_params(
-    user_name: Annotated[str, Header()],
-):
-    """Some code that references user_name"""
-
-
-@router.get("/users")
-def get_users_by_name(user_name: Annotated[str, Param()]):
-    """Some code that references user_name"""
+{! ./docs_src/concepts/endpoint_migrations/block005.py !}
 ```
 
 As you can see in the code example above, the two functions have the same parameters and path decorators. And if you have many versions, you may have even more functions like these two. The recommended way to instruct Cadwyn to restore one of them and delete the other is the following:
 
 ```python
-from cadwyn import VersionChange, endpoint
-
-
-class UseParamsInsteadOfHeadersForUserNameFiltering(VersionChange):
-    """'GET /users' now accepts the user-name filter as a query parameter
-    instead of a header, following standard HTTP filtering conventions.
-    """
-
-    instructions_to_migrate_to_previous_version = (
-        # Specify the name; otherwise you will encounter an exception due to
-        # having two identical endpoints with the same parameters and path decorators
-        endpoint(
-            "/users",
-            ["GET"],
-            func_name="get_users_by_name_before_starting_to_use_params",
-        ).existed,
-        # Also specify the name here because, following the instructions above,
-        # we now have two existing endpoints
-        endpoint("/users", ["GET"], func_name="get_users_by_name").didnt_exist,
-    )
+{! ./docs_src/concepts/endpoint_migrations/block006.py !}
 ```
 Using a more specific `func_name` allows to distinguish between different functions that affect the same routes.

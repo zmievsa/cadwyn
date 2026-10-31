@@ -41,6 +41,13 @@ include = ["docs_src/concepts/version_changes/block*.py"]
 unresolved-import = "ignore"
 
 [[overrides]]
+# The `cadwyn render` examples run from the directory of this app, so it imports `data.schemas`
+include = ["docs_src/concepts/schema_generation/render_project/**"]
+
+[overrides.rules]
+unresolved-import = "ignore"
+
+[[overrides]]
 # The changelog page documents the deprecated `hidden()`
 include = ["docs_src/concepts/changelogs/block*.py"]
 

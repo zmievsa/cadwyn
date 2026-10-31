@@ -13,17 +13,17 @@ If you have many versions and schemas, it is quite challenging to know what vali
 Here's a way to render the entire module with the schemas:
 
 ```bash
-cadwyn render module data.schemas --app=main:app --version=2024-05-26
+{! ./docs_src/concepts/schema_generation/block003.sh !}
 ```
 <!-- TODO: Add an option to use a callable instead of a variable -->
-This command prints to stdout how the schemas would look in version 2024-05-26 if they were written by hand rather than generated at runtime by Cadwyn. This command takes the schemas from `data/schemas.py` module and knows what the schemas would look based on the version changes from `Cadwyn` app instance named `app` and located in `main.py`.
+This command prints to stdout how the schemas would look in version 2024-05-26 if they were written by hand rather than generated at runtime by Cadwyn. This command takes the schemas from `data/schemas.py` module and knows what the schemas would look based on the version changes from `Cadwyn` app instance named `app` and located in `main.py`. Run it from the directory that contains `main.py` and `data/`: `python -m cadwyn` imports the modules from there.
 
 ### Rendering a single model
 
 Here's a way to render a single Pydantic model or enum with the schemas:
 
 ```bash
-cadwyn render model data.schemas:UserCreateRequest --app=main:app --version=2024-05-26
+{! ./docs_src/concepts/schema_generation/block004.sh !}
 ```
 
 This command prints to stdout how the `UserCreateRequest` schema would look in version 2024-05-26 if it was written by hand rather than generated at runtime by Cadwyn. This command takes the `UserCreateRequest` schema from `data/schemas.py` module and knows what the schema would look based on the version changes from `Cadwyn` app instance named `app` and located in `main.py`.
@@ -35,12 +35,7 @@ The rendered fields are the ones that the schema has in that version. When a sch
 Cadwyn can generate versioned schemas from its version changes even without FastAPI:
 
 ```python
-import cadwyn
-from cadwyn.schema_generation import generate_versioned_models
-from my_versions import MyVersionedSchema, version_bundle
-
-schema_generators = generate_versioned_models(version_bundle)
-MyVersionedSchemaFrom2025 = schema_generators["2025-11-16"][MyVersionedSchema]
+{! ./docs_src/concepts/schema_generation/block001.py !}
 ```
 
 Cadwyn generates a copy of every model for every version, except for the enums without enum instructions and the models that refer to themselves (directly or through other models, e.g. `children: "list[Category]"`) when neither they nor the models they refer to have instructions in any version (including `HeadVersion`) and they are not parents of models with versioned copies. Cadwyn uses such enums and models as they are: `schema_generators["2025-11-16"][Category] is Category`. Cadwyn makes this decision when it first needs a model, so the models defined after that (e.g. new subclasses) do not change it.
@@ -50,36 +45,7 @@ Cadwyn generates a copy of every model for every version, except for the enums w
 Parametrized generic models such as `Page[Item]` use the versioned copies of their type args in every version. For example, take the app from [issue #416](https://github.com/zmievsa/cadwyn/issues/416):
 
 ```python
-from typing import Generic, TypeVar
-
-from pydantic import BaseModel
-
-from cadwyn import Cadwyn, Version, VersionBundle, VersionChange, schema
-
-T = TypeVar("T")
-
-
-class Item(BaseModel):
-    full_name: str
-
-
-class Page(BaseModel, Generic[T]):
-    items: list[T]
-
-
-class RenameNameToFullName(VersionChange):
-    description = "Renamed `name` to `full_name`"
-    instructions_to_migrate_to_previous_version = (
-        schema(Item).field("full_name").had(name="name"),
-    )
-
-
-app = Cadwyn(
-    versions=VersionBundle(
-        Version("2001-01-01", RenameNameToFullName),
-        Version("2000-01-01"),
-    )
-)
+{! ./docs_src/concepts/schema_generation/block002.py !}
 ```
 
 Version 2000-01-01 uses the old `Item` with its `name` field inside `Page[Item]`, generic subclasses such as `PageWithTotal[Item]`, `class ItemPage(Page[Item])`, `class Items(RootModel[list[Item]])`, and nested generics such as `Page[Page[Item]]`, and its OpenAPI has one `Item` schema.
