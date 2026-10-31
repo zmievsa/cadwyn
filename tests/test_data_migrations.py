@@ -95,6 +95,7 @@ from tests._resources.utils import (
     FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
     FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS,
     FASTAPI_VALIDATES_FORM_FIELDS_OF_OVERRIDES,
+    FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA,
 )
 from tests.conftest import (
     CreateVersionedApp,
@@ -2347,6 +2348,209 @@ def test__request_body_migration__with_form_model_union_of_override_named_like_f
     }
 
 
+async def _form_model_union(text: Annotated[Union[SchemaWithText, OtherSchemaWithText], Form()]):
+    return text.model_dump()
+
+
+async def _optional_form_model_union(
+    text: Annotated[Optional[Union[SchemaWithText, OtherSchemaWithText]], Form()] = None,
+):
+    return None if text is None else text.model_dump()
+
+
+# Since FastAPI 0.153.0, FastAPI validates the members of a union of form models from the body as if it were form data
+_SKIP_IF_CADWYN_PASSES_FORM_MODEL_UNION_DUMPS_AS_THEY_ARE = pytest.mark.skipif(
+    FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA and not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
+    reason="On FastAPI 0.153 to 0.160, Cadwyn passes the dump of the union member to FastAPI as it is",
+)
+
+
+class SchemaWithCollections(BaseModel):
+    tags: set[str]
+    frozen_tags: frozenset[str]
+    numbers: tuple[int, ...]
+
+
+async def _form_model_union_with_collections(
+    body: Annotated[Union[SchemaWithCollections, OtherSchemaWithText], Form()],
+):
+    return body.model_dump(mode="json")
+
+
+def _split_by_commas(value: Any) -> Any:
+    return value.split(",") if isinstance(value, str) else value  # pragma: no cover # FastAPI >= 0.161
+
+
+class SchemaWithSplitValue(BaseModel):
+    value: Annotated[Any, BeforeValidator(_split_by_commas)]
+
+
+# The head rejects the bodies that these endpoints get in the tests
+async def _form_model_union_with_split_value(
+    body: Annotated[Union[SchemaWithSplitValue, OtherSchemaWithText], Form()],
+):
+    return body.model_dump()  # pragma: no cover
+
+
+class SchemaWithListValue(BaseModel):
+    kind: Literal["list"]
+    value: list[str]
+
+
+class SchemaWithSplitValueOfKind(SchemaWithSplitValue):
+    kind: Literal["split"]
+
+
+async def _form_model_union_with_list_and_split_value(
+    body: Annotated[Union[SchemaWithListValue, SchemaWithSplitValueOfKind], Form()],
+):
+    return body.model_dump()  # pragma: no cover
+
+
+class SchemaWithExtraValue(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    kind: Literal["extra"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def split_value(cls, data: Any) -> Any:  # pragma: no cover # FastAPI >= 0.161
+        value = data.get("value") if isinstance(data, dict) else None
+        if isinstance(value, str):
+            return {**data, "value": tuple(value.split(","))}
+        if isinstance(value, list):
+            return {**data, "value": f"repeated:{','.join(value)}"}
+        return data
+
+
+class SchemaWithTupleValue(BaseModel):
+    kind: Literal["tuple"]
+    value: tuple[str, ...]
+
+
+async def _form_model_union_with_extra_and_tuple_value(
+    body: Annotated[Union[SchemaWithExtraValue, SchemaWithTupleValue], Form()],
+):
+    return body.model_dump()  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "data"),
+    [
+        pytest.param(_form_model_union, {"text": "1"}, id="with_form_data_of_first_member"),
+        pytest.param(_form_model_union, {"other_text": "1"}, id="with_form_data_of_second_member"),
+        pytest.param(_optional_form_model_union, {"text": "1"}, id="optional_with_form_data_of_first_member"),
+        pytest.param(_optional_form_model_union, {"other_text": "1"}, id="optional_with_form_data_of_second_member"),
+        pytest.param(
+            _form_model_union_with_collections,
+            {"tags": ["x", "y"], "frozen_tags": ["x", "y"], "numbers": ["1", "2"]},
+            id="with_set_frozenset_and_tuple_fields",
+            marks=_SKIP_IF_CADWYN_PASSES_FORM_MODEL_UNION_DUMPS_AS_THEY_ARE,
+        ),
+        pytest.param(_optional_form_model_union, None, id="optional_without_form_data"),
+        pytest.param(_optional_form_model_union, {"unrelated": "1"}, id="optional_with_unrelated_form_data"),
+    ],
+)
+def test__request_body_migration__with_form_model_union__head_should_get_it_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
+    data: Optional[dict[str, str]],
+):
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    clients = create_versioned_clients(version_change())
+
+    expected = TestClient(fastapi_app).post(test_path, data=data)
+    for version_client in clients.values():
+        response = version_client.post(test_path, data=data)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.parametrize("field_name", ["text", "other_text"])
+def test__request_body_migration__with_form_model_union__migration_should_change_the_supplied_member(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    field_name: str,
+):
+    router.post(test_path)(_form_model_union)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body[field_name] = "migrated"
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert {
+        version: client.post(test_path, data={field_name: "sent"}).json() for version, client in clients.items()
+    } == {
+        "2000-01-01": {field_name: "migrated"},
+        "2001-01-01": {field_name: "sent"},
+    }
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
+    not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
+    reason="Before FastAPI 0.161.0, a union of form models isn't a form model",
+)
+@pytest.mark.parametrize(
+    ("endpoint", "data", "migrated_body"),
+    [
+        pytest.param(_form_model_union_with_split_value, {"value": "a,b"}, {}, id="list_from_validator"),
+        pytest.param(
+            _form_model_union_with_split_value, {"value": "a"}, {"value": ["p", "q"]}, id="list_from_migration"
+        ),
+        pytest.param(_form_model_union_with_split_value, {"value": "a"}, {"value": (1, 2)}, id="tuple_from_migration"),
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "split", "value": "a,b"},
+            {},
+            id="list_in_member_whose_field_takes_any_value",
+        ),
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "list", "value": ["a", "b"]},
+            {},
+            id="list_in_member_whose_field_takes_lists",
+        ),
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "split", "value": "a"},
+            {"kind": "list", "value": ["p", "q"]},
+            id="migration_that_switches_member",
+        ),
+        pytest.param(
+            _form_model_union_with_extra_and_tuple_value,
+            {"kind": "extra", "value": "p,q"},
+            {},
+            id="tuple_in_extra_field_that_another_member_has_as_tuple",
+        ),
+    ],
+)
+def test__request_body_migration__with_form_model_union_and_collection_in_field_that_takes_any_value__should_fail(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
+    data: dict[str, str],
+    migrated_body: dict[str, Any],
+):
+    router.post(test_path)(endpoint)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body.update(migrated_body)
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # FastAPI would give only one of the values of the collection to a member whose field takes a single value,
+    # so we pass the body as the last release does, which fails
+    with pytest.raises(CadwynHeadRequestValidationError):
+        clients["2000-01-01"].post(test_path, data=data)
+
+
 class SchemaWithTextDumpedAsString(BaseModel):
     text: str
 
@@ -2511,6 +2715,152 @@ def test__request_body_migration__with_required_form_field_of_override_named_lik
     clients["2000-01-01"].app.dependency_overrides[_get_text] = get_any_from_form_field
 
     assert clients["2000-01-01"].post(test_path, data={"text": "sent", "other": "y"}).json() == [None, {"other": "y"}]
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so no param looks values up in it",
+)
+def test__request_body_migration__with_form_field_of_override_sent_outside_of_form_model__should_fail_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    async def get_text_from_form_field(text: str = Form("dependency default")) -> str:
+        return text
+
+    @router.post(test_path)
+    async def endpoint(text: Annotated[OtherSchemaWithText, Form()], from_dependency: Any = Depends(_get_text)):
+        return [text.other_text, from_dependency]
+
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = get_text_from_form_field
+
+    # The form model can't carry the value of the form field, so it would silently get its default instead
+    for version_client in clients.values():
+        with pytest.raises(CadwynHeadRequestValidationError):
+            version_client.post(test_path, data={"other_text": "x", "text": "sent"})
+
+
+class SchemaWithBody(BaseModel):
+    body: str
+    b: str
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
+    not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
+    reason="Before FastAPI 0.161.0, a union of form models isn't a form model",
+)
+def test__request_body_migration__with_form_field_of_override_that_matched_union_member_lacks__should_fail_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    async def get_body_from_form_field(body: str = Form("dependency default")) -> str:
+        return body
+
+    @router.post(test_path)
+    async def endpoint(
+        body: Annotated[Union[OtherSchemaWithText, SchemaWithBody], Form()], from_dependency: Any = Depends(_get_body)
+    ):
+        return [body.model_dump(), from_dependency]
+
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_body] = get_body_from_form_field
+
+    # The member that the request matches can't carry the value of the form field, unlike the other member
+    for version_client in clients.values():
+        with pytest.raises(CadwynHeadRequestValidationError):
+            version_client.post(test_path, data={"other_text": "x", "body": "sent"})
+
+
+class SchemaWithOptionalBody(BaseModel):
+    a: str
+    body: Optional[str] = None
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so no param looks values up in it",
+)
+def test__request_body_migration__with_form_field_of_override_that_older_form_model_lacks__should_fail_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    async def get_body_from_form_field(body: str = Form("dependency default")) -> str:
+        return body
+
+    @router.post(test_path)
+    async def endpoint(body: Annotated[SchemaWithOptionalBody, Form()], from_dependency: Any = Depends(_get_body)):
+        return [body.body, from_dependency]
+
+    clients = create_versioned_clients(version_change(schema(SchemaWithOptionalBody).field("body").didnt_exist))
+    clients["2000-01-01"].app.dependency_overrides[_get_body] = get_body_from_form_field
+
+    data = {"a": "x", "body": "sent"}
+    assert clients["2001-01-01"].post(test_path, data=data).json() == ["sent", "sent"]
+    # The older form model can't carry the value of the form field, so it would silently get its default instead
+    with pytest.raises(CadwynHeadRequestValidationError):
+        clients["2000-01-01"].post(test_path, data=data)
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so no param looks values up in it",
+)
+def test__request_body_migration__with_alias_choices_of_override_form_field_and_removed_field__should_get_default(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    async def get_value_from_form_field(
+        value: str = Form("dependency default", validation_alias=AliasChoices("text", "external")),
+    ) -> str:
+        return value
+
+    @router.post(test_path)
+    async def endpoint(text: Annotated[SchemaWithOptionalText, Form()], from_dependency: Any = Depends(_get_text)):
+        return [text.text, from_dependency]
+
+    @convert_request_to_next_version_for(SchemaWithOptionalText)
+    def migrator(request: RequestInfo):
+        del request.body["text"]
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = get_value_from_form_field
+
+    # Like FastAPI, the form field takes the value of its first alias that the form has, which the migration removes
+    data = {"text": "sent", "other": "y", "external": "ignored"}
+    assert clients["2000-01-01"].post(test_path, data=data).json() == [None, "dependency default"]
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
+    not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
+    reason="Before FastAPI 0.161.0, a union of form models isn't a form model",
+)
+def test__request_body_migration__with_form_model_union_and_form_field_of_override_named_like_it__head_should_get_both(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(
+        text: Annotated[Union[SchemaWithText, OtherSchemaWithText], Form()], from_dependency: str = Depends(_get_text)
+    ):
+        return [text.model_dump(), from_dependency]
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body["text"] = "migrated"
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = _get_text_from_form_field
+
+    assert {version: client.post(test_path, data={"text": "sent"}).json() for version, client in clients.items()} == {
+        "2000-01-01": [{"text": "migrated"}, "migrated"],
+        "2001-01-01": [{"text": "sent"}, "sent"],
+    }
 
 
 class SchemaWithUpload(BaseModel):
