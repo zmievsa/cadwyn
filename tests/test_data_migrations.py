@@ -2370,6 +2370,20 @@ async def _form_model_union_with_collections(
     return body.model_dump(mode="json")
 
 
+def _split_by_commas(value: Any) -> Any:
+    return tuple(value.split(",")) if isinstance(value, str) else value
+
+
+class SchemaWithSplitValue(BaseModel):
+    value: Annotated[Any, BeforeValidator(_split_by_commas)]
+
+
+async def _form_model_union_with_split_value(
+    body: Annotated[Union[SchemaWithSplitValue, OtherSchemaWithText], Form()],
+):
+    return body.model_dump()
+
+
 @pytest.mark.parametrize(
     ("endpoint", "data"),
     [
@@ -2386,6 +2400,7 @@ async def _form_model_union_with_collections(
                 reason="On FastAPI 0.153 to 0.160, Cadwyn passes the dump of the union member to FastAPI as it is",
             ),
         ),
+        pytest.param(_form_model_union_with_split_value, {"value": "a,b"}, id="with_tuple_in_field_of_any_type"),
         pytest.param(_optional_form_model_union, None, id="optional_without_form_data"),
         pytest.param(_optional_form_model_union, {"unrelated": "1"}, id="optional_with_unrelated_form_data"),
     ],
@@ -2429,6 +2444,22 @@ def test__request_body_migration__with_form_model_union__migration_should_change
         "2000-01-01": {field_name: "migrated"},
         "2001-01-01": {field_name: "sent"},
     }
+
+
+def test__request_body_migration__with_form_model_union_and_tuple_in_field_of_any_type__head_should_get_the_tuple(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    router.post(test_path)(_form_model_union_with_split_value)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body["value"] = (1, 2)
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, data={"value": "a"}).json() == {"value": [1, 2]}
 
 
 class SchemaWithTextDumpedAsString(BaseModel):
@@ -2620,6 +2651,67 @@ def test__request_body_migration__with_form_field_of_override_sent_outside_of_fo
     for version_client in clients.values():
         with pytest.raises(CadwynHeadRequestValidationError):
             version_client.post(test_path, data={"other_text": "x", "text": "sent"})
+
+
+class SchemaWithOptionalBody(BaseModel):
+    a: str
+    body: Optional[str] = None
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so no param looks values up in it",
+)
+def test__request_body_migration__with_form_field_of_override_that_older_form_model_lacks__should_fail_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    async def get_body_from_form_field(body: str = Form("dependency default")) -> str:
+        return body
+
+    @router.post(test_path)
+    async def endpoint(body: Annotated[SchemaWithOptionalBody, Form()], from_dependency: Any = Depends(_get_body)):
+        return [body.body, from_dependency]
+
+    clients = create_versioned_clients(version_change(schema(SchemaWithOptionalBody).field("body").didnt_exist))
+    clients["2000-01-01"].app.dependency_overrides[_get_body] = get_body_from_form_field
+
+    data = {"a": "x", "body": "sent"}
+    assert clients["2001-01-01"].post(test_path, data=data).json() == ["sent", "sent"]
+    # The older form model can't carry the value of the form field, so it would silently get its default instead
+    with pytest.raises(CadwynHeadRequestValidationError):
+        clients["2000-01-01"].post(test_path, data=data)
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
+    reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so no param looks values up in it",
+)
+def test__request_body_migration__with_alias_choices_of_override_form_field_and_removed_field__should_get_default(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    async def get_value_from_form_field(
+        value: str = Form("dependency default", validation_alias=AliasChoices("text", "external")),
+    ) -> str:
+        return value
+
+    @router.post(test_path)
+    async def endpoint(text: Annotated[SchemaWithOptionalText, Form()], from_dependency: Any = Depends(_get_text)):
+        return [text.text, from_dependency]
+
+    @convert_request_to_next_version_for(SchemaWithOptionalText)
+    def migrator(request: RequestInfo):
+        del request.body["text"]
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = get_value_from_form_field
+
+    # Like FastAPI, the form field takes the value of its first alias that the form has, which the migration removes
+    data = {"text": "sent", "other": "y", "external": "ignored"}
+    assert clients["2000-01-01"].post(test_path, data=data).json() == [None, "dependency default"]
 
 
 @pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
