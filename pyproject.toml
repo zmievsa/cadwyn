@@ -148,7 +148,13 @@ exclude_lines = [
     "__repr__",
     "def .+: \\.\\.\\.",
 ]
-omit = ["./docs/plugin.py", "./site/plugin.py", "scripts/*.py"]
+omit = [
+    "./docs/plugin.py",
+    "./site/plugin.py",
+    "scripts/*.py",
+    # Modules that tests write to their temporary directories
+    "*/pytest-of-*/*",
+]
 
 [tool.pytest.ini_options]
 filterwarnings = [

@@ -16,7 +16,7 @@ Here's a way to render the entire module with the schemas:
 {! ./docs_src/concepts/schema_generation/block003.sh !}
 ```
 <!-- TODO: Add an option to use a callable instead of a variable -->
-This command prints to stdout how the schemas would look in version 2024-05-26 if they were written by hand rather than generated at runtime by Cadwyn. This command takes the schemas from `data/schemas.py` module and knows what the schemas would look based on the version changes from `Cadwyn` app instance named `app` and located in `main.py`. Run it from the directory that contains `main.py` and `data/`: `python -m cadwyn` imports the modules from there.
+This command prints to stdout how the schemas would look in version 2024-05-26 if they were written by hand rather than generated at runtime by Cadwyn. This command takes the schemas from `data/schemas.py` module and knows what the schemas would look based on the version changes from `Cadwyn` app instance named `app` and located in `main.py`. Run it from the directory that contains `main.py` and `data/`: `cadwyn` imports the modules from there.
 
 ### Rendering a single model
 

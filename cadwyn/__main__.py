@@ -1,4 +1,6 @@
+import sys
 from datetime import date
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -71,7 +73,12 @@ def render_module(
 @app.callback()
 def main(
     version: bool = typer.Option(None, "-V", "--version", callback=version_callback, is_eager=True),
-) -> None: ...
+) -> None:
+    # Import the user's modules from the current directory, like `python -m` and uvicorn do.
+    # The `cadwyn` console script doesn't put it on `sys.path` by itself.
+    cwd = str(Path.cwd())
+    if cwd not in sys.path:
+        sys.path.insert(0, cwd)
 
 
 if __name__ == "__main__":
