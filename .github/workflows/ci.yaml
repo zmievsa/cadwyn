@@ -63,7 +63,7 @@ jobs:
         run: sh docs_src/quickstart/setup/block001.sh
       - run: |
           pip install uv
-          uv pip install --system pytest coverage dirty-equals
+          uv pip install --system pytest coverage dirty-equals fastapi-pagination
           coverage run -m pytest docs_src
       - name: Upload coverage results
         uses: actions/upload-artifact@v6
