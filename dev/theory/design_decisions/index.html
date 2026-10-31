@@ -2066,11 +2066,14 @@
 <h2 id="known-limitations">Known limitations<a class="headerlink" href="#known-limitations" title="Permanent link">&para;</a></h2>
 <p>These are accepted for now. They are listed so that nobody "discovers" and fixes them as a side quest. A fix for any of them is a separate, deliberate change with its own issue.</p>
 <ul>
-<li>Generic models: cyclic generic args, quoted args from other modules, and recursive native type aliases keep the latest models in older versions.</li>
-<li>Dependencies: class dependencies (except Pydantic models) are not versioned. <code>Flag</code> and <code>IntFlag</code> parameters fail. WebSocket routes and streaming (generator or server-sent-event) endpoints don't work in versioned routes.</li>
-<li>Schema instructions: diamond inheritance takes the field from the first base, like Pydantic does. A parent's rename reaches a subclass's own changes only through single, non-generic inheritance.</li>
-<li><code>cadwyn render</code> doesn't render <code>model_config</code>.</li>
-<li>Bodies sent without a <code>Content-Type</code> are parsed as JSON by Cadwyn but ignored by FastAPI.</li>
+<li>Generic models keep the latest models in older versions when a type arg refers back to its own model through a quoted annotation, such as <code>Optional[Page["Category"]]</code> in <code>Category</code>, or when it uses a recursive native <code>type</code> alias. A PEP 695 generic model that refers to itself through a quoted annotation, such as <code>nxt: Optional["Wrap[X]"]</code> in <code>class Wrap[X](BaseModel)</code>, returns a 500 in every version, including the latest one, instead of failing at startup. On Pydantic 2.14.2 and newer, this happens only when a version change alters its type arg.</li>
+<li>Type aliases: a response model with a field typed by a recursive native <code>type</code> alias, such as <code>type JsonData = list[JsonData] | Leaf | int</code>, fails with a <code>RecursionError</code>, so every request returns a 500.</li>
+<li>Enums: <code>enum(...)</code> instructions on a <code>Flag</code> or <code>IntFlag</code> enum make every route and the OpenAPI return a 500. <code>enum(...)</code> instructions on a plain <code>Enum</code> (<code>class Kind(Enum)</code>, not <code>class Kind(str, Enum)</code>) make the request bodies that use it return a 500 in every version.</li>
+<li>Dependencies: class dependencies (except Pydantic models) are not versioned. WebSocket routes and streaming (generator or server-sent-event) endpoints don't work in versioned routes.</li>
+<li>Uploads and forms: an upload parameter named <code>body</code> returns a 500 in every version, and so does a form model with a <code>Json[...]</code> field.</li>
+<li>Schema instructions: diamond inheritance takes the field from the first base, like Pydantic does. A parent's rename reaches a subclass's own changes only through single, non-generic inheritance. <code>schema(Child).field("x").had(name="y")</code> for a field that <code>Child</code> inherits leaves both <code>x</code> and <code>y</code> in the older versions of <code>Child</code>. <code>had(default=PydanticUndefined)</code> doesn't make a field required when its default is declared in <code>Annotated[..., Field(default=...)]</code>. <code>didnt_have(...)</code> fails with an <code>AttributeError</code> when the attribute is a read-only property of an <code>Annotated</code> metadata object. <code>schema(Model).validator(...).existed</code> for a computed field fails on Python versions before 3.13.</li>
+<li><code>cadwyn render</code> doesn't render <code>model_config</code>, and it renders <code>AliasChoices</code> and <code>AliasPath</code> as calls that raise a <code>TypeError</code>.</li>
+<li>When a request has no <code>Content-Type</code> header, Cadwyn parses its body as JSON for an endpoint with several <code>Body()</code> params, while FastAPI ignores the body.</li>
 </ul>
 <h2 id="rules-for-changing-cadwyn">Rules for changing Cadwyn<a class="headerlink" href="#rules-for-changing-cadwyn" title="Permanent link">&para;</a></h2>
 <p><strong>Scope</strong></p>
@@ -2081,6 +2084,8 @@
 <li>Don't widen a change during review. If a review uncovers a new problem, file it.</li>
 <li>Don't add options or flags to keep both behaviors unless the maintainer has signed off on them.</li>
 <li>If a simple workaround exists in user code and the fix in Cadwyn is complex, document the workaround instead.</li>
+<li>Rank review findings by how likely they are in real apps. A contrived case that breaks working output still gets fixed, but it shouldn't drive the design.</li>
+<li>Decide which breaking changes a major release takes when the work starts, not in the audit before the release. 8.0.0 rolled two fixes back and redesigned them late (#457 and #475, #458 and #474).</li>
 </ul>
 <p><strong>What a change may alter</strong></p>
 <ul>
@@ -2092,12 +2097,25 @@
 <p><strong>How to fix</strong></p>
 <ul>
 <li>Prefer doing less. Narrow the fix, apply it only when the old path fails ("retry on failure", not an extra validation pass), or go back to the last release's code path.</li>
+<li>If every review round finds new edge cases in the same part of a fix, remove that part instead of patching it again.</li>
 <li>Don't reimplement FastAPI, Pydantic, or CPython logic. Call their functions, and evaluate annotations only where FastAPI itself does.</li>
 <li>Make safety checks allow-lists. Anything unknown takes the old behavior.</li>
 <li>Decide statically, not by the order in which models happen to be generated.</li>
+<li>Use one traversal to find what needs versioning and to copy it, never two that must agree. Finding must not copy, wrap, or rebuild the models that it leaves unchanged.</li>
+<li>Keep the user's objects as they are, and copy only what FastAPI or Pydantic would mutate. <code>deepcopy</code> isn't a way to isolate things: it goes through <code>typing</code>'s caches and breaks objects compared with <code>is</code>, such as FastAPI's sentinels.</li>
+<li>Caches may share structure but never user-visible state, such as a stateful default factory, between models or versions.</li>
 <li>Invalid instructions or models fail at startup with an error that names the model and the field. Never fail later at request time, and never serve wrong data silently.</li>
 <li>When you rely on a private FastAPI or Pydantic internal, check that it exists at import time and fail with a clear error if it changed. Never fall back silently.</li>
 <li><code>Cadwyn()</code> accepts FastAPI's parameters and passes each of them to every router it creates.</li>
+<li>In the user docs, describe the common case and its workaround. The full list of shapes that a rule covers belongs in the tests.</li>
+</ul>
+<p><strong>How to check a change</strong></p>
+<ul>
+<li>Run the same requests and OpenAPI of every version against the last release in its own checkout or virtual environment, and compare the results.</li>
+<li>Run the tests on the minimum supported and the latest Pydantic, and on Python 3.10 and 3.14. Check CI on every operating system before merging: recursion and stack limits differ on Windows and macOS.</li>
+<li><code>tox -e docs</code> writes <code>site/</code> into the repository root, which shadows the standard <code>site</code> module on Python 3.10 when the root is on <code>PYTHONPATH</code>. Delete it before comparing runs.</li>
+<li>Pytest puts the root of the checkout it runs from first on <code>sys.path</code>, so run a test file from the checkout that you want to test.</li>
+<li>After merging <code>main</code> into a branch, look for top-level functions that are now defined twice. The later definition silently wins.</li>
 </ul>
 
 
