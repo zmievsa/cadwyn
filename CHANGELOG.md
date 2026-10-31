@@ -9,6 +9,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 - The README and the documentation now link to the author's blog and X.
 - Documented how Cadwyn works inside, for contributors, on the new "Architecture" page in the "Theory" section of the documentation (#202).
+- [Design decisions and trade-offs](https://docs.cadwyn.dev/theory/design_decisions/) now lists more known limitations, more rules for changing Cadwyn, and how to check a change (#202).
 
 ### Fixed
 
@@ -41,7 +42,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Added
 
-- Documented Cadwyn's design decisions, accepted trade-offs, known limitations, the rules for changing its behavior, and how to check a change in [Design decisions and trade-offs](https://docs.cadwyn.dev/theory/design_decisions/) (#202).
+- Documented Cadwyn's design decisions, accepted trade-offs, known limitations, and the rules for changing its behavior in [Design decisions and trade-offs](https://docs.cadwyn.dev/theory/design_decisions/) (#202).
 
 ### Fixed
 
