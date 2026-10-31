@@ -1079,12 +1079,20 @@ def _get_value_aliases_of_union(  # pragma: no cover # FastAPI >= 0.161
     """
     repeated_value_aliases: set[str] = set()
     single_value_aliases: set[str] = set()
+    aliases_of_models: list[tuple[type[BaseModel], set[str]]] = []
     for model in form_models:
+        aliases_of_model: set[str] = set()
         for field in _get_cached_model_fields(model):
             # FastAPI passes `field_info.annotation` to `field_annotation_is_sequence` too, but types it as a type
             is_sequence = field_annotation_is_sequence(field.field_info.annotation)  # ty: ignore[invalid-argument-type]
-            aliases = repeated_value_aliases if is_sequence else single_value_aliases
-            aliases.update(alias for alias, _ in _get_param_aliases(field))
+            field_aliases = [alias for alias, _ in _get_param_aliases(field)]
+            (repeated_value_aliases if is_sequence else single_value_aliases).update(field_aliases)
+            aliases_of_model.update(field_aliases)
+        aliases_of_models.append((model, aliases_of_model))
+    # A model that allows extra fields can take a key that it doesn't have as an extra field with a single value
+    for model, aliases_of_model in aliases_of_models:
+        if model.model_config.get("extra") == "allow":
+            single_value_aliases.update(repeated_value_aliases - aliases_of_model)
     return frozenset(repeated_value_aliases - single_value_aliases), frozenset(single_value_aliases)
 
 

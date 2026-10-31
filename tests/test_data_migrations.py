@@ -2407,6 +2407,32 @@ async def _form_model_union_with_list_and_split_value(
     return body.model_dump()  # pragma: no cover
 
 
+class SchemaWithExtraValue(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    kind: Literal["extra"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def split_value(cls, data: Any) -> Any:  # pragma: no cover # FastAPI >= 0.161
+        value = data.get("value") if isinstance(data, dict) else None
+        if isinstance(value, str):
+            return {**data, "value": tuple(value.split(","))}
+        if isinstance(value, list):
+            return {**data, "value": f"repeated:{','.join(value)}"}
+        return data
+
+
+class SchemaWithTupleValue(BaseModel):
+    kind: Literal["tuple"]
+    value: tuple[str, ...]
+
+
+async def _form_model_union_with_extra_and_tuple_value(
+    body: Annotated[Union[SchemaWithExtraValue, SchemaWithTupleValue], Form()],
+):
+    return body.model_dump()  # pragma: no cover
+
+
 @pytest.mark.parametrize(
     ("endpoint", "data"),
     [
@@ -2494,6 +2520,12 @@ def test__request_body_migration__with_form_model_union__migration_should_change
             {"kind": "split", "value": "a"},
             {"kind": "list", "value": ["p", "q"]},
             id="migration_that_switches_member",
+        ),
+        pytest.param(
+            _form_model_union_with_extra_and_tuple_value,
+            {"kind": "extra", "value": "p,q"},
+            {},
+            id="tuple_in_extra_field_that_another_member_has_as_tuple",
         ),
     ],
 )
