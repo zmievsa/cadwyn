@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Possibly breaking
+
+- With FastAPI 0.158.2 or newer, a form field of a dependency override that has the same name as the endpoint's form model param and accepts any value (e.g. `body: Any = Form()` next to `body: Annotated[MyModel, Form()]`) now gets its own value from the form instead of the whole form model, like in FastAPI itself (#496).
+
 ### Added
 
 - The README and the documentation now link to the author's blog and X.
