@@ -11,7 +11,7 @@ import re
 import tempfile
 import threading
 from collections import Counter, defaultdict, deque
-from collections.abc import Callable, Coroutine, Hashable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Hashable, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
@@ -1080,32 +1080,33 @@ def _get_omitted_form_model_lookup(  # pragma: no cover # FastAPI >= 0.158.2
 ) -> _FormModelLookup:
     """Return how to pass the body that a migration has set for an omitted optional form model to the head.
 
-    We put the body under the aliases of the params that have the same form models as the endpoint's body param, e.g.
-    those of the dependencies and overrides that share it, so that other form models still get their defaults. The form
-    supplies none of the form models, and they are the only body params in the tree, so no other param reads the body.
-    Like the last release, we pass the body as it is if the migration has already put it under such an alias, or if
-    a model of a union would get only one of the repeated values of a field.
+    We put a dict body under the aliases of the params that have the same form models as the endpoint's body param,
+    e.g. those of the dependencies and overrides that share it, so that other form models still get their defaults.
+    The form supplies none of the form models, and they are the only body params in the tree, so no other param reads
+    the body. In every other case we pass the body as it is, like the last release did: if the body isn't a dict, if it
+    has a key with such an alias (e.g. a migration has put the form model's data under it), if another param of the
+    tree has such an alias, or if a model of a union would get only one of the repeated values of a field.
     """
-    form_models = _get_form_models(head_dependant.body_params[0])
-    aliases = tuple(
-        dict.fromkeys(
-            alias
-            for dependant in _iter_dependants_that_fastapi_solves(head_dependant, head_route)
-            for field in dependant.body_params
-            if _get_form_models(field) == form_models
-            for alias, _ in _get_param_aliases(field)
-        )
-    )
-    if isinstance(body, Mapping) and any(isinstance(body.get(alias), (Mapping, BaseModel)) for alias in aliases):
+    if type(body) is not dict:
+        return _FormModelLookup(head_dependant)
+    form_models = set(_get_form_models(head_dependant.body_params[0]))
+    aliases: dict[str, None] = {}
+    other_aliases: set[str] = set()
+    for dependant in _iter_dependants_that_fastapi_solves(head_dependant, head_route):
+        for field in dependant.body_params:
+            field_aliases = [alias for alias, _ in _get_param_aliases(field)]
+            if set(_get_form_models(field)) == form_models:
+                aliases.update(dict.fromkeys(field_aliases))
+            else:
+                other_aliases.update(field_aliases)
+    if not aliases.keys().isdisjoint(body) or not aliases.keys().isdisjoint(other_aliases):
         return _FormModelLookup(head_dependant)
     repeated_value_aliases = frozenset[str]()
     if len(form_models) > 1:
-        repeated_value_aliases, single_value_aliases = _get_value_aliases_of_union(form_models)
-        if isinstance(body, dict) and any(
-            isinstance(body.get(alias), (list, set, frozenset, tuple, deque)) for alias in single_value_aliases
-        ):
+        repeated_value_aliases, single_value_aliases = _get_value_aliases_of_union(list(form_models))
+        if any(isinstance(body.get(alias), (list, set, frozenset, tuple, deque)) for alias in single_value_aliases):
             return _FormModelLookup(head_dependant)
-    return _FormModelLookup(head_dependant, aliases, repeated_value_aliases)
+    return _FormModelLookup(head_dependant, tuple(aliases), repeated_value_aliases)
 
 
 def _get_value_aliases_of_union(  # pragma: no cover # FastAPI >= 0.161
