@@ -4,6 +4,7 @@ import re
 import sys
 import tempfile
 import typing
+from collections import OrderedDict
 from collections.abc import Callable, Coroutine, Iterator
 from contextvars import ContextVar
 from datetime import datetime
@@ -2494,6 +2495,7 @@ def test__request_body_migration__with_form_model_union__head_should_get_it_as_i
         pytest.param(_optional_form_model, {"v": "2"}, id="form_model"),
         pytest.param(_optional_form_model_shared_by_dependency, {"v": "2"}, id="form_model_shared_by_dependency"),
         pytest.param(_optional_form_model_with_file, {"value": "2"}, id="form_model_with_file_field"),
+        pytest.param(_optional_form_model, OrderedDict({"v": "2"}), id="form_model_with_dict_subclass"),
         pytest.param(
             _optional_form_model_union,
             {"other_text": "2"},
@@ -2740,6 +2742,57 @@ def test__request_body_migration__with_optional_form_model_that_the_form_does_no
     clients["2000-01-01"].app.dependency_overrides[_dependency_of_head_only] = _read_whole_body_in_override
 
     assert clients["2000-01-01"].post(test_path).json() == [None, {"v": "2"}]
+
+
+async def _read_form_field_in_override(  # pragma: no cover # FastAPI >= 0.158.2
+    request: Request, number: int = Form(0)
+) -> None:
+    request.state.number = number
+
+
+class _FormModelThatForbidsExtraFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    value: str = "default"
+
+
+class _FormModelThatAllowsExtraFields(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    value: str = "default"
+
+
+# The model would take the field of the override as an extra field, which FastAPI doesn't do for a form before 0.160.0
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize(
+    "model", [_FormModelThatForbidsExtraFields, _FormModelThatAllowsExtraFields], ids=["forbids", "allows"]
+)
+@pytest.mark.parametrize(
+    "migrated_body",
+    [{"number": "3"}, {"number": "3", "value": "2"}],
+    ids=["field_of_override", "fields_of_override_and_of_model"],
+)
+def test__request_body_migration__with_optional_form_model_with_extra_fields_that_the_form_does_not_supply_and_override_of_head_only_dependency_with_form_field__head_should_get_the_body_as_it_is(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    model: type[BaseModel],
+    migrated_body: dict[str, str],
+):
+    @router.post(test_path, dependencies=[Depends(_dependency_of_head_only)])
+    async def endpoint(request: Request, body: Annotated[Optional[model], Form()] = None):  # ty: ignore[invalid-type-form]
+        return [None if body is None else body.model_dump(), request.state.number]
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = migrated_body
+
+    clients = create_versioned_clients(
+        version_change(cadwyn_endpoint(test_path, ["POST"]).had(dependencies=[]), migrator=migrator)
+    )
+    clients["2000-01-01"].app.dependency_overrides[_dependency_of_head_only] = _read_form_field_in_override
+
+    assert clients["2000-01-01"].post(test_path).json() == [None, 3]
 
 
 class _FormModelOfKindWithExtraFields(BaseModel):

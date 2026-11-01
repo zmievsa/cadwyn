@@ -126,7 +126,7 @@ _get_multidict_value = cast(
 )
 # Since FastAPI 0.161.0, FastAPI normalizes the dict body of a union of form models with this function for each model
 _normalize_form_model = cast(
-    "Union[Callable[..., dict[str, Any]], None]", getattr(fastapi.dependencies.utils, "_normalize_form_model", None)
+    "Callable[..., dict[str, Any]]", getattr(fastapi.dependencies.utils, "_normalize_form_model", None)
 )
 
 
@@ -153,6 +153,15 @@ if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and None in (  # pragma: no cover
         "0.161.0), `_get_param_aliases`, `get_cached_model_fields`, `_should_embed_body_fields`, or "
         "`_get_multidict_value` is missing from `fastapi.dependencies.utils`. Cadwyn uses them to pass form models to "
         "FastAPI. Please, open an issue on Cadwyn's GitHub."
+    )
+# FastAPI 0.161.0 added `_get_form_models` along with unions of form models
+if (  # pragma: no cover
+    getattr(fastapi.dependencies.utils, "_get_form_models", None) is not None and _normalize_form_model is None
+):
+    raise ImportError(
+        "Cadwyn does not support this version of FastAPI: `_normalize_form_model` is missing from "
+        "`fastapi.dependencies.utils`. Cadwyn uses it to pass unions of form models to FastAPI. Please, open an issue "
+        "on Cadwyn's GitHub."
     )
 if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and not (  # pragma: no cover
     dataclasses.is_dataclass(Dependant)
@@ -1092,13 +1101,17 @@ def _get_omitted_form_model_lookup(  # pragma: no cover # FastAPI >= 0.158.2
     In every other case we pass the body as it is, like the last release did: if the body isn't a dict, if it has a key
     with such an alias (e.g. a migration has put the form model's data under it), if another param of the tree has
     such an alias or gets the whole body, if, like a form, it supplies none of the form models, so that the param gets
-    its default as FastAPI gives it, or if FastAPI would validate a model of a union from changed values.
+    its default as FastAPI gives it, if a form model that allows or forbids extra fields would take a key of another
+    param as an extra field, which FastAPI doesn't do for a form before 0.160.0, or if FastAPI would validate a model
+    of a union from changed values.
     """
-    if type(body) is not dict:
+    if not isinstance(body, dict):
         return _FormModelLookup(head_dependant)
     form_models = set(_get_form_models(head_dependant.body_params[0]))
     aliases: dict[str, None] = {}
     other_aliases: set[str] = set()
+    # The keys that the other params of the tree read, including the fields of their form models
+    other_keys: set[str] = set()
     for dependant in _iter_dependants_that_fastapi_solves(head_dependant, head_route):
         # Like FastAPI, we give a single body param that isn't embedded the whole body
         is_embedded = embed_body_fields or _should_embed_body_fields(dependant.body_params)
@@ -1111,10 +1124,15 @@ def _get_omitted_form_model_lookup(  # pragma: no cover # FastAPI >= 0.158.2
                 aliases.update(dict.fromkeys(field_aliases))
             else:
                 other_aliases.update(field_aliases)
+                other_keys.update(field_aliases, _get_field_aliases_of_models(field_form_models))
     if (
         not aliases.keys().isdisjoint(body)
         or not aliases.keys().isdisjoint(other_aliases)
         or not any(_form_supplies_form_model(model, FormData(body)) for model in form_models)
+        or (
+            any(model.model_config.get("extra") in ("allow", "forbid") for model in form_models)
+            and not (other_keys - _get_field_aliases_of_models(form_models)).isdisjoint(body)
+        )
     ):
         return _FormModelLookup(head_dependant)
     lookup = _FormModelLookup(head_dependant, tuple(aliases))
@@ -1123,6 +1141,14 @@ def _get_omitted_form_model_lookup(  # pragma: no cover # FastAPI >= 0.158.2
         if _form_model_union_changes_body(_embed_form_model(body, lookup)[lookup.aliases[0]], form_models):
             return _FormModelLookup(head_dependant)
     return lookup
+
+
+def _get_field_aliases_of_models(  # pragma: no cover # FastAPI >= 0.158.2
+    models: set[type[BaseModel]],
+) -> set[str]:
+    return {
+        alias for model in models for field in _get_cached_model_fields(model) for alias, _ in _get_param_aliases(field)
+    }
 
 
 def _form_model_union_changes_body(  # pragma: no cover # FastAPI >= 0.161
@@ -1135,9 +1161,7 @@ def _form_model_union_changes_body(  # pragma: no cover # FastAPI >= 0.161
     string gets its default. A model can read any key, e.g. through an `AliasPath`, a root model, or a validator,
     so we compare the whole dict.
     """
-    return _normalize_form_model is None or any(
-        _normalize_form_model(body, model=model) != body for model in form_models
-    )
+    return any(_normalize_form_model(body, model=model) != body for model in form_models)
 
 
 def _get_value_aliases_of_union(  # pragma: no cover # FastAPI >= 0.161
