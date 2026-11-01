@@ -516,6 +516,15 @@ class VersionBundle:
             for instruction in version_change.alter_enum_instructions
         }
 
+    @functools.cached_property
+    def _has_versioned_plain_enums(self) -> bool:
+        """Whether a plain enum or flag has enum instructions, so that the head rejects the members of its copies.
+
+        Pydantic looks up the members of `str`, `int`, and `float` enums by their values, so the head accepts
+        the members of their copies.
+        """
+        return any(not issubclass(enum, (int, str, float)) for enum in self.versioned_enums.values())
+
     def _get_closest_lesser_version(self, version: VersionType):
         for defined_version in self.version_values:
             if defined_version <= version:
@@ -564,6 +573,10 @@ class VersionBundle:
 
         is_body_restored = False
         form_model_lookup = _FormModelLookup(head_dependant)
+        # Migrations get the members of the copies of enums, as they always did, but the head gets its own members
+        migrated_body = (
+            _replace_with_head_enum_members(request_info.body) if self._has_versioned_plain_enums else request_info.body
+        )
         if request_info._form is not None:
             if uploads_read_by_fastapi:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
@@ -572,8 +585,8 @@ class VersionBundle:
         elif request_info.body is None and (request_info._body_is_assigned or body_is_omitted):
             body_for_solving = _OMITTED_BODY
         elif dumped_body_model is not None:
-            body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
-            is_body_restored = body_for_solving is not request_info.body
+            body_for_solving = _rescue_body(head_dependant.body_params[0], migrated_body)
+            is_body_restored = body_for_solving is not migrated_body
             form_model_lookup = await _get_form_model_lookup(
                 request,
                 route,
@@ -584,7 +597,7 @@ class VersionBundle:
                 embed_body_fields=embed_body_fields,
             )
         else:
-            body_for_solving = request_info.body
+            body_for_solving = migrated_body
 
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
         solve = functools.partial(
@@ -603,7 +616,7 @@ class VersionBundle:
         # the dependencies of the first one, so they run as many times as before.
         if result.errors and is_body_restored:
             result = await solve(
-                body=_embed_form_model(request_info.body, form_model_lookup), dependency_cache=result.dependency_cache
+                body=_embed_form_model(migrated_body, form_model_lookup), dependency_cache=result.dependency_cache
             )
         if result.errors:
             errors = _unembed_form_model_errors(result.errors, form_model_lookup.aliases)
@@ -1542,6 +1555,86 @@ def _rescue_response(response_field: ModelField, head_response_model: object, co
     except Exception:  # noqa: BLE001
         return data
     return data if errors else value
+
+
+def _replace_with_head_enum_members(data: Any) -> Any:
+    """Replace each member of a copy of a plain enum or flag with the member of its head enum that has the same value.
+
+    Python-mode dumps keep the members of the copies, which the head rejects for plain enums and flags. The head looks
+    up the members of the copies of `str`, `int`, and `float` enums by their values anyway, so we leave them, as well
+    as the members of other enums and the ones whose values their head enums don't have. We walk into
+    dicts (and their keys), lists, tuples, sets, frozensets, and the fields of models without recursion, so that data
+    as deep as pydantic accepts never hits the recursion limit. We only copy the containers in which something
+    changes, and we don't walk into the containers that contain themselves again.
+    """
+
+    def replace(value: Any) -> Any:
+        if not isinstance(value, Enum) or isinstance(value, (int, str, float)):
+            return value
+        head_enum: Union[type[Enum], None] = getattr(type(value), "__cadwyn_original_model__", None)
+        if head_enum is None:
+            return value
+        # We leave the member as it is if the head enum doesn't take its value, so the head fails as before
+        try:
+            return head_enum(value.value)
+        except Exception:  # noqa: BLE001
+            return value
+
+    children = _get_children_with_enum_members(data)
+    if children is None:
+        return replace(data)
+    # Each frame is [container, iterator over its children, its children with replaced members, whether any changed]
+    stack: list[list[Any]] = [[data, iter(children), [], False]]
+    containers_on_stack = {id(data)}
+    while True:
+        frame = stack[-1]
+        child = next(frame[1], _NO_CHILD)
+        if child is not _NO_CHILD:
+            grandchildren = None if id(child) in containers_on_stack else _get_children_with_enum_members(child)
+            if grandchildren is None:
+                replaced_child = replace(child)
+                frame[2].append(replaced_child)
+                frame[3] = frame[3] or replaced_child is not child
+            else:
+                stack.append([child, iter(grandchildren), [], False])
+                containers_on_stack.add(id(child))
+            continue
+        stack.pop()
+        container = frame[0]
+        containers_on_stack.discard(id(container))
+        replaced = _rebuild_container(container, frame[2]) if frame[3] else container
+        if not stack:
+            return replaced
+        stack[-1][2].append(replaced)
+        stack[-1][3] = stack[-1][3] or replaced is not container
+
+
+_NO_CHILD = object()
+
+
+def _get_children_with_enum_members(value: Any) -> Union[list[Any], None]:
+    """Return the children of a container that can hold enum members, with the keys and values of dicts in turn"""
+    if type(value) is dict or isinstance(value, BaseModel):
+        items = cast("dict[Any, Any]", value if type(value) is dict else value.__dict__).items()
+        return [child for item in items for child in item]
+    if type(value) in (list, tuple, set, frozenset):
+        return list(value)
+    return None
+
+
+def _rebuild_container(container: Any, children: list[Any]) -> Any:
+    if type(container) is dict:
+        return dict(zip(children[::2], children[1::2], strict=True))
+    if isinstance(container, BaseModel):
+        # FastAPI validates the models that the head gets by their attributes
+        return container.model_copy(
+            update={
+                name: value
+                for name, value in zip(children[::2], children[1::2], strict=True)
+                if value is not container.__dict__[name]
+            }
+        )
+    return type(container)(children)
 
 
 def _restore_model_validation_aliases(model: type[BaseModel], data: Any) -> Any:
