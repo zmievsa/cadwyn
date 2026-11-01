@@ -5904,11 +5904,48 @@ def test__request_body_migration__with_plain_enum_member_that_head_doesnt_have__
 
     with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
         clients["2000-01-01"].post(test_path, json=["a", "c"])
-    # The error is about the body as it was, before its members were replaced with the head members
-    assert [(error["loc"], error["input"].name) for error in exc_info.value.errors] == [
-        (("body", 0), "a"),
-        (("body", 1), "c"),
-    ]
+    assert [(error["loc"], error["input"].name) for error in exc_info.value.errors] == [(("body", 1), "c")]
+
+
+def test__request_body_migration__with_plain_enum_that_has_enum_instructions__should_solve_dependencies_once(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    calls: list[str] = []
+
+    def dependency(body: ModelWithPlainEnum, solver: str = Depends(current_dependency_solver)) -> None:
+        calls.append(solver)
+
+    @router.post(test_path)
+    async def endpoint(body: ModelWithPlainEnum, _: None = Depends(dependency, use_cache=False)):
+        return body.value is PlainEnum.a
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+
+    for version_client in clients.values():
+        calls.clear()
+        assert version_client.post(test_path, json={"value": "a"}).json() is True
+        # Once for the route of the request's version and once for the head, as for any other request
+        assert calls == ["fastapi", "cadwyn"]
+
+
+def test__request_body_migration__with_plain_enum_in_union_with_other_types__head_should_get_head_member(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class ModelWithUnionOfPlainEnum(BaseModel):
+        value: Union[PlainEnum, int]
+
+    @router.post(test_path)
+    async def endpoint(body: ModelWithUnionOfPlainEnum):
+        return body.value is PlainEnum.a
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"value": "a"}).json() is True
 
 
 @pytest.mark.parametrize(
@@ -5975,19 +6012,21 @@ class ModelWithPlainFlags(BaseModel):
     values: list[PlainFlag]
 
 
-def test__response_body_migration__with_plain_flag_that_has_enum_instructions__should_return_combined_values(
+def test__request_and_response_body_migration__with_plain_flag_that_has_enum_instructions__should_combine_members(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
 ):
     @router.post(test_path, response_model=ModelWithPlainFlags)
-    async def endpoint():
-        return ModelWithPlainFlags(value=PlainFlag.read | PlainFlag.write, values=[PlainFlag.read])
+    async def endpoint(body: ModelWithPlainFlags):
+        assert body.value is PlainFlag.read | PlainFlag.write
+        assert body.values == [PlainFlag.read]
+        return body
 
     clients = create_versioned_clients(version_change(enum(PlainFlag).didnt_have("execute")))
 
     for version_client in clients.values():
-        assert version_client.post(test_path).json() == {"value": 3, "values": [1]}
+        assert version_client.post(test_path, json={"value": 3, "values": [1]}).json() == {"value": 3, "values": [1]}
 
 
 def test__response_body_migration__with_plain_flag_member_that_older_version_doesnt_have__should_raise_validation_error(

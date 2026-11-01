@@ -41,12 +41,7 @@ from fastapi._compat import (
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
-from fastapi.dependencies.utils import (
-    SolvedDependency,
-    get_dependant,
-    get_validation_alias,
-    solve_dependencies,
-)
+from fastapi.dependencies.utils import get_dependant, get_validation_alias, solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
@@ -521,6 +516,15 @@ class VersionBundle:
             for instruction in version_change.alter_enum_instructions
         }
 
+    @functools.cached_property
+    def _has_versioned_plain_enums(self) -> bool:
+        """Whether a plain enum or flag has enum instructions, so that the head rejects the members of its copies.
+
+        Pydantic looks up the members of `str`, `int`, and `float` enums by their values, so the head accepts
+        the members of their copies.
+        """
+        return any(not issubclass(enum, (int, str, float)) for enum in self.versioned_enums.values())
+
     def _get_closest_lesser_version(self, version: VersionType):
         for defined_version in self.version_values:
             if defined_version <= version:
@@ -569,6 +573,10 @@ class VersionBundle:
 
         is_body_restored = False
         form_model_lookup = _FormModelLookup(head_dependant)
+        # Migrations get the members of the copies of enums, as they always did, but the head gets its own members
+        migrated_body = (
+            _replace_with_head_enum_members(request_info.body) if self._has_versioned_plain_enums else request_info.body
+        )
         if request_info._form is not None:
             if uploads_read_by_fastapi:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
@@ -577,8 +585,8 @@ class VersionBundle:
         elif request_info.body is None and (request_info._body_is_assigned or body_is_omitted):
             body_for_solving = _OMITTED_BODY
         elif dumped_body_model is not None:
-            body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
-            is_body_restored = body_for_solving is not request_info.body
+            body_for_solving = _rescue_body(head_dependant.body_params[0], migrated_body)
+            is_body_restored = body_for_solving is not migrated_body
             form_model_lookup = await _get_form_model_lookup(
                 request,
                 route,
@@ -589,7 +597,7 @@ class VersionBundle:
                 embed_body_fields=embed_body_fields,
             )
         else:
-            body_for_solving = request_info.body
+            body_for_solving = migrated_body
 
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
         solve = functools.partial(
@@ -603,14 +611,12 @@ class VersionBundle:
             background_tasks=background_tasks,
         )
         result = await solve(body=_embed_form_model(body_for_solving, form_model_lookup))
-        if result.errors:
-            result = await _solve_with_head_enum_members(solve, result, body_for_solving, form_model_lookup)
         # We only restore bodies that would fail as they are. If the head rejects the restored body too, we solve the
         # request again with the body as it is, so that it fails with the same error as before. The second solve reuses
         # the dependencies of the first one, so they run as many times as before.
         if result.errors and is_body_restored:
             result = await solve(
-                body=_embed_form_model(request_info.body, form_model_lookup), dependency_cache=result.dependency_cache
+                body=_embed_form_model(migrated_body, form_model_lookup), dependency_cache=result.dependency_cache
             )
         if result.errors:
             errors = _unembed_form_model_errors(result.errors, form_model_lookup.aliases)
@@ -1551,42 +1557,21 @@ def _rescue_response(response_field: ModelField, head_response_model: object, co
     return data if errors else value
 
 
-async def _solve_with_head_enum_members(
-    solve: Callable[..., Coroutine[Any, Any, SolvedDependency]],
-    result: SolvedDependency,
-    body: Any,
-    form_model_lookup: "_FormModelLookup",
-) -> SolvedDependency:
-    """Solve the request again with the head members of the enums if the head has rejected the body as it is.
-
-    Python-mode dumps keep the members of the copies of enums, which the head rejects for plain enums.
-    We keep the new result only if it passes, and the solve reuses the dependencies of the failed one.
-    """
-    body_with_head_members = _replace_with_head_enum_members(body)
-    if body_with_head_members is body:
-        return result
-    result_with_head_members = await solve(
-        body=_embed_form_model(body_with_head_members, form_model_lookup), dependency_cache=result.dependency_cache
-    )
-    return result if result_with_head_members.errors else result_with_head_members
-
-
-def _get_head_enum(enum_cls: type[Enum]) -> Union[type[Enum], None]:
-    """Return the head enum of a copy of an enum that an older version uses, or None for any other enum"""
-    return getattr(enum_cls, "__cadwyn_original_model__", None)
-
-
 def _replace_with_head_enum_members(data: Any) -> Any:
-    """Replace each member of a copy of an enum in the data with the member of its head enum that has the same value.
+    """Replace each member of a copy of a plain enum or flag with the member of its head enum that has the same value.
 
-    Members of other enums, or whose values their head enums don't have, stay as they are. We walk into
+    Python-mode dumps keep the members of the copies, which the head rejects for plain enums and flags. The head looks
+    up the members of the copies of `str`, `int`, and `float` enums by their values anyway, so we leave them, as well
+    as the members of other enums and the ones whose values their head enums don't have. We walk into
     dicts (and their keys), lists, tuples, sets, frozensets, and the fields of models without recursion, so that data
     as deep as pydantic accepts never hits the recursion limit. We only copy the containers in which something
     changes, and we don't walk into the containers that contain themselves again.
     """
 
     def replace(value: Any) -> Any:
-        head_enum = _get_head_enum(type(value)) if isinstance(value, Enum) else None
+        if not isinstance(value, Enum) or isinstance(value, (int, str, float)):
+            return value
+        head_enum: Union[type[Enum], None] = getattr(type(value), "__cadwyn_original_model__", None)
         if head_enum is None:
             return value
         # We leave the member as it is if the head enum doesn't take its value, so the head fails as before
