@@ -2871,6 +2871,32 @@ def test__request_body_migration__with_optional_form_model_union_that_the_form_d
     assert clients["2000-01-01"].post(test_path).json() is None
 
 
+class _DictWithOwnLookup(dict[str, Any]):
+    @override
+    def get(self, key: object, default: Any = None, /) -> Any:  # pragma: no cover # FastAPI >= 0.158.2
+        return {"v": "1"} if key == "body" else super().get(key, default)
+
+
+# Cadwyn can't tell what the lookups of such a dict return, so it passes the body as the last release did
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+def test__request_body_migration__with_optional_form_model_that_the_form_does_not_supply_and_dict_subclass_with_own_lookup_set_by_migration__head_should_get_the_body_as_it_is(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    router.post(test_path)(_optional_form_model)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = _DictWithOwnLookup(v="2")
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path).json() == 1
+
+
 class _FormModelFromString(BaseModel):
     value: str
 

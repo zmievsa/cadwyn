@@ -10,7 +10,7 @@ import os
 import re
 import tempfile
 import threading
-from collections import Counter, defaultdict, deque
+from collections import Counter, OrderedDict, defaultdict, deque
 from collections.abc import Callable, Coroutine, Hashable, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
@@ -1098,14 +1098,15 @@ def _get_omitted_form_model_lookup(  # pragma: no cover # FastAPI >= 0.158.2
     We put a dict body under the aliases of the params that have the same form models as the endpoint's body param,
     e.g. those of the dependencies and overrides that share it, so that other form models still get their defaults.
     We look at the tree that FastAPI solves for the head, which can have dependencies that the request's version lacks.
-    In every other case we pass the body as it is, like the last release did: if the body isn't a dict, if it has a key
-    with such an alias (e.g. a migration has put the form model's data under it), if another param of the tree has
-    such an alias or gets the whole body, if, like a form, it supplies none of the form models, so that the param gets
-    its default as FastAPI gives it, if a form model that allows or forbids extra fields would take a key of another
-    param as an extra field, which FastAPI doesn't do for a form before 0.160.0, or if FastAPI would validate a model
-    of a union from changed values.
+    In every other case we pass the body as it is, like the last release did: if the body isn't a dict, an
+    `OrderedDict`, or a `defaultdict`, if it has a key with such an alias (e.g. a migration has put the form model's
+    data under it), if another param of the tree has such an alias or gets the whole body, if, like a form, it supplies
+    none of the form models, so that the param gets its default as FastAPI gives it, if a form model that allows or
+    forbids extra fields would take a key of another param as an extra field, which FastAPI doesn't do for a form
+    before 0.160.0, or if FastAPI would validate a model of a union from changed values.
     """
-    if not isinstance(body, dict):
+    # We only know how the lookups of these dicts behave, while a subclass can override them
+    if type(body) not in (dict, OrderedDict, defaultdict):
         return _FormModelLookup(head_dependant)
     form_models = set(_get_form_models(head_dependant.body_params[0]))
     aliases: dict[str, None] = {}
