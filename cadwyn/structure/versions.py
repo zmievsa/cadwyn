@@ -1091,7 +1091,8 @@ def _get_omitted_form_model_lookup(  # pragma: no cover # FastAPI >= 0.158.2
     We look at the tree that FastAPI solves for the head, which can have dependencies that the request's version lacks.
     In every other case we pass the body as it is, like the last release did: if the body isn't a dict, if it has a key
     with such an alias (e.g. a migration has put the form model's data under it), if another param of the tree has
-    such an alias or gets the whole body, or if FastAPI would validate a model of a union from changed values.
+    such an alias or gets the whole body, if, like a form, it supplies none of the form models, so that the param gets
+    its default as FastAPI gives it, or if FastAPI would validate a model of a union from changed values.
     """
     if type(body) is not dict:
         return _FormModelLookup(head_dependant)
@@ -1110,7 +1111,11 @@ def _get_omitted_form_model_lookup(  # pragma: no cover # FastAPI >= 0.158.2
                 aliases.update(dict.fromkeys(field_aliases))
             else:
                 other_aliases.update(field_aliases)
-    if not aliases.keys().isdisjoint(body) or not aliases.keys().isdisjoint(other_aliases):
+    if (
+        not aliases.keys().isdisjoint(body)
+        or not aliases.keys().isdisjoint(other_aliases)
+        or not any(_form_supplies_form_model(model, FormData(body)) for model in form_models)
+    ):
         return _FormModelLookup(head_dependant)
     lookup = _FormModelLookup(head_dependant, tuple(aliases))
     if len(form_models) > 1:
@@ -1123,25 +1128,16 @@ def _get_omitted_form_model_lookup(  # pragma: no cover # FastAPI >= 0.158.2
 def _form_model_union_changes_body(  # pragma: no cover # FastAPI >= 0.161
     body: dict[str, Any], form_models: set[type[BaseModel]]
 ) -> bool:
-    """Return whether FastAPI would validate a model of the union from other values than the ones in the body.
+    """Return whether FastAPI would validate a model of the union from another dict than the body.
 
     FastAPI validates each model of the union from the body as if it were form data, e.g. a field that takes a single
-    value gets one value of a list, an extra field gets the only value of a list as it is, and a field with
-    an empty string gets its default. We compare the values that each model takes: the ones of its fields, and if it
-    allows extra fields, all of them.
+    value gets one value of a list, any other key gets the only value of a list as it is, and a field with an empty
+    string gets its default. A model can read any key, e.g. through an `AliasPath`, a root model, or a validator,
+    so we compare the whole dict.
     """
-    if _normalize_form_model is None:
-        return True
-    for model in form_models:
-        normalized = _normalize_form_model(body, model=model)
-        keys = (
-            body.keys()
-            if model.model_config.get("extra") == "allow"
-            else {alias for field in _get_cached_model_fields(model) for alias, _ in _get_param_aliases(field)}
-        )
-        if any(normalized.get(key, PydanticUndefined) != body[key] for key in body.keys() & keys):
-            return True
-    return False
+    return _normalize_form_model is None or any(
+        _normalize_form_model(body, model=model) != body for model in form_models
+    )
 
 
 def _get_value_aliases_of_union(  # pragma: no cover # FastAPI >= 0.161

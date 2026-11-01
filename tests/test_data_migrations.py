@@ -2758,24 +2758,56 @@ async def _optional_form_model_union_with_extra_fields(  # pragma: no cover # Fa
     return None if body is None else body.model_dump()
 
 
+class _FormModelOfKindWithAliasPath(BaseModel):
+    kind: Literal["with_alias_path"]
+    value: str = Field("default", validation_alias=AliasPath("names", 0))
+
+
+async def _optional_form_model_union_with_alias_path(  # pragma: no cover # FastAPI >= 0.161
+    body: Annotated[Optional[Union[_FormModelOfKindWithAliasPath, _FormModelOfOtherKind]], Form()] = None,
+):
+    return None if body is None else body.model_dump()
+
+
+async def _optional_form_model_union_with_root_model(  # pragma: no cover # FastAPI >= 0.161
+    body: Annotated[Optional[Union[RootModel[dict[str, Any]], _FormModelOfOtherKind]], Form()] = None,
+):
+    return None if body is None else body.model_dump()
+
+
 # FastAPI would validate the models of the union from a changed body, so Cadwyn passes the body as the last release did
 @pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
     not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS, reason="Before FastAPI 0.161.0, a union of form models isn't a form model"
 )
 @pytest.mark.parametrize(
-    "migrated_body",
+    ("endpoint", "migrated_body"),
     [
-        pytest.param({"kind": "with_extra_fields", "tags": ["one"]}, id="single_item_list_in_extra_field"),
-        pytest.param({"kind": "with_extra_fields", "label": ""}, id="empty_string_in_field_with_default"),
+        pytest.param(
+            _optional_form_model_union_with_extra_fields,
+            {"kind": "with_extra_fields", "tags": ["one"]},
+            id="single_item_list_in_extra_field",
+        ),
+        pytest.param(
+            _optional_form_model_union_with_extra_fields,
+            {"kind": "with_extra_fields", "label": ""},
+            id="empty_string_in_field_with_default",
+        ),
+        pytest.param(
+            _optional_form_model_union_with_alias_path,
+            {"kind": "with_alias_path", "names": ["migrated"]},
+            id="single_item_list_under_alias_path",
+        ),
+        pytest.param(_optional_form_model_union_with_root_model, {"raw": ["migrated"]}, id="root_model"),
     ],
 )
 def test__request_body_migration__with_optional_form_model_union_that_the_form_does_not_supply_and_body_that_fastapi_would_change__head_should_get_the_body_as_it_is(  # noqa: E501
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
     migrated_body: dict[str, Any],
 ):
-    router.post(test_path)(_optional_form_model_union_with_extra_fields)
+    router.post(test_path)(endpoint)
 
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
@@ -2854,25 +2886,41 @@ def test__request_body_migration__with_optional_form_model_that_the_form_does_no
     assert clients["2000-01-01"].post(test_path).json() == "2"
 
 
+class _FormModelWithRenamedField(BaseModel):
+    kind: str
+    value: int = Field(alias="x", validation_alias="v")
+
+
+async def _optional_form_model_with_renamed_field(  # pragma: no cover # FastAPI >= 0.158.2
+    body: Annotated[Optional[_FormModelWithRenamedField], Form()] = None,
+):
+    return None if body is None else body.value
+
+
 @pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
     not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
 )
 @pytest.mark.parametrize(
-    "migrated_body",
+    ("endpoint", "migrated_body"),
     [
-        pytest.param({"unrelated": "2"}, id="without_its_fields"),
+        pytest.param(_optional_form_model, {"v": "not a number"}, id="with_value_that_it_rejects"),
         # Unlike the dump of a supplied form model, the body of a migration doesn't get its validation aliases restored
-        pytest.param({"x": "2"}, id="with_serialization_alias_instead_of_validation_alias"),
-        pytest.param({"body": "2"}, id="with_value_under_its_alias_that_it_rejects"),
+        pytest.param(
+            _optional_form_model_with_renamed_field,
+            {"kind": "2", "x": "2"},
+            id="with_serialization_alias_instead_of_validation_alias",
+        ),
+        pytest.param(_optional_form_model, {"body": "2"}, id="with_value_under_its_alias_that_it_rejects"),
     ],
 )
 def test__request_body_migration__with_optional_form_model_that_the_form_does_not_supply_and_invalid_body_set_by_migration__should_raise_error(  # noqa: E501
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
     migrated_body: dict[str, str],
 ):
-    router.post(test_path)(_optional_form_model)
+    router.post(test_path)(endpoint)
 
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
@@ -2908,22 +2956,38 @@ def test__request_body_migration__with_optional_form_model_union_that_the_form_d
 @pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
     not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
 )
-def test__request_body_migration__with_optional_form_model_that_the_form_does_not_supply_and_empty_body_set_by_migration__head_should_get_the_model_with_defaults(  # noqa: E501
+@pytest.mark.parametrize(
+    ("model", "migrated_body"),
+    [
+        pytest.param(_OtherFormModelWithDefault, {}, id="empty_for_model_with_default"),
+        pytest.param(_OtherFormModelWithRequiredField, {}, id="empty_for_model_with_required_field"),
+        pytest.param(_OtherFormModelWithDefault, {"unrelated": "2"}, id="unrelated_fields_for_model_with_default"),
+        pytest.param(
+            _OtherFormModelWithRequiredField, {"unrelated": "2"}, id="unrelated_fields_for_model_with_required_field"
+        ),
+        # FastAPI looks the field up by its validation alias only
+        pytest.param(InnerSchemaWithValidationAlias, {"x": "2"}, id="serialization_alias_instead_of_validation_alias"),
+    ],
+)
+def test__request_body_migration__with_optional_form_model_that_the_form_does_not_supply_and_body_without_its_fields_set_by_migration__head_should_get_none(  # noqa: E501
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
+    model: type[BaseModel],
+    migrated_body: dict[str, str],
 ):
+    # Like FastAPI does for a form, Cadwyn gives the param its default if the body supplies none of the model's fields
     @router.post(test_path)
-    async def endpoint(body: Annotated[Optional[_OtherFormModelWithDefault], Form()] = None):
-        return None if body is None else body.number
+    async def endpoint(body: Annotated[Optional[model], Form()] = None):  # ty: ignore[invalid-type-form]
+        return None if body is None else body.model_dump()
 
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
-        request.body = {}
+        request.body = migrated_body
 
     clients = create_versioned_clients(version_change(migrator=migrator))
 
-    assert clients["2000-01-01"].post(test_path).json() == 5
+    assert clients["2000-01-01"].post(test_path).json() is None
 
 
 @pytest.mark.parametrize("field_name", ["text", "other_text"])
