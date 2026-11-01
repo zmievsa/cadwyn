@@ -107,6 +107,9 @@ from ._utils import iscoroutinefunction
 if TYPE_CHECKING:
     from cadwyn.structure.versions import HeadVersion, Version
 
+if sys.version_info >= (3, 11):
+    from enum import FlagBoundary
+
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])
 
@@ -4011,9 +4014,14 @@ class _EnumWrapper(Generic[_T_ENUM]):
         for attr_name, attr in initialization_namespace.items():
             enum_dict[attr_name] = attr
         enum_dict["__doc__"] = self.cls.__doc__
-        # A Flag's boundary is a class keyword, not an attribute of its body (Python 3.11+)
-        boundary = getattr(self.cls, "_boundary_", None)
-        class_kwargs = {} if boundary is None else {"boundary": boundary}
+        class_kwargs: dict[str, Any] = {}
+        # A Flag's boundary is a class keyword, not an attribute of its body
+        if (
+            sys.version_info >= (3, 11)
+            and issubclass(self.cls, Flag)
+            and isinstance(boundary := getattr(self.cls, "_boundary_", None), FlagBoundary)
+        ):
+            class_kwargs["boundary"] = boundary
         model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict, **class_kwargs))
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         return model_copy

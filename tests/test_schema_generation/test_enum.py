@@ -1,6 +1,6 @@
 import re
 import sys
-from enum import Enum, Flag, IntFlag, auto
+from enum import Enum, Flag, IntEnum, IntFlag, auto
 from typing import Any
 
 import pytest
@@ -116,6 +116,24 @@ def test__enum_didnt_have_and_had__flag_enum__should_behave_like_hand_written_fl
 
     assert _observe_flag_enum(models["2000-01-01"][original]) == _observe_flag_enum(hand_written)
     assert serialize_enum(models["2001-01-01"][original]) == {"read": 1, "write": 2}
+
+
+class MixinWithBoundaryAttribute:
+    _boundary_ = "domain-metadata"
+
+
+class IntEnumWithBoundaryAttributeFromMixin(MixinWithBoundaryAttribute, IntEnum):
+    read = 1
+    write = 2
+
+
+def test__enum_didnt_have__enum_that_inherits_boundary_attribute_from_mixin__should_remove_the_member(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(IntEnumWithBoundaryAttributeFromMixin).didnt_have("write")))
+
+    assert serialize_enum(models["2000-01-01"][IntEnumWithBoundaryAttributeFromMixin]) == {"read": 1}
+    assert models["2000-01-01"][IntEnumWithBoundaryAttributeFromMixin]._boundary_ == "domain-metadata"
 
 
 if sys.version_info >= (3, 11):
