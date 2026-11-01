@@ -8,7 +8,7 @@ from collections.abc import Callable, Coroutine, Iterator
 from contextvars import ContextVar
 from datetime import datetime
 from decimal import Decimal
-from enum import Enum
+from enum import Enum, Flag
 from io import BytesIO, RawIOBase, StringIO, UnsupportedOperation
 from typing import Annotated, Any, Literal, Optional, Union, cast
 from uuid import UUID
@@ -51,6 +51,7 @@ from pydantic import (
     PlainValidator,
     RootModel,
     Strict,
+    TypeAdapter,
     ValidationError,
     WrapSerializer,
     WrapValidator,
@@ -83,6 +84,7 @@ from cadwyn.structure import (
     VersionChange,
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
+    enum,
 )
 from cadwyn.structure.data import RequestInfo, ResponseInfo
 from cadwyn.structure.endpoints import endpoint as cadwyn_endpoint
@@ -5760,6 +5762,279 @@ def test__request_body_migration__with_fields_of_all_kinds_of_core_schemas__head
     for version_client in clients.values():
         payload = {f"{name.rstrip('_')}_v": value for name, value in values.items()}
         assert version_client.post(test_path, json=payload).json() == values
+
+
+class PlainEnum(Enum):
+    a = "a"
+    b = "b"
+
+
+class ModelWithPlainEnum(BaseModel):
+    value: PlainEnum
+
+
+class ModelWithPlainEnumFromAttributes(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    value: PlainEnum
+
+
+@dataclasses.dataclass
+class ObjectWithPlainEnum:
+    value: PlainEnum
+
+
+class PlainEnumWithMissing(Enum):
+    a = "a"
+    b = "b"
+    unknown = "unknown"
+
+    @classmethod
+    @override
+    def _missing_(cls, value: object):
+        return cls.unknown
+
+
+class ModelWithPlainEnumWithMissing(BaseModel):
+    value: PlainEnumWithMissing
+
+
+class ModelWithPlainEnumsInAllKindsOfFields(BaseModel):
+    scalar: PlainEnum
+    optional: Optional[PlainEnum]
+    list_: list[PlainEnum]
+    tuple_: tuple[PlainEnum, ...]
+    frozenset_: frozenset[PlainEnum]
+    dict_values: dict[str, PlainEnum]
+    dict_keys: dict[PlainEnum, int]
+    model: ModelWithPlainEnum
+    models: list[ModelWithPlainEnum]
+
+
+PLAIN_ENUMS_IN_ALL_KINDS_OF_FIELDS = {
+    "scalar": "a",
+    "optional": "a",
+    "list_": ["a"],
+    "tuple_": ["a"],
+    "frozenset_": ["a"],
+    "dict_values": {"key": "a"},
+    "dict_keys": {"a": 1},
+    "model": {"value": "a"},
+    "models": [{"value": "a"}],
+}
+
+
+@pytest.mark.parametrize(
+    ("annotation", "payload"),
+    [
+        pytest.param(ModelWithPlainEnumsInAllKindsOfFields, PLAIN_ENUMS_IN_ALL_KINDS_OF_FIELDS, id="model"),
+        pytest.param(list[PlainEnum], ["a"], id="list_of_enums"),
+        pytest.param(list[ModelWithPlainEnum], [{"value": "a"}], id="list_of_models"),
+    ],
+)
+def test__request_body_migration__with_plain_enum_that_has_enum_instructions__head_should_get_head_members(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+    payload: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[annotation, Body()]):
+        # Members of copies of plain enums never equal the head members
+        return body == TypeAdapter(annotation).validate_python(payload)
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() is True
+
+
+def test__request_body_migration__with_plain_enum_member_that_only_older_version_has__migration_should_get_the_member(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: ModelWithPlainEnum):
+        return body.value is PlainEnum.a
+
+    @convert_request_to_next_version_for(ModelWithPlainEnum)
+    def migrate(request: RequestInfo):
+        # Migrations get the members of the enum of the request's version, as they always did
+        assert type(request.body["value"]) is not PlainEnum
+        if request.body["value"].name == "c":
+            request.body["value"] = PlainEnum.a
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).had(c="c"), migrate=migrate))
+
+    assert clients["2000-01-01"].post(test_path, json={"value": "a"}).json() is True
+    assert clients["2000-01-01"].post(test_path, json={"value": "c"}).json() is True
+    assert clients["2001-01-01"].post(test_path, json={"value": "a"}).json() is True
+
+
+def test__request_body_migration__with_plain_enum_and_cyclic_body_set_by_migration__head_should_get_head_members(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: ModelWithPlainEnum):
+        return body.value is PlainEnum.a
+
+    @convert_request_to_next_version_for(ModelWithPlainEnum)
+    def migrate(request: RequestInfo):
+        # The head ignores the extra key, so it never walks into the cycle
+        request.body["cycle"] = [request.body]
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b"), migrate=migrate))
+
+    assert clients["2000-01-01"].post(test_path, json={"value": "a"}).json() is True
+
+
+def test__request_body_migration__with_plain_enum_member_that_head_doesnt_have__should_raise_head_validation_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[list[PlainEnum], Body()]):
+        raise NotImplementedError
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).had(c="c")))
+
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, json=["a", "c"])
+    # The error is about the body as it was, before its members were replaced with the head members
+    assert [(error["loc"], error["input"].name) for error in exc_info.value.errors] == [
+        (("body", 0), "a"),
+        (("body", 1), "c"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("response_model", "content", "payload"),
+    [
+        pytest.param(
+            ModelWithPlainEnumsInAllKindsOfFields,
+            ModelWithPlainEnumsInAllKindsOfFields.model_validate(PLAIN_ENUMS_IN_ALL_KINDS_OF_FIELDS),
+            PLAIN_ENUMS_IN_ALL_KINDS_OF_FIELDS,
+            id="model",
+        ),
+        pytest.param(
+            list[ModelWithPlainEnumFromAttributes],
+            [ObjectWithPlainEnum(value=PlainEnum.a)],
+            [{"value": "a"}],
+            id="objects_validated_from_attributes",
+        ),
+    ],
+)
+def test__response_body_migration__with_plain_enum_that_has_enum_instructions__should_return_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    response_model: Any,
+    content: Any,
+    payload: Any,
+):
+    @router.post(test_path, response_model=response_model)
+    async def endpoint():
+        return content
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+
+    for version_client in clients.values():
+        assert version_client.post(test_path).json() == payload
+
+
+def test__response_body_migration__with_plain_enum_whose_missing_returns_a_member__should_return_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, response_model=ModelWithPlainEnumWithMissing)
+    async def endpoint(value: str):
+        return ModelWithPlainEnumWithMissing(value=PlainEnumWithMissing(value))
+
+    clients = create_versioned_clients(version_change(enum(PlainEnumWithMissing).didnt_have("b")))
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, params={"value": "a"}).json() == {"value": "a"}
+    # The enum's own `_missing_` gets the values of the members that the version doesn't have
+    assert clients["2001-01-01"].post(test_path, params={"value": "b"}).json() == {"value": "b"}
+    assert clients["2000-01-01"].post(test_path, params={"value": "b"}).json() == {"value": "unknown"}
+
+
+class PlainFlag(Flag):
+    read = 1
+    write = 2
+    execute = 4
+
+
+class ModelWithPlainFlags(BaseModel):
+    value: PlainFlag
+    values: list[PlainFlag]
+
+
+def test__response_body_migration__with_plain_flag_that_has_enum_instructions__should_return_combined_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, response_model=ModelWithPlainFlags)
+    async def endpoint():
+        return ModelWithPlainFlags(value=PlainFlag.read | PlainFlag.write, values=[PlainFlag.read])
+
+    clients = create_versioned_clients(version_change(enum(PlainFlag).didnt_have("execute")))
+
+    for version_client in clients.values():
+        assert version_client.post(test_path).json() == {"value": 3, "values": [1]}
+
+
+def test__response_body_migration__with_plain_flag_member_that_older_version_doesnt_have__should_raise_validation_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, response_model=ModelWithPlainFlags)
+    async def endpoint():
+        return ModelWithPlainFlags(value=PlainFlag.read | PlainFlag.execute, values=[])
+
+    clients = create_versioned_clients(version_change(enum(PlainFlag).didnt_have("execute")))
+
+    assert clients["2001-01-01"].post(test_path).json() == {"value": 5, "values": []}
+    with pytest.raises(fastapi.exceptions.ResponseValidationError):
+        clients["2000-01-01"].post(test_path)
+
+
+def test__request_query_param__with_plain_enum_default_that_has_enum_instructions__should_get_the_default(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.get(test_path)
+    async def endpoint(value: PlainEnum = Query(PlainEnum.a)):
+        return value is PlainEnum.a
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+
+    for version_client in clients.values():
+        assert version_client.get(test_path).json() is True
+
+
+def test__response_body_migration__with_plain_enum_member_that_older_version_doesnt_have__should_raise_validation_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, response_model=ModelWithPlainEnum)
+    async def endpoint():
+        return ModelWithPlainEnum(value=PlainEnum.b)
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+
+    assert clients["2001-01-01"].post(test_path).json() == {"value": "b"}
+    with pytest.raises(fastapi.exceptions.ResponseValidationError):
+        clients["2000-01-01"].post(test_path)
 
 
 @pytest.mark.parametrize(

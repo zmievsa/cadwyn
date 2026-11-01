@@ -4024,6 +4024,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
             class_kwargs["boundary"] = boundary
         model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict, **class_kwargs))
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
+        _take_head_members_by_value(model_copy, self.cls)
         return model_copy
 
     @staticmethod
@@ -4042,6 +4043,27 @@ class _EnumWrapper(Generic[_T_ENUM]):
             and k not in _FLAG_INTERNAL_ATTRIBUTES
             and (k not in mro_dict or mro_dict[k] is not v)
         }
+
+
+def _take_head_members_by_value(enum_copy: type[Enum], head_enum: type[Enum]) -> None:
+    """Make the copy of an enum take the members of its head enum as the members that have their values.
+
+    The responses that the endpoints return have the head members, and so do the defaults of params. Pydantic looks up
+    the members of `str`, `int`, and `float` enums by their values, but for plain enums and flags it only calls
+    `_missing_`, so their copies would reject the head members. Like for those enums, we look up the head members by
+    their values, so the enum's own `_missing_` gets the value of a member that the copy doesn't have.
+    """
+    inherited_missing = enum_copy._missing_
+
+    def _missing_(cls: type[Enum], value: object) -> Any:
+        if not isinstance(value, head_enum):
+            return inherited_missing(value)
+        try:
+            return cls(value.value)
+        except ValueError:
+            return None
+
+    enum_copy._missing_ = classmethod(_missing_)  # ty: ignore[invalid-assignment]
 
 
 def _is_same_parametrization(model: type[Union[BaseModel, Enum]], generic: type[BaseModel]) -> bool:

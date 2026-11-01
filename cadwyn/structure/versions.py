@@ -41,7 +41,12 @@ from fastapi._compat import (
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
-from fastapi.dependencies.utils import get_dependant, get_validation_alias, solve_dependencies
+from fastapi.dependencies.utils import (
+    SolvedDependency,
+    get_dependant,
+    get_validation_alias,
+    solve_dependencies,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
@@ -598,6 +603,8 @@ class VersionBundle:
             background_tasks=background_tasks,
         )
         result = await solve(body=_embed_form_model(body_for_solving, form_model_lookup))
+        if result.errors:
+            result = await _solve_with_head_enum_members(solve, result, body_for_solving, form_model_lookup)
         # We only restore bodies that would fail as they are. If the head rejects the restored body too, we solve the
         # request again with the body as it is, so that it fails with the same error as before. The second solve reuses
         # the dependencies of the first one, so they run as many times as before.
@@ -1542,6 +1549,107 @@ def _rescue_response(response_field: ModelField, head_response_model: object, co
     except Exception:  # noqa: BLE001
         return data
     return data if errors else value
+
+
+async def _solve_with_head_enum_members(
+    solve: Callable[..., Coroutine[Any, Any, SolvedDependency]],
+    result: SolvedDependency,
+    body: Any,
+    form_model_lookup: "_FormModelLookup",
+) -> SolvedDependency:
+    """Solve the request again with the head members of the enums if the head has rejected the body as it is.
+
+    Python-mode dumps keep the members of the copies of enums, which the head rejects for plain enums.
+    We keep the new result only if it passes, and the solve reuses the dependencies of the failed one.
+    """
+    body_with_head_members = _replace_with_head_enum_members(body)
+    if body_with_head_members is body:
+        return result
+    result_with_head_members = await solve(
+        body=_embed_form_model(body_with_head_members, form_model_lookup), dependency_cache=result.dependency_cache
+    )
+    return result if result_with_head_members.errors else result_with_head_members
+
+
+def _get_head_enum(enum_cls: type[Enum]) -> Union[type[Enum], None]:
+    """Return the head enum of a copy of an enum that an older version uses, or None for any other enum"""
+    return getattr(enum_cls, "__cadwyn_original_model__", None)
+
+
+def _replace_with_head_enum_members(data: Any) -> Any:
+    """Replace each member of a copy of an enum in the data with the member of its head enum that has the same value.
+
+    Members of other enums, or whose values their head enums don't have, stay as they are. We walk into
+    dicts (and their keys), lists, tuples, sets, frozensets, and the fields of models without recursion, so that data
+    as deep as pydantic accepts never hits the recursion limit. We only copy the containers in which something
+    changes, and we don't walk into the containers that contain themselves again.
+    """
+
+    def replace(value: Any) -> Any:
+        head_enum = _get_head_enum(type(value)) if isinstance(value, Enum) else None
+        if head_enum is None:
+            return value
+        # We leave the member as it is if the head enum doesn't take its value, so the head fails as before
+        try:
+            return head_enum(value.value)
+        except Exception:  # noqa: BLE001
+            return value
+
+    children = _get_children_with_enum_members(data)
+    if children is None:
+        return replace(data)
+    # Each frame is [container, iterator over its children, its children with replaced members, whether any changed]
+    stack: list[list[Any]] = [[data, iter(children), [], False]]
+    containers_on_stack = {id(data)}
+    while True:
+        frame = stack[-1]
+        child = next(frame[1], _NO_CHILD)
+        if child is not _NO_CHILD:
+            grandchildren = None if id(child) in containers_on_stack else _get_children_with_enum_members(child)
+            if grandchildren is None:
+                replaced_child = replace(child)
+                frame[2].append(replaced_child)
+                frame[3] = frame[3] or replaced_child is not child
+            else:
+                stack.append([child, iter(grandchildren), [], False])
+                containers_on_stack.add(id(child))
+            continue
+        stack.pop()
+        container = frame[0]
+        containers_on_stack.discard(id(container))
+        replaced = _rebuild_container(container, frame[2]) if frame[3] else container
+        if not stack:
+            return replaced
+        stack[-1][2].append(replaced)
+        stack[-1][3] = stack[-1][3] or replaced is not container
+
+
+_NO_CHILD = object()
+
+
+def _get_children_with_enum_members(value: Any) -> Union[list[Any], None]:
+    """Return the children of a container that can hold enum members, with the keys and values of dicts in turn"""
+    if type(value) is dict or isinstance(value, BaseModel):
+        items = cast("dict[Any, Any]", value if type(value) is dict else value.__dict__).items()
+        return [child for item in items for child in item]
+    if type(value) in (list, tuple, set, frozenset):
+        return list(value)
+    return None
+
+
+def _rebuild_container(container: Any, children: list[Any]) -> Any:
+    if type(container) is dict:
+        return dict(zip(children[::2], children[1::2], strict=True))
+    if isinstance(container, BaseModel):
+        # FastAPI validates the models that the head gets by their attributes
+        return container.model_copy(
+            update={
+                name: value
+                for name, value in zip(children[::2], children[1::2], strict=True)
+                if value is not container.__dict__[name]
+            }
+        )
+    return type(container)(children)
 
 
 def _restore_model_validation_aliases(model: type[BaseModel], data: Any) -> Any:
