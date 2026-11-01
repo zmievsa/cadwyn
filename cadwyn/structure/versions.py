@@ -11,7 +11,7 @@ import re
 import tempfile
 import threading
 from collections import Counter, defaultdict, deque
-from collections.abc import Callable, Coroutine, Hashable, Iterator, Sequence
+from collections.abc import Callable, Coroutine, Hashable, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date
@@ -572,8 +572,11 @@ class VersionBundle:
         # A body is omitted if the request had none for FastAPI, or if a migration has set it to None
         elif request_info.body is None and (request_info._body_is_assigned or body_is_omitted):
             body_for_solving = _OMITTED_BODY
-        # If a migration has set the body of an omitted form model, we pass it to the head like a supplied one
-        elif dumped_body_model is not None or form_model_is_omitted:
+        elif form_model_is_omitted:  # pragma: no cover # FastAPI >= 0.158.2
+            # A migration has set the body of an omitted form model. It isn't a dump, so we don't restore its aliases
+            body_for_solving = request_info.body
+            form_model_lookup = _get_omitted_form_model_lookup(head_dependant, head_route, body_for_solving)
+        elif dumped_body_model is not None:
             body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
             is_body_restored = body_for_solving is not request_info.body
             form_model_lookup = await _get_form_model_lookup(
@@ -1023,7 +1026,7 @@ async def _get_form_model_lookup(
     head_dependant: Dependant,
     head_route: APIRoute,
     body: Any,
-    dumped_body_model: Union[type[BaseModel], None],
+    dumped_body_model: type[BaseModel],
     *,
     embed_body_fields: bool,
 ) -> _FormModelLookup:
@@ -1070,6 +1073,39 @@ async def _get_form_model_lookup(
         lookups = _get_body_lookups(dependant, head_route, embed_body_fields=embed_body_fields)
         return _FormModelLookup(dependant, tuple(lookups.form_model_aliases), repeated_value_aliases)
     return _FormModelLookup(head_dependant)
+
+
+def _get_omitted_form_model_lookup(  # pragma: no cover # FastAPI >= 0.158.2
+    head_dependant: Dependant, head_route: APIRoute, body: Any
+) -> _FormModelLookup:
+    """Return how to pass the body that a migration has set for an omitted optional form model to the head.
+
+    We put the body under the aliases of the params that have the same form models as the endpoint's body param, e.g.
+    those of the dependencies and overrides that share it, so that other form models still get their defaults. The form
+    supplies none of the form models, and they are the only body params in the tree, so no other param reads the body.
+    Like the last release, we pass the body as it is if the migration has already put it under such an alias, or if
+    a model of a union would get only one of the repeated values of a field.
+    """
+    form_models = _get_form_models(head_dependant.body_params[0])
+    aliases = tuple(
+        dict.fromkeys(
+            alias
+            for dependant in _iter_dependants_that_fastapi_solves(head_dependant, head_route)
+            for field in dependant.body_params
+            if _get_form_models(field) == form_models
+            for alias, _ in _get_param_aliases(field)
+        )
+    )
+    if isinstance(body, Mapping) and any(isinstance(body.get(alias), (Mapping, BaseModel)) for alias in aliases):
+        return _FormModelLookup(head_dependant)
+    repeated_value_aliases = frozenset[str]()
+    if len(form_models) > 1:
+        repeated_value_aliases, single_value_aliases = _get_value_aliases_of_union(form_models)
+        if isinstance(body, dict) and any(
+            isinstance(body.get(alias), (list, set, frozenset, tuple, deque)) for alias in single_value_aliases
+        ):
+            return _FormModelLookup(head_dependant)
+    return _FormModelLookup(head_dependant, aliases, repeated_value_aliases)
 
 
 def _get_value_aliases_of_union(  # pragma: no cover # FastAPI >= 0.161
@@ -1165,10 +1201,7 @@ def _get_body_lookups(  # pragma: no cover # FastAPI >= 0.158.2
 
 
 async def _form_gives_values_that_form_models_lack(  # pragma: no cover # FastAPI >= 0.158.2
-    request: FastapiRequest,
-    route: APIRoute,
-    params: list[_BodyParamLookup],
-    dumped_body_model: Union[type[BaseModel], None],
+    request: FastapiRequest, route: APIRoute, params: list[_BodyParamLookup], dumped_body_model: type[BaseModel]
 ) -> bool:
     """Return whether FastAPI would give any of the params a value from the form that the request's form models lack.
 
@@ -1183,7 +1216,7 @@ async def _form_gives_values_that_form_models_lack(  # pragma: no cover # FastAP
         for field in dependant.body_params
         for models in (_get_form_models(field),)
         # Of a union of form models, only the member that the request matches takes the values of its fields
-        for model in ([dumped_body_model] if dumped_body_model is not None and dumped_body_model in models else models)
+        for model in ([dumped_body_model] if dumped_body_model in models else models)
         for model_field in _get_cached_model_fields(model)
         for alias, _ in _get_param_aliases(model_field)
     }

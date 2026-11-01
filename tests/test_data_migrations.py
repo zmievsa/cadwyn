@@ -2358,6 +2358,17 @@ async def _optional_form_model_union(
     return None if text is None else text.model_dump()
 
 
+class _FormModelWithFile(BaseModel):
+    value: str
+    file: Optional[UploadFile] = None
+
+
+async def _optional_form_model_with_file(  # pragma: no cover # FastAPI >= 0.158.2
+    body: Annotated[Optional[_FormModelWithFile], Form()] = None,
+):
+    return None if body is None else [body.value, body.file is None]
+
+
 _SKIP_IF_FORM_MODEL_UNIONS_ARE_NOT_FORM_MODELS = pytest.mark.skipif(
     not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS, reason="Before FastAPI 0.161.0, a union of form models isn't a form model"
 )
@@ -2481,6 +2492,7 @@ def test__request_body_migration__with_form_model_union__head_should_get_it_as_i
     [
         pytest.param(_optional_form_model, {"v": "2"}, id="form_model"),
         pytest.param(_optional_form_model_shared_by_dependency, {"v": "2"}, id="form_model_shared_by_dependency"),
+        pytest.param(_optional_form_model_with_file, {"value": "2"}, id="form_model_with_file_field"),
         pytest.param(
             _optional_form_model_union,
             {"text": "2"},
@@ -2519,6 +2531,150 @@ def test__request_body_migration__with_optional_form_model_that_the_form_does_no
     expected = TestClient(fastapi_app).post(test_path, data=data)
     response = clients["2001-01-01"].post(test_path, data=data)
     assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize(
+    ("endpoint", "alias"),
+    [
+        pytest.param(_optional_form_model, "body", id="form_model"),
+        pytest.param(_optional_form_model_shared_by_dependency, "body", id="form_model_shared_by_dependency"),
+        pytest.param(
+            _optional_form_model_union, "text", id="union", marks=_SKIP_IF_FORM_MODEL_UNIONS_ARE_NOT_FORM_MODELS
+        ),
+    ],
+)
+def test__request_body_migration__with_optional_form_model_that_the_form_does_not_supply__head_should_get_the_body_that_migration_has_embedded_under_its_alias(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
+    alias: str,
+):
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    form_model_body = {"text": "2"} if alias == "text" else {"v": "2"}
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = {alias: form_model_body}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    expected = TestClient(fastapi_app).post(test_path, data=form_model_body)
+    response = clients["2000-01-01"].post(test_path)
+    assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+class _OtherFormModelWithDefault(BaseModel):
+    number: int = 5
+
+
+class _OtherFormModelWithRequiredField(BaseModel):
+    number: int
+
+
+async def _get_other_optional_form_model_in_override(  # pragma: no cover # FastAPI >= 0.158.2
+    other: Annotated[Optional[_OtherFormModelWithDefault], Form()] = None,
+) -> Optional[int]:
+    return None if other is None else other.number
+
+
+async def _get_other_optional_form_model_with_required_field_in_override(  # pragma: no cover # FastAPI >= 0.158.2
+    other: Annotated[Optional[_OtherFormModelWithRequiredField], Form()] = None,
+) -> Optional[int]:
+    return None if other is None else other.number
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize(
+    "override",
+    [
+        pytest.param(_get_fake_user, id="override_without_params"),
+        pytest.param(_get_optional_form_model_value_in_override, id="override_sharing_form_model"),
+        pytest.param(_get_other_optional_form_model_in_override, id="override_with_other_form_model"),
+        pytest.param(
+            _get_other_optional_form_model_with_required_field_in_override,
+            id="override_with_other_form_model_with_required_field",
+        ),
+    ],
+)
+def test__request_body_migration__with_optional_form_model_that_the_form_does_not_supply_and_dependency_override__head_should_get_the_body_set_by_migration(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    override: Callable[..., Coroutine[Any, Any, Any]],
+):
+    router.post(test_path)(_optional_form_model_next_to_overridden_dependency)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(_optional_form_model_next_to_overridden_dependency)
+    fastapi_app.dependency_overrides[_get_current_user] = override
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = {"v": "2"}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_current_user] = override
+
+    expected = TestClient(fastapi_app).post(test_path, data={"v": "2"})
+    response = clients["2000-01-01"].post(test_path)
+    assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize(
+    "migrated_body",
+    [
+        pytest.param({"unrelated": "2"}, id="without_its_fields"),
+        # Unlike the dump of a supplied form model, the body of a migration doesn't get its validation aliases restored
+        pytest.param({"x": "2"}, id="with_serialization_alias_instead_of_validation_alias"),
+    ],
+)
+def test__request_body_migration__with_optional_form_model_that_the_form_does_not_supply_and_invalid_body_set_by_migration__should_raise_error(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    migrated_body: dict[str, str],
+):
+    router.post(test_path)(_optional_form_model)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = migrated_body
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    with pytest.raises(CadwynHeadRequestValidationError):
+        clients["2000-01-01"].post(test_path)
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+def test__request_body_migration__with_optional_form_model_that_the_form_does_not_supply_and_empty_body_set_by_migration__head_should_get_the_model_with_defaults(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[Optional[_OtherFormModelWithDefault], Form()] = None):
+        return None if body is None else body.number
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = {}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path).json() == 5
 
 
 @pytest.mark.parametrize("field_name", ["text", "other_text"])
