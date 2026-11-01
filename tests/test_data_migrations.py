@@ -2358,6 +2358,10 @@ async def _optional_form_model_union(
     return None if text is None else text.model_dump()
 
 
+_SKIP_IF_FORM_MODEL_UNIONS_ARE_NOT_FORM_MODELS = pytest.mark.skipif(
+    not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS, reason="Before FastAPI 0.161.0, a union of form models isn't a form model"
+)
+
 # Since FastAPI 0.153.0, FastAPI validates the members of a union of form models from the body as if it were form data
 _SKIP_IF_CADWYN_PASSES_FORM_MODEL_UNION_DUMPS_AS_THEY_ARE = pytest.mark.skipif(
     FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA and not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
@@ -2466,6 +2470,55 @@ def test__request_body_migration__with_form_model_union__head_should_get_it_as_i
     for version_client in clients.values():
         response = version_client.post(test_path, data=data)
         assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize("data", [None, {"unrelated": "1"}], ids=["without_form_data", "with_unrelated_form_data"])
+@pytest.mark.parametrize(
+    ("endpoint", "migrated_body"),
+    [
+        pytest.param(_optional_form_model, {"v": "2"}, id="form_model"),
+        pytest.param(_optional_form_model_shared_by_dependency, {"v": "2"}, id="form_model_shared_by_dependency"),
+        pytest.param(
+            _optional_form_model_union,
+            {"text": "2"},
+            id="union_with_body_of_first_member",
+            marks=_SKIP_IF_FORM_MODEL_UNIONS_ARE_NOT_FORM_MODELS,
+        ),
+        pytest.param(
+            _optional_form_model_union,
+            {"other_text": "2"},
+            id="union_with_body_of_second_member",
+            marks=_SKIP_IF_FORM_MODEL_UNIONS_ARE_NOT_FORM_MODELS,
+        ),
+    ],
+)
+def test__request_body_migration__with_optional_form_model_that_the_form_does_not_supply__head_should_get_the_body_set_by_migration(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
+    data: Optional[dict[str, str]],
+    migrated_body: dict[str, str],
+):
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = migrated_body
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    expected = TestClient(fastapi_app).post(test_path, data=migrated_body)
+    response = clients["2000-01-01"].post(test_path, data=data)
+    assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+    expected = TestClient(fastapi_app).post(test_path, data=data)
+    response = clients["2001-01-01"].post(test_path, data=data)
+    assert (response.status_code, response.json()) == (expected.status_code, expected.json())
 
 
 @pytest.mark.parametrize("field_name", ["text", "other_text"])
