@@ -13,7 +13,7 @@ import typing
 import warnings
 from collections.abc import Callable, Generator, Sequence
 from datetime import date
-from enum import Enum, auto
+from enum import Enum, Flag, auto
 from functools import cache
 from typing import (
     TYPE_CHECKING,
@@ -106,6 +106,9 @@ from ._utils import iscoroutinefunction
 
 if TYPE_CHECKING:
     from cadwyn.structure.versions import HeadVersion, Version
+
+if sys.version_info >= (3, 11):
+    from enum import FlagBoundary
 
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])
@@ -3977,6 +3980,17 @@ class _DummyEnum(Enum):
     pass
 
 
+class _DummyFlag(Flag):
+    pass
+
+
+# The attributes such as `_flag_mask_` that the enum machinery puts on every Flag on Python 3.11+.
+# It computes them for the copy again and doesn't accept them in a class body
+_FLAG_INTERNAL_ATTRIBUTES = frozenset(
+    name for name in _DummyFlag.__dict__ if name.startswith("_") and not name.startswith("__") and name.endswith("_")
+)
+
+
 @final
 class _EnumWrapper(Generic[_T_ENUM]):
     __slots__ = "cls", "members", "name"
@@ -4000,7 +4014,15 @@ class _EnumWrapper(Generic[_T_ENUM]):
         for attr_name, attr in initialization_namespace.items():
             enum_dict[attr_name] = attr
         enum_dict["__doc__"] = self.cls.__doc__
-        model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict))
+        class_kwargs: dict[str, Any] = {}
+        # A Flag's boundary is a class keyword, not an attribute of its body
+        if (
+            sys.version_info >= (3, 11)
+            and issubclass(self.cls, Flag)
+            and isinstance(boundary := getattr(self.cls, "_boundary_", None), FlagBoundary)
+        ):
+            class_kwargs["boundary"] = boundary
+        model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict, **class_kwargs))
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         return model_copy
 
@@ -4017,6 +4039,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
             for k, v in enum_cls.__dict__.items()
             if k not in enum_cls._member_names_
             and k not in _DummyEnum.__dict__
+            and k not in _FLAG_INTERNAL_ATTRIBUTES
             and (k not in mro_dict or mro_dict[k] is not v)
         }
 

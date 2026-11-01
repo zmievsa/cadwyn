@@ -1,5 +1,7 @@
 import re
-from enum import Enum, auto
+import sys
+from enum import Enum, Flag, IntEnum, IntFlag, auto
+from typing import Any
 
 import pytest
 
@@ -77,6 +79,78 @@ def test__enum_didnt_have__original_enum_has_two_members(create_runtime_schemas:
 def test__enum_had__original_schema_is_empty(create_runtime_schemas: CreateRuntimeSchemas):
     models = create_runtime_schemas(version_change(enum(EmptyEnum).had(b=7)))
     assert serialize_enum(models["2000-01-01"][EmptyEnum]) == {"b": 7}
+
+
+class FlagWithTwoMembers(Flag):
+    read = 1
+    write = 2
+
+
+class IntFlagWithTwoMembers(IntFlag):
+    read = 1
+    write = 2
+
+
+def _observe_flag_enum(flag_enum: Any) -> list[Any]:
+    read_and_execute = flag_enum.read | flag_enum.execute
+    return [
+        serialize_enum(flag_enum),
+        repr(read_and_execute),
+        read_and_execute.value,
+        type(read_and_execute) is flag_enum,
+        flag_enum(5) is read_and_execute,
+        flag_enum.read in read_and_execute,
+        repr(read_and_execute & flag_enum.read),
+        repr(~flag_enum.read),
+    ]
+
+
+@pytest.mark.parametrize("flag_base", [Flag, IntFlag])
+def test__enum_didnt_have_and_had__flag_enum__should_behave_like_hand_written_flag_enum(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    flag_base: type[Flag],
+):
+    original = FlagWithTwoMembers if flag_base is Flag else IntFlagWithTwoMembers
+    models = create_runtime_schemas(version_change(enum(original).didnt_have("write"), enum(original).had(execute=4)))
+    hand_written = flag_base(original.__name__, {"read": 1, "execute": 4})
+
+    assert _observe_flag_enum(models["2000-01-01"][original]) == _observe_flag_enum(hand_written)
+    assert serialize_enum(models["2001-01-01"][original]) == {"read": 1, "write": 2}
+
+
+class MixinWithBoundaryAttribute:
+    _boundary_ = "domain-metadata"
+
+
+class IntEnumWithBoundaryAttributeFromMixin(MixinWithBoundaryAttribute, IntEnum):
+    read = 1
+    write = 2
+
+
+def test__enum_didnt_have__enum_that_inherits_boundary_attribute_from_mixin__should_remove_the_member(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(IntEnumWithBoundaryAttributeFromMixin).didnt_have("write")))
+
+    assert serialize_enum(models["2000-01-01"][IntEnumWithBoundaryAttributeFromMixin]) == {"read": 1}
+    assert models["2000-01-01"][IntEnumWithBoundaryAttributeFromMixin]._boundary_ == "domain-metadata"
+
+
+if sys.version_info >= (3, 11):
+    from enum import KEEP
+
+    class FlagWithKeepBoundary(Flag, boundary=KEEP):
+        read = 1
+        write = 2
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Flag boundaries were added in Python 3.11")
+def test__enum_didnt_have__flag_enum_with_custom_boundary__should_keep_the_boundary(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(FlagWithKeepBoundary).didnt_have("write")))
+    # With the default boundary of Flag, 8 would raise a ValueError because it isn't a combination of members
+    assert models["2000-01-01"][FlagWithKeepBoundary](8).value == 8
 
 
 def test__enum_had__same_name_as_other_value__should_raise_invalid_generation_instruction_error(

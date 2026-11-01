@@ -12,7 +12,7 @@ import typing
 import warnings
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from enum import Enum, auto
+from enum import Enum, Flag, IntFlag, auto
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -2666,6 +2666,63 @@ def test__router_generation__enum_member_dependency_default__fails_without_membe
     expected = (422, rejected_default) if FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS else (200, "a")
     assert (response.status_code, response.json()) == expected
     assert clients["2000-01-01"].get("/test").json() == "a"
+
+
+class FlagPermission(Flag):
+    read = 1
+    write = 2
+
+
+class IntFlagPermission(IntFlag):
+    read = 1
+    write = 2
+
+
+class PermissionsOfUser(BaseModel):
+    flag_permissions: Optional[FlagPermission] = None
+    int_flag_permissions: Optional[IntFlagPermission] = None
+
+
+@pytest.mark.parametrize("flag_enum", [FlagPermission, IntFlagPermission])
+def test__router_generation__flag_enum_with_instructions__should_serve_routes_and_openapi_of_every_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    flag_enum: type[Flag],
+):
+    @router.post("/permissions")
+    async def set_permissions(body: PermissionsOfUser) -> PermissionsOfUser:
+        raise NotImplementedError
+
+    @router.get("/unrelated")
+    async def unrelated() -> int:
+        return 1
+
+    clients = create_versioned_clients(
+        version_change(enum(flag_enum).didnt_have("write"), enum(flag_enum).had(execute=4)),
+    )
+
+    assert clients["2001-01-01"].get("/unrelated").json() == 1
+    assert clients["2000-01-01"].get("/unrelated").json() == 1
+    for version, enum_values in {"2001-01-01": [1, 2], "2000-01-01": [1, 4]}.items():
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"][flag_enum.__name__]["enum"] == enum_values
+
+
+def test__router_generation__int_flag_enum_with_instructions__should_accept_combined_members_of_each_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/permissions")
+    async def set_permissions(body: PermissionsOfUser) -> PermissionsOfUser:
+        return body
+
+    clients = create_versioned_clients(
+        version_change(enum(IntFlagPermission).didnt_have("write"), enum(IntFlagPermission).had(execute=4)),
+    )
+
+    for version, combined_value in {"2001-01-01": 3, "2000-01-01": 5}.items():
+        response = clients[version].post("/permissions", json={"int_flag_permissions": combined_value})
+        assert response.json() == {"flag_permissions": None, "int_flag_permissions": combined_value}
 
 
 def test__router_generation__using_unversioned_schema_in_body(
