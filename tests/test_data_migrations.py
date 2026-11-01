@@ -2708,6 +2708,84 @@ def test__request_body_migration__with_optional_form_model_that_the_form_does_no
     assert clients["2000-01-01"].post(test_path).json() == expected
 
 
+async def _dependency_of_head_only() -> None:
+    raise NotImplementedError
+
+
+async def _read_whole_body_in_override(  # pragma: no cover # FastAPI >= 0.158.2
+    request: Request, payload: dict[str, Any] = Body()
+) -> None:
+    request.state.payload = payload
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+def test__request_body_migration__with_optional_form_model_that_the_form_does_not_supply_and_override_of_head_only_dependency_that_reads_whole_body__override_should_get_the_body_as_it_is(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, dependencies=[Depends(_dependency_of_head_only)])
+    async def endpoint(request: Request, body: Annotated[Optional[InnerSchemaWithValidationAlias], Form()] = None):
+        return [None if body is None else body.value, request.state.payload]
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = {"v": "2"}
+
+    clients = create_versioned_clients(
+        version_change(cadwyn_endpoint(test_path, ["POST"]).had(dependencies=[]), migrator=migrator)
+    )
+    clients["2000-01-01"].app.dependency_overrides[_dependency_of_head_only] = _read_whole_body_in_override
+
+    assert clients["2000-01-01"].post(test_path).json() == [None, {"v": "2"}]
+
+
+class _FormModelOfKindWithExtraFields(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    kind: Literal["with_extra_fields"]
+    label: str = "default"
+
+
+class _FormModelOfOtherKind(BaseModel):
+    kind: Literal["other"]
+
+
+async def _optional_form_model_union_with_extra_fields(  # pragma: no cover # FastAPI >= 0.161
+    body: Annotated[Optional[Union[_FormModelOfKindWithExtraFields, _FormModelOfOtherKind]], Form()] = None,
+):
+    return None if body is None else body.model_dump()
+
+
+# FastAPI would validate the models of the union from a changed body, so Cadwyn passes the body as the last release did
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
+    not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS, reason="Before FastAPI 0.161.0, a union of form models isn't a form model"
+)
+@pytest.mark.parametrize(
+    "migrated_body",
+    [
+        pytest.param({"kind": "with_extra_fields", "tags": ["one"]}, id="single_item_list_in_extra_field"),
+        pytest.param({"kind": "with_extra_fields", "label": ""}, id="empty_string_in_field_with_default"),
+    ],
+)
+def test__request_body_migration__with_optional_form_model_union_that_the_form_does_not_supply_and_body_that_fastapi_would_change__head_should_get_the_body_as_it_is(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    migrated_body: dict[str, Any],
+):
+    router.post(test_path)(_optional_form_model_union_with_extra_fields)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = migrated_body
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path).json() is None
+
+
 class _FormModelFromString(BaseModel):
     value: str
 
