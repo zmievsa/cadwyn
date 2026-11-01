@@ -39,6 +39,7 @@ from fastapi import (
     Body,
     Cookie,
     Depends,
+    FastAPI,
     Header,
     HTTPException,
     Path,
@@ -64,6 +65,7 @@ from pydantic import (
     Strict,
     StringConstraints,
     conint,
+    create_model,
 )
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings
@@ -81,6 +83,7 @@ from cadwyn.exceptions import (
     InvalidGenerationInstructionError,
     RouterGenerationError,
     RouterPathParamsModifiedError,
+    SchemaGenerationError,
 )
 from cadwyn.route_generation import copy_route, generate_versioned_routers
 from cadwyn.schema_generation import _UNRESOLVED, _get_value_of_type_alias_with_args, generate_versioned_models
@@ -4185,9 +4188,38 @@ class ModelWithUnusedArgOfAliasBehindAlias(BaseModel):
     role_name: AliasOfAliasThatDoesNotUseItsArg
 
 
+class LeafOfRecursiveAlias(BaseModel):
+    name: str
+    extra: str = "default"
+
+
+class EnvelopeOfRecursiveAlias(BaseModel):
+    leaf: Any = Field(default_factory=lambda: LeafOfRecursiveAlias(name="a"))
+
+
+TypingExtensionsRecursiveAlias = TypeAliasType(
+    "TypingExtensionsRecursiveAlias", Union[list["TypingExtensionsRecursiveAlias"], LeafOfRecursiveAlias, int]
+)
+
+
 if sys.version_info >= (3, 12):
     # Type aliases that refer to themselves can only be defined with the type statement
     exec(
+        "type RecursiveJson = dict[str, RecursiveJson] | list[RecursiveJson] | str | int | None\n"
+        "type MutuallyRecursiveList = list[MutuallyRecursiveDict] | int\n"
+        "type MutuallyRecursiveDict = dict[str, MutuallyRecursiveList] | Literal['b', 1]\n"
+        "type RecursiveTree = list[RecursiveTree] | LeafOfRecursiveAlias | int\n"
+        "type RecursiveTreeWithQuotedModel = list[RecursiveTreeWithQuotedModel] | list['LeafOfRecursiveAlias'] | int\n"
+        "type RecursiveTreeWithModelInDefaultFactory = (\n"
+        "    list[RecursiveTreeWithModelInDefaultFactory] | EnvelopeOfRecursiveAlias | int\n"
+        ")\n"
+        "type RecursiveTreeWithModelInMetadata = (\n"
+        "    list[RecursiveTreeWithModelInMetadata]\n"
+        "    | Annotated[Any, AfterValidator(LeafOfRecursiveAlias.model_validate)]\n"
+        "    | int\n"
+        ")\n"
+        "class ModelWithRecursiveTree(BaseModel):\n"
+        "    data: RecursiveTree\n"
         "type RecursiveAlias[T] = T | list[RecursiveAlias[T]]\n"
         "type RecursiveAliasThatDoesNotUseItsArg[T] = str | list[RecursiveAliasThatDoesNotUseItsArg[T]]\n"
         "class ModelWithRecursiveAliasThatDoesNotUseItsArg(BaseModel):\n"
@@ -4364,6 +4396,115 @@ def test__get_value_of_type_alias_with_args__alias_that_cannot_be_substituted__s
     variadic_args = TypeVarTuple("variadic_args")
     variadic_alias = TypeAliasType("variadic_alias", tuple[Unpack[variadic_args]], type_params=(variadic_args,))
     assert _get_value_of_type_alias_with_args(variadic_alias[int, str]) is _UNRESOLVED
+
+
+def _add_route_that_returns_its_body(router: APIRouter, annotation: Any) -> None:
+    async def route(body: Any) -> Any:
+        return body
+
+    route.__annotations__["body"] = Annotated[annotation, Body()]
+    router.post("/test", response_model=annotation)(route)
+
+
+_TREE_OF_LEAVES = [{"name": "a", "extra": "x"}, [1, [{"name": "b", "extra": "y"}]]]
+
+
+@pytest.mark.parametrize(
+    ("alias_name", "data", "usage"),
+    [
+        *(
+            pytest.param(alias_name, data, usage, id=f"{alias_id}-{usage}", marks=_requires_type_statement)
+            for alias_id, alias_name, data in [
+                ("json", "RecursiveJson", {"a": [1, "b", {"c": None}]}),
+                ("mutually_recursive", "MutuallyRecursiveList", [{"a": 1}, "b", {"c": [{"d": 2}]}]),
+            ]
+            for usage in ["bare", "field", "two_fields"]
+        ),
+        # Its copies differ for each field (as on main) so they get other names in OpenAPI than in FastAPI
+        *(
+            pytest.param("TypingExtensionsRecursiveAlias", _TREE_OF_LEAVES, usage, id=f"typing_extensions-{usage}")
+            for usage in ["bare", "field"]
+        ),
+    ],
+)
+def test__router_generation__recursive_type_alias_of_builtin_types__should_work_like_fastapi_in_every_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    alias_name: str,
+    data: Any,
+    usage: str,
+):
+    alias = globals()[alias_name]
+    if usage == "bare":
+        annotation, body = alias, data
+    elif usage == "field":
+        annotation, body = create_model("ModelWithRecursiveAlias", data=(alias, ...)), {"data": data}
+    else:
+        annotation = create_model("ModelWithRecursiveAliases", first=(alias, ...), second=(alias, ...))
+        body = {"first": data, "second": data}
+    fastapi_router = APIRouter()
+    for some_router in (router, fastapi_router):
+        _add_route_that_returns_its_body(some_router, annotation)
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(fastapi_router)
+    fastapi_client = TestClient(fastapi_app)
+
+    # The other version changes a model that the aliases do not refer to
+    clients = create_versioned_clients(version_change(schema(SchemaWithOneIntField).field("foo").had(type=str)))
+
+    assert fastapi_client.post("/test", json=body).json() == body
+    fastapi_schemas = fastapi_client.get("/openapi.json").json()["components"]["schemas"]
+    for version, version_client in clients.items():
+        assert version_client.post("/test", json=body).json() == body
+        assert version_client.get(f"/openapi.json?version={version}").json()["components"]["schemas"] == (
+            fastapi_schemas
+        )
+
+
+@_requires_type_statement
+@pytest.mark.parametrize(
+    "alias_name",
+    [
+        "RecursiveTree",
+        "RecursiveTreeWithQuotedModel",
+        "RecursiveTreeWithModelInDefaultFactory",
+        "RecursiveTreeWithModelInMetadata",
+    ],
+)
+def test__router_generation__recursive_type_alias_of_other_than_builtin_types__should_raise_error_on_first_request(
+    router: VersionedAPIRouter,
+    alias_name: str,
+):
+    _add_route_that_returns_its_body(router, create_model("ModelWithRecursiveAlias", data=(globals()[alias_name], ...)))
+    app = Cadwyn(
+        versions=VersionBundle(
+            Version("2001-01-01", version_change(schema(LeafOfRecursiveAlias).field("extra").didnt_exist)),
+            Version("2000-01-01"),
+        )
+    )
+    app.generate_and_include_versioned_routers(router)
+
+    with pytest.raises(
+        SchemaGenerationError,
+        match=rf"type alias {alias_name} because it refers to itself\. .* only contain builtin types",
+    ):
+        TestClient(app).post("/test", json={"data": 1})
+
+
+@_requires_type_statement
+def test__router_generation__recursive_type_alias_of_changed_model_that_no_route_uses__should_not_raise_error(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/leaf", response_model=LeafOfRecursiveAlias)
+    async def route(leaf: LeafOfRecursiveAlias):
+        return leaf
+
+    clients = create_versioned_clients(version_change(schema(LeafOfRecursiveAlias).field("extra").didnt_exist))
+
+    # ModelWithRecursiveTree refers to the changed model through a recursive type alias, but no route uses it
+    assert globals()["ModelWithRecursiveTree"].model_fields["data"].annotation is globals()["RecursiveTree"]
+    assert clients["2000-01-01"].post("/leaf", json={"name": "a", "extra": "x"}).json() == {"name": "a"}
 
 
 def get_role_name_from_query(role: RoleOfVersionedDependency = Query(RoleOfVersionedDependency.reader)) -> str:
