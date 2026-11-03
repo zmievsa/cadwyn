@@ -58,7 +58,8 @@ class X(BaseModel):
     elif KIND == "generic_arg":
         later: Ref["Later"] = Ref["Later"]()
     elif KIND in {"default_factory", "lazy_default_factory"}:
-        later_id: int = Field(default_factory=make_later_id)
+        # Typed as object because make_later_id claims to return Later. Only its annotation needs to refer to Later
+        later_id: object = Field(default_factory=make_later_id)
     elif KIND == "classvar":
         # Only evaluated lazily since Python 3.14
         later: ClassVar[Later]
