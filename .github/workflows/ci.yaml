@@ -51,6 +51,7 @@ jobs:
           name: coverage-results-${{ matrix.python-version }}
           path: .coverage*
           include-hidden-files: true
+          retention-days: 7
   Tutorial-tests:
     runs-on: ubuntu-latest
     name: Tutorial tests
@@ -73,6 +74,7 @@ jobs:
           name: coverage-results-docs
           path: .coverage*
           include-hidden-files: true
+          retention-days: 7
   Coverage:
     needs: [Tests, Tutorial-tests]
     runs-on: ubuntu-latest
