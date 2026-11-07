@@ -3808,6 +3808,66 @@ def test__schema_field_had_name__parent_renamed_field_and_other_base_got_new_one
     }
 
 
+class ChildThatRedeclaresIntFooAndHasOldFoo(ParentWithIntFooThatGetsRenamed):
+    foo: int
+    old_foo: str
+
+
+def test__schema_field_had_name__parent_renamed_field_to_name_that_child_declares__should_keep_child_fields(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    # The child's own `old_foo` hides the parent's renamed field, so the child has it only once, as `foo`
+    child = schemas["2000-01-01"][ChildThatRedeclaresIntFooAndHasOldFoo]
+    assert child.model_validate({"foo": 1, "old_foo": "own"}).model_dump() == {"old_foo": "own", "foo": 1}
+
+
+class AliasOfParentWithIntFooThatGetsRenamed:
+    def __mro_entries__(self, bases: tuple[Any, ...]) -> tuple[type, ...]:
+        return (ParentWithIntFooThatGetsRenamed,)
+
+
+class ChildOfAliasOfParentWithIntFooThatGetsRenamed(AliasOfParentWithIntFooThatGetsRenamed()):
+    pass
+
+
+class RedeclaringChildOfAliasOfParentWithIntFooThatGetsRenamed(AliasOfParentWithIntFooThatGetsRenamed()):
+    foo: int
+
+
+def test__schema_field_had_name__parent_renamed_field_that_child_of_mro_entries_base_changed__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    with pytest.raises(InvalidGenerationInstructionError) as exc_info:
+        create_runtime_schemas(
+            version_change(
+                schema(ChildOfAliasOfParentWithIntFooThatGetsRenamed).field("foo").had(description="Child"),
+                schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"),
+            )
+        )
+
+    assert '"ChildOfAliasOfParentWithIntFooThatGetsRenamed" still has it as "foo" next to "old_foo"' in str(
+        exc_info.value
+    )
+
+
+def test__schema_field_had_name__parent_renamed_field_that_child_of_mro_entries_base_redeclares__should_keep_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    # A known limitation: the copies of the subclasses of an object with `__mro_entries__` inherit from the parent
+    # itself instead of its copy, so the parent's instructions, including its renames, don't reach them
+    schemas = create_runtime_schemas(
+        version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    child = schemas["2000-01-01"][RedeclaringChildOfAliasOfParentWithIntFooThatGetsRenamed]
+    assert ParentWithIntFooThatGetsRenamed in child.__mro__
+    assert list(child.model_fields) == ["foo"]
+
+
 def test__schema_field_didnt_exist__field_is_missing__should_raise_error(create_runtime_schemas: CreateRuntimeSchemas):
     with pytest.raises(
         InvalidGenerationInstructionError,

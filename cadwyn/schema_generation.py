@@ -454,7 +454,8 @@ def _get_annotations_without_evaluating(obj: Any) -> dict[str, Any]:
         # Annotations are evaluated lazily since Python 3.14 so the names that are only imported for type checking
         # would raise a NameError
         return get_annotations(obj, format=Format.FORWARDREF)
-    return obj.__annotations__
+    # E.g. `object` has none before Python 3.14, which annotationlib treats as no annotations
+    return getattr(obj, "__annotations__", {})
 
 
 _UNRESOLVED: Any = object()
@@ -2659,7 +2660,9 @@ class SchemaGenerator:
             if model is parent or not issubclass(model, parent):
                 continue
             new_name = _get_name_of_field(self.model_bundle.schemas[parent], rename.field_identity)
-            if new_name in {None, old_name} or not _gets_field_from_copy_of_parent(model_copy, parent, new_name):
+            if new_name in {None, old_name} or not self._gets_renamed_field_from_parent(
+                model, model_copy, rename, new_name
+            ):
                 continue
             # The parent got a field with the old name back, or still inherits it, which the renames of the parent
             # itself report once all models of the version are copied
@@ -2671,9 +2674,39 @@ class SchemaGenerator:
             if (
                 old_name in model_copy.model_fields
                 and old_name not in _get_annotations_without_evaluating(model_copy)
-                and any(self._declared_field_before_rename(base, rename) for base in model.__mro__[1:])
+                # Like pydantic, we skip `object`
+                and any(self._declared_field_before_rename(base, rename) for base in model.__mro__[1:-1])
             ):
                 raise _get_parent_rename_error(model, model_copy, rename, old_name, new_name, self._version)
+
+    def _gets_renamed_field_from_parent(
+        self, model: type[BaseModel], model_copy: type[BaseModel], rename: "_ParentRename", new_name: str
+    ) -> bool:
+        """Whether the copy of the model has the field that the parent renamed under the new name.
+
+        A field of the model itself with that name hides it, unless it is the model's copy of the parent's field
+        (e.g. because the model changed it). So does a class before the copy of the parent in the MRO that declares
+        the name, e.g. a first base.
+        """
+        if new_name not in model_copy.model_fields:
+            return False
+        if new_name in _get_annotations_without_evaluating(model_copy):
+            wrapper = self.model_bundle.schemas.get(model)
+            return wrapper is not None and any(
+                field is not None and field.identity == rename.field_identity
+                for field in (wrapper.fields.get(new_name), wrapper.fields_renamed_by_parents.get(new_name))
+            )
+        # The closest class that is the copy of the parent or declares the name. Like pydantic, we skip `object`
+        closest = next(
+            (
+                cls
+                for cls in model_copy.__mro__[1:-1]
+                if vars(cls).get("__cadwyn_original_model__") is rename.parent
+                or new_name in _get_annotations_without_evaluating(cls)
+            ),
+            None,
+        )
+        return closest is not None and vars(closest).get("__cadwyn_original_model__") is rename.parent
 
     def _get_names_of_own_copies_of_renamed_field(self, model: type[BaseModel], rename: "_ParentRename") -> list[str]:
         """Return the names of the fields of the model that are its own copies of the field that the parent renamed.
@@ -3728,22 +3761,6 @@ def _check_that_deleted_fields_are_not_inherited(
             f'"{version}" "{model_name}" still inherits "{name}" from {_format_bases(bases)}, so it would still have '
             "the field. Pydantic models can't drop the fields that they inherit. " + advice
         )
-
-
-def _gets_field_from_copy_of_parent(model_copy: type[BaseModel], parent: type[BaseModel], field_name: str) -> bool:
-    """Whether the copy of the model has the field and no class before the copy of the parent in its MRO declares it.
-
-    E.g. a first base that declares the name hides the parent's field with that name.
-    """
-    if field_name not in model_copy.model_fields:
-        return False
-    for cls in model_copy.__mro__[1:]:
-        if vars(cls).get("__cadwyn_original_model__") is parent:
-            return True
-        if field_name in _get_annotations_without_evaluating(cls):
-            return False
-    # The parent has instructions, so its copy is always among the bases of the copies of its subclasses
-    return False  # pragma: no cover
 
 
 def _copy_of_parent_has_field(model_copy: type[BaseModel], parent: type[BaseModel], field_name: str) -> bool:
