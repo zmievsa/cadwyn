@@ -9,6 +9,7 @@ from typing import Any, Self
 from uuid import UUID
 
 import pytest
+from pydantic import TypeAdapter
 from typing_extensions import override
 
 from cadwyn.exceptions import (
@@ -570,8 +571,6 @@ class EnumWithCustomNewThatChangesFieldThatIsntCompared(Enum):
 @pytest.mark.parametrize(
     ("original", "value"),
     [
-        (EnumWithCustomNewThatChangesTheValue, 10),
-        (EnumWithCustomNewThatChangesTheExponentOfTheValue, Decimal("1.00")),
         (EnumWithCustomNewThatChangesTheExponentOfAttribute, 1),
         (EnumWithCustomNewThatChangesTheTypeOfNestedValue, 1),
         (EnumWithCustomNewThatChangesFieldThatIsntCompared, 1),
@@ -948,3 +947,44 @@ def test__enum_didnt_have__custom_new_with_init_that_sets_equal_new_value_object
     old_enum: Any = models["2000-01-01"][original]
 
     assert [(m.name, m.attribute) for m in old_enum] == [("a", make_attribute())]
+
+
+@pytest.mark.parametrize(
+    ("original", "expected_value", "expected_json"),
+    [
+        (EnumWithCustomNewThatChangesTheExponentOfTheValue, Decimal("1.00"), b'"1.00"'),
+        (EnumWithCustomNewThatChangesTheValue, 10, b"10"),
+    ],
+)
+def test__enum_didnt_have__custom_new_whose_members_have_only_their_values__should_keep_the_exact_values(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: Any,
+    expected_value: Any,
+    expected_json: bytes,
+):
+    models = create_runtime_schemas(version_change(enum(original).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][original]
+
+    assert [(m.name, repr(m.value)) for m in old_enum] == [("a", repr(expected_value))]
+    assert TypeAdapter(old_enum).dump_json(old_enum.a) == expected_json
+    assert TypeAdapter(old_enum).validate_python(original.a) is old_enum.a
+
+
+class TupleEnumWithCustomNew(tuple, Enum):  # noqa: SLOT001
+    def __new__(cls, *coordinates: int) -> Self:
+        obj = tuple.__new__(cls, coordinates)
+        obj._value_ = coordinates
+        return obj
+
+    a = (1, 2)
+    b = (3, 4)
+
+
+def test__enum_didnt_have__tuple_enum_with_custom_new__should_keep_the_exact_values(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(TupleEnumWithCustomNew).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][TupleEnumWithCustomNew]
+
+    original = TupleEnumWithCustomNew.a
+    assert [(m.name, m.value, tuple(m)) for m in old_enum] == [("a", original.value, tuple(original))]

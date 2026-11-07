@@ -4579,6 +4579,10 @@ class _EnumWrapper(Generic[_T_ENUM]):
     def _create_enum(self, members: dict[str, Any]) -> type[_T_ENUM]:
         enum_dict = Enum.__prepare__(self.name, self.cls.__bases__)
         namespace = self._get_initialization_namespace_for_enum(self.cls) | self._get_member_definitions(members)
+        has_custom_new = _has_custom_new(self.cls)
+        if has_custom_new:
+            namespace["__new__"] = _make_new_that_keeps_members_with_only_their_values(self.cls)
+            namespace["__init__"] = _make_init_that_skips_members_with_only_their_values(self.cls)
         for attr_name, attr in namespace.items():
             enum_dict[attr_name] = attr
         enum_dict["__doc__"] = self.cls.__doc__
@@ -4586,15 +4590,37 @@ class _EnumWrapper(Generic[_T_ENUM]):
         # A Flag's boundary is a class keyword, not an attribute of its body
         if issubclass(self.cls, Flag) and isinstance(boundary := getattr(self.cls, "_boundary_", None), FlagBoundary):
             class_kwargs["boundary"] = boundary
-        return cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict, **class_kwargs))
+        enum_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict, **class_kwargs))
+        if has_custom_new:
+            self._restore_new_and_init(enum_copy)
+        return enum_copy
+
+    def _restore_new_and_init(self, enum_copy: type[_T_ENUM]) -> None:
+        """Give the copy the __new__ and __init__ of the enum, e.g. for the flags that `_missing_` creates later"""
+        new_member = self.cls._new_member_  # ty: ignore[unresolved-attribute]
+        enum_copy._new_member_ = new_member  # ty: ignore[unresolved-attribute]
+        if "__new_member__" in self.cls.__dict__:
+            enum_copy.__new_member__ = new_member  # ty: ignore[unresolved-attribute]
+        else:
+            del enum_copy.__new_member__  # ty: ignore[unresolved-attribute]
+        if "__init__" in self.cls.__dict__:
+            enum_copy.__init__ = self.cls.__dict__["__init__"]
+        else:
+            del enum_copy.__init__
 
     def _get_member_definitions(self, members: dict[str, Any]) -> dict[str, Any]:
         original_members = self.cls.__members__
+        has_custom_new = _has_custom_new(self.cls)
         definitions: dict[str, Any] = {}
         for name, value in members.items():
             if name in original_members and value is original_members[name].value:
-                # A member of the original stays a member even if its value is a function or a class (`@member`)
-                definitions[name] = enum.member(value.value if isinstance(value, Enum) else value)
+                if has_custom_new and _has_only_its_value(original_members[name]):
+                    # We know everything about such a member, so we take its exact value instead of calling __new__
+                    # with it, which can need other args (e.g. a precision that changes the exponent of a decimal)
+                    definitions[name] = enum.member(_ValueOfMemberWithOnlyItsValue(value))
+                else:
+                    # A member of the original stays a member even if its value is a function or a class (`@member`)
+                    definitions[name] = enum.member(value.value if isinstance(value, Enum) else value)
             else:
                 # The value that `had()` got, which the copy defines like the class body of the enum would
                 definitions[name] = value.value if isinstance(value, Enum) else value
@@ -4676,6 +4702,62 @@ def _has_custom_new(enum_cls: type[Enum]) -> bool:
     new_member = enum_cls._new_member_  # ty: ignore[unresolved-attribute]
     member_type_new = enum_cls._member_type_.__new__  # ty: ignore[unresolved-attribute]
     return new_member is not member_type_new and not any(new_member is new for new in _STDLIB_ENUM_NEWS)
+
+
+@final
+class _ValueOfMemberWithOnlyItsValue:
+    """The value of a member of the original enum that has no state other than its value.
+
+    The `__new__` and `__init__` of the copy create such a member from the value without calling the enum's own ones.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+
+def _get_value_of_member_with_only_its_value(args: tuple[Any, ...]) -> Union[_ValueOfMemberWithOnlyItsValue, None]:
+    # The enum machinery passes the definition of a member as the args, and wraps them in a tuple for tuple enums
+    if len(args) == 1 and type(args[0]) is tuple:
+        args = args[0]
+    if len(args) == 1 and isinstance(args[0], _ValueOfMemberWithOnlyItsValue):
+        return args[0]
+    return None
+
+
+def _make_new_that_keeps_members_with_only_their_values(enum_cls: type[Enum]) -> Callable[..., Any]:
+    new_member = enum_cls._new_member_  # ty: ignore[unresolved-attribute]
+    member_type = enum_cls._member_type_  # ty: ignore[unresolved-attribute]
+
+    def __new__(cls: type[Enum], *args: Any) -> Any:  # noqa: N807
+        value = _get_value_of_member_with_only_its_value(args)
+        if value is None:
+            return new_member(cls, *args)
+        member = object.__new__(cls) if member_type is object else member_type.__new__(cls, value.value)
+        member._value_ = value.value
+        return member
+
+    return __new__
+
+
+def _make_init_that_skips_members_with_only_their_values(enum_cls: type[Enum]) -> Callable[..., None]:
+    init = enum_cls.__init__
+
+    def __init__(self: Enum, *args: Any, **kwargs: Any) -> None:  # noqa: N807
+        # `object.__init__` does nothing, but rejects args when it's called directly
+        if init is not object.__init__ and _get_value_of_member_with_only_its_value(args) is None:
+            init(self, *args, **kwargs)
+
+    return __init__
+
+
+def _has_only_its_value(member: Enum) -> bool:
+    """Whether the member has no attributes or set slots, and its mixin data (e.g. its `str`) is its value"""
+    if any(value is not _UNSET_SLOT for value in _get_member_state(member).values()):
+        return False
+    member_type = type(member)._member_type_  # ty: ignore[unresolved-attribute]
+    return member_type is object or member_type.__eq__(member, member._value_) is True
 
 
 def _is_same_member(rebuilt_member: Enum, original_member: Enum) -> bool:
