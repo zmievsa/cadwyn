@@ -836,6 +836,7 @@ class VersionBundle:
         hidden_background_tasks_param_name: Union[str, None],
         response_param_name: str,
         dropped_background_tasks_warning: "_DroppedBackgroundTasksWarning",
+        use_head_response_model: bool,
     ) -> "Callable[[Endpoint[_P, _R]], Callable[..., Coroutine[Any, Any, _R]]]":
         request_target = _get_request_body_target(head_body_field, head_route)
         response_target = _get_schema_migration_target(head_route.response_model)
@@ -892,6 +893,7 @@ class VersionBundle:
                         kwargs,
                         response_param,
                         response_target=response_target,
+                        use_head_response_model=use_head_response_model,
                     )
                 if response is Sentinel:  # pragma: no cover
                     raise CadwynError(
@@ -936,6 +938,7 @@ class VersionBundle:
         fastapi_response_dependency: FastapiResponse,
         *,
         response_target: "_SchemaMigrationTarget",
+        use_head_response_model: bool,
     ) -> Any:
         raised_exception = None
         if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
@@ -992,6 +995,8 @@ class VersionBundle:
             else:
                 status_code = 200
             fastapi_response_dependency.status_code = status_code
+            if use_head_response_model:
+                return response_or_response_body
             response_info = ResponseInfo(
                 fastapi_response_dependency,
                 _prepare_response_content(

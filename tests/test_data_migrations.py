@@ -6142,7 +6142,11 @@ def test__response_migration__with_validation_aliases_in_nested_models__client_s
     async def endpoint():
         return get_response()
 
-    clients = create_versioned_clients(version_change())
+    @convert_response_to_previous_version_for(test_path, ["GET"])
+    def migrator(response: ResponseInfo):
+        pass
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
 
     for version_client in clients.values():
         assert version_client.get(test_path).json() == expected
@@ -6222,7 +6226,7 @@ def _subclass_instance(cls: type[SchemaWithRequiredValidationAlias]) -> SchemaWi
     return cls.model_validate({"v": 1})
 
 
-@pytest.mark.parametrize(
+_response_alias_cases = pytest.mark.parametrize(
     ("response_model", "get_response", "expected"),
     [
         # The response passes validation with the default, so we keep it as it is
@@ -6316,6 +6320,9 @@ def _subclass_instance(cls: type[SchemaWithRequiredValidationAlias]) -> SchemaWi
         ),
     ],
 )
+
+
+@_response_alias_cases
 def test__response_migration__with_validation_aliases_in_dicts_other_models_or_unsafe_response_models__should_stay(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
@@ -6328,15 +6335,316 @@ def test__response_migration__with_validation_aliases_in_dicts_other_models_or_u
     async def endpoint():
         return get_response()
 
-    clients = create_versioned_clients(version_change())
+    @convert_response_to_previous_version_for(test_path, ["GET"])
+    def migrator(response: ResponseInfo):
+        pass
 
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    if expected is FAILS_AS_BEFORE:
+        with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+            clients["2000-01-01"].get(test_path)
+        assert {error["type"] for error in exc_info.value.errors()} == {"missing"}
+    else:
+        assert clients["2000-01-01"].get(test_path).json() == expected
+
+
+@_response_alias_cases
+def test__response_validation__without_migrations_and_with_validation_aliases__should_match_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    response_model: Any,
+    get_response: Callable[[], Any],
+    expected: Any,
+):
+    @router.get("/test", response_model=response_model)
+    def endpoint():
+        return get_response()
+
+    def outcome(client: TestClient) -> Any:
+        try:
+            return client.get("/test").json()
+        except fastapi.exceptions.ResponseValidationError as error:
+            return [(item["type"], item["loc"]) for item in error.errors()]
+        except UserWarning as error:
+            return str(error)
+
+    plain = FastAPI()
+    plain.include_router(router)
+    expected_outcome = outcome(TestClient(plain))
+    clients = create_versioned_clients(version_change())
     for version_client in clients.values():
-        if expected is FAILS_AS_BEFORE:
-            with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
-                version_client.get(test_path)
-            assert {error["type"] for error in exc_info.value.errors()} == {"missing"}
-        else:
-            assert version_client.get(test_path).json() == expected
+        assert outcome(version_client) == expected_outcome
+
+
+@pytest.mark.parametrize("response_shape", ["model", "list", "dict", "nested", "union", "alias"])
+@pytest.mark.parametrize("single_version", [False, True])
+def test__response_validation__with_validated_model__should_match_fastapi(
+    router: VersionedAPIRouter,
+    response_shape: Literal["model", "list", "dict", "nested", "union", "alias"],
+    single_version: bool,
+):
+    calls: list[str] = []
+
+    class Payload(BaseModel):
+        value: int
+
+        @field_validator("value")
+        @classmethod
+        def increment(cls, value: int) -> int:
+            calls.append("field_validator")
+            return value + 1
+
+        @override
+        def model_post_init(self, context: Any) -> None:
+            calls.append("model_post_init")
+            self.value += 1
+
+    class Envelope(BaseModel):
+        payload: Payload
+
+    PayloadAlias = TypeAliasType("PayloadAlias", list[Payload])  # noqa: N806
+    response_models = {
+        "model": Payload,
+        "list": list[Payload],
+        "dict": dict[str, Payload],
+        "nested": Envelope,
+        "union": Union[Payload, None],
+        "alias": PayloadAlias,
+    }
+
+    @router.get("/test", response_model=response_models[response_shape])
+    def endpoint():
+        payload = Payload(value=1)
+        return {
+            "model": payload,
+            "list": [payload],
+            "dict": {"payload": payload},
+            "nested": Envelope(payload=payload),
+            "union": payload,
+            "alias": [payload],
+        }[response_shape]
+
+    @router.get("/other", response_model=int)
+    def other_endpoint():
+        return 1
+
+    plain = FastAPI()
+    plain.include_router(router)
+    expected = TestClient(plain).get("/test")
+    expected_calls = calls.copy()
+    assert TestClient(plain).get("/other").json() == 1
+    assert expected.status_code == 200
+    assert expected_calls == ["field_validator", "model_post_init"]
+
+    versions = [Version("2001-01-01")]
+    if not single_version:
+        versions[0] = Version("2001-01-01", version_change(cadwyn_endpoint("/other", ["GET"]).had(response_model=str)))
+        versions.append(Version("2000-01-01"))
+    app = Cadwyn(versions=VersionBundle(*versions))
+    app.generate_and_include_versioned_routers(router)
+    for version in versions:
+        calls.clear()
+        response = TestClient(app).get("/test", headers={"x-api-version": version.value})
+        assert response.status_code == 200
+        assert response.json() == expected.json()
+        assert calls == expected_calls
+
+
+def test__response_validation__with_custom_route_class__should_preserve_the_custom_handler(
+    create_versioned_clients: CreateVersionedClients,
+):
+    class CustomRoute(APIRoute):
+        @override
+        def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+            handler = super().get_route_handler()
+
+            async def custom_handler(request: Request) -> Response:
+                assert request.scope["route"] is self
+                response = await handler(request)
+                response.headers["x-custom-handler"] = "called"
+                return response
+
+            return custom_handler
+
+    class Payload(BaseModel):
+        value: int
+
+        @field_validator("value")
+        @classmethod
+        def increment(cls, value: int) -> int:
+            return value + 1
+
+    router = VersionedAPIRouter(route_class=CustomRoute)
+
+    @router.get("/test", response_model=Payload)
+    def endpoint():
+        return Payload(value=1)
+
+    parent = VersionedAPIRouter()
+    parent.include_router(router, prefix="/prefix")
+    clients = create_versioned_clients(version_change(), router=parent)
+    for version_client in clients.values():
+        response = version_client.get("/prefix/test")
+        assert response.json() == {"value": 2}
+        assert response.headers["x-custom-handler"] == "called"
+
+
+def test__response_validation__with_generated_router_in_fastapi__should_preserve_include_settings(
+    router: VersionedAPIRouter,
+):
+    class Payload(BaseModel):
+        value: int
+
+        @field_validator("value")
+        @classmethod
+        def increment(cls, value: int) -> int:
+            return value + 1
+
+    @router.get("/test", response_model=Payload, status_code=201)
+    def endpoint():
+        return Payload(value=1)
+
+    api_version_var: ContextVar[Optional[str]] = ContextVar("version", default="2001-01-01")
+    generated = generate_versioned_routers(
+        router, VersionBundle(Version("2001-01-01"), api_version_var=api_version_var)
+    )
+    app = FastAPI()
+    app.include_router(generated.endpoints["2001-01-01"], prefix="/prefix")
+    response = TestClient(app).get("/prefix/test")
+    assert response.status_code == 201
+    assert response.json() == {"value": 2}
+    assert "/prefix/test" in TestClient(app).get("/openapi.json").json()["paths"]
+
+
+def test__response_validation__without_migrations__should_keep_the_versioned_openapi(
+    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter
+):
+    class Payload(BaseModel):
+        value: int = Field(alias="x", validation_alias="v")
+        children: list["Payload"] = []
+
+    @router.get("/test", response_model=Payload)
+    def endpoint():
+        return Payload(v=1)
+
+    @convert_response_to_previous_version_for("/test", ["GET"])
+    def migrator(response: ResponseInfo):
+        pass
+
+    unmigrated_app = create_versioned_app(version_change())
+    migrated_app = create_versioned_app(version_change(migrator=migrator))
+    # The migrated route still uses the generated response field at runtime and in OpenAPI.
+    assert (
+        TestClient(unmigrated_app).get("/openapi.json?version=2000-01-01").json()
+        == TestClient(migrated_app).get("/openapi.json?version=2000-01-01").json()
+    )
+    for app in (unmigrated_app, migrated_app):
+        assert TestClient(app).get("/test", headers={"x-api-version": "2000-01-01"}).json() == {"x": 1, "children": []}
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test__response_validation__with_changed_schema_and_no_migration__should_validate_against_the_older_model(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter, nested: bool
+):
+    class Payload(BaseModel):
+        value: int
+
+    class Envelope(BaseModel):
+        payload: Payload
+
+    @router.get("/test", response_model=Envelope if nested else Payload)
+    def endpoint():
+        payload = Payload(value=3)
+        return Envelope(payload=payload) if nested else payload
+
+    clients = create_versioned_clients(version_change(schema(Payload).field("value").had(le=2)))
+    expected_body = {"payload": {"value": 3}} if nested else {"value": 3}
+    assert clients["2001-01-01"].get("/test").json() == expected_body
+    with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+        clients["2000-01-01"].get("/test")
+    expected_loc = ("response", "payload", "value") if nested else ("response", "value")
+    assert [(item["type"], item["loc"]) for item in exc_info.value.errors()] == [("less_than_equal", expected_loc)]
+
+
+@pytest.mark.parametrize("migration_kind", ["schema", "path"])
+@pytest.mark.parametrize("value", [4, 11])
+def test__response_validation__with_migration_to_older_version__should_validate_the_migrated_body(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter, migration_kind: str, value: int
+):
+    calls: list[str] = []
+
+    class Payload(BaseModel):
+        value: int = Field(alias="x", validation_alias="v")
+
+        @field_validator("value")
+        @classmethod
+        def increment(cls, value: int) -> int:
+            calls.append("field_validator")
+            return value + 1
+
+        @override
+        def model_post_init(self, context: Any) -> None:
+            calls.append("model_post_init")
+
+    @router.get("/test", response_model=Payload)
+    def endpoint():
+        return Payload(v=1)
+
+    def migrate(response: ResponseInfo):
+        assert response.body == {"x": 2}
+        response.body["x"] = value
+
+    converters = {
+        "schema": convert_response_to_previous_version_for(Payload)(migrate),
+        "path": convert_response_to_previous_version_for("/test", ["GET"])(migrate),
+    }
+    clients = create_versioned_clients(
+        version_change(schema(Payload).field("value").had(le=10), migrate=converters[migration_kind])
+    )
+    assert clients["2001-01-01"].get("/test").json() == {"x": 2}
+    assert calls == ["field_validator", "model_post_init"]
+    calls.clear()
+    if value > 10:
+        with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+            clients["2000-01-01"].get("/test")
+        assert [(item["type"], item["loc"]) for item in exc_info.value.errors()] == [
+            ("less_than_equal", ("response", "v"))
+        ]
+        assert calls == ["field_validator", "model_post_init"]
+    else:
+        assert clients["2000-01-01"].get("/test").json() == {"x": 5}
+        assert calls == ["field_validator", "model_post_init"] * 2
+
+
+@pytest.mark.parametrize("revalidate_instances", ["always", "subclass-instances", "never"])
+def test__response_validation__with_revalidation_config__should_match_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    revalidate_instances: Literal["always", "subclass-instances", "never"],
+):
+    class Payload(BaseModel):
+        model_config = ConfigDict(revalidate_instances=revalidate_instances)
+        value: int
+
+        @field_validator("value")
+        @classmethod
+        def increment(cls, value: int) -> int:
+            return value + 1
+
+    class Subclass(Payload):
+        secret: str = "hidden"
+
+    @router.get("/test", response_model=Payload)
+    def endpoint():
+        return Subclass(value=1)
+
+    plain = FastAPI()
+    plain.include_router(router)
+    expected = TestClient(plain).get("/test").json()
+    clients = create_versioned_clients(version_change())
+    for version_client in clients.values():
+        assert version_client.get("/test").json() == expected
 
 
 @pytest.mark.parametrize("fails_on_third_validation", [False, True], ids=["counts", "rejects_third_validation"])
@@ -6375,12 +6683,16 @@ def test__response_migration__with_validation_aliases__should_validate_the_respo
     async def endpoint():
         return SchemaWithStatefulValidator.model_validate({"v": 7, "data": {"count": 0}})
 
-    clients = create_versioned_clients(version_change())
+    @convert_response_to_previous_version_for(test_path, ["GET"])
+    def migrator(response: ResponseInfo):
+        pass
 
-    for version_client in clients.values():
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    for version_client, value in [(clients["2000-01-01"], expected_value), (clients["2001-01-01"], 7)]:
         validations.clear()
         # The endpoint validates the response once and FastAPI validates it once, like FastAPI without Cadwyn
-        assert version_client.get(test_path).json() == {"x": expected_value, "data": {"count": 2}}
+        assert version_client.get(test_path).json() == {"x": value, "data": {"count": 2}}
         assert len(validations) == 2
 
 
@@ -6578,7 +6890,11 @@ def test__response_migration__with_validation_aliases_and_response_model_exclude
             SchemaWithOptionalInnerSchemaWithValidationAlias(),
         ]
 
-    clients = create_versioned_clients(version_change())
+    @convert_response_to_previous_version_for(test_path, ["GET"])
+    def migrator(response: ResponseInfo):
+        pass
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
 
     for version_client in clients.values():
         assert version_client.get(test_path).json() == [{"inner": {"x": 1}}, {}]
@@ -10959,12 +11275,15 @@ def test__response_migration__with_self_referencing_response_model_that_passes_v
     async def endpoint():
         return TreeNodeWithValidationAlias.model_validate({"vv": 1, "kids": {"a": [{"vv": 2}]}})
 
-    clients = create_versioned_clients(version_change())
+    @convert_response_to_previous_version_for(test_path, ["GET"])
+    def migrator(response: ResponseInfo):
+        pass
 
-    # The values are lost, but the response passes validation. We only rescue responses that fail validation,
-    # so the responses that work today never change.
-    for version_client in clients.values():
-        assert version_client.get(test_path).json() == {"kids": {"a": [{}]}}
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # Migrated dumps retain rescue-only behavior; unmigrated instances keep their values.
+    assert clients["2000-01-01"].get(test_path).json() == {"kids": {"a": [{}]}}
+    assert clients["2001-01-01"].get(test_path).json() == {"x": 1, "kids": {"a": [{"x": 2}]}}
 
 
 class TreeWithValidationAlias(BaseModel):
@@ -10987,7 +11306,11 @@ def test__response_migration__with_self_referencing_response_model_that_fails_va
             }
         )
 
-    clients = create_versioned_clients(version_change())
+    @convert_response_to_previous_version_for(test_path, ["GET"])
+    def migrator(response: ResponseInfo):
+        pass
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
 
     # The required tree is missing without its validation alias, so we rescue the response and restore all of it
     for version_client in clients.values():
@@ -13450,12 +13773,17 @@ def test__response_migration__with_required_field_under_optional_field_with_vali
     async def endpoint():
         return response_model.model_validate(response)
 
-    clients = create_versioned_clients(version_change())
+    @convert_response_to_previous_version_for(test_path, ["GET"])
+    def migrator(response: ResponseInfo):
+        pass
 
-    # The response model doesn't read the dumped key of the optional field, so it never validates the required field
-    # under it, and the response passes as it is. We leave it as it is, so the optional field gets its default.
-    for version_client in clients.values():
-        assert version_client.get(test_path).json() == expected
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # A migrated dump still leaves optional aliases alone, even when they lose the value.
+    assert clients["2000-01-01"].get(test_path).json() == expected
+    plain = FastAPI()
+    plain.include_router(router)
+    assert clients["2001-01-01"].get(test_path).json() == TestClient(plain).get(test_path).json()
 
 
 def test__response_migration__with_required_field_under_shadowed_validation_key__should_stay_as_before(

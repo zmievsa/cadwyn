@@ -2931,6 +2931,17 @@ class SchemaGenerator:
             return False
         collector = _ReferencedModelCollector(expands_type_aliases=True)
         collector.annotation_transformer.record_dependency(dependency)
+        return self._collected_models_differ_from_head(collector)
+
+    def response_model_differs_from_head(self, annotation: Any) -> bool:
+        """Whether the response annotation reaches a model or enum changed in this version."""
+        if not self._instructions_that_differ_from_head:
+            return False
+        collector = _ReferencedModelCollector(expands_type_aliases=True)
+        collector.annotation_transformer.change_version_of_annotation(annotation)
+        return not collector.is_complete or self._collected_models_differ_from_head(collector)
+
+    def _collected_models_differ_from_head(self, collector: _ReferencedModelCollector) -> bool:
         models_to_visit = [*collector.models, *collector.arg_models]
         visited_models: set[type[Union[BaseModel, Enum]]] = set()
         while models_to_visit:

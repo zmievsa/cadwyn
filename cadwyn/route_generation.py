@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from starlette.routing import BaseRoute
 from typing_extensions import TypeVar
 
+from cadwyn._internal.response import _use_head_response_model
 from cadwyn._utils import DATACLASS_SLOTS, Sentinel, _callable_name, is_same_value, lenient_issubclass
 from cadwyn.exceptions import (
     CadwynError,
@@ -63,6 +64,7 @@ _WR = TypeVar("_WR", bound=APIRouter, default=APIRouter)
 _RouteT = TypeVar("_RouteT", bound=BaseRoute)
 # This is a hack we do because we can't guarantee how the user will use the router.
 _DELETED_ROUTE_TAG = "_CADWYN_DELETED_ROUTE"
+_RESPONSE_MODEL_CHANGED: Final = "_cadwyn_response_model_changed"
 _FLAT_DEPENDANT_ATTR: Final = "_flat_dependant"
 _RoutePath = str
 _RouteMethod = str
@@ -269,7 +271,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 f'"{list(_route_methods(head_route))} {head_route.path}"'
             )
 
-            for older_router in list(routers.values()):
+            for version_index, (version_value, older_router) in enumerate(routers.items()):
                 older_route = older_router.routes[route_index]
 
                 # We know they are APIRoutes because of the check at the very beginning of the top loop.
@@ -286,6 +288,27 @@ class _EndpointTransformer(Generic[_R, _WR]):
                         template_older_body_model = annotation
                 else:
                     template_older_body_model = None
+                response_target = _get_schema_migration_target(head_route.response_model)
+                newer_changes = [
+                    change for version in self.versions.versions[:version_index] for change in version.changes
+                ]
+                use_head_response_model = (
+                    head_route.response_field is not None
+                    and not getattr(older_route, _RESPONSE_MODEL_CHANGED, False)
+                    and not self.schema_generators[version_value].response_model_differs_from_head(
+                        head_route.response_model
+                    )
+                    and not any(
+                        id(head_route) in change._route_to_response_migration_mapping
+                        or any(
+                            key in change.alter_response_by_schema_instructions
+                            for key in (*response_target.keys, *response_target.union_members)
+                        )
+                        for change in newer_changes
+                    )
+                )
+                if use_head_response_model and head_route.response_field is not None:
+                    _use_head_response_model(older_route, head_route.response_field)
                 _add_data_migrations_to_route(
                     older_route,
                     # NOTE: The fact that we use latest here assumes that the route can never change its response schema
@@ -298,6 +321,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                         self.run_background_tasks_of_latest_version_dependencies
                     ),
                     dropped_background_tasks_warning=dropped_background_tasks_warning,
+                    use_head_response_model=use_head_response_model,
                 )
         for router in routers.values():
             router.routes = [
@@ -579,6 +603,7 @@ def _add_data_migrations_to_route(
     *,
     run_background_tasks_of_latest_version_dependencies: bool,
     dropped_background_tasks_warning: _DroppedBackgroundTasksWarning,
+    use_head_response_model: bool,
 ):
     if not (route.dependant.request_param_name and route.dependant.response_param_name):  # pragma: no cover
         raise CadwynError(
@@ -605,6 +630,7 @@ def _add_data_migrations_to_route(
         hidden_background_tasks_param_name=hidden_background_tasks_param_name,
         response_param_name=route.dependant.response_param_name,
         dropped_background_tasks_warning=dropped_background_tasks_warning,
+        use_head_response_model=use_head_response_model,
     )(route.endpoint)
     route.dependant.call = route.endpoint
 
@@ -642,6 +668,8 @@ def _apply_endpoint_had_instruction(
                         "not a breaking change. If you really need to change the path params, you should create a "
                         "new route with the new path params and delete the old one.",
                     )
+            if attr_name == "response_model":
+                setattr(original_route, _RESPONSE_MODEL_CHANGED, True)
             setattr(original_route, attr_name, attr)
 
 
