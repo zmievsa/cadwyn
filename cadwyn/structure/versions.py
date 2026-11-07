@@ -1838,6 +1838,9 @@ def _rescue_model_data(model: type[BaseModel], data: Any) -> Any:
 
     It's what `_rescue_body` does for a body field, for data that the model itself validates.
     """
+    # Like `_rescue_body`, we go by the failing keys of `_get_failing_keys`, which come from the field infos even for
+    # fields that the core schemas of their types give defaults to: such a field wouldn't fail without its value,
+    # but it would silently get its default instead of the value in the body
     if not _annotation_reaches_models_with(model, _get_failing_renames, all_fields=False):
         return data
     return _restore_surely_failing_data(("model", model), data)
@@ -2538,8 +2541,9 @@ def _rescue_response(response_field: ModelField, head_response_model: object, co
 
     That's the case when a required field, or a model that forbids extra keys, gets a dumped key instead of
     a validation key. We restore its validation aliases and let FastAPI validate the restored response, so its
-    validators run once, like in FastAPI without Cadwyn. The response fails as it is anyway, so if the restored
-    response fails too, FastAPI raises its errors instead. Otherwise, FastAPI validates the response as it is,
+    validators run once, like in FastAPI without Cadwyn. The response fails as it is anyway, or silently gets
+    the defaults that the core schemas of the types of some fields give them (see `_get_failing_keys`), so if
+    the restored response fails, FastAPI raises its errors. Otherwise, FastAPI validates the response as it is,
     as it always did, and responses that pass stay exactly as they are, even if a field gets its default instead
     of its value.
     """

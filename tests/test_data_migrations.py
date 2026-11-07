@@ -109,6 +109,7 @@ from tests._resources.utils import (
     FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA,
 )
 from tests.conftest import (
+    CadwynTestClient,
     CreateVersionedApp,
     CreateVersionedClients,
     client,
@@ -3983,6 +3984,57 @@ def test__response_migration__with_value_that_the_version_rejects__should_fail_w
         clients["2000-01-01"].get(test_path)
     assert [error["type"] for error in exc_info.value.errors()] == ["greater_than_equal"]
     assert clients["2001-01-01"].get(test_path).json() == {"x": 5}
+
+
+# The field info says that the field is required, but the core schema of its type gives it a default when it's missing
+IntWithCoreSchemaDefault = Annotated[
+    int, GetPydanticSchema(lambda source, handler: core_schema.with_default_schema(handler(source), default=0))
+]
+
+
+class SchemaWithCoreSchemaDefaultAndValidationAlias(BaseModel):
+    value: IntWithCoreSchemaDefault = Field(alias="x", validation_alias="v", ge=0)
+
+
+def _create_clients_with_core_schema_default(
+    create_versioned_clients: CreateVersionedClients, test_path: str, router: VersionedAPIRouter, migrated_value: int
+) -> dict[str, CadwynTestClient]:
+    @router.get(test_path, response_model=SchemaWithCoreSchemaDefaultAndValidationAlias)
+    async def endpoint():
+        return SchemaWithCoreSchemaDefaultAndValidationAlias.model_validate({"v": 7})
+
+    @convert_response_to_previous_version_for(SchemaWithCoreSchemaDefaultAndValidationAlias)
+    def migrator(response: ResponseInfo):
+        response.body["x"] = migrated_value
+
+    return create_versioned_clients(version_change(migrator=migrator))
+
+
+def test__response_migration__with_field_that_gets_its_default_from_core_schema__client_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    clients = _create_clients_with_core_schema_default(create_versioned_clients, test_path, router, migrated_value=3)
+
+    assert clients["2000-01-01"].get(test_path).json() == {"x": 3}
+    assert clients["2001-01-01"].get(test_path).json() == {"x": 7}
+
+
+def test__response_migration__with_field_that_gets_its_default_from_core_schema__should_fail_with_the_values_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    clients = _create_clients_with_core_schema_default(create_versioned_clients, test_path, router, migrated_value=-1)
+
+    # The model rejects the value, so the client doesn't silently get the default of the field instead
+    with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+        clients["2000-01-01"].get(test_path)
+    assert [(error["type"], error["loc"], error["input"]) for error in exc_info.value.errors()] == [
+        ("greater_than_equal", ("response", "v"), -1)
+    ]
+    assert clients["2001-01-01"].get(test_path).json() == {"x": 7}
 
 
 class SchemaWithoutAliases(BaseModel):
@@ -9814,12 +9866,6 @@ def test__request_body_migration__with_required_value_that_the_head_rejects__sho
     ]
 
 
-# The field info says that the field is required, but the core schema of its type gives it a default when it's missing
-IntWithCoreSchemaDefault = Annotated[
-    int, GetPydanticSchema(lambda source, handler: core_schema.with_default_schema(handler(source), default=0))
-]
-
-
 class SchemaWithCoreSchemaDefaultAndStricterHead(BaseModel):
     value: IntWithCoreSchemaDefault = Field(alias="x", validation_alias="v", ge=10)
 
@@ -10395,6 +10441,30 @@ def test__manual_response_migrations__with_body_that_fails_for_another_reason__s
             version_bundle, SchemaWithDefaultThatTheValidatorRejects, latest_body={"x": 5}, version="2000-01-01"
         )
     assert [error["type"] for error in exc_info.value.errors()] == ["value_error"]
+
+
+def test__manual_response_migrations__with_field_that_gets_its_default_from_core_schema__should_get_the_value():
+    version_bundle = VersionBundle(Version("2001-01-01"), Version("2000-01-01"))
+
+    migrated = migrate_response_body(
+        version_bundle, SchemaWithCoreSchemaDefaultAndValidationAlias, latest_body={"x": 7}, version="2000-01-01"
+    )
+
+    # The body gets the value under its dumped key instead of the default of the field
+    assert migrated.model_dump(by_alias=True) == {"x": 7}
+
+
+def test__manual_response_migrations__with_field_that_gets_its_default_from_core_schema__should_raise_the_error():
+    version_bundle = VersionBundle(Version("2001-01-01"), Version("2000-01-01"))
+
+    # The model rejects the value, so the body doesn't silently get the default of the field instead
+    with pytest.raises(ValidationError) as exc_info:
+        migrate_response_body(
+            version_bundle, SchemaWithCoreSchemaDefaultAndValidationAlias, latest_body={"x": -1}, version="2000-01-01"
+        )
+    assert [(error["type"], error["loc"], error["input"]) for error in exc_info.value.errors()] == [
+        ("greater_than_equal", ("v",), -1)
+    ]
 
 
 def test__manual_response_migrations__with_rescue_that_raises__should_raise_the_error_of_the_validator():
