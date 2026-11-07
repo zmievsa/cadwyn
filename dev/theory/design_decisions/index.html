@@ -2093,8 +2093,7 @@
 <p><strong>How to check a change</strong></p>
 <ul>
 <li>Run the same requests and OpenAPI of every version against the last release in its own checkout or virtual environment, and compare the results.</li>
-<li>Run the tests on the minimum supported and the latest Pydantic, and on Python 3.10 and 3.14. Check CI on every operating system before merging: recursion and stack limits differ on Windows and macOS.</li>
-<li><code>tox -e docs</code> writes <code>site/</code> into the repository root, which shadows the standard <code>site</code> module on Python 3.10 when the root is on <code>PYTHONPATH</code>. Delete it before comparing runs.</li>
+<li>Run the tests on the minimum supported and the latest Pydantic, and on Python 3.11 and 3.14. Check CI on every operating system before merging: recursion and stack limits differ on Windows and macOS.</li>
 <li>Pytest puts the root of the checkout it runs from first on <code>sys.path</code>, so run a test file from the checkout that you want to test.</li>
 <li>After merging <code>main</code> into a branch, look for top-level functions that are now defined twice. The later definition silently wins.</li>
 </ul>
