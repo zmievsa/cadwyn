@@ -20,7 +20,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-- Background tasks can now read the `UploadFile` params of a request. Before, Cadwyn closed the uploaded files when the endpoint returned, so the task failed with `ValueError: I/O operation on closed file`. FastAPI closes them after the response, as it does without Cadwyn.
+- Background tasks can now read the `UploadFile` params of a request. Before, Cadwyn closed the uploaded files when the endpoint returned, so the task failed with `ValueError: I/O operation on closed file`. Cadwyn now closes the uploads of versioned routes once, after the response and its background tasks, also when the client disconnects or the request gets cancelled.
+- Uploads that request migrations put into the form (e.g. `request.form[:] = [("upload", UploadFile(...))]`) are now closed after the request. Before, nothing closed them, so their files stayed open.
 
 ## [8.2.0]
 

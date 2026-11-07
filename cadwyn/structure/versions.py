@@ -33,6 +33,7 @@ from typing import (
     get_origin,
 )
 
+import anyio
 import fastapi.dependencies.utils
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -873,6 +874,9 @@ class VersionBundle:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
             kwargs.pop(request_param_name)
+        if route.body_field is not None and isinstance(route.body_field.field_info, params.Form):
+            # FastAPI has already parsed this form, so this returns its cached form
+            _get_uploads_to_close(request).add_fastapi_form(await request.form())
 
         api_version = self.api_version_var.get()
         if api_version is None:
@@ -911,6 +915,9 @@ class VersionBundle:
             form_model_is_omitted or await _fastapi_got_no_body(request, route, embed_body_fields=embed_body_fields)
         )
         request_info = RequestInfo(request, body)
+        if request_info._form is not None:
+            # Migrations can put new uploads into the form, and FastAPI doesn't know about them
+            _get_uploads_to_close(request).add_migrated_form(request_info._form)
         new_kwargs = await self._migrate_request(
             head_body_field,
             head_dependant,
@@ -1516,6 +1523,62 @@ async def _rewind_uploads_read_by_fastapi(
             await read.upload.seek(0)
 
 
+_UPLOADS_TO_CLOSE_SCOPE_KEY = "cadwyn.uploads_to_close"
+
+
+class _UploadsToClose:
+    """The uploads of a request that Cadwyn closes once the request is done, even if it gets cancelled.
+
+    FastAPI closes the uploads of the form that it has parsed, but it doesn't shield closing them. So when the
+    request gets cancelled, e.g. by a `BaseHTTPMiddleware` (like Cadwyn's) after the client has disconnected,
+    the uploaded files stay open. FastAPI also doesn't know about the uploads that migrations put into the form.
+    We read the forms only when we close them, so we see every upload that a migration has put there, even if a
+    later migration has failed.
+    """
+
+    __slots__ = ("_fastapi_forms", "_migrated_forms", "_runs_after_fastapi")
+
+    def __init__(self, *, runs_after_fastapi: bool) -> None:
+        super().__init__()
+        # If we close the uploads before FastAPI does, FastAPI would close the uploads of its own form again
+        self._runs_after_fastapi = runs_after_fastapi
+        self._fastapi_forms: list[FormData] = []
+        self._migrated_forms: list[list[tuple[str, Union[UploadFile, str]]]] = []
+
+    def add_fastapi_form(self, form: FormData) -> None:
+        self._fastapi_forms.append(form)
+
+    def add_migrated_form(self, form: list[tuple[str, Union[UploadFile, str]]]) -> None:
+        self._migrated_forms.append(form)
+
+    async def close(self) -> None:
+        # Background tasks and streams have finished by now, so nothing reads the uploads anymore
+        with anyio.CancelScope(shield=True):
+            handled = (
+                set()
+                if self._runs_after_fastapi
+                else {id(value) for form in self._fastapi_forms for _, value in form.multi_items()}
+            )
+            forms = [form.multi_items() for form in self._fastapi_forms] + [list(f) for f in self._migrated_forms]
+            for form in forms:
+                for _, value in form:
+                    if isinstance(value, UploadFile) and id(value) not in handled:
+                        handled.add(id(value))
+                        if not getattr(value.file, "closed", False):
+                            await value.close()
+
+
+def _get_uploads_to_close(request: FastapiRequest) -> _UploadsToClose:
+    uploads: Union[_UploadsToClose, None] = request.scope.get(_UPLOADS_TO_CLOSE_SCOPE_KEY)
+    if uploads is None:
+        # Outside of a Cadwyn app (e.g. with the routers of `generate_versioned_routers()`), we close them with the
+        # stack that FastAPI closes its forms with
+        uploads = _UploadsToClose(runs_after_fastapi=False)
+        request.scope[_UPLOADS_TO_CLOSE_SCOPE_KEY] = uploads
+        request.scope["fastapi_middleware_astack"].push_async_callback(uploads.close)
+    return uploads
+
+
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
 async def _get_body(request: FastapiRequest, body_field: Union[ModelField, None]):  # pragma: no cover # From FastAPI
     is_body_form = body_field and isinstance(body_field.field_info, params.Form)
@@ -1523,8 +1586,8 @@ async def _get_body(request: FastapiRequest, body_field: Union[ModelField, None]
         body: Any = None
         if body_field:
             if is_body_form:
-                # FastAPI has already parsed this form, so this returns its cached form. FastAPI closes it
-                # after the response, so background tasks can still read the uploaded files
+                # FastAPI has already parsed this form, so this returns its cached form. We close its files after the
+                # response (`_UploadsToClose`), so background tasks can still read them
                 body = await request.form()
             else:
                 body_bytes = await request.body()

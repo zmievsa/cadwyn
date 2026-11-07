@@ -93,5 +93,6 @@ sequenceDiagram
 6. It calls your endpoint with the HEAD arguments.
 7. It puts the result, or the `HTTPException` that the endpoint raised, in a `ResponseInfo`. `VersionBundle._migrate_response()` runs the response migrations of every version newer than the client's, from newest to oldest. It migrates error responses only if the migration sets `migrate_http_errors=True`.
 8. If the endpoint returned a body rather than a `Response`, FastAPI serializes the migrated body with the response model of the client's version.
+9. After the response and its background tasks, `Cadwyn.__call__` closes the uploads of the request that are still open: the ones of FastAPI's form and the ones that migrations put into the form. It shields this from cancellation, because `VersionPickingMiddleware` (a `BaseHTTPMiddleware`) cancels the request when the client disconnects, which interrupts FastAPI's own closing of the files.
 
 Migrations by schema run only when the schema is the route's body or response model itself. Migrations by path run for the HEAD routes that route generation linked to them. See [Data migrations](../concepts/version_changes.md#data-migrations) for how users write migrations, and [Costs of the architecture](design_decisions.md#costs-of-the-architecture) for what this design costs.

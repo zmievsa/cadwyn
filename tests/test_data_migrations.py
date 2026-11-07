@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import http.cookies
 import inspect
@@ -21,15 +22,18 @@ from types import MappingProxyType
 from typing import Annotated, Any, Literal, Optional, Self, Union, cast
 from uuid import UUID
 
+import anyio
 import fastapi
+import httpx
 import pytest
-from dirty_equals import IsPartialDict, IsStr
+from dirty_equals import IsList, IsPartialDict, IsStr
 from fastapi import (
     APIRouter,
     BackgroundTasks,
     Body,
     Cookie,
     Depends,
+    FastAPI,
     File,
     Form,
     Header,
@@ -79,7 +83,7 @@ from starlette.formparsers import MultiPartParser
 from starlette.responses import StreamingResponse
 from typing_extensions import TypeAliasType, TypedDict, override
 
-from cadwyn import VersionedAPIRouter, current_dependency_solver
+from cadwyn import VersionedAPIRouter, current_dependency_solver, generate_versioned_routers
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -112,6 +116,7 @@ from tests.conftest import (
     client,
     version_change,
 )
+from tests.conftest import versions as conftest_versions
 
 
 @pytest.fixture
@@ -5561,6 +5566,307 @@ def test__request_body_migration__with_upload_file_read_by_background_task__task
     for version_client in clients.values():
         assert version_client.post(test_path, files={"upload": b"payload"}).status_code == 200
     assert read_by_background_task == [b"payload", b"payload"]
+
+
+class _CloseCountingFile:
+    """Wraps the file of an upload to count how many times it gets closed."""
+
+    def __init__(self, file: Any) -> None:
+        self.wrapped_file = file
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self.wrapped_file.close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.wrapped_file, name)
+
+
+# Bigger than the spool size, so that the upload rolls to disk and closing it takes a thread, like in production
+_LARGE_UPLOAD = b"x" * (MultiPartParser.spool_max_size + 1)
+_UploadBehavior = Callable[[UploadFile, BackgroundTasks, list[int]], Coroutine[Any, Any, Any]]
+
+
+async def _read_the_upload(upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]) -> None:
+    reads.append(len(await upload.read()))
+
+
+async def _read_the_upload_in_background_task(
+    upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]
+) -> None:
+    background_tasks.add_task(_read_the_upload, upload, background_tasks, reads)
+
+
+async def _read_the_upload_in_failing_background_task(
+    upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]
+) -> None:
+    async def task():
+        await _read_the_upload(upload, background_tasks, reads)
+        raise RuntimeError("Background task failed")
+
+    background_tasks.add_task(task)
+
+
+async def _raise_http_exception(upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]) -> None:
+    raise HTTPException(status_code=400)
+
+
+async def _raise_error(upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]) -> None:
+    raise RuntimeError("Endpoint failed")
+
+
+async def _stream_the_upload(
+    upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]
+) -> StreamingResponse:
+    async def chunks():
+        while chunk := await upload.read(len(_LARGE_UPLOAD) // 4):
+            reads.append(len(chunk))
+            yield chunk
+
+    return StreamingResponse(chunks())
+
+
+class _ASGIRequestDriver:
+    """Sends a multipart request with an upload to the app through ASGI, like a server, and fails it if asked."""
+
+    def __init__(
+        self,
+        *,
+        fail_sending: Optional[str] = None,
+        cancel_after_first_chunk: Optional[Literal["task", "anyio_scope"]] = None,
+    ) -> None:
+        self.fail_sending = fail_sending
+        self.cancel_after_first_chunk = cancel_after_first_chunk
+
+    async def __call__(self, app: Any, headers: dict[str, str]) -> None:
+        request = httpx.Request("POST", "http://test/test", headers=headers, files={"upload": _LARGE_UPLOAD})
+        body = request.read()
+        first_chunk_is_sent = asyncio.Event()
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == self.fail_sending:
+                raise OSError("The client has disconnected")
+            if message["type"] == "http.response.body":
+                first_chunk_is_sent.set()
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.4"},
+            "http_version": "1.1",
+            "scheme": "http",
+            "method": "POST",
+            "path": "/test",
+            "raw_path": b"/test",
+            "root_path": "",
+            "query_string": b"",
+            "headers": [(key.lower(), value) for key, value in request.headers.raw],
+            "client": ("test", 1),
+            "server": ("test", 80),
+        }
+        if self.cancel_after_first_chunk == "anyio_scope":
+            with anyio.CancelScope() as cancel_scope:
+                async with anyio.create_task_group() as task_group:
+                    task_group.start_soon(app, scope, receive, send)
+                    await first_chunk_is_sent.wait()
+                    cancel_scope.cancel()
+            return
+        task = asyncio.create_task(app(scope, receive, send))
+        if self.cancel_after_first_chunk == "task":
+            await first_chunk_is_sent.wait()
+            task.cancel()
+        await task
+
+
+_UPLOAD_OUTCOMES = [
+    pytest.param(_read_the_upload, _ASGIRequestDriver(), None, [len(_LARGE_UPLOAD)], id="response"),
+    pytest.param(
+        _read_the_upload_in_background_task, _ASGIRequestDriver(), None, [len(_LARGE_UPLOAD)], id="background_task"
+    ),
+    pytest.param(
+        _read_the_upload_in_failing_background_task,
+        _ASGIRequestDriver(),
+        RuntimeError,
+        [len(_LARGE_UPLOAD)],
+        id="failing_background_task",
+    ),
+    pytest.param(_raise_http_exception, _ASGIRequestDriver(), None, [], id="http_exception"),
+    pytest.param(_raise_error, _ASGIRequestDriver(), RuntimeError, [], id="endpoint_error"),
+    pytest.param(_stream_the_upload, _ASGIRequestDriver(), None, [len(_LARGE_UPLOAD) // 4] * 4 + [1], id="stream"),
+    pytest.param(
+        _read_the_upload,
+        _ASGIRequestDriver(fail_sending="http.response.start"),
+        OSError,
+        [len(_LARGE_UPLOAD)],
+        id="disconnect_before_headers",
+    ),
+    pytest.param(
+        _read_the_upload,
+        _ASGIRequestDriver(fail_sending="http.response.body"),
+        OSError,
+        [len(_LARGE_UPLOAD)],
+        id="disconnect_before_body",
+    ),
+    pytest.param(
+        _stream_the_upload,
+        _ASGIRequestDriver(fail_sending="http.response.body"),
+        OSError,
+        [len(_LARGE_UPLOAD) // 4],
+        id="disconnect_during_stream",
+    ),
+    pytest.param(
+        _stream_the_upload,
+        _ASGIRequestDriver(cancel_after_first_chunk="task"),
+        asyncio.CancelledError,
+        IsList(len(_LARGE_UPLOAD) // 4, check_order=False, length=(1, 5)),
+        id="task_cancelled_during_stream",
+    ),
+    pytest.param(
+        _stream_the_upload,
+        _ASGIRequestDriver(cancel_after_first_chunk="anyio_scope"),
+        None,
+        IsList(len(_LARGE_UPLOAD) // 4, check_order=False, length=(1, 5)),
+        id="anyio_scope_cancelled_during_stream",
+    ),
+]
+
+
+def _add_endpoint_that_tracks_closes_of_the_upload(
+    router: VersionedAPIRouter, behavior: _UploadBehavior, files: list[_CloseCountingFile], reads: list[int]
+) -> None:
+    async def track_closes(upload: UploadFile = File()) -> None:
+        if not isinstance(upload.file, _CloseCountingFile):
+            file = _CloseCountingFile(upload.file)
+            upload.file = cast("typing.BinaryIO", file)
+            files.append(file)
+
+    @router.post("/test", dependencies=[Depends(track_closes)])
+    async def endpoint(background_tasks: BackgroundTasks, upload: UploadFile = File()):
+        return await behavior(upload, background_tasks, reads)
+
+
+async def _run_request(driver: _ASGIRequestDriver, app: Any, headers: dict[str, str], expected_error: Any) -> None:
+    if expected_error is None:
+        await driver(app, headers)
+    else:
+        with pytest.raises(expected_error):
+            await driver(app, headers)
+
+
+@pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
+@pytest.mark.parametrize(("behavior", "driver", "expected_error", "expected_reads"), _UPLOAD_OUTCOMES)
+def test__request_body_migration__with_upload_file__should_close_it_once_after_the_request(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+    version: str,
+    behavior: _UploadBehavior,
+    driver: _ASGIRequestDriver,
+    expected_error: Any,
+    expected_reads: Any,
+):
+    files: list[_CloseCountingFile] = []
+    reads: list[int] = []
+    _add_endpoint_that_tracks_closes_of_the_upload(router, behavior, files, reads)
+    app = create_versioned_app(version_change())
+
+    asyncio.run(_run_request(driver, app, {"x-api-version": version}, expected_error))
+
+    assert reads == expected_reads
+    assert [(file.closed, file.close_calls) for file in files] == [(True, 1)]
+
+
+def _replace_the_upload(files: list[_CloseCountingFile]) -> Callable[[RequestInfo], None]:
+    def migration(request: RequestInfo) -> None:
+        assert request.form is not None
+        file = _CloseCountingFile(BytesIO(_LARGE_UPLOAD))
+        files.append(file)
+        upload = UploadFile(cast("typing.BinaryIO", file), filename="new")
+        request.form[:] = [(key, upload if key == "upload" else value) for key, value in request.form]
+
+    return migration
+
+
+def _replace_the_upload_and_fail(files: list[_CloseCountingFile]) -> Callable[[RequestInfo], None]:
+    def migration(request: RequestInfo) -> None:
+        _replace_the_upload(files)(request)
+        raise RuntimeError("Migration failed")
+
+    return migration
+
+
+def _move_the_upload_under_another_key(files: list[_CloseCountingFile]) -> Callable[[RequestInfo], None]:
+    def migration(request: RequestInfo) -> None:
+        _replace_the_upload(files)(request)
+        assert request.form is not None
+        request.form[:] = [("other" if key == "upload" else key, value) for key, value in request.form]
+
+    return migration
+
+
+@pytest.mark.parametrize(
+    ("make_migration", "behavior", "driver", "expected_error", "expected_reads"),
+    [pytest.param(_replace_the_upload, *outcome.values, id=outcome.id) for outcome in _UPLOAD_OUTCOMES]
+    + [
+        pytest.param(
+            _replace_the_upload_and_fail, _read_the_upload, _ASGIRequestDriver(), RuntimeError, [], id="migration_error"
+        ),
+        pytest.param(
+            _move_the_upload_under_another_key,
+            _read_the_upload,
+            _ASGIRequestDriver(),
+            CadwynHeadRequestValidationError,
+            [],
+            id="head_validation_error",
+        ),
+    ],
+)
+def test__form_migration__with_upload_put_into_the_form__should_close_it_and_the_original_once_after_the_request(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+    make_migration: Callable[[list[_CloseCountingFile]], Callable[[RequestInfo], None]],
+    behavior: _UploadBehavior,
+    driver: _ASGIRequestDriver,
+    expected_error: Any,
+    expected_reads: Any,
+):
+    files: list[_CloseCountingFile] = []
+    reads: list[int] = []
+    _add_endpoint_that_tracks_closes_of_the_upload(router, behavior, files, reads)
+    app = create_versioned_app(
+        version_change(migrator=convert_request_to_next_version_for("/test", ["POST"])(make_migration(files)))
+    )
+
+    asyncio.run(_run_request(driver, app, {"x-api-version": "2000-01-01"}, expected_error))
+
+    assert reads == expected_reads
+    # The original upload and the one that the migration has put into the form
+    assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1)]
+
+
+def test__form_migration__with_upload_put_into_the_form_of_router_outside_cadwyn_app__should_close_it_once(
+    router: VersionedAPIRouter, api_version_var: ContextVar[Union[str, None]]
+):
+    files: list[_CloseCountingFile] = []
+    reads: list[int] = []
+    _add_endpoint_that_tracks_closes_of_the_upload(router, _read_the_upload_in_background_task, files, reads)
+    migration = convert_request_to_next_version_for("/test", ["POST"])(_replace_the_upload(files))
+    versions = VersionBundle(*conftest_versions(version_change(migrator=migration)), api_version_var=api_version_var)
+    app = FastAPI()
+    app.include_router(generate_versioned_routers(router, versions=versions).endpoints["2000-01-01"])
+
+    @app.middleware("http")
+    async def pick_version(request: Request, call_next: Callable[[Request], Any]):
+        api_version_var.set("2000-01-01")
+        return await call_next(request)
+
+    with TestClient(app) as client:
+        assert client.post("/test", files={"upload": _LARGE_UPLOAD}).status_code == 200
+
+    assert reads == [len(_LARGE_UPLOAD)]
+    assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1)]
 
 
 async def _close_upload(upload: UploadFile = File()) -> None:
