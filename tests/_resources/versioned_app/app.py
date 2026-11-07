@@ -1,16 +1,31 @@
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from typing import Union
 
-import pytest
 import uvicorn
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
-from cadwyn import Cadwyn
-from cadwyn.structure.versions import Version, VersionBundle
-from tests._resources.versioned_app.v2021_01_01 import router as v2021_01_01_router
-from tests._resources.versioned_app.v2022_01_02 import router as v2022_01_02_router
+from cadwyn import Cadwyn, ResponseInfo, VersionChange, convert_response_to_previous_version_for, schema
+from cadwyn.structure.versions import Version, VersionBundle, VersionType
 from tests._resources.versioned_app.webhooks import router as unversioned_router
+
+versioned_router = APIRouter(prefix="/v1")
+
+
+class VersionResponseModel(BaseModel):
+    my_version2: int
+
+
+@versioned_router.get("", response_model=VersionResponseModel)
+def read_root():
+    return {"my_version2": 2}
+
+
+@versioned_router.websocket_route("/non_api_route_made_only_to_verify_that_we_can_have_non_api_routes")
+def non_api_route_made_only_to_verify_that_we_can_have_non_api_routes():
+    raise NotImplementedError
 
 
 # TODO: Add better tests for covering lifespan
@@ -19,31 +34,33 @@ async def lifespan(app: FastAPI):
     yield  # pragma: no cover
 
 
-versioned_app = Cadwyn(versions=VersionBundle(Version("2021-01-01")), lifespan=lifespan)
-with pytest.warns(DeprecationWarning, match="Use generate_and_include_versioned_routers"):
-    versioned_app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy API fixture.
-        v2021_01_01_router,
-        header_value="2021-01-01",
-    )
-with pytest.warns(DeprecationWarning, match="Use generate_and_include_versioned_routers"):
-    versioned_app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy API fixture.
-        v2022_01_02_router,
-        header_value="2022-02-02",
-    )
-versioned_app.include_router(unversioned_router)
+def _create_versioned_app(api_version_var: Union[ContextVar[Union[VersionType, None]], None] = None) -> Cadwyn:
+    # A version change can only belong to one version bundle, so every app gets its own
+    class ReturnFirstVersionResponse(VersionChange):
+        description = "2021-01-01 returns my_version1 instead of my_version2"
+        instructions_to_migrate_to_previous_version = (
+            schema(VersionResponseModel).field("my_version2").had(name="my_version1"),
+        )
 
-versioned_app_with_custom_api_version_var = Cadwyn(
-    versions=VersionBundle(Version("2021-01-01"), api_version_var=ContextVar("My api version")), lifespan=lifespan
-)
-with pytest.warns(DeprecationWarning, match="Use generate_and_include_versioned_routers"):
-    versioned_app_with_custom_api_version_var.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy fixture.
-        v2021_01_01_router, header_value="2021-01-01"
+        @convert_response_to_previous_version_for(VersionResponseModel)
+        def return_first_version_response(response: ResponseInfo) -> None:
+            response.body = {"my_version1": 1}
+
+    app = Cadwyn(
+        versions=VersionBundle(
+            Version("2022-02-02", ReturnFirstVersionResponse),
+            Version("2021-01-01"),
+            api_version_var=api_version_var,
+        ),
+        lifespan=lifespan,
     )
-with pytest.warns(DeprecationWarning, match="Use generate_and_include_versioned_routers"):
-    versioned_app_with_custom_api_version_var.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy fixture.
-        v2022_01_02_router, header_value="2022-02-02"
-    )
-versioned_app_with_custom_api_version_var.include_router(unversioned_router)
+    app.generate_and_include_versioned_routers(versioned_router)
+    app.include_router(unversioned_router)
+    return app
+
+
+versioned_app = _create_versioned_app()
+versioned_app_with_custom_api_version_var = _create_versioned_app(ContextVar("My api version"))
 
 # TODO: We should not have any clients that are run like this. Instead, all of them must run using "with"
 client_without_headers = TestClient(versioned_app)

@@ -54,7 +54,7 @@ from pydantic.fields import FieldInfo
 from pydantic_core import PydanticSerializationError, PydanticUndefined, TzInfo, to_json
 from starlette._utils import is_async_callable
 from starlette.datastructures import FormData, UploadFile
-from typing_extensions import ParamSpec, TypeVar, deprecated, override
+from typing_extensions import ParamSpec, TypeVar, override
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
 from cadwyn._utils import UnionType, classproperty, lenient_issubclass
@@ -405,11 +405,6 @@ class Version:
         self.value = value
         self.changes = changes
 
-    @property
-    @deprecated("'version_changes' attribute is deprecated and will be removed in Cadwyn 5.x.x. Use 'changes' instead.")
-    def version_changes(self) -> tuple[type[VersionChange], ...]:  # pragma: no cover
-        return self.changes
-
     @override
     def __repr__(self) -> str:
         return f"Version('{self.value}')"
@@ -432,11 +427,6 @@ class HeadVersion:
                 raise NotImplementedError(
                     f"HeadVersion does not support request or response migrations but {version_change} contained one."
                 )
-
-    @property
-    @deprecated("'version_changes' attribute is deprecated and will be removed in Cadwyn 5.x.x. Use 'changes' instead.")
-    def version_changes(self) -> tuple[type[VersionChange], ...]:  # pragma: no cover
-        return self.changes
 
 
 def get_cls_pythonpath(cls: type) -> IdentifierPythonPath:
@@ -499,11 +489,6 @@ class VersionBundle:
 
     def __iter__(self) -> Iterator[Version]:
         yield from self.versions
-
-    @property
-    @deprecated("Use 'version_values' instead.")
-    def version_dates(self) -> tuple[str, ...]:  # pragma: no cover
-        return self.version_values
 
     @functools.cached_property
     def versioned_schemas(self) -> dict[IdentifierPythonPath, type[VersionedModel]]:
