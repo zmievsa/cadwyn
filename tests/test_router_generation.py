@@ -669,7 +669,7 @@ def test__versioned_router_generation__materializes_plain_routes_and_mounts_adde
     assert static_response.text == "Hello World"
 
 
-def test__add_header_versioned_routers__uses_routes_added_to_included_router_after_cadwyn_inclusion():
+def test__generate_and_include_versioned_routers__plain_router__uses_routes_added_to_included_router_after_inclusion():
     app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     api_router = APIRouter(prefix="/api")
     items_router = APIRouter()
@@ -683,11 +683,7 @@ def test__add_header_versioned_routers__uses_routes_added_to_included_router_aft
         dependencies=[Depends(mark_included_router_dependency)],
     )
 
-    with pytest.warns(DeprecationWarning, match="Use generate_and_include_versioned_routers"):
-        app.add_header_versioned_routers(  # ty: ignore[deprecated]  # This test verifies the legacy API.
-            api_router,
-            header_value="2022-11-16",
-        )
+    app.generate_and_include_versioned_routers(api_router)
 
     @items_router.get("/{item_id}")
     async def get_item(item_id: int):

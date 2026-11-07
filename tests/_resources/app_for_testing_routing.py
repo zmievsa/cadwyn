@@ -1,5 +1,5 @@
-import pytest
 from fastapi import APIRouter
+from fastapi.testclient import TestClient
 from starlette.responses import JSONResponse, Response
 
 from cadwyn import Cadwyn
@@ -30,18 +30,17 @@ def doggies_api(dogname: str):
     return JSONResponse({"doggies": [{"dogname": dogname}]})
 
 
-versions = [
-    "2022-01-10",
-    "2022-02-11",
-    "1998-11-15",
-    "2022-03-12",
-    "2027-11-15",
-    "2022-04-14",
-]
-mixed_hosts_app = Cadwyn(versions=VersionBundle(Version("1998-11-15")))
-for version in versions:
-    with pytest.warns(DeprecationWarning, match="Use generate_and_include_versioned_routers"):
-        mixed_hosts_app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy routing fixture.
-            router,
-            header_value=version,
-        )
+mixed_hosts_app = Cadwyn(
+    versions=VersionBundle(
+        Version("2027-11-15"),
+        Version("2022-04-14"),
+        Version("2022-03-12"),
+        Version("2022-02-11"),
+        Version("2022-01-10"),
+        Version("1998-11-15"),
+    )
+)
+mixed_hosts_app.generate_and_include_versioned_routers(router)
+# Cadwyn generates the versioned routes when the app starts, and the tests inspect them without starting the app
+with TestClient(mixed_hosts_app):
+    pass

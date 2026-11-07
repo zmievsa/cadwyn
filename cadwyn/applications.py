@@ -1,9 +1,8 @@
-import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Optional, Self, Union, assert_never, cast, overload
+from typing import TYPE_CHECKING, Any, Optional, Self, Union, assert_never, cast, overload
 from urllib.parse import quote
 
 import fastapi
@@ -17,7 +16,7 @@ from fastapi.openapi.docs import (
 from fastapi.openapi.utils import get_openapi
 from fastapi.params import Depends
 from fastapi.responses import HTMLResponse
-from fastapi.routing import _EffectiveRouteContext, _IncludedRouter, _iter_routes_with_context
+from fastapi.routing import _EffectiveRouteContext, _iter_routes_with_context
 from fastapi.templating import Jinja2Templates
 from fastapi.utils import generate_unique_id
 from starlette.middleware import Middleware
@@ -25,7 +24,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan, Receive, Scope, Send
-from typing_extensions import deprecated, override
+from typing_extensions import override
 
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
@@ -106,13 +105,6 @@ class Cadwyn(FastAPI):
         self,
         *,
         versions: VersionBundle,
-        api_version_header_name: Annotated[
-            Union[str, None],
-            deprecated(
-                "api_version_header_name is deprecated and will be removed in the future. "
-                "Use api_version_parameter_name instead."
-            ),
-        ] = None,
         api_version_location: APIVersionLocation = "custom_header",
         api_version_format: APIVersionFormat = "date",
         api_version_parameter_name: str = "x-api-version",
@@ -182,14 +174,11 @@ class Cadwyn(FastAPI):
         self.versions = versions
         self._cadwyn_initialized = False
 
-        if api_version_header_name is not None:
-            warnings.warn(
-                "api_version_header_name is deprecated and will be removed in the future. "
-                "Use api_version_parameter_name instead.",
-                DeprecationWarning,
-                stacklevel=2,
+        # FastAPI keeps unknown keyword arguments in app.extra, so a removed argument would be ignored without this
+        if "api_version_header_name" in extra:
+            raise TypeError(
+                "Cadwyn 9.0.0 removed the api_version_header_name argument. Use api_version_parameter_name instead."
             )
-            api_version_parameter_name = api_version_header_name
         for removed_argument in _REMOVED_CHANGELOG_ARGUMENTS:
             if removed_argument in extra:
                 raise TypeError(
@@ -526,28 +515,8 @@ class Cadwyn(FastAPI):
             context={"table": table},
         )
 
-    @deprecated("Use generate_and_include_versioned_routers and VersionBundle versions instead")
-    def add_header_versioned_routers(
-        self,
-        first_router: APIRouter,
-        *other_routers: APIRouter,
-        header_value: str,
-    ) -> list[BaseRoute]:
-        """Add all routes from routers to be routed using header_value and return the added routes"""
-        try:
-            date.fromisoformat(header_value)
-        except ValueError as e:
-            raise ValueError("header_value should be in ISO 8601 format") from e
-
-        return self._add_versioned_routers(first_router, *other_routers, version=header_value)
-
-    def _add_versioned_routers(
-        self, first_router: APIRouter, *other_routers: APIRouter, version: str
-    ) -> list[BaseRoute]:
+    def _add_versioned_routers(self, router: APIRouter, *, version: str) -> None:
         added_routes: list[BaseRoute] = []
-        if version not in self.router.versioned_routers:  # pragma: no branch
-            self.router.versioned_routers[version] = APIRouter(**self._kwargs_to_router)
-
         versioned_router = self.router.versioned_routers[version]
         if self.openapi_url is not None:  # pragma: no branch
             versioned_router.add_route(
@@ -557,32 +526,27 @@ class Cadwyn(FastAPI):
             )
             added_routes.append(versioned_router.routes[-1])
 
-        for router in (first_router, *other_routers):
-            route_count_before_include = len(versioned_router.routes)
-            self.router.versioned_routers[version].include_router(
-                router,
-                dependencies=[
-                    Depends(
-                        _generate_api_version_dependency(
-                            api_version_pythonic_parameter_name=self.api_version_pythonic_parameter_name,
-                            default_value=version,
-                            fastapi_depends_class=self._api_version_fastapi_depends_class,
-                            validation_data_type=self.api_version_validation_data_type,
-                            title=self.api_version_title,
-                            description=self.api_version_description,
-                        )
+        route_count_before_include = len(versioned_router.routes)
+        versioned_router.include_router(
+            router,
+            dependencies=[
+                Depends(
+                    _generate_api_version_dependency(
+                        api_version_pythonic_parameter_name=self.api_version_pythonic_parameter_name,
+                        default_value=version,
+                        fastapi_depends_class=self._api_version_fastapi_depends_class,
+                        validation_data_type=self.api_version_validation_data_type,
+                        title=self.api_version_title,
+                        description=self.api_version_description,
                     )
-                ],
-            )
-            newly_added_routes = versioned_router.routes[route_count_before_include:]
-            if not any(isinstance(route, _IncludedRouter) for route in router.routes):
-                # There is no nested FastAPI include tree to preserve, so Cadwyn can materialize the plain
-                # routes here and keep the root router's version bookkeeping stable.
-                newly_added_routes = _materialize_routes(newly_added_routes)
-                versioned_router.routes[route_count_before_include:] = newly_added_routes
-                versioned_router._mark_routes_changed()
-            added_routes.extend(newly_added_routes)
+                )
+            ],
+        )
+        # Route generation flattens FastAPI's include trees, so there is no nested tree to preserve here, and
+        # Cadwyn can materialize the routes to keep the root router's version bookkeeping stable
+        newly_added_routes = _materialize_routes(versioned_router.routes[route_count_before_include:])
+        versioned_router.routes[route_count_before_include:] = newly_added_routes
+        versioned_router._mark_routes_changed()
+        added_routes.extend(newly_added_routes)
 
         self.router.extend_routes(added_routes)
-
-        return added_routes

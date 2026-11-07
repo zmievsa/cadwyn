@@ -10,6 +10,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Removed the deprecated `openapi_prefix` argument of `Cadwyn()` (#488). FastAPI 0.145.0 had already removed it. Passing it now raises a `TypeError` on every FastAPI version, including the ones before 0.145.0 that still accept it. Set the root path on your server instead, e.g. with `root_path` or your proxy's prefix.
 - Removed the deprecated changelog: the `/changelog` endpoint, `Cadwyn.generate_changelog()`, `cadwyn.hidden()`, and the `changelog_url` and `include_changelog_url_in_schema` arguments of `Cadwyn()`. Apps can generate a better and more extensible changelog from their version changes themselves, e.g. with a coding agent. To upgrade, remove these arguments from `Cadwyn()`, and remove the calls to `generate_changelog()` and `hidden()` (keep the instructions and version changes that you wrapped in `hidden()`). `Cadwyn()` now raises `TypeError` if you pass `changelog_url` or `include_changelog_url_in_schema` (#487). Cadwyn also no longer depends on `backports-strenum`, which only the changelog used on Python 3.10.
 - Dropped support for Python 3.10, which reached its end of life in October 2026. Cadwyn now requires Python 3.11 or newer. To migrate, upgrade your app to Python 3.11 or newer, or stay on Cadwyn 8.x. Cadwyn no longer depends on `backports-strenum`.
+- Removed the `api_version_header_name` argument of `Cadwyn()`, deprecated since 5.0.0. Passing it now raises a `TypeError`. Pass the same value to `api_version_parameter_name` instead.
+- Removed `Cadwyn.add_header_versioned_routers()`, deprecated since 5.0.0. Add each version to your `VersionBundle`, describe how it differs from the latest one with version changes, and include the latest routers with `Cadwyn.generate_and_include_versioned_routers()`.
+- Removed the `version_changes` attribute of `Version` and `HeadVersion`, deprecated since 4.2.0. Use `changes` instead.
+- Removed `VersionBundle.version_dates`, deprecated since 5.0.0. Use `VersionBundle.version_values` instead.
 
 ## [8.2.0]
 
