@@ -61,11 +61,26 @@ def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_ope
 
 @pytest.mark.parametrize(
     ("argument", "value"),
-    [("changelog_url", "/changelog"), ("changelog_url", None), ("include_changelog_url_in_schema", False)],
+    [
+        ("changelog_url", "/changelog"),
+        ("changelog_url", ""),
+        ("include_changelog_url_in_schema", True),
+        ("include_changelog_url_in_schema", 0),
+    ],
 )
 def test__cadwyn_init__removed_changelog_argument__should_raise_type_error(argument: str, value: Any):
     with pytest.raises(TypeError, match=f"unexpected keyword argument '{argument}'.*removed the changelog feature"):
         Cadwyn(versions=VersionBundle(Version("2022-11-16")), **{argument: value})
+
+
+@pytest.mark.parametrize(("argument", "value"), [("changelog_url", None), ("include_changelog_url_in_schema", False)])
+def test__cadwyn_init__removed_changelog_argument_that_turns_it_off__should_warn_and_do_nothing(
+    argument: str, value: Any
+):
+    with pytest.warns(DeprecationWarning, match=f"`{argument}={value!r}` does nothing"):
+        app = Cadwyn(versions=VersionBundle(Version("2022-11-16")), **{argument: value})
+    assert argument not in app.extra
+    assert "/changelog" not in [cast("APIRoute", route).path for route in app.routes]
 
 
 def test__header_routing_fastapi_init__passing_null_to_oauth2__should_not_add_oauth2_redirect_route():
