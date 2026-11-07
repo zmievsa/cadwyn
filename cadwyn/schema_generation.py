@@ -12,7 +12,7 @@ import threading
 import types
 import typing
 import uuid
-from collections.abc import Callable, Generator, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from datetime import date, datetime, time, timedelta
 from enum import Enum, Flag, FlagBoundary, auto
 from functools import cache
@@ -91,7 +91,6 @@ from cadwyn.structure.common import VersionType
 from cadwyn.structure.data import ResponseInfo
 from cadwyn.structure.enums import AlterEnumSubInstruction, EnumDidntHaveMembersInstruction, EnumHadMembersInstruction
 from cadwyn.structure.schemas import (
-    _KEYS_RENAMED_BY_ALIAS,
     AlterSchemaSubInstruction,
     FieldDidntExistInstruction,
     FieldDidntHaveInstruction,
@@ -101,14 +100,15 @@ from cadwyn.structure.schemas import (
     ValidatorDidntExistInstruction,
     ValidatorExistedInstruction,
     _get_model_decorators,
-    _reject_keys_renamed_by_alias,
 )
 from cadwyn.structure.versions import (
     _CADWYN_REQUEST_PARAM_NAME,
     _CADWYN_RESPONSE_PARAM_NAME,
+    _KEYS_RENAMED_BY_ALIAS,
     VersionBundle,
     _get_schema_migration_target,
-    _get_validation_paths,
+    _record_field_with_value,
+    _reject_keys_renamed_by_alias,
     _rescue_model_data,
 )
 
@@ -946,9 +946,12 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             if defined_fields[name].keys_renamed_by_alias
         }
         if keys_renamed_by_alias:
-            # Pydantic makes it a classmethod because its first parameter is "cls"
+            # Pydantic makes them classmethods because their first parameter is "cls"
             root_validators[_REJECT_KEYS_RENAMED_BY_ALIAS] = pydantic.model_validator(mode="wrap")(
                 _reject_keys_renamed_by_alias
+            )
+            per_field_validators[_RECORD_FIELDS_WITH_VALUES] = pydantic.field_validator("*", mode="after")(
+                _record_field_with_value
             )
 
         model_copy = type(self.cls)(
@@ -974,6 +977,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
 
 _REJECT_KEYS_RENAMED_BY_ALIAS = "__cadwyn_reject_keys_renamed_by_alias__"
+_RECORD_FIELDS_WITH_VALUES = "__cadwyn_record_fields_with_values__"
 
 
 def _set_keys_renamed_by_alias(
@@ -981,38 +985,21 @@ def _set_keys_renamed_by_alias(
     defined_field_names: "collections.abc.Iterable[str]",
     keys_by_field: dict[str, frozenset[str]],
 ) -> None:
-    """Set the keys that `_reject_keys_renamed_by_alias` rejects in the model, with the keys that the fields read.
+    """Set the keys that the fields of the model lost because their aliases followed alias.
 
-    The model inherits the keys of the fields that it inherits from its bases without defining them. We leave out
-    the keys that any field of the model reads, because they are not lost.
+    The model inherits them for the fields that it inherits from its bases without defining them. Each model class
+    leaves out the keys that its own fields read (see `_get_renamed_key_checks`) when it first validates data.
     """
     defined_field_names = frozenset(defined_field_names)
     keys_by_field = {
-        name: frozenset(renamed_keys)
+        name: renamed_keys
         for base in reversed(model.__bases__)
-        for name, (renamed_keys, _) in getattr(base, _KEYS_RENAMED_BY_ALIAS, {}).items()
+        for name, renamed_keys in getattr(base, _KEYS_RENAMED_BY_ALIAS, {}).items()
         if name not in defined_field_names
     } | keys_by_field
     # The model also inherits the check and the keys of its bases, so it needs keys of its own if they have any
-    if not keys_by_field and not hasattr(model, _KEYS_RENAMED_BY_ALIAS):
-        return
-    keys_read_by_field = {
-        name: tuple(_get_keys_read_by_field(model, name, field)) for name, field in model.model_fields.items()
-    }
-    keys_of_model = {key for keys in keys_read_by_field.values() for key in keys}
-    renamed_keys_by_field: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
-    for name, keys in keys_by_field.items():
-        lost_keys = tuple(sorted(keys - keys_of_model))
-        if lost_keys and name in model.model_fields:
-            renamed_keys_by_field[name] = (lost_keys, keys_read_by_field[name])
-    setattr(model, _KEYS_RENAMED_BY_ALIAS, renamed_keys_by_field)
-
-
-def _get_keys_read_by_field(model: type[BaseModel], name: str, field: FieldInfo) -> Iterator[str]:
-    """Yield the keys of the input whose values the field reads, i.e. the first keys of its validation paths"""
-    for path in _get_validation_paths(model, name, field):
-        # Pydantic paths always start with a key
-        yield cast("str", path[0])
+    if keys_by_field or hasattr(model, _KEYS_RENAMED_BY_ALIAS):
+        setattr(model, _KEYS_RENAMED_BY_ALIAS, keys_by_field)
 
 
 def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, types.MethodType]]:

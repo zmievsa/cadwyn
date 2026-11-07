@@ -70,6 +70,7 @@ from pydantic import (
     StringConstraints,
     conint,
     create_model,
+    model_validator,
 )
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings
@@ -2098,6 +2099,18 @@ class ItemWithOptionalAliasedNameAndFieldNamedLikeIt(BaseModel):
     a: str = Field("other", alias="b")
 
 
+# Pydantic validates by alias anyway because the model can't validate by neither
+class ItemWithOptionalAliasedNameAndFieldNamedLikeItThatDisablesValidationByAlias(BaseModel):
+    model_config = ConfigDict(populate_by_name=False, validate_by_alias=False)
+    name: str = Field("default", alias="a")
+    a: str = Field("other", alias="b")
+
+
+class NodeWithOptionalAliasedName(BaseModel):
+    name: str = Field("default", alias="a")
+    child: Optional["NodeWithOptionalAliasedName"] = None
+
+
 class ItemWithOptionalAliasedNameAndExtras(BaseModel):
     model_config = ConfigDict(extra="allow")
     name: str = Field("default", alias="a")
@@ -2110,6 +2123,13 @@ class ItemWithOptionalAliasedNameAndExtras(BaseModel):
         pytest.param(
             ItemWithOptionalAliasedNameAndFieldNamedLikeIt, {"a": "x"}, "a", id="old_key_is_name_of_another_field"
         ),
+        pytest.param(
+            ItemWithOptionalAliasedNameAndFieldNamedLikeItThatDisablesValidationByAlias,
+            {"a": "x"},
+            "a",
+            id="old_key_is_name_of_another_field_that_validates_by_alias_anyway",
+        ),
+        pytest.param(NodeWithOptionalAliasedName, {"child": {"a": "x"}}, "a", id="self_referencing_model"),
         pytest.param(ItemWithOptionalAliasedNameAndExtras, {"a": "x"}, "a", id="extras"),
         pytest.param(ItemWithOptionalAliasedNameAndExtras, {"a": "x", "name": "y"}, "a", id="extra_named_like_field"),
     ],
@@ -2138,6 +2158,94 @@ def test__router_generation__alias_instruction_without_migrations__should_reject
     with pytest.raises(ResponseValidationError) as exc_info:
         clients["2000-01-01"].get("/items")
     assert [error["msg"] for error in exc_info.value.errors()] == [message]
+
+
+class ParentWithTwoFieldsAliasedByTheSameKey(BaseModel):
+    name: str = Field("default", alias="a")
+    code: str = Field("other", alias="a")
+
+
+class ChildWithOtherAliasOfCode(ParentWithTwoFieldsAliasedByTheSameKey):
+    code: str = Field("child", alias="c")
+
+
+def test__router_generation__parent_had_alias__should_reject_old_key_in_child_that_no_other_field_reads(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+):
+    @router.get("/children", response_model=ChildWithOtherAliasOfCode)
+    async def get_child():
+        return {"a": "x"}
+
+    @router.post("/children")
+    async def post_child(item: ChildWithOtherAliasOfCode):
+        raise NotImplementedError
+
+    clients = create_versioned_clients(
+        version_change(schema(ParentWithTwoFieldsAliasedByTheSameKey).field("name").had(alias="legacy"))
+    )
+    message = 'The key "a" of "ChildWithOtherAliasOfCode.name" was renamed to "legacy" in this API version'
+
+    response = clients["2000-01-01"].post("/children", json={"a": "x"})
+    assert response.status_code == 422
+    assert [error["msg"] for error in response.json()["detail"]] == [message]
+    with pytest.raises(ResponseValidationError) as exc_info:
+        clients["2000-01-01"].get("/children")
+    assert [error["msg"] for error in exc_info.value.errors()] == [message]
+
+
+class ItemWithOptionalAliasedNameAndCodeAliasedByTheSameKey(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, validate_by_alias=False)
+    name: str = Field("default", alias="a")
+    code: str = Field("other", alias="a")
+
+
+def test__router_generation__alias_instruction_gives_old_key_to_another_field_by_compiled_config__should_accept_it(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+):
+    @router.post("/codes")
+    async def get_code(item: ItemWithOptionalAliasedNameAndCodeAliasedByTheSameKey) -> str:
+        return item.code
+
+    clients = create_versioned_clients(
+        version_change(schema(ItemWithOptionalAliasedNameAndCodeAliasedByTheSameKey).field("name").had(alias="legacy"))
+    )
+
+    # Pydantic validates by alias anyway, so "code" reads "a"
+    response = clients["2000-01-01"].post("/codes", json={"a": "x"})
+    assert (response.status_code, response.json()) == (200, "x")
+
+
+class ItemWithOptionalAliasedNameThatValidatorFills(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str = Field("default", alias="a")
+
+    @model_validator(mode="before")
+    @classmethod
+    def fill_name(cls, data: dict[str, Any]) -> dict[str, Any]:
+        return {**data, cast("str", cls.model_fields["name"].validation_alias): data["compatibility_name"]}
+
+
+def test__router_generation__alias_instruction_with_validator_that_fills_field__should_accept_old_key(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+):
+    @router.post("/names")
+    async def get_name(item: ItemWithOptionalAliasedNameThatValidatorFills) -> str:
+        return item.name
+
+    @convert_request_to_next_version_for(ItemWithOptionalAliasedNameThatValidatorFills)
+    def migrate_request(request: RequestInfo):
+        request.body["a"] = request.body.pop("legacy")
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(ItemWithOptionalAliasedNameThatValidatorFills).field("name").had(alias="legacy"),
+            migrate_request=migrate_request,
+        )
+    )
+
+    # The extra key "name" doesn't make the field look like it has a value either
+    response = clients["2000-01-01"].post("/names", json={"compatibility_name": "x", "a": "old", "name": "extra"})
+    assert (response.status_code, response.json()) == (200, "x")
 
 
 class ItemWithOptionalNameAliasedByItsNameThatValidatesByName(BaseModel):

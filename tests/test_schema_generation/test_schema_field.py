@@ -3228,6 +3228,24 @@ def test__schema_field_didnt_have__attribute_of_field_in_annotated__should_only_
         assert _get_field_attribute(old_field, attr_name) == head_value
 
 
+class SchemaWithAliasThatValidatesAssignment(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+    foo: str = Field("default", alias="a")
+
+
+def test__schema_field_had_alias__field_of_old_schema_is_assigned__should_validate_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithAliasThatValidatesAssignment).field("foo").had(alias="old_a"))
+    )
+    old_schema = schemas["2000-01-01"][SchemaWithAliasThatValidatesAssignment].model_validate({"old_a": "x"})
+
+    old_schema.foo = "y"
+
+    assert old_schema.model_dump(by_alias=True) == {"old_a": "y"}
+
+
 def test__schema_field_had_annotated_constrained_field(create_runtime_schemas: CreateRuntimeSchemas):
     schemas = create_runtime_schemas(
         version_change(schema(SchemaWithAnnotatedConstraints).field("foo").had(alias="foo1"))
