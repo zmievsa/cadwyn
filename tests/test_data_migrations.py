@@ -10201,25 +10201,6 @@ def test__request_body_migration__with_plain_enum_in_any_container__head_should_
         assert version_client.post(test_path, json=payload).json() is True
 
 
-class ModelWithIterableOfPlainEnums(BaseModel):
-    values: Iterable[PlainEnum]
-
-
-def test__request_body_migration__with_iterable_of_plain_enums__head_should_get_head_members(
-    create_versioned_clients: CreateVersionedClients,
-    test_path: Literal["/test"],
-    router: VersionedAPIRouter,
-):
-    @router.post(test_path)
-    async def endpoint(body: ModelWithIterableOfPlainEnums):
-        return list(body.values) == [PlainEnum.a, PlainEnum.b]
-
-    clients = create_versioned_clients(version_change(enum(PlainEnum).had(c="c")))
-
-    for version_client in clients.values():
-        assert version_client.post(test_path, json={"values": ["a", "b"]}).json() is True
-
-
 class ConformFlag(Flag, boundary=FlagBoundary.CONFORM):
     read = 1
     write = 2
@@ -10369,98 +10350,58 @@ class ModelWithPlainEnumAndAnyValue(BaseModel):
     value: Any = None
 
 
-class SetWithAttribute(set[Any]):
-    attribute = "set"
-
-
-class TupleWithoutMake(tuple[Any, ...]):
-    __slots__ = ()
-
-
-class NamedTupleWithAnyValue(typing.NamedTuple):
-    value: Any
-
-
-class ReadOnlySequence(Sequence[Any]):
-    def __init__(self, items: Iterable[Any]) -> None:
-        self.items = list(items)
-
-    @override
-    def __getitem__(self, index: Any) -> Any:
-        return self.items[index]
-
-    @override
-    def __len__(self) -> int:
-        return len(self.items)
-
-
-class SequenceThatCantBeCopied(ReadOnlySequence):
-    def __init__(self, *, items: Iterable[Any]) -> None:
-        super().__init__(items)
-
-
-class SequenceThatCantBeIterated(ReadOnlySequence):
-    @override
-    def __getitem__(self, index: Any) -> Any:
-        raise RuntimeError
-
-
 class ModelWithExtraFields(BaseModel):
     model_config = ConfigDict(extra="allow")
+
+
+def _values(container: Any) -> list[Any]:
+    return [item.value if isinstance(item, Enum) else item for item in container]
 
 
 @pytest.mark.parametrize(
     ("make_value", "is_expected"),
     [
         pytest.param(
-            lambda member: MappingProxyType({"key": member}),
-            lambda value: type(value) is MappingProxyType and value["key"] is PlainEnum.a,
-            id="read_only_mapping",
+            lambda member: collections.deque([member, 1], maxlen=5),
+            lambda value: type(value) is collections.deque and value.maxlen == 5 and list(value) == [PlainEnum.a, 1],
+            id="deque",
         ),
         pytest.param(
-            lambda member: SetWithAttribute({member}),
-            lambda value: type(value) is SetWithAttribute and value == {PlainEnum.a},
-            id="set_subclass",
+            lambda member: collections.defaultdict(list, {"key": member}),
+            lambda value: (
+                type(value) is collections.defaultdict and value.default_factory is list and value["key"] is PlainEnum.a
+            ),
+            id="defaultdict",
         ),
         pytest.param(
-            NamedTupleWithAnyValue,
-            lambda value: type(value) is NamedTupleWithAnyValue and value.value is PlainEnum.a,
-            id="named_tuple",
+            lambda member: OrderedDict([("first", 1), ("key", member)]),
+            lambda value: type(value) is OrderedDict and list(value.items()) == [("first", 1), ("key", PlainEnum.a)],
+            id="ordered_dict",
         ),
         pytest.param(
-            lambda member: TupleWithoutMake((member,)),
-            lambda value: type(value) is TupleWithoutMake and value[0] is PlainEnum.a,
-            id="tuple_subclass",
+            lambda member: collections.Counter({member: 3}),
+            lambda value: type(value) is collections.Counter and value == {PlainEnum.a: 3},
+            id="counter",
         ),
         pytest.param(
-            lambda member: ReadOnlySequence([member]),
-            lambda value: type(value) is ReadOnlySequence and value[0] is PlainEnum.a,
-            id="read_only_sequence",
+            lambda member: frozenset({member}),
+            lambda value: type(value) is frozenset and value == {PlainEnum.a},
+            id="frozenset",
         ),
         pytest.param(
             lambda member: ModelWithExtraFields(member=member),
             lambda value: type(value) is ModelWithExtraFields and value.member is PlainEnum.a,
             id="extra_fields_of_model",
         ),
-        # We leave what we can't copy or walk into as it is
-        pytest.param(
-            lambda member: SequenceThatCantBeCopied(items=[member]),
-            lambda value: type(value[0]) is not PlainEnum,
-            id="sequence_that_cant_be_copied",
-        ),
-        pytest.param(
-            lambda member: SequenceThatCantBeIterated([member]),
-            lambda value: type(value.items[0]) is not PlainEnum,
-            id="sequence_that_cant_be_iterated",
-        ),
+        # A dict whose keys would become one is left as it is
         pytest.param(
             lambda member: {member: 1, PlainEnum.a: 2},
-            lambda value: len(value) == 2,
+            lambda value: len(value) == 2 and PlainEnum.a in value,
             id="keys_that_would_become_one",
         ),
     ],
 )
-def test__request_body_migration__with_plain_enum_members_that_migration_puts_in_containers__head_should_get_them(
+def test__request_body_migration__with_plain_enum_members_that_migration_puts_in_builtin_containers__head_gets_them(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -10474,6 +10415,124 @@ def test__request_body_migration__with_plain_enum_members_that_migration_puts_in
     @convert_request_to_next_version_for(ModelWithPlainEnumAndAnyValue)
     def migrate(request: RequestInfo):
         request.body["value"] = make_value(request.body["kind"])
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b"), migrate=migrate))
+
+    assert clients["2000-01-01"].post(test_path, json={"kind": "a"}).json() is True
+
+
+class ListThatMustNotChange(MutableSequence[Any]):
+    """A list whose items Cadwyn must neither take away nor change, even in a shallow copy that shares them"""
+
+    def __init__(self, items: Iterable[Any]) -> None:
+        self.items = list(items)
+
+    @override
+    def __getitem__(self, index: Any) -> Any:
+        return self.items[index]
+
+    @override
+    def __len__(self) -> int:
+        return len(self.items)
+
+    @override
+    def __setitem__(self, index: Any, value: Any) -> None:  # pragma: no cover
+        raise AssertionError("Cadwyn must not change the list")
+
+    @override
+    def __delitem__(self, index: Any) -> None:  # pragma: no cover
+        raise AssertionError("Cadwyn must not change the list")
+
+    @override
+    def insert(self, index: int, value: Any) -> None:  # pragma: no cover
+        raise AssertionError("Cadwyn must not change the list")
+
+
+class BoundedSequence(Sequence[Any]):
+    def __init__(self, items: Iterable[Any], *, maxlen: int = 2) -> None:
+        self.maxlen = maxlen
+        self.items = list(items)[-maxlen:]
+
+    @override
+    def __getitem__(self, index: Any) -> Any:
+        return self.items[index]
+
+    @override
+    def __len__(self) -> int:
+        return len(self.items)
+
+
+class OneShotSequence(Sequence[Any]):
+    def __init__(self, items: Iterable[Any]) -> None:
+        self.iterator = iter(items)
+
+    @override
+    def __getitem__(self, index: Any) -> Any:
+        try:
+            return next(self.iterator)
+        except StopIteration:
+            raise IndexError from None
+
+    @override
+    def __len__(self) -> int:
+        return 2
+
+
+class SetSubclass(set[Any]):
+    pass
+
+
+class NamedTupleWithAnyValue(typing.NamedTuple):
+    value: Any
+
+
+@pytest.mark.parametrize(
+    ("make_value", "is_unchanged"),
+    [
+        pytest.param(lambda _: BytesIO(b"abc"), lambda value: value.read() == b"abc", id="file"),
+        pytest.param(lambda member: iter([member, 1]), lambda value: _values(value) == ["a", 1], id="iterator"),
+        pytest.param(
+            lambda member: ListThatMustNotChange([member, 100, 200]),
+            lambda value: len(value) == 3 and _values(value) == ["a", 100, 200],
+            id="sequence_whose_copies_share_items",
+        ),
+        pytest.param(
+            lambda member: BoundedSequence([member, 100, 200], maxlen=3),
+            lambda value: value.maxlen == len(value) == 3 and _values(value) == ["a", 100, 200],
+            id="sequence_with_constructor_options",
+        ),
+        pytest.param(
+            lambda member: OneShotSequence([member, 1]),
+            lambda value: len(value) == 2 and _values(value) == ["a", 1],
+            id="one_shot",
+        ),
+        pytest.param(lambda member: SetSubclass({member}), lambda value: _values(value) == ["a"], id="set_subclass"),
+        pytest.param(NamedTupleWithAnyValue, lambda value: _values(value) == ["a"], id="named_tuple"),
+        pytest.param(
+            lambda member: MappingProxyType({"key": member}),
+            lambda value: _values(value.values()) == ["a"],
+            id="read_only_mapping",
+        ),
+    ],
+)
+def test__request_body_migration__with_object_that_pydantic_doesnt_make_set_by_migration__head_should_get_it_as_is(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    make_value: Callable[[Any], Any],
+    is_unchanged: Callable[[Any], bool],
+):
+    values: list[Any] = []
+
+    @router.post(test_path)
+    async def endpoint(body: ModelWithPlainEnumAndAnyValue):
+        # Cadwyn never copies, iterates, or changes the containers and iterators that pydantic doesn't make
+        return body.value is values[0] and is_unchanged(body.value)
+
+    @convert_request_to_next_version_for(ModelWithPlainEnumAndAnyValue)
+    def migrate(request: RequestInfo):
+        values.append(make_value(request.body["kind"]))
+        request.body["value"] = values[0]
 
     clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b"), migrate=migrate))
 

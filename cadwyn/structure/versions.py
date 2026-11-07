@@ -12,18 +12,7 @@ import tempfile
 import threading
 import uuid
 from collections import Counter, OrderedDict, defaultdict, deque
-from collections.abc import (
-    Callable,
-    Coroutine,
-    Hashable,
-    Iterator,
-    Mapping,
-    MutableMapping,
-    MutableSequence,
-    MutableSet,
-    Sequence,
-)
-from collections.abc import Set as AbstractSet
+from collections.abc import Callable, Coroutine, Hashable, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date, datetime, time, timedelta
@@ -2368,11 +2357,11 @@ def _replace_with_head_enum_members(data: Any) -> Any:
     as the members of other enums and the ones that their head enums have no member with exactly the same value for,
     so that the head rejects them as before.
 
-    We walk into the keys and values of mappings, the items of sequences and sets, and the fields and extra fields of
-    models, and we keep the type of each container that we copy. Iterators, which pydantic validates lazily, get their
-    members replaced as they are iterated. We walk without recursion, so that data as deep as pydantic accepts never
-    hits the recursion limit. We only copy the containers in which something changes, and we don't walk into the
-    containers that contain themselves again. If we can't walk into a container or copy it, we leave it as it is.
+    We only walk into pydantic models and the containers that pydantic makes when it validates a field, and make
+    copies of the same types. Anything else, such as iterators or containers of other types, could run code of users
+    or lose what they hold if we iterated or copied it, so we leave it as it is. We walk without recursion, so that data
+    as deep as pydantic accepts never hits the recursion limit. We only copy the containers in which something
+    changes, and we don't walk into the containers that contain themselves again.
     """
     children = _get_children_that_can_be_enum_members(data)
     if children is None:
@@ -2404,89 +2393,57 @@ def _replace_with_head_enum_members(data: Any) -> Any:
 
 
 _NO_CHILD = object()
-_TYPES_WITHOUT_ENUM_MEMBERS = (str, int, float, type(None), bytes, bytearray, memoryview, range)
+# The containers that pydantic makes when it validates a field (see `GenerateSchema` and `MAPPING_ORIGIN_MAP`)
+_MAPPINGS_THAT_PYDANTIC_MAKES = (dict, OrderedDict, defaultdict, Counter)
+_COLLECTIONS_THAT_PYDANTIC_MAKES = (list, tuple, set, frozenset, deque)
 
 
 def _replace_with_head_enum_member(value: Any) -> Any:
-    if isinstance(value, Enum):
-        head_enum: Union[type[Enum], None] = getattr(type(value), "__cadwyn_original_model__", None)
-        if head_enum is None or is_enum_looked_up_by_value(head_enum):
-            return value
-        head_member = get_member_with_same_value(head_enum, value)
-        return value if head_member is None else head_member
-    if isinstance(value, Iterator):
-        return map(_replace_with_head_enum_members, value)
-    return value
+    if not isinstance(value, Enum):
+        return value
+    head_enum: Union[type[Enum], None] = getattr(type(value), "__cadwyn_original_model__", None)
+    if head_enum is None or is_enum_looked_up_by_value(head_enum):
+        return value
+    head_member = get_member_with_same_value(head_enum, value)
+    return value if head_member is None else head_member
 
 
 def _get_children_that_can_be_enum_members(value: Any) -> Union[list[Any], None]:
     """Return the children of a container, with the keys and values of mappings and models in turn, or None"""
-    if isinstance(value, (Enum, *_TYPES_WITHOUT_ENUM_MEMBERS)):
-        return None
-    try:
-        if isinstance(value, BaseModel):
-            items = itertools.chain(value.__dict__.items(), (value.__pydantic_extra__ or {}).items())
-            return [child for item in items for child in item]
-        if isinstance(value, Mapping):
-            return [child for item in value.items() for child in item]
-        if isinstance(value, (Sequence, AbstractSet)):
-            return list(value)
-    except Exception:  # noqa: BLE001
-        return None
+    if type(value) in _MAPPINGS_THAT_PYDANTIC_MAKES:
+        return [child for item in dict.items(value) for child in item]
+    if type(value) in _COLLECTIONS_THAT_PYDANTIC_MAKES:
+        return list(value)
+    if isinstance(value, BaseModel):
+        items = itertools.chain(value.__dict__.items(), (value.__pydantic_extra__ or {}).items())
+        return [child for item in items for child in item]
     return None
 
 
 def _copy_container_with_children(container: Any, children: list[Any]) -> Any:
-    """Return a copy of the container that has the children instead of its own, or the container if we can't copy it"""
-    try:
-        copied = _copy_container_with_children_or_fail(container, children)
-    except Exception:  # noqa: BLE001
-        return container
-    # Members of the copies don't equal the head members, so two distinct keys can become one
-    if isinstance(container, (Mapping, AbstractSet)) and len(copied) != len(container):
-        return container
-    return copied
-
-
-def _copy_container_with_children_or_fail(container: Any, children: list[Any]) -> Any:
+    """Return a copy of the container that has the children instead of its own, or the container if they don't fit"""
     if isinstance(container, BaseModel):
+        pairs = list(zip(children[::2], children[1::2], strict=True))
         field_count = len(container.__dict__)
-        pairs = dict(zip(children[::2], children[1::2], strict=True))
-        # A copy keeps the fields that are set, the private attributes, and the extra fields. FastAPI validates the
-        # models that the head gets by their attributes.
-        copied = container.model_copy()
-        copied.__dict__.update(itertools.islice(pairs.items(), field_count))
+        # Pydantic's own copy (not an override of the model's) keeps the fields that are set, the private attributes,
+        # and the extra fields. FastAPI validates the models that the head gets by their attributes.
+        copied = BaseModel.__copy__(container)
+        copied.__dict__.update(pairs[:field_count])
         if copied.__pydantic_extra__ is not None:
-            copied.__pydantic_extra__.update(itertools.islice(pairs.items(), field_count, None))
+            copied.__pydantic_extra__.update(pairs[field_count:])
         return copied
-    if isinstance(container, Mapping):
-        items = dict(zip(children[::2], children[1::2], strict=True))
-        if type(container) is dict:
-            return items
-        if isinstance(container, MutableMapping):
-            # A copy keeps what the type has besides its items, e.g. the default factory of a `defaultdict`
-            copied = copy.copy(container)
-            copied.clear()
-            copied.update(items)
-            return copied
-        return type(container)(items)
-    if type(container) in (list, tuple, set, frozenset):
-        return type(container)(children)
-    if isinstance(container, tuple) and hasattr(type(container), "_make"):
-        return type(container)._make(children)
-    if isinstance(container, MutableSet):
-        copied = copy.copy(container)
-        copied.clear()
-        for child in children:
-            copied.add(child)
-        return copied
-    if isinstance(container, MutableSequence):
-        # A copy keeps what the type has besides its items, e.g. the `maxlen` of a `deque`
-        copied = copy.copy(container)
-        copied.clear()
-        copied.extend(children)
-        return copied
-    return type(container)(children)
+    if type(container) in _MAPPINGS_THAT_PYDANTIC_MAKES:
+        items = list(zip(children[::2], children[1::2], strict=True))
+        if type(container) is defaultdict:
+            copied = defaultdict(container.default_factory, items)
+        else:
+            copied = type(container)(dict(items))
+    elif type(container) is deque:
+        copied = deque(children, maxlen=container.maxlen)
+    else:
+        copied = type(container)(children)
+    # Members of the copies don't equal the head members, so two distinct keys or items can become one
+    return copied if len(copied) == len(container) else container
 
 
 def _restore_model_validation_aliases(model: type[BaseModel], data: Any) -> Any:
