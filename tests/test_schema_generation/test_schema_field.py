@@ -19,11 +19,12 @@ from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 from typing_extensions import override
 
+from cadwyn import Version, VersionBundle, VersionChange
 from cadwyn.exceptions import (
     CadwynStructureError,
     InvalidGenerationInstructionError,
 )
-from cadwyn.schema_generation import SchemaGenerator
+from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
 from cadwyn.structure import schema
 from cadwyn.structure.schemas import PossibleFieldAttributes
 from tests._resources.utils import HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED
@@ -849,18 +850,6 @@ def _get_max_lengths(model: type[BaseModel]) -> dict[str, Union[int, None]]:
         ),
         pytest.param(
             [
-                [schema(GrandchildWithFieldThatGetsRenamed).field("foo").had(max_length=3)],
-                [schema(ChildWithFieldThatGetsRenamed).field("foo").had(name="old_foo")],
-            ],
-            {
-                ParentWithFieldThatGetsRenamed: {"foo": 10},
-                ChildWithFieldThatGetsRenamed: {"foo": 10, "old_foo": 10},
-                GrandchildWithFieldThatGetsRenamed: {"foo": 3, "old_foo": 3},
-            },
-            id="grandchild_changed_field_then_child_renamed_it",
-        ),
-        pytest.param(
-            [
                 [schema(ChildWithFieldThatGetsRenamed).field("foo").had(max_length=3)],
                 [schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo")],
                 [schema(ParentWithFieldThatGetsRenamed).field("old_foo").had(name="older_foo")],
@@ -1274,6 +1263,305 @@ def test__schema_field_had__parent_renamed_field_with_mutable_default__should_no
     child = schemas["2000-01-01"][ChildWithMutableDefaultToRename]()
     child.foo.items.append("foo")
     assert child.old_foo.items == []  # ty: ignore[unresolved-attribute]
+
+
+def _child_rename_error(model: str, inherited: str, parent: str, advice: str) -> str:
+    return (
+        f'You tried to rename the field "foo" of "{model}" to "old_foo" in "MyVersionChange", but "{model}" still '
+        f'inherits "{inherited}" from "{parent}", so it would have both fields. Pydantic models can\'t drop the '
+        f"fields that they inherit. {advice}"
+    )
+
+
+def _rename_in_parent_instead(parent: str) -> str:
+    return (
+        f'Rename it in "{parent}" instead, which renames it in its subclasses too. If a subclass changed the field '
+        f'in a newer version, rename it in that subclass and in "{parent}" in the same version.'
+    )
+
+
+class MixinWithFooAnnotation:
+    foo: str
+
+
+class ChildOfMixinWithFooAnnotation(MixinWithFooAnnotation, BaseModel):
+    foo: str
+
+
+class BaseWithUnrelatedOlderFoo(BaseModel):
+    older_foo: int = 0
+
+
+class ChildOfBaseWithUnrelatedOlderFoo(BaseWithUnrelatedOlderFoo, InheritedFieldParent):
+    pass
+
+
+class AncestorWithFoo(BaseModel):
+    foo: str
+
+
+class ParentThatHidesFooAsClassVar(AncestorWithFoo):
+    foo: ClassVar[str]  # ty: ignore[invalid-attribute-override]
+
+
+class ChildThatRedeclaresFooHiddenByParent(ParentThatHidesFooAsClassVar):
+    foo: str  # ty: ignore[invalid-attribute-override]
+
+
+@pytest.mark.parametrize(
+    ("instructions_from_newest", "expected_error"),
+    [
+        pytest.param(
+            [[schema(InheritedFieldChild).field("foo").had(name="old_foo")]],
+            _child_rename_error(
+                "InheritedFieldChild", "foo", "InheritedFieldParent", _rename_in_parent_instead("InheritedFieldParent")
+            ),
+            id="child_renamed_inherited_field",
+        ),
+        pytest.param(
+            [[schema(InheritedFieldGrandchild).field("foo").had(name="old_foo")]],
+            _child_rename_error(
+                "InheritedFieldGrandchild",
+                "foo",
+                "InheritedFieldParent",
+                _rename_in_parent_instead("InheritedFieldParent"),
+            ),
+            id="grandchild_renamed_inherited_field",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldChild).field("foo").had(description="Child")],
+                [schema(InheritedFieldGrandchild).field("foo").had(name="old_foo")],
+            ],
+            _child_rename_error(
+                "InheritedFieldGrandchild",
+                "foo",
+                "InheritedFieldChild",
+                _rename_in_parent_instead("InheritedFieldChild"),
+            ),
+            id="grandchild_renamed_field_that_child_changed",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldGrandchild).field("foo").had(max_length=3)],
+                [schema(InheritedFieldChild).field("foo").had(name="old_foo")],
+            ],
+            _child_rename_error(
+                "InheritedFieldChild", "foo", "InheritedFieldParent", _rename_in_parent_instead("InheritedFieldParent")
+            ),
+            id="grandchild_changed_field_then_child_renamed_it",
+        ),
+        pytest.param(
+            [[schema(InheritedFieldRedeclaringChild).field("foo").had(name="old_foo")]],
+            _child_rename_error(
+                "InheritedFieldRedeclaringChild",
+                "foo",
+                "InheritedFieldParent",
+                'Rename it in "InheritedFieldParent" in the same version too.',
+            ),
+            id="child_renamed_field_that_it_redeclares",
+        ),
+        pytest.param(
+            [[schema(ChildOfMixinWithFooAnnotation).field("foo").had(name="old_foo")]],
+            _child_rename_error(
+                "ChildOfMixinWithFooAnnotation",
+                "foo",
+                "MixinWithFooAnnotation",
+                '"MixinWithFooAnnotation" is not a pydantic model, so Cadwyn can\'t rename the field in it. Declare '
+                'the field in a pydantic model instead of "MixinWithFooAnnotation" and rename it there.',
+            ),
+            id="child_renamed_field_that_plain_mixin_declares_too",
+        ),
+        pytest.param(
+            [
+                [
+                    schema(InheritedFieldChild).field("foo").had(name="old_foo"),
+                    schema(InheritedFieldParent).field("foo").had(name="older_foo"),
+                ]
+            ],
+            _child_rename_error(
+                "InheritedFieldChild",
+                "older_foo",
+                "InheritedFieldParent",
+                _rename_in_parent_instead("InheritedFieldParent"),
+            ),
+            id="child_renamed_inherited_field_then_parent_renamed_it_to_another_name",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldChild).field("foo").had(name="old_foo")],
+                [schema(InheritedFieldChild).field("old_foo").had(name="foo")],
+            ],
+            _child_rename_error(
+                "InheritedFieldChild", "foo", "InheritedFieldParent", _rename_in_parent_instead("InheritedFieldParent")
+            ),
+            id="child_renamed_inherited_field_in_newer_version_than_rename_back",
+        ),
+    ],
+)
+def test__schema_field_had_name__child_renamed_field_that_parent_still_has__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    instructions_from_newest: list[list[Any]],
+    expected_error: str,
+):
+    with pytest.raises(InvalidGenerationInstructionError) as exc_info:
+        create_runtime_schemas(*(version_change(*instructions) for instructions in reversed(instructions_from_newest)))
+
+    assert str(exc_info.value) == expected_error
+
+
+@pytest.mark.parametrize(
+    "instructions_from_newest",
+    [
+        pytest.param(
+            [
+                [
+                    schema(InheritedFieldChild).field("foo").had(name="old_foo"),
+                    schema(InheritedFieldParent).field("foo").didnt_exist,
+                ]
+            ],
+            id="parent_deleted_field_in_same_version_change",
+        ),
+        pytest.param(
+            [
+                [
+                    schema(InheritedFieldChild).field("foo").had(name="old_foo"),
+                    schema(InheritedFieldParent).field("foo").had(name="old_foo"),
+                ]
+            ],
+            id="parent_renamed_field_to_same_name_in_same_version_change",
+        ),
+        pytest.param(
+            [
+                [
+                    schema(InheritedFieldRedeclaringChild).field("foo").had(name="old_foo"),
+                    schema(InheritedFieldParent).field("foo").had(name="old_foo"),
+                ]
+            ],
+            id="parent_renamed_field_that_child_redeclares_in_same_version_change",
+        ),
+        pytest.param(
+            [[schema(ChildThatRedeclaresFooHiddenByParent).field("foo").had(name="old_foo")]],
+            id="parent_hides_ancestor_field_with_class_var",
+        ),
+        pytest.param(
+            [
+                [
+                    schema(ChildOfBaseWithUnrelatedOlderFoo).field("foo").had(name="old_foo"),
+                    schema(InheritedFieldParent).field("foo").had(name="older_foo"),
+                ]
+            ],
+            id="parent_renamed_field_to_name_that_closer_base_declares",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldChild).field("foo").had(description="Child")],
+                [
+                    schema(InheritedFieldChild).field("foo").had(name="old_foo"),
+                    schema(InheritedFieldParent).field("foo").had(name="old_foo"),
+                ],
+            ],
+            id="child_changed_field_then_child_and_parent_renamed_it_in_same_version_change",
+        ),
+        pytest.param(
+            [
+                [schema(InheritedFieldChild).field("foo").had(description="Child")],
+                [
+                    schema(InheritedFieldParent).field("foo").had(name="old_foo"),
+                    schema(InheritedFieldChild).field("foo").had(name="old_foo"),
+                ],
+            ],
+            id="child_changed_field_then_parent_and_child_renamed_it_in_same_version_change",
+        ),
+    ],
+)
+def test__schema_field_had_name__child_renamed_field_that_parent_no_longer_has__should_rename_it_in_child(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    instructions_from_newest: list[list[Any]],
+):
+    child = instructions_from_newest[-1][0].schema
+    schemas = create_runtime_schemas(
+        *(version_change(*instructions) for instructions in reversed(instructions_from_newest))
+    )
+
+    assert "foo" not in schemas["2000-01-01"][child].model_fields
+    assert schemas["2000-01-01"][child].model_validate({"old_foo": "v"}).old_foo == "v"
+
+
+def test__schema_field_had_name__child_renamed_field_that_parent_deletes_in_another_change_of_version__should_rename():
+    rename = version_change(schema(InheritedFieldChild).field("foo").had(name="old_foo"))
+    delete = version_change(schema(InheritedFieldParent).field("foo").didnt_exist)
+    schemas = generate_versioned_models(VersionBundle(Version("2001-01-01", rename, delete), Version("2000-01-01")))
+
+    assert list(schemas["2000-01-01"][InheritedFieldChild].model_fields) == ["bar", "old_foo"]
+
+
+@pytest.mark.parametrize(
+    "version_changes",
+    [
+        pytest.param(
+            [
+                version_change(
+                    schema(InheritedFieldChild).field("foo").had(name="old_foo"),
+                    schema(InheritedFieldChild).field("old_foo").didnt_exist,
+                )
+            ],
+            id="in_same_version_change",
+        ),
+        pytest.param(
+            [
+                version_change(schema(InheritedFieldChild).field("foo").had(name="old_foo")),
+                version_change(schema(InheritedFieldChild).field("old_foo").didnt_exist),
+            ],
+            id="in_another_change_of_version",
+        ),
+    ],
+)
+def test__schema_field_had_name__child_renamed_inherited_field_and_deleted_new_name__should_keep_inherited_field(
+    version_changes: list[type[VersionChange]],
+):
+    schemas = generate_versioned_models(VersionBundle(Version("2001-01-01", *version_changes), Version("2000-01-01")))
+
+    child = schemas["2000-01-01"][InheritedFieldChild]
+    assert list(child.model_fields) == ["foo", "bar"]
+    assert child.model_validate({"foo": "v"}).foo == "v"
+
+
+class ParentOfChildThatRetypesFoo(BaseModel):
+    foo: str = Field(description="Parent", max_length=5)
+
+
+class ChildThatRetypesFoo(ParentOfChildThatRetypesFoo):
+    foo: Annotated[int, Field(gt=0)] = Field(description="Child")  # ty: ignore[invalid-attribute-override]
+
+
+def test__schema_field_existed_as__changelog_recipe_for_child_rename__should_keep_parent_field_and_add_child_field(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    # The CHANGELOG of 9.0 gives this recipe to keep the older versions of 8.x, in which
+    # schema(ChildThatRetypesFoo).field("foo").had(name="old_foo") inherited the parent's foo next to old_foo
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ChildThatRetypesFoo)
+            .field("old_foo")
+            .existed_as(type=Annotated[int, Field(gt=0)], info=Field(description="Child")),
+            schema(ChildThatRetypesFoo).field("foo").had(type=str, description="Parent", max_length=5),
+            schema(ChildThatRetypesFoo).field("foo").didnt_have("gt"),
+        )
+    )
+
+    child = schemas["2000-01-01"][ChildThatRetypesFoo]
+    assert child.model_validate({"foo": "text", "old_foo": 1}).model_dump() == {"foo": "text", "old_foo": 1}
+    assert {error["loc"] for error in _get_validation_errors(child, {"foo": "toolong", "old_foo": 0})} == {
+        ("foo",),
+        ("old_foo",),
+    }
+
+
+def _get_validation_errors(model: type[BaseModel], data: dict[str, Any]) -> list[Any]:
+    with pytest.raises(ValidationError) as exc_info:
+        model.model_validate(data)
+    return exc_info.value.errors()
 
 
 class ParentWithDefaults(BaseModel):
