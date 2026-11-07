@@ -1020,14 +1020,14 @@ class VersionBundle:
             len(route.dependant.body_params) == 1
             and head_body_field is not None
             and body_field_alias is not None
-            and body_field_alias in kwargs
-            and _kwarg_can_be_the_body(route, body_field_alias, embed_body_fields=embed_body_fields)
+            and _body_is_in_kwargs(route, body_field_alias, embed_body_fields=embed_body_fields)
         ):
-            raw_body: Union[BaseModel, None] = kwargs.get(body_field_alias)
+            # FastAPI keys the kwargs by param names, so a kwarg named after the body's alias can be another param
+            raw_body: Union[BaseModel, None] = kwargs[route.dependant.body_params[0].name]
             validated_body = raw_body
             if raw_body is None:
                 body = None
-                form_model_is_omitted = await _form_model_is_omitted(request, route, body_field_alias)
+                form_model_is_omitted = await _form_model_is_omitted(request, route)
             # It means we have a dict or a list instead of a full model.
             # This covers the following use case in the endpoint definition: "payload: dict = Body(None)"
             elif not isinstance(raw_body, BaseModel):
@@ -1040,9 +1040,7 @@ class VersionBundle:
                 body = _copy_decoded_json_strings(plan, body, client_json_strings)
         else:
             # This is for requests without body or with complex body such as form or file
-            body = await _get_body(
-                request, route.body_field, exit_stack, strict_content_type=_get_strict_content_type(request)
-            )
+            body = await _get_body(request, route.body_field, strict_content_type=_get_strict_content_type(request))
             if isinstance(body, FormData):
                 uploads_read_by_fastapi = _get_uploads_read_by_fastapi(route, head_route, head_dependant, body)
 
@@ -1103,29 +1101,28 @@ async def _fastapi_got_no_body(request: FastapiRequest, route: APIRoute, *, embe
     return embed_body_fields and not is_form
 
 
-async def _form_model_is_omitted(request: FastapiRequest, route: APIRoute, body_field_alias: str) -> bool:
+async def _form_model_is_omitted(request: FastapiRequest, route: APIRoute) -> bool:
     """Return whether FastAPI has given the form model body param its default because the form doesn't supply it.
 
     Since FastAPI 0.158.2, FastAPI does so for an optional form model if the form has none of its fields. Cadwyn sees
     that default as None, and the head would reject None as a form body, so we omit the body for the head instead.
     """
     if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS:  # pragma: no cover # FastAPI >= 0.158.2
-        return await _form_has_no_fields_of_omittable_form_model(request, route, body_field_alias)
+        return await _form_has_no_fields_of_omittable_form_model(request, route)
     return False
 
 
 async def _form_has_no_fields_of_omittable_form_model(  # pragma: no cover # FastAPI >= 0.158.2
-    request: FastapiRequest, route: APIRoute, body_field_alias: str
+    request: FastapiRequest, route: APIRoute
 ) -> bool:
     """Return whether the body param is a form model with a default, and FastAPI has given every body param its default.
 
-    The kwarg is the body param only if it has the param's name, and not a dependency or another param named after
-    the body's alias. FastAPI only skips the form models (or unions of them) that can be None if the form doesn't
-    supply any of them. Dependencies and their overrides can have such form models too, but if anything else in the
-    tree reads the form, we take the previous path, so that the head can't lose its values when it gets no body.
+    FastAPI only skips the form models (or unions of them) that can be None if the form doesn't supply any of them.
+    Dependencies and their overrides can have such form models too, but if anything else in the tree reads the form,
+    we take the previous path, so that the head can't lose its values when it gets no body.
     """
     body_param = route.dependant.body_params[0]
-    if not _get_form_models(body_param) or body_param.name != body_field_alias or body_param.field_info.is_required():
+    if not _get_form_models(body_param) or body_param.field_info.is_required():
         return False
     models: list[type[BaseModel]] = []
     for dependant in _iter_dependants_that_fastapi_solves(route.dependant, route):
@@ -1150,16 +1147,14 @@ def _form_supplies_form_model(model: type[BaseModel], form: FormData) -> bool:  
     return any(alias in form for field in _get_cached_model_fields(model) for alias, _ in _get_param_aliases(field))
 
 
-def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body_fields: bool) -> bool:
-    """Return False if the endpoint kwarg named after the body's alias is surely not the body.
+def _body_is_in_kwargs(route: APIRoute, body_field_alias: str, *, embed_body_fields: bool) -> bool:
+    """Return whether we take the body from the kwarg of the body param instead of reading it from the request.
 
-    FastAPI keys the endpoint kwargs by param names, while the body is looked up by its alias. So the kwarg
-    is another param when the body is embedded (wrapped into a separate field with the "body" alias),
-    or when the alias isn't the name of the body param, unless the kwarg is a dependency that returns the body.
+    When the body is embedded (wrapped into a separate field with the "body" alias, e.g. for files and forms), no
+    kwarg holds the whole body: a kwarg named "body" is a param of its own (a file, a query param, a dependency, etc.),
+    so we read the body from the request. Otherwise, the kwarg of the body param holds the body. We take it from
+    there if the body's alias is the body param's name or the name of a dependency, and read the request otherwise.
     """
-    # FastAPI has already read the uploaded files, so they would come out empty if we read them again
-    if route.body_field is not None and isinstance(route.body_field.field_info, params.File):
-        return True
     if embed_body_fields:
         return False
     return body_field_alias == route.dependant.body_params[0].name or any(
@@ -1997,19 +1992,16 @@ def _get_strict_content_type(request: FastapiRequest) -> bool:
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
 async def _get_body(
-    request: FastapiRequest,
-    body_field: Union[ModelField, None],
-    exit_stack: AsyncExitStack,
-    *,
-    strict_content_type: bool,
+    request: FastapiRequest, body_field: Union[ModelField, None], *, strict_content_type: bool
 ):  # pragma: no cover # This is from FastAPI
     is_body_form = body_field and isinstance(body_field.field_info, params.Form)
     try:
         body: Any = None
         if body_field:
             if is_body_form:
+                # FastAPI has already parsed this form, so this returns its cached form. FastAPI closes it
+                # after the response, so background tasks can still read the uploaded files
                 body = await request.form()
-                exit_stack.push_async_callback(body.close)
             else:
                 body_bytes = await request.body()
                 if body_bytes:
