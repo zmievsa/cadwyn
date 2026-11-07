@@ -3928,6 +3928,43 @@ class MixinForAlias:
         return "mixin"
 
 
+class MixinAddingMeta(type(BaseModel)):
+    def __new__(mcs, name: str, bases: tuple[type, ...], namespace: dict[str, Any], **kwargs: Any):
+        if MixinForAlias not in bases:
+            bases = (*bases, MixinForAlias)
+        return super().__new__(mcs, name, bases, namespace, **kwargs)
+
+
+class ChildOfAliasWithMetaclass(AliasOfParentWithIntFooThatGetsRenamed(), metaclass=MixinAddingMeta):
+    pass
+
+
+class GrandchildOfAliasWithMetaclass(ChildOfAliasWithMetaclass):
+    pass
+
+
+@pytest.mark.parametrize("model", [ChildOfAliasWithMetaclass, GrandchildOfAliasWithMetaclass])
+def test__generate_versioned_routers__metaclass_changes_unversioned_mro_entries_bases__should_preserve_responses(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter, model: type[BaseModel]
+):
+    router.get("/", response_model=model)(lambda: {"foo": 42})
+    clients = create_versioned_clients(version_change(schema(SchemaWithOneStrField).field("foo").had(name="old_foo")))
+
+    for client in clients.values():
+        response = client.get("/")
+        assert response.status_code == 200
+        assert response.json() == {"foo": 42}
+
+
+def test__generate_versioned_routers__metaclass_changes_versioned_mro_entries_bases__should_fail_at_startup(
+    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter
+):
+    router.get("/", response_model=ChildOfAliasWithMetaclass)(lambda: {"foo": 42})
+
+    with pytest.raises(SchemaGenerationError, match='would keep the latest parent "ParentWithIntFooThatGetsRenamed"'):
+        create_versioned_app(version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo")))
+
+
 @pytest.mark.parametrize(
     "bases",
     [
@@ -4000,7 +4037,7 @@ def test__generate_versioned_routers__mro_entries_no_longer_match_actual_bases__
     with pytest.raises(
         SchemaGenerationError, match=r'original bases of ".*Child" no longer resolve to its actual bases'
     ):
-        create_versioned_app()
+        create_versioned_app(version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo")))
 
 
 def test__generate_versioned_routers__mro_entries_resolution_fails__should_fail_at_startup(
@@ -4023,7 +4060,7 @@ def test__generate_versioned_routers__mro_entries_resolution_fails__should_fail_
     router.get("/", response_model=Child)(lambda: {"foo": 42})
 
     with pytest.raises(SchemaGenerationError, match=r'Cannot resolve the original bases of ".*Child"') as exc_info:
-        create_versioned_app()
+        create_versioned_app(version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo")))
 
     assert isinstance(exc_info.value.__cause__, ValueError)
 

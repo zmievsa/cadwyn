@@ -678,40 +678,77 @@ def _change_version_of_model_references(
         for name, attributes in field_attributes.items():
             with transformer.describing(f"the field '{name}' of {model.__qualname__}"):
                 versioned_field_attributes[name] = transformer.change_version_of_annotation(attributes)
-    # Resolve before versioning: an __mro_entries__ hook returns HEAD classes and may depend on the other bases.
-    bases = tuple(
-        generator.change_version_of_base(base) if issubclass(base, (BaseModel, Enum)) else base
-        for base in _get_resolved_model_bases(model)
-    )
-    # Keep the original generic aliases as metadata so that the copy stays generic, but don't resolve them again
-    # after versioning: that would reintroduce the HEAD classes returned by custom __mro_entries__ hooks.
-    orig_bases = tuple(
-        generator.change_version_of_base(base) if isinstance(base, type) else base
-        for base in model.__dict__.get("__orig_bases__", model.__bases__)
-    )
+    bases, orig_bases = _change_version_of_model_bases(generator, model)
     versioned_annotations = transformer.change_version_of_annotation(annotations)
     with transformer.hard_position():
         generic_metadata = generator.change_version_of_generic_metadata(model)
     return versioned_field_attributes, bases, orig_bases, versioned_annotations, generic_metadata
 
 
-def _get_resolved_model_bases(model: type[BaseModel]) -> tuple[type, ...]:
+def _change_version_of_model_bases(
+    generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier]", model: type[BaseModel]
+) -> tuple[tuple[type, ...], tuple[Any, ...]]:
     original_bases = model.__dict__.get("__orig_bases__", model.__bases__)
+    # The ordinary path needs no resolution or second lookup of each versioned base.
+    if "__orig_bases__" not in model.__dict__ or not any(
+        not isinstance(base, type) and hasattr(base, "__mro_entries__") for base in original_bases
+    ):
+        bases = tuple(generator.change_version_of_base(base) for base in original_bases)
+        return bases, bases
+
+    if isinstance(generator, _ReferencedModelCollector):
+        # Both construction paths only request actual bases and explicit original bases. Record their union
+        # without running user hooks during discovery; only copying needs to check which path it can use.
+        for base in model.__bases__:
+            if issubclass(base, (BaseModel, Enum)) and not any(base is original for original in original_bases):
+                generator.change_version_of_base(base)
+        orig_bases = tuple(
+            generator.change_version_of_base(base) if isinstance(base, type) else base for base in original_bases
+        )
+        return model.__bases__, orig_bases
+
+    resolution_error = None
     try:
         resolved_bases = types.resolve_bases(original_bases)
-    except Exception as error:
-        raise SchemaGenerationError(
-            f'Cannot resolve the original bases of "{model.__qualname__}" through __mro_entries__. '
-            "Use explicit base classes instead."
-        ) from error
-    if len(resolved_bases) != len(model.__bases__) or any(
-        resolved is not actual for resolved, actual in zip(resolved_bases, model.__bases__, strict=True)
+    except Exception as error:  # noqa: BLE001  # User hooks can raise anything; preserve the cause for the startup error.
+        resolution_error = error
+        resolved_bases = ()
+    if len(resolved_bases) == len(model.__bases__) and all(
+        resolved is actual for resolved, actual in zip(resolved_bases, model.__bases__, strict=True)
     ):
-        raise SchemaGenerationError(
-            f'The original bases of "{model.__qualname__}" no longer resolve to its actual bases through '
-            "__mro_entries__. Use explicit base classes instead."
+        # Resolve before versioning: hooks return HEAD classes and may depend on the other original bases.
+        bases = tuple(
+            generator.change_version_of_base(base) if issubclass(base, (BaseModel, Enum)) else base
+            for base in resolved_bases
         )
-    return model.__bases__
+        copies_by_id = {id(base): base_copy for base, base_copy in zip(resolved_bases, bases, strict=True)}
+        # Keep Generic[T] and other aliases as metadata, reusing the copies of explicit class bases.
+        orig_bases = tuple(copies_by_id[id(base)] if isinstance(base, type) else base for base in original_bases)
+        return bases, orig_bases
+
+    # A metaclass can legitimately change __bases__ after Python resolves the original bases. Preserve the old
+    # construction path unless it would leave a changed parent hidden behind a hook at HEAD.
+    orig_bases = tuple(
+        generator.change_version_of_base(base) if isinstance(base, type) else base for base in original_bases
+    )
+    schema_generator = generator.schema_generator if isinstance(generator, _CycleCopier) else generator
+    for base in model.__bases__:
+        if (
+            issubclass(base, BaseModel)
+            and not any(base is original for original in original_bases)
+            and schema_generator._reaches_changed_models(_VersioningQuestion(base, includes_subclasses=False))
+        ):
+            reason = (
+                f'Cannot resolve the original bases of "{model.__qualname__}" through __mro_entries__.'
+                if resolution_error is not None
+                else f'The original bases of "{model.__qualname__}" no longer resolve to its actual bases '
+                "through __mro_entries__."
+            )
+            raise SchemaGenerationError(
+                f'{reason} This would keep the latest parent "{base.__qualname__}" despite schema '
+                "instructions. Use explicit base classes instead."
+            ) from resolution_error
+    return types.resolve_bases(orig_bases), orig_bases
 
 
 # The modules of the generics whose args are types that pydantic resolves, such as list, dict, Optional, or Callable
