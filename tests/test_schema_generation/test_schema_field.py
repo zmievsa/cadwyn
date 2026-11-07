@@ -1,13 +1,29 @@
+import collections
 import contextlib
+import copy
 import dataclasses
 import json
 import re
+import threading
 import time
+import typing
 from collections import Counter
 from collections.abc import Callable
 from decimal import Decimal
 from enum import Enum, auto
-from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, Union, get_args, get_origin, get_type_hints
+from typing import (
+    Annotated,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    NamedTuple,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 import pytest
 from pydantic import (
@@ -21,19 +37,21 @@ from pydantic import (
     computed_field,
     conint,
     constr,
+    create_model,
 )
 from pydantic._internal._known_annotated_metadata import collect_known_metadata
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
-from typing_extensions import override
+from typing_extensions import TypeAliasType, override
 
 from cadwyn import Version, VersionBundle, VersionChange
 from cadwyn.exceptions import (
     CadwynStructureError,
     InvalidGenerationInstructionError,
+    SchemaGenerationError,
 )
 from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
-from cadwyn.structure import schema
+from cadwyn.structure import enum, schema
 from cadwyn.structure.schemas import PossibleFieldAttributes
 from tests._resources.utils import HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED
 from tests.conftest import (
@@ -1801,6 +1819,358 @@ def test__schema_field_had__default_of_field_with_elementwise_equal_default_that
     )
 
     assert schemas["2000-01-01"][ChildWithElementwiseEqualDefault]().foo is None
+
+
+class TagList(list[Any]):
+    pass
+
+
+class TagTuple(tuple[Any, ...]):  # noqa: SLOT001 # It needs instance attributes
+    pass
+
+
+class Options(dict[str, Any]):
+    pass
+
+
+class Point(NamedTuple):
+    x: Any
+    y: Any
+
+
+def _with_source(container: _T) -> _T:
+    container.source = "config"  # ty: ignore[unresolved-attribute]
+    return container
+
+
+def _get_default(schemas: dict[str, SchemaGenerator], version: str, model: type[BaseModel]) -> Any:
+    return schemas[version][model].model_fields["foo"].default
+
+
+@pytest.mark.parametrize(
+    "default",
+    [
+        pytest.param(_with_source(TagList(["a"])), id="list_subclass"),
+        pytest.param(_with_source(TagTuple(("a",))), id="tuple_subclass"),
+        pytest.param(_with_source(Options(a=[1])), id="dict_subclass"),
+        pytest.param(collections.defaultdict(list, a=[1]), id="defaultdict"),
+        pytest.param(_with_source(collections.OrderedDict(a=[1])), id="ordered_dict"),
+        pytest.param(collections.Counter(a=1), id="counter"),  # deepcopy drops the attributes of Counter
+        pytest.param(Point(1, [2]), id="named_tuple"),
+    ],
+)
+def test__schema_field__default_that_subclasses_list_tuple_or_dict__should_get_a_deep_copy_in_every_version(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    default: Any,
+):
+    model = create_model("ModelWithContainerSubclassDefault", foo=(Any, default), bar=(int, 0))
+    schemas = create_runtime_schemas(version_change(schema(model).field("bar").had(description="Bar")))
+
+    defaults = [_get_default(schemas, version, model) for version in ("2000-01-01", "2001-01-01")]
+    for value in defaults:
+        assert type(value) is type(default)
+        assert value == default
+        assert getattr(value, "__dict__", None) == getattr(default, "__dict__", None)
+        assert getattr(value, "default_factory", None) is getattr(default, "default_factory", None)
+        assert value is not default
+    assert defaults[0] is not defaults[1]
+
+
+class CopyMarkingList(list[Any]):
+    def __deepcopy__(self, memo: dict[int, Any]) -> "CopyMarkingList":
+        result = CopyMarkingList(copy.deepcopy(list(self), memo))
+        result.copied_by_its_own_hook = True  # ty: ignore[unresolved-attribute]
+        return result
+
+
+def test__schema_field__default_that_subclasses_list_with_own_deepcopy__should_be_copied_with_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    model = create_model("ModelWithOwnDeepcopyDefault", foo=(Any, CopyMarkingList([1])))
+    schemas = create_runtime_schemas(version_change())
+
+    value = _get_default(schemas, "2000-01-01", model)
+    assert value == [1]
+    assert value.copied_by_its_own_hook
+
+
+def _make_self_containing_list() -> list[Any]:
+    default: list[Any] = [1, list[int]]
+    default.append(default)
+    return default
+
+
+def _make_self_containing_dict(factory: Callable[[], dict[Any, Any]]) -> dict[Any, Any]:
+    default = factory()
+    default["self"] = default
+    return default
+
+
+def _make_tuple_that_contains_itself() -> tuple[Any, ...]:
+    child: list[Any] = []
+    default = (1, child)
+    child.append(default)
+    return default
+
+
+def _make_self_containing_list_subclass() -> TagList:
+    default = _with_source(TagList([1]))
+    default.append(default)
+    return default
+
+
+@pytest.mark.parametrize(
+    ("default", "get_itself"),
+    [
+        pytest.param(_make_self_containing_list(), lambda value: value[2], id="list"),
+        pytest.param(_make_self_containing_dict(dict), lambda value: value["self"], id="dict"),
+        pytest.param(_make_tuple_that_contains_itself(), lambda value: value[1][0], id="tuple_through_list"),
+        pytest.param(_make_self_containing_list_subclass(), lambda value: value[1], id="list_subclass"),
+        pytest.param(
+            _make_self_containing_dict(collections.OrderedDict), lambda value: value["self"], id="ordered_dict"
+        ),
+        pytest.param(
+            _make_self_containing_dict(lambda: collections.defaultdict(list)),
+            lambda value: value["self"],
+            id="defaultdict",
+        ),
+    ],
+)
+def test__schema_field__default_that_contains_itself__should_keep_containing_itself_in_its_own_copy(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    default: Any,
+    get_itself: Callable[[Any], Any],
+):
+    model = create_model("ModelWithSelfContainingDefault", foo=(Any, default))
+    schemas = create_runtime_schemas(version_change())
+
+    defaults = [_get_default(schemas, version, model) for version in ("2000-01-01", "2001-01-01")]
+    for value in defaults:
+        assert type(value) is type(default)
+        assert get_itself(value) is value
+        assert value is not default
+    assert defaults[0] is not defaults[1]
+
+
+Ints = TypeAliasType("Ints", list[int])
+
+
+@pytest.mark.parametrize(
+    "default",
+    [
+        pytest.param(TagList([list[int]]), id="builtin_generic_alias"),
+        pytest.param(TagList([typing.List[int]]), id="typing_generic_alias"),  # noqa: UP006
+        pytest.param(Options(value=Annotated[int, []]), id="annotated_with_unhashable_metadata"),
+        pytest.param(TagList([Ints]), id="type_alias"),
+        pytest.param(TagList([int | str]), id="union_type"),
+        pytest.param(Point(1, Union[int, str]), id="typing_union"),
+        pytest.param(TagList([MyEnum]), id="enum_without_instructions"),
+    ],
+)
+def test__schema_field__container_subclass_default_with_nothing_to_version__should_stay_the_same(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    default: Any,
+):
+    model = create_model("ModelWithTypingObjectsInContainerSubclassDefault", foo=(Any, default))
+    schemas = create_runtime_schemas(version_change())
+
+    value = _get_default(schemas, "2000-01-01", model)
+    assert type(value) is type(default)
+    assert value == default
+
+
+@pytest.mark.parametrize(
+    "default",
+    [
+        pytest.param([1], id="list"),
+        pytest.param({"a": [1]}, id="nested_in_dict"),
+        pytest.param((1, [1]), id="nested_in_tuple"),
+        pytest.param(_with_source(TagList([1])), id="list_subclass"),
+        pytest.param(Options(a=[1]), id="nested_in_dict_subclass"),
+        pytest.param(Point(1, [1]), id="nested_in_named_tuple"),
+    ],
+)
+def test__schema_field__mutating_default_of_one_version__should_not_change_other_versions_or_head(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    default: Any,
+):
+    model = create_model("ModelWithMutableContainerDefault", foo=(Any, copy.deepcopy(default)))
+    schemas = create_runtime_schemas(version_change())
+
+    defaults = [_get_default(schemas, version, model) for version in ("2000-01-01", "2001-01-01")]
+    _get_innermost_list(defaults[0]).append(2)
+
+    assert defaults[1] == default
+    assert model.model_fields["foo"].default == default
+
+
+def _get_innermost_list(value: Any) -> list[Any]:
+    while not isinstance(value, list):
+        value = list(value.values())[-1] if isinstance(value, dict) else value[-1]
+    return value
+
+
+class Sentinel:
+    pass
+
+
+SENTINEL = Sentinel()
+
+
+@pytest.mark.parametrize(
+    "default",
+    [
+        pytest.param([SENTINEL], id="list"),
+        pytest.param((SENTINEL,), id="tuple"),
+        pytest.param({"a": SENTINEL}, id="dict"),
+    ],
+)
+def test__schema_field__plain_container_default__should_share_the_objects_within_it_with_head(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    default: Any,
+):
+    model = create_model(
+        "ModelWithSentinelInDefault", __config__=ConfigDict(arbitrary_types_allowed=True), foo=(Any, default)
+    )
+    schemas = create_runtime_schemas(version_change())
+
+    value = _get_default(schemas, "2000-01-01", model)
+    assert type(value) is type(default)
+    assert next(iter(value.values() if isinstance(value, dict) else value)) is SENTINEL
+
+
+@pytest.mark.parametrize(
+    ("make_default", "get_class"),
+    [
+        pytest.param(lambda cls: [cls], lambda default: default[0], id="list"),
+        pytest.param(lambda cls: (1, cls), lambda default: default[1], id="tuple"),
+        pytest.param(lambda cls: {"model": cls}, lambda default: default["model"], id="dict"),
+    ],
+)
+def test__schema_field__plain_container_default_with_versioned_model_class__should_use_the_class_of_each_version(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    make_default: Callable[[type[BaseModel]], Any],
+    get_class: Callable[[Any], Any],
+):
+    model = create_model("ModelWithModelClassInDefault", foo=(Any, make_default(SchemaWithOneStrField)))
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithOneStrField).field("foo").had(description="Old")))
+
+    descriptions = {}
+    for version in ("2000-01-01", "2001-01-01"):
+        model_class = get_class(schemas[version][model]().foo)  # ty: ignore[unresolved-attribute]
+        assert model_class is schemas[version][SchemaWithOneStrField]
+        descriptions[version] = model_class.model_fields["foo"].description
+    assert descriptions == {"2000-01-01": "Old", "2001-01-01": None}
+
+
+def _function_in_default(value: int) -> int:  # pragma: no cover # Only its signature is versioned
+    return value
+
+
+@pytest.mark.parametrize(
+    "default",
+    [
+        pytest.param(TagList([SchemaWithOneStrField]), id="list_subclass"),
+        pytest.param(Options(model=SchemaWithOneStrField), id="dict_subclass"),
+        pytest.param(Point(1, SchemaWithOneStrField), id="named_tuple"),
+        pytest.param(collections.OrderedDict(model=SchemaWithOneStrField), id="ordered_dict"),
+        pytest.param(collections.Counter({SchemaWithOneStrField: 1}), id="counter"),
+        pytest.param(collections.defaultdict[str, Any](list, model=SchemaWithOneStrField), id="defaultdict"),
+        pytest.param(TagList([list[SchemaWithOneStrField]]), id="model_in_generic_alias"),
+        pytest.param(TagList([Annotated[int, SchemaWithOneStrField]]), id="model_in_annotated_metadata"),
+        pytest.param(TagList([MyEnum]), id="enum_with_instructions"),
+        pytest.param(TagList([_function_in_default]), id="function"),
+    ],
+)
+def test__schema_field__container_subclass_default_with_values_to_version__should_raise_schema_generation_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    default: Any,
+):
+    model = create_model("ModelWithModelClassInContainerSubclassDefault", foo=(Any, default))
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithOneStrField).field("foo").had(description="Old"),
+            enum(MyEnum).didnt_have("baz"),
+        )
+    )
+
+    with pytest.raises(
+        SchemaGenerationError,
+        match=re.escape(
+            "in the field 'foo' of ModelWithModelClassInContainerSubclassDefault because it is a "
+            f"{type(default).__qualname__}, not a plain list, tuple, or dict"
+        ),
+    ):
+        schemas["2000-01-01"][model]
+
+
+def test__schema_field__self_containing_default_with_versioned_model_class__should_raise_schema_generation_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    default: list[Any] = [SchemaWithOneStrField]
+    default.append(default)
+    model = create_model("ModelWithModelClassInSelfContainingDefault", foo=(Any, default))
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithOneStrField).field("foo").had(description="Old")))
+
+    with pytest.raises(
+        SchemaGenerationError,
+        match=re.escape("in the field 'foo' of ModelWithModelClassInSelfContainingDefault because it contains itself"),
+    ):
+        schemas["2000-01-01"][model]
+
+
+def _make_list_subclass_with_lock() -> TagList:
+    default = TagList([1])
+    default.lock = threading.Lock()  # ty: ignore[unresolved-attribute]
+    return default
+
+
+@pytest.mark.parametrize(
+    "default",
+    [
+        pytest.param(_make_list_subclass_with_lock(), id="list_subclass_with_lock"),
+        pytest.param(_make_self_containing_dict(collections.Counter), id="self_containing_counter"),
+    ],
+)
+def test__schema_field__container_subclass_default_that_cannot_be_deep_copied__should_raise_schema_generation_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    default: Any,
+):
+    model = create_model(
+        "ModelWithDefaultThatCannotBeDeepCopied",
+        __config__=ConfigDict(arbitrary_types_allowed=True),
+        foo=(Any, default),
+    )
+    schemas = create_runtime_schemas(version_change())
+
+    with pytest.raises(
+        SchemaGenerationError,
+        match=re.escape("in the field 'foo' of ModelWithDefaultThatCannotBeDeepCopied because it cannot deep copy it"),
+    ):
+        schemas["2000-01-01"][model]
+
+
+def make_tags_from_registry(registry: Any = None) -> list[str]:  # pragma: no cover # Generation fails first
+    return []
+
+
+TAG_FACTORIES = {"tags": make_tags_from_registry}
+make_tags_from_registry.__defaults__ = (TAG_FACTORIES,)
+
+
+def test__schema_field__default_factory_whose_default_contains_the_factory__should_raise_schema_generation_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class ModelWithFactoryFromRegistry(BaseModel):
+        tags: list[str] = Field(default_factory=make_tags_from_registry)
+
+    schemas = create_runtime_schemas(version_change())
+
+    with pytest.raises(
+        SchemaGenerationError,
+        match=re.escape("in the parameters of make_tags_from_registry because it contains itself"),
+    ):
+        schemas["2000-01-01"][ModelWithFactoryFromRegistry]
 
 
 def _factory() -> str:
