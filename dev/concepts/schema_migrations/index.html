@@ -2076,7 +2076,7 @@
 <ol>
 <li>Receives a request for API version <code>V</code></li>
 <li>Validates the request using the schemas from <code>V</code></li>
-<li>Marshalls the unmarshalled request body into a raw data structure using <code>BaseModel.model_dump</code> with <strong>exclude_unset=True</strong></li>
+<li>Marshalls the unmarshalled request body into a raw data structure using <code>BaseModel.model_dump</code> with <strong>exclude_unset=True</strong> and without computed fields, which <code>latest</code> computes itself</li>
 <li>Passes the request through all request migrations from <code>V</code> to <code>latest</code></li>
 <li>Validates the request using <code>latest</code> schemas</li>
 </ol>
