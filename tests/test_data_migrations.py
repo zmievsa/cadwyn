@@ -9107,8 +9107,38 @@ def _make_int_that_counts_its_schemas(make_schema: Callable[[int], core_schema.C
     return IntThatCountsItsSchemas
 
 
-def _raise_on_second_build(build: int) -> core_schema.CoreSchema:
-    if build == 2:
+def _count_override_builds_of_plain_fastapi_request() -> int:
+    """Return how many schemas of an override a request to a plain FastAPI app builds, which is one solve.
+
+    FastAPI 0.157.0 to 0.159.1 build each override twice per solve: once more to collect the names of the params.
+    """
+    builds: list[int] = []
+
+    def make_schema(build: int) -> core_schema.CoreSchema:
+        builds.append(build)
+        return core_schema.int_schema()
+
+    counted_int = _make_int_that_counts_its_schemas(make_schema)
+
+    def get_limit(limit: int) -> int:
+        raise NotImplementedError
+
+    def get_overridden_limit(limit: counted_int) -> int:  # ty: ignore[invalid-type-form]
+        return limit
+
+    app = fastapi.FastAPI()
+
+    @app.get("/")
+    async def endpoint(limit: Annotated[int, Depends(get_limit)]):
+        return limit
+
+    app.dependency_overrides[get_limit] = get_overridden_limit
+    assert TestClient(app).get("/", params={"limit": 3}).json() == 3
+    return len(builds)
+
+
+def _raise_on_first_build_of_head_solve(build: int, builds_per_solve: int) -> core_schema.CoreSchema:
+    if build == builds_per_solve + 1:
         raise HTTPException(status_code=503)
     return core_schema.int_schema()
 
@@ -9116,20 +9146,24 @@ def _raise_on_second_build(build: int) -> core_schema.CoreSchema:
 @pytest.mark.parametrize(
     ("make_schema", "expected_status_code"),
     [
-        # Each override is solved once per pass, so the schemas have `gt=1` and `gt=2`, and 3 passes both
-        pytest.param(lambda build: core_schema.int_schema(gt=build), 200, id="schema_that_changes_per_build"),
-        pytest.param(_raise_on_second_build, 503, id="schema_that_raises_on_second_build"),
+        # Each pass solves the override once, so the head validates the limit with the last schema of the two solves.
+        # The limit passes that schema but not the schema of one more build
+        pytest.param(
+            lambda build, _builds_per_solve: core_schema.int_schema(gt=build), 200, id="schema_that_changes_per_build"
+        ),
+        pytest.param(_raise_on_first_build_of_head_solve, 503, id="schema_that_raises_in_head_solve"),
     ],
 )
 def test__request_body_migration__with_omitted_json_field_and_overridden_dependency__should_solve_it_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
-    make_schema: Callable[[int], core_schema.CoreSchema],
+    make_schema: Callable[[int, int], core_schema.CoreSchema],
     expected_status_code: int,
 ):
     """Nothing is encoded, so building the overrides once more to check the readers of the body would change them"""
-    counted_int = _make_int_that_counts_its_schemas(make_schema)
+    builds_per_solve = _count_override_builds_of_plain_fastapi_request()
+    counted_int = _make_int_that_counts_its_schemas(lambda build: make_schema(build, builds_per_solve))
 
     def get_limit(limit: int) -> int:
         raise NotImplementedError
@@ -9145,16 +9179,16 @@ def test__request_body_migration__with_omitted_json_field_and_overridden_depende
     clients["2000-01-01"].app.dependency_overrides[get_limit] = get_overridden_limit
     counted_int.reset()
 
-    response = clients["2000-01-01"].post(test_path, params={"limit": 3}, json={})
+    response = clients["2000-01-01"].post(test_path, params={"limit": 2 * builds_per_solve + 1}, json={})
     assert response.status_code == expected_status_code
 
 
 @pytest.mark.parametrize(
-    ("data", "expected_builds"),
+    ("data", "extra_builds"),
     [
         # Each request solves the override in both passes, and checking the readers of the body builds it once more
-        pytest.param('{"a": 1}', 3, id="value_to_encode"),
-        pytest.param(None, 2, id="nothing_to_encode"),
+        pytest.param('{"a": 1}', 1, id="value_to_encode"),
+        pytest.param(None, 0, id="nothing_to_encode"),
     ],
 )
 def test__request_body_migration__with_json_field_and_overridden_dependency__should_build_it_once_more_if_it_encodes(
@@ -9162,8 +9196,9 @@ def test__request_body_migration__with_json_field_and_overridden_dependency__sho
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
     data: Optional[str],
-    expected_builds: int,
+    extra_builds: int,
 ):
+    expected_builds = 2 * _count_override_builds_of_plain_fastapi_request() + extra_builds
     builds: list[int] = []
 
     def make_schema(build: int) -> core_schema.CoreSchema:
