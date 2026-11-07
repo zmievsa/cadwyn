@@ -889,38 +889,36 @@ def test__enum_didnt_have__custom_new_that_sets_slot_from_value__should_copy_the
     assert [(m.name, m.double) for m in old_enum] == [("a", 2)]
 
 
-class _TagThatCantBeCompared:
-    @override
-    def __eq__(self, other: object) -> bool:
-        raise TypeError("Can't compare tags")
-
-    __hash__ = object.__hash__
+class _Tag:
+    pass
 
 
-class EnumWithCustomNewAndInitThatSetsUncomparableObject(Enum):
+class EnumWithCustomNewAndInitThatSetsNewObjectOfOtherClass(Enum):
     def __new__(cls, value: int) -> Self:
         obj = object.__new__(cls)
         obj._value_ = value
         return obj
 
     def __init__(self, value: int) -> None:
-        self.tag = _TagThatCantBeCompared()
+        self.tag = _Tag()
 
     a = 1
     b = 2
 
 
-def test__enum_didnt_have__custom_new_with_attribute_that_cant_be_compared__should_raise_schema_generation_error(
+def test__enum_didnt_have__custom_new_that_sets_new_object_of_other_class__should_raise_schema_generation_error(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     with pytest.raises(
         SchemaGenerationError,
         match=re.escape(
-            'Cadwyn can\'t copy "EnumWithCustomNewAndInitThatSetsUncomparableObject" for its versions because its '
+            'Cadwyn can\'t copy "EnumWithCustomNewAndInitThatSetsNewObjectOfOtherClass" for its versions because its '
             '__new__ doesn\'t recreate the member "a" from its value 1.'
         ),
     ):
-        create_runtime_schemas(version_change(enum(EnumWithCustomNewAndInitThatSetsUncomparableObject).didnt_have("b")))
+        create_runtime_schemas(
+            version_change(enum(EnumWithCustomNewAndInitThatSetsNewObjectOfOtherClass).didnt_have("b"))
+        )
 
 
 @pytest.mark.parametrize(
