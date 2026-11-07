@@ -22,9 +22,9 @@ It is recommended to add `enum` members in new versions as well.
 
 For every version, Cadwyn copies the enums that have `enum(...)` instructions. A copy behaves like the enum that you would write by hand for that version: it keeps aliases, `nonmember()` attributes, and `@member` functions, and `had()` takes the same values that you would write in the class body.
 
-Copies retain the state that construction computes for their version, including attributes such as a member's position in the enum. Unchanged members also keep missing attributes and slots assigned after class creation or by a metaclass. Replaced members and aliases that become canonical members are constructed for their version instead of inheriting the old member's state.
+Copies retain constructor-produced state for their version, even when construction deliberately leaves an attribute unset. Unchanged members keep extra attributes and slots assigned outside construction, such as labels added after class creation or by a metaclass. Replaced members and aliases that become canonical members are constructed for their version instead of inheriting the old member's state.
 
-Enum-valued members keep the inner enum member as their value, and `had()` also accepts these values as written. Generated copies still accept the inner members' raw values in requests and responses, so JSON serialization and OpenAPI values stay the same.
+Known limitation: enum-valued members are unwrapped in generated copies, including values passed to `had()`. For example, if `Outer.a = Inner.a`, the copy stores `Inner.a.value` rather than `Inner.a`; members whose raw values compare equal can become aliases. This behavior is retained to preserve existing requests, responses, validation errors, and OpenAPI. Use raw values directly when defining versioned enums.
 
 Cadwyn does not replay a metaclass declared only on the enum itself: metaclasses can require class-creation arguments that the enum has not stored. Members added with `had()` and aliases that become canonical members can therefore lack attributes assigned only by the metaclass. Use a property or member constructor for attributes that these members need.
 

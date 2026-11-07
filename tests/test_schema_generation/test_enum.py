@@ -1033,27 +1033,6 @@ def test__enum_didnt_have__member_attributes_set_by_metaclass__should_keep_the_a
     assert old_enum.a.label == LabeledEnum.a.label == "A"  # ty: ignore[unresolved-attribute]
 
 
-@pytest.mark.parametrize("inner_base", [Enum, StrEnum, IntEnum])
-def test__enum_didnt_have_and_had__enum_valued_members__should_keep_the_inner_members(
-    create_runtime_schemas: CreateRuntimeSchemas,
-    inner_base: type[Enum],
-):
-    values = {"a": 1, "b": 2, "c": 3} if inner_base is IntEnum else {"a": "a", "b": "b", "c": "c"}
-    inner: Any = inner_base("Inner", values)
-    outer: Any = Enum("Outer", {"a": inner.a, "alias": inner.a, "b": inner.b})
-    models = create_runtime_schemas(version_change(enum(outer).didnt_have("b"), enum(outer).had(c=inner.c)))
-    old: Any = models["2000-01-01"][outer]
-    hand_written: Any = Enum("Outer", {"a": inner.a, "alias": inner.a, "c": inner.c})
-
-    assert old.a.value is inner.a
-    assert old.c.value is inner.c
-    assert old.alias is old.a
-    adapter = TypeAdapter(old)
-    assert adapter.validate_python(inner.a) is old.a
-    assert adapter.dump_json(old.a) == TypeAdapter(hand_written).dump_json(hand_written.a)
-    assert adapter.json_schema() == TypeAdapter(hand_written).json_schema()
-
-
 def test__enum_didnt_have__member_slots_set_after_creation__should_keep_own_and_shadowed_slots(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
@@ -1120,6 +1099,34 @@ def test__enum_didnt_have__constructor_sets_member_order__should_keep_the_recons
     assert [(m.name, m.ordinal) for m in Ordered] == [("a", 0), ("b", 1), ("c", 2)]  # ty: ignore[unresolved-attribute]
 
 
+@pytest.mark.parametrize("use_slots", [False, True])
+def test__enum_didnt_have__constructor_omits_state_for_first_member__should_not_restore_constructor_state(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    use_slots: bool,
+):
+    class Ordered(Enum):
+        __slots__ = ("previous",) if use_slots else ()
+
+        def __new__(cls, value: int) -> Self:
+            obj = object.__new__(cls)
+            obj._value_ = value
+            if cls.__members__:
+                obj.previous = list(cls.__members__)[-1]  # ty: ignore[unresolved-attribute]
+            return obj
+
+        a = 1
+        b = 2
+        c = 3
+
+    Ordered.b.display_label = "B"  # ty: ignore[unresolved-attribute]
+    models = create_runtime_schemas(version_change(enum(Ordered).didnt_have("a")))
+    old: Any = models["2000-01-01"][Ordered]
+
+    assert not hasattr(old.b, "previous")
+    assert old.c.previous == "b"
+    assert old.b.display_label == "B"
+
+
 def test__enum_didnt_have__metaclass_requires_class_arguments__should_keep_existing_members_labels(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
@@ -1142,74 +1149,3 @@ def test__enum_didnt_have__metaclass_requires_class_arguments__should_keep_exist
 
     assert old.a.label == "A"
     assert old.a.value == 1
-
-
-@pytest.mark.parametrize("raw_value", [1, True, 1.0])
-def test__enum_didnt_have__enum_valued_members__should_keep_raw_value_equality_lookup(
-    create_runtime_schemas: CreateRuntimeSchemas,
-    raw_value: object,
-):
-    class Inner(Enum):
-        a = 1
-        b = 2
-
-    class Outer(Enum):
-        a = Inner.a
-        b = Inner.b
-
-        @classmethod
-        @override
-        def _missing_(cls, value: object):
-            return cls.a if value == "legacy" else None
-
-    models = create_runtime_schemas(version_change(enum(Outer).didnt_have("b")))
-    old = models["2000-01-01"][Outer]
-
-    assert old.a.value is Inner.a
-    assert TypeAdapter(old).validate_python(raw_value) is old.a
-    assert old("legacy") is old.a
-    with pytest.raises(ValueError, match="not a valid Outer"):
-        old(2)
-
-
-def test__enum_didnt_have__str_mixin_with_enum_value__should_accept_the_raw_value(
-    create_runtime_schemas: CreateRuntimeSchemas,
-):
-    class Inner(Enum):
-        a = "a"
-        b = "b"
-
-    class Outer(str, Enum):
-        def __new__(cls, value: "str | Inner") -> Self:
-            obj = str.__new__(cls, value.value if isinstance(value, Inner) else value)
-            obj._value_ = value
-            return obj
-
-        a = Inner.a
-        b = Inner.b
-
-    models = create_runtime_schemas(version_change(enum(Outer).didnt_have("b")))
-    old = models["2000-01-01"][Outer]
-
-    assert old.a.value is Inner.a
-    assert TypeAdapter(old).validate_python("a") is old.a
-
-
-def test__enum_didnt_have__enum_valued_nan__should_accept_the_identical_raw_value(
-    create_runtime_schemas: CreateRuntimeSchemas,
-):
-    nan = float("nan")
-
-    class Inner(Enum):
-        a = nan
-        b = 2
-
-    class Outer(Enum):
-        a = Inner.a
-        b = Inner.b
-
-    models = create_runtime_schemas(version_change(enum(Outer).didnt_have("b")))
-    old = models["2000-01-01"][Outer]
-
-    assert old.a.value is Inner.a
-    assert TypeAdapter(old).validate_python(nan) is old.a

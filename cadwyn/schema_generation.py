@@ -4568,8 +4568,10 @@ class _EnumWrapper(Generic[_T_ENUM]):
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_ENUM]:
         has_custom_new = _has_custom_new(self.cls)
+        with self._explain_errors_of_custom_new() if has_custom_new else contextlib.nullcontext():
+            rebuilt_head = self._create_enum({name: member.value for name, member in self.cls.__members__.items()})
         if has_custom_new:
-            self._check_that_new_recreates_the_members_from_their_values()
+            self._check_that_new_recreates_the_members_from_their_values(rebuilt_head)
         with self._explain_errors_of_custom_new() if has_custom_new else contextlib.nullcontext():
             model_copy = self._create_enum(self.members)
         for name, original in self.cls.__members__.items():
@@ -4577,7 +4579,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
                 copied = model_copy.__members__[name]
                 # Removing the canonical member of an alias gives the alias a new name and constructor state.
                 if copied.name == original.name:
-                    _restore_member_state(copied, original)
+                    _restore_member_state(copied, original, rebuilt_head.__members__[name])
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         _take_head_members_by_value(model_copy, self.cls)
         return model_copy
@@ -4626,10 +4628,10 @@ class _EnumWrapper(Generic[_T_ENUM]):
                     definitions[name] = enum.member(_ValueOfMemberWithOnlyItsValue(value))
                 else:
                     # A member of the original stays a member even if its value is a function or a class (`@member`)
-                    definitions[name] = enum.member(value)
+                    definitions[name] = enum.member(value.value if isinstance(value, Enum) else value)
             else:
                 # The value that `had()` got, which the copy defines like the class body of the enum would
-                definitions[name] = value
+                definitions[name] = value.value if isinstance(value, Enum) else value
         return definitions
 
     @contextlib.contextmanager
@@ -4642,7 +4644,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
                 f"from their values: {e!r}. {_CUSTOM_NEW_ADVICE}"
             ) from e
 
-    def _check_that_new_recreates_the_members_from_their_values(self) -> None:
+    def _check_that_new_recreates_the_members_from_their_values(self, rebuilt_members: type[_T_ENUM]) -> None:
         """Make sure that the custom __new__ of the enum recreates its members from their values.
 
         Cadwyn only knows the values of the members, not the arguments that __new__ got in the class body. So we build
@@ -4650,8 +4652,6 @@ class _EnumWrapper(Generic[_T_ENUM]):
         that the instructions change are what the class body of their version would give.
         """
         original_members = self.cls.__members__
-        with self._explain_errors_of_custom_new():
-            rebuilt_members = self._create_enum({name: member.value for name, member in original_members.items()})
         for name, original_member in original_members.items():
             if not _is_same_member(rebuilt_members.__members__[name], original_member):
                 raise SchemaGenerationError(
@@ -4857,11 +4857,15 @@ def _get_own_slot_names(cls: type) -> tuple[str, ...]:
     )
 
 
-def _restore_member_state(copied: Enum, original: Enum) -> None:
-    """Restore missing state without replacing what construction computed for this version."""
+def _restore_member_state(copied: Enum, original: Enum, rebuilt_head: Enum) -> None:
+    """Restore only state absent from the full HEAD reconstruction, never constructor-produced state."""
+    constructed_state = _get_member_state(rebuilt_head)
     copied_state = _get_member_state(copied)
     for key, value in _get_member_state(original).items():
-        if copied_state.get(key, _UNSET_SLOT) is not _UNSET_SLOT:
+        if (
+            constructed_state.get(key, _UNSET_SLOT) is not _UNSET_SLOT
+            or copied_state.get(key, _UNSET_SLOT) is not _UNSET_SLOT
+        ):
             continue
         if key[0] == "attribute":
             vars(copied)[key[1]] = value
@@ -4884,28 +4888,17 @@ def _take_head_members_by_value(enum_copy: type[Enum], head_enum: type[Enum]) ->
     """Make the copy of a plain enum or flag take the members of its head enum that have the values of its members.
 
     The responses that the endpoints return have the head members, and so do the defaults of params. Pydantic looks up
-    the members of `str`, `int`, and `float` enums by their values, so we leave them as they are unless their values
-    are themselves enums. For plain enums and flags, it only calls `_missing_`, so their copies would reject the
-    head members. The enum's own `_missing_` gets the head members that the copy has no member with the same value
-    for, as before.
-
-    Enum-valued members also accept their inner raw values, which copies used to store as their values.
+    the members of `str`, `int`, and `float` enums by their values, so we leave them as they are. For plain enums and
+    flags, it only calls `_missing_`, so their copies would reject the head members. The enum's own `_missing_` gets
+    the head members that the copy has no member with the same value for, as before.
     """
-    if is_enum_looked_up_by_value(head_enum) and not any(
-        isinstance(member.value, Enum) for member in enum_copy.__members__.values()
-    ):
+    if is_enum_looked_up_by_value(head_enum):
         return
     inherited_missing = enum_copy._missing_
 
     def _missing_(cls: type[Enum], value: object) -> Any:
         if isinstance(value, head_enum) and (member := get_member_with_same_value(cls, value)) is not None:
             return member
-        for member in cls.__members__.values():
-            if isinstance(member.value, Enum):
-                raw_value = member.value.value
-                # Match enum lookup: identity handles NaN, and equality also accepts e.g. True for 1.
-                if raw_value is value or raw_value == value:
-                    return member
         return inherited_missing(value)
 
     enum_copy._missing_ = classmethod(_missing_)  # ty: ignore[invalid-assignment]
