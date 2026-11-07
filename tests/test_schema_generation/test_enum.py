@@ -3,7 +3,7 @@ import re
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
-from enum import KEEP, Enum, Flag, FlagBoundary, IntEnum, IntFlag, StrEnum, auto, member, nonmember
+from enum import KEEP, Enum, EnumType, Flag, FlagBoundary, IntEnum, IntFlag, StrEnum, auto, member, nonmember
 from pathlib import PurePosixPath
 from typing import Any, Self
 from uuid import UUID
@@ -988,3 +988,164 @@ def test__enum_didnt_have__tuple_enum_with_custom_new__should_keep_the_exact_val
 
     original = TupleEnumWithCustomNew.a
     assert [(m.name, m.value, tuple(m)) for m in old_enum] == [("a", original.value, tuple(original))]
+
+
+@pytest.mark.parametrize(
+    "original", [EnumWithTwoMembers, StrEnumWithAlias, EnumWithCustomNewThatRecreatesMembersFromValue]
+)
+def test__enum_didnt_have__member_attributes_set_after_creation__should_keep_the_attributes(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: type[Enum],
+):
+    retained = next(iter(original))
+    retained.display_label = "A"  # ty: ignore[unresolved-attribute]
+    try:
+        models = create_runtime_schemas(version_change(enum(original).didnt_have(list(original.__members__)[-1])))
+        for version in ("2001-01-01", "2000-01-01"):
+            copied = models[version][original].__members__[retained.name]
+            assert copied.display_label == "A"  # ty: ignore[unresolved-attribute]
+            assert copied.value is retained.value
+            assert copied is not retained
+    finally:
+        del retained.display_label  # ty: ignore[unresolved-attribute]
+
+
+class LabelMeta(EnumType):
+    @override
+    def __new__(mcls, cls: str, bases: tuple[type, ...], classdict: Any, **kwargs: Any) -> Any:
+        result: Any = super().__new__(mcls, cls, bases, classdict, **kwargs)
+        for value in result:
+            value.label = value.name.upper()
+        return result
+
+
+class LabeledEnum(Enum, metaclass=LabelMeta):
+    a = 1
+    b = 2
+
+
+def test__enum_didnt_have__member_attributes_set_by_metaclass__should_keep_the_attributes(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(LabeledEnum).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][LabeledEnum]
+
+    assert old_enum.a.label == LabeledEnum.a.label == "A"  # ty: ignore[unresolved-attribute]
+
+
+def test__enum_didnt_have__member_slots_set_after_creation__should_keep_own_and_shadowed_slots(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Base(Enum):
+        __slots__ = ("label",)
+
+        def __new__(cls, value: int) -> Self:
+            obj = object.__new__(cls)
+            obj._value_ = value
+            return obj
+
+    class Kind(Base):
+        __slots__ = ("label", "unused")
+        a = 1
+        b = 2
+
+    Base.label.__set__(Kind.a, "base label")
+    Kind.a.label = "A"
+    models = create_runtime_schemas(version_change(enum(Kind).didnt_have("b")))
+    old = models["2000-01-01"][Kind]
+
+    assert old.a.label == "A"
+    assert Base.label.__get__(old.a) == "base label"
+    assert not hasattr(old.a, "unused")
+
+
+def test__enum_had__replaced_member__should_not_keep_its_old_attributes(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Kind(Enum):
+        a = 1
+        b = 2
+
+    Kind.a.label = "A"  # ty: ignore[unresolved-attribute]
+    models = create_runtime_schemas(version_change(enum(Kind).had(a=3)))
+    old = models["2000-01-01"][Kind]
+
+    assert old.a.value == 3
+    assert not hasattr(old.a, "label")
+
+
+@pytest.mark.parametrize("use_slots", [False, True])
+def test__enum_didnt_have__constructor_sets_member_order__should_keep_the_reconstructed_order(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    use_slots: bool,
+):
+    class Ordered(Enum):
+        __slots__ = ("ordinal",) if use_slots else ()
+
+        def __new__(cls, value: int) -> Self:
+            obj = object.__new__(cls)
+            obj._value_ = value
+            obj.ordinal = len(cls.__members__)  # ty: ignore[unresolved-attribute]
+            return obj
+
+        a = 1
+        b = 2
+        c = 3
+
+    models = create_runtime_schemas(version_change(enum(Ordered).didnt_have("a")))
+    old: Any = models["2000-01-01"][Ordered]
+
+    assert [(m.name, m.ordinal) for m in old] == [("b", 0), ("c", 1)]
+    assert [(m.name, m.ordinal) for m in Ordered] == [("a", 0), ("b", 1), ("c", 2)]  # ty: ignore[unresolved-attribute]
+
+
+@pytest.mark.parametrize("use_slots", [False, True])
+def test__enum_didnt_have__constructor_omits_state_for_first_member__should_not_restore_constructor_state(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    use_slots: bool,
+):
+    class Ordered(Enum):
+        __slots__ = ("previous",) if use_slots else ()
+
+        def __new__(cls, value: int) -> Self:
+            obj = object.__new__(cls)
+            obj._value_ = value
+            if cls.__members__:
+                obj.previous = list(cls.__members__)[-1]  # ty: ignore[unresolved-attribute]
+            return obj
+
+        a = 1
+        b = 2
+        c = 3
+
+    Ordered.b.display_label = "B"  # ty: ignore[unresolved-attribute]
+    models = create_runtime_schemas(version_change(enum(Ordered).didnt_have("a")))
+    old: Any = models["2000-01-01"][Ordered]
+
+    assert not hasattr(old.b, "previous")
+    assert old.c.previous == "b"
+    assert old.b.display_label == "B"
+
+
+def test__enum_didnt_have__metaclass_requires_class_arguments__should_keep_existing_members_labels(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Meta(EnumType):
+        @override
+        def __new__(  # ty: ignore[invalid-method-override] # Python accepts required metaclass keywords.
+            mcls, cls: str, bases: tuple[type, ...], classdict: Any, *, labels: dict[str, str], **kwargs: Any
+        ) -> Any:
+            result: Any = super().__new__(mcls, cls, bases, classdict, **kwargs)
+            for value in result:
+                value.label = labels[value.name]
+            return result
+
+    class Kind(Enum, metaclass=Meta, labels={"a": "A", "b": "B"}):
+        a = 1
+        b = 2
+
+    models = create_runtime_schemas(version_change(enum(Kind).didnt_have("b")))
+    old: Any = models["2000-01-01"][Kind]
+
+    assert old.a.label == "A"
+    assert old.a.value == 1

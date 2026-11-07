@@ -4568,10 +4568,18 @@ class _EnumWrapper(Generic[_T_ENUM]):
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_ENUM]:
         has_custom_new = _has_custom_new(self.cls)
+        with self._explain_errors_of_custom_new() if has_custom_new else contextlib.nullcontext():
+            rebuilt_head = self._create_enum({name: member.value for name, member in self.cls.__members__.items()})
         if has_custom_new:
-            self._check_that_new_recreates_the_members_from_their_values()
+            self._check_that_new_recreates_the_members_from_their_values(rebuilt_head)
         with self._explain_errors_of_custom_new() if has_custom_new else contextlib.nullcontext():
             model_copy = self._create_enum(self.members)
+        for name, original in self.cls.__members__.items():
+            if name in self.members and self.members[name] is original.value:
+                copied = model_copy.__members__[name]
+                # Removing the canonical member of an alias gives the alias a new name and constructor state.
+                if copied.name == original.name:
+                    _restore_member_state(copied, original, rebuilt_head.__members__[name])
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         _take_head_members_by_value(model_copy, self.cls)
         return model_copy
@@ -4636,7 +4644,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
                 f"from their values: {e!r}. {_CUSTOM_NEW_ADVICE}"
             ) from e
 
-    def _check_that_new_recreates_the_members_from_their_values(self) -> None:
+    def _check_that_new_recreates_the_members_from_their_values(self, rebuilt_members: type[_T_ENUM]) -> None:
         """Make sure that the custom __new__ of the enum recreates its members from their values.
 
         Cadwyn only knows the values of the members, not the arguments that __new__ got in the class body. So we build
@@ -4644,8 +4652,6 @@ class _EnumWrapper(Generic[_T_ENUM]):
         that the instructions change are what the class body of their version would give.
         """
         original_members = self.cls.__members__
-        with self._explain_errors_of_custom_new():
-            rebuilt_members = self._create_enum({name: member.value for name, member in original_members.items()})
         for name, original_member in original_members.items():
             if not _is_same_member(rebuilt_members.__members__[name], original_member):
                 raise SchemaGenerationError(
@@ -4767,8 +4773,13 @@ def _is_same_member(rebuilt_member: Enum, original_member: Enum) -> bool:
         # E.g. not an alias of another member
         rebuilt_member.name == original_member.name
         and _is_same_or_interchangeable(rebuilt_member._value_, original_member._value_)
-        and rebuilt_state.keys() == original_state.keys()
-        and all(_is_same_or_interchangeable(rebuilt_state[k], original_state[k]) for k in original_state)
+        # Attributes absent from the reconstruction can have been assigned after class creation, e.g. by a
+        # metaclass. They are restored separately; attributes that the constructor does set must still match.
+        and rebuilt_state.keys() <= original_state.keys()
+        and all(
+            value is _UNSET_SLOT or _is_same_or_interchangeable(value, original_state[k])
+            for k, value in rebuilt_state.items()
+        )
         # E.g. the `str` that `str.__new__` got, which can differ from the value
         and (member_type is object or member_type.__eq__(rebuilt_member, original_member) is True)
     )
@@ -4844,6 +4855,23 @@ def _get_own_slot_names(cls: type) -> tuple[str, ...]:
         for name, descriptor in cls.__dict__.items()
         if isinstance(descriptor, types.MemberDescriptorType) and descriptor.__objclass__ is cls
     )
+
+
+def _restore_member_state(copied: Enum, original: Enum, rebuilt_head: Enum) -> None:
+    """Restore only state absent from the full HEAD reconstruction, never constructor-produced state."""
+    constructed_state = _get_member_state(rebuilt_head)
+    copied_state = _get_member_state(copied)
+    for key, value in _get_member_state(original).items():
+        if (
+            constructed_state.get(key, _UNSET_SLOT) is not _UNSET_SLOT
+            or copied_state.get(key, _UNSET_SLOT) is not _UNSET_SLOT
+        ):
+            continue
+        if key[0] == "attribute":
+            vars(copied)[key[1]] = value
+        elif value is not _UNSET_SLOT:
+            # Use the descriptor itself: a subclass can shadow a base's slot with a slot of the same name.
+            type(copied).__mro__[key[1]].__dict__[key[2]].__set__(copied, value)
 
 
 def _wrap_enum_nonmember(enum_cls: type[Enum], name: str, value: Any) -> Any:
