@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 import warnings
-from typing import Annotated, ClassVar, Final, Generic, TypeAlias, TypeVar
+from collections.abc import Callable
+from typing import Annotated, Any, ClassVar, Final, Generic, Optional, TypeAlias, TypeGuard, TypeVar
 
 import pytest
 from pydantic import BaseModel, WithJsonSchema
@@ -134,3 +135,42 @@ def test__schema_field_had_name__parent_declares_field_name_as_class_var__should
     copied_child = schemas["2000-01-01"][child]
     assert list(copied_child.model_fields) == ["old_foo"]
     assert copied_child.model_validate({"old_foo": "v"}).model_dump() == {"old_foo": "v"}
+
+
+class ItemOfModelWithSpecialForms(BaseModel):
+    name: str
+
+
+with warnings.catch_warnings():
+    # Pydantic treats `Final` with a default as a class variable, and warns that it will become a field in pydantic v3
+    warnings.filterwarnings("ignore", "Annotation .* is marked as final and has a default value")
+
+    class ModelWithSpecialForms(BaseModel):
+        constant: Final[int] = 1
+        default_item: ClassVar[Optional[ItemOfModelWithSpecialForms]] = None
+        item: Final[ItemOfModelWithSpecialForms]
+        checker: Callable[[Any], TypeGuard[ItemOfModelWithSpecialForms]]
+
+    class ChildOfModelWithSpecialForms(ModelWithSpecialForms):
+        other: str
+
+
+@pytest.mark.filterwarnings("ignore:Annotation .* is marked as final and has a default value")
+def test__schema_field_had__child_of_model_with_special_forms__should_keep_class_vars_and_version_fields(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ItemOfModelWithSpecialForms).field("name").had(type=int),
+            schema(ChildOfModelWithSpecialForms).field("other").had(description="Other"),
+        )
+    )
+
+    model_copy = schemas["2000-01-01"][ChildOfModelWithSpecialForms]
+    item_copy = schemas["2000-01-01"][ItemOfModelWithSpecialForms]
+    assert model_copy.__class_vars__ == {"constant", "default_item"}
+    assert model_copy.constant == 1
+    assert set(model_copy.model_fields) == {"item", "checker", "other"}
+    assert model_copy.model_fields["item"].annotation is item_copy
+    assert model_copy.model_fields["item"].frozen is True
+    assert model_copy.model_fields["checker"].annotation == Callable[[Any], TypeGuard[item_copy]]  # ty: ignore[invalid-type-form]
