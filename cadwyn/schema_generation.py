@@ -4059,10 +4059,22 @@ class _DummyFlag(Flag):
     pass
 
 
+# The enum machinery puts `_generate_next_value_` in the namespace of every enum, but the user can define it too.
+# The copy needs it to compute the values of the members that `had()` adds with `auto()`
+_USER_DEFINABLE_ENUM_ATTRIBUTES = frozenset({"_generate_next_value_"})
+
+# The attributes such as `_member_map_` that the enum machinery puts on every enum. It computes them for the copy again
+_ENUM_INTERNAL_ATTRIBUTES = frozenset(_DummyEnum.__dict__) - _USER_DEFINABLE_ENUM_ATTRIBUTES
+
 # The attributes such as `_flag_mask_` that the enum machinery puts on every Flag.
 # It computes them for the copy again and doesn't accept them in a class body
-_FLAG_INTERNAL_ATTRIBUTES = frozenset(
-    name for name in _DummyFlag.__dict__ if name.startswith("_") and not name.startswith("__") and name.endswith("_")
+_FLAG_INTERNAL_ATTRIBUTES = (
+    frozenset(
+        name
+        for name in _DummyFlag.__dict__
+        if name.startswith("_") and not name.startswith("__") and name.endswith("_")
+    )
+    - _USER_DEFINABLE_ENUM_ATTRIBUTES
 )
 
 
@@ -4109,9 +4121,11 @@ class _EnumWrapper(Generic[_T_ENUM]):
             k: v
             for k, v in enum_cls.__dict__.items()
             if k not in enum_cls._member_names_
-            and k not in _DummyEnum.__dict__
+            and k not in _ENUM_INTERNAL_ATTRIBUTES
             and k not in _FLAG_INTERNAL_ATTRIBUTES
-            and (k not in mro_dict or mro_dict[k] is not v)
+            # A `_generate_next_value_` that the enum takes from a mixin is the mixin's function on Python 3.11, but
+            # the copy would take the one of its base enum type
+            and (k in _USER_DEFINABLE_ENUM_ATTRIBUTES or k not in mro_dict or mro_dict[k] is not v)
         }
 
 
