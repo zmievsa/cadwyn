@@ -44,11 +44,12 @@ from fastapi._compat import (
     is_bytes_sequence_annotation,
 )
 from fastapi.concurrency import run_in_threadpool
+from fastapi.datastructures import DefaultPlaceholder
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import get_dependant, get_validation_alias, solve_dependencies
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, _get_scope_effective_route_context
 from pydantic import AliasChoices, AliasPath, BaseModel, RootModel
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticSerializationError, PydanticUndefined, TzInfo, to_json
@@ -903,7 +904,9 @@ class VersionBundle:
                 dumped_body_model = type(raw_body)
         else:
             # This is for requests without body or with complex body such as form or file
-            body = await _get_body(request, route.body_field, exit_stack)
+            body = await _get_body(
+                request, route.body_field, exit_stack, strict_content_type=_get_strict_content_type(request)
+            )
             if isinstance(body, FormData):
                 uploads_read_by_fastapi = _get_uploads_read_by_fastapi(route, head_route, head_dependant, body)
 
@@ -947,7 +950,8 @@ async def _fastapi_got_no_body(request: FastapiRequest, route: APIRoute, *, embe
     # FastAPI always passes forms. It has already read other bodies, so this returns the cached bytes
     if not is_form and not await request.body():
         return True
-    # Embedded body fields get None only if `_get_body` has parsed a body without a content type as JSON null.
+    # Embedded body fields get None only if `_get_body` has parsed a body without a content type as JSON null, which
+    # it does only with `strict_content_type=False`.
     # FastAPI rejects a JSON null for them, so it has got these raw bytes instead, which it ignores like no body
     return embed_body_fields and not is_form
 
@@ -1519,9 +1523,39 @@ async def _rewind_uploads_read_by_fastapi(
             await read.upload.seek(0)
 
 
+def _get_strict_content_type(request: FastapiRequest) -> bool:
+    """Return the `strict_content_type` with which FastAPI has read the body of the request.
+
+    We resolve it like FastAPI does for the route that serves the request, which isn't the versioned route that
+    Cadwyn has generated. A route in a tree of included routers gets its handler from its effective route context,
+    which merges the values of the route and the routers that include it, and any other route has its own value.
+    FastAPI's request handler takes the value of a default placeholder.
+    """
+    served_route = request.scope["route"]
+    effective_route_context = _get_scope_effective_route_context(request.scope)
+    if effective_route_context is not None and effective_route_context.original_route is served_route:
+        strict_content_type = effective_route_context.strict_content_type
+    else:
+        strict_content_type = served_route.strict_content_type
+    # FastAPI apps give their router a bool, which the routes and routers that they include inherit
+    if isinstance(strict_content_type, DefaultPlaceholder):  # pragma: no cover
+        strict_content_type = strict_content_type.value
+    if not isinstance(strict_content_type, bool):  # pragma: no cover # FastAPI only has bools here
+        raise CadwynError(
+            f"Cadwyn can't tell how FastAPI has read the request body: the route that serves the request has "
+            f"strict_content_type={strict_content_type!r} instead of True or False. Please, open an issue on Cadwyn's "
+            "GitHub."
+        )
+    return strict_content_type
+
+
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
 async def _get_body(
-    request: FastapiRequest, body_field: Union[ModelField, None], exit_stack: AsyncExitStack
+    request: FastapiRequest,
+    body_field: Union[ModelField, None],
+    exit_stack: AsyncExitStack,
+    *,
+    strict_content_type: bool,
 ):  # pragma: no cover # This is from FastAPI
     is_body_form = body_field and isinstance(body_field.field_info, params.Form)
     try:
@@ -1536,7 +1570,9 @@ async def _get_body(
                     json_body: Any = PydanticUndefined
                     content_type_value = request.headers.get("content-type")
                     if not content_type_value:
-                        json_body = await request.json()
+                        # Like FastAPI, we parse a body without a content type as JSON only if it's not strict
+                        if not strict_content_type:
+                            json_body = await request.json()
                     else:
                         message = email.message.Message()
                         message["content-type"] = content_type_value
