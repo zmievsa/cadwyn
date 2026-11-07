@@ -3,6 +3,7 @@ import functools
 import inspect
 import logging
 import re
+import threading
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from contextlib import asynccontextmanager
@@ -1374,16 +1375,11 @@ class _FailingLogHandler(logging.Handler):
 
     def __init__(self) -> None:
         super().__init__()
-        self.ran_on_event_loop: list[bool] = []
+        self.threads: list[threading.Thread] = []
 
     @override
     def handle(self, record: logging.LogRecord) -> bool:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            self.ran_on_event_loop.append(False)
-        else:
-            self.ran_on_event_loop.append(True)
+        self.threads.append(threading.current_thread())
         raise OSError("The log transport is unavailable")
 
 
@@ -1419,22 +1415,25 @@ def test__background_tasks__dropped_while_warnings_are_errors_and_logging_fails_
     with _client_of(router) as client:
         assert client.post("/test").json() == "ok"
     assert background_task_calls == ["user task"]
-    assert failing_log_handler.ran_on_event_loop == [False]
+    assert len(failing_log_handler.threads) == 1
 
 
 def test__background_tasks__dropped_while_warnings_are_errors__should_log_the_warning_off_the_event_loop(
     background_task_calls: list[str], failing_log_handler: _FailingLogHandler
 ):
     router = VersionedAPIRouter()
+    event_loop_threads: list[threading.Thread] = []
 
     @router.post("/test", dependencies=[Depends(_add_background_task)])
     async def handler():
+        event_loop_threads.append(threading.current_thread())
         return "ok"
 
     with _client_of(router) as client:
         assert client.post("/test").json() == "ok"
     assert background_task_calls == ["dependency of fastapi"]
-    assert failing_log_handler.ran_on_event_loop == [False]
+    assert len(event_loop_threads) == len(failing_log_handler.threads) == 1
+    assert failing_log_handler.threads[0] is not event_loop_threads[0]
 
 
 class _RouteThatRecordsBackgroundTasks(APIRoute):
