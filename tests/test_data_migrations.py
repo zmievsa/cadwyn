@@ -2445,6 +2445,7 @@ def test__request_body_migration__with_dependency_override_with_schema_hook__sho
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
 ):
+    builds_per_solve = _count_override_builds_of_plain_fastapi_request()
     bodies_seen_by_migration: list[Any] = []
 
     class IntThatChangesTheBody(int):
@@ -2479,7 +2480,8 @@ def test__request_body_migration__with_dependency_override_with_schema_hook__sho
     with TestClient(app) as client:
         response = client.post(test_path, json=[{"values": [1]}], headers={"x-api-version": "2000-01-01"})
 
-    assert response.json() == [[2]]
+    assert response.status_code == 200
+    assert response.json() == [[1 + builds_per_solve]]
 
 
 class ItemWithValueAndBeforeValidator(BaseModel):
