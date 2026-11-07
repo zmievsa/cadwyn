@@ -2499,6 +2499,7 @@ nan = float("nan")
         pytest.param({1: "a"}, {True: "a"}, id="dict_with_int_key_to_dict_with_bool_key"),
         pytest.param({"a": 1, "b": 2}, {"b": 2, "a": 1}, id="dict_to_dict_in_another_order"),
         pytest.param(frozenset({1}), frozenset({True}), id="frozenset_with_int_to_frozenset_with_bool"),
+        pytest.param({(1, frozenset({2}))}, {(1, frozenset({True}))}, id="set_with_nested_int_to_set_with_nested_bool"),
         pytest.param(AlwaysEqual("old"), AlwaysEqual("new"), id="object_with_custom_eq_to_another_object"),
     ],
 )
@@ -2621,20 +2622,29 @@ class SelfReferencingNode:
     label: str
 
 
-def _self_referencing_node(label: str) -> SelfReferencingNode:
-    node = SelfReferencingNode(parent=None, label=label)
+@dataclasses.dataclass(frozen=True)
+class SelfReferencingNodeThatComparesItsFields:
+    parent: Any
+    label: str
+
+
+def _self_referencing_node(label: str, node_type: type[Any] = SelfReferencingNode) -> Any:
+    node = node_type(parent=None, label=label)
     object.__setattr__(node, "parent", node)
     return node
 
 
+@pytest.mark.parametrize("node_type", [SelfReferencingNode, SelfReferencingNodeThatComparesItsFields])
 def test__schema_field_had__default_that_refers_to_itself__should_change_it(
-    create_runtime_schemas: CreateRuntimeSchemas,
+    create_runtime_schemas: CreateRuntimeSchemas, node_type: type[Any]
 ):
     class SchemaWithSelfReferencingDefault(BaseModel):
-        foo: Annotated[Any, PlainSerializer(lambda node: node.label)] = _self_referencing_node("old")
+        foo: Annotated[Any, PlainSerializer(lambda node: node.label)] = _self_referencing_node("old", node_type)
 
     schemas = create_runtime_schemas(
-        version_change(schema(SchemaWithSelfReferencingDefault).field("foo").had(default=_self_referencing_node("new")))
+        version_change(
+            schema(SchemaWithSelfReferencingDefault).field("foo").had(default=_self_referencing_node("new", node_type))
+        )
     )
 
     assert schemas["2000-01-01"][SchemaWithSelfReferencingDefault]().model_dump() == {"foo": "new"}
@@ -2708,6 +2718,12 @@ class BoxWithInheritedSlot(WithTagSlot):
     value: int
 
 
+@dataclasses.dataclass
+class BoxWithExtraSlot:
+    __slots__ = ("tag", "value")
+    value: int
+
+
 def _tagged(value: Any, tag: str) -> Any:
     value.tag = tag
     return value
@@ -2739,7 +2755,8 @@ def test__schema_field_had__default_of_container_subclass_with_state_that_equali
         pytest.param(lambda: TaggedSet({1}), id="set_subclass"),
         pytest.param(lambda: TaggedFrozenset({1}), id="frozenset_subclass"),
         pytest.param(lambda: Box(1), id="dataclass_with_attribute_that_is_not_a_field"),
-        pytest.param(lambda: BoxWithInheritedSlot(1), id="dataclass_with_slot_that_is_not_a_field"),
+        pytest.param(lambda: BoxWithExtraSlot(1), id="dataclass_with_slot_that_is_not_a_field"),
+        pytest.param(lambda: BoxWithInheritedSlot(1), id="dataclass_with_base_that_is_not_a_dataclass"),
     ],
 )
 def test__schema_field_had__default_with_state_that_equality_ignores__should_change_it(
@@ -2754,6 +2771,91 @@ def test__schema_field_had__default_with_state_that_equality_ignores__should_cha
 
     assert schemas["2000-01-01"][SchemaWithTaggedDefault]().model_dump() == {"foo": "new"}
     assert schemas["2001-01-01"][SchemaWithTaggedDefault]().model_dump() == {"foo": "old"}
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class DataclassSet(set[int]):
+    tag: str = "same tag"
+
+
+def _dataclass_set(*items: int) -> DataclassSet:
+    value = DataclassSet()
+    value.update(items)
+    return value
+
+
+def test__schema_field_had__default_of_dataclass_that_subclasses_set_with_other_items__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithDataclassSetDefault(BaseModel):
+        foo: Annotated[Any, PlainSerializer(sorted)] = _dataclass_set(1)
+
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithDataclassSetDefault).field("foo").had(default=_dataclass_set(2)))
+    )
+
+    assert schemas["2000-01-01"][SchemaWithDataclassSetDefault]().model_dump() == {"foo": [2]}
+    assert schemas["2001-01-01"][SchemaWithDataclassSetDefault]().model_dump() == {"foo": [1]}
+
+
+class CantBeCompared:
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    @override
+    def __hash__(self) -> int:
+        return 1
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        raise RuntimeError("Can't compare")  # pragma: no cover
+
+
+def test__schema_field_had__default_of_set_with_items_that_cant_be_compared__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithSetDefault(BaseModel):
+        foo: Annotated[Any, PlainSerializer(lambda value: sorted(item.label for item in value))] = {
+            CantBeCompared("old")
+        }
+
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithSetDefault).field("foo").had(default={CantBeCompared("new")}))
+    )
+
+    assert schemas["2000-01-01"][SchemaWithSetDefault]().model_dump() == {"foo": ["new"]}
+    assert schemas["2001-01-01"][SchemaWithSetDefault]().model_dump() == {"foo": ["old"]}
+
+
+@dataclasses.dataclass
+class BoxWithFieldThatCantBeRead:
+    value: int
+
+
+def _raise_when_read(box: BoxWithFieldThatCantBeRead) -> int:
+    raise RuntimeError("Can't read")
+
+
+box_with_field_that_cant_be_read_1 = BoxWithFieldThatCantBeRead(1)
+box_with_field_that_cant_be_read_2 = BoxWithFieldThatCantBeRead(2)
+# The instances keep the value in their __dict__, but reading it runs the property
+BoxWithFieldThatCantBeRead.value = property(_raise_when_read)  # ty: ignore[invalid-assignment]
+
+
+def test__schema_field_had__default_whose_field_raises_when_read__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithDefaultThatCantBeRead(BaseModel):
+        foo: Annotated[Any, PlainSerializer(lambda box: vars(box)["value"])] = box_with_field_that_cant_be_read_1
+
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithDefaultThatCantBeRead).field("foo").had(default=box_with_field_that_cant_be_read_2)
+        )
+    )
+
+    assert schemas["2000-01-01"][SchemaWithDefaultThatCantBeRead]().model_dump() == {"foo": 2}
+    assert schemas["2001-01-01"][SchemaWithDefaultThatCantBeRead]().model_dump() == {"foo": 1}
 
 
 def test__schema_field_had__nonexistent_field__should_raise_error(create_runtime_schemas: CreateRuntimeSchemas):
