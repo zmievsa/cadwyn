@@ -17,6 +17,7 @@ from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
     Annotated,
+    Any,
     ClassVar,
     Generic,
     Literal,
@@ -72,7 +73,7 @@ from pydantic_settings import BaseSettings
 from pytest_fixture_classes import fixture_class
 from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from starlette.routing import Route
-from typing_extensions import Any, TypeAliasType, TypeVarTuple, Unpack, override
+from typing_extensions import TypeAliasType, TypeVarTuple, Unpack, override
 
 from cadwyn import VersionBundle, VersionedAPIRouter
 from cadwyn._utils import _callable_name
@@ -3791,7 +3792,7 @@ def test__router_generation__dependency_with_lazy_type_checking_only_annotations
     create_versioned_clients: CreateVersionedClients,
 ):
     paths = []
-    # Python 3.10-3.13 evaluate annotations when a function gets defined so such dependencies cannot exist there
+    # Python 3.11-3.13 evaluate annotations when a function gets defined so such dependencies cannot exist there
     if sys.version_info >= (3, 14):
         lazy_dependencies = importlib.import_module("tests._data.lazy_type_checking_dependencies")
 

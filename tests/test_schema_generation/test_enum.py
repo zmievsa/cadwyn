@@ -1,6 +1,5 @@
 import re
-import sys
-from enum import Enum, Flag, IntEnum, IntFlag, auto
+from enum import KEEP, Enum, Flag, IntEnum, IntFlag, auto
 from typing import Any
 
 import pytest
@@ -136,15 +135,11 @@ def test__enum_didnt_have__enum_that_inherits_boundary_attribute_from_mixin__sho
     assert models["2000-01-01"][IntEnumWithBoundaryAttributeFromMixin]._boundary_ == "domain-metadata"
 
 
-if sys.version_info >= (3, 11):
-    from enum import KEEP
-
-    class FlagWithKeepBoundary(Flag, boundary=KEEP):
-        read = 1
-        write = 2
+class FlagWithKeepBoundary(Flag, boundary=KEEP):
+    read = 1
+    write = 2
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="Flag boundaries were added in Python 3.11")
 def test__enum_didnt_have__flag_enum_with_custom_boundary__should_keep_the_boundary(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):

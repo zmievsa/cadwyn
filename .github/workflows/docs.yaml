@@ -48,7 +48,7 @@ jobs:
         with:
           # When this version is updated,
           # update the docs `base_python` version in `tox.ini`, too.
-          python-version: "3.10"
+          python-version: "3.11"
       - run: tox run -e docs
       # Ubuntu 24.04 blocks unprivileged user namespaces, so the Chrome that
       # linkspector starts crashes with "No usable sandbox!".

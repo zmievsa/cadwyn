@@ -116,7 +116,6 @@ These are accepted for now. They are listed so that nobody "discovers" and fixes
 **How to check a change**
 
 * Run the same requests and OpenAPI of every version against the last release in its own checkout or virtual environment, and compare the results.
-* Run the tests on the minimum supported and the latest Pydantic, and on Python 3.10 and 3.14. Check CI on every operating system before merging: recursion and stack limits differ on Windows and macOS.
-* `tox -e docs` writes `site/` into the repository root, which shadows the standard `site` module on Python 3.10 when the root is on `PYTHONPATH`. Delete it before comparing runs.
+* Run the tests on the minimum supported and the latest Pydantic, and on Python 3.11 and 3.14. Check CI on every operating system before merging: recursion and stack limits differ on Windows and macOS.
 * Pytest puts the root of the checkout it runs from first on `sys.path`, so run a test file from the checkout that you want to test.
 * After merging `main` into a branch, look for top-level functions that are now defined twice. The later definition silently wins.

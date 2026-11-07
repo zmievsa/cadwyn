@@ -6,7 +6,6 @@ import decimal
 import functools
 import inspect
 import itertools
-import operator
 import sys
 import threading
 import types
@@ -15,11 +14,12 @@ import uuid
 import warnings
 from collections.abc import Callable, Generator, Sequence
 from datetime import date, datetime, time, timedelta
-from enum import Enum, Flag, auto
+from enum import Enum, Flag, FlagBoundary, auto
 from functools import cache
 from typing import (
     TYPE_CHECKING,
     Annotated,
+    Any,
     ClassVar,
     ForwardRef,
     Generic,
@@ -27,9 +27,12 @@ from typing import (
     TypeAlias,
     TypeGuard,
     Union,
+    assert_never,
     cast,
+    final,
     get_args,
     get_origin,
+    overload,
 )
 
 import annotated_types
@@ -61,13 +64,9 @@ from pydantic._internal._typing_extra import try_eval_type as pydantic_try_eval_
 from pydantic.fields import ComputedFieldInfo, FieldInfo
 from pydantic_core import PydanticUndefined
 from typing_extensions import (
-    Any,
     Doc,
     TypeVar,
     _AnnotatedAlias,
-    assert_never,
-    final,
-    overload,
     override,
 )
 
@@ -108,9 +107,6 @@ from ._utils import iscoroutinefunction
 
 if TYPE_CHECKING:
     from cadwyn.structure.versions import HeadVersion, Version
-
-if sys.version_info >= (3, 11):
-    from enum import FlagBoundary
 
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])
@@ -4063,7 +4059,7 @@ class _DummyFlag(Flag):
     pass
 
 
-# The attributes such as `_flag_mask_` that the enum machinery puts on every Flag on Python 3.11+.
+# The attributes such as `_flag_mask_` that the enum machinery puts on every Flag.
 # It computes them for the copy again and doesn't accept them in a class body
 _FLAG_INTERNAL_ATTRIBUTES = frozenset(
     name for name in _DummyFlag.__dict__ if name.startswith("_") and not name.startswith("__") and name.endswith("_")
@@ -4095,11 +4091,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
         enum_dict["__doc__"] = self.cls.__doc__
         class_kwargs: dict[str, Any] = {}
         # A Flag's boundary is a class keyword, not an attribute of its body
-        if (
-            sys.version_info >= (3, 11)
-            and issubclass(self.cls, Flag)
-            and isinstance(boundary := getattr(self.cls, "_boundary_", None), FlagBoundary)
-        ):
+        if issubclass(self.cls, Flag) and isinstance(boundary := getattr(self.cls, "_boundary_", None), FlagBoundary):
             class_kwargs["boundary"] = boundary
         model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict, **class_kwargs))
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
@@ -4147,8 +4139,6 @@ def _eval_forward_refs(annotation: Any, model: type[BaseModel]) -> Any:
     """Resolve the forward refs in the annotation of a model the way pydantic does, keeping the unresolvable ones"""
     if not _contains_forward_refs(annotation):
         return annotation
-    if sys.version_info < (3, 11):
-        annotation = _convert_strings_in_builtin_generics_to_forward_refs(annotation)
     globalns = getattr(sys.modules.get(model.__module__), "__dict__", None)
     localns = {model.__name__: model} | (unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
     evaluated_annotation = _evaluate_user_annotations(lambda: pydantic_try_eval_type(annotation, globalns, localns)[0])
@@ -4172,36 +4162,6 @@ def _contains_forward_refs(annotation: Any) -> bool:
     if is_annotated(origin):
         args = args[:1]
     return any(_contains_forward_refs(arg) for arg in args)
-
-
-def _convert_strings_in_builtin_generics_to_forward_refs(annotation: Any) -> Any:
-    """Python 3.10 does not evaluate the strings in the args of builtin generics such as list["Item"].
-
-    Python 3.11+ converts them to forward refs while evaluating, which we do ourselves here.
-    """
-    from typing_inspection.typing_objects import is_annotated, is_literal
-
-    if isinstance(annotation, types.UnionType):
-        # Unlike typing.Union, `X | Y` cannot be rebuilt with copy_with
-        return functools.reduce(
-            operator.or_, (_convert_strings_in_builtin_generics_to_forward_refs(arg) for arg in annotation.__args__)
-        )
-    if isinstance(annotation, types.GenericAlias):
-        args = tuple(
-            ForwardRef(arg) if isinstance(arg, str) else _convert_strings_in_builtin_generics_to_forward_refs(arg)
-            for arg in annotation.__args__
-        )
-        return types.GenericAlias(annotation.__origin__, args)
-    origin = get_origin(annotation)
-    # Bare aliases such as typing.List have no args to convert
-    args = getattr(annotation, "__args__", ())
-    if is_literal(origin) or not args or not hasattr(annotation, "copy_with"):
-        return annotation
-    if is_annotated(origin):
-        return _AnnotatedAlias(
-            _convert_strings_in_builtin_generics_to_forward_refs(annotation.__origin__), annotation.__metadata__
-        )
-    return annotation.copy_with(tuple(_convert_strings_in_builtin_generics_to_forward_refs(arg) for arg in args))
 
 
 def _try_eval_type_for_discovery(value: Any, globals: dict[str, Any]) -> Any:

@@ -5,7 +5,7 @@ description = "Production-ready community-driven modern Stripe-like API versioni
 authors = [{ name = "Stanislav Zmiev", email = "zmievsa@gmail.com" }]
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = [
     "python",
     "api",
@@ -17,7 +17,6 @@ keywords = [
     "api-versioning",
     "pydantic",
     "fastapi",
-    "python310",
     "python311",
     "python312",
     "python313",
@@ -29,7 +28,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -73,7 +71,6 @@ dev = [
     "svcs ~=24.1.0",
     "httpx >=0.26.0",
     "pytest-fixture-classes >=1.0.3",
-    # pytest==8.3.5 has a bug that fails our windows python 3.10 tests
     "pytest==9.0.3",
     "pytest-cov >=4.0.0",
     "dirty-equals >=0.6.0",

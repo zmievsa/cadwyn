@@ -18,7 +18,7 @@ from decimal import Decimal
 from enum import Enum
 from io import BytesIO, RawIOBase, StringIO, UnsupportedOperation
 from types import MappingProxyType
-from typing import Annotated, Any, Literal, Optional, Union, cast
+from typing import Annotated, Any, Literal, Optional, Self, Union, cast
 from uuid import UUID
 
 import fastapi
@@ -77,7 +77,7 @@ from pydantic_core import core_schema
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.formparsers import MultiPartParser
 from starlette.responses import StreamingResponse
-from typing_extensions import Self, TypeAliasType, TypedDict, override
+from typing_extensions import TypeAliasType, TypedDict, override
 
 from cadwyn import VersionedAPIRouter, current_dependency_solver
 from cadwyn.exceptions import (
@@ -6526,8 +6526,6 @@ def test__request_body_migration__with_recursive_model__head_should_get_the_valu
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
 ):
-    # Python 3.10 keeps forward references inside builtin generics such as `list["Node"]` unevaluated
-    # in the field info, so only references that typing evaluates, such as `Optional["Node"]`, are walked into there
     class Node(BaseModel):
         # Required, so that the head surely rejects the body as it is and we restore it
         value: int = Field(validation_alias="vv")
@@ -6835,7 +6833,6 @@ def test__request_body_migration__with_body_as_deep_as_pydantic_accepts__head_sh
 
 class TreeNodeWithValidationAlias(BaseModel):
     value: Optional[int] = Field(default=None, alias="x", validation_alias="vv")
-    # Python 3.10 keeps quoted names inside `list[...]` as strings, so we quote the whole annotation
     kids: "dict[str, list[TreeNodeWithValidationAlias]]" = {}
 
 

@@ -8,7 +8,7 @@ import types
 import typing
 import warnings
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Optional
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Optional, Self
 
 import pytest
 from annotated_types import Len, MinLen
@@ -28,7 +28,7 @@ from pydantic import (
     conint,
 )
 from pydantic.fields import FieldInfo
-from typing_extensions import Self, override
+from typing_extensions import override
 
 from cadwyn.applications import Cadwyn
 from cadwyn.route_generation import VersionedAPIRouter
@@ -1032,11 +1032,7 @@ def test__router_generation__partial_of_class_with_forwardrefs__should_resolve_a
     async def no_constructor_route(resource: Annotated[Any, Depends(functools.partial(ResourceWithoutConstructor))]):
         return resource.body
 
-    paths = ["/init", "/new", "/metaclass", "/cached_new", "/cached_init"]
-    # Python 3.10's inspect.signature() drops the first parameter of a staticmethod or classmethod __call__ of
-    # a metaclass so even FastAPI itself cannot use such dependencies there
-    if sys.version_info >= (3, 11):
-        paths += ["/static_metaclass", "/class_metaclass"]
+    paths = ["/init", "/new", "/metaclass", "/cached_new", "/cached_init", "/static_metaclass", "/class_metaclass"]
     for version_client in create_versioned_clients(version_change()).values():
         for path in paths:
             response = version_client.post(path, json={"foo": "bar"})
@@ -1170,11 +1166,8 @@ def test__router_generation__dependencies_with_annotations_from_another_module__
         "/bound_method",
         "/inherited_partialmethod",
         "/inherited_staticmethod",
+        "/classmethod",
     ]
-    # Python 3.10's inspect.signature() drops the first parameter of a classmethod __call__ of a metaclass
-    # so even FastAPI itself cannot use such dependencies there
-    if sys.version_info >= (3, 11):
-        paths.append("/classmethod")
     for version_client in create_versioned_clients(version_change()).values():
         for path in paths:
             response = version_client.post(path, json={"foo": "bar"})
@@ -1250,11 +1243,8 @@ def test__router_generation__wrapped_dependencies_from_another_module__should_re
         "/staticmethod_of_decorated",
         "/bound_method_of_decorated",
         "/decorated_bound_method",
+        "/classmethod_of_decorated",
     ]
-    # Python 3.10's inspect.signature() drops the first parameter of a classmethod __call__ of a metaclass
-    # so even FastAPI itself cannot use such dependencies there
-    if sys.version_info >= (3, 11):
-        paths.append("/classmethod_of_decorated")
     for version_client in create_versioned_clients(version_change()).values():
         for path in paths:
             response = version_client.post(path, json={"foo": "bar"})
@@ -1343,36 +1333,31 @@ def test__router_generation__callable_instances_with_descriptor_call__should_res
     async def partialmethod_route(body: Annotated[Any, Depends(partialmethod_provider)]):
         return body
 
-    paths = ["/partialmethod"]
-    # Python 3.10's inspect.signature() looks up __call__ on the class instead of the instance
-    # so it fails or drops the first parameter for these dependencies and even FastAPI itself cannot use them there
-    if sys.version_info >= (3, 11):
+    @router.post("/staticmethod")
+    async def staticmethod_route(body: Annotated[Any, Depends(staticmethod_provider)]):
+        return body
 
-        @router.post("/staticmethod")
-        async def staticmethod_route(body: Annotated[Any, Depends(staticmethod_provider)]):
-            return body
+    @router.post("/classmethod")
+    async def classmethod_route(body: Annotated[Any, Depends(classmethod_provider)]):
+        return body
 
-        @router.post("/classmethod")
-        async def classmethod_route(body: Annotated[Any, Depends(classmethod_provider)]):
-            return body
+    @router.post("/instance")
+    async def instance_route(body: Annotated[Any, Depends(instance_call_provider)]):
+        return body
 
-        @router.post("/instance")
-        async def instance_route(body: Annotated[Any, Depends(instance_call_provider)]):
-            return body
+    @router.post("/class")
+    async def class_route(resource: Annotated[Any, Depends(class_call_provider)]):
+        return resource.body
 
-        @router.post("/class")
-        async def class_route(resource: Annotated[Any, Depends(class_call_provider)]):
-            return resource.body
+    @router.post("/property")
+    async def property_route(body: Annotated[Any, Depends(property_provider)]):
+        return body
 
-        @router.post("/property")
-        async def property_route(body: Annotated[Any, Depends(property_provider)]):
-            return body
+    @router.post("/descriptor")
+    async def descriptor_route(body: Annotated[Any, Depends(descriptor_provider)]):
+        return body
 
-        @router.post("/descriptor")
-        async def descriptor_route(body: Annotated[Any, Depends(descriptor_provider)]):
-            return body
-
-        paths += ["/staticmethod", "/classmethod", "/instance", "/class", "/property", "/descriptor"]
+    paths = ["/partialmethod", "/staticmethod", "/classmethod", "/instance", "/class", "/property", "/descriptor"]
     for version_client in create_versioned_clients(version_change()).values():
         for path in paths:
             response = version_client.post(path, json={"foo": "bar"})
@@ -1388,7 +1373,7 @@ def test__router_generation__function_like_dependency__should_resolve_annotation
         return body
 
     paths = ["/function_like"]
-    # Python 3.10-3.12's inspect.signature() reads a function-like partial directly. Python 3.13+ unwraps partials
+    # Python 3.11-3.12's inspect.signature() reads a function-like partial directly. Python 3.13+ unwraps partials
     # first so it gets the signature of _invoke which has no "body" and even FastAPI itself cannot use it there
     if sys.version_info < (3, 13):
 
@@ -1637,8 +1622,6 @@ nested_quoted_dependency: Any = None
 def test__router_generation__nested_quoted_parameter_annotations__should_use_versioned_models(
     router, create_versioned_clients, monkeypatch, style, shape
 ):
-    if sys.version_info < (3, 11) and shape in {"list", "dict", "annotated"}:
-        pytest.skip("Python 3.10 cannot evaluate forward references within builtin generics such as list['Model']")
     dependency, make_body = _NESTED_QUOTED_DEPENDENCIES[shape]
     monkeypatch.setitem(globals(), "nested_quoted_dependency", dependency)
     if style == "endpoint":

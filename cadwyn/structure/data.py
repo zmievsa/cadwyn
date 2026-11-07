@@ -2,11 +2,10 @@ import functools
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import ClassVar, Union, cast
+from typing import Any, ClassVar, Union, cast, overload
 
 from fastapi import Request, Response
 from starlette.datastructures import FormData, MutableHeaders, UploadFile
-from typing_extensions import Any, overload
 
 from cadwyn._utils import _callable_name, same_method_definition_as_in
 from cadwyn.structure.common import _validate_schema_is_versionable
