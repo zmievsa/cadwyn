@@ -1,3 +1,4 @@
+import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
@@ -47,8 +48,9 @@ if TYPE_CHECKING:
 
 CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
-# FastAPI silently keeps unknown keyword arguments in `app.extra`, so we reject these ourselves
-_REMOVED_CHANGELOG_ARGUMENTS = ("changelog_url", "include_changelog_url_in_schema")
+# FastAPI silently keeps unknown keyword arguments in `app.extra`, so we reject these ourselves. The 8.x docs told
+# apps to pass the values that turn the changelog off, which still do what they did, so we only warn about them
+_REMOVED_CHANGELOG_ARGUMENTS = {"changelog_url": None, "include_changelog_url_in_schema": False}
 
 
 def _get_effective_include_in_schema(route: BaseRoute, effective_route_context: _EffectiveRouteContext | None) -> bool:
@@ -182,12 +184,21 @@ class Cadwyn(FastAPI):
             raise TypeError(
                 "Cadwyn 9.0.0 removed the api_version_header_name argument. Use api_version_parameter_name instead."
             )
-        for removed_argument in _REMOVED_CHANGELOG_ARGUMENTS:
-            if removed_argument in extra:
+        for removed_argument, value_that_turns_it_off in _REMOVED_CHANGELOG_ARGUMENTS.items():
+            if removed_argument not in extra:
+                continue
+            value = extra.pop(removed_argument)
+            if value is not value_that_turns_it_off:
                 raise TypeError(
                     f"Cadwyn.__init__() got an unexpected keyword argument '{removed_argument}'. "
                     "Cadwyn 9.0 removed the changelog feature, so remove this argument."
                 )
+            warnings.warn(
+                f"Cadwyn 9.0 removed the changelog feature, so `{removed_argument}={value_that_turns_it_off!r}` does "
+                "nothing. Remove this argument: Cadwyn 10.0 will raise a TypeError for it.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if api_version_default_value is not None and api_version_location == "path":
             raise CadwynStructureError(
                 "You tried to pass an api_version_default_value while putting the API version in Path. "
