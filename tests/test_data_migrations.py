@@ -7512,6 +7512,15 @@ def test__request_body_migration__with_json_field__should_get_its_parsed_value_a
             lambda body: body.update(anything=body["anything"] + "4"), 1234, id="string_that_the_migration_changes"
         ),
         pytest.param(lambda body: body.update(anything=["a"]), ["a"], id="list_that_the_migration_sets"),
+        # Cadwyn can't tell an equal string that a migration makes from JSON that it sets on purpose
+        pytest.param(
+            lambda body: body.update(anything=body["anything"].encode().decode()),
+            123,
+            id="string_that_the_migration_makes_anew",
+        ),
+        pytest.param(
+            lambda body: body.update(items=[body["anything"]]), "123", id="string_that_the_migration_copies_elsewhere"
+        ),
     ],
 )
 def test__request_body_migration__with_string_in_json_field__should_get_the_decoded_string_and_keep_what_it_sets(
@@ -7579,7 +7588,7 @@ def test__request_body_migration__with_string_in_json_field_next_to_value_cadwyn
     assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [("json_type", ("body", "data"))]
 
 
-def test__request_body_migration__with_string_in_json_field_next_to_list_that_the_migration_replaces__should_get_both(
+def test__request_body_migration__with_json_string_next_to_list_that_the_migration_replaces__should_stay_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -7594,12 +7603,41 @@ def test__request_body_migration__with_string_in_json_field_next_to_list_that_th
 
     clients = create_versioned_clients(version_change(migrator=migrator))
 
-    # Cadwyn doesn't walk into the tuple, so the head decodes its string once more, as before, but not the other one
+    # Cadwyn can't walk into the tuple, so it can't encode the string in it. If it encoded the other string, the head
+    # would decode the string in the tuple once more and accept the request with `123` instead of `"123"`.
     with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
-        clients["2000-01-01"].post(test_path, json={"items": ['"a"'], "anything": '"abc"'})
+        clients["2000-01-01"].post(test_path, json={"items": ['"123"'], "anything": '"abc"'})
     assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [
-        ("json_invalid", ("body", "items", 0))
+        ("json_invalid", ("body", "anything"))
     ]
+
+
+def test__request_body_migration__with_client_string_that_the_migration_puts_elsewhere__should_keep_it_as_its_own(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    encoded = json.dumps([73912653, 28176493])
+    is_the_client_string: list[bool] = []
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithJsonStrings):
+        return body
+
+    @convert_request_to_next_version_for(SchemaWithJsonStrings)
+    def migrator(request: RequestInfo):
+        sys.intern(request.body["anything"])
+        # Interning gives the migration the very string object that the client has sent
+        own_json = sys.intern(json.dumps([73912653, 28176493]))
+        is_the_client_string.append(own_json is request.body["anything"])
+        request.body["items"] = [own_json]
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    response = clients["2000-01-01"].post(test_path, json={"anything": json.dumps(encoded)})
+    assert is_the_client_string == [True]
+    # The head decodes the JSON that the migration has set, as before, and gets the client's string as it is
+    assert response.json() == IsPartialDict(anything=encoded, items=[[73912653, 28176493]])
 
 
 def test__request_body_migration__with_empty_string_in_json_field__should_fail_as_before(
