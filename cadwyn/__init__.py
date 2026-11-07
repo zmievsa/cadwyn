@@ -1,7 +1,6 @@
 import importlib.metadata
 
 from .applications import Cadwyn
-from .changelogs import hidden  # ty: ignore[deprecated]  # Re-export the deprecated API for compatibility.
 from .dependencies import current_dependency_solver
 from .route_generation import VersionedAPIRouter, generate_versioned_routers
 from .schema_generation import generate_versioned_models, migrate_response_body
@@ -38,7 +37,6 @@ __all__ = [
     "enum",
     "generate_versioned_models",
     "generate_versioned_routers",
-    "hidden",
     "migrate_response_body",
     "schema",
 ]

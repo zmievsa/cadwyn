@@ -488,9 +488,6 @@ def test__issue_419_reproduction__renamed_field_of_self_referencing_model__shoul
     old_schema = old_openapi["components"]["schemas"][old_response["schema"]["$ref"].rsplit("/", 1)[-1]]
     assert set(old_schema["properties"]) == {"title", "children"}
     assert old_schema["properties"]["children"]["items"] == old_response["schema"]
-    changelog = TestClient(app).get("/changelog")
-    assert changelog.status_code == HTTP_200_OK
-    assert "title" in changelog.text
 
 
 def test__generate_versioned_models__copies_in_cycle__should_refer_to_each_other():
@@ -852,8 +849,6 @@ def test__router_generation__generic_args_that_lead_back_to_the_generic__should_
     assert old_client.post("/categories", json={"name": "toolong"}).status_code == HTTP_422_UNPROCESSABLE_CONTENT
     nested_body = {"name": "abc", "children": {"items": [{"name": "toolong", "children": None}]}}
     assert old_client.post("/categories", json=nested_body).json() == nested_body
-    # The changelog generates another copy of PagedCategory whose generic args refer to the version's copy
-    assert TestClient(app).get("/changelog").status_code == HTTP_200_OK
 
 
 @pytest.mark.parametrize("generic_first", [False, True])
@@ -1091,7 +1086,7 @@ def test__router_generation__description_of_self_referencing_model_changed__shou
         Version("2001-01-01", version_change(schema(DocumentedCategory).had(description="A category."))),
         Version("2000-01-01"),
     )
-    app = Cadwyn(versions=versions, changelog_url=None)
+    app = Cadwyn(versions=versions)
     app.generate_and_include_versioned_routers(router)
     client = TestClient(app)
 

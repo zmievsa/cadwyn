@@ -5,7 +5,6 @@ line-length = 80
 # The multi-line docstrings of these version changes are descriptions for API clients
 "concepts/version_changes/block00[145678].py" = ["D205"]
 "concepts/version_changes/block01[05].py" = ["D205"]
-"concepts/changelogs/block001.py" = ["D205"]
 "concepts/enum_migrations/block00[12].py" = ["D205"]
 "concepts/schema_migrations/block00[123489].py" = ["D205"]
 "concepts/endpoint_migrations/block00[2346].py" = ["D205"]

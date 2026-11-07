@@ -119,5 +119,3 @@ The latest version keeps the docstring from your code, so if the docstring conta
 ```python
 {! ./docs_src/concepts/schema_migrations/block011.py [ln:1,6-16] !}
 ```
-
-The [changelog](./changelogs.md) does not describe changes of schema descriptions.

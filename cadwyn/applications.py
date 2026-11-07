@@ -27,7 +27,6 @@ from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan, Receive, Scope, Send
 from typing_extensions import Self, assert_never, deprecated, override
 
-from cadwyn.changelogs import _CHANGELOG_DEPRECATION_MESSAGE, CadwynChangelogResource, _generate_changelog
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
     APIVersionFormat,
@@ -48,6 +47,8 @@ if TYPE_CHECKING:
 
 CURR_DIR = Path(__file__).resolve()
 logger = getLogger(__name__)
+# FastAPI silently keeps unknown keyword arguments in `app.extra`, so we reject these ourselves
+_REMOVED_CHANGELOG_ARGUMENTS = ("changelog_url", "include_changelog_url_in_schema")
 
 
 def _get_effective_include_in_schema(route: BaseRoute, effective_route_context: _EffectiveRouteContext | None) -> bool:
@@ -119,8 +120,6 @@ class Cadwyn(FastAPI):
         api_version_title: Optional[str] = None,
         api_version_description: Optional[str] = None,
         versioning_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
-        changelog_url: Annotated[Union[str, None], deprecated(_CHANGELOG_DEPRECATION_MESSAGE)] = "/changelog",
-        include_changelog_url_in_schema: Annotated[bool, deprecated(_CHANGELOG_DEPRECATION_MESSAGE)] = True,
         debug: bool = False,
         title: str = "FastAPI",
         summary: Union[str, None] = None,
@@ -191,12 +190,12 @@ class Cadwyn(FastAPI):
                 stacklevel=2,
             )
             api_version_parameter_name = api_version_header_name
-        if changelog_url is not None:
-            warnings.warn(
-                _CHANGELOG_DEPRECATION_MESSAGE,
-                DeprecationWarning,
-                stacklevel=2,
-            )
+        for removed_argument in _REMOVED_CHANGELOG_ARGUMENTS:
+            if removed_argument in extra:
+                raise TypeError(
+                    f"Cadwyn.__init__() got an unexpected keyword argument '{removed_argument}'. "
+                    "Cadwyn 9.0 removed the changelog feature, so remove this argument."
+                )
         if api_version_default_value is not None and api_version_location == "path":
             raise CadwynStructureError(
                 "You tried to pass an api_version_default_value while putting the API version in Path. "
@@ -244,9 +243,6 @@ class Cadwyn(FastAPI):
 
         self._versioned_webhook_routers: dict[VersionType, APIRouter] = {}
         self._latest_version_router = APIRouter(dependency_overrides_provider=self)
-
-        self.changelog_url = changelog_url
-        self.include_changelog_url_in_schema = include_changelog_url_in_schema
 
         self.docs_url = docs_url
         self.redoc_url = redoc_url
@@ -363,20 +359,7 @@ class Cadwyn(FastAPI):
         for version in self.versions:
             self.router.versioned_routers[version.value] = APIRouter(**self._kwargs_to_router)
 
-    @deprecated(_CHANGELOG_DEPRECATION_MESSAGE)
-    def generate_changelog(self) -> CadwynChangelogResource:
-        return _generate_changelog(self.versions, self.router)
-
     def _add_utility_endpoints(self, unversioned_router: APIRouter):
-        if self.changelog_url is not None:
-            unversioned_router.add_api_route(
-                path=self.changelog_url,
-                endpoint=self.generate_changelog,  # ty: ignore[deprecated]  # Keep serving the legacy endpoint.
-                response_model=CadwynChangelogResource,
-                methods=["GET"],
-                include_in_schema=self.include_changelog_url_in_schema,
-            )
-
         if self.openapi_url is not None:
             unversioned_router.add_route(
                 path=self.openapi_url,
