@@ -11,6 +11,11 @@ async def list_items() -> Page[Item]:
     return Page[Item](items=[Item(full_name="John")])
 
 
+@router.post("/bare")
+async def accept_bare_page(page: Page) -> None:  # ty: ignore[missing-type-argument] # Tests bare generic validation.
+    pass
+
+
 app.generate_and_include_versioned_routers(router)
 client = TestClient(app)
 
@@ -41,3 +46,21 @@ def test__generic_model__response_of_newer_version__should_use_head_type_arg():
     response = client.get("/items", headers={"x-api-version": "2001-01-01"})
     assert response.status_code == 200, response.json()
     assert response.json() == {"items": [{"full_name": "John"}]}
+
+
+def test__bare_generic__old_version__should_reject_latest_bound_shape():
+    response = client.post(
+        "/bare",
+        headers={"x-api-version": "2000-01-01"},
+        json={"items": [{"full_name": "John"}]},
+    )
+    assert response.status_code == 422
+
+
+def test__bare_generic__latest_version__should_accept_latest_bound_shape():
+    response = client.post(
+        "/bare",
+        headers={"x-api-version": "2001-01-01"},
+        json={"items": [{"full_name": "John"}]},
+    )
+    assert response.status_code == 200

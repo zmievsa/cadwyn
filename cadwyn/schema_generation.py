@@ -674,21 +674,30 @@ def _change_version_of_model_references(
     such as default factories, and the generic metadata need the classes themselves, just like the bases.
     """
     transformer = generator.annotation_transformer
-    with transformer.hard_position():
-        versioned_field_attributes = {}
-        for name, attributes in field_attributes.items():
-            with transformer.describing(f"the field '{name}' of {model.__qualname__}"):
-                versioned_field_attributes[name] = transformer.change_version_of_annotation(attributes)
-    orig_bases = tuple(
-        generator.change_version_of_base(base) if isinstance(base, type) else base
-        for base in model.__dict__.get("__orig_bases__", model.__bases__)
-    )
-    if isinstance(generator, _ReferencedModelCollector):
-        _change_version_of_model_bases(generator, model, orig_bases)
-    versioned_annotations = transformer.change_version_of_annotation(annotations)
-    with transformer.hard_position():
-        generic_metadata = generator.change_version_of_generic_metadata(model)
-    return versioned_field_attributes, orig_bases, versioned_annotations, generic_metadata
+    with transformer.typevar_namespace(model):
+        with transformer.hard_position():
+            versioned_field_attributes = {}
+            for name, attributes in field_attributes.items():
+                with transformer.describing(f"the field '{name}' of {model.__qualname__}"):
+                    versioned_field_attributes[name] = transformer.change_version_of_annotation(attributes)
+        # __orig_bases__ keeps bases such as Generic[T] that __bases__ loses so that the copy stays generic
+        orig_bases = tuple(
+            generator.change_version_of_base(base) if isinstance(base, type) else base
+            for base in model.__dict__.get("__orig_bases__", model.__bases__)
+        )
+        if isinstance(generator, _ReferencedModelCollector):
+            _change_version_of_model_bases(generator, model, orig_bases)
+        versioned_annotations = transformer.change_version_of_annotation(annotations)
+        with transformer.hard_position():
+            generic_metadata = generator.change_version_of_generic_metadata(model)
+        # Generic[T] and the metadata must share the very same TypeVars as the copied fields. Do not inspect
+        # unused parameters: their bounds never participate in validation.
+        orig_bases = tuple(replace_types(base, transformer.typevar_copies) for base in orig_bases)
+        generic_metadata = generic_metadata.copy()
+        generic_metadata["parameters"] = tuple(
+            transformer.typevar_copies.get(param, param) for param in generic_metadata["parameters"]
+        )
+        return versioned_field_attributes, orig_bases, versioned_annotations, generic_metadata
 
 
 def _change_version_of_model_bases(
@@ -1288,6 +1297,9 @@ class _AnnotationTransformer:
         expands_type_aliases: bool = False,
     ) -> None:
         self.generator = generator
+        self.typevar_copies: dict[typing.TypeVar, typing.TypeVar] = {}
+        self._typevars_being_copied: set[typing.TypeVar] = set()
+        self._typevar_owners: list[Any] = []
         # Only request the models from the generator without rebuilding the annotations. This way, we can find
         # the models that an annotation refers to without failing on annotations that we cannot rebuild
         self.record_only = record_only
@@ -1442,8 +1454,10 @@ class _AnnotationTransformer:
             self._locations.pop()
 
     def migrate_router_to_version(self, router: fastapi.routing.APIRouter):
+        from cadwyn.route_generation import _DELETED_ROUTE_TAG
+
         for route in router.routes:
-            if not isinstance(route, fastapi.routing.APIRoute):
+            if not isinstance(route, fastapi.routing.APIRoute) or _DELETED_ROUTE_TAG in route.tags:
                 continue
             self.migrate_route_to_version(route)
 
@@ -1502,6 +1516,8 @@ class _AnnotationTransformer:
             return annotation
         if isinstance(annotation, GenericAliasUnionArgs):
             return self._change_version_of_generic_alias(annotation)
+        elif isinstance(annotation, TypeVar):
+            return self._change_version_of_typevar(annotation)
         elif is_typealiastype(annotation):
             if (
                 annotation.__module__ is not None and (annotation.__module__.startswith("pydantic."))
@@ -1540,6 +1556,130 @@ class _AnnotationTransformer:
         else:
             return annotation
 
+    @contextlib.contextmanager
+    def typevar_namespace(self, owner: Any) -> Generator[None, None, None]:
+        self._typevar_owners.append(owner)
+        try:
+            yield
+        finally:
+            self._typevar_owners.pop()
+
+    def _change_version_of_typevar(self, param: typing.TypeVar) -> typing.TypeVar:
+        if param in self.typevar_copies:
+            return self.typevar_copies[param]
+        if param in self._typevars_being_copied:
+            if self.record_only:
+                self._record_unknown_references()
+                return param
+            raise SchemaGenerationError(
+                f"Cadwyn cannot version type parameter {param.__name__} because its bounds, constraints, or "
+                "default refer back to it. Use explicit type arguments instead."
+            )
+        self._typevars_being_copied.add(param)
+        try:
+            bound = self._version_typevar_annotation(param, param.__bound__) if param.__bound__ is not None else None
+            constraints = tuple(self._version_typevar_annotation(param, value) for value in param.__constraints__)
+            default_kwargs = {}
+            default = getattr(param, "__default__", None)
+            has_default = getattr(param, "has_default", lambda: default is not None)()
+            if has_default:
+                default_kwargs["default"] = self._version_typevar_annotation(param, default)
+            if self.record_only:
+                return param
+            if (
+                bound == param.__bound__
+                and constraints == param.__constraints__
+                and (not has_default or default_kwargs["default"] == default)
+            ):
+                copied = param
+            else:
+                # Runtime reconstruction uses the third-party factory dynamically; static TypeVar syntax
+                # cannot express bounds, constraints, and defaults discovered at runtime.
+                factory = sys.modules["typing_extensions"].TypeVar
+                copied = factory(
+                    param.__name__,
+                    *constraints,
+                    bound=bound,
+                    covariant=param.__covariant__,
+                    contravariant=param.__contravariant__,
+                    infer_variance=getattr(param, "__infer_variance__", False),
+                    **default_kwargs,
+                )
+                copied.__module__ = param.__module__
+            self.typevar_copies[param] = copied
+            return copied
+        finally:
+            self._typevars_being_copied.remove(param)
+
+    def _version_typevar_annotation(self, param: typing.TypeVar, value: Any) -> Any:
+        if _contains_forward_refs(value):
+            for owner in reversed(self._typevar_owners):
+                if isinstance(owner, type) and issubclass(owner, BaseModel):
+                    value = _eval_forward_refs(value, owner)
+                else:
+                    value = _try_eval_type(value, vars(sys.modules[owner.__module__]))
+                if not _contains_forward_refs(value):
+                    break
+            if _contains_forward_refs(value):
+                if self.record_only:
+                    self._record_unknown_references()
+                    return value
+                raise SchemaGenerationError(
+                    f"Cadwyn cannot resolve {value!r} in type parameter {param.__name__}. "
+                    "Define the referenced types before generating versions, or use explicit type arguments."
+                )
+        generator = self.generator.schema_generator if isinstance(self.generator, _CycleCopier) else self.generator
+        if isinstance(generator, SchemaGenerator):
+            collector = _ReferencedModelCollector()
+            collector.annotation_transformer._typevar_owners = self._typevar_owners.copy()
+            collector.annotation_transformer.change_version_of_annotation(value)
+            if collector.is_complete and not any(generator._is_versioned(model) for model in collector.models):
+                # Match explicit generic arguments: unchanged models keep their identity and behavior.
+                return value
+        # A TypeVar must be built before pydantic sees it, so cyclic bounds need the classes themselves.
+        with self.hard_position():
+            versioned_value = self.change_version_of_annotation(value)
+        if not self.record_only:
+            self._check_typevar_value(param, versioned_value)
+        return versioned_value
+
+    def _check_typevar_value(self, param: typing.TypeVar, value: Any) -> None:
+        """Reject bounds/defaults whose copied generics still validate a changed HEAD model.
+
+        Generic arguments can deliberately keep HEAD models to avoid reference cycles. Type parameters must
+        not silently inherit that fallback, including when the generic was already copied and cached.
+        """
+        from typing_inspection.typing_objects import is_typealiastype
+
+        generator = self.generator.schema_generator if isinstance(self.generator, _CycleCopier) else self.generator
+        if not isinstance(generator, SchemaGenerator) or not generator._instructions_that_differ_from_head:
+            return
+        values = [value]
+        visited: set[int] = set()
+        while values:
+            current = values.pop()
+            if id(current) in visited:
+                continue
+            visited.add(id(current))
+            if isinstance(current, type) and issubclass(current, BaseModel):
+                for cls in _get_classes_in_core_schema(current.__pydantic_core_schema__):
+                    if cls in generator._instructions_that_differ_from_head or (
+                        issubclass(cls, BaseModel)
+                        and any(generator._base_differs_from_head(cls, index) for index in range(1, len(cls.__mro__)))
+                    ):
+                        raise SchemaGenerationError(
+                            f"Cadwyn cannot version type parameter {param.__name__}: its bound, constraints, or "
+                            f"default still validate the latest {cls.__qualname__} in an older version. "
+                            "Use explicit type arguments with models that Cadwyn can version."
+                        )
+            elif is_typealiastype(current):
+                values.append(_get_type_alias_value(current))
+            else:
+                origin = get_origin(current)
+                if is_typealiastype(origin):
+                    values.append(origin)
+                values.extend(get_args(current))
+
     def _copy_type_alias(self, alias: Any) -> Any:
         """Return the copy of the type alias whose value refers to this version's copies of models.
 
@@ -1552,8 +1692,9 @@ class _AnnotationTransformer:
             raise _TypeAliasRefersToItselfError(alias)
         self._type_aliases_being_copied.add(id(alias))
         try:
-            value = self.change_version_of_annotation(_get_type_alias_value(alias))
-            type_params = self.change_version_of_annotation(alias.__type_params__)
+            with self.typevar_namespace(alias):
+                value = self.change_version_of_annotation(_get_type_alias_value(alias))
+            type_params = tuple(self.typevar_copies.get(param, param) for param in alias.__type_params__)
         except _TypeAliasRefersToItselfError as error:
             if error.alias is not alias:
                 raise
@@ -1684,7 +1825,7 @@ class _AnnotationTransformer:
                 self._record_unknown_references()
                 return _UNRESOLVED
             callable_annotations = self._get_annotations_of_callable_called_by_fastapi(
-                call, signature, callable_kind, evaluate=_try_eval_type_for_discovery
+                call, signature, evaluate=_try_eval_type_for_discovery
             )
             defaults = tuple(
                 param.default for param in signature.parameters.values() if param.default is not inspect.Signature.empty
@@ -1699,7 +1840,8 @@ class _AnnotationTransformer:
         if _evaluate_user_annotations(lambda: alias.__value__) is _UNRESOLVED:
             self._record_unknown_references()
             return
-        self._record_without_cycles(alias, lambda: [_get_type_alias_value(alias), alias.__type_params__])
+        with self.typevar_namespace(alias):
+            self._record_without_cycles(alias, lambda: [_get_type_alias_value(alias)])
 
     def _record_unknown_references(self) -> None:
         """Record that we cannot know every model that copying the annotation would request.
@@ -1710,8 +1852,38 @@ class _AnnotationTransformer:
         cast("_ReferencedModelCollector", self.generator).is_complete = False
 
     def _change_version_of_generic_alias(self, annotation: Any) -> Any:
+        from typing_inspection.typing_objects import is_typealiastype
+
         origin = get_origin(annotation)
         args = get_args(annotation)
+        if is_typealiastype(origin):
+            # The alias value can hold a bare generic even when none of the args contains a model.
+            versioned_args = self.change_version_of_annotation(args)
+            if self.record_only:
+                self.change_version_of_annotation(origin)
+                return annotation
+            supplied_params = origin.__type_params__[: len(args)]
+            collector = _ReferencedModelCollector()
+            # Supplied arguments replace these parameters, so their bounds/defaults do not validate anything.
+            collector.annotation_transformer.typevar_copies.update({param: param for param in supplied_params})
+            collector.annotation_transformer.change_version_of_annotation(origin)
+            versioned_origin = origin
+            generator = self.generator.schema_generator if isinstance(self.generator, _CycleCopier) else self.generator
+            if isinstance(generator, SchemaGenerator) and any(
+                generator._is_versioned(model) for model in collector.models
+            ):
+                saved_copies = {
+                    param: self.typevar_copies[param] for param in supplied_params if param in self.typevar_copies
+                }
+                try:
+                    self.typevar_copies.update({param: param for param in supplied_params})
+                    versioned_origin = self.change_version_of_annotation(origin)
+                finally:
+                    for param in supplied_params:
+                        self.typevar_copies.pop(param, None)
+                        if param in saved_copies:
+                            self.typevar_copies[param] = saved_copies[param]
+            return versioned_origin[versioned_args[0] if len(versioned_args) == 1 else versioned_args]
         new_args = tuple(self._change_version_of_generic_arg(origin, index, arg) for index, arg in enumerate(args))
         if self.record_only:
             return annotation
@@ -1811,14 +1983,11 @@ class _AnnotationTransformer:
             old_signature = _get_signature(call)
             old_params = old_signature.parameters
             return_annotation = old_signature.return_annotation
-            callable_annotations = cls._get_annotations_of_callable_called_by_fastapi(
-                call, old_signature, callable_kind
-            )
+            callable_annotations = cls._get_annotations_of_callable_called_by_fastapi(call, old_signature)
             annotation_modifying_wrapper.__annotations__ = modify_annotations(callable_annotations)
-            if callable_kind is _CallableKind.DEPENDENCY and return_annotation is not inspect.Signature.empty:
-                # FastAPI never looks at the return annotations of dependencies so we neither evaluate nor version them.
-                # Versioning them would generate their models for nothing, which can even fail
-                # (e.g. for default factories without a signature such as time.time before Python 3.13)
+            if return_annotation is not inspect.Signature.empty:
+                # FastAPI validates the route's explicit response_model, which is versioned separately, and never
+                # validates dependency returns. Copying these annotations can reject models that no route uses.
                 annotation_modifying_wrapper.__annotations__["return"] = return_annotation
             annotation_modifying_wrapper.__defaults__ = modify_defaults(
                 tuple(
@@ -1842,7 +2011,6 @@ class _AnnotationTransformer:
         cls,
         call: Any,
         old_signature: inspect.Signature,
-        callable_kind: _CallableKind,
         *,
         evaluate: Union[Callable[[Any, dict[str, Any]], Any], None] = None,
     ) -> dict[str, Any]:
@@ -1852,10 +2020,6 @@ class _AnnotationTransformer:
             for name, param in old_signature.parameters.items()
             if param.annotation is not inspect.Parameter.empty
         }
-        return_annotation = old_signature.return_annotation
-        if callable_kind is _CallableKind.ENDPOINT and return_annotation is not inspect.Signature.empty:
-            # FastAPI infers the response model of endpoints from their return annotations
-            callable_annotations["return"] = return_annotation
         # Cadwyn always evaluated the annotations that were written as strings (e.g. postponed ones) recursively
         # before versioning them. inspect.signature() evaluates them only once so forward references can be left
         # within them (e.g. `body: "Model"` or `list["Model"]` with postponed annotations) or they can stay strings
@@ -3384,9 +3548,15 @@ def _change_version_of_generic_metadata(
     generic_metadata = model.__pydantic_generic_metadata__
     origin = generic_metadata["origin"]
     if not schema_generator._should_version_generic_args(model, generation_stack=[]):
-        if origin is not None and schema_generator._is_copied_with_its_cycle(origin):
-            # Pydantic identifies a parametrized generic by its origin and args, so with the head origin, the copy
-            # of e.g. TreeNode[int] would be mistaken for the head TreeNode[int] wherever both of them are used
+        if origin is not None and (
+            schema_generator._is_copied_with_its_cycle(origin)
+            or any(
+                generator.annotation_transformer.typevar_copies.get(param, param) is not param
+                for param in origin.__pydantic_generic_metadata__["parameters"]
+            )
+        ):
+            # The origin must share the copied TypeVars of its fields, or pydantic cannot substitute its args.
+            # It must also distinguish copied cyclic parametrizations from their HEAD counterparts.
             return {**generic_metadata, "origin": generator.change_version_of_base(origin)}
         return generic_metadata
     # Pydantic resolves the fields of a parametrized generic (such as Page[Item]) through its origin and args
