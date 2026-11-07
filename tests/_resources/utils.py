@@ -20,8 +20,6 @@ PYDANTIC_RAISES_RECURSION_ERROR_ON_DEEPCOPY = _PYDANTIC_VERSION < (2, 14, 3)
 # Like Cadwyn, we only take the numbers, so that pre-releases such as 0.163.0rc1 parse too
 _FASTAPI_VERSION = tuple(map(int, re.findall(r"\d+", fastapi.__version__)[:3]))
 _FASTAPI_MINOR_VERSION = _FASTAPI_VERSION[:2]
-# FastAPI 0.145.0 removed the `openapi_prefix` parameter
-FASTAPI_ACCEPTS_OPENAPI_PREFIX = _FASTAPI_MINOR_VERSION < (0, 145)
 # Before FastAPI 0.148.0, FastAPI validates the defaults of omitted query, header, cookie, and form params.
 # Since FastAPI 0.148.0, it only validates them when they set `validate_default=True`
 FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS = _FASTAPI_MINOR_VERSION < (0, 148)
