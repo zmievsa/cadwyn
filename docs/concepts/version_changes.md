@@ -268,7 +268,7 @@ Dependencies that read uploaded files or move their position (e.g. to skip a hea
 
 ### Background tasks added by dependencies
 
-Background tasks that a dependency adds are side effects too. FastAPI runs the tasks that dependencies add in the first run after the response. In the second run, Cadwyn keeps them only if the endpoint itself declares a `BackgroundTasks` param. Otherwise, it drops them and emits a `FutureWarning` once per route.
+Background tasks that a dependency adds are side effects too. FastAPI runs the tasks that dependencies add in the first run after the response. In the second run, Cadwyn keeps them only if the endpoint itself declares a `BackgroundTasks` param. Otherwise, it drops them. When FastAPI runs the background tasks of a request after its response, and the second run has added tasks, Cadwyn emits a `FutureWarning` once per route. If your warning filters turn the warning into an error, Cadwyn logs it instead, so the response and the other background tasks are not affected.
 
 Cadwyn 10.0 will always run them. To run them now, pass `run_background_tasks_of_latest_version_dependencies=True` to `Cadwyn()` or `generate_versioned_routers()`. Then every task that a dependency adds runs once after the response, in the order it was added, as in FastAPI. As in FastAPI, a response that has its own background tasks (e.g. `JSONResponse(..., background=...)`) runs only them.
 

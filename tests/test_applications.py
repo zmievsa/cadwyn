@@ -1,5 +1,6 @@
 import functools
 import inspect
+import logging
 import re
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
@@ -1224,6 +1225,150 @@ def test__background_tasks__when_endpoint_raises_http_exception__should_not_run_
     ) as client:
         assert client.post("/test").status_code == 400
     assert background_task_calls == []
+
+
+def test__background_tasks__dropped_while_future_warnings_are_errors__should_log_the_warning_once_and_keep_the_response(
+    background_task_calls: list[str], caplog: pytest.LogCaptureFixture
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task)])
+    async def handler():
+        return "ok"
+
+    # Tests turn every warning into an error
+    with _client_of(router) as client:
+        assert client.post("/test").json() == "ok"
+        assert client.post("/test").json() == "ok"
+
+    assert background_task_calls == ["dependency of fastapi"] * 2
+    dropped_task_logs = [record for record in caplog.records if record.name.startswith("cadwyn")]
+    assert [record.levelno for record in dropped_task_logs] == [logging.WARNING]
+    assert re.match(_DROPPED_BACKGROUND_TASK_WARNING.format(path="/test"), dropped_task_logs[0].getMessage())
+
+
+async def _endpoint_with_background_tasks_named_like_cadwyn_param(cadwyn_background_tasks_param: BackgroundTasks):
+    cadwyn_background_tasks_param.add_task(_background_task_calls.append, "endpoint task")
+    return "ok"
+
+
+@pytest.mark.parametrize("run_background_tasks_of_latest_version_dependencies", [False, True])
+def test__background_tasks__with_endpoint_param_named_cadwyn_background_tasks_param__should_get_the_background_tasks(
+    background_task_calls: list[str], run_background_tasks_of_latest_version_dependencies: bool
+):
+    router = VersionedAPIRouter()
+    router.post("/test", dependencies=[Depends(_add_background_task)])(
+        _endpoint_with_background_tasks_named_like_cadwyn_param
+    )
+
+    with _client_of(
+        router, run_background_tasks_of_latest_version_dependencies=run_background_tasks_of_latest_version_dependencies
+    ) as client:
+        assert client.post("/test").json() == "ok"
+    assert background_task_calls == ["dependency of fastapi", "dependency of cadwyn", "endpoint task"]
+
+
+@pytest.mark.parametrize("run_background_tasks_of_latest_version_dependencies", [False, True])
+def test__background_tasks__with_query_param_named_cadwyn_background_tasks_param__should_get_the_query_value(
+    run_background_tasks_of_latest_version_dependencies: bool,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test")
+    async def handler(cadwyn_background_tasks_param: str = "default"):
+        return cadwyn_background_tasks_param
+
+    with _client_of(
+        router, run_background_tasks_of_latest_version_dependencies=run_background_tasks_of_latest_version_dependencies
+    ) as client:
+        assert client.post("/test", params={"cadwyn_background_tasks_param": "value"}).json() == "value"
+        assert client.post("/test").json() == "default"
+
+
+def _add_background_task_after_yield(
+    background_tasks: BackgroundTasks, solver: Annotated[str, Depends(current_dependency_solver)]
+) -> Iterator[None]:
+    yield
+    background_tasks.add_task(_background_task_calls.append, f"dependency of {solver}")
+
+
+def test__background_tasks__added_after_yield_of_function_scoped_dependency__should_be_dropped_with_a_warning(
+    background_task_calls: list[str],
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task_after_yield, scope="function")])
+    async def handler():
+        return "ok"
+
+    with (
+        _client_of(router) as client,
+        pytest.warns(FutureWarning, match=_DROPPED_BACKGROUND_TASK_WARNING.format(path="/test")),
+    ):
+        assert client.post("/test").json() == "ok"
+    assert background_task_calls == ["dependency of fastapi"]
+
+
+def test__background_tasks__added_after_yield_of_function_scoped_dependency_with_run_background_tasks_of_latest_version_dependencies__should_run(  # noqa: E501
+    background_task_calls: list[str],
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task_after_yield, scope="function")])
+    async def handler():
+        return "ok"
+
+    with _client_of(router, run_background_tasks_of_latest_version_dependencies=True) as client:
+        assert client.post("/test").json() == "ok"
+    assert sorted(background_task_calls) == ["dependency of cadwyn", "dependency of fastapi"]
+
+
+def _add_background_task_and_raise_after_yield(
+    background_tasks: BackgroundTasks,
+    solver: Annotated[str, Depends(current_dependency_solver)],
+    fail_after_yield: bool = False,
+) -> Iterator[None]:
+    background_tasks.add_task(_background_task_calls.append, f"dependency of {solver}")
+    yield
+    if fail_after_yield:
+        raise HTTPException(status_code=400)
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_status_code"),
+    [
+        pytest.param({"valid_response": False}, 500, id="response_validation_error"),
+        pytest.param({"fail_after_yield": True}, 400, id="http_exception_after_yield"),
+    ],
+)
+def test__background_tasks__dropped_in_request_that_fails_after_the_solve__should_not_warn_until_a_request_succeeds(
+    background_task_calls: list[str], params: dict[str, Any], expected_status_code: int
+):
+    router = VersionedAPIRouter()
+
+    @router.post(
+        "/test",
+        dependencies=[Depends(_add_background_task_and_raise_after_yield, scope="function")],
+        response_model=int,
+    )
+    async def handler(valid_response: bool = True):
+        return 1 if valid_response else "not an integer"
+
+    app = _client_of(router).app
+    with (
+        TestClient(app, headers=BASIC_HEADERS, raise_server_exceptions=False) as client,
+        warnings.catch_warnings(record=True) as caught_warnings,
+    ):
+        warnings.simplefilter("always")
+        assert client.post("/test", params=params).status_code == expected_status_code
+        assert caught_warnings == []
+        assert background_task_calls == []
+
+        assert client.post("/test").json() == 1
+
+    assert [warning.category for warning in caught_warnings] == [FutureWarning]
+    assert re.match(_DROPPED_BACKGROUND_TASK_WARNING.format(path="/test"), str(caught_warnings[0].message))
+    assert background_task_calls == ["dependency of fastapi"]
 
 
 def test__webhooks():

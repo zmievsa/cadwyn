@@ -19,6 +19,7 @@ from contextvars import ContextVar
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
+from logging import getLogger
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -86,6 +87,7 @@ _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
 _CADWYN_RESPONSE_PARAM_NAME = "cadwyn_response_param"
 _CADWYN_BACKGROUND_TASKS_PARAM_NAME = "cadwyn_background_tasks_param"
 _RUN_BACKGROUND_TASKS_FLAG = "run_background_tasks_of_latest_version_dependencies"
+_logger = getLogger(__name__)
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _RouteId = int
@@ -667,9 +669,10 @@ class VersionBundle:
         dependant_for_request_migrations: Dependant,
         *,
         request_param_name: str,
-        background_tasks_param_name: Union[str, None],
+        background_tasks_param_name: str,
+        is_background_tasks_param_hidden: bool,
         response_param_name: str,
-        dropped_background_tasks_warning: "_DroppedBackgroundTasksWarning",
+        dropped_background_tasks_warning: "Union[_DroppedBackgroundTasksWarning, None]",
     ) -> "Callable[[Endpoint[_P, _R]], Callable[..., Coroutine[Any, Any, _R]]]":
         request_target = _get_request_body_target(head_body_field, head_route)
         response_target = _get_schema_migration_target(head_route.response_model)
@@ -688,15 +691,22 @@ class VersionBundle:
             async def decorator(*args: Any, **kwargs: Any) -> _R:
                 request_param: FastapiRequest = kwargs[request_param_name]
                 response_param: FastapiResponse = kwargs[response_param_name]
-                # The solve of the latest version adds its background tasks to the BackgroundTasks of the solve of
-                # the request's version, which FastAPI runs after the response. Without it, they are dropped.
-                dropped_background_tasks: Union[BackgroundTasks, None] = None
-                if background_tasks_param_name == _CADWYN_BACKGROUND_TASKS_PARAM_NAME:
-                    background_tasks = kwargs.pop(background_tasks_param_name)
-                elif background_tasks_param_name is not None:
-                    background_tasks = kwargs[background_tasks_param_name]
+                # FastAPI runs these background tasks after the response
+                background_tasks: BackgroundTasks = (
+                    kwargs.pop(background_tasks_param_name)
+                    if is_background_tasks_param_hidden
+                    else kwargs[background_tasks_param_name]
+                )
+                if dropped_background_tasks_warning is None:
+                    background_tasks_of_latest_version = background_tasks
                 else:
-                    background_tasks = dropped_background_tasks = BackgroundTasks()
+                    # Cadwyn 8.x behavior: the endpoint doesn't declare BackgroundTasks, so the tasks that the
+                    # dependencies add in the solve of the latest version are dropped. We warn after the response,
+                    # when FastAPI runs the background tasks, because only then would these tasks have run.
+                    background_tasks_of_latest_version = BackgroundTasks()
+                    background_tasks.add_task(
+                        dropped_background_tasks_warning.warn_if_dropped, background_tasks_of_latest_version
+                    )
                 method = request_param.method
                 response = Sentinel
                 async with AsyncExitStack() as exit_stack:
@@ -713,7 +723,7 @@ class VersionBundle:
                         head_route,
                         exit_stack=exit_stack,
                         embed_body_fields=route._embed_body_fields,
-                        background_tasks=background_tasks,
+                        background_tasks=background_tasks_of_latest_version,
                         request_target=request_target,
                     )
 
@@ -727,13 +737,6 @@ class VersionBundle:
                         response_param,
                         response_target=response_target,
                     )
-                    # FastAPI wouldn't run the tasks anyway if the response had its own background tasks
-                    if (
-                        dropped_background_tasks is not None
-                        and dropped_background_tasks.tasks
-                        and not (isinstance(response, FastapiResponse) and response.background is not None)
-                    ):
-                        dropped_background_tasks_warning.warn_once()
                 if response is Sentinel:  # pragma: no cover
                     raise CadwynError(
                         "No response object was returned. There's a high chance that the "
@@ -749,8 +752,8 @@ class VersionBundle:
                 _add_keyword_only_parameter(decorator, _CADWYN_REQUEST_PARAM_NAME, FastapiRequest)
             if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
                 _add_keyword_only_parameter(decorator, _CADWYN_RESPONSE_PARAM_NAME, FastapiResponse)
-            if background_tasks_param_name == _CADWYN_BACKGROUND_TASKS_PARAM_NAME:
-                _add_keyword_only_parameter(decorator, _CADWYN_BACKGROUND_TASKS_PARAM_NAME, BackgroundTasks)
+            if is_background_tasks_param_hidden:
+                _add_keyword_only_parameter(decorator, background_tasks_param_name, BackgroundTasks)
 
             return decorator
 
@@ -3569,6 +3572,15 @@ def _do_compiled_settings_match(model: type[BaseModel], compiled_config: object)
     )
 
 
+def _get_hidden_background_tasks_param_name(endpoint: Callable[..., object]) -> str:
+    """Return a name for the BackgroundTasks param that Cadwyn adds to the endpoint, which none of its params has."""
+    taken_names = {*inspect.signature(endpoint).parameters, _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME}
+    name = _CADWYN_BACKGROUND_TASKS_PARAM_NAME
+    while name in taken_names:
+        name += "_"
+    return name
+
+
 def _add_keyword_only_parameter(
     func: Callable[..., object],
     param_name: str,
@@ -3590,17 +3602,21 @@ class _DroppedBackgroundTasksWarning:
     route: str
     has_warned: bool = False
 
-    def warn_once(self) -> None:
-        if self.has_warned:
+    async def warn_if_dropped(self, background_tasks_of_latest_version: BackgroundTasks) -> None:
+        """Warn if the solve of the latest version has added background tasks. FastAPI runs it after the response."""
+        if self.has_warned or not background_tasks_of_latest_version.tasks:
             return
-        self.has_warned = True
-        warnings.warn(
+        message = (
             f"Cadwyn has dropped a background task of {self.route}: a dependency has added it while Cadwyn solved the "
             "dependencies of the latest version, and the endpoint doesn't declare a `BackgroundTasks` param. "
             "Cadwyn 10.0 will run such tasks after the response. To run them now, pass "
             f"`{_RUN_BACKGROUND_TASKS_FLAG}=True` to `Cadwyn()`. Dependencies run both for the request's version and "
             "for the latest version, so a task that a dependency adds in both runs will then run twice. To keep a "
-            'single run, add it only when `current_dependency_solver` is "fastapi".',
-            FutureWarning,
-            stacklevel=2,
+            'single run, add it only when `current_dependency_solver` is "fastapi".'
         )
+        # The warning must not stop the background tasks that run after it, even if warnings are errors
+        try:
+            warnings.warn(message, FutureWarning, stacklevel=1)
+        except Exception:  # noqa: BLE001
+            _logger.warning(message)
+        self.has_warned = True

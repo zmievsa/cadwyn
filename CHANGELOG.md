@@ -54,7 +54,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Deprecated
 
-- Dropping the background tasks that dependencies add while Cadwyn solves the dependencies of the latest version. Cadwyn still does it by default when the endpoint doesn't declare a `BackgroundTasks` param, but now emits a `FutureWarning` once per route when it drops such a task. Cadwyn 10.0 will run these tasks by default. To switch now, pass `run_background_tasks_of_latest_version_dependencies=True` to `Cadwyn()`. Dependencies run for both the request's version and the latest version, so a dependency that adds a task in both runs will then have it run twice. To keep a single run, add the task only when `current_dependency_solver` is `"fastapi"` (#568).
+- Dropping the background tasks that dependencies add while Cadwyn solves the dependencies of the latest version. Cadwyn still does it by default when the endpoint doesn't declare a `BackgroundTasks` param, but now emits a `FutureWarning` once per route when it drops such a task. It warns after the response, when FastAPI runs the request's background tasks, so requests that fail don't warn. If your warning filters turn the warning into an error, Cadwyn logs it instead. Cadwyn 10.0 will run these tasks by default. To switch now, pass `run_background_tasks_of_latest_version_dependencies=True` to `Cadwyn()`. Dependencies run for both the request's version and the latest version, so a dependency that adds a task in both runs will then have it run twice. To keep a single run, add the task only when `current_dependency_solver` is `"fastapi"` (#568).
 
 ## [8.2.0]
 
