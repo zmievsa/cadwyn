@@ -92,6 +92,35 @@ def test__cadwyn_render__defaultdict_default__should_output_executable_source(mo
     assert counts["missing"] == 0
 
 
+def test__cadwyn_render__set_defaults__should_preserve_main_source_bytes():
+    module = "tests._resources.render.container_defaults"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "cadwyn",
+            "render",
+            "model",
+            f"{module}:SetFormattingDefaults",
+            f"--app={module}:app",
+            "--version=2000-01-01",
+            "--raw",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "PYTHONHASHSEED": "0"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "class SetFormattingDefaults(BaseModel):\n"
+        "    empty: Any = Field(default=frozenset())\n"
+        "    items: Any = Field(default={2, 1, 3})\n"
+        "    frozen: Any = Field(default=frozenset({2, 1, 3}))\n"
+    )
+
+
 @pytest.mark.parametrize("arg", ["-V", "--version"])
 def test__cli_get_version(arg: str) -> None:
     result = CliRunner().invoke(app, [arg])

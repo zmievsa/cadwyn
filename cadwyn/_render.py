@@ -214,7 +214,9 @@ def _generate_field_ast(field_attributes: dict[str, Any]) -> ast.Call:
         keywords=[
             ast.keyword(
                 arg=attr,
-                value=ast.parse(get_fancy_repr(attr_value), mode="eval").body,
+                value=ast.parse(
+                    "type(None)" if attr_value is type(None) else get_fancy_repr(attr_value), mode="eval"
+                ).body,
             )
             for attr, attr_value in field_attributes.items()
         ],

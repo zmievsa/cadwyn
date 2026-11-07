@@ -4,6 +4,7 @@ import inspect
 import sys
 from collections import Counter, OrderedDict, defaultdict
 from enum import Enum, auto
+from functools import partial
 from types import FunctionType, GenericAlias, LambdaType
 from typing import (  # noqa: UP035
     Any,
@@ -21,6 +22,10 @@ from cadwyn.exceptions import CadwynRenderError, InvalidGenerationInstructionErr
 
 _LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
 NoneType = type(None)
+_BUILTIN_COLLECTION_IDS = frozenset(map(id, (list, tuple, set, frozenset)))
+_BUILTIN_CONTAINER_IDS = _BUILTIN_COLLECTION_IDS | {id(dict)}
+_STANDARD_MAPPING_IDS = frozenset(map(id, (dict, OrderedDict, Counter)))
+_STANDARD_MUTABLE_CONTAINER_IDS = frozenset(map(id, (list, set, dict, OrderedDict, Counter, defaultdict)))
 
 
 # A parent type of typing._GenericAlias
@@ -36,25 +41,44 @@ if sys.version_info >= (3, 14):  # pragma: no cover
     GenericAliasUnionArgs = (*GenericAliasUnionArgs, type(Union[int, str]))
 
 
-def get_fancy_repr(value: Any, seen_containers: Union[set[int], None] = None) -> Any:
-    if seen_containers is None:
-        seen_containers = set()
-    if isinstance(value, list | tuple | set | frozenset | dict):
-        if id(value) in seen_containers:
+@dataclasses.dataclass
+class _ReprContext:
+    active: set[int] = dataclasses.field(default_factory=set)
+    mutable: dict[int, object] = dataclasses.field(default_factory=dict)
+
+
+def get_fancy_repr(value: Any, context: Union[_ReprContext, None] = None) -> Any:
+    if context is None:
+        context = _ReprContext()
+    if not isinstance(value, list | tuple | set | frozenset | dict):
+        return _get_fancy_repr(value, context)
+    if id(value) in context.active:
+        raise CadwynRenderError("Cannot render recursive containers faithfully. Use a named default_factory instead.")
+    if id(type(value)) in _STANDARD_MUTABLE_CONTAINER_IDS:
+        if id(value) in context.mutable:
             raise CadwynRenderError(
-                "Cannot render recursive or shared containers faithfully. Use a named default_factory instead."
+                "Cannot render shared mutable containers faithfully. Use a named default_factory instead."
             )
-        seen_containers.add(id(value))
+        # Keep temporary values from subclass iterators alive so their ids cannot be reused during this rendering.
+        context.mutable[id(value)] = value
+    context.active.add(id(value))
+    try:
+        return _get_fancy_repr(value, context)
+    finally:
+        context.active.remove(id(value))
+
+
+def _get_fancy_repr(value: Any, context: _ReprContext) -> Any:
     if isinstance(value, annotated_types.GroupedMetadata) and dataclasses.is_dataclass(value):
-        return transform_grouped_metadata(value, dataclasses.fields(value), seen_containers)
+        return transform_grouped_metadata(value, dataclasses.fields(value), context)
     if isinstance(value, list | tuple | set | frozenset):
-        return transform_collection(value, seen_containers)
+        return transform_collection(value, context)
     if isinstance(value, dict):
-        return transform_dict(value, seen_containers)
+        return transform_dict(value, context)
     if isinstance(value, UnionType):
-        return transform_union(value, seen_containers)
+        return transform_union(value, context)
     if isinstance(value, GenericAliasUnionArgs):
-        return transform_generic_alias(value, seen_containers)
+        return transform_generic_alias(value, context)
     if value is None or value is NoneType:
         return transform_none(value)
     if isinstance(value, type):
@@ -72,7 +96,7 @@ def get_fancy_repr(value: Any, seen_containers: Union[set[int], None] = None) ->
 
 
 def transform_grouped_metadata(
-    value: "annotated_types.GroupedMetadata", fields: tuple[dataclasses.Field[Any], ...], seen_containers: set[int]
+    value: "annotated_types.GroupedMetadata", fields: tuple[dataclasses.Field[Any], ...], context: _ReprContext
 ) -> PlainRepr:
     empty_obj = type(value)
 
@@ -85,53 +109,49 @@ def transform_grouped_metadata(
     return PlainRepr(
         value.__class__.__name__
         + "("
-        + ", ".join(f"{PlainRepr(key)}={get_fancy_repr(v, seen_containers)}" for key, v in modified_fields)
+        + ", ".join(f"{PlainRepr(key)}={get_fancy_repr(v, context)}" for key, v in modified_fields)
         + ")",
     )
 
 
+def _container_item_repr(value: Any, context: _ReprContext) -> PlainRepr:
+    # Values are expressions rather than quoted strings. Annotations still spell NoneType as None.
+    return PlainRepr("type(None)" if value is NoneType else get_fancy_repr(value, context))
+
+
 def transform_collection(
     value: Union[list[object], tuple[object, ...], set[object], frozenset[object]],
-    seen_containers: set[int],
+    context: _ReprContext,
 ) -> PlainRepr:
     cls = type(value)
-    if cls in {list, tuple, set, frozenset}:
-        items = ", ".join(get_fancy_repr(item, seen_containers) for item in value)
-        if cls is list:
-            return PlainRepr(f"[{items}]")
-        if cls is tuple:
-            return PlainRepr(f"({items},)" if items else "()")
-        set_source = f"{{{items}}}" if items else "set()"
-        return PlainRepr(set_source if cls is set else f"frozenset({set_source})")
-    if (
-        isinstance(value, tuple)
-        and cls.__bases__ == (tuple,)
-        and getattr(cls, "__slots__", None) == ()
-        and isinstance(getattr(cls, "_fields", None), tuple)
-    ):
-        # Bypass __new__: a named tuple can override it to change the supplied values.
-        items = ", ".join(get_fancy_repr(item, seen_containers) for item in tuple.__iter__(value))
-        tuple_source = f"({items},)" if items else "()"
-        return PlainRepr(f"tuple.__new__({cls.__name__}, {tuple_source})")
-    raise _unsupported_container(value)
+    try:
+        # Keep main's constructor and repr, including its ordering and formatting, for successful renderings.
+        converter = _container_item_repr if id(cls) in _BUILTIN_COLLECTION_IDS else get_fancy_repr
+        items = map(partial(converter, context=context), value)
+        return _container_repr(value, value.__class__(items))
+    except (TypeError, SyntaxError) as error:
+        if not (
+            isinstance(value, tuple)
+            and cls.__bases__ == (tuple,)
+            and getattr(cls, "__slots__", None) == ()
+            and isinstance(getattr(cls, "_fields", None), tuple)
+        ):
+            raise CadwynRenderError(
+                f"Cannot render {cls.__qualname__} through its constructor and repr. "
+                "Use a named default_factory instead."
+            ) from error
+    # NamedTuple's positional constructor cannot take one iterable. Bypass it to retain the stored tuple values.
+    items_repr = tuple(_container_item_repr(item, context) for item in tuple.__iter__(value))
+    return PlainRepr(f"tuple.__new__({cls.__name__}, {items_repr!r})")
 
 
-def transform_dict(value: dict[object, object], seen_containers: set[int]) -> PlainRepr:
+def transform_dict(value: dict[object, object], context: _ReprContext) -> PlainRepr:
     cls = type(value)
-    if cls not in {dict, defaultdict, OrderedDict, Counter}:
-        raise _unsupported_container(value)
-    if getattr(value, "__dict__", {}):
+    if (cls is OrderedDict or cls is Counter) and vars(value):
         raise CadwynRenderError(
             f"Cannot render {cls.__name__} with instance attributes faithfully. Use a named default_factory instead."
         )
-    items = [
-        (get_fancy_repr(key, seen_containers), get_fancy_repr(item, seen_containers)) for key, item in value.items()
-    ]
-    if cls is OrderedDict:
-        pairs = ", ".join(f"({key}, {item})" for key, item in items)
-        return PlainRepr(f"OrderedDict([{pairs}])")
-    mapping = "{" + ", ".join(f"{key}: {item}" for key, item in items) + "}"
-    if isinstance(value, defaultdict):
+    if cls is defaultdict and isinstance(value, defaultdict):
         factory = value.default_factory
         if factory is not None and not (
             isinstance(factory, type) or (isinstance(factory, FunctionType) and factory.__name__ != _LambdaFunctionName)
@@ -139,26 +159,43 @@ def transform_dict(value: dict[object, object], seen_containers: set[int]) -> Pl
             raise CadwynRenderError(
                 "Cannot render defaultdict factory faithfully. Use a named default_factory for the whole field instead."
             )
-        return PlainRepr(f"defaultdict({get_fancy_repr(factory, seen_containers)}, {mapping})")
-    if cls is Counter:
-        return PlainRepr(f"Counter({mapping})")
-    return PlainRepr(mapping)
-
-
-def _unsupported_container(value: object) -> CadwynRenderError:
-    return CadwynRenderError(
-        f"Cannot render container subclass {type(value).__qualname__} faithfully. Use a named default_factory instead."
+        mapping = {_container_item_repr(k, context): _container_item_repr(v, context) for k, v in value.items()}
+        return PlainRepr(f"defaultdict({_container_item_repr(factory, context)}, {mapping!r})")
+    if cls is Counter and value:
+        # Counter(iterable_of_pairs) counts the pairs instead of retaining the mapping's counts.
+        mapping = {_container_item_repr(k, context): _container_item_repr(v, context) for k, v in value.items()}
+        return PlainRepr(f"Counter({mapping!r})")
+    items = (
+        (_container_item_repr(k, context), _container_item_repr(v, context))
+        if id(cls) in _STANDARD_MAPPING_IDS
+        else (get_fancy_repr(k, context), get_fancy_repr(v, context))
+        for k, v in value.items()
     )
+    return _container_repr(value, value.__class__(items))
 
 
-def transform_generic_alias(value: object, seen_containers: set[int]) -> str:
-    origin = get_fancy_repr(get_origin(value), seen_containers)
-    args = ", ".join(get_fancy_repr(arg, seen_containers) for arg in get_args(value))
+def _container_repr(original: object, rebuilt: object) -> PlainRepr:
+    source = repr(rebuilt)
+    expression = ast.parse(source, mode="eval").body
+    if id(type(original)) not in _BUILTIN_CONTAINER_IDS and isinstance(
+        expression, ast.List | ast.Tuple | ast.Dict | ast.Set
+    ):
+        raise CadwynRenderError(
+            f"Cannot render container subclass {type(original).__qualname__} as a builtin literal "
+            "without losing its type. "
+            "Use a named default_factory instead."
+        )
+    return PlainRepr(source)
+
+
+def transform_generic_alias(value: object, context: _ReprContext) -> str:
+    origin = get_fancy_repr(get_origin(value), context)
+    args = ", ".join(get_fancy_repr(arg, context) for arg in get_args(value))
     return f"{origin}[{args}]"
 
 
-def transform_none(value: Union[type[None], None]) -> str:
-    return "None" if value is None else "type(None)"
+def transform_none(_: Union[type[None], None]) -> Any:
+    return "None"
 
 
 def transform_type(value: type) -> Any:
@@ -173,8 +210,8 @@ def transform_auto(_: auto) -> Any:  # pragma: no cover # it works but we no lon
     return PlainRepr("auto()")
 
 
-def transform_union(value: Any, seen_containers: set[int]) -> str:
-    return "typing.Union[" + (", ".join(get_fancy_repr(a, seen_containers) for a in get_args(value))) + "]"
+def transform_union(value: Any, context: _ReprContext) -> str:
+    return "typing.Union[" + (", ".join(get_fancy_repr(a, context) for a in get_args(value))) + "]"
 
 
 def transform_lambda(value: LambdaType) -> Any:

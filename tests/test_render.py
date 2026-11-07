@@ -1,6 +1,7 @@
 import re
 import sys
 from collections import Counter, OrderedDict, defaultdict, namedtuple
+from collections.abc import Iterator
 from datetime import datetime
 from enum import Enum
 from functools import partial
@@ -8,6 +9,7 @@ from typing import Annotated, Any, ClassVar, NamedTuple
 
 import pytest
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from typing_extensions import override
 
 from cadwyn import VersionChange, schema
 from cadwyn._render import render_model, render_model_by_path, render_module_by_path
@@ -144,14 +146,114 @@ class CustomFrozenSet(frozenset):
     pass
 
 
+class ConstructorList(list):
+    def __init__(self, values: list[int], *, label: str) -> None:
+        super().__init__(values)
+        self.label = label
+
+
 @pytest.mark.parametrize(
-    "default", [CustomList([1]), CustomTuple((1,)), CustomDict(a=1), CustomSet({1}), CustomFrozenSet({1})]
+    "default", [CustomList([1]), CustomTuple((1,)), CustomDict(a=1), ConstructorList([1], label="keep")]
 )
 def test__render_model__custom_container_default__should_fail_instead_of_losing_its_type(default: Any):
     with pytest.raises(
         CadwynRenderError, match=rf"ModelWithContainerDefault.value.*{type(default).__name__}.*default_factory"
     ):
         render_container_default(default)
+
+
+class RepresentationList(list):
+    @override
+    def __repr__(self) -> str:
+        return f"RepresentationList({list.__repr__(self)})"
+
+
+class ReferencedList(list):
+    @override
+    def __repr__(self) -> str:
+        return "REFERENCED_LIST"
+
+
+class CopyingList(list):
+    @override
+    def __iter__(self) -> Iterator[list[int]]:
+        for value in list.__iter__(self):
+            yield list(value)
+
+    @override
+    def __repr__(self) -> str:
+        return f"CopyingList({list.__repr__(self)})"
+
+
+REFERENCED_LIST = ReferencedList([1, 2])
+
+
+def test__render_model__subclass_iterator_yields_fresh_containers__should_preserve_main_source_bytes():
+    default = CopyingList([[i] for i in range(100)])
+    assert render_container_default(default) == (
+        f"class ModelWithContainerDefault(BaseModel):\n    value: Any = Field(default={default!r})"
+    )
+
+
+def test__render_model__shared_subclass_with_reference_repr__should_preserve_main_source_bytes():
+    assert render_container_default([REFERENCED_LIST, REFERENCED_LIST]) == (
+        "class ModelWithContainerDefault(BaseModel):\n"
+        "    value: Any = Field(default=[REFERENCED_LIST, REFERENCED_LIST])"
+    )
+    restored = evaluate_rendered_default([REFERENCED_LIST, REFERENCED_LIST])
+    assert restored[0] is restored[1] is REFERENCED_LIST
+
+
+@pytest.mark.parametrize(
+    ("default", "expected"),
+    [
+        (CustomSet({1}), "CustomSet({1})"),
+        (CustomFrozenSet({1}), "CustomFrozenSet({1})"),
+        (RepresentationList([1, 2]), "RepresentationList([1, 2])"),
+        (CopyingList([[1], [2], [3]]), "CopyingList([[1], [2], [3]])"),
+    ],
+)
+def test__render_model__reconstructible_subclass__should_preserve_main_source_bytes(default: Any, expected: str):
+    assert render_container_default(default) == (
+        "class ModelWithContainerDefault(BaseModel):\n    value: Any = Field(default=" + expected + ")"
+    )
+    rendered_default = evaluate_rendered_default(default)
+    assert type(rendered_default) is type(default)
+    assert rendered_default == default
+
+
+@pytest.mark.parametrize(
+    ("shared", "expected"),
+    [
+        ((), "[(), ()]"),
+        ((1, 2), "[(1, 2), (1, 2)]"),
+        (frozenset({1}), "[frozenset({1}), frozenset({1})]"),
+    ],
+)
+def test__render_model__repeated_immutable_container__should_preserve_main_source_bytes(shared: Any, expected: str):
+    assert render_container_default([shared, shared]) == (
+        "class ModelWithContainerDefault(BaseModel):\n    value: Any = Field(default=" + expected + ")"
+    )
+
+
+def test__render_model__repeated_tuple_in_dict__should_preserve_main_source_bytes():
+    shared = (1, 2)
+    assert render_container_default({"a": shared, "b": shared}) == (
+        "class ModelWithContainerDefault(BaseModel):\n    value: Any = Field(default={'a': (1, 2), 'b': (1, 2)})"
+    )
+
+
+class TupleValues(Enum):
+    pair = (1, 2)
+    nested = ((1, 2), "a")
+    singleton = (1,)
+    empty = ()
+
+
+def test__render_model__tuple_enum_values__should_preserve_main_source_bytes():
+    assert render_model(TupleValues, VersionBundle(Version("2000-01-01")), "2000-01-01") == (
+        "class TupleValues(Enum):\n    pair = (1, 2)\n    nested = ((1, 2), 'a')\n    singleton = (1,)\n    empty = ()"
+    )
 
 
 @pytest.mark.parametrize("container_type", [list, dict])
@@ -224,7 +326,7 @@ class ModelWithWeirdFields(A):
     baz: typing.Literal[MyEnum.foo] = Field()
     saz: {rend_ann}[str, StringConstraints(to_upper=True)] = Field()
     laz: {rend_ann}[int, None, {rend_interval}, None] = Field(gt=12)
-    taz: typing.Union[int, str, type(None)] = Field(default_factory={rendered_lambda})
+    taz: typing.Union[int, str, None] = Field(default_factory={rendered_lambda})
     naz: list[int] = Field(default=[1, 2, 3])
     gaz: {rend_ann}[bytes, Strict(strict=True), {rend_len}] = Field(title='Hewwo', min_length=3)
 '''
