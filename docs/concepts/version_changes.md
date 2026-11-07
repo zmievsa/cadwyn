@@ -135,7 +135,7 @@ Did you notice how the schema for `InvoiceResource` is specified in the migratio
     If Cadwyn can't tell which member a request or a response is, it fails with a `CadwynError` instead of guessing, but only if a migration of a member would run:
 
     * The endpoint returns something else than an object of a member's model or `None`, e.g. a dict or a database object. Cadwyn could only find out which member it becomes by validating it, which would run its validators twice, because FastAPI validates it again with the models of the client's version after the migrations. Return an object of the member's model, or migrate the endpoint by its path.
-    * The endpoint returns a `Response` object, such as a `JSONResponse`, which FastAPI doesn't validate. Return the content instead, or migrate the endpoint by its path.
+    * The endpoint returns a `Response` object, such as a `JSONResponse`, which FastAPI doesn't validate. Return an object of the member's model instead (e.g. `InvoiceResource(...)`, not the dict that you put in the `JSONResponse`), or migrate the endpoint by its path.
     * The response or the body is an object of several members that don't inherit from each other (e.g. `class Both(InvoiceResource, RefundResource)`). Use an object of only one of them, or migrate the endpoint by its path.
     * The request body param has an alias (`Body(alias=...)`), so the endpoint doesn't get the body under the name that Cadwyn looks it up by. Remove the alias, or migrate the endpoint by its path.
 
