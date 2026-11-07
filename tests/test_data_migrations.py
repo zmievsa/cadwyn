@@ -1,3 +1,4 @@
+import asyncio
 import collections
 import dataclasses
 import http.cookies
@@ -23,7 +24,9 @@ from types import MappingProxyType
 from typing import Annotated, Any, ClassVar, Literal, Optional, Self, Union, cast
 from uuid import UUID
 
+import anyio
 import fastapi
+import httpx
 import pytest
 from dirty_equals import IsList, IsPartialDict, IsStr
 from fastapi import (
@@ -122,6 +125,7 @@ from tests.conftest import (
     client,
     version_change,
 )
+from tests.conftest import versions as conftest_versions
 
 
 @pytest.fixture
@@ -3319,62 +3323,239 @@ def test__request_body_migration__with_supplied_form_model_that_dumps_to_none__h
         assert (response.status_code, response.json()) == (200, None)
 
 
-def _add_optional_file_next_to_query_param_named_body_endpoint(  # pragma: no cover # FastAPI >= 0.151
-    router: VersionedAPIRouter, path: str
-) -> None:
-    @router.post(path)
-    async def endpoint(upload: Optional[bytes] = File(None), body: Optional[str] = Query(None)):
-        raise NotImplementedError
+async def _read_upload(upload: Union[StarletteUploadFile, bytes, None]) -> Optional[str]:
+    if isinstance(upload, StarletteUploadFile):
+        return (await upload.read()).decode()
+    return None if upload is None else upload.decode()
 
 
-def _add_optional_form_model_aliased_as_dependency_named_body_endpoint(  # pragma: no cover # FastAPI >= 0.158.2
-    router: VersionedAPIRouter, path: str
-) -> None:
-    @router.post(path)
-    async def endpoint(
-        payload: Annotated[Optional[InnerSchemaWithValidationAlias], Form(alias="body")] = None,
-        body: None = Depends(_none_dependency),
-    ):
-        raise NotImplementedError
+async def _bytes_named_body_endpoint(body: bytes = File()):
+    return [await _read_upload(body)]
 
 
-@pytest.mark.parametrize(  # pragma: no cover # FastAPI >= 0.151
-    ("add_endpoint", "request_kwargs"),
+async def _bytes_list_named_body_endpoint(body: list[bytes] = File()):
+    return [await _read_upload(file) for file in body]
+
+
+async def _upload_file_named_body_endpoint(body: UploadFile = File()):
+    return [await _read_upload(body)]
+
+
+async def _optional_bytes_named_body_endpoint(body: Optional[bytes] = File(None)):
+    return [await _read_upload(body)]
+
+
+async def _optional_upload_file_named_body_endpoint(body: Optional[UploadFile] = File(None)):
+    return [await _read_upload(body)]
+
+
+async def _optional_bytes_next_to_query_param_named_body_endpoint(
+    upload: Optional[bytes] = File(None), body: Optional[str] = Query(None)
+):
+    return [await _read_upload(upload), body]
+
+
+async def _bytes_next_to_header_named_body_endpoint(upload: bytes = File(), body: str = Header()):
+    return [await _read_upload(upload), body]
+
+
+async def _bytes_next_to_cookie_named_body_endpoint(upload: bytes = File(), body: str = Cookie()):
+    return [await _read_upload(upload), body]
+
+
+async def _bytes_next_to_path_param_named_body_endpoint(body: str, upload: bytes = File()):
+    return [await _read_upload(upload), body]
+
+
+async def _get_dependency_value() -> str:
+    return "from_dependency"
+
+
+async def _optional_bytes_next_to_dependency_named_body_endpoint(
+    upload: Optional[bytes] = File(None), body: str = Depends(_get_dependency_value)
+):
+    return [await _read_upload(upload), body]
+
+
+async def _replace_upload(upload: UploadFile = File()) -> dict[str, UploadFile]:
+    return {"upload": UploadFile(BytesIO(b"normalized"), filename=upload.filename)}
+
+
+async def _upload_file_next_to_dependency_named_body_that_replaces_it_endpoint(
+    upload: UploadFile = File(), body: Any = Depends(_replace_upload)
+):
+    return [await _read_upload(upload)]
+
+
+async def _get_other_body() -> dict[str, int]:
+    return {"v": 2}
+
+
+async def _body_aliased_as_dependency_named_body_endpoint(
+    payload: Annotated[InnerSchemaWithValidationAlias, Body(alias="body")], body: Any = Depends(_get_other_body)
+):
+    return [payload.value, body]
+
+
+async def _optional_form_model_aliased_as_dependency_named_body_endpoint(  # pragma: no cover # FastAPI >= 0.158.2
+    payload: Annotated[Optional[InnerSchemaWithValidationAlias], Form(alias="body")] = None,
+    body: None = Depends(_none_dependency),
+):
+    return [None if payload is None else payload.value, body]
+
+
+_NEEDS_OPTIONAL_FORM_MODELS = pytest.mark.skipif(
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI embeds `Optional` form models"
+)
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "path", "request_kwargs", "expected"),
     [
+        pytest.param(_bytes_named_body_endpoint, "/test", {"files": {"body": b"hi"}}, ["hi"], id="bytes"),
         pytest.param(
-            _add_optional_file_next_to_query_param_named_body_endpoint,
-            {"files": {"upload": ("file.txt", b"content")}},
-            id="optional_file_next_to_query_param_named_body",
-            marks=pytest.mark.skipif(
-                not FASTAPI_DISTINGUISHES_NULL_BODIES,
-                reason="Before FastAPI 0.151.0, a body that is None is an omitted one",
-            ),
+            _bytes_list_named_body_endpoint,
+            "/test",
+            {"files": [("body", b"a"), ("body", b"b")]},
+            ["a", "b"],
+            id="list_of_bytes",
+        ),
+        pytest.param(_upload_file_named_body_endpoint, "/test", {"files": {"body": b"hi"}}, ["hi"], id="upload_file"),
+        pytest.param(
+            _optional_bytes_named_body_endpoint, "/test", {"files": {"body": b"hi"}}, ["hi"], id="optional_bytes"
+        ),
+        pytest.param(_optional_bytes_named_body_endpoint, "/test", {}, [None], id="optional_bytes_missing"),
+        pytest.param(
+            _optional_upload_file_named_body_endpoint,
+            "/test",
+            {"files": {"body": b"hi"}},
+            ["hi"],
+            id="optional_upload_file",
+        ),
+        pytest.param(_optional_upload_file_named_body_endpoint, "/test", {}, [None], id="optional_upload_file_missing"),
+        pytest.param(
+            _optional_bytes_next_to_query_param_named_body_endpoint,
+            "/test",
+            {"params": {"body": "query"}, "files": {"upload": b"hi"}},
+            ["hi", "query"],
+            id="file_next_to_query_param",
         ),
         pytest.param(
-            _add_optional_form_model_aliased_as_dependency_named_body_endpoint,
+            _optional_bytes_next_to_query_param_named_body_endpoint,
+            "/test",
+            {"files": {"upload": b"hi"}},
+            ["hi", None],
+            id="file_next_to_missing_query_param",
+        ),
+        pytest.param(
+            _optional_bytes_next_to_query_param_named_body_endpoint,
+            "/test",
+            {},
+            [None, None],
+            id="missing_file_next_to_missing_query_param",
+        ),
+        pytest.param(
+            _bytes_next_to_header_named_body_endpoint,
+            "/test",
+            {"headers": {"body": "header"}, "files": {"upload": b"hi"}},
+            ["hi", "header"],
+            id="file_next_to_header",
+        ),
+        pytest.param(
+            _bytes_next_to_cookie_named_body_endpoint,
+            "/test",
+            {"headers": {"cookie": "body=cookie"}, "files": {"upload": b"hi"}},
+            ["hi", "cookie"],
+            id="file_next_to_cookie",
+        ),
+        pytest.param(
+            _bytes_next_to_path_param_named_body_endpoint,
+            "/test/{body}",
+            {"files": {"upload": b"hi"}},
+            ["hi", "path"],
+            id="file_next_to_path_param",
+        ),
+        pytest.param(
+            _optional_bytes_next_to_dependency_named_body_endpoint,
+            "/test",
+            {"files": {"upload": b"hi"}},
+            ["hi", "from_dependency"],
+            id="file_next_to_dependency",
+        ),
+        pytest.param(
+            _optional_bytes_next_to_dependency_named_body_endpoint,
+            "/test",
+            {},
+            [None, "from_dependency"],
+            id="missing_file_next_to_dependency",
+        ),
+        pytest.param(
+            _upload_file_next_to_dependency_named_body_that_replaces_it_endpoint,
+            "/test",
+            {"files": {"upload": b"original"}},
+            ["original"],
+            id="upload_file_next_to_dependency_that_replaces_it",
+        ),
+        pytest.param(
+            _body_aliased_as_dependency_named_body_endpoint,
+            "/test",
+            {"json": {"v": 1}},
+            [1, {"v": 2}],
+            id="body_aliased_as_dependency",
+        ),
+        pytest.param(
+            _optional_form_model_aliased_as_dependency_named_body_endpoint,
+            "/test",
             {"data": {"v": "1"}},
-            id="optional_form_model_aliased_as_dependency_named_body",
-            marks=pytest.mark.skipif(
-                not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS,
-                reason="Before FastAPI 0.158.2, FastAPI embeds `Optional` form models",
-            ),
+            [1, None],
+            id="optional_form_model_aliased_as_dependency",
+            marks=_NEEDS_OPTIONAL_FORM_MODELS,
+        ),
+        pytest.param(
+            _optional_form_model_aliased_as_dependency_named_body_endpoint,
+            "/test",
+            {},
+            [None, None],
+            id="missing_optional_form_model_aliased_as_dependency",
+            marks=_NEEDS_OPTIONAL_FORM_MODELS,
         ),
     ],
 )
-def test__request_body_migration__with_none_kwarg_named_body_that_is_not_the_body__should_not_drop_the_body(
+def test__request_body_migration__with_param_named_body_that_is_not_the_whole_body__endpoint_should_get_its_params(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Any],
+    path: str,
+    request_kwargs: dict[str, Any],
+    expected: list[Any],
+):
+    router.post(path)(endpoint)
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        response = version_client.post(path.replace("{body}", "path"), **request_kwargs)
+        assert (response.status_code, response.json()) == (200, expected)
+
+
+def test__form_migration__with_file_next_to_param_named_body__should_see_and_change_the_form(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
-    add_endpoint: Callable[[VersionedAPIRouter, str], None],
-    request_kwargs: dict[str, Any],
 ):
-    add_endpoint(router, test_path)
-    clients = create_versioned_clients(version_change())
+    @router.post(test_path)
+    async def endpoint(upload: bytes = File(), body: str = Query()):
+        return [upload.decode(), body]
 
-    # Cadwyn takes the kwarg for the body, so it fails as before instead of passing the head no body
-    for version_client in clients.values():
-        with pytest.raises(CadwynHeadRequestValidationError):
-            version_client.post(test_path, **request_kwargs)
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        assert request.form is not None
+        request.form[:] = [(key, UploadFile(BytesIO(b"migrated"), filename="upload")) for key, _ in request.form]
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    request_kwargs: dict[str, Any] = {"params": {"body": "query"}, "files": {"upload": b"original"}}
+    assert clients["2000-01-01"].post(test_path, **request_kwargs).json() == ["migrated", "query"]
+    assert clients["2001-01-01"].post(test_path, **request_kwargs).json() == ["original", "query"]
 
 
 @pytest.mark.parametrize(
@@ -6129,25 +6310,6 @@ def test__request_body_migration__with_body_alias_of_dependency_returning_the_bo
     assert bodies_seen_by_migration == [{"out": 4}]
 
 
-@pytest.mark.parametrize("annotation", [bytes, list[bytes]])
-def test__request_body_migration__with_file_named_body__should_stay_as_before(
-    create_versioned_clients: CreateVersionedClients,
-    test_path: Literal["/test"],
-    router: VersionedAPIRouter,
-    annotation: Any,
-):
-    @router.post(test_path)
-    async def endpoint(body: annotation = File()):
-        raise NotImplementedError
-
-    clients = create_versioned_clients(version_change())
-
-    # FastAPI has already read the uploaded files so reading the request again would deliver them empty
-    for version_client in clients.values():
-        with pytest.raises(CadwynHeadRequestValidationError):
-            version_client.post(test_path, files={"body": ("file.txt", b"content")})
-
-
 async def _bytes_upload_endpoint(upload: bytes = File()):
     return [upload.decode()]
 
@@ -7146,50 +7308,412 @@ def test__request_body_migration__with_upload_file_read_by_cached_dependency__sh
         assert version_client.post(test_path, files={"upload": b"HEADERdata"}).json() == ["HE", "ADERdata"]
 
 
-async def _replace_upload(upload: UploadFile = File()) -> dict[str, UploadFile]:
-    return {"upload": UploadFile(BytesIO(b"normalized"), filename=upload.filename)}
-
-
-def test__request_body_migration__with_upload_replaced_by_dependency_named_body__should_stay_as_before(
-    create_versioned_clients: CreateVersionedClients,
-    test_path: Literal["/test"],
-    router: VersionedAPIRouter,
-):
-    @router.post(test_path)
-    async def endpoint(upload: UploadFile = File(), body: Any = Depends(_replace_upload)):
-        return (await upload.read()).decode()
-
-    clients = create_versioned_clients(version_change())
-
-    for version_client in clients.values():
-        assert version_client.post(test_path, files={"upload": b"original"}).json() == "normalized"
-
-
 async def _parse_form(request: Request) -> dict[str, Any]:
     return dict(await request.form())
 
 
-def test__request_body_migration__with_upload_file_read_by_background_task__should_stay_as_before(
+def _make_upload_file_endpoint_with_dependency_named_body(
+    read_upload: Callable[[UploadFile], Any],
+) -> Callable[..., Any]:
+    async def endpoint(
+        background_tasks: BackgroundTasks, upload: UploadFile = File(), body: Any = Depends(_parse_form)
+    ):
+        background_tasks.add_task(read_upload, upload)
+
+    return endpoint
+
+
+def _make_upload_file_endpoint(read_upload: Callable[[UploadFile], Any]) -> Callable[..., Any]:
+    async def endpoint(background_tasks: BackgroundTasks, upload: UploadFile = File()):
+        background_tasks.add_task(read_upload, upload)
+
+    return endpoint
+
+
+@pytest.mark.parametrize(
+    "make_endpoint",
+    [_make_upload_file_endpoint_with_dependency_named_body, _make_upload_file_endpoint],
+    ids=["with_dependency_named_body", "without_dependencies"],
+)
+def test__request_body_migration__with_upload_file_read_by_background_task__task_should_read_the_upload(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
+    make_endpoint: Callable[[Callable[[UploadFile], Any]], Callable[..., Any]],
 ):
     read_by_background_task = []
 
     async def read_upload(upload: UploadFile):
         read_by_background_task.append(await upload.read())
 
-    @router.post(test_path)
-    async def endpoint(
-        background_tasks: BackgroundTasks, upload: UploadFile = File(), body: Any = Depends(_parse_form)
-    ):
-        background_tasks.add_task(read_upload, upload)
+    router.post(test_path)(make_endpoint(read_upload))
 
     clients = create_versioned_clients(version_change())
 
     for version_client in clients.values():
         assert version_client.post(test_path, files={"upload": b"payload"}).status_code == 200
     assert read_by_background_task == [b"payload", b"payload"]
+
+
+class _CloseCountingFile:
+    """Wraps the file of an upload to count how many times it gets closed.
+
+    Closing a file that is closed already does nothing, so we only count the calls that close an open file.
+    """
+
+    def __init__(self, file: Any) -> None:
+        self.wrapped_file = file
+        self.close_calls = 0
+
+    def close(self) -> None:
+        if not self.wrapped_file.closed:
+            self.close_calls += 1
+        self.wrapped_file.close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.wrapped_file, name)
+
+
+# Bigger than the spool size, so that the upload rolls to disk and closing it takes a thread, like in production
+_LARGE_UPLOAD = b"x" * (MultiPartParser.spool_max_size + 1)
+_UploadBehavior = Callable[[UploadFile, BackgroundTasks, list[int]], Coroutine[Any, Any, Any]]
+
+
+async def _read_the_upload(upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]) -> None:
+    reads.append(len(await upload.read()))
+
+
+async def _read_the_upload_in_background_task(
+    upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]
+) -> None:
+    background_tasks.add_task(_read_the_upload, upload, background_tasks, reads)
+
+
+async def _read_the_upload_in_failing_background_task(
+    upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]
+) -> None:
+    async def task():
+        await _read_the_upload(upload, background_tasks, reads)
+        raise RuntimeError("Background task failed")
+
+    background_tasks.add_task(task)
+
+
+async def _raise_http_exception(upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]) -> None:
+    raise HTTPException(status_code=400)
+
+
+async def _raise_error(upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]) -> None:
+    raise RuntimeError("Endpoint failed")
+
+
+async def _stream_the_upload(
+    upload: UploadFile, background_tasks: BackgroundTasks, reads: list[int]
+) -> StreamingResponse:
+    async def chunks():
+        while chunk := await upload.read(len(_LARGE_UPLOAD) // 4):
+            reads.append(len(chunk))
+            yield chunk
+
+    return StreamingResponse(chunks())
+
+
+class _ASGIRequestDriver:
+    """Sends a multipart request with an upload to the app through ASGI, like a server, and fails it if asked."""
+
+    def __init__(
+        self,
+        *,
+        fail_sending: Optional[str] = None,
+        cancel_after_first_chunk: Optional[Literal["task", "anyio_scope"]] = None,
+    ) -> None:
+        self.fail_sending = fail_sending
+        self.cancel_after_first_chunk = cancel_after_first_chunk
+
+    async def __call__(self, app: Any, headers: dict[str, str]) -> None:
+        request = httpx.Request("POST", "http://test/test", headers=headers, files={"upload": _LARGE_UPLOAD})
+        body = request.read()
+        first_chunk_is_sent = asyncio.Event()
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == self.fail_sending:
+                raise OSError("The client has disconnected")
+            if message["type"] == "http.response.body":
+                first_chunk_is_sent.set()
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.4"},
+            "http_version": "1.1",
+            "scheme": "http",
+            "method": "POST",
+            "path": "/test",
+            "raw_path": b"/test",
+            "root_path": "",
+            "query_string": b"",
+            "headers": [(key.lower(), value) for key, value in request.headers.raw],
+            "client": ("test", 1),
+            "server": ("test", 80),
+        }
+        if self.cancel_after_first_chunk == "anyio_scope":
+            with anyio.CancelScope() as cancel_scope:
+                async with anyio.create_task_group() as task_group:
+                    task_group.start_soon(app, scope, receive, send)
+                    await first_chunk_is_sent.wait()
+                    cancel_scope.cancel()
+            return
+        task = asyncio.create_task(app(scope, receive, send))
+        if self.cancel_after_first_chunk == "task":
+            await first_chunk_is_sent.wait()
+            task.cancel()
+        await task
+
+
+_UPLOAD_OUTCOMES = [
+    pytest.param(_read_the_upload, _ASGIRequestDriver(), None, [len(_LARGE_UPLOAD)], id="response"),
+    pytest.param(
+        _read_the_upload_in_background_task, _ASGIRequestDriver(), None, [len(_LARGE_UPLOAD)], id="background_task"
+    ),
+    pytest.param(
+        _read_the_upload_in_failing_background_task,
+        _ASGIRequestDriver(),
+        RuntimeError,
+        [len(_LARGE_UPLOAD)],
+        id="failing_background_task",
+    ),
+    pytest.param(_raise_http_exception, _ASGIRequestDriver(), None, [], id="http_exception"),
+    pytest.param(_raise_error, _ASGIRequestDriver(), RuntimeError, [], id="endpoint_error"),
+    pytest.param(_stream_the_upload, _ASGIRequestDriver(), None, [len(_LARGE_UPLOAD) // 4] * 4 + [1], id="stream"),
+    pytest.param(
+        _read_the_upload,
+        _ASGIRequestDriver(fail_sending="http.response.start"),
+        OSError,
+        [len(_LARGE_UPLOAD)],
+        id="disconnect_before_headers",
+    ),
+    pytest.param(
+        _read_the_upload,
+        _ASGIRequestDriver(fail_sending="http.response.body"),
+        OSError,
+        [len(_LARGE_UPLOAD)],
+        id="disconnect_before_body",
+    ),
+    pytest.param(
+        _stream_the_upload,
+        _ASGIRequestDriver(fail_sending="http.response.body"),
+        OSError,
+        [len(_LARGE_UPLOAD) // 4],
+        id="disconnect_during_stream",
+    ),
+    pytest.param(
+        _stream_the_upload,
+        _ASGIRequestDriver(cancel_after_first_chunk="task"),
+        asyncio.CancelledError,
+        IsList(len(_LARGE_UPLOAD) // 4, check_order=False, length=(1, 5)),
+        id="task_cancelled_during_stream",
+    ),
+    pytest.param(
+        _stream_the_upload,
+        _ASGIRequestDriver(cancel_after_first_chunk="anyio_scope"),
+        None,
+        IsList(len(_LARGE_UPLOAD) // 4, check_order=False, length=(1, 5)),
+        id="anyio_scope_cancelled_during_stream",
+    ),
+]
+
+
+def _add_endpoint_that_tracks_closes_of_the_upload(
+    router: VersionedAPIRouter, behavior: _UploadBehavior, files: list[_CloseCountingFile], reads: list[int]
+) -> None:
+    async def track_closes(upload: UploadFile = File()) -> None:
+        if not isinstance(upload.file, _CloseCountingFile):
+            file = _CloseCountingFile(upload.file)
+            upload.file = cast("typing.BinaryIO", file)
+            files.append(file)
+
+    @router.post("/test", dependencies=[Depends(track_closes)])
+    async def endpoint(background_tasks: BackgroundTasks, upload: UploadFile = File()):
+        return await behavior(upload, background_tasks, reads)
+
+
+async def _run_request(driver: _ASGIRequestDriver, app: Any, headers: dict[str, str], expected_error: Any) -> None:
+    if expected_error is None:
+        await driver(app, headers)
+    else:
+        with pytest.raises(expected_error):
+            await driver(app, headers)
+
+
+@pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
+@pytest.mark.parametrize(("behavior", "driver", "expected_error", "expected_reads"), _UPLOAD_OUTCOMES)
+def test__request_body_migration__with_upload_file__should_close_it_once_after_the_request(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+    version: str,
+    behavior: _UploadBehavior,
+    driver: _ASGIRequestDriver,
+    expected_error: Any,
+    expected_reads: Any,
+):
+    files: list[_CloseCountingFile] = []
+    reads: list[int] = []
+    _add_endpoint_that_tracks_closes_of_the_upload(router, behavior, files, reads)
+    app = create_versioned_app(version_change())
+
+    asyncio.run(_run_request(driver, app, {"x-api-version": version}, expected_error))
+
+    assert reads == expected_reads
+    assert [(file.closed, file.close_calls) for file in files] == [(True, 1)]
+
+
+def _replace_the_upload(files: list[_CloseCountingFile]) -> Callable[[RequestInfo], None]:
+    def migration(request: RequestInfo) -> None:
+        assert request.form is not None
+        file = _CloseCountingFile(BytesIO(_LARGE_UPLOAD))
+        files.append(file)
+        upload = UploadFile(cast("typing.BinaryIO", file), filename="new")
+        request.form[:] = [(key, upload if key == "upload" else value) for key, value in request.form]
+
+    return migration
+
+
+def _replace_the_upload_and_fail(files: list[_CloseCountingFile]) -> Callable[[RequestInfo], None]:
+    def migration(request: RequestInfo) -> None:
+        _replace_the_upload(files)(request)
+        raise RuntimeError("Migration failed")
+
+    return migration
+
+
+def _move_the_upload_under_another_key(files: list[_CloseCountingFile]) -> Callable[[RequestInfo], None]:
+    def migration(request: RequestInfo) -> None:
+        _replace_the_upload(files)(request)
+        assert request.form is not None
+        request.form[:] = [("other" if key == "upload" else key, value) for key, value in request.form]
+
+    return migration
+
+
+@pytest.mark.parametrize(
+    ("make_migration", "behavior", "driver", "expected_error", "expected_reads"),
+    [pytest.param(_replace_the_upload, *outcome.values, id=outcome.id) for outcome in _UPLOAD_OUTCOMES]
+    + [
+        pytest.param(
+            _replace_the_upload_and_fail, _read_the_upload, _ASGIRequestDriver(), RuntimeError, [], id="migration_error"
+        ),
+        pytest.param(
+            _move_the_upload_under_another_key,
+            _read_the_upload,
+            _ASGIRequestDriver(),
+            CadwynHeadRequestValidationError,
+            [],
+            id="head_validation_error",
+        ),
+    ],
+)
+def test__form_migration__with_upload_put_into_the_form__should_close_it_and_the_original_once_after_the_request(
+    create_versioned_app: CreateVersionedApp,
+    router: VersionedAPIRouter,
+    make_migration: Callable[[list[_CloseCountingFile]], Callable[[RequestInfo], None]],
+    behavior: _UploadBehavior,
+    driver: _ASGIRequestDriver,
+    expected_error: Any,
+    expected_reads: Any,
+):
+    files: list[_CloseCountingFile] = []
+    reads: list[int] = []
+    _add_endpoint_that_tracks_closes_of_the_upload(router, behavior, files, reads)
+    app = create_versioned_app(
+        version_change(migrator=convert_request_to_next_version_for("/test", ["POST"])(make_migration(files)))
+    )
+
+    asyncio.run(_run_request(driver, app, {"x-api-version": "2000-01-01"}, expected_error))
+
+    assert reads == expected_reads
+    # The original upload and the one that the migration has put into the form
+    assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1)]
+
+
+@pytest.mark.parametrize(("behavior", "driver", "expected_error", "expected_reads"), _UPLOAD_OUTCOMES)
+def test__form_migration__with_upload_put_into_the_form_of_router_outside_cadwyn_app__should_close_both_once(
+    router: VersionedAPIRouter,
+    api_version_var: ContextVar[Union[str, None]],
+    behavior: _UploadBehavior,
+    driver: _ASGIRequestDriver,
+    expected_error: Any,
+    expected_reads: Any,
+):
+    files: list[_CloseCountingFile] = []
+    reads: list[int] = []
+    _add_endpoint_that_tracks_closes_of_the_upload(router, behavior, files, reads)
+    migration = convert_request_to_next_version_for("/test", ["POST"])(_replace_the_upload(files))
+    versions = VersionBundle(*conftest_versions(version_change(migrator=migration)), api_version_var=api_version_var)
+    app = FastAPI()
+    app.include_router(generate_versioned_routers(router, versions=versions).endpoints["2000-01-01"])
+
+    # A `BaseHTTPMiddleware` cancels the request when the client disconnects, which interrupts FastAPI's closing
+    @app.middleware("http")
+    async def pick_version(request: Request, call_next: Callable[[Request], Any]):
+        api_version_var.set("2000-01-01")
+        return await call_next(request)
+
+    asyncio.run(_run_request(driver, app, {}, expected_error))
+
+    assert reads == expected_reads
+    # The original upload and the one that the migration has put into the form
+    assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1)]
+
+
+def test__form_migration__with_uploads_replaced_by_later_migrations__should_close_every_upload_once(
+    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter
+):
+    files: list[_CloseCountingFile] = []
+    reads: list[int] = []
+    _add_endpoint_that_tracks_closes_of_the_upload(router, _read_the_upload, files, reads)
+    replace_the_upload = convert_request_to_next_version_for("/test", ["POST"])(_replace_the_upload(files))
+    app = create_versioned_app(version_change(migrator=replace_the_upload), version_change(migrator=replace_the_upload))
+
+    asyncio.run(_run_request(_ASGIRequestDriver(), app, {"x-api-version": "2000-01-01"}, None))
+
+    assert reads == [len(_LARGE_UPLOAD)]
+    # The original upload, the one that the first migration has put into the form, and the one that replaced it
+    assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1), (True, 1)]
+
+
+class _UploadThatNeverCloses(UploadFile):
+    @override
+    async def close(self) -> None:
+        await anyio.sleep_forever()
+
+
+def test__form_migration__with_upload_that_never_closes__should_finish_the_request_and_log_it(
+    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter, caplog: pytest.LogCaptureFixture
+):
+    files: list[_CloseCountingFile] = []
+    reads: list[int] = []
+    _add_endpoint_that_tracks_closes_of_the_upload(router, _read_the_upload, files, reads)
+    upload = _UploadThatNeverCloses(BytesIO(b"content"), filename="stuck.txt")
+
+    @convert_request_to_next_version_for("/test", ["POST"])
+    def add_upload(request: RequestInfo) -> None:
+        assert request.form is not None
+        request.form.append(("other", upload))
+
+    app = create_versioned_app(version_change(migrator=add_upload))
+
+    async def run_request() -> None:
+        with anyio.fail_after(30):
+            await _run_request(_ASGIRequestDriver(), app, {"x-api-version": "2000-01-01"}, None)
+
+    asyncio.run(run_request())
+
+    assert reads == [len(_LARGE_UPLOAD)]
+    assert [(file.closed, file.close_calls) for file in files] == [(True, 1)]
+    assert not upload.file.closed
+    assert [record.getMessage() for record in caplog.records] == [IsStr(regex=".*'stuck.txt'.*")]
 
 
 async def _close_upload(upload: UploadFile = File()) -> None:

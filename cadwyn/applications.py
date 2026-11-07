@@ -38,6 +38,7 @@ from cadwyn.middleware import (
 from cadwyn.route_generation import copy_route, generate_versioned_routers
 from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.structure import VersionBundle
+from cadwyn.structure.versions import _UPLOADS_TO_CLOSE_SCOPE_KEY, _UploadsToClose
 
 if TYPE_CHECKING:
     from enum import Enum
@@ -324,7 +325,16 @@ class Cadwyn(FastAPI):
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if not self._cadwyn_initialized:
             self._cadwyn_initialize()
-        await super().__call__(scope, receive, send)
+        if scope["type"] != "http":
+            await super().__call__(scope, receive, send)
+            return
+        # We close the uploads after everything else, including FastAPI's own closing of them and background tasks
+        uploads = _UploadsToClose()
+        scope[_UPLOADS_TO_CLOSE_SCOPE_KEY] = uploads
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await uploads.close()
 
     def _cadwyn_initialize(self) -> None:
         try:

@@ -37,6 +37,7 @@ from typing import (
     get_origin,
 )
 
+import anyio
 import fastapi.dependencies.utils
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -611,16 +612,18 @@ class VersionBundle:
         start = self.reversed_version_values.index(current_version)
         head_route_id = id(head_route)
         has_run_migrations = False
+        # Migrations can put new uploads into the form, which FastAPI doesn't know about
+        uploads = _get_uploads_to_close(request) if request_info._form is not None else None
         for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
                 for instruction in _get_schema_migrations(
                     version_change.alter_request_by_schema_instructions, body_target, get_body_union_member
                 ):
-                    instruction(request_info)
+                    _run_request_migration(instruction, request_info, uploads)
                     has_run_migrations = True
                 if head_route_id in version_change._route_to_request_migration_mapping:
                     for instruction in version_change._route_to_request_migration_mapping[head_route_id]:
-                        instruction(request_info)
+                        _run_request_migration(instruction, request_info, uploads)
                         has_run_migrations = True
         if has_run_migrations:
             client_json_strings.forget_shared_strings()
@@ -1002,6 +1005,9 @@ class VersionBundle:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
             kwargs.pop(request_param_name)
+        if route.body_field is not None and isinstance(route.body_field.field_info, params.Form):
+            # FastAPI has already parsed this form, so this returns its cached form
+            _get_uploads_to_close(request).add((await request.form()).multi_items())
 
         api_version = self.api_version_var.get()
         if api_version is None:
@@ -1020,14 +1026,14 @@ class VersionBundle:
             len(route.dependant.body_params) == 1
             and head_body_field is not None
             and body_field_alias is not None
-            and body_field_alias in kwargs
-            and _kwarg_can_be_the_body(route, body_field_alias, embed_body_fields=embed_body_fields)
+            and _body_is_in_kwargs(route, body_field_alias, embed_body_fields=embed_body_fields)
         ):
-            raw_body: Union[BaseModel, None] = kwargs.get(body_field_alias)
+            # FastAPI keys the kwargs by param names, so a kwarg named after the body's alias can be another param
+            raw_body: Union[BaseModel, None] = kwargs[route.dependant.body_params[0].name]
             validated_body = raw_body
             if raw_body is None:
                 body = None
-                form_model_is_omitted = await _form_model_is_omitted(request, route, body_field_alias)
+                form_model_is_omitted = await _form_model_is_omitted(request, route)
             # It means we have a dict or a list instead of a full model.
             # This covers the following use case in the endpoint definition: "payload: dict = Body(None)"
             elif not isinstance(raw_body, BaseModel):
@@ -1040,9 +1046,7 @@ class VersionBundle:
                 body = _copy_decoded_json_strings(plan, body, client_json_strings)
         else:
             # This is for requests without body or with complex body such as form or file
-            body = await _get_body(
-                request, route.body_field, exit_stack, strict_content_type=_get_strict_content_type(request)
-            )
+            body = await _get_body(request, route.body_field, strict_content_type=_get_strict_content_type(request))
             if isinstance(body, FormData):
                 uploads_read_by_fastapi = _get_uploads_read_by_fastapi(route, head_route, head_dependant, body)
 
@@ -1058,7 +1062,6 @@ class VersionBundle:
             get_body_union_member = functools.partial(
                 _get_union_member_of_body, validated_body, request_target.union_members, head_body_field
             )
-
         new_kwargs = await self._migrate_request(
             request_target,
             head_dependant,
@@ -1103,29 +1106,28 @@ async def _fastapi_got_no_body(request: FastapiRequest, route: APIRoute, *, embe
     return embed_body_fields and not is_form
 
 
-async def _form_model_is_omitted(request: FastapiRequest, route: APIRoute, body_field_alias: str) -> bool:
+async def _form_model_is_omitted(request: FastapiRequest, route: APIRoute) -> bool:
     """Return whether FastAPI has given the form model body param its default because the form doesn't supply it.
 
     Since FastAPI 0.158.2, FastAPI does so for an optional form model if the form has none of its fields. Cadwyn sees
     that default as None, and the head would reject None as a form body, so we omit the body for the head instead.
     """
     if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS:  # pragma: no cover # FastAPI >= 0.158.2
-        return await _form_has_no_fields_of_omittable_form_model(request, route, body_field_alias)
+        return await _form_has_no_fields_of_omittable_form_model(request, route)
     return False
 
 
 async def _form_has_no_fields_of_omittable_form_model(  # pragma: no cover # FastAPI >= 0.158.2
-    request: FastapiRequest, route: APIRoute, body_field_alias: str
+    request: FastapiRequest, route: APIRoute
 ) -> bool:
     """Return whether the body param is a form model with a default, and FastAPI has given every body param its default.
 
-    The kwarg is the body param only if it has the param's name, and not a dependency or another param named after
-    the body's alias. FastAPI only skips the form models (or unions of them) that can be None if the form doesn't
-    supply any of them. Dependencies and their overrides can have such form models too, but if anything else in the
-    tree reads the form, we take the previous path, so that the head can't lose its values when it gets no body.
+    FastAPI only skips the form models (or unions of them) that can be None if the form doesn't supply any of them.
+    Dependencies and their overrides can have such form models too, but if anything else in the tree reads the form,
+    we take the previous path, so that the head can't lose its values when it gets no body.
     """
     body_param = route.dependant.body_params[0]
-    if not _get_form_models(body_param) or body_param.name != body_field_alias or body_param.field_info.is_required():
+    if not _get_form_models(body_param) or body_param.field_info.is_required():
         return False
     models: list[type[BaseModel]] = []
     for dependant in _iter_dependants_that_fastapi_solves(route.dependant, route):
@@ -1150,16 +1152,14 @@ def _form_supplies_form_model(model: type[BaseModel], form: FormData) -> bool:  
     return any(alias in form for field in _get_cached_model_fields(model) for alias, _ in _get_param_aliases(field))
 
 
-def _kwarg_can_be_the_body(route: APIRoute, body_field_alias: str, *, embed_body_fields: bool) -> bool:
-    """Return False if the endpoint kwarg named after the body's alias is surely not the body.
+def _body_is_in_kwargs(route: APIRoute, body_field_alias: str, *, embed_body_fields: bool) -> bool:
+    """Return whether we take the body from the kwarg of the body param instead of reading it from the request.
 
-    FastAPI keys the endpoint kwargs by param names, while the body is looked up by its alias. So the kwarg
-    is another param when the body is embedded (wrapped into a separate field with the "body" alias),
-    or when the alias isn't the name of the body param, unless the kwarg is a dependency that returns the body.
+    When the body is embedded (wrapped into a separate field with the "body" alias, e.g. for files and forms), no
+    kwarg holds the whole body: a kwarg named "body" is a param of its own (a file, a query param, a dependency, etc.),
+    so we read the body from the request. Otherwise, the kwarg of the body param holds the body. We take it from
+    there if the body's alias is the body param's name or the name of a dependency, and read the request otherwise.
     """
-    # FastAPI has already read the uploaded files, so they would come out empty if we read them again
-    if route.body_field is not None and isinstance(route.body_field.field_info, params.File):
-        return True
     if embed_body_fields:
         return False
     return body_field_alias == route.dependant.body_params[0].name or any(
@@ -1995,21 +1995,82 @@ def _get_strict_content_type(request: FastapiRequest) -> bool:
     return strict_content_type
 
 
+_UPLOADS_TO_CLOSE_SCOPE_KEY = "cadwyn.uploads_to_close"
+# How long we wait for each upload to close, so that an upload that never closes can't keep the request running forever
+_UPLOAD_CLOSE_TIMEOUT_SECONDS = 3
+
+
+class _UploadsToClose:
+    """The uploads of a request that Cadwyn closes once the request is done, even if it gets cancelled.
+
+    FastAPI closes the uploads of the form that it has parsed, but it doesn't shield closing them. So when the
+    request gets cancelled, e.g. by a `BaseHTTPMiddleware` (like Cadwyn's) after the client has disconnected,
+    the uploaded files stay open. FastAPI also doesn't know about the uploads that migrations put into the form,
+    including the ones that later migrations replace or remove.
+    """
+
+    __slots__ = ("_uploads",)
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Keyed by id, so that we close every upload once. The values keep the ids valid
+        self._uploads: dict[int, UploadFile] = {}
+
+    def add(self, form: Iterable[tuple[str, Union[UploadFile, str]]]) -> None:
+        for _, value in form:
+            if isinstance(value, UploadFile):
+                self._uploads.setdefault(id(value), value)
+
+    async def close(self) -> None:
+        # Background tasks and streams have finished by now, so nothing reads the uploads anymore. If FastAPI closes
+        # its uploads after us, closing them again does nothing
+        for upload in self._uploads.values():
+            if getattr(upload.file, "closed", False):
+                continue
+            with anyio.move_on_after(_UPLOAD_CLOSE_TIMEOUT_SECONDS, shield=True) as scope:
+                await upload.close()
+            if scope.cancelled_caught:
+                _logger.warning(
+                    "Cadwyn couldn't close the upload %r within %s seconds after the request, so it may stay open",
+                    upload.filename,
+                    _UPLOAD_CLOSE_TIMEOUT_SECONDS,
+                )
+
+
+def _get_uploads_to_close(request: FastapiRequest) -> _UploadsToClose:
+    uploads: Union[_UploadsToClose, None] = request.scope.get(_UPLOADS_TO_CLOSE_SCOPE_KEY)
+    if uploads is None:
+        # Outside of a Cadwyn app (e.g. with the routers of `generate_versioned_routers()`), we close them with the
+        # stack that FastAPI closes its forms with
+        uploads = _UploadsToClose()
+        request.scope[_UPLOADS_TO_CLOSE_SCOPE_KEY] = uploads
+        request.scope["fastapi_middleware_astack"].push_async_callback(uploads.close)
+    return uploads
+
+
+def _run_request_migration(
+    migration: Callable[[RequestInfo], None], request_info: RequestInfo, uploads: Union[_UploadsToClose, None]
+) -> None:
+    try:
+        migration(request_info)
+    finally:
+        # A later migration can replace or remove the uploads that this one has put into the form
+        if uploads is not None and request_info._form is not None:
+            uploads.add(request_info._form)
+
+
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form
 async def _get_body(
-    request: FastapiRequest,
-    body_field: Union[ModelField, None],
-    exit_stack: AsyncExitStack,
-    *,
-    strict_content_type: bool,
+    request: FastapiRequest, body_field: Union[ModelField, None], *, strict_content_type: bool
 ):  # pragma: no cover # This is from FastAPI
     is_body_form = body_field and isinstance(body_field.field_info, params.Form)
     try:
         body: Any = None
         if body_field:
             if is_body_form:
+                # FastAPI has already parsed this form, so this returns its cached form. We close its files after the
+                # response (`_UploadsToClose`), so background tasks can still read them
                 body = await request.form()
-                exit_stack.push_async_callback(body.close)
             else:
                 body_bytes = await request.body()
                 if body_bytes:
