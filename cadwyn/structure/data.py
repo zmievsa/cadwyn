@@ -1,13 +1,14 @@
 import functools
 import inspect
+import types
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Union, cast, overload
+from typing import Any, ClassVar, TypeAlias, Union, cast, overload
 
 from fastapi import Request, Response
 from starlette.datastructures import FormData, MutableHeaders, UploadFile
 
-from cadwyn._utils import _callable_name, same_method_definition_as_in
+from cadwyn._utils import UnionType, _callable_name, same_method_definition_as_in
 from cadwyn.structure.common import _validate_schema_is_versionable
 from cadwyn.structure.endpoints import _validate_that_strings_are_valid_http_methods
 
@@ -109,6 +110,9 @@ class _BaseAlterBySchemaInstruction:
     check_usage: bool = True
 
 
+# A schema of a migration: a model, or a union of models, such as `Union[A, B]`, `A | B`, or `Optional[A]`
+_Schema: TypeAlias = Union[type, types.UnionType]
+
 ##########
 # Requests
 ##########
@@ -132,7 +136,7 @@ class _AlterRequestByPathInstruction(_BaseAlterRequestInstruction):
 
 @overload
 def convert_request_to_next_version_for(
-    first_schema: type,
+    first_schema: _Schema,
     /,
     *,
     check_usage: bool = True,
@@ -141,10 +145,10 @@ def convert_request_to_next_version_for(
 
 @overload
 def convert_request_to_next_version_for(
-    first_schema: type,
-    second_schema: type,
+    first_schema: _Schema,
+    second_schema: _Schema,
     /,
-    *additional_schemas: type,
+    *additional_schemas: _Schema,
     check_usage: bool = True,
 ) -> Callable[[Callable[[RequestInfo], None]], _AlterRequestBySchemaInstruction]: ...
 
@@ -156,10 +160,10 @@ def convert_request_to_next_version_for(
 
 
 def convert_request_to_next_version_for(
-    schema_or_path: Union[type, str],
-    methods_or_second_schema: Union[list[str], type, None] = None,
+    schema_or_path: Union[_Schema, str],
+    methods_or_second_schema: Union[list[str], _Schema, None] = None,
     /,
-    *additional_schemas: type,
+    *additional_schemas: _Schema,
     check_usage: bool = True,
 ) -> Callable[[Callable[[RequestInfo], None]], Union[_AlterRequestBySchemaInstruction, _AlterRequestByPathInstruction]]:
     _validate_decorator_args(schema_or_path, methods_or_second_schema, additional_schemas)
@@ -211,7 +215,7 @@ class _AlterResponseByPathInstruction(_BaseAlterResponseInstruction):
 
 @overload
 def convert_response_to_previous_version_for(
-    first_schema: type,
+    first_schema: _Schema,
     /,
     *,
     migrate_http_errors: bool = False,
@@ -221,10 +225,10 @@ def convert_response_to_previous_version_for(
 
 @overload
 def convert_response_to_previous_version_for(
-    first_schema: type,
-    second_schema: type,
+    first_schema: _Schema,
+    second_schema: _Schema,
     /,
-    *schemas: type,
+    *schemas: _Schema,
     migrate_http_errors: bool = False,
     check_usage: bool = True,
 ) -> Callable[[Callable[[ResponseInfo], None]], _AlterResponseBySchemaInstruction]: ...
@@ -241,10 +245,10 @@ def convert_response_to_previous_version_for(
 
 
 def convert_response_to_previous_version_for(
-    schema_or_path: Union[type, str],
-    methods_or_second_schema: Union[list[str], type, None] = None,
+    schema_or_path: Union[_Schema, str],
+    methods_or_second_schema: Union[list[str], _Schema, None] = None,
     /,
-    *additional_schemas: type,
+    *additional_schemas: _Schema,
     migrate_http_errors: bool = False,
     check_usage: bool = True,
 ) -> Callable[
@@ -279,9 +283,9 @@ def convert_response_to_previous_version_for(
 
 
 def _validate_decorator_args(
-    schema_or_path: Union[type, str],
-    methods_or_second_schema: Union[list[str], type, None],
-    additional_schemas: tuple[type, ...],
+    schema_or_path: Union[_Schema, str],
+    methods_or_second_schema: Union[list[str], _Schema, None],
+    additional_schemas: tuple[_Schema, ...],
 ) -> None:
     if isinstance(schema_or_path, str):
         if not isinstance(methods_or_second_schema, list):
@@ -290,7 +294,7 @@ def _validate_decorator_args(
         if additional_schemas:
             raise TypeError("If path was provided as a first argument, then additional schemas cannot be added")
 
-    elif methods_or_second_schema is not None and not isinstance(methods_or_second_schema, type):
+    elif methods_or_second_schema is not None and not isinstance(methods_or_second_schema, type | UnionType):
         raise TypeError("If schema was provided as a first argument, all other arguments must also be schemas")
 
     else:

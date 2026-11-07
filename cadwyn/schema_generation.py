@@ -76,6 +76,7 @@ from cadwyn._utils import (
     DATACLASS_SLOTS,
     Sentinel,
     UnionType,
+    _get_type_alias_value,
     fully_unwrap_decorator,
     get_name_of_function_wrapped_in_pydantic_validator,
     is_sqlalchemy_model,
@@ -100,6 +101,7 @@ from cadwyn.structure.versions import (
     _CADWYN_REQUEST_PARAM_NAME,
     _CADWYN_RESPONSE_PARAM_NAME,
     VersionBundle,
+    _get_schema_migration_target,
     _restore_model_validation_aliases,
 )
 
@@ -355,8 +357,8 @@ def migrate_response_body(
     migrated_response = versions._migrate_response(
         response,
         current_version=version,
-        head_response_model=latest_response_model,
         head_route=None,
+        response_target=_get_schema_migration_target(latest_response_model),
     )
 
     versioned_response_model: type[pydantic.BaseModel] = generate_versioned_models(versions)[str(version)][
@@ -934,16 +936,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         return cast("type[_T_PYDANTIC_MODEL]", model_copy)
-
-
-def _get_type_alias_value(alias: Any) -> Any:
-    # The values of typing.TypeAliasType (but not of typing_extensions.TypeAliasType) are evaluated lazily so they
-    # can contain names that are only imported for type checking
-    if sys.version_info >= (3, 14) and hasattr(alias, "evaluate_value"):  # pragma: no cover
-        from annotationlib import Format, call_evaluate_function
-
-        return call_evaluate_function(alias.evaluate_value, Format.FORWARDREF)
-    return alias.__value__
 
 
 def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, types.MethodType]]:

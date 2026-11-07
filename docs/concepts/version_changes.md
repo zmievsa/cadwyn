@@ -129,6 +129,18 @@ Did you notice how the schema for `InvoiceResource` is specified in the migratio
 !!! note "Migrations only run for the schema you name"
     Instructions such as `schema(InvoiceResource).field(...).had(...)` change the schema everywhere it is used, including inside other schemas and generics. Request and response migrations are different: a schema-based migration only runs when its schema is the request body or the `response_model` of the route itself. It does not run for that schema nested in another one, e.g. in a field of another schema or inside a generic such as `Page[InvoiceResource]`, so write the migration for the outer schema instead. This is a deliberate choice: each migration runs exactly where you declared it and never twice for the same data.
 
+!!! note "Unions of schemas"
+    If the request body or the `response_model` is a union that has the schema as a member, e.g. `Union[InvoiceResource, RefundResource]` or `Optional[InvoiceResource]`, the migration runs only for the requests and responses that are that member. For requests, that's the member that the body of the client's version validates into. For responses, it's the member whose model the endpoint returns an object of, so an object of a subclass of the schema, such as an [internal representation](#internal-representations), counts as the schema, and `None` is no member. A migration declared for the union itself (`convert_response_to_previous_version_for(Union[InvoiceResource, RefundResource])`) replaces the migrations of its members in the same version change. `Annotated` and named type aliases (`TypeAliasType("Resource", Union[InvoiceResource, RefundResource])`) mean the same as their value.
+
+    If Cadwyn can't tell which member a request or a response is, it fails with a `CadwynError` instead of guessing, but only if a migration of a member would run:
+
+    * The endpoint returns something else than an object of a member's model or `None`, e.g. a dict or a database object. Cadwyn could only find out which member it becomes by validating it, which would run its validators twice, because FastAPI validates it again with the models of the client's version after the migrations. Return an object of the member's model, or migrate the endpoint by its path.
+    * The endpoint returns a `Response` object, such as a `JSONResponse`, which FastAPI doesn't validate. Return an object of the member's model instead (e.g. `InvoiceResource(...)`, not the dict that you put in the `JSONResponse`), or migrate the endpoint by its path.
+    * The response or the body is an object of several members that don't inherit from each other (e.g. `class Both(InvoiceResource, RefundResource)`). Use an object of only one of them, or migrate the endpoint by its path.
+    * The request body param has an alias (`Body(alias=...)`), so the endpoint doesn't get the body under the name that Cadwyn looks it up by. Remove the alias, or migrate the endpoint by its path.
+
+    A migration of a member with `migrate_http_errors=True` fails at startup with a `RouterGenerationError` if a union route exists in a version that it migrates, because an error isn't any member of the union. Migrate the errors of the endpoint by its path instead.
+
 When a request comes in, Cadwyn migrates it to the latest version using the request migration. You then handle your business logic, return the latest response, and Cadwyn migrates it back to the requested API version. Does your business logic or database know that you have two versions? No, not at all. It is zero-cost. Consider the benefits of supporting not just two, but two hundred versions.
 
 ![The diagram showing how it works](../img/simplified_migration_model.png)
