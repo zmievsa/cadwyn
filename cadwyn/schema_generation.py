@@ -4531,8 +4531,22 @@ _FLAG_INTERNAL_ATTRIBUTES = (
 )
 
 
-# The attributes that the enum machinery puts on every member. It sets them for the members of the copy again
-_ENUM_MEMBER_INTERNAL_ATTRIBUTES = frozenset({"_value_", "_name_", "__objclass__", "_sort_order_"})
+# The attributes that the enum machinery puts on the members: on all of them, or on some (`_inverted_` caches `~member`
+# for flags). It sets them for the members of the copy again
+_ENUM_MEMBER_INTERNAL_ATTRIBUTES = frozenset({"_value_", "_name_", "__objclass__", "_sort_order_", "_inverted_"})
+
+# The `__new__`s that the enum types of the standard library create their members with. They only need the values
+_STDLIB_ENUM_NEWS = (
+    object.__new__,
+    *(
+        getattr(enum_type, attr_name)
+        for enum_type in (Enum, enum.IntEnum, enum.StrEnum, Flag, enum.IntFlag, enum.ReprEnum)
+        for attr_name in ("_new_member_", "__new_member__")
+        if attr_name in enum_type.__dict__
+    ),
+)
+
+_UNSET_SLOT = object()
 
 
 @final
@@ -4552,9 +4566,18 @@ class _EnumWrapper(Generic[_T_ENUM]):
         return result
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_ENUM]:
-        enum_dict = Enum.__prepare__(self.name, self.cls.__bases__)
+        has_custom_new = _has_custom_new(self.cls)
+        if has_custom_new:
+            self._check_that_new_recreates_the_members_from_their_values()
+        with self._explain_errors_of_custom_new() if has_custom_new else contextlib.nullcontext():
+            model_copy = self._create_enum(self.members)
+        model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
+        _take_head_members_by_value(model_copy, self.cls)
+        return model_copy
 
-        namespace = self._get_initialization_namespace_for_enum(self.cls) | self._get_member_definitions()
+    def _create_enum(self, members: dict[str, Any]) -> type[_T_ENUM]:
+        enum_dict = Enum.__prepare__(self.name, self.cls.__bases__)
+        namespace = self._get_initialization_namespace_for_enum(self.cls) | self._get_member_definitions(members)
         for attr_name, attr in namespace.items():
             enum_dict[attr_name] = attr
         enum_dict["__doc__"] = self.cls.__doc__
@@ -4562,19 +4585,12 @@ class _EnumWrapper(Generic[_T_ENUM]):
         # A Flag's boundary is a class keyword, not an attribute of its body
         if issubclass(self.cls, Flag) and isinstance(boundary := getattr(self.cls, "_boundary_", None), FlagBoundary):
             class_kwargs["boundary"] = boundary
-        has_custom_new = _has_custom_new(self.cls)
-        with self._explain_errors_of_custom_new() if has_custom_new else contextlib.nullcontext():
-            model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict, **class_kwargs))
-        if has_custom_new:
-            self._check_that_new_recreated_the_original_members(model_copy)
-        model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
-        _take_head_members_by_value(model_copy, self.cls)
-        return model_copy
+        return cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict, **class_kwargs))
 
-    def _get_member_definitions(self) -> dict[str, Any]:
+    def _get_member_definitions(self, members: dict[str, Any]) -> dict[str, Any]:
         original_members = self.cls.__members__
         definitions: dict[str, Any] = {}
-        for name, value in self.members.items():
+        for name, value in members.items():
             if name in original_members and value is original_members[name].value:
                 # A member of the original stays a member even if its value is a function or a class (`@member`)
                 definitions[name] = enum.member(value.value if isinstance(value, Enum) else value)
@@ -4593,20 +4609,21 @@ class _EnumWrapper(Generic[_T_ENUM]):
                 f"from their values: {e!r}. {_CUSTOM_NEW_ADVICE}"
             ) from e
 
-    def _check_that_new_recreated_the_original_members(self, model_copy: type[_T_ENUM]) -> None:
-        """Make sure that the custom __new__ of the enum recreated its members from their values.
+    def _check_that_new_recreates_the_members_from_their_values(self) -> None:
+        """Make sure that the custom __new__ of the enum recreates its members from their values.
 
-        Cadwyn only knows the values of the members, not the arguments that __new__ got in the original class body.
+        Cadwyn only knows the values of the members, not the arguments that __new__ got in the class body. So we build
+        the enum from the values of all of its members and compare it to the enum. If they're the same, the copies
+        that the instructions change are what the class body of their version would give.
         """
         original_members = self.cls.__members__
-        copied_members = model_copy.__members__
-        for name, value in self.members.items():
-            if name not in original_members or value is not original_members[name].value:
-                continue
-            if not _is_same_member(copied_members[name], original_members[name]):
+        with self._explain_errors_of_custom_new():
+            rebuilt_members = self._create_enum({name: member.value for name, member in original_members.items()})
+        for name, original_member in original_members.items():
+            if not _is_same_member(rebuilt_members.__members__[name], original_member):
                 raise SchemaGenerationError(
                     f"Cadwyn can't copy \"{self.name}\" for its versions because its __new__ doesn't recreate the "
-                    f'member "{name}" from its value {value!r}. {_CUSTOM_NEW_ADVICE}'
+                    f'member "{name}" from its value {original_member.value!r}. {_CUSTOM_NEW_ADVICE}'
                 )
 
     @staticmethod
@@ -4617,6 +4634,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
         for cls in reversed(mro_without_the_class_itself):
             mro_dict.update(cls.__dict__)
 
+        own_slots = _get_own_slot_names(enum_cls)
         namespace = {
             k: v
             for k, v in enum_cls.__dict__.items()
@@ -4624,6 +4642,8 @@ class _EnumWrapper(Generic[_T_ENUM]):
             if k not in enum_cls._member_map_
             and k not in _ENUM_INTERNAL_ATTRIBUTES
             and k not in _FLAG_INTERNAL_ATTRIBUTES
+            # `type()` makes the descriptors of the slots of the copy from its `__slots__`
+            and k not in own_slots
             # A `_generate_next_value_` that the enum takes from a mixin is the mixin's function on Python 3.11, but
             # the copy would take the one of its base enum type
             and (k in _USER_DEFINABLE_ENUM_ATTRIBUTES or k not in mro_dict or mro_dict[k] is not v)
@@ -4647,21 +4667,61 @@ _CUSTOM_NEW_ADVICE = (
 
 
 def _has_custom_new(enum_cls: type[Enum]) -> bool:
+    """Whether the enum creates its members with a `__new__` of the user's, which can need more than the values"""
     new_member = enum_cls._new_member_  # ty: ignore[unresolved-attribute]
-    return new_member not in {object.__new__, enum_cls._member_type_.__new__}  # ty: ignore[unresolved-attribute]
+    member_type_new = enum_cls._member_type_.__new__  # ty: ignore[unresolved-attribute]
+    return new_member is not member_type_new and not any(new_member is new for new in _STDLIB_ENUM_NEWS)
 
 
-def _is_same_member(copied_member: Enum, original_member: Enum) -> bool:
-    copied_attributes = {k: v for k, v in vars(copied_member).items() if k not in _ENUM_MEMBER_INTERNAL_ATTRIBUTES}
-    original_attributes = {k: v for k, v in vars(original_member).items() if k not in _ENUM_MEMBER_INTERNAL_ATTRIBUTES}
+def _is_same_member(rebuilt_member: Enum, original_member: Enum) -> bool:
+    rebuilt_state, original_state = _get_member_state(rebuilt_member), _get_member_state(original_member)
     member_type = type(original_member)._member_type_  # ty: ignore[unresolved-attribute]
     return (
-        is_same_value(copied_member._value_, original_member._value_)
-        and copied_attributes.keys() == original_attributes.keys()
-        and all(is_same_value(copied_attributes[k], original_attributes[k]) for k in original_attributes)
+        # E.g. not an alias of another member
+        rebuilt_member.name == original_member.name
+        and _is_same_or_equal(rebuilt_member._value_, original_member._value_)
+        and rebuilt_state.keys() == original_state.keys()
+        and all(_is_same_or_equal(rebuilt_state[k], original_state[k]) for k in original_state)
         # E.g. the `str` that `str.__new__` got, which can differ from the value
-        and (member_type is object or member_type.__eq__(copied_member, original_member) is True)
+        and (member_type is object or member_type.__eq__(rebuilt_member, original_member) is True)
     )
+
+
+def _is_same_or_equal(rebuilt: Any, original: Any) -> bool:
+    """Whether the values are the same, or equal objects of the same type (e.g. a `date` that `__init__` makes again)"""
+    if is_same_value(rebuilt, original):
+        return True
+    try:
+        return type(rebuilt) is type(original) and (rebuilt == original) is True
+    except Exception:  # noqa: BLE001 # E.g. an `__eq__` that fails, which can't tell that they're equal
+        return False
+
+
+def _get_member_state(member: Enum) -> dict[tuple[str, str], Any]:
+    """Return the attributes of the member in its `__dict__` and in the slots of its classes, except enum internals"""
+    state = {("attribute", k): v for k, v in vars(member).items() if k not in _ENUM_MEMBER_INTERNAL_ATTRIBUTES}
+    # A subclass that declares the same slot again shadows the slot of its base, so it comes last
+    for cls in reversed(type(member).__mro__):
+        for slot_name in _get_own_slot_names(cls):
+            try:
+                state["slot", slot_name] = cls.__dict__[slot_name].__get__(member, type(member))
+            except AttributeError:  # The slot isn't set
+                state["slot", slot_name] = _UNSET_SLOT
+    return state
+
+
+def _get_own_slot_names(cls: type) -> frozenset[str]:
+    """Return the names of the slot descriptors of the class's own `__slots__`, with private names mangled"""
+    slots = cls.__dict__.get("__slots__", ())
+    names = (_mangle_private_name(cls.__name__, slot) for slot in ((slots,) if isinstance(slots, str) else slots))
+    return frozenset(name for name in names if isinstance(cls.__dict__.get(name), types.MemberDescriptorType))
+
+
+def _mangle_private_name(cls_name: str, name: str) -> str:
+    stripped_cls_name = cls_name.lstrip("_")
+    if name.startswith("__") and not name.endswith("__") and stripped_cls_name:
+        return f"_{stripped_cls_name}{name}"
+    return name
 
 
 def _wrap_enum_nonmember(enum_cls: type[Enum], name: str, value: Any) -> Any:
