@@ -747,7 +747,7 @@ class VersionBundle:
                     and background_tasks_of_latest_version.tasks
                     and not (isinstance(response, FastapiResponse) and response.background is not None)
                 ):
-                    dropped_background_tasks_warning.warn_after_the_response(request_param)
+                    await dropped_background_tasks_warning.warn_after_the_response(request_param)
                 return response
 
             if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
@@ -3605,7 +3605,7 @@ class _DroppedBackgroundTasksWarning:
     has_warned: bool = False
     _lock: threading.Lock = dataclasses.field(default_factory=threading.Lock, repr=False)
 
-    def warn_after_the_response(self, request: FastapiRequest) -> None:
+    async def warn_after_the_response(self, request: FastapiRequest) -> None:
         """Warn once FastAPI has sent the response and run its background tasks, unless the request has failed.
 
         That's when FastAPI would have run the dropped tasks. It closes this exit stack right after.
@@ -3613,7 +3613,9 @@ class _DroppedBackgroundTasksWarning:
         if self.has_warned:
             return
         request_stack = request.scope.get("fastapi_inner_astack")
-        if not isinstance(request_stack, AsyncExitStack):  # pragma: no cover # FastAPI always sets it
+        if not isinstance(request_stack, AsyncExitStack):
+            # Every supported FastAPI version sets it. Without it, we warn right away rather than not at all
+            await run_in_threadpool(self._warn, is_deferred=False)
             return
 
         async def warn_unless_the_request_has_failed(exc_type: Union[type[BaseException], None], *_: object) -> None:
@@ -3623,7 +3625,7 @@ class _DroppedBackgroundTasksWarning:
 
         request_stack.push_async_exit(warn_unless_the_request_has_failed)
 
-    def _warn(self) -> None:
+    def _warn(self, *, is_deferred: bool = True) -> None:
         message = (
             f"Cadwyn has dropped a background task of {self.route}: a dependency has added it while Cadwyn solved the "
             "dependencies of the latest version, and the endpoint doesn't declare a `BackgroundTasks` param. "
@@ -3632,6 +3634,11 @@ class _DroppedBackgroundTasksWarning:
             "for the latest version, so a task that a dependency adds in both runs will then run twice. To keep a "
             'single run, add it only when `current_dependency_solver` is "fastapi".'
         )
+        if not is_deferred:
+            message += (
+                " Cadwyn couldn't defer this warning until FastAPI has sent the response, so it warns even if the "
+                "request fails afterwards."
+            )
         with self._lock:
             if self.has_warned:
                 return

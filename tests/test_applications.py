@@ -1539,6 +1539,28 @@ def test__background_tasks__dropped_in_concurrent_requests__should_warn_once(bac
     assert background_task_calls == ["dependency of fastapi"] * 2
 
 
+def test__background_tasks__dropped_without_fastapi_request_exit_stack__should_warn_right_away(
+    background_task_calls: list[str],
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task)])
+    async def handler(request: Request):
+        # Every supported FastAPI version sets it, so we remove it to see what Cadwyn does without it
+        request.scope.pop("fastapi_inner_astack")
+        return "ok"
+
+    with (
+        _client_of(router) as client,
+        pytest.warns(
+            FutureWarning,
+            match=_DROPPED_BACKGROUND_TASK_WARNING.format(path="/test") + r".*couldn't defer this warning",
+        ),
+    ):
+        assert client.post("/test").json() == "ok"
+    assert background_task_calls == ["dependency of fastapi"]
+
+
 def test__webhooks():
     webhooks = VersionedAPIRouter()
 
