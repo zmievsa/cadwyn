@@ -1296,6 +1296,14 @@ class ChildOfMixinWithFooAnnotation(MixinWithFooAnnotation, BaseModel):
     foo: str
 
 
+class ParentWithFieldNamedLikeIntermediateRename(BaseModel):
+    old_foo: int = 0
+
+
+class ChildRenamedThroughNameOfParentField(ParentWithFieldNamedLikeIntermediateRename):
+    foo: str
+
+
 class BaseWithUnrelatedOlderFoo(BaseModel):
     older_foo: int = 0
 
@@ -1379,21 +1387,6 @@ class ChildThatRedeclaresFooHiddenByParent(ParentThatHidesFooAsClassVar):
                 'the field in a pydantic model instead of "MixinWithFooAnnotation" and rename it there.',
             ),
             id="child_renamed_field_that_plain_mixin_declares_too",
-        ),
-        pytest.param(
-            [
-                [
-                    schema(InheritedFieldChild).field("foo").had(name="old_foo"),
-                    schema(InheritedFieldParent).field("foo").had(name="older_foo"),
-                ]
-            ],
-            _child_rename_error(
-                "InheritedFieldChild",
-                "older_foo",
-                "InheritedFieldParent",
-                _rename_in_parent_instead("InheritedFieldParent"),
-            ),
-            id="child_renamed_inherited_field_then_parent_renamed_it_to_another_name",
         ),
         pytest.param(
             [
@@ -1533,6 +1526,35 @@ def test__schema_field_had_name__child_renamed_inherited_field_and_deleted_new_n
     child = schemas["2000-01-01"][InheritedFieldChild]
     assert list(child.model_fields) == ["foo", "bar"]
     assert child.model_validate({"foo": "v"}).foo == "v"
+
+
+def test__schema_field_had_name__renamed_field_and_added_field_with_old_name__should_keep_both_fields(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithOneStrField).field("foo").had(name="bar"),
+            schema(SchemaWithOneStrField).field("foo").existed_as(type=int),
+        )
+    )
+
+    model = schemas["2000-01-01"][SchemaWithOneStrField]
+    assert model.model_validate({"foo": 1, "bar": "v"}).model_dump() == {"bar": "v", "foo": 1}
+
+
+def test__schema_field_had_name__child_renamed_field_through_name_of_parent_field__should_keep_both_fields(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ChildRenamedThroughNameOfParentField).field("foo").had(name="old_foo"),
+            schema(ChildRenamedThroughNameOfParentField).field("old_foo").had(name="older_foo"),
+        )
+    )
+
+    child = schemas["2000-01-01"][ChildRenamedThroughNameOfParentField]
+    assert child.model_validate({"old_foo": 1, "older_foo": "v"}).model_dump() == {"old_foo": 1, "older_foo": "v"}
+    assert "foo" not in child.model_fields
 
 
 class ParentOfChildThatRetypesFoo(BaseModel):
