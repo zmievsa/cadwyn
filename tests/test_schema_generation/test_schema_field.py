@@ -53,7 +53,6 @@ from cadwyn.exceptions import (
 from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
 from cadwyn.structure import enum, schema
 from cadwyn.structure.schemas import PossibleFieldAttributes
-from tests._resources.utils import HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED
 from tests.conftest import (
     CreateRuntimeSchemas,
     assert_models_are_equal,
@@ -2396,19 +2395,13 @@ def test__schema_field_had__default_of_child_after_parent_deleted_annotated_defa
     assert schemas["2000-01-01"][AnnotatedChildWithDefaultFactory]().foo == 5
 
 
-def test__schema_field_had__annotated_default_factory_with_assigned_default__should_raise_pydantic_error(
-    create_runtime_schemas: CreateRuntimeSchemas,
-):
-    # pydantic<2.12 accepts the model itself but not the field that Cadwyn copies from it
+def test__schema_field_had__annotated_default_factory_with_assigned_default__should_raise_pydantic_error():
+    # Cadwyn relies on pydantic rejecting such declarations, so only instructions can give a field both
     with pytest.raises(TypeError, match="cannot specify both default and default_factory"):
 
         class ModelWithAnnotatedFactoryAndAssignedDefault(BaseModel):
             foo: Annotated[int, Field(default_factory=int)] = 5
             bar: int = 0
-
-        create_runtime_schemas(  # pragma: no cover # Pydantic 2.11
-            version_change(schema(ModelWithAnnotatedFactoryAndAssignedDefault).field("bar").had(description="Bar"))
-        )
 
 
 class ParentWithoutField(BaseModel):
@@ -2832,7 +2825,7 @@ def test__schema_field_had_and_didnt_have__field_info_subclass_in_annotated__sho
     assert old_schema.model_json_schema()["properties"] == {
         "foo": {
             "description": "Old",
-            "minLength": 5 if HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED else 1,
+            "minLength": 1,
             "title": "Foo",
             "type": "string",
         },

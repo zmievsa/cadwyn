@@ -1039,7 +1039,7 @@ class VersionBundle:
             elif not isinstance(raw_body, BaseModel):
                 body = raw_body
             else:
-                body = raw_body.model_dump(by_alias=True, exclude_unset=True)
+                body = _dump_request_body(raw_body)
                 dumped_body_model = type(raw_body)
             if body is not None:
                 plan = _get_route_json_values_plan(head_dependant, route, embed_body_fields=embed_body_fields)
@@ -1086,6 +1086,19 @@ class VersionBundle:
             new_kwargs.pop(_CADWYN_REQUEST_PARAM_NAME)
 
         return new_kwargs
+
+
+def _dump_request_body(body: BaseModel) -> dict[str, Any]:
+    """Return the data that the client has sent for a model body, without the values of its computed fields.
+
+    The head would take them as input: as extra keys, as a 500 for models that forbid extra keys, or as the values of
+    the fields that they share a key with. Like FastAPI, the head computes them itself. We can't tell whether an
+    override of `model_dump()` takes `exclude_computed_fields` (e.g. the one of SQLModel before 0.0.26 doesn't), so we
+    dump such models as before.
+    """
+    if type(body).model_dump is BaseModel.model_dump:
+        return body.model_dump(by_alias=True, exclude_unset=True, exclude_computed_fields=True)
+    return body.model_dump(by_alias=True, exclude_unset=True)
 
 
 async def _fastapi_got_no_body(request: FastapiRequest, route: APIRoute, *, embed_body_fields: bool) -> bool:

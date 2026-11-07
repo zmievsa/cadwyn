@@ -99,7 +99,6 @@ from tests._data.unversioned_schema_dir.unversioned_schemas import UnversionedSc
 from tests._data.unversioned_schemas import UnversionedSchema3
 from tests._resources.utils import (
     FASTAPI_VALIDATES_DEFAULTS_OF_OMITTED_PARAMS,
-    HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED,
 )
 from tests.conftest import (
     CadwynTestClient,
@@ -1561,7 +1560,7 @@ def constrained_fields_router(router: VersionedAPIRouter) -> VersionedAPIRouter:
         # Cadwyn 7.4.0 ignored had() for a constraint that the annotation's metadata sets (since pydantic 2.12).
         # Applying it would make the older versions reject the requests and responses that they have always
         # accepted, so it stays ignored
-        ("/annotated", "ConstrainedFieldsInAnnotated", HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED),
+        ("/annotated", "ConstrainedFieldsInAnnotated", False),
     ],
 )
 @pytest.mark.parametrize(
@@ -2497,18 +2496,8 @@ class StrictSchemaWithLaxFieldInAnnotated(BaseModel):
 @pytest.mark.parametrize(
     ("model", "attribute", "instruction"),
     [
-        *(
-            pytest.param(
-                SchemaWithWireAttributesInAnnotated,
-                "name",
-                instruction,
-                marks=pytest.mark.skipif(
-                    HAD_CHANGES_CONSTRAINTS_OF_FIELD_IN_ANNOTATED,
-                    reason="Before pydantic 2.12, had() changes such constraints, as in Cadwyn 7.4.0",
-                ),
-            )
-            for instruction in [lambda field: field.had(min_length=5), lambda field: field.had(max_length=3)]
-        ),
+        (SchemaWithWireAttributesInAnnotated, "name", lambda field: field.had(min_length=5)),
+        (SchemaWithWireAttributesInAnnotated, "name", lambda field: field.had(max_length=3)),
         (SchemaWithWireAttributesInAnnotated, "name", lambda field: field.didnt_have("min_length")),
         (SchemaWithWireAttributesInAnnotated, "name", lambda field: field.didnt_have("max_length")),
         (SchemaWithWireAttributesInAnnotated, "with_default", lambda field: field.didnt_have("default")),

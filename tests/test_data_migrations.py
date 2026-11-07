@@ -1,5 +1,6 @@
 import asyncio
 import collections
+import copy
 import dataclasses
 import http.cookies
 import inspect
@@ -21,7 +22,7 @@ from decimal import Decimal
 from enum import Enum, Flag, FlagBoundary, IntEnum
 from io import BytesIO, RawIOBase, StringIO, UnsupportedOperation
 from types import MappingProxyType
-from typing import Annotated, Any, ClassVar, Literal, Optional, Self, Union, cast
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Optional, Self, Union, cast
 from uuid import UUID
 
 import anyio
@@ -126,6 +127,10 @@ from tests.conftest import (
     version_change,
 )
 from tests.conftest import versions as conftest_versions
+
+if TYPE_CHECKING:
+    # Only Python 3.14 evaluates annotations lazily, so this name exists only for type checkers
+    from typing import Any as TypeCheckingOnlyAny  # noqa: TC004
 
 
 @pytest.fixture
@@ -8748,7 +8753,7 @@ class InnerWithComputedFieldAndExtraForbid(BaseModel):
 
     @computed_field
     @property
-    def double(self) -> int:
+    def double(self) -> int:  # pragma: no cover # Request bodies leave computed fields out
         return self.a * 2
 
 
@@ -9512,7 +9517,7 @@ class SchemaWithComputedFieldCollidingWithDumpedKey(BaseModel):
 
     @computed_field(alias="value")
     @property
-    def display(self) -> str:
+    def display(self) -> str:  # pragma: no cover # Request bodies leave computed fields out
         return f"{self.value} cents"
 
 
@@ -9521,7 +9526,7 @@ class SchemaWithComputedFieldCollidingWithTargetKey(BaseModel):
 
     @computed_field(alias="v")
     @property
-    def display(self) -> int:
+    def display(self) -> int:  # pragma: no cover # Request bodies leave computed fields out
         return 123
 
 
@@ -9551,7 +9556,7 @@ class InnerWithComputedFieldAndV1PostRootValidator(BaseModel):
 
     @computed_field
     @property
-    def display(self) -> str:
+    def display(self) -> str:  # pragma: no cover # Request bodies leave computed fields out
         return str(self.value)
 
 
@@ -9568,13 +9573,6 @@ class SchemaWithComputedFieldBehindV1PostRootValidator(BaseModel):
             lambda b: b.value,
             0,
             id="computed_field_on_dumped_key",
-        ),
-        pytest.param(
-            SchemaWithComputedFieldCollidingWithTargetKey,
-            {"v": 5},
-            lambda b: b.value,
-            123,
-            id="computed_field_on_target_key",
         ),
         pytest.param(SchemaWithModelDumpOverride, {"v": None}, lambda b: b.value, None, id="model_dump_override"),
         pytest.param(
@@ -9610,6 +9608,334 @@ def test__request_body_migration__with_dumps_that_the_core_schema_does_not_descr
 
     for version_client in clients.values():
         assert version_client.post(test_path, json=payload).json() == expected
+
+
+class ItemWithComputedFieldAllowingExtra(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str
+
+    @computed_field
+    @property
+    def upper(self) -> str:
+        return self.name.upper()
+
+
+class ItemWithComputedFieldForbiddingExtra(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+
+    @computed_field
+    @property
+    def upper(self) -> str:
+        return self.name.upper()
+
+
+class OuterOfItemsWithComputedFields(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    allowing: ItemWithComputedFieldAllowingExtra
+    forbidding: ItemWithComputedFieldForbiddingExtra
+    items: list[ItemWithComputedFieldAllowingExtra] = []
+
+    @computed_field
+    @property
+    def count(self) -> int:
+        return len(self.items)
+
+
+class RootOfItemWithComputedField(RootModel[ItemWithComputedFieldAllowingExtra]):
+    pass
+
+
+class SchemaWithComputedFieldOnTheKeyOfAField(BaseModel):
+    name: str
+
+    @computed_field(alias="name")
+    @property
+    def upper(self) -> str:
+        return self.name.upper()
+
+
+class OtherItemWithComputedField(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    other: int
+
+    @computed_field
+    @property
+    def doubled(self) -> int:
+        return self.other * 2
+
+
+def _read_extras_of_outer(body: OuterOfItemsWithComputedFields) -> Any:
+    return {
+        "outer": body.model_extra,
+        "allowing": body.allowing.model_extra,
+        "forbidding": [body.forbidding.name, body.forbidding.upper],
+        "items": [item.model_extra for item in body.items],
+        "count": body.count,
+    }
+
+
+@pytest.mark.parametrize(
+    ("annotation", "payload", "read", "expected"),
+    [
+        pytest.param(
+            ItemWithComputedFieldAllowingExtra, {"name": "n"}, lambda b: b.model_extra, {}, id="model_allowing_extra"
+        ),
+        pytest.param(
+            ItemWithComputedFieldForbiddingExtra,
+            {"name": "n"},
+            lambda b: [b.name, b.upper],
+            ["n", "N"],
+            id="model_forbidding_extra",
+        ),
+        pytest.param(
+            OuterOfItemsWithComputedFields,
+            {"allowing": {"name": "a"}, "forbidding": {"name": "f"}, "items": [{"name": "i"}]},
+            _read_extras_of_outer,
+            {"outer": {}, "allowing": {}, "forbidding": ["f", "F"], "items": [{}], "count": 1},
+            id="nested_models",
+        ),
+        pytest.param(RootOfItemWithComputedField, {"name": "n"}, lambda b: b.root.model_extra, {}, id="root_model"),
+        pytest.param(
+            SchemaWithComputedFieldOnTheKeyOfAField,
+            {"name": "n"},
+            lambda b: [b.name, b.upper],
+            ["n", "N"],
+            id="computed_field_on_key",
+        ),
+        pytest.param(
+            Union[ItemWithComputedFieldForbiddingExtra, OtherItemWithComputedField],
+            {"other": 2},
+            lambda b: [b.other, b.doubled],
+            [2, 4],
+            id="union_of_models",
+        ),
+        pytest.param(
+            Annotated[ItemWithComputedFieldAllowingExtra, Body(embed=True)],
+            {"body": {"name": "n"}},
+            lambda b: b.model_extra,
+            {},
+            id="embedded_model",
+        ),
+    ],
+)
+def test__request_body_migration__with_computed_fields__head_should_get_only_what_the_client_has_sent(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+    payload: Any,
+    read: Callable[[Any], Any],
+    expected: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: annotation):
+        return read(body)
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == expected
+
+
+def test__request_body_migration__with_computed_field_on_validation_alias_of_field__head_should_get_the_default(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithComputedFieldCollidingWithTargetKey):
+        return body.value
+
+    clients = create_versioned_clients(version_change())
+
+    # The head doesn't read the dumped key of the field, and the body passes with the default, so it isn't rescued.
+    # But it no longer reads the value of the computed field instead (123)
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"v": 5}).json() == 0
+
+
+def test__request_body_migration__with_computed_fields_in_several_body_params__head_should_get_what_the_client_sent(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(first: ItemWithComputedFieldAllowingExtra, second: ItemWithComputedFieldForbiddingExtra):
+        return [first.model_extra, second.name]
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"first": {"name": "a"}, "second": {"name": "b"}}).json() == [
+            {},
+            "b",
+        ]
+
+
+def test__request_body_migration__with_computed_fields_in_form_model__head_should_get_only_what_the_client_has_sent(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[ItemWithComputedFieldAllowingExtra, Form()]):
+        return body.model_extra
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, data={"name": "n"}).json() == {}
+
+
+def test__request_body_migration__with_computed_fields__migration_should_get_the_body_without_them(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: OuterOfItemsWithComputedFields):
+        return _read_extras_of_outer(body)
+
+    bodies_seen_by_migration = []
+
+    @convert_request_to_next_version_for(OuterOfItemsWithComputedFields)
+    def migrator(request: RequestInfo):
+        bodies_seen_by_migration.append(copy.deepcopy(request.body))
+        # A migration can still set a key that is named like a computed field
+        request.body["count"] = 5
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    payload = {"allowing": {"name": "a"}, "forbidding": {"name": "f"}, "items": [{"name": "i"}]}
+
+    assert clients["2000-01-01"].post(test_path, json=payload).json() == {
+        "outer": {"count": 5},
+        "allowing": {},
+        "forbidding": ["f", "F"],
+        "items": [{}],
+        "count": 1,
+    }
+    assert bodies_seen_by_migration == [payload]
+
+
+class SchemaWithComputedFieldAndModelDumpOverrideWithoutExtraParams(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str
+
+    @computed_field
+    @property
+    def upper(self) -> str:
+        return self.name.upper()
+
+    @override
+    def model_dump(  # ty: ignore[invalid-method-override]
+        self, *, by_alias: Optional[bool] = None, exclude_unset: bool = False
+    ) -> dict[str, Any]:
+        return BaseModel.model_dump(self, by_alias=by_alias, exclude_unset=exclude_unset)
+
+
+class SchemaWithComputedFieldAndModelDumpOverrideForwardingToOneWithoutExtraParams(
+    SchemaWithComputedFieldAndModelDumpOverrideWithoutExtraParams
+):
+    # E.g. a model that forwards to the `model_dump()` of SQLModel before 0.0.26
+    @override
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        return SchemaWithComputedFieldAndModelDumpOverrideWithoutExtraParams.model_dump(self, **kwargs)
+
+
+class SchemaWithComputedFieldAndModelDumpOverrideForwardingToPydantic(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str
+
+    @computed_field
+    @property
+    def upper(self) -> str:
+        return self.name.upper()
+
+    @override
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return BaseModel.model_dump(self, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param(SchemaWithComputedFieldAndModelDumpOverrideWithoutExtraParams, id="without_extra_params"),
+        pytest.param(
+            SchemaWithComputedFieldAndModelDumpOverrideForwardingToOneWithoutExtraParams,
+            id="forwarding_to_one_without_extra_params",
+        ),
+        pytest.param(SchemaWithComputedFieldAndModelDumpOverrideForwardingToPydantic, id="forwarding_to_pydantic"),
+    ],
+)
+def test__request_body_migration__with_model_dump_override__should_dump_the_body_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    model: type[BaseModel],
+):
+    # Cadwyn can't tell what an override takes, so it calls it as before, and the head still gets the computed field
+    @router.post(test_path)
+    async def endpoint(body: model):  # ty: ignore[invalid-type-form]
+        return body.model_extra
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"name": "n"}).json() == {"upper": "N"}
+
+
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="Annotations are only evaluated lazily since Python 3.14")
+def test__request_body_migration__with_model_dump_override_annotated_with_type_checking_only_names__should_work(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    # This annotation would fail before Python 3.14 because it is evaluated when the class is created
+    class SchemaWithModelDumpOverrideAnnotatedForTypeCheckingOnly(BaseModel):
+        name: str = ""
+
+        @override
+        def model_dump(self, **kwargs: Any) -> TypeCheckingOnlyAny:  # pyright: ignore[reportIncompatibleMethodOverride]
+            return BaseModel.model_dump(self, **kwargs)
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithModelDumpOverrideAnnotatedForTypeCheckingOnly):
+        return body.name
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"name": "n"}).json() == "n"
+
+
+class ResponseWithComputedFields(BaseModel):
+    item: ItemWithComputedFieldAllowingExtra
+    items: list[ItemWithComputedFieldAllowingExtra] = []
+
+    @computed_field
+    @property
+    def count(self) -> int:
+        return len(self.items)
+
+
+def test__response_migration__with_computed_fields__should_return_them_in_every_version(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, response_model=ResponseWithComputedFields)
+    async def endpoint(body: ResponseWithComputedFields):
+        return body
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"item": {"name": "a"}, "items": [{"name": "i"}]}).json() == {
+            "item": {"name": "a", "upper": "A"},
+            "items": [{"name": "i", "upper": "I"}],
+            "count": 1,
+        }
 
 
 class DeepNodeWithValidationAlias(BaseModel):
@@ -9821,7 +10147,7 @@ class SchemaWithValidationSettingsChangedInCoreSchema(BaseModel):
 class ParentWithComputedField(BaseModel):
     @computed_field(alias="wire")
     @property
-    def display(self) -> str:
+    def display(self) -> str:  # pragma: no cover # Request bodies leave computed fields out
         return "redacted"
 
 
@@ -9998,7 +10324,7 @@ class InnerOfJsonWithComputedField(BaseModel):
 
     @computed_field
     @property
-    def double(self) -> int:
+    def double(self) -> int:  # pragma: no cover # Request bodies leave computed fields out
         return self.x * 2
 
 
@@ -10708,17 +11034,8 @@ class InnerOfJsonWithComputedFieldForbiddingExtra(BaseModel):
 
     @computed_field
     @property
-    def double(self) -> int:
+    def double(self) -> int:  # pragma: no cover # Request bodies leave computed fields out
         return self.x * 2
-
-
-class SchemaWithJsonDictShadowedByComputedField(BaseModel):
-    data: Json[dict[str, Any]] = Field(validation_alias="raw", serialization_alias="raw_out")
-
-    @computed_field(alias="raw")
-    @property
-    def computed(self) -> dict[str, Any]:
-        return {"computed": True}
 
 
 class InnerOfJsonWithDoublingFieldValidator(BaseModel):
@@ -10904,7 +11221,7 @@ class SchemaWithJsonDictAndCountingComputedField(BaseModel):
 
     @computed_field
     @property
-    def number(self) -> int:
+    def number(self) -> int:  # pragma: no cover # Request bodies leave computed fields out
         return next(_computed_field_counter)
 
 
@@ -10974,10 +11291,6 @@ async def _json_union_with_model_endpoint(body: Annotated[Json[Union[InnerOfJson
 async def _json_model_with_computed_field_forbidding_extra_endpoint(
     body: Annotated[Json[InnerOfJsonWithComputedFieldForbiddingExtra], Body()],
 ):
-    raise NotImplementedError
-
-
-async def _json_shadowed_by_computed_field_endpoint(body: SchemaWithJsonDictShadowedByComputedField):
     raise NotImplementedError
 
 
@@ -11271,8 +11584,6 @@ async def _json_tree_with_children_endpoint(body: JsonTree):
             '{"x": 5}',
             id="computed_field_of_model_forbidding_extra",
         ),
-        # The head would read the dumped computed field instead of the client's value
-        pytest.param(_json_shadowed_by_computed_field_endpoint, {"raw": '{"a": 1}'}, id="key_of_computed_field"),
         pytest.param(
             _int_tree_in_json_endpoint, '{"x": 1, "children": [{"x": 2}]}', id="self_referencing_model_in_json"
         ),
