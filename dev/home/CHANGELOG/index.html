@@ -10167,6 +10167,7 @@ Please follow <a href="https://keepachangelog.com/en/1.0.0/">the Keep a Changelo
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>Enum copies now preserve extra attributes and slots assigned outside construction, including metaclass-assigned labels, on unchanged members. Constructor-produced state is rebuilt for each version (<a href="https://github.com/zmievsa/cadwyn/issues/589">#589</a>).</li>
 <li>Responses whose validation aliases are restored now run model validators once, avoiding duplicated side effects in routes and <code>migrate_response_body()</code> (<a href="https://github.com/zmievsa/cadwyn/issues/565">#565</a>).</li>
 <li>Supported request and response bodies with versioned plain enums or flags no longer fail with a 500; omitted enum defaults work on FastAPI before 0.148 when that version has the member. See <a href="https://docs.cadwyn.dev/theory/design_decisions/#known-limitations">known limitations</a> for strict responses and unsupported containers (<a href="https://github.com/zmievsa/cadwyn/issues/521">#521</a>).</li>
 <li>On FastAPI 0.153.0+, unions of form models no longer fail with a 500 for supported container fields; optional unions also receive their data on 0.161.0+ (<a href="https://github.com/zmievsa/cadwyn/issues/532">#532</a>).</li>
