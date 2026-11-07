@@ -12,12 +12,13 @@ import tempfile
 import threading
 import uuid
 from collections import Counter, OrderedDict, defaultdict, deque
-from collections.abc import Callable, Coroutine, Hashable, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Coroutine, Hashable, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -125,8 +126,10 @@ _is_form_model_supplied = cast(
 _should_embed_body_fields = cast(
     "Callable[[list[ModelField]], bool]", getattr(fastapi.dependencies.utils, "_should_embed_body_fields", None)
 )
-_get_multidict_value = cast(
-    "Callable[[ModelField, FormData, str], Any]", getattr(fastapi.dependencies.utils, "_get_multidict_value", None)
+# Yields the alias and the value that FastAPI picks from a form for each field, e.g. the bytes of a `bytes` upload
+_extract_form_body = cast(
+    "Callable[[list[ModelField], FormData], AsyncIterator[tuple[str, Any, Union[ModelField, None]]]]",
+    getattr(fastapi.dependencies.utils, "_extract_form_body", None),
 )
 # Since FastAPI 0.161.0, FastAPI normalizes the dict body of a union of form models with this function for each model
 _normalize_form_model = cast(
@@ -150,12 +153,12 @@ if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS and None in (  # pragma: no cover
     _get_param_aliases,
     _get_cached_model_fields,
     _should_embed_body_fields,
-    _get_multidict_value,
+    _extract_form_body,
 ):
     raise ImportError(
         "Cadwyn does not support this version of FastAPI: `_get_form_models` (or `_get_form_model` before FastAPI "
         "0.161.0), `_get_param_aliases`, `get_cached_model_fields`, `_should_embed_body_fields`, or "
-        "`_get_multidict_value` is missing from `fastapi.dependencies.utils`. Cadwyn uses them to pass form models to "
+        "`_extract_form_body` is missing from `fastapi.dependencies.utils`. Cadwyn uses them to pass form models to "
         "FastAPI. Please, open an issue on Cadwyn's GitHub."
     )
 # FastAPI 0.161.0 added `_get_form_models` along with unions of form models
@@ -537,9 +540,9 @@ class VersionBundle:
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
         background_tasks: Union[BackgroundTasks, None],
-        dumped_body_model: Union[type[BaseModel], None],
+        dumped_body: Union[BaseModel, None],
         body_is_omitted: bool,
-        form_model_is_omitted: bool,
+        form_model_omission: "_FormModelOmission",
         uploads_read_by_fastapi: "Union[_UploadPositions, None]",
     ) -> dict[str, Any]:
         start = self.reversed_version_values.index(current_version)
@@ -570,29 +573,27 @@ class VersionBundle:
             if uploads_read_by_fastapi:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
             body_for_solving = FormData(request_info._form)
+        elif (  # pragma: no cover # FastAPI >= 0.158.2
+            form_model_omission is _FormModelOmission.OMITTED_NEXT_TO_OTHER_FORM_PARAMS and request_info.body is None
+        ):
+            body_for_solving = await _get_form_for_omitted_form_model(request, head_dependant)
         # A body is omitted if the request had none for FastAPI, or if a migration has set it to None
         elif request_info.body is None and (request_info._body_is_assigned or body_is_omitted):
             body_for_solving = _OMITTED_BODY
-        elif form_model_is_omitted:  # pragma: no cover # FastAPI >= 0.158.2
+        elif form_model_omission is _FormModelOmission.OMITTED:  # pragma: no cover # FastAPI >= 0.158.2
             # A migration has set the body of an omitted form model. It isn't a dump, so we don't restore its aliases
             body_for_solving = request_info.body
             form_model_lookup = _get_omitted_form_model_lookup(
                 head_dependant, head_route, body_for_solving, embed_body_fields=embed_body_fields
             )
-        elif dumped_body_model is not None:
+        elif dumped_body is not None:
             body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
             is_body_restored = body_for_solving is not request_info.body
             body_for_solving = await _encode_json_values(
                 request, head_dependant, head_route, route, body_for_solving, embed_body_fields=embed_body_fields
             )
             form_model_lookup = await _get_form_model_lookup(
-                request,
-                route,
-                head_dependant,
-                head_route,
-                body_for_solving,
-                dumped_body_model,
-                embed_body_fields=embed_body_fields,
+                request, head_dependant, head_route, body_for_solving, dumped_body, embed_body_fields=embed_body_fields
             )
         else:
             body_for_solving = await _encode_json_values(
@@ -615,8 +616,19 @@ class VersionBundle:
         # request again with the body as it is, so that it fails with the same error as before. The second solve reuses
         # the dependencies of the first one, so they run as many times as before.
         if result.errors and is_body_restored:
+            # The form fields of other params can look up other keys of this body
+            form_model_lookup = await _get_form_model_lookup(
+                request,
+                head_dependant,
+                head_route,
+                request_info.body,
+                cast("BaseModel", dumped_body),
+                embed_body_fields=embed_body_fields,
+            )
             result = await solve(
-                body=_embed_form_model(request_info.body, form_model_lookup), dependency_cache=result.dependency_cache
+                dependant=form_model_lookup.dependant,
+                body=_embed_form_model(request_info.body, form_model_lookup),
+                dependency_cache=result.dependency_cache,
             )
         if result.errors:
             errors = _unembed_form_model_errors(result.errors, form_model_lookup.aliases)
@@ -879,8 +891,8 @@ class VersionBundle:
             return kwargs
 
         # The class of the model whose dump the body is, e.g. the member of a union that the request matches
-        dumped_body_model: Union[type[BaseModel], None] = None
-        form_model_is_omitted = False
+        dumped_body: Union[BaseModel, None] = None
+        form_model_omission = _FormModelOmission.NOT_OMITTED
         uploads_read_by_fastapi: Union[_UploadPositions, None] = None
         # This is a kind of body param you get when you define a single pydantic schema in your route's body
         if (
@@ -893,14 +905,14 @@ class VersionBundle:
             raw_body: Union[BaseModel, None] = kwargs.get(body_field_alias)
             if raw_body is None:
                 body = None
-                form_model_is_omitted = await _form_model_is_omitted(request, route, body_field_alias)
+                form_model_omission = await _get_form_model_omission(request, route, body_field_alias)
             # It means we have a dict or a list instead of a full model.
             # This covers the following use case in the endpoint definition: "payload: dict = Body(None)"
             elif not isinstance(raw_body, BaseModel):
                 body = raw_body
             else:
                 body = raw_body.model_dump(by_alias=True, exclude_unset=True)
-                dumped_body_model = type(raw_body)
+                dumped_body = raw_body
         else:
             # This is for requests without body or with complex body such as form or file
             body = await _get_body(request, route.body_field, exit_stack)
@@ -908,7 +920,8 @@ class VersionBundle:
                 uploads_read_by_fastapi = _get_uploads_read_by_fastapi(route, head_route, head_dependant, body)
 
         body_is_omitted = body is None and (
-            form_model_is_omitted or await _fastapi_got_no_body(request, route, embed_body_fields=embed_body_fields)
+            form_model_omission is _FormModelOmission.OMITTED
+            or await _fastapi_got_no_body(request, route, embed_body_fields=embed_body_fields)
         )
         request_info = RequestInfo(request, body)
         new_kwargs = await self._migrate_request(
@@ -923,9 +936,9 @@ class VersionBundle:
             exit_stack=exit_stack,
             embed_body_fields=embed_body_fields,
             background_tasks=background_tasks,
-            dumped_body_model=dumped_body_model,
+            dumped_body=dumped_body,
             body_is_omitted=body_is_omitted,
-            form_model_is_omitted=form_model_is_omitted,
+            form_model_omission=form_model_omission,
             uploads_read_by_fastapi=uploads_read_by_fastapi,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
@@ -952,40 +965,82 @@ async def _fastapi_got_no_body(request: FastapiRequest, route: APIRoute, *, embe
     return embed_body_fields and not is_form
 
 
-async def _form_model_is_omitted(request: FastapiRequest, route: APIRoute, body_field_alias: str) -> bool:
+class _FormModelOmission(Enum):
+    """Whether FastAPI has given the form model body param its default because the form doesn't supply it."""
+
+    NOT_OMITTED = "not_omitted"
+    # Every body param of the tree is an optional form model that the form doesn't supply
+    OMITTED = "omitted"
+    # Other body params of the tree, e.g. the form fields of a dependency override, can read the form
+    OMITTED_NEXT_TO_OTHER_FORM_PARAMS = "omitted_next_to_other_form_params"
+
+
+async def _get_form_model_omission(
+    request: FastapiRequest, route: APIRoute, body_field_alias: str
+) -> _FormModelOmission:
     """Return whether FastAPI has given the form model body param its default because the form doesn't supply it.
 
     Since FastAPI 0.158.2, FastAPI does so for an optional form model if the form has none of its fields. Cadwyn sees
     that default as None, and the head would reject None as a form body, so we omit the body for the head instead.
     """
     if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS:  # pragma: no cover # FastAPI >= 0.158.2
-        return await _form_has_no_fields_of_omittable_form_model(request, route, body_field_alias)
-    return False
+        return await _get_omission_of_optional_form_model(request, route, body_field_alias)
+    return _FormModelOmission.NOT_OMITTED
 
 
-async def _form_has_no_fields_of_omittable_form_model(  # pragma: no cover # FastAPI >= 0.158.2
+async def _get_omission_of_optional_form_model(  # pragma: no cover # FastAPI >= 0.158.2
     request: FastapiRequest, route: APIRoute, body_field_alias: str
-) -> bool:
-    """Return whether the body param is a form model with a default, and FastAPI has given every body param its default.
+) -> _FormModelOmission:
+    """Return whether the body param is a form model that FastAPI has given its default, and what else reads the form.
 
     The kwarg is the body param only if it has the param's name, and not a dependency or another param named after
     the body's alias. FastAPI only skips the form models (or unions of them) that can be None if the form doesn't
-    supply any of them. Dependencies and their overrides can have such form models too, but if anything else in the
-    tree reads the form, we take the previous path, so that the head can't lose its values when it gets no body.
+    supply any of them. Dependencies and their overrides can have such form models too.
     """
     body_param = route.dependant.body_params[0]
-    if not _get_form_models(body_param) or body_param.name != body_field_alias or body_param.field_info.is_required():
-        return False
-    models: list[type[BaseModel]] = []
+    if (
+        not _get_form_models(body_param)
+        or body_param.name != body_field_alias
+        or body_param.field_info.is_required()
+        or type(None) not in get_args(body_param.field_info.annotation)
+    ):
+        return _FormModelOmission.NOT_OMITTED
+    # FastAPI has already parsed the form, so this returns its cached form without reading it again or closing it
+    form = await request.form()
+    if any(_form_supplies_form_model(model, form) for model in _get_form_models(body_param)):
+        return _FormModelOmission.NOT_OMITTED
     for dependant in _iter_dependants_that_fastapi_solves(route.dependant, route):
         for field in dependant.body_params:
             field_models = _get_form_models(field)
-            if not field_models or type(None) not in get_args(field.field_info.annotation):
-                return False
-            models.extend(field_models)
+            if (
+                not field_models
+                or type(None) not in get_args(field.field_info.annotation)
+                or any(_form_supplies_form_model(model, form) for model in field_models)
+            ):
+                return _FormModelOmission.OMITTED_NEXT_TO_OTHER_FORM_PARAMS
+    return _FormModelOmission.OMITTED
+
+
+async def _get_form_for_omitted_form_model(  # pragma: no cover # FastAPI >= 0.158.2
+    request: FastapiRequest, head_dependant: Dependant
+) -> FormData:
+    """Return the form for the head when its form model is omitted, but other params of the tree can read the form.
+
+    No migration has set the body, so the head gives the form model its default, and every other param the value that
+    FastAPI gives it from the form. That is only so if the form doesn't supply the form model in the head either.
+    """
     # FastAPI has already parsed the form, so this returns its cached form without reading it again or closing it
     form = await request.form()
-    return not any(_form_supplies_form_model(model, form) for model in models)
+    body_param = head_dependant.body_params[0]
+    if any(_form_supplies_form_model(model, form) for model in _get_form_models(body_param)):
+        raise CadwynError(
+            f"Cadwyn can't pass the form of this request to the latest version: the request has none of the fields of "
+            f"the form model `{body_param.name}` in its version, so the form model gets its default, but the form has "
+            "fields of the form model in the latest version, and other params of the endpoint, of its dependencies, "
+            "or of their overrides read the form as well. Give these params other names or aliases than the fields "
+            "of the form model."
+        )
+    return form
 
 
 def _form_supplies_form_model(model: type[BaseModel], form: FormData) -> bool:  # pragma: no cover # FastAPI >= 0.158.2
@@ -1026,31 +1081,34 @@ class _FormModelLookup(NamedTuple):
     # form data, so it takes a value that isn't a list as a single form value. These are the keys of the fields that
     # FastAPI gets repeated form values for in every model of the union that has them
     repeated_value_aliases: frozenset[str] = frozenset()
+    # The values that FastAPI gives other params from the form, e.g. the form fields that only a dependency override
+    # declares, under the keys that these params look them up under in the dict body
+    form_values: Mapping[str, Any] = MappingProxyType({})
 
 
 async def _get_form_model_lookup(
     request: FastapiRequest,
-    route: APIRoute,
     head_dependant: Dependant,
     head_route: APIRoute,
     body: Any,
-    dumped_body_model: type[BaseModel],
+    dumped_body: BaseModel,
     *,
     embed_body_fields: bool,
 ) -> _FormModelLookup:
-    """Return the dependant to solve for the head, and the keys to put the dict body of its form model under, if any.
+    """Return the dependant to solve for the head, and how to pass the dict body of its form model to FastAPI.
 
     Before FastAPI 0.158.2, FastAPI validates the dict body of a single form model as it is. Since then, the endpoint
     and every dependency that shares the form model look it up under their own aliases instead, and the other embedded
     body params, e.g. the form fields that only a dependency override declares, look their values up in the same dict.
-    So a param with the alias of a form model gets the whole body instead of its own value.
 
-    In that case, we solve a copy of the head's dependant whose form model looks the body up under a key that no
-    form field has, but only if it surely gives every such param a better value: the body is a dict, each such param
-    finds a value of its own under one of its aliases or has a default, and no param takes the whole body, which would
-    see the key. A param gets its default only if FastAPI gives it no value from the form either, or takes it from a
-    field of the request's own form models, which a migration may have removed. Otherwise the body can't carry the
-    value, so the param would silently lose it. In all other cases we take the last release's path.
+    Each of these params gets what FastAPI would give it if the client had sent the migrated request: the value of the
+    first of its aliases that the migrated body has, or that the rest of the form has, i.e. the form without the keys
+    that the request's form model has taken. Like FastAPI, we take the values from the rest of the form with FastAPI's
+    own function, e.g. the bytes of an upload. We pass the body as the last release did if that gives every param its
+    value. Otherwise, we put the values from the form next to the body, and solve a copy of the head's dependant whose
+    form model looks the body up under a key that no form field has. If neither gives every param its value, e.g.
+    because a dependency's form model has the alias of another param, or a param takes the whole body, we fail instead
+    of giving a param another value.
     """
     body_field = head_dependant.body_params[0]
     form_models = _get_form_models(body_field) if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS else []
@@ -1064,22 +1122,43 @@ async def _get_form_model_lookup(
                 isinstance(body.get(alias), (list, set, frozenset, tuple, deque)) for alias in single_value_aliases
             ):
                 return _FormModelLookup(head_dependant)
-        lookups = _get_body_lookups(head_dependant, head_route, embed_body_fields=embed_body_fields)
-        form_model_aliases = tuple(lookups.form_model_aliases)
-        clashing_params = [
-            param for param in lookups.other_params if not lookups.form_model_aliases.keys().isdisjoint(param.aliases)
-        ]
-        if not clashing_params or lookups.is_whole_body_read or not isinstance(body, dict):
-            return _FormModelLookup(head_dependant, form_model_aliases, repeated_value_aliases)
-        params_without_value = [param for param in clashing_params if body.keys().isdisjoint(param.aliases)]
-        if not all(param.has_default for param in params_without_value) or (
-            params_without_value
-            and await _form_gives_values_that_form_models_lack(request, route, params_without_value, dumped_body_model)
-        ):
-            return _FormModelLookup(head_dependant, form_model_aliases, repeated_value_aliases)
-        dependant = _with_form_models_under_own_key(head_dependant)
-        lookups = _get_body_lookups(dependant, head_route, embed_body_fields=embed_body_fields)
-        return _FormModelLookup(dependant, tuple(lookups.form_model_aliases), repeated_value_aliases)
+        params = _get_body_lookups(head_dependant, head_route, set(form_models), embed_body_fields=embed_body_fields)
+        lookup = _FormModelLookup(
+            head_dependant, _get_form_model_aliases(params, own_key=False), repeated_value_aliases
+        )
+        if not any(param.kind is _BodyParamKind.FORM_FIELD for param in params):
+            return lookup
+        expected_values = await _get_expected_values_of_form_fields(request, params, body, dumped_body)
+        mismatching_param = _get_param_with_other_value(lookup, params, expected_values, body, own_key=False)
+        if mismatching_param is None:
+            return lookup
+        whole_body_param = next((param for param in params if param.kind is _BodyParamKind.WHOLE_BODY), None)
+        if whole_body_param is None:
+            form_values: dict[str, Any] = {}
+            for expected_value in expected_values.values():
+                if isinstance(expected_value, _ExpectedFormValue) and expected_value.is_from_form:
+                    form_values.setdefault(expected_value.alias, expected_value.value)
+            lookup = _FormModelLookup(
+                _with_form_models_under_own_key(head_dependant),
+                _get_form_model_aliases(params, own_key=True),
+                repeated_value_aliases,
+                form_values,
+            )
+            mismatching_param = _get_param_with_other_value(lookup, params, expected_values, body, own_key=True)
+            if mismatching_param is None:
+                return lookup
+        reason = (
+            f"the param {_describe_body_param(whole_body_param)} takes the whole body. Read the form from the "
+            "`Request` in that dependency instead"
+            if whole_body_param is not None
+            else "it has the same key as a form model or another param. Give them other names or aliases"
+        )
+        raise CadwynError(
+            "Cadwyn can't pass the form of this request to the latest version: FastAPI looks the form models and the "
+            "other form params up in the same dict body, so the param "
+            f"{_describe_body_param(mismatching_param)} would get another value than the one that FastAPI gives it "
+            f"from the form, because {reason}."
+        )
     return _FormModelLookup(head_dependant)
 
 
@@ -1210,78 +1289,194 @@ def _with_form_model_under_own_key(field: ModelField) -> ModelField:  # pragma: 
     return field
 
 
+class _BodyParamKind(Enum):  # pragma: no cover # FastAPI >= 0.158.2
+    # A form model param with the same form models as the endpoint's body param, which gets the body
+    SAME_FORM_MODEL = "same_form_model"
+    # A form model param with other form models
+    OTHER_FORM_MODEL = "other_form_model"
+    # A param that FastAPI looks up in the body by its aliases, e.g. a form field or `Body(embed=True)`
+    FORM_FIELD = "form_field"
+    # A param that gets the whole body, e.g. the only `Body()` param of a dependency override
+    WHOLE_BODY = "whole_body"
+
+
 class _BodyParamLookup(NamedTuple):  # pragma: no cover # FastAPI >= 0.158.2
-    """A body param, the aliases that FastAPI looks it up under in a dict body, and whether it has a default."""
+    """A body param of the tree that FastAPI solves for the head, and the aliases that FastAPI looks it up under."""
 
     field: ModelField
     aliases: list[str]
-    has_default: bool
-
-
-@dataclasses.dataclass
-class _BodyLookups:  # pragma: no cover # FastAPI >= 0.158.2
-    """How the tree that FastAPI solves for the head reads a dict body."""
-
-    form_model_aliases: dict[str, None] = dataclasses.field(default_factory=dict)
-    # Every other body param that FastAPI looks up in the body
-    other_params: list[_BodyParamLookup] = dataclasses.field(default_factory=list)
-    # Whether a body param gets the whole body instead of looking its alias up
-    is_whole_body_read: bool = False
+    kind: _BodyParamKind
+    # The endpoint, dependency, or override that declares the param
+    call: Any
+    # Whether the head's dependant declares it itself, so that a copy of the dependant can change its alias
+    is_own: bool
 
 
 def _get_body_lookups(  # pragma: no cover # FastAPI >= 0.158.2
-    head_dependant: Dependant, head_route: APIRoute, *, embed_body_fields: bool
-) -> _BodyLookups:
+    head_dependant: Dependant, head_route: APIRoute, form_models: set[type[BaseModel]], *, embed_body_fields: bool
+) -> list[_BodyParamLookup]:
     """Return how the tree that FastAPI solves for the head reads a dict body."""
-    lookups = _BodyLookups()
+    lookups: list[_BodyParamLookup] = []
     for dependant in _iter_dependants_that_fastapi_solves(head_dependant, head_route):
         # Like FastAPI, we give a single body param that isn't embedded the whole body
         is_embedded = embed_body_fields or _should_embed_body_fields(dependant.body_params)
         for field in dependant.body_params:
-            aliases = [alias for alias, _ in _get_param_aliases(field)]
-            if _get_form_models(field):
-                lookups.form_model_aliases.update(dict.fromkeys(aliases))
-            elif is_embedded:
-                lookups.other_params.append(
-                    _BodyParamLookup(field, aliases, has_default=not field.field_info.is_required())
+            field_form_models = _get_form_models(field)
+            if field_form_models:
+                kind = (
+                    _BodyParamKind.SAME_FORM_MODEL
+                    if set(field_form_models) == form_models
+                    else _BodyParamKind.OTHER_FORM_MODEL
                 )
             else:
-                lookups.is_whole_body_read = True
+                kind = _BodyParamKind.FORM_FIELD if is_embedded else _BodyParamKind.WHOLE_BODY
+            aliases = [alias for alias, _ in _get_param_aliases(field)]
+            lookups.append(_BodyParamLookup(field, aliases, kind, dependant.call, dependant is head_dependant))
     return lookups
 
 
-async def _form_gives_values_that_form_models_lack(  # pragma: no cover # FastAPI >= 0.158.2
-    request: FastapiRequest, route: APIRoute, params: list[_BodyParamLookup], dumped_body_model: type[BaseModel]
-) -> bool:
-    """Return whether FastAPI would give any of the params a value from the form that the request's form models lack.
+def _get_lookup_aliases(
+    param: _BodyParamLookup, *, own_key: bool
+) -> list[str]:  # pragma: no cover # FastAPI >= 0.158.2
+    """Return the aliases that FastAPI looks the param up under, given whether the own form models use their own key."""
+    if own_key and param.is_own and param.kind in (_BodyParamKind.SAME_FORM_MODEL, _BodyParamKind.OTHER_FORM_MODEL):
+        return [_FORM_MODEL_BODY_KEY]
+    return param.aliases
 
-    Like FastAPI, we take the value of the first alias that the form has. The request's form models are the ones of
-    its own version, so they lack the fields that a newer version adds.
-    """
+
+def _get_form_model_aliases(  # pragma: no cover # FastAPI >= 0.158.2
+    params: list[_BodyParamLookup], *, own_key: bool
+) -> tuple[str, ...]:
+    """Return the keys to put the body under: the aliases of every form model, like the last release did."""
+    return tuple(
+        dict.fromkeys(
+            alias
+            for param in params
+            if param.kind in (_BodyParamKind.SAME_FORM_MODEL, _BodyParamKind.OTHER_FORM_MODEL)
+            for alias in _get_lookup_aliases(param, own_key=own_key)
+        )
+    )
+
+
+class _ExpectedFormValue(NamedTuple):  # pragma: no cover # FastAPI >= 0.158.2
+    """The value that a param gets in the head, and the key that it gets it under."""
+
+    alias: str
+    value: Any
+    # Whether the value is FastAPI's from the rest of the form, so it is a string, an upload, bytes, or a list of them
+    is_from_form: bool
+
+
+class _FormValueMarker(Enum):  # pragma: no cover # FastAPI >= 0.158.2
+    # The param gets its default because FastAPI finds none of its aliases in the body
+    DEFAULT = "default"
+    # We can't know what the param would get, because it looks up a key that the form model has taken, and the body
+    # that a migration has made of the form model isn't a dict. We pass the body to it as the last release did
+    UNKNOWN = "unknown"
+
+
+async def _get_expected_values_of_form_fields(  # pragma: no cover # FastAPI >= 0.158.2
+    request: FastapiRequest, params: list[_BodyParamLookup], body: Any, dumped_body: BaseModel
+) -> dict[int, Union[_ExpectedFormValue, _FormValueMarker]]:
+    """Return what FastAPI would give each form field param if the client had sent the migrated request, by index."""
     # FastAPI has already parsed the form, so this returns its cached form without reading it again or closing it
     form = await request.form()
-    form_model_field_aliases = {
-        alias
-        for dependant in _iter_dependants_that_fastapi_solves(route.dependant, route)
-        for field in dependant.body_params
-        for models in (_get_form_models(field),)
-        # Of a union of form models, only the member that the request matches takes the values of its fields
-        for model in ([dumped_body_model] if dumped_body_model in models else models)
-        for model_field in _get_cached_model_fields(model)
-        for alias, _ in _get_param_aliases(model_field)
+    taken_keys = {
+        alias for field in _get_cached_model_fields(type(dumped_body)) for alias, _ in _get_param_aliases(field)
     }
-    for param in params:
-        alias = next(
-            (
-                alias
-                for alias in param.aliases
-                if _get_multidict_value(param.field, form, alias) is not PydanticUndefined
-            ),
-            None,
+    # A form model that allows extra fields takes the other keys of the form too
+    taken_keys.update(dumped_body.__pydantic_extra__ or {})
+    # `_embed_form_model` puts these keys of the body next to the form model
+    body_values = {**body} if isinstance(body, dict) else None
+    rest_of_form = FormData(
+        [
+            (key, value)
+            for key, value in form.multi_items()
+            if key not in taken_keys and (body_values is None or key not in body_values)
+        ]
+    )
+    expected_values: dict[int, Union[_ExpectedFormValue, _FormValueMarker]] = {}
+    for index, param in enumerate(params):
+        if param.kind is not _BodyParamKind.FORM_FIELD:
+            continue
+        form_value = await _extract_form_value(param.field, rest_of_form)
+        form_value_index = len(param.aliases) if form_value is None else param.aliases.index(form_value.alias)
+        if body_values is None:
+            if not taken_keys.isdisjoint(param.aliases[:form_value_index]):
+                expected_values[index] = _FormValueMarker.UNKNOWN
+                continue
+        else:
+            body_alias = next((alias for alias in param.aliases if alias in body_values), None)
+            # Before FastAPI 0.162.0, FastAPI gives a missing boolean form field False, but not if the body has it
+            if body_alias is not None and (
+                param.aliases.index(body_alias) < form_value_index
+                or all(alias not in rest_of_form for alias in param.aliases)
+            ):
+                expected_values[index] = _ExpectedFormValue(body_alias, body_values[body_alias], is_from_form=False)
+                continue
+        expected_values[index] = _FormValueMarker.DEFAULT if form_value is None else form_value
+    return expected_values
+
+
+async def _extract_form_value(  # pragma: no cover # FastAPI >= 0.158.2
+    field: ModelField, form: FormData
+) -> Union[_ExpectedFormValue, None]:
+    """Return the alias and the value that FastAPI picks for the field from the form, if any."""
+    # FastAPI yields the other keys of the form too, so we go through all of them to close the generator
+    values = [
+        _ExpectedFormValue(alias, value, is_from_form=True)
+        async for alias, value, item_field in _extract_form_body([field], form)
+        if item_field is not None
+    ]
+    return values[0] if values else None
+
+
+def _get_param_with_other_value(  # pragma: no cover # FastAPI >= 0.158.2
+    lookup: _FormModelLookup,
+    params: list[_BodyParamLookup],
+    expected_values: dict[int, Union[_ExpectedFormValue, _FormValueMarker]],
+    body: Any,
+    *,
+    own_key: bool,
+) -> Union[_BodyParamLookup, None]:
+    """Return a param that FastAPI would give another value than the expected one from the embedded body, if any.
+
+    Like FastAPI, we take the value of the first alias of the param that the body has. We don't know what FastAPI
+    should give the form models with other form models and the params that take the whole body, so we give them
+    what the last release did.
+    """
+    embedded_body = _embed_form_model(body, lookup)
+    form_model_body = embedded_body[lookup.aliases[0]]
+    for index, param in enumerate(params):
+        found_alias = next(
+            (alias for alias in _get_lookup_aliases(param, own_key=own_key) if alias in embedded_body), None
         )
-        if alias is not None and alias not in form_model_field_aliases:
-            return True
-    return False
+        # Only form field params have expected values
+        expected = expected_values.get(index)
+        if param.kind is _BodyParamKind.SAME_FORM_MODEL:
+            is_expected = found_alias is not None and embedded_body[found_alias] is form_model_body
+        elif not isinstance(expected, _ExpectedFormValue):
+            is_expected = expected is not _FormValueMarker.DEFAULT or found_alias is None
+        else:
+            found_value = None if found_alias is None else embedded_body[found_alias]
+            # FastAPI's values from the form can't run user code when compared, unlike the values of the body
+            is_expected = found_alias == expected.alias and (
+                found_value is expected.value
+                or (
+                    expected.is_from_form
+                    and found_alias in lookup.form_values
+                    and found_alias not in lookup.aliases
+                    and found_value == expected.value
+                )
+            )
+        if not is_expected:
+            return param
+    return None
+
+
+def _describe_body_param(param: _BodyParamLookup) -> str:  # pragma: no cover # FastAPI >= 0.158.2
+    call_name = getattr(param.call, "__qualname__", None) or repr(param.call)
+    return f"`{param.field.name}` of `{call_name}`"
 
 
 def _iter_dependants_that_fastapi_solves(  # pragma: no cover # FastAPI >= 0.158.2
@@ -1308,7 +1503,8 @@ def _embed_form_model(body: Any, form_model_lookup: _FormModelLookup) -> Any:
     """Return the body with the form models embedded under their aliases.
 
     Other form fields, e.g. the ones that only a dependency override declares, look their values up in the body itself,
-    as they did before FastAPI 0.158.2. A form model of an override wins over a form field with the same alias.
+    as they did before FastAPI 0.158.2, or in the values that FastAPI gives them from the form. A form model of an
+    override wins over a form field with the same alias.
 
     FastAPI takes the dict body of a union of form models as form data, so in the copy that we embed, we pass the sets
     and tuples of the fields that get repeated form values as lists, which is how FastAPI gets repeated form values.
@@ -1321,7 +1517,11 @@ def _embed_form_model(body: Any, form_model_lookup: _FormModelLookup) -> Any:
             for key, value in body.items()
         }
     return (
-        {**(body if isinstance(body, dict) else {}), **dict.fromkeys(form_model_lookup.aliases, form_model_body)}
+        {
+            **(body if isinstance(body, dict) else {}),
+            **form_model_lookup.form_values,
+            **dict.fromkeys(form_model_lookup.aliases, form_model_body),
+        }
         if form_model_lookup.aliases
         else body
     )
