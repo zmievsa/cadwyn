@@ -32,6 +32,7 @@ from fastapi import (
     Body,
     Cookie,
     Depends,
+    FastAPI,
     File,
     Form,
     Header,
@@ -2068,6 +2069,79 @@ def test__request_body_migration__with_extra_keys_in_container_body__head_should
         # The second request takes what Cadwyn has cached during the first one
         for _ in range(2):
             assert version_client.post(test_path, json=payload).json() == expected
+
+
+class ItemWithJsonOfAnything(BaseModel):
+    name: str
+    data: Json[Any]
+
+
+def test__request_body_migration__with_json_values_that_arent_strings_in_container_body__should_get_what_fastapi_gets(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: list[ItemWithJsonOfAnything]):
+        return [item.data for item in body]
+
+    clients = create_versioned_clients(version_change())
+    fastapi_app = FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    payload = [{"name": "a", "data": "[1]"}, {"name": "b", "data": '{"c": 2}'}]
+
+    expected = TestClient(fastapi_app).post(test_path, json=payload).json()
+    assert expected == [[1], {"c": 2}]
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == expected
+
+
+def test__request_body_migration__with_json_strings_in_container_body__should_decode_them_once_more_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: list[ItemWithJsonOfAnything]):
+        return [item.data for item in body]
+
+    clients = create_versioned_clients(version_change())
+
+    # Known limitation: Cadwyn can't tell the client's strings in such bodies from the ones that migrations set, so
+    # the head decodes them once more, as before (FastAPI gives "123")
+    assert clients["2000-01-01"].post(test_path, json=[{"name": "a", "data": '"123"'}]).json() == [123]
+    # The body stays as it is, so the head doesn't get any of its values encoded, and the list fails as before
+    with pytest.raises(CadwynHeadRequestValidationError):
+        clients["2000-01-01"].post(test_path, json=[{"name": "a", "data": '"123"'}, {"name": "b", "data": "[1]"}])
+
+
+@pytest.mark.parametrize(
+    ("set_data", "expected"),
+    [
+        pytest.param(lambda: [5], [[5], [1]], id="value"),
+        # The workaround of encoding the value in the migration works as before
+        pytest.param(lambda: json.dumps([5]), [[5]], id="encoded_value"),
+    ],
+)
+def test__request_body_migration__with_json_value_set_by_migration_in_container_body__head_should_get_it(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    set_data: Callable[[], Any],
+    expected: list[Any],
+):
+    @router.post(test_path)
+    async def endpoint(body: list[ItemWithJsonOfAnything]):
+        return [item.data for item in body]
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body[0].data = set_data()
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    payload = [{"name": "a", "data": "[1]"}, {"name": "b", "data": "[1]"}][: len(expected)]
+
+    assert clients["2000-01-01"].post(test_path, json=payload).json() == expected
 
 
 class ItemWithAlias(BaseModel):
