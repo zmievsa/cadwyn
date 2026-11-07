@@ -60,7 +60,14 @@ from typing_extensions import ParamSpec, TypeVar, override
 from typing_inspection.typing_objects import is_typealiastype
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
-from cadwyn._utils import UnionType, _get_type_alias_value, classproperty, lenient_issubclass
+from cadwyn._utils import (
+    UnionType,
+    _get_type_alias_value,
+    classproperty,
+    get_member_with_same_value,
+    is_enum_looked_up_by_value,
+    lenient_issubclass,
+)
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -526,6 +533,18 @@ class VersionBundle:
             for instruction in version_change.alter_enum_instructions
         }
 
+    @functools.cached_property
+    def _has_versioned_plain_enums(self) -> bool:
+        """Whether a plain enum or flag has enum instructions, so that the head rejects the members of its copies.
+
+        Pydantic looks up the members of `str`, `int`, and `float` enums by their values, so the head accepts
+        the members of their copies.
+        """
+        return any(not is_enum_looked_up_by_value(enum) for enum in self.versioned_enums.values())
+
+    def _replace_with_head_enum_members(self, body: Any) -> Any:
+        return _replace_with_head_enum_members(body) if self._has_versioned_plain_enums else body
+
     def _get_closest_lesser_version(self, version: VersionType):
         for defined_version in self.version_values:
             if defined_version <= version:
@@ -570,6 +589,8 @@ class VersionBundle:
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
         form_model_lookup = _FormModelLookup(head_dependant)
+        # Request migrations got the members of the copies of enums, as they always did, but the head gets its own ones
+        body_with_head_members = self._replace_with_head_enum_members(request_info.body)
         if request_info._form is not None:
             if uploads_read_by_fastapi:
                 await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
@@ -584,7 +605,7 @@ class VersionBundle:
                 head_dependant, head_route, body_for_solving, embed_body_fields=embed_body_fields
             )
         elif dumped_body_model is not None:
-            body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
+            body_for_solving = _rescue_body(head_dependant.body_params[0], body_with_head_members)
             body_for_solving = await _encode_json_values(
                 request, head_dependant, head_route, route, body_for_solving, embed_body_fields=embed_body_fields
             )
@@ -599,7 +620,7 @@ class VersionBundle:
             )
         else:
             body_for_solving = await _encode_json_values(
-                request, head_dependant, head_route, route, request_info.body, embed_body_fields=embed_body_fields
+                request, head_dependant, head_route, route, body_with_head_members, embed_body_fields=embed_body_fields
             )
 
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
@@ -2593,6 +2614,103 @@ def _rescue_response(response_field: ModelField, head_response_model: object, co
     if head_spec is None or not _is_dumped_from_models(content, head_spec):
         return data
     return restored
+
+
+def _replace_with_head_enum_members(data: Any) -> Any:
+    """Replace each member of a copy of a plain enum or flag with the member of its head enum that has the same value.
+
+    Python-mode dumps keep the members of the copies, which the head rejects for plain enums and flags. The head looks
+    up the members of the copies of `str`, `int`, and `float` enums by their values anyway, so we leave them, as well
+    as the members of other enums and the ones that their head enums have no member with exactly the same value for,
+    so that the head rejects them as before.
+
+    We only walk into the containers that pydantic makes when it validates a field, and copy only the ones in which
+    something below them changes, with the same types. Copying them again hashes their keys and items, which runs code
+    of users, so if a copy fails, we keep the container as it is. Anything else, such as models (a dump has none, but
+    a migration can put some into the body), iterators, or containers of other types, could run code of users or lose
+    what they hold if we iterated or copied it, so we leave it as it is. We walk depth-first without recursion, so that
+    data as deep as pydantic accepts never hits the recursion limit, and we don't walk into the containers that contain
+    themselves again.
+    """
+    children = _get_children_that_can_be_enum_members(data)
+    if children is None:
+        return _replace_with_head_enum_member(data)
+    # Each frame is [container, iterator over its children, its children with replaced members, whether any changed]
+    stack: list[list[Any]] = [[data, iter(children), [], False]]
+    containers_on_stack = {id(data)}
+    while True:
+        frame = stack[-1]
+        child = next(frame[1], _NO_CHILD)
+        if child is not _NO_CHILD:
+            grandchildren = None if id(child) in containers_on_stack else _get_children_that_can_be_enum_members(child)
+            if grandchildren is None:
+                replaced_child = _replace_with_head_enum_member(child)
+                frame[2].append(replaced_child)
+                frame[3] = frame[3] or replaced_child is not child
+            else:
+                stack.append([child, iter(grandchildren), [], False])
+                containers_on_stack.add(id(child))
+            continue
+        stack.pop()
+        container = frame[0]
+        containers_on_stack.discard(id(container))
+        replaced = _copy_container_with_children(container, frame[2]) if frame[3] else container
+        if not stack:
+            return replaced
+        stack[-1][2].append(replaced)
+        stack[-1][3] = stack[-1][3] or replaced is not container
+
+
+_NO_CHILD = object()
+# The containers that pydantic makes when it validates a field (see `GenerateSchema` and `MAPPING_ORIGIN_MAP`)
+_MAPPINGS_THAT_PYDANTIC_MAKES = (dict, OrderedDict, defaultdict, Counter)
+_COLLECTIONS_THAT_PYDANTIC_MAKES = (list, tuple, set, frozenset, deque)
+
+
+def _replace_with_head_enum_member(value: Any) -> Any:
+    if not isinstance(value, Enum):
+        return value
+    head_enum: Union[type[Enum], None] = getattr(type(value), "__cadwyn_original_model__", None)
+    if head_enum is None or is_enum_looked_up_by_value(head_enum):
+        return value
+    head_member = get_member_with_same_value(head_enum, value)
+    return value if head_member is None else head_member
+
+
+def _get_children_that_can_be_enum_members(value: Any) -> Union[list[Any], None]:
+    """Return the children of a container, with the keys and values of mappings in turn, or None"""
+    if type(value) in _MAPPINGS_THAT_PYDANTIC_MAKES:
+        # Unlike the type's own `items` (and iterating an `OrderedDict`), `dict.items` never hashes the keys again
+        return [child for item in dict.items(value) for child in item]
+    if type(value) in _COLLECTIONS_THAT_PYDANTIC_MAKES:
+        return list(value)
+    return None
+
+
+def _copy_container_with_children(container: Any, children: list[Any]) -> Any:
+    """Return a copy of the container that has the children instead of its own, or the container if they don't fit"""
+    try:
+        if type(container) in _MAPPINGS_THAT_PYDANTIC_MAKES:
+            items = list(zip(children[::2], children[1::2], strict=True))
+            if type(container) is defaultdict:
+                copied = defaultdict(container.default_factory, items)
+            elif type(container) is Counter:
+                copied = Counter(dict(items))
+            elif type(container) is OrderedDict:
+                # The children have the order of the dict, while `move_to_end` only changes the order of the
+                # `OrderedDict`. Iterating it hashes the keys, so we only do it here, where a copy hashes them anyway.
+                index_by_key_id = {id(key): index for index, key in enumerate(dict.keys(container))}
+                copied = OrderedDict(items[index_by_key_id[id(key)]] for key in container)
+            else:
+                copied = dict(items)
+        elif type(container) is deque:
+            copied = deque(children, maxlen=container.maxlen)
+        else:
+            copied = type(container)(children)
+    except Exception:  # noqa: BLE001 # E.g. a key whose `__hash__` fails
+        return container
+    # Members of the copies don't equal the head members, so two distinct keys or items can become one
+    return copied if len(copied) == len(container) else container
 
 
 def _is_dumped_from_models(content: Any, spec: "_RestorerSpec") -> bool:

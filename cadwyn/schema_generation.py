@@ -78,7 +78,9 @@ from cadwyn._utils import (
     UnionType,
     _get_type_alias_value,
     fully_unwrap_decorator,
+    get_member_with_same_value,
     get_name_of_function_wrapped_in_pydantic_validator,
+    is_enum_looked_up_by_value,
     is_same_value,
     is_sqlalchemy_model,
     lenient_issubclass,
@@ -4194,6 +4196,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
             class_kwargs["boundary"] = boundary
         model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict, **class_kwargs))
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
+        _take_head_members_by_value(model_copy, self.cls)
         return model_copy
 
     @staticmethod
@@ -4214,6 +4217,26 @@ class _EnumWrapper(Generic[_T_ENUM]):
             # the copy would take the one of its base enum type
             and (k in _USER_DEFINABLE_ENUM_ATTRIBUTES or k not in mro_dict or mro_dict[k] is not v)
         }
+
+
+def _take_head_members_by_value(enum_copy: type[Enum], head_enum: type[Enum]) -> None:
+    """Make the copy of a plain enum or flag take the members of its head enum that have the values of its members.
+
+    The responses that the endpoints return have the head members, and so do the defaults of params. Pydantic looks up
+    the members of `str`, `int`, and `float` enums by their values, so we leave them as they are. For plain enums and
+    flags, it only calls `_missing_`, so their copies would reject the head members. The enum's own `_missing_` gets
+    the head members that the copy has no member with the same value for, as before.
+    """
+    if is_enum_looked_up_by_value(head_enum):
+        return
+    inherited_missing = enum_copy._missing_
+
+    def _missing_(cls: type[Enum], value: object) -> Any:
+        if isinstance(value, head_enum) and (member := get_member_with_same_value(cls, value)) is not None:
+            return member
+        return inherited_missing(value)
+
+    enum_copy._missing_ = classmethod(_missing_)  # ty: ignore[invalid-assignment]
 
 
 def _is_same_parametrization(model: type[Union[BaseModel, Enum]], generic: type[BaseModel]) -> bool:

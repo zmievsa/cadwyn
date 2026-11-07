@@ -1,5 +1,5 @@
 import re
-from enum import KEEP, Enum, Flag, IntEnum, IntFlag, auto
+from enum import KEEP, Enum, Flag, FlagBoundary, IntEnum, IntFlag, auto
 from typing import Any
 
 import pytest
@@ -250,3 +250,84 @@ def test__enum_didnt_have__nonexisting_name__should_raise_invalid_generation_ins
         ),
     ):
         create_runtime_schemas(version_change(enum(EnumWithOneMember).didnt_have("hoo")))
+
+
+def test__enum_didnt_have__copy_called_with_latest_member__should_return_member_with_same_value(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(EnumWithTwoMembers).didnt_have("bar")))
+    old_enum = models["2000-01-01"][EnumWithTwoMembers]
+
+    assert old_enum(EnumWithTwoMembers.foo) is old_enum.foo
+    with pytest.raises(ValueError, match="is not a valid EnumWithTwoMembers"):
+        old_enum(EnumWithTwoMembers.bar)
+
+
+class StrEnumWithMissingForMembers(str, Enum):
+    a = "a"
+    b = "b"
+
+    @classmethod
+    @override
+    def _missing_(cls, value: object) -> "StrEnumWithMissingForMembers | None":
+        return cls.a if isinstance(value, Enum) else None
+
+
+class PlainEnumWithMissingByName(Enum):
+    a = "a"
+    b = "b"
+
+    @classmethod
+    @override
+    def _missing_(cls, value: object) -> "PlainEnumWithMissingByName | None":
+        return cls[value.name] if isinstance(value, Enum) else None
+
+
+def test__enum_didnt_have__str_enum_copy_called_with_latest_member__should_give_missing_the_member(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(StrEnumWithMissingForMembers).didnt_have("b")))
+    old_enum = models["2000-01-01"][StrEnumWithMissingForMembers]
+
+    assert old_enum(StrEnumWithMissingForMembers.b) is old_enum.a
+
+
+def test__enum_had__copy_called_with_latest_member_without_same_value__should_give_missing_the_member(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(PlainEnumWithMissingByName).had(b="old")))
+    old_enum = models["2000-01-01"][PlainEnumWithMissingByName]
+
+    assert old_enum(PlainEnumWithMissingByName.b) is old_enum.b
+    assert old_enum(PlainEnumWithMissingByName.a) is old_enum.a
+
+
+def test__enum_didnt_have__conform_flag_copy_called_with_latest_bits_it_doesnt_have__should_raise_value_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class ConformFlag(Flag, boundary=FlagBoundary.CONFORM):
+        read = 1
+        write = 2
+
+    models = create_runtime_schemas(version_change(enum(ConformFlag).didnt_have("write")))
+    old_enum = models["2000-01-01"][ConformFlag]
+
+    assert old_enum(ConformFlag.read) is old_enum.read
+    with pytest.raises(ValueError, match="is not a valid ConformFlag"):
+        old_enum(ConformFlag.read | ConformFlag.write)
+
+
+class EnumWithUnhashableValues(Enum):
+    a = [1]
+    b = [2]
+
+
+def test__enum_didnt_have__copy_of_enum_with_unhashable_values_called_with_latest_member__should_return_member(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(EnumWithUnhashableValues).didnt_have("b")))
+    old_enum = models["2000-01-01"][EnumWithUnhashableValues]
+
+    assert old_enum(EnumWithUnhashableValues.a) is old_enum.a
+    with pytest.raises(ValueError, match="is not a valid EnumWithUnhashableValues"):
+        old_enum(EnumWithUnhashableValues.b)
