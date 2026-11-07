@@ -6,11 +6,12 @@ import itertools
 import json
 import pathlib
 import re
+import subprocess
 import sys
 import tempfile
 import time as time_module
 import typing
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Mapping, MutableSequence, Sequence
 from collections.abc import Set as AbstractSet
 from contextvars import ContextVar
@@ -19,12 +20,12 @@ from decimal import Decimal
 from enum import Enum, Flag, FlagBoundary, IntEnum
 from io import BytesIO, RawIOBase, StringIO, UnsupportedOperation
 from types import MappingProxyType
-from typing import Annotated, Any, Literal, Optional, Self, Union, cast
+from typing import Annotated, Any, ClassVar, Literal, Optional, Self, Union, cast
 from uuid import UUID
 
 import fastapi
 import pytest
-from dirty_equals import IsPartialDict, IsStr
+from dirty_equals import IsList, IsPartialDict, IsStr
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -108,6 +109,7 @@ from tests._resources.utils import (
     FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
     FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
     FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS,
+    FASTAPI_TAKES_FIRST_ALIAS_OF_FORM_FIELDS_WITH_VALUE,
     FASTAPI_VALIDATES_FORM_FIELDS_OF_OVERRIDES,
     FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA,
 )
@@ -2584,9 +2586,9 @@ _SKIP_IF_FORM_MODEL_UNIONS_ARE_NOT_FORM_MODELS = pytest.mark.skipif(
 )
 
 # Since FastAPI 0.153.0, FastAPI validates the members of a union of form models from the body as if it were form data
-_SKIP_IF_CADWYN_PASSES_FORM_MODEL_UNION_DUMPS_AS_THEY_ARE = pytest.mark.skipif(
-    FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA and not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
-    reason="On FastAPI 0.153 to 0.160, Cadwyn passes the dump of the union member to FastAPI as it is",
+_SKIP_IF_FORM_MODEL_UNIONS_ARE_NOT_VALIDATED_AS_FORM_DATA = pytest.mark.skipif(
+    not FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA,
+    reason="Before FastAPI 0.153.0, FastAPI doesn't take the form data of a union of form models",
 )
 
 
@@ -2603,18 +2605,94 @@ async def _form_model_union_with_collections(
 
 
 def _split_by_commas(value: Any) -> Any:
-    return value.split(",") if isinstance(value, str) else value  # pragma: no cover # FastAPI >= 0.161
+    return value.split(",") if isinstance(value, str) else value  # pragma: no cover # FastAPI >= 0.153
 
 
 class SchemaWithSplitValue(BaseModel):
     value: Annotated[Any, BeforeValidator(_split_by_commas)]
 
 
-# The head rejects the bodies that these endpoints get in the tests
 async def _form_model_union_with_split_value(
     body: Annotated[Union[SchemaWithSplitValue, OtherSchemaWithText], Form()],
 ):
-    return body.model_dump()  # pragma: no cover
+    return body.model_dump()  # pragma: no cover # FastAPI >= 0.153
+
+
+async def _optional_form_model_union_with_split_value(
+    body: Annotated[Optional[Union[SchemaWithSplitValue, OtherSchemaWithText]], Form()] = None,
+):
+    return None if body is None else body.model_dump()  # pragma: no cover # FastAPI >= 0.153
+
+
+def _split_by_commas_into_tuple(value: Any) -> Any:
+    return tuple(value.split(",")) if isinstance(value, str) else value  # pragma: no cover # FastAPI >= 0.153
+
+
+class SchemaWithSplitTupleValue(BaseModel):
+    value: Annotated[Any, BeforeValidator(_split_by_commas_into_tuple)]
+
+
+async def _form_model_union_with_split_tuple_value(
+    body: Annotated[Union[SchemaWithSplitTupleValue, OtherSchemaWithText], Form()],
+):
+    value = body.model_dump()["value"]  # pragma: no cover # FastAPI >= 0.153
+    return [type(value).__name__, value]  # pragma: no cover # FastAPI >= 0.153
+
+
+def _to_empty_collection(value: Any) -> Any:
+    empty_collections = {"tuple": (), "set": set(), "frozenset": frozenset(), "deque": deque()}
+    return (
+        empty_collections.get(value, value) if isinstance(value, str) else value
+    )  # pragma: no cover # FastAPI >= 0.153
+
+
+class SchemaWithEmptyCollectionValue(BaseModel):
+    value: Annotated[Any, BeforeValidator(_to_empty_collection)]
+
+
+async def _form_model_union_with_empty_collection_value(
+    body: Annotated[Union[SchemaWithEmptyCollectionValue, OtherSchemaWithText], Form()],
+):
+    value = body.model_dump()["value"]  # pragma: no cover # FastAPI >= 0.153
+    return [type(value).__name__, list(value)]  # pragma: no cover # FastAPI >= 0.153
+
+
+class SchemaWithAliasChoicesAndExtraFields(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    tags: list[str] = Field(alias="primary", validation_alias=AliasChoices("primary", "secondary"))
+
+    @model_validator(mode="before")
+    @classmethod
+    def split_secondary(cls, data: Any) -> Any:  # pragma: no cover # FastAPI >= 0.153
+        secondary = data.get("secondary") if isinstance(data, dict) else None
+        if isinstance(secondary, str):
+            if secondary.startswith("list:"):
+                return {**data, "secondary": secondary.removeprefix("list:").split(",")}
+            return {**data, "secondary": tuple(secondary.split(","))}
+        return data
+
+
+# When the form has the first alias, FastAPI and Pydantic take the second one as an extra field
+async def _form_model_union_with_alias_choices_and_extra_fields(
+    body: Annotated[Union[SchemaWithAliasChoicesAndExtraFields, OtherSchemaWithText], Form()],
+):
+    secondary = body.model_dump()["secondary"]  # pragma: no cover # FastAPI >= 0.153
+    return [
+        body.model_dump(mode="json", by_alias=True),
+        type(secondary).__name__,
+    ]  # pragma: no cover # FastAPI >= 0.153
+
+
+class SchemaWithTupleAndFieldWithItsAliasAsSecondAlias(BaseModel):
+    values: tuple[str, ...]
+    value: Any = Field(validation_alias=AliasChoices("value", "values"))
+
+
+# `value` takes `values` only if the form doesn't have `value`
+async def _form_model_union_with_tuple_and_field_with_its_alias_as_second_alias(
+    body: Annotated[Union[SchemaWithTupleAndFieldWithItsAliasAsSecondAlias, OtherSchemaWithText], Form()],
+):
+    return [body.model_dump(), type(body.model_dump()["values"]).__name__]  # pragma: no cover # FastAPI >= 0.153
 
 
 class SchemaWithListValue(BaseModel):
@@ -2626,6 +2704,7 @@ class SchemaWithSplitValueOfKind(SchemaWithSplitValue):
     kind: Literal["split"]
 
 
+# Cadwyn can't pass the bodies that these endpoints get in the tests to the head
 async def _form_model_union_with_list_and_split_value(
     body: Annotated[Union[SchemaWithListValue, SchemaWithSplitValueOfKind], Form()],
 ):
@@ -2638,7 +2717,7 @@ class SchemaWithExtraValue(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def split_value(cls, data: Any) -> Any:  # pragma: no cover # FastAPI >= 0.161
+    def split_value(cls, data: Any) -> Any:  # pragma: no cover # FastAPI >= 0.153
         value = data.get("value") if isinstance(data, dict) else None
         if isinstance(value, str):
             return {**data, "value": tuple(value.split(","))}
@@ -2669,7 +2748,44 @@ async def _form_model_union_with_extra_and_tuple_value(
             _form_model_union_with_collections,
             {"tags": ["x", "y"], "frozen_tags": ["x", "y"], "numbers": ["1", "2"]},
             id="with_set_frozenset_and_tuple_fields",
-            marks=_SKIP_IF_CADWYN_PASSES_FORM_MODEL_UNION_DUMPS_AS_THEY_ARE,
+        ),
+        pytest.param(
+            _form_model_union_with_split_value,
+            {"value": "x,y"},
+            id="with_list_from_validator_in_field_that_takes_single_value",
+        ),
+        pytest.param(
+            _optional_form_model_union_with_split_value,
+            {"value": "x,y"},
+            id="optional_with_list_from_validator_in_field_that_takes_single_value",
+        ),
+        pytest.param(
+            _form_model_union_with_split_tuple_value,
+            {"value": "x,y"},
+            id="with_tuple_from_validator_in_field_that_takes_single_value",
+        ),
+        *(
+            pytest.param(
+                _form_model_union_with_empty_collection_value,
+                {"value": collection_type},
+                id=f"with_empty_{collection_type}_from_validator_in_field_that_takes_single_value",
+            )
+            for collection_type in ("tuple", "set", "frozenset", "deque")
+        ),
+        pytest.param(
+            _form_model_union_with_alias_choices_and_extra_fields,
+            {"primary": "p", "secondary": "q,r"},
+            id="with_tuple_from_validator_in_extra_field_named_like_second_alias_of_field_that_takes_repeated_values",
+        ),
+        pytest.param(
+            _form_model_union_with_alias_choices_and_extra_fields,
+            {"primary": "p", "secondary": "list:q"},
+            id="with_one_item_list_from_validator_in_extra_field_named_like_second_alias_of_field_that_takes_repeated_values",
+        ),
+        pytest.param(
+            _form_model_union_with_tuple_and_field_with_its_alias_as_second_alias,
+            {"value": "s", "values": ["x", "y"]},
+            id="with_tuple_field_whose_alias_is_second_alias_of_field_that_takes_single_value",
         ),
         pytest.param(_optional_form_model_union, None, id="optional_without_form_data"),
         pytest.param(_optional_form_model_union, {"unrelated": "1"}, id="optional_with_unrelated_form_data"),
@@ -3300,51 +3416,125 @@ def test__request_body_migration__with_form_model_union__migration_should_change
     }
 
 
-@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
-    not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
-    reason="Before FastAPI 0.161.0, a union of form models isn't a form model",
+async def _form_model_union_with_extra_fields(
+    body: Annotated[Union[_FormModelOfKindWithExtraFields, _FormModelOfOtherKind], Form()],
+):
+    return body.model_dump()  # pragma: no cover # FastAPI >= 0.153
+
+
+class SchemaWithListAndFieldWithItsAliasAsSecondAlias(BaseModel):
+    b: list[str]
+    a: Any = Field(validation_alias=AliasChoices("a", "b"))
+
+
+async def _form_model_union_with_list_and_field_with_its_alias_as_second_alias(
+    body: Annotated[Union[SchemaWithListAndFieldWithItsAliasAsSecondAlias, OtherSchemaWithText], Form()],
+):
+    return body.model_dump()  # pragma: no cover # FastAPI >= 0.153
+
+
+class SchemaWithAliasPath(BaseModel):
+    value: str = Field(validation_alias=AliasPath("values", 0))
+
+
+async def _form_model_union_with_alias_path(
+    body: Annotated[Union[SchemaWithAliasPath, OtherSchemaWithText], Form()],
+):
+    return body.model_dump()  # pragma: no cover # FastAPI >= 0.153
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.153
+    not FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA,
+    reason="Before FastAPI 0.153.0, FastAPI doesn't take the form data of a union of form models",
 )
 @pytest.mark.parametrize(
-    ("endpoint", "data", "migrated_body"),
+    ("endpoint", "data", "migrated_body", "expected"),
     [
-        pytest.param(_form_model_union_with_split_value, {"value": "a,b"}, {}, id="list_from_validator"),
         pytest.param(
-            _form_model_union_with_split_value, {"value": "a"}, {"value": ["p", "q"]}, id="list_from_migration"
-        ),
-        pytest.param(_form_model_union_with_split_value, {"value": "a"}, {"value": (1, 2)}, id="tuple_from_migration"),
-        pytest.param(
-            _form_model_union_with_list_and_split_value,
-            {"kind": "split", "value": "a,b"},
-            {},
-            id="list_in_member_whose_field_takes_any_value",
+            _form_model_union_with_split_value,
+            {"value": "a"},
+            {"value": ["p", "q"]},
+            {"value": ["p", "q"]},
+            id="list_in_field_that_takes_single_value",
         ),
         pytest.param(
-            _form_model_union_with_list_and_split_value,
-            {"kind": "list", "value": ["a", "b"]},
-            {},
-            id="list_in_member_whose_field_takes_lists",
+            _form_model_union_with_split_value,
+            {"value": "a"},
+            {"value": ["p"]},
+            {"value": ["p"]},
+            id="one_item_list_in_field_that_takes_single_value",
         ),
         pytest.param(
-            _form_model_union_with_list_and_split_value,
-            {"kind": "split", "value": "a"},
-            {"kind": "list", "value": ["p", "q"]},
-            id="migration_that_switches_member",
+            _form_model_union_with_split_value,
+            {"value": "a"},
+            {"value": []},
+            {"value": []},
+            id="empty_list_in_field_that_takes_single_value",
         ),
         pytest.param(
-            _form_model_union_with_extra_and_tuple_value,
-            {"kind": "extra", "value": "p,q"},
-            {},
-            id="tuple_in_extra_field_that_another_member_has_as_tuple",
+            _form_model_union_with_split_tuple_value,
+            {"value": "a"},
+            {"value": (1, 2)},
+            ["tuple", [1, 2]],
+            id="tuple_in_field_that_takes_single_value",
+        ),
+        pytest.param(
+            _form_model_union_with_split_tuple_value,
+            {"value": "a"},
+            {"value": {"p"}},
+            ["set", ["p"]],
+            id="set_in_field_that_takes_single_value",
+        ),
+        pytest.param(
+            _form_model_union_with_collections,
+            {"tags": "x", "frozen_tags": "x", "numbers": "1"},
+            {"tags": ("p", "q"), "frozen_tags": ["p"], "numbers": {1}},
+            {"tags": IsList("p", "q", check_order=False), "frozen_tags": ["p"], "numbers": [1]},
+            id="collections_in_fields_that_take_repeated_values",
+        ),
+        pytest.param(
+            _form_model_union_with_extra_fields,
+            {"kind": "with_extra_fields"},
+            {"labels": ["p"]},
+            {"kind": "with_extra_fields", "label": "default", "labels": ["p"]},
+            id="one_item_list_in_extra_field",
+        ),
+        pytest.param(
+            _form_model_union_with_extra_fields,
+            {"kind": "with_extra_fields"},
+            {"labels": ["p", "q"]},
+            {"kind": "with_extra_fields", "label": "default", "labels": ["p", "q"]},
+            id="list_in_extra_field",
+        ),
+        # FastAPI gives `a` the value of `b` if `a` has no value, and an empty or null value is none
+        pytest.param(
+            _form_model_union_with_list_and_field_with_its_alias_as_second_alias,
+            {"b": ["x", "y"], "a": "sent"},
+            {"a": [None]},
+            {"b": ["x", "y"], "a": [None]},
+            id="list_of_null_in_field_whose_second_alias_is_alias_of_field_that_takes_repeated_values",
+            marks=pytest.mark.skipif(
+                not FASTAPI_TAKES_FIRST_ALIAS_OF_FORM_FIELDS_WITH_VALUE,
+                reason="Before FastAPI 0.157.0, FastAPI gives `a` the value of `b` too, which `b` rejects",
+            ),
+        ),
+        pytest.param(
+            _form_model_union_with_alias_path,
+            {"values": ["sent", "padding"]},
+            {"values": ["migrated"]},
+            {"value": "migrated"},
+            id="one_item_list_read_through_alias_path",
         ),
     ],
 )
-def test__request_body_migration__with_form_model_union_and_collection_in_field_that_takes_any_value__should_fail(
+def test__request_body_migration__with_form_model_union_and_collection_set_by_migration__head_should_get_it(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
     endpoint: Callable[..., Coroutine[Any, Any, Any]],
     data: dict[str, str],
     migrated_body: dict[str, Any],
+    expected: Any,
 ):
     router.post(test_path)(endpoint)
 
@@ -3354,10 +3544,285 @@ def test__request_body_migration__with_form_model_union_and_collection_in_field_
 
     clients = create_versioned_clients(version_change(migrator=migrator))
 
-    # FastAPI would give only one of the values of the collection to a member whose field takes a single value,
-    # so we pass the body as the last release does, which fails
-    with pytest.raises(CadwynHeadRequestValidationError):
+    assert clients["2000-01-01"].post(test_path, data=data).json() == expected
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
+    not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
+    reason="Before FastAPI 0.161.0, Cadwyn passes these bodies as the last release does",
+)
+@pytest.mark.parametrize(
+    ("endpoint", "data", "migrated_body", "message"),
+    [
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "split", "value": "a,b"},
+            {},
+            "the list in 'value' of the request body to every form model that reads it "
+            "(`SchemaWithListValue`, `SchemaWithSplitValueOfKind`)",
+            id="list_in_member_whose_field_takes_any_value",
+        ),
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "list", "value": ["a", "b"]},
+            {},
+            "the list in 'value'",
+            id="list_in_member_whose_field_takes_lists",
+        ),
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "split", "value": "a"},
+            {"kind": "list", "value": ["p", "q"]},
+            "the list in 'value'",
+            id="migration_that_switches_member",
+        ),
+        pytest.param(
+            _form_model_union_with_extra_and_tuple_value,
+            {"kind": "extra", "value": "p,q"},
+            {},
+            "the tuple in 'value' of the request body to every form model that reads it "
+            "(`SchemaWithExtraValue`, `SchemaWithTupleValue`)",
+            id="tuple_in_extra_field_that_another_member_has_as_tuple",
+        ),
+        pytest.param(
+            _form_model_union_with_extra_and_tuple_value,
+            {"kind": "tuple", "value": ["p"]},
+            {},
+            "the tuple in 'value'",
+            id="one_item_tuple_in_field_that_another_member_takes_as_extra_field",
+        ),
+    ],
+)
+def test__request_body_migration__with_form_model_union_and_collection_in_field_that_its_models_take_differently__should_raise_error(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
+    data: dict[str, Any],
+    migrated_body: dict[str, Any],
+    message: str,
+):
+    router.post(test_path)(endpoint)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body.update(migrated_body)
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # FastAPI would give only some of the values to one of the models, so Cadwyn can't pass the value as it is
+    with pytest.raises(CadwynError, match=re.escape(f"Cadwyn can't pass {message}")):
         clients["2000-01-01"].post(test_path, data=data)
+
+
+class _AliasChoicesThatCountsItsReads(AliasChoices):
+    reads: ClassVar[int] = 0
+
+    @override
+    def __getattribute__(self, name: str) -> Any:
+        if name == "choices":
+            type(self).reads += 1
+        return super().__getattribute__(name)
+
+
+_FIELDS_OF_FORM_MODEL_WITH_COUNTED_ALIASES = 30
+_COUNTED_ALIAS_FIELDS: dict[str, Any] = {
+    f"v{i}": (tuple[str, ...], Field(validation_alias=_AliasChoicesThatCountsItsReads(f"v{i}")))
+    for i in range(_FIELDS_OF_FORM_MODEL_WITH_COUNTED_ALIASES)
+}
+SchemaWithCountedAliases = create_model("SchemaWithCountedAliases", **_COUNTED_ALIAS_FIELDS)
+
+
+async def _form_model_union_with_counted_aliases(
+    body: Annotated[Union[SchemaWithCountedAliases, OtherSchemaWithText], Form()],  # ty: ignore[invalid-type-form]
+):
+    return body.model_dump()  # pragma: no cover # FastAPI >= 0.153
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.153
+    not FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA,
+    reason="Before FastAPI 0.153.0, FastAPI doesn't take the form data of a union of form models",
+)
+def test__request_body_migration__with_form_model_union_with_many_collection_fields__should_look_their_aliases_up_as_often_as_fastapi(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    router.post(test_path)(_form_model_union_with_counted_aliases)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(_form_model_union_with_counted_aliases)
+    clients = create_versioned_clients(version_change())
+    data = {f"v{i}": ["x", "y"] for i in range(_FIELDS_OF_FORM_MODEL_WITH_COUNTED_ALIASES)}
+    plain_client = TestClient(fastapi_app)
+    # The first requests may build what doesn't depend on the request, e.g. the models of the versions
+    plain_client.post(test_path, data=data)
+    clients["2000-01-01"].post(test_path, data=data)
+
+    _AliasChoicesThatCountsItsReads.reads = 0
+    plain_client.post(test_path, data=data)
+    plain_reads = _AliasChoicesThatCountsItsReads.reads
+    _AliasChoicesThatCountsItsReads.reads = 0
+    response = clients["2000-01-01"].post(test_path, data=data)
+    cadwyn_reads = _AliasChoicesThatCountsItsReads.reads
+
+    assert response.json() == data
+    # Cadwyn validates the request twice and checks the body for every model of the union once. Looking up the aliases
+    # of every field for every key would read them about as many times more as the model has fields
+    assert plain_reads > 0
+    assert cadwyn_reads <= 6 * plain_reads
+
+
+# FastAPI could change these functions in a minor release, which would break unions of form models on every request
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.153
+    not FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA,
+    reason="Before FastAPI 0.153.0, Cadwyn doesn't use the functions that validate unions of form models as form data",
+)
+@pytest.mark.parametrize(
+    ("function_name", "changed_signature"),
+    [
+        pytest.param("_normalize_form_model", "value, *, form_model", id="normalize_form_model"),
+        pytest.param("_extract_form_items", "*, body_fields, received_body", id="extract_form_items"),
+        pytest.param("_get_multidict_value", "*, field, values, alias", id="get_multidict_value"),
+        pytest.param("get_cached_model_fields", "*, model", id="get_cached_model_fields"),
+    ],
+)
+def test__import__with_fastapi_function_for_form_model_unions_that_takes_other_arguments__should_raise_import_error(
+    function_name: str, changed_signature: str
+):
+    script = (
+        "import fastapi.dependencies.utils\n"
+        f"def changed({changed_signature}): pass\n"
+        f"fastapi.dependencies.utils.{function_name} = changed\n"
+        "import cadwyn\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=pathlib.Path(__file__).parent.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "ImportError: Cadwyn does not support this version of FastAPI" in result.stderr
+    assert f"`{function_name}`" in result.stderr
+
+
+_SKIP_UNLESS_UNIONS_ARE_FORM_DATA_BUT_NOT_FORM_MODELS = pytest.mark.skipif(
+    not FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA or FASTAPI_SUPPORTS_FORM_MODEL_UNIONS,
+    reason="Only FastAPI 0.153 to 0.160 validates a union of form models as form data without it being a form model",
+)
+
+
+# The last release passes these bodies as they are, and some apps rely on it, e.g. when the model that FastAPI gives
+# only part of the value rejects the body anyway, so Cadwyn keeps doing it
+@_SKIP_UNLESS_UNIONS_ARE_FORM_DATA_BUT_NOT_FORM_MODELS  # pragma: no cover # FastAPI < 0.161
+@pytest.mark.parametrize(
+    ("endpoint", "data", "migrated_body", "expected"),
+    [
+        # FastAPI gives the model whose field takes any value only the last item of the list
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "split", "value": "a,b"},
+            {},
+            {"kind": "split", "value": ["b"]},
+            id="list_in_member_whose_field_takes_any_value",
+        ),
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "list", "value": ["a", "b"]},
+            {},
+            {"kind": "list", "value": ["a", "b"]},
+            id="list_in_member_whose_field_takes_lists",
+        ),
+        pytest.param(
+            _form_model_union_with_list_and_split_value,
+            {"kind": "split", "value": "a"},
+            {"kind": "list", "value": ["p", "q"]},
+            {"kind": "list", "value": ["p", "q"]},
+            id="migration_that_switches_member",
+        ),
+        pytest.param(
+            _form_model_union_with_extra_and_tuple_value,
+            {"kind": "extra", "value": "p,q"},
+            {},
+            {"kind": "extra", "value": ["p", "q"]},
+            id="tuple_in_extra_field_that_another_member_has_as_tuple",
+        ),
+    ],
+)
+def test__request_body_migration__with_form_model_union_that_is_not_form_model_and_collection_in_field_that_its_models_take_differently__head_should_get_the_body_as_it_is(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
+    data: dict[str, Any],
+    migrated_body: dict[str, Any],
+    expected: dict[str, Any],
+):
+    router.post(test_path)(endpoint)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body.update(migrated_body)
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, data=data).json() == expected
+
+
+@_SKIP_UNLESS_UNIONS_ARE_FORM_DATA_BUT_NOT_FORM_MODELS  # pragma: no cover # FastAPI < 0.161
+def test__request_body_migration__with_form_model_union_that_is_not_form_model_and_one_item_tuple_in_field_that_another_model_takes_as_extra_field__should_fail_as_before(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    router.post(test_path)(_form_model_union_with_extra_and_tuple_value)
+    clients = create_versioned_clients(version_change())
+
+    # FastAPI gives the tuple to the tuple field as one item, as in the last release
+    with pytest.raises(CadwynHeadRequestValidationError):
+        clients["2000-01-01"].post(test_path, data={"kind": "tuple", "value": ["p"]})
+
+
+async def _get_nothing() -> None:
+    pass  # pragma: no cover # FastAPI >= 0.161
+
+
+async def _form_model_union_next_to_overridden_dependency(
+    body: Annotated[Union[SchemaWithSplitValue, OtherSchemaWithText], Form()], _: None = Depends(_get_nothing)
+):
+    return body.model_dump()  # pragma: no cover
+
+
+async def _get_split_value_in_override(  # pragma: no cover # FastAPI >= 0.161
+    body: Annotated[SchemaWithSplitValue, Form()],
+) -> None:
+    pass
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.161
+    not FASTAPI_SUPPORTS_FORM_MODEL_UNIONS, reason="Before FastAPI 0.161.0, a union of form models isn't a form model"
+)
+def test__request_body_migration__with_form_model_union_and_list_in_field_that_takes_single_value_and_override_with_form_model__should_raise_error(  # noqa: E501
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    router.post(test_path)(_form_model_union_next_to_overridden_dependency)
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_nothing] = _get_split_value_in_override
+
+    # The override's form model gets the dict as it is, so it would get the list that the union needs in a list
+    with pytest.raises(
+        CadwynError,
+        match=re.escape(
+            "Cadwyn can't pass the list in 'value' of the request body to every form model that reads it "
+            "(`SchemaWithSplitValue`, `SchemaWithSplitValue` outside the union)"
+        ),
+    ):
+        clients["2000-01-01"].post(test_path, data={"value": "a,b"})
 
 
 class SchemaWithTextDumpedAsString(BaseModel):
