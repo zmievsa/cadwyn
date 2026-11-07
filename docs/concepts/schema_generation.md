@@ -34,7 +34,7 @@ Rendering supports named tuples defined with `NamedTuple` or `collections.namedt
 
 Recursive containers and shared builtin or standard-library mutable containers raise `CadwynRenderError`, as do `OrderedDict` and `Counter` defaults with extra instance attributes, unsupported `defaultdict` factories (such as lambdas or callable instances), and subclasses whose representations lose their type by printing a builtin container literal. Use `Field(default_factory=...)` with a named function that creates the whole value for these defaults.
 
-Other container subclasses keep their constructor and `__repr__` rendering. These must themselves reconstruct the contents and any extra state; use a named factory if they do not. Repeated immutable containers and the formatting of correctly rendered defaults are preserved.
+Container subclass expressions and the new named-tuple, defaultdict, and Counter paths are checked by reconstructing their source with the model's referenced types and comparing contents, types, and instance state. Rendering raises `CadwynRenderError` if it cannot verify fidelity; use a named factory for such values. Repeated immutable containers and the formatting of correctly rendered defaults are preserved. Nonfinite floats use executable `float('inf')`, `float('-inf')`, and `float('nan')` expressions.
 
 ## Generating schemas without FastAPI
 

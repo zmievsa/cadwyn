@@ -1,5 +1,6 @@
 import ast
 import inspect
+import sys
 import textwrap
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
@@ -8,7 +9,7 @@ import typer
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from cadwyn._asts import get_fancy_repr, pop_docstring_from_cls_body
+from cadwyn._asts import _ReprContext, get_fancy_repr, pop_docstring_from_cls_body
 from cadwyn._utils import lenient_issubclass
 from cadwyn.exceptions import CadwynRenderError
 from cadwyn.schema_generation import (
@@ -133,7 +134,10 @@ def _render_pydantic_model(
                 ast.AnnAssign(
                     target=ast.Name(name),
                     annotation=ast.Name(get_fancy_repr(annotations[name])),
-                    value=_generate_field_ast(_without_redundant_none_aliases(attributes, annotations[name])),
+                    value=_generate_field_ast(
+                        _without_redundant_none_aliases(attributes, annotations[name]),
+                        vars(sys.modules[wrapper.cls.__module__]),
+                    ),
                     simple=1,
                 )
             )
@@ -207,17 +211,21 @@ def _without_redundant_none_aliases(attributes: dict[str, Any], annotation: Any)
     }
 
 
-def _generate_field_ast(field_attributes: dict[str, Any]) -> ast.Call:
+def _generate_field_ast(field_attributes: dict[str, Any], namespace: dict[str, Any]) -> ast.Call:
     return ast.Call(
         func=ast.Name("Field"),
         args=[],
         keywords=[
             ast.keyword(
                 arg=attr,
-                value=ast.parse(
-                    "type(None)" if attr_value is type(None) else get_fancy_repr(attr_value), mode="eval"
-                ).body,
+                value=ast.parse(_field_attribute_repr(attr_value, namespace), mode="eval").body,
             )
             for attr, attr_value in field_attributes.items()
         ],
     )
+
+
+def _field_attribute_repr(value: Any, namespace: dict[str, Any]) -> str:
+    context = _ReprContext()
+    context.namespace.update(namespace)
+    return "type(None)" if value is type(None) else get_fancy_repr(value, context)

@@ -1,4 +1,5 @@
 import re
+import struct
 import sys
 from collections import Counter, OrderedDict, defaultdict, namedtuple
 from collections.abc import Iterator
@@ -168,6 +169,127 @@ class RepresentationList(list):
         return f"RepresentationList({list.__repr__(self)})"
 
 
+class AnyPoint(NamedTuple):
+    x: Any
+    y: Any
+
+
+class MyCounter(Counter):
+    pass
+
+
+class MyDefaultDict(defaultdict):
+    pass
+
+
+class MyInt(int):
+    pass
+
+
+class MyStr(str):
+    __slots__ = ()
+
+
+class SlotList(list):
+    __slots__ = ("tag",)
+    tag: str
+
+    @override
+    def __repr__(self) -> str:
+        return f"SlotList({list.__repr__(self)})"
+
+
+class UnverifiableList(list):
+    @override
+    def __repr__(self) -> str:
+        return "(lambda: [1])()"
+
+
+class FunctionReprList(list):
+    @override
+    def __repr__(self) -> str:
+        return "len([1])"
+
+
+@pytest.mark.parametrize("default", [UnverifiableList([1]), FunctionReprList([1])])
+def test__render_model__unverifiable_subclass_constructor__should_fail_with_field_context(default: Any):
+    with pytest.raises(CadwynRenderError, match=r"ModelWithContainerDefault.value.*faithfully"):
+        render_container_default(default)
+
+
+def test__render_model__subclass_repr_loses_slot__should_fail_with_field_context():
+    default = SlotList([1])
+    default.tag = "keep"
+    with pytest.raises(CadwynRenderError, match=r"ModelWithContainerDefault.value.*faithfully"):
+        render_container_default(default)
+
+
+def test__render_model__namedtuple_with_nested_subclass__should_keep_none_value_and_type():
+    default = AnyPoint(RepresentationList([None]), 2)
+    actual = evaluate_rendered_default(default)
+    assert actual == default
+    assert type(actual) is AnyPoint
+    assert type(actual.x) is RepresentationList
+    assert actual.x[0] is None
+
+
+def test__render_model__counter_subclass__should_reject_changed_counts_with_field_context():
+    with pytest.raises(CadwynRenderError, match=r"ModelWithContainerDefault.value.*faithfully"):
+        render_container_default(MyCounter(a=3))
+
+
+def test__render_model__defaultdict_subclass__should_wrap_constructor_error_with_field_context():
+    with pytest.raises(CadwynRenderError, match=r"ModelWithContainerDefault.value.*MyDefaultDict"):
+        render_container_default(MyDefaultDict(int, a=1))
+
+
+@pytest.mark.parametrize(("default", "source", "base"), [(MyInt(1), "1", int), (MyStr("x"), "'x'", str)])
+def test__render_model__scalar_subclass__should_preserve_main_base_type_source(default: Any, source: str, base: type):
+    assert render_container_default(default) == (
+        f"class ModelWithContainerDefault(BaseModel):\n    value: Any = Field(default={source})"
+    )
+    actual = evaluate_rendered_default(default)
+    assert actual == default
+    assert type(actual) is base
+
+
+@pytest.mark.parametrize(
+    ("value", "expression"),
+    [(float("inf"), "float('inf')"), (float("-inf"), "float('-inf')"), (float("nan"), "float('nan')")],
+)
+@pytest.mark.parametrize(
+    ("wrap", "extract"),
+    [
+        (lambda value: value, lambda value: value),
+        (lambda value: AnyPoint(value, 2), lambda value: value.x),
+        (lambda value: defaultdict(int, a=value), lambda value: value["a"]),
+        (lambda value: Counter(a=value), lambda value: value["a"]),
+        (lambda value: RepresentationList([value]), lambda value: value[0]),
+    ],
+)
+def test__render_model__nonfinite_default__should_emit_executable_float_expression(
+    value: float, expression: str, wrap: Any, extract: Any
+):
+    default = wrap(value)
+    assert expression in render_container_default(default)
+    actual = extract(evaluate_rendered_default(default))
+    assert type(actual) is float
+    assert struct.pack("!d", actual) == struct.pack("!d", value)
+
+
+def test__render_model__finite_float_default__should_preserve_main_source_bytes():
+    assert render_container_default(-0.0) == (
+        "class ModelWithContainerDefault(BaseModel):\n    value: Any = Field(default=-0.0)"
+    )
+
+
+def test__render_model__subclass_repr_loses_attributes__should_fail_with_field_context():
+    default = RepresentationList([1])
+    default.__dict__["label"] = "keep"
+    with pytest.raises(CadwynRenderError, match=r"ModelWithContainerDefault.value.*faithfully"):
+        render_container_default(default)
+
+
 class ReferencedList(list):
     @override
     def __repr__(self) -> str:
@@ -204,12 +326,18 @@ def test__render_model__shared_subclass_with_reference_repr__should_preserve_mai
     assert restored[0] is restored[1] is REFERENCED_LIST
 
 
+def test__render_model__namedtuple_with_shared_reference__should_preserve_mutable_identity():
+    actual = evaluate_rendered_default(AnyPoint(REFERENCED_LIST, REFERENCED_LIST))
+    assert actual.x is actual.y is REFERENCED_LIST
+
+
 @pytest.mark.parametrize(
     ("default", "expected"),
     [
         (CustomSet({1}), "CustomSet({1})"),
         (CustomFrozenSet({1}), "CustomFrozenSet({1})"),
         (RepresentationList([1, 2]), "RepresentationList([1, 2])"),
+        (SlotList([1]), "SlotList([1])"),
         (CopyingList([[1], [2], [3]]), "CopyingList([[1], [2], [3]])"),
     ],
 )
