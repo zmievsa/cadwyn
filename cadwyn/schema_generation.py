@@ -204,21 +204,15 @@ class PydanticFieldWrapper:
         """
         if _has_default_and_default_factory(self.passed_field_attributes):
             # pydantic would fail to create the field, as it did when every model shared these attributes
+            # Pydantic rejects declarations with both, so an instruction has set one of them
             changed_by = next(
-                (
-                    change.changed_by
-                    for change in reversed(self.changes)
-                    if change.name in {"default", "default_factory"}
-                ),
-                None,
+                change.changed_by for change in reversed(self.changes) if change.name in {"default", "default_factory"}
             )
-            # Otherwise, the declaration has both (pydantic<2.12 accepts some) and pydantic fails as before
-            if changed_by is not None:  # pragma: no branch # Pydantic 2.11
-                raise InvalidGenerationInstructionError(
-                    f'Instructions leave the field "{name}" with both a default and a default_factory, which '
-                    "pydantic does not allow. The last instruction that changed one of them is for "
-                    f'"{changed_by.__name__}".'
-                )
+            raise InvalidGenerationInstructionError(
+                f'Instructions leave the field "{name}" with both a default and a default_factory, which '
+                "pydantic does not allow. The last instruction that changed one of them is for "
+                f'"{changed_by.__name__}".'
+            )
         field_copy = copy.copy(self)
         field_copy.annotation = copy.deepcopy(self.annotation, memo)
         field_copy.passed_field_attributes = {}
@@ -287,17 +281,12 @@ def _keep_last_of_default_and_default_factory(
     """
     if not _has_default_and_default_factory(attributes):
         return attributes
+    # Pydantic rejects declarations with both, so a change has set one of them
     last_set = next(
-        (
-            change.name
-            for change in reversed(changes)
-            if not change.is_deleted and change.name in {"default", "default_factory"}
-        ),
-        None,
+        change.name
+        for change in reversed(changes)
+        if not change.is_deleted and change.name in {"default", "default_factory"}
     )
-    if last_set is None:  # pragma: no cover # Pydantic 2.11
-        # The declaration has both (pydantic<2.12 accepts some) so pydantic fails as before
-        return attributes
     return {name: value for name, value in attributes.items() if name != _OTHER_DEFAULT_ATTRIBUTE[last_set]}
 
 
@@ -550,8 +539,12 @@ def _get_model_field_names(
     return names + [name for name in redefined_field_names if name not in names]
 
 
-# The signature of this private function differs between pydantic versions
-_REBUILD_MODEL_FIELDS_TAKES_CONFIG = "config_wrapper" in inspect.signature(rebuild_model_fields).parameters
+if "config_wrapper" not in inspect.signature(rebuild_model_fields).parameters:  # pragma: no cover
+    raise ImportError(
+        "Cadwyn does not support this version of pydantic: `rebuild_model_fields` of `pydantic._internal._fields` "
+        "doesn't take `config_wrapper`. Cadwyn uses it to resolve the fields of models without rebuilding them. "
+        "Please, open an issue on Cadwyn's GitHub."
+    )
 
 
 def _get_rebuilt_model_fields(model: type[BaseModel]) -> Union[dict[str, FieldInfo], None]:
@@ -564,60 +557,18 @@ def _get_rebuilt_model_fields(model: type[BaseModel]) -> Union[dict[str, FieldIn
         return model.model_fields
     ns_resolver = NsResolver(parent_namespace=unpack_lenient_weakvaluedict(model.__pydantic_parent_namespace__) or {})
     typevars_map = get_model_typevars_map(model)
-    if _REBUILD_MODEL_FIELDS_TAKES_CONFIG:
-        config_wrapper = ConfigWrapper(model.model_config, check=False)
-        # Pydantic evaluates the annotations of the fields in there
-        rebuilt_fields = _evaluate_user_annotations(
-            lambda: rebuild_model_fields(
-                model, config_wrapper=config_wrapper, ns_resolver=ns_resolver, typevars_map=typevars_map
-            )
+    config_wrapper = ConfigWrapper(model.model_config, check=False)
+    # Pydantic evaluates the annotations of the fields in there
+    rebuilt_fields = _evaluate_user_annotations(
+        lambda: rebuild_model_fields(
+            model, config_wrapper=config_wrapper, ns_resolver=ns_resolver, typevars_map=typevars_map
         )
-    else:  # pragma: no cover # Pydantic 2.11
-        rebuilt_fields = _rebuild_model_fields_without_changing_them(model, ns_resolver, typevars_map)
+    )
     if rebuilt_fields is _UNRESOLVED:
         # E.g. some names in the annotations are not defined yet
         return None
     # Pydantic >= 2.13 also returns the info about the extra fields
     return rebuilt_fields[0] if isinstance(rebuilt_fields, tuple) else rebuilt_fields
-
-
-def _rebuild_model_fields_without_changing_them(  # pragma: no cover # Pydantic 2.11
-    model: type[BaseModel], ns_resolver: NsResolver, typevars_map: Any
-) -> Any:
-    """Do what rebuild_model_fields of pydantic 2.11 does without changing the fields of the model.
-
-    Pydantic 2.11 merges the `Annotated` metadata of a field into the FieldInfo assigned to the field in place,
-    so every call would add that metadata (e.g. validators) to the field of the model once more.
-    """
-    from pydantic._internal._typing_extra import eval_type
-    from typing_inspection.introspection import AnnotationSource
-
-    rebuilt_fields: dict[str, FieldInfo] = {}
-    with ns_resolver.push(model):
-        for name, field_info in model.__pydantic_fields__.items():
-            if field_info._complete:
-                rebuilt_fields[name] = field_info
-                continue
-            types_namespace = ns_resolver.types_namespace
-            evaluated_annotation = _evaluate_user_annotations(
-                lambda field_info=field_info, types_namespace=types_namespace: eval_type(
-                    field_info._original_annotation, *types_namespace
-                )
-            )
-            if evaluated_annotation is _UNRESOLVED:
-                return _UNRESOLVED
-            annotation = replace_types(evaluated_annotation, typevars_map)
-            assignment = field_info._original_assignment
-            if assignment is PydanticUndefined:
-                rebuilt_fields[name] = FieldInfo.from_annotation(annotation, _source=AnnotationSource.CLASS)
-                continue
-            if isinstance(assignment, FieldInfo):
-                assignment = copy.copy(assignment)
-                assignment.metadata = list(assignment.metadata)
-            rebuilt_fields[name] = FieldInfo.from_annotated_attribute(
-                annotation, assignment, _source=AnnotationSource.CLASS
-            )
-    return rebuilt_fields
 
 
 def _get_head_model_references(

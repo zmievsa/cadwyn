@@ -56,7 +56,7 @@ Cadwyn:
 
 1. Receives a request for API version `V`
 2. Validates the request using the schemas from `V`
-3. Marshalls the unmarshalled request body into a raw data structure using `BaseModel.model_dump` with **exclude_unset=True**
+3. Marshalls the unmarshalled request body into a raw data structure using `BaseModel.model_dump` with **exclude_unset=True** and without computed fields, which `latest` computes itself
 4. Passes the request through all request migrations from `V` to `latest`
 5. Validates the request using `latest` schemas
 
