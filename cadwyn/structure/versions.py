@@ -1830,6 +1830,24 @@ def _rescue_body(body_field: ModelField, data: Any) -> Any:
     spec = _get_restorer_spec(annotation)
     if spec is None or not _is_body_field_safe(body_field, spec):
         return data
+    return _restore_surely_failing_data(spec, data)
+
+
+def _rescue_model_data(model: type[BaseModel], data: Any) -> Any:
+    """Restore the validation aliases of `model_dump(by_alias=True)` data only if `model.model_validate` surely fails.
+
+    It's what `_rescue_body` does for a body field, for data that the model itself validates.
+    """
+    if not _annotation_reaches_models_with(model, _get_failing_renames, all_fields=False):
+        return data
+    return _restore_surely_failing_data(("model", model), data)
+
+
+def _restore_surely_failing_data(spec: "_RestorerSpec", data: Any) -> Any:
+    """Restore the data only if it surely fails validation as is, so that we decide what to validate before validating.
+
+    Validators can have side effects, so the data is validated only once, whichever data it is.
+    """
     _RESTORATION.has_failing_renames = False
     restored = _restore_data(spec, data)
     return restored if _RESTORATION.has_failing_renames else data
@@ -2519,10 +2537,11 @@ def _rescue_response(response_field: ModelField, head_response_model: object, co
     """Rescue the migrated `_prepare_response_content` of `content` if it surely fails validation due to dumped keys.
 
     That's the case when a required field, or a model that forbids extra keys, gets a dumped key instead of
-    a validation key. We validate the response with its validation aliases restored, and use the result only if it
-    passes. FastAPI then validates the result again, which doesn't run any validators of the validated models.
-    Otherwise, FastAPI validates the response as it is, as it always did, and responses that pass stay exactly
-    as they are, even if a field gets its default instead of its value.
+    a validation key. We restore its validation aliases and let FastAPI validate the restored response, so its
+    validators run once, like in FastAPI without Cadwyn. The response fails as it is anyway, so if the restored
+    response fails too, FastAPI raises its errors instead. Otherwise, FastAPI validates the response as it is,
+    as it always did, and responses that pass stay exactly as they are, even if a field gets its default instead
+    of its value.
     """
     restored = _rescue_body(response_field, data)
     if restored is data:
@@ -2533,18 +2552,7 @@ def _rescue_response(response_field: ModelField, head_response_model: object, co
     head_spec = _get_restorer_spec(head_response_model)
     if head_spec is None or not _is_dumped_from_models(content, head_spec):
         return data
-    # The response fails as it is anyway, so whatever goes wrong while we try to rescue it, we don't swallow
-    # anything new: FastAPI validates the response as it is and raises the original error as before
-    try:
-        value, errors = response_field.validate(restored, {}, loc=("response",))
-    except Exception:  # noqa: BLE001
-        return data
-    return data if errors else value
-
-
-def _restore_model_validation_aliases(model: type[BaseModel], data: Any) -> Any:
-    """Restore the validation aliases in `model_dump(by_alias=True)` data that `model.model_validate` validates"""
-    return _restore_data(("model", model), data)
+    return restored
 
 
 def _is_dumped_from_models(content: Any, spec: "_RestorerSpec") -> bool:

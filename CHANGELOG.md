@@ -25,10 +25,16 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
         - A response or a body that is an object of several members that don't inherit from each other (e.g. `class Both(A, B)` for `Union[A, B]`). Return or validate an object of only one of them (e.g. make `Both` a subclass of only one member), or migrate the endpoint by its path.
         - A union body param with an alias (e.g. `body: Union[A, B] = Body(alias="payload")`). Remove the alias, or migrate the endpoint by its path.
     - A migration of a member with `migrate_http_errors=True` now fails at startup with a `RouterGenerationError` if a union route exists in a version that it migrates, because an HTTP error isn't any member of the union. Pass `migrate_http_errors=False`, and migrate the errors of these endpoints by their paths.
+- `migrate_response_body()` now restores the validation aliases of a body only if the body surely fails without them, which is the rule that routes already follow: a required field, or a model that forbids extra keys, gets a dumped key (e.g. `x` of `Field(alias="x", validation_alias="v")`) instead of its validation key. Before, it also restored them when the body failed for another reason, e.g. a model validator that rejects the default that an optional field gets instead of its value. Such bodies now raise the `ValidationError` of the body. To migrate, make your response migrations set the validation key (`v`) of such fields (#565).
+- When Cadwyn restores the validation aliases of a response that fails without them, and the restored response fails too, the error is now the one of the restored response, e.g. `int_parsing` or an exception that a validator raises, instead of the `missing` error of the response as it was. This applies to route responses (`ResponseValidationError`) and to `migrate_response_body()` (`ValidationError`). Such responses failed before too. To migrate, update exception handlers and tests that check these errors to expect the errors of the restored response (#565).
 
 ### Changed
 
 - The type hints of `convert_request_to_next_version_for()` and `convert_response_to_previous_version_for()` now accept unions of schemas (e.g. `Union[A, B]` or `A | B`), so type checkers no longer reject migrations declared for a union (#530).
+
+### Fixed
+
+- Responses whose validation aliases Cadwyn restores now go through the validators of their models once, like in FastAPI without Cadwyn. Before, routes validated the restored response and FastAPI validated it again, so `mode="after"` model validators ran twice, and `migrate_response_body()` validated the body as it was and then the restored body, so the validators of the fields that passed ran twice. Validators with side effects, such as one that increments a value, gave wrong values (#565).
 
 ## [8.2.0]
 
