@@ -108,6 +108,7 @@ from tests._resources.utils import (
     FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA,
 )
 from tests.conftest import (
+    CadwynTestClient,
     CreateVersionedApp,
     CreateVersionedClients,
     client,
@@ -3855,16 +3856,27 @@ def test__response_migration__with_validation_aliases_in_dicts_other_models_or_u
 
 
 @pytest.mark.parametrize("fails_on_third_validation", [False, True], ids=["counts", "rejects_third_validation"])
+@pytest.mark.parametrize(
+    ("value_field", "expected_value"),
+    [
+        # It passes with the default, so we don't touch it
+        pytest.param(Field(default=0, alias="x", validation_alias="v"), 0, id="passes_as_is"),
+        # It surely fails with the dumped key, so we restore the validation key
+        pytest.param(Field(alias="x", validation_alias="v"), 7, id="rescued"),
+    ],
+)
 def test__response_migration__with_validation_aliases__should_validate_the_response_as_many_times_as_before(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
     fails_on_third_validation: bool,
+    value_field: Any,
+    expected_value: int,
 ):
     validations: list[str] = []
 
     class SchemaWithStatefulValidator(BaseModel):
-        value: int = Field(default=0, alias="x", validation_alias="v")
+        value: int = value_field
         data: Any
 
         @model_validator(mode="after")
@@ -3883,9 +3895,44 @@ def test__response_migration__with_validation_aliases__should_validate_the_respo
 
     for version_client in clients.values():
         validations.clear()
-        # The endpoint validates the response once and FastAPI validates it once. It passes, so we don't touch it.
-        assert version_client.get(test_path).json() == {"x": 0, "data": {"count": 2}}
+        # The endpoint validates the response once and FastAPI validates it once, like FastAPI without Cadwyn
+        assert version_client.get(test_path).json() == {"x": expected_value, "data": {"count": 2}}
         assert len(validations) == 2
+
+
+def test__response_migration__with_validation_aliases_and_value_that_fails__should_validate_the_response_once(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    validated_values: list[int] = []
+
+    class SchemaWithCountingFieldValidator(BaseModel):
+        value: int = Field(alias="x", validation_alias="v")
+        other: int
+
+        @field_validator("other")
+        @classmethod
+        def count_validations(cls, other: int) -> int:
+            validated_values.append(other)
+            return other
+
+    @router.get(test_path, response_model=SchemaWithCountingFieldValidator)
+    async def endpoint():
+        return SchemaWithCountingFieldValidator.model_validate({"v": 7, "other": 1})
+
+    @convert_response_to_previous_version_for(SchemaWithCountingFieldValidator)
+    def migrator(response: ResponseInfo):
+        response.body["x"] = "not an int"
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    validated_values.clear()
+    # The endpoint validates the response once and FastAPI validates the restored response once
+    with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+        clients["2000-01-01"].get(test_path)
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors()] == [("int_parsing", ("response", "v"))]
+    assert validated_values == [1, 1]
 
 
 class SchemaWithValidatorThatRaisesTypeError(BaseModel):
@@ -3899,7 +3946,7 @@ class SchemaWithValidatorThatRaisesTypeError(BaseModel):
         return value
 
 
-def test__response_migration__with_rescue_that_raises__should_fail_with_the_original_error(
+def test__response_migration__with_rescue_that_raises__should_raise_the_error_of_the_validator(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -3914,14 +3961,13 @@ def test__response_migration__with_rescue_that_raises__should_fail_with_the_orig
 
     clients = create_versioned_clients(version_change(migrator=migrator))
 
-    # The restored response makes the validator raise, so the error is the one that the response had before
-    with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+    # The response fails as it is anyway, and FastAPI validates the restored response, which makes the validator raise
+    with pytest.raises(TypeError, match="Negative values cannot be processed"):
         clients["2000-01-01"].get(test_path)
-    assert [error["type"] for error in exc_info.value.errors()] == ["missing"]
     assert clients["2001-01-01"].get(test_path).json() == {"x": 7}
 
 
-def test__response_migration__with_value_that_the_version_rejects__should_fail_as_before(
+def test__response_migration__with_value_that_the_version_rejects__should_fail_with_the_error_of_the_value(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -3932,11 +3978,62 @@ def test__response_migration__with_value_that_the_version_rejects__should_fail_a
 
     clients = create_versioned_clients(version_change(schema(InnerSchemaWithValidationAlias).field("value").had(ge=10)))
 
-    # The restored response fails too, so the error is the one that the response had before
+    # The response fails as it is anyway, and FastAPI validates the restored response, which fails because of the value
     with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
         clients["2000-01-01"].get(test_path)
-    assert [error["type"] for error in exc_info.value.errors()] == ["missing"]
+    assert [error["type"] for error in exc_info.value.errors()] == ["greater_than_equal"]
     assert clients["2001-01-01"].get(test_path).json() == {"x": 5}
+
+
+# The field info says that the field is required, but the core schema of its type gives it a default when it's missing
+IntWithCoreSchemaDefault = Annotated[
+    int, GetPydanticSchema(lambda source, handler: core_schema.with_default_schema(handler(source), default=0))
+]
+
+
+class SchemaWithCoreSchemaDefaultAndValidationAlias(BaseModel):
+    value: IntWithCoreSchemaDefault = Field(alias="x", validation_alias="v", ge=0)
+
+
+def _create_clients_with_core_schema_default(
+    create_versioned_clients: CreateVersionedClients, test_path: str, router: VersionedAPIRouter, migrated_value: int
+) -> dict[str, CadwynTestClient]:
+    @router.get(test_path, response_model=SchemaWithCoreSchemaDefaultAndValidationAlias)
+    async def endpoint():
+        return SchemaWithCoreSchemaDefaultAndValidationAlias.model_validate({"v": 7})
+
+    @convert_response_to_previous_version_for(SchemaWithCoreSchemaDefaultAndValidationAlias)
+    def migrator(response: ResponseInfo):
+        response.body["x"] = migrated_value
+
+    return create_versioned_clients(version_change(migrator=migrator))
+
+
+def test__response_migration__with_field_that_gets_its_default_from_core_schema__client_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    clients = _create_clients_with_core_schema_default(create_versioned_clients, test_path, router, migrated_value=3)
+
+    assert clients["2000-01-01"].get(test_path).json() == {"x": 3}
+    assert clients["2001-01-01"].get(test_path).json() == {"x": 7}
+
+
+def test__response_migration__with_field_that_gets_its_default_from_core_schema__should_fail_with_the_values_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    clients = _create_clients_with_core_schema_default(create_versioned_clients, test_path, router, migrated_value=-1)
+
+    # The model rejects the value, so the client doesn't silently get the default of the field instead
+    with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+        clients["2000-01-01"].get(test_path)
+    assert [(error["type"], error["loc"], error["input"]) for error in exc_info.value.errors()] == [
+        ("greater_than_equal", ("response", "v"), -1)
+    ]
+    assert clients["2001-01-01"].get(test_path).json() == {"x": 7}
 
 
 class SchemaWithoutAliases(BaseModel):
@@ -9795,12 +9892,6 @@ def test__request_body_migration__with_required_value_that_the_head_rejects__sho
     ]
 
 
-# The field info says that the field is required, but the core schema of its type gives it a default when it's missing
-IntWithCoreSchemaDefault = Annotated[
-    int, GetPydanticSchema(lambda source, handler: core_schema.with_default_schema(handler(source), default=0))
-]
-
-
 class SchemaWithCoreSchemaDefaultAndStricterHead(BaseModel):
     value: IntWithCoreSchemaDefault = Field(alias="x", validation_alias="v", ge=10)
 
@@ -10311,11 +10402,14 @@ def test__manual_response_migrations__with_validation_aliases_that_pass_validati
 
 
 @pytest.mark.parametrize(
-    "latest_body",
-    [pytest.param({}, id="nothing_to_restore"), pytest.param({"x": "not an int"}, id="invalid_restored_value")],
+    ("latest_body", "expected_error"),
+    [
+        pytest.param({}, ("missing", ("v",)), id="nothing_to_restore"),
+        pytest.param({"x": "not an int"}, ("int_parsing", ("v",)), id="invalid_restored_value"),
+    ],
 )
-def test__manual_response_migrations__with_body_that_fails_with_validation_aliases__should_fail_as_before(
-    latest_body: dict[str, Any],
+def test__manual_response_migrations__with_body_that_fails_with_validation_aliases__should_raise_the_error_of_the_body(
+    latest_body: dict[str, Any], expected_error: tuple[str, tuple[str, ...]]
 ):
     version_bundle = VersionBundle(Version("2001-01-01"), Version("2000-01-01"))
 
@@ -10323,17 +10417,89 @@ def test__manual_response_migrations__with_body_that_fails_with_validation_alias
         migrate_response_body(
             version_bundle, InnerSchemaWithValidationAlias, latest_body=latest_body, version="2000-01-01"
         )
-    assert [error["type"] for error in exc_info.value.errors()] == ["missing"]
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors()] == [expected_error]
 
 
-def test__manual_response_migrations__with_rescue_that_raises__should_fail_with_the_original_error():
+@pytest.mark.parametrize(
+    "latest_body",
+    [pytest.param({"x": 7, "other": 1}, id="rescued"), pytest.param({"v": 7, "other": 1}, id="passes_as_is")],
+)
+def test__manual_response_migrations__with_validation_aliases__should_validate_the_body_once(
+    latest_body: dict[str, Any],
+):
+    validated_values: list[int] = []
+
+    class SchemaWithCountingFieldValidator(BaseModel):
+        value: int = Field(alias="x", validation_alias="v")
+        other: int
+
+        @field_validator("other")
+        @classmethod
+        def count_validations(cls, other: int) -> int:
+            validated_values.append(other)
+            return other
+
     version_bundle = VersionBundle(Version("2001-01-01"), Version("2000-01-01"))
 
+    migrated = migrate_response_body(
+        version_bundle, SchemaWithCountingFieldValidator, latest_body=latest_body, version="2000-01-01"
+    )
+
+    assert migrated.model_dump(by_alias=True) == {"x": 7, "other": 1}
+    assert validated_values == [1]
+
+
+def test__manual_response_migrations__with_body_that_fails_for_another_reason__should_not_restore_validation_aliases():
+    class SchemaWithDefaultThatTheValidatorRejects(BaseModel):
+        value: int = Field(default=0, alias="x", validation_alias="v")
+
+        @model_validator(mode="after")
+        def check_value(self) -> Self:
+            if self.value == 0:
+                raise ValueError("The value is required")
+            return self  # pragma: no cover # Only if the test fails
+
+    version_bundle = VersionBundle(Version("2001-01-01"), Version("2000-01-01"))
+
+    # The dumped key doesn't make the body surely fail, so we validate it as it is, like routes do
     with pytest.raises(ValidationError) as exc_info:
+        migrate_response_body(
+            version_bundle, SchemaWithDefaultThatTheValidatorRejects, latest_body={"x": 5}, version="2000-01-01"
+        )
+    assert [error["type"] for error in exc_info.value.errors()] == ["value_error"]
+
+
+def test__manual_response_migrations__with_field_that_gets_its_default_from_core_schema__should_get_the_value():
+    version_bundle = VersionBundle(Version("2001-01-01"), Version("2000-01-01"))
+
+    migrated = migrate_response_body(
+        version_bundle, SchemaWithCoreSchemaDefaultAndValidationAlias, latest_body={"x": 7}, version="2000-01-01"
+    )
+
+    # The body gets the value under its dumped key instead of the default of the field
+    assert migrated.model_dump(by_alias=True) == {"x": 7}
+
+
+def test__manual_response_migrations__with_field_that_gets_its_default_from_core_schema__should_raise_the_error():
+    version_bundle = VersionBundle(Version("2001-01-01"), Version("2000-01-01"))
+
+    # The model rejects the value, so the body doesn't silently get the default of the field instead
+    with pytest.raises(ValidationError) as exc_info:
+        migrate_response_body(
+            version_bundle, SchemaWithCoreSchemaDefaultAndValidationAlias, latest_body={"x": -1}, version="2000-01-01"
+        )
+    assert [(error["type"], error["loc"], error["input"]) for error in exc_info.value.errors()] == [
+        ("greater_than_equal", ("v",), -1)
+    ]
+
+
+def test__manual_response_migrations__with_rescue_that_raises__should_raise_the_error_of_the_validator():
+    version_bundle = VersionBundle(Version("2001-01-01"), Version("2000-01-01"))
+
+    with pytest.raises(TypeError, match="Negative values cannot be processed"):
         migrate_response_body(
             version_bundle, SchemaWithValidatorThatRaisesTypeError, latest_body={"x": -1}, version="2000-01-01"
         )
-    assert [error["type"] for error in exc_info.value.errors()] == ["missing"]
 
 
 def test__request_and_response_migrations__with_multiple_schemas_in_converters(
