@@ -1,12 +1,20 @@
+import dataclasses
 import re
-from enum import KEEP, Enum, Flag, FlagBoundary, IntEnum, IntFlag, auto
-from typing import Any
+from collections.abc import Callable
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
+from enum import KEEP, Enum, Flag, FlagBoundary, IntEnum, IntFlag, StrEnum, auto, member, nonmember
+from pathlib import PurePosixPath
+from typing import Any, Self
+from uuid import UUID
 
 import pytest
+from pydantic import TypeAdapter
 from typing_extensions import override
 
 from cadwyn.exceptions import (
     InvalidGenerationInstructionError,
+    SchemaGenerationError,
 )
 from cadwyn.structure import enum
 from tests.conftest import CreateRuntimeSchemas, serialize_enum, version_change
@@ -331,3 +339,652 @@ def test__enum_didnt_have__copy_of_enum_with_unhashable_values_called_with_lates
     assert old_enum(EnumWithUnhashableValues.a) is old_enum.a
     with pytest.raises(ValueError, match="is not a valid EnumWithUnhashableValues"):
         old_enum(EnumWithUnhashableValues.b)
+
+
+def _observe_enum(enum_cls: Any) -> list[Any]:
+    return [
+        [(member.name, member.value) for member in enum_cls],
+        [(name, member.name) for name, member in enum_cls.__members__.items()],
+        {member.value: enum_cls(member.value).name for member in enum_cls},
+    ]
+
+
+class EnumWithAlias(Enum):
+    a = 1
+    b = 1  # noqa: PIE796
+    c = 2
+
+
+class StrEnumWithAlias(str, Enum):
+    a = "a"
+    b = "a"  # noqa: PIE796
+    c = "c"
+
+
+_ENUM_WITH_ALIAS_NAME = EnumWithAlias.__name__
+_STR_ENUM_WITH_ALIAS_NAME = StrEnumWithAlias.__name__
+
+
+@pytest.mark.parametrize(
+    ("instruction", "hand_written"),
+    [
+        (enum(EnumWithAlias).didnt_have("c"), Enum(_ENUM_WITH_ALIAS_NAME, [("a", 1), ("b", 1)])),
+        (enum(EnumWithAlias).didnt_have("a"), Enum(_ENUM_WITH_ALIAS_NAME, [("b", 1), ("c", 2)])),
+        (enum(EnumWithAlias).didnt_have("b"), Enum(_ENUM_WITH_ALIAS_NAME, [("a", 1), ("c", 2)])),
+        (enum(EnumWithAlias).had(d=2), Enum(_ENUM_WITH_ALIAS_NAME, [("a", 1), ("b", 1), ("c", 2), ("d", 2)])),
+        (enum(StrEnumWithAlias).didnt_have("c"), Enum(_STR_ENUM_WITH_ALIAS_NAME, [("a", "a"), ("b", "a")], type=str)),
+        (enum(StrEnumWithAlias).didnt_have("a"), Enum(_STR_ENUM_WITH_ALIAS_NAME, [("b", "a"), ("c", "c")], type=str)),
+    ],
+)
+def test__enum_instructions__enum_with_alias__should_behave_like_hand_written_enum(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    instruction: Any,
+    hand_written: type[Enum],
+):
+    original = instruction.enum
+    models = create_runtime_schemas(version_change(instruction))
+
+    assert _observe_enum(models["2000-01-01"][original]) == _observe_enum(hand_written)
+    assert _observe_enum(models["2001-01-01"][original]) == _observe_enum(original)
+
+
+class FlagWithMultiBitAlias(Flag):
+    read = 1
+    write = 2
+    read_write = 3
+    execute = 4
+
+
+def test__enum_didnt_have__flag_with_multi_bit_alias__should_behave_like_hand_written_flag(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(FlagWithMultiBitAlias).didnt_have("execute")))
+    old_flag = models["2000-01-01"][FlagWithMultiBitAlias]
+    hand_written_definition = [("read", 1), ("write", 2), ("read_write", 3)]
+
+    assert _observe_enum(old_flag) == _observe_enum(Flag(FlagWithMultiBitAlias.__name__, hand_written_definition))
+    assert old_flag.read_write is old_flag(3)
+    assert old_flag.read_write.value == 3
+
+
+class EnumWithNonmembers(Enum):
+    a = 1
+    b = 2
+    limit = nonmember(10)
+    _limit = nonmember(20)
+    __private_limit = 30
+
+
+def test__enum_didnt_have__enum_with_nonmember_attributes__should_keep_them_as_attributes(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(EnumWithNonmembers).didnt_have("b")))
+    old_enum = models["2000-01-01"][EnumWithNonmembers]
+
+    assert list(old_enum.__members__) == ["a"]
+    assert old_enum.limit == 10
+    assert old_enum._limit == 20
+    assert old_enum._EnumWithNonmembers__private_limit == 30  # ty: ignore[unresolved-attribute]
+
+
+class EnumWithFunctionMember(Enum):
+    a = 1
+    b = 2
+
+    @member
+    def function() -> int:
+        return 3
+
+
+def test__enum_didnt_have__enum_with_function_member__should_keep_the_function_a_member(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(EnumWithFunctionMember).didnt_have("b")))
+    old_enum = models["2000-01-01"][EnumWithFunctionMember]
+
+    assert list(old_enum.__members__) == ["a", "function"]
+    assert isinstance(old_enum.function, old_enum)
+    assert old_enum.function.value() == 3
+
+
+class EnumWithCustomNewThatTakesMoreThanTheValue(Enum):
+    def __new__(cls, value: int, mass: float) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.mass = mass  # ty: ignore[unresolved-attribute]
+        return obj
+
+    earth = (1, 5.97)
+    mars = (2, 0.642)
+
+
+class EnumBaseWithCustomNewThatTakesMoreThanTheValue(Enum):
+    def __new__(cls, value: int, mass: float) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.mass = mass  # ty: ignore[unresolved-attribute]
+        return obj
+
+
+class EnumThatInheritsCustomNewThatTakesMoreThanTheValue(EnumBaseWithCustomNewThatTakesMoreThanTheValue):
+    earth = (1, 5.97)
+    mars = (2, 0.642)
+
+
+@pytest.mark.parametrize(
+    "original", [EnumWithCustomNewThatTakesMoreThanTheValue, EnumThatInheritsCustomNewThatTakesMoreThanTheValue]
+)
+def test__enum_didnt_have__custom_new_that_takes_more_than_the_value__should_raise_schema_generation_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: type[Enum],
+):
+    with pytest.raises(
+        SchemaGenerationError,
+        match=re.escape(
+            f'Cadwyn can\'t copy "{original.__name__}" for its versions because its __new__ failed to create the '
+            "members from their values: TypeError("
+        ),
+    ):
+        create_runtime_schemas(version_change(enum(original).didnt_have("mars")))
+
+
+class EnumWithCustomNewThatChangesTheValue(Enum):
+    def __new__(cls, value: int) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value * 10
+        return obj
+
+    a = 1
+    b = 2
+
+
+class EnumWithCustomNewThatSetsAttributeFromOtherArg(Enum):
+    def __new__(cls, value: int, label: str = "default") -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.label = label  # ty: ignore[unresolved-attribute]
+        return obj
+
+    a = (1, "first")
+    b = (2, "second")
+
+
+class StrEnumWithCustomNewThatTakesStrFromOtherArg(str, Enum):
+    def __new__(cls, value: str, text: str = "default") -> Self:
+        obj = str.__new__(cls, text)
+        obj._value_ = value
+        return obj
+
+    a = ("a", "first")
+    b = ("b", "second")
+
+
+class EnumWithCustomNewThatChangesTheExponentOfTheValue(Enum):
+    def __new__(cls, value: str, precision: str = "0.1") -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = Decimal(value).quantize(Decimal(precision))
+        return obj
+
+    a = ("1", "0.01")
+    b = ("2", "0.01")
+
+
+class EnumWithCustomNewThatChangesTheExponentOfAttribute(Enum):
+    def __new__(cls, value: int, price: str = "1.0") -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.price = Decimal(price)  # ty: ignore[unresolved-attribute]
+        return obj
+
+    a = (1, "1.00")
+    b = (2, "1.00")
+
+
+class EnumWithCustomNewThatChangesTheTypeOfNestedValue(Enum):
+    def __new__(cls, value: int, enabled: object = True) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.metadata = {"enabled": enabled}  # ty: ignore[unresolved-attribute]
+        return obj
+
+    a = (1, 1)
+    b = (2, 1)
+
+
+@dataclasses.dataclass
+class _TagWithLabelThatIsntCompared:
+    id: int
+    label: str = dataclasses.field(compare=False)
+
+
+class EnumWithCustomNewThatChangesFieldThatIsntCompared(Enum):
+    def __new__(cls, value: int, label: str = "default") -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.tag = _TagWithLabelThatIsntCompared(value, label)  # ty: ignore[unresolved-attribute]
+        return obj
+
+    a = (1, "first")
+    b = (2, "second")
+
+
+@pytest.mark.parametrize(
+    ("original", "value"),
+    [
+        (EnumWithCustomNewThatChangesTheExponentOfAttribute, 1),
+        (EnumWithCustomNewThatChangesTheTypeOfNestedValue, 1),
+        (EnumWithCustomNewThatChangesFieldThatIsntCompared, 1),
+        (EnumWithCustomNewThatSetsAttributeFromOtherArg, 1),
+        (StrEnumWithCustomNewThatTakesStrFromOtherArg, "a"),
+    ],
+)
+def test__enum_didnt_have__custom_new_that_doesnt_recreate_member_from_value__should_raise_schema_generation_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: type[Enum],
+    value: Any,
+):
+    with pytest.raises(
+        SchemaGenerationError,
+        match=re.escape(
+            f"Cadwyn can't copy \"{original.__name__}\" for its versions because its __new__ doesn't recreate the "
+            f'member "a" from its value {value!r}. Cadwyn only knows the values of the members, not the arguments '
+            "that __new__ got. Compute the other attributes of the members from their values instead, e.g. with a "
+            "property."
+        ),
+    ):
+        create_runtime_schemas(version_change(enum(original).didnt_have("b")))
+
+
+_LABELS = {1: "first", 2: "second"}
+
+
+class EnumWithCustomNewThatRecreatesMembersFromValue(Enum):
+    def __new__(cls, value: int, label: "str | None" = None) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.label = label or _LABELS[value]  # ty: ignore[unresolved-attribute]
+        return obj
+
+    a = 1
+    b = 2
+
+
+class StrEnumBaseThatAcceptsSeveralValues(str, Enum):
+    def __new__(cls, *values: str) -> Self:
+        value = "".join(values)
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        return obj
+
+
+class StrEnumThatInheritsCustomNewThatRecreatesMembersFromValue(StrEnumBaseThatAcceptsSeveralValues):
+    a = "a"
+    b = "b"
+
+
+class StdlibStrEnum(StrEnum):
+    a = "a"
+    b = "b"
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        EnumWithCustomNewThatRecreatesMembersFromValue,
+        StrEnumThatInheritsCustomNewThatRecreatesMembersFromValue,
+        StdlibStrEnum,
+    ],
+)
+def test__enum_didnt_have__custom_new_that_recreates_members_from_value__should_behave_like_original(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: Any,
+):
+    models = create_runtime_schemas(version_change(enum(original).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][original]
+
+    assert _observe_enum(old_enum) == [[("a", original.a.value)], [("a", "a")], {original.a.value: "a"}]
+    assert vars(old_enum.a).keys() == vars(original.a).keys()
+    assert getattr(old_enum.a, "label", None) == getattr(original.a, "label", None)
+
+
+def test__enum_had__custom_new__should_pass_the_definition_to_new_like_hand_written_enum(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(
+        version_change(enum(EnumWithCustomNewThatRecreatesMembersFromValue).had(c=(3, "third")))
+    )
+    old_enum: Any = models["2000-01-01"][EnumWithCustomNewThatRecreatesMembersFromValue]
+
+    assert [(m.name, m.value, m.label) for m in old_enum] == [("a", 1, "first"), ("b", 2, "second"), ("c", 3, "third")]
+
+
+def test__enum_didnt_have__str_mixin_enum__copy_members_should_have_their_own_dict(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(StrEnumWithAlias).didnt_have("c")))
+
+    assert vars(models["2000-01-01"][StrEnumWithAlias].a)["_value_"] == "a"
+
+
+class StdlibStrEnumWithInitThatSetsNewObject(StrEnum):
+    a = "2000-01-01"
+    b = "2001-01-01"
+
+    def __init__(self, value: str) -> None:
+        self.date = date.fromisoformat(value)
+
+
+class EnumWithCustomNewAndInitThatSetsNewObject(Enum):
+    def __new__(cls, value: str) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        return obj
+
+    def __init__(self, value: str) -> None:
+        self.date = date.fromisoformat(value)
+
+    a = "2000-01-01"
+    b = "2001-01-01"
+
+
+@pytest.mark.parametrize(
+    "original", [StdlibStrEnumWithInitThatSetsNewObject, EnumWithCustomNewAndInitThatSetsNewObject]
+)
+def test__enum_didnt_have__init_that_sets_equal_new_object__should_keep_the_attribute(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: Any,
+):
+    models = create_runtime_schemas(version_change(enum(original).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][original]
+
+    assert [(m.name, m.value, m.date) for m in old_enum] == [("a", "2000-01-01", date(2000, 1, 1))]
+
+
+@pytest.mark.parametrize("flag_base", [Flag, IntFlag])
+def test__enum_didnt_have__flag_with_custom_new_after_inverting_a_member__should_copy_the_flag(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    flag_base: type[Flag],
+):
+    def __new__(cls: Any, value: int) -> Any:  # noqa: N807
+        obj = object.__new__(cls) if flag_base is Flag else int.__new__(cls, value)
+        obj._value_ = value
+        return obj
+
+    original: Any = flag_base("FlagWithCustomNew", {"__new__": __new__, "read": 1, "write": 2, "execute": 4})
+    assert ~original.read == original.write | original.execute
+
+    models = create_runtime_schemas(version_change(enum(original).didnt_have("execute")))
+    old_flag: Any = models["2000-01-01"][original]
+
+    assert serialize_enum(old_flag) == {"read": 1, "write": 2}
+    assert ~old_flag.read is old_flag.write
+
+
+class EnumWithAliasAndInitThatSetsTheName(Enum):
+    def __new__(cls, value: int) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        return obj
+
+    def __init__(self, value: int) -> None:
+        self.label = self.name
+
+    a = 1
+    b = 1  # noqa: PIE796
+    c = 2
+
+
+def test__enum_didnt_have__canonical_member_of_alias_with_custom_new__should_behave_like_hand_written_enum(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(EnumWithAliasAndInitThatSetsTheName).didnt_have("a")))
+    old_enum: Any = models["2000-01-01"][EnumWithAliasAndInitThatSetsTheName]
+
+    assert [(name, m.name, m.value, m.label) for name, m in old_enum.__members__.items()] == [
+        ("b", "b", 1, "b"),
+        ("c", "c", 2, "c"),
+    ]
+
+
+class EnumBaseWithSlotThatCustomNewSets(Enum):
+    __slots__ = ("mass",)
+
+    def __new__(cls, value: int, mass: float = 0) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.mass = mass
+        return obj
+
+
+class EnumThatInheritsSlotThatCustomNewSets(EnumBaseWithSlotThatCustomNewSets):
+    earth = (1, 5.97)
+    mars = (2, 0.642)
+
+
+class EnumWithSlotThatCustomNewSets(Enum):
+    __slots__ = ("mass",)
+
+    def __new__(cls, value: int, mass: float = 0) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.mass = mass
+        return obj
+
+    earth = (1, 5.97)
+    mars = (2, 0.642)
+
+
+class EnumBaseWithIteratorSlotThatCustomNewSets(Enum):
+    __slots__ = iter(["mass"])
+
+    def __new__(cls, value: int, mass: float = 0) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.mass = mass  # ty: ignore[unresolved-attribute]
+        return obj
+
+
+class EnumThatInheritsIteratorSlotThatCustomNewSets(EnumBaseWithIteratorSlotThatCustomNewSets):
+    earth = (1, 5.97)
+    mars = (2, 0.642)
+
+
+class EnumBaseWithSlotThatSubclassShadows(Enum):
+    __slots__ = ("mass",)
+
+
+class EnumWithSlotThatShadowsSlotThatCustomNewSets(EnumBaseWithSlotThatSubclassShadows):
+    __slots__ = ("mass",)
+
+    def __new__(cls, value: int, mass: float = 0) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        EnumBaseWithSlotThatSubclassShadows.mass.__set__(obj, mass)
+        obj.mass = value * 2
+        return obj
+
+    earth = (1, 5.97)
+    mars = (2, 0.642)
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        EnumThatInheritsSlotThatCustomNewSets,
+        EnumWithSlotThatCustomNewSets,
+        EnumThatInheritsIteratorSlotThatCustomNewSets,
+        EnumWithSlotThatShadowsSlotThatCustomNewSets,
+    ],
+)
+def test__enum_didnt_have__custom_new_that_sets_slot_from_other_arg__should_raise_schema_generation_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: type[Enum],
+):
+    with pytest.raises(
+        SchemaGenerationError,
+        match=re.escape(
+            f"Cadwyn can't copy \"{original.__name__}\" for its versions because its __new__ doesn't recreate the "
+            'member "earth" from its value 1.'
+        ),
+    ):
+        create_runtime_schemas(version_change(enum(original).didnt_have("mars")))
+
+
+class EnumWithSlotThatInitSets(Enum):
+    __slots__ = ("double",)
+
+    def __init__(self, value: int) -> None:
+        self.double = value * 2
+
+    a = 1
+    b = 2
+
+
+class EnumWithIteratorSlotThatInitSets(Enum):
+    __slots__ = iter(["double"])
+
+    def __init__(self, value: int) -> None:
+        self.double = value * 2
+
+    a = 1
+    b = 2
+
+
+@pytest.mark.parametrize("original", [EnumWithSlotThatInitSets, EnumWithIteratorSlotThatInitSets])
+def test__enum_didnt_have__enum_with_own_slots__should_copy_the_slots(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: type[Enum],
+):
+    models = create_runtime_schemas(version_change(enum(original).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][original]
+
+    assert [(m.name, m.double) for m in old_enum] == [("a", 2)]
+    assert "double" not in vars(old_enum.a)
+
+    assert [(m.name, m.double) for m in old_enum] == [("a", 2)]
+
+
+class EnumBaseWithSetAndUnsetSlots(Enum):
+    __slots__ = ("__cache", "double")
+
+    def __new__(cls, value: int) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.double = value * 2
+        return obj
+
+
+class EnumThatInheritsSetAndUnsetSlots(EnumBaseWithSetAndUnsetSlots):
+    a = 1
+    b = 2
+
+
+def test__enum_didnt_have__custom_new_that_sets_slot_from_value__should_copy_the_enum(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(EnumThatInheritsSetAndUnsetSlots).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][EnumThatInheritsSetAndUnsetSlots]
+
+    assert [(m.name, m.double) for m in old_enum] == [("a", 2)]
+
+
+class _Tag:
+    pass
+
+
+class EnumWithCustomNewAndInitThatSetsNewObjectOfOtherClass(Enum):
+    def __new__(cls, value: int) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        return obj
+
+    def __init__(self, value: int) -> None:
+        self.tag = _Tag()
+
+    a = 1
+    b = 2
+
+
+def test__enum_didnt_have__custom_new_that_sets_new_object_of_other_class__should_raise_schema_generation_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    with pytest.raises(
+        SchemaGenerationError,
+        match=re.escape(
+            'Cadwyn can\'t copy "EnumWithCustomNewAndInitThatSetsNewObjectOfOtherClass" for its versions because its '
+            '__new__ doesn\'t recreate the member "a" from its value 1.'
+        ),
+    ):
+        create_runtime_schemas(
+            version_change(enum(EnumWithCustomNewAndInitThatSetsNewObjectOfOtherClass).didnt_have("b"))
+        )
+
+
+@pytest.mark.parametrize(
+    "make_attribute",
+    [
+        lambda: datetime(2000, 1, 1, 12, tzinfo=timezone(timedelta(hours=1), "CET")),
+        lambda: time(12, 30, tzinfo=timezone.utc),
+        lambda: timedelta(days=1),
+        lambda: UUID("12345678-1234-5678-1234-567812345678"),
+        lambda: PurePosixPath("a/b"),
+    ],
+)
+def test__enum_didnt_have__custom_new_with_init_that_sets_equal_new_value_object__should_keep_the_attribute(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    make_attribute: Callable[[], object],
+):
+    def __new__(cls: Any, value: int) -> Any:  # noqa: N807
+        obj = object.__new__(cls)
+        obj._value_ = value
+        return obj
+
+    def __init__(self: Any, value: int) -> None:  # noqa: N807
+        self.attribute = make_attribute()
+
+    original: Any = Enum("EnumWithInitThatSetsValueObject", {"__new__": __new__, "__init__": __init__, "a": 1, "b": 2})
+    models = create_runtime_schemas(version_change(enum(original).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][original]
+
+    assert [(m.name, m.attribute) for m in old_enum] == [("a", make_attribute())]
+
+
+@pytest.mark.parametrize(
+    ("original", "expected_value", "expected_json"),
+    [
+        (EnumWithCustomNewThatChangesTheExponentOfTheValue, Decimal("1.00"), b'"1.00"'),
+        (EnumWithCustomNewThatChangesTheValue, 10, b"10"),
+    ],
+)
+def test__enum_didnt_have__custom_new_whose_members_have_only_their_values__should_keep_the_exact_values(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: Any,
+    expected_value: Any,
+    expected_json: bytes,
+):
+    models = create_runtime_schemas(version_change(enum(original).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][original]
+
+    assert [(m.name, repr(m.value)) for m in old_enum] == [("a", repr(expected_value))]
+    assert TypeAdapter(old_enum).dump_json(old_enum.a) == expected_json
+    assert TypeAdapter(old_enum).validate_python(original.a) is old_enum.a
+
+
+class TupleEnumWithCustomNew(tuple, Enum):  # noqa: SLOT001
+    def __new__(cls, *coordinates: int) -> Self:
+        obj = tuple.__new__(cls, coordinates)
+        obj._value_ = coordinates
+        return obj
+
+    a = (1, 2)
+    b = (3, 4)
+
+
+def test__enum_didnt_have__tuple_enum_with_custom_new__should_keep_the_exact_values(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(TupleEnumWithCustomNew).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][TupleEnumWithCustomNew]
+
+    original = TupleEnumWithCustomNew.a
+    assert [(m.name, m.value, tuple(m)) for m in old_enum] == [("a", original.value, tuple(original))]

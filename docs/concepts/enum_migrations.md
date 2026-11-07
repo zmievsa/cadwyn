@@ -17,3 +17,13 @@ It is recommended to add `enum` members in new versions as well.
 ```python
 {! ./docs_src/concepts/enum_migrations/block002.py !}
 ```
+
+## How Cadwyn copies enums
+
+For every version, Cadwyn copies the enums that have `enum(...)` instructions. A copy behaves like the enum that you would write by hand for that version: it keeps aliases, `nonmember()` attributes, and `@member` functions, and `had()` takes the same values that you would write in the class body.
+
+Cadwyn only knows the values of the members, not the arguments that they were defined with. So an enum with a custom `__new__` that sets attributes from more than the value (e.g. `mass` from `earth = (1, 5.97)` for `__new__(cls, value, mass)`) can't be copied, and Cadwyn raises a `SchemaGenerationError` at startup. Compute such attributes from the value instead, e.g. with a property:
+
+```python
+{! ./docs_src/concepts/enum_migrations/block003.py !}
+```
