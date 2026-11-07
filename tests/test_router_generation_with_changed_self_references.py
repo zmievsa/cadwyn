@@ -1978,7 +1978,13 @@ def test__generate_versioned_models__self_referencing_parent_renamed_field_that_
             "2002-01-01",
             version_change(schema(ShortNamedNode).field("children").had(description="Short named children")),
         ),
-        Version("2001-01-01", version_change(schema(NodeWithInheritedName).field("children").had(name="kids"))),
+        Version(
+            "2001-01-01",
+            version_change(
+                schema(NodeWithInheritedName).field("children").had(name="kids"),
+                schema(ShortNamedNode).field("children").had(name="kids"),
+            ),
+        ),
         Version("2000-01-01"),
     )
     old_models = generate_versioned_models(versions)["2000-01-01"]
@@ -1987,6 +1993,7 @@ def test__generate_versioned_models__self_referencing_parent_renamed_field_that_
     old_short_named_node = old_models[ShortNamedNode]
     assert old_node.model_fields["kids"].description is None
     assert old_models[OtherNode].model_fields["kids"].description is None
+    assert "children" not in old_short_named_node.model_fields
     assert old_short_named_node.model_fields["kids"].description == "Short named children"
     assert old_short_named_node.model_fields["kids"].annotation == list[old_node]  # ty: ignore[invalid-type-form]
     node: Any = old_short_named_node.model_validate({"name": "a", "kids": [{"name": "b", "kids": [{"name": "c"}]}]})
