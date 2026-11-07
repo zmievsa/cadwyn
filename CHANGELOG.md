@@ -14,6 +14,13 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Removed `Cadwyn.add_header_versioned_routers()`, deprecated since 5.0.0. Add each version to your `VersionBundle`, describe how it differs from the latest one with version changes, and include the latest routers with `Cadwyn.generate_and_include_versioned_routers()`.
 - Removed the `version_changes` attribute of `Version` and `HeadVersion`, deprecated since 4.2.0. Use `changes` instead.
 - Removed `VersionBundle.version_dates`, deprecated since 5.0.0. Use `VersionBundle.version_values` instead.
+- A param named `body` is no longer mistaken for the whole request body (#526). This affects endpoints with files or forms, with `Body(embed=True)`, or with several body params, and endpoints whose body alias is the name of a dependency. Before, uploads named `body` (e.g. `body: bytes = File()` or `body: UploadFile = File()`) and uploads next to a query, header, cookie, path param, or dependency named `body` returned a 500 or arrived as `None`. A dependency named `body` (or named after the body's alias) whose value differed from the body replaced the body, so the endpoint got that value. Now the endpoint gets what FastAPI gives it in every version. Migrate your app if:
+    - your request migrations by path for such endpoints read the value of the `body` param or dependency from `request.body`. They now get the request body as the client sent it, e.g. the form (`request.form`), like for other endpoints with forms.
+    - you relied on a dependency named `body` to replace the uploads or the body that the endpoint gets, e.g. `upload: UploadFile = File(), body = Depends(replace_upload)`. Change the upload in a request migration, or let the endpoint read the dependency's value instead.
+
+### Fixed
+
+- Background tasks can now read the `UploadFile` params of a request. Before, Cadwyn closed the uploaded files when the endpoint returned, so the task failed with `ValueError: I/O operation on closed file`. FastAPI closes them after the response, as it does without Cadwyn.
 
 ## [8.2.0]
 
