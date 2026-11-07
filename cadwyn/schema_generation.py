@@ -2649,38 +2649,52 @@ class SchemaGenerator:
         """Fail if the copy of a subclass has a field that a parent renamed under another name next to the new one.
 
         Pydantic models can't drop the fields that they inherit, so a subclass keeps the field under the old name if
-        it declares it itself (or changed it in a newer version, which makes its copy declare it) or inherits it from
-        another base, and inherits it under the new name from the parent. We decide from the copy that pydantic built,
-        so only real fields count, not e.g. class vars.
+        it declares it itself (or changed it, which makes its copy declare it) or inherits it from another base, and
+        inherits it under the new name from the parent. We decide from the copy that pydantic built, so only real
+        fields count, not e.g. class vars. Only the fields that instructions added since the rename may have the old
+        name, in the version of the rename and in the older ones.
         """
         for rename in self._parent_renames:
             parent, old_name = rename.parent, rename.old_name
             if model is parent or not issubclass(model, parent):
                 continue
-            has_instructions = model in rename.subclass_field_identities
-            # The models with instructions are copied in every version, so we check them in the version that the
-            # rename produces. In the older ones, they can get new fields with the old name
-            if has_instructions and not rename.is_of_this_version:
-                continue
             new_name = _get_name_of_field(self.model_bundle.schemas[parent], rename.field_identity)
-            if new_name in {None, old_name} or new_name not in model_copy.model_fields:
+            if new_name in {None, old_name} or not _gets_field_from_copy_of_parent(model_copy, parent, new_name):
                 continue
             # The parent got a field with the old name back, or still inherits it, which the renames of the parent
             # itself report once all models of the version are copied
             if _copy_of_parent_has_field(model_copy, parent, old_name):
                 continue
-            if has_instructions:
-                identity = rename.subclass_field_identities[model]
-                own_name = None if identity is None else _get_name_of_field(self.model_bundle.schemas[model], identity)
-            else:
-                own_name = old_name if old_name in _get_annotations_without_evaluating(model) else None
-            # The field that the model declared under the old name before the version, by its current name, and the
-            # old name itself, which the model can also inherit from another base. A model without instructions
-            # can also be copied only in the older versions, where another base can get a new field with the name
-            names = [own_name, old_name] if rename.is_of_this_version else [own_name]
-            for name in names:
-                if name is not None and name != new_name and name in model_copy.model_fields:
+            for name in self._get_names_of_own_copies_of_renamed_field(model, rename):
+                if name != new_name and name in model_copy.model_fields:
                     raise _get_parent_rename_error(model, model_copy, rename, name, new_name, self._version)
+            if (
+                old_name in model_copy.model_fields
+                and old_name not in _get_annotations_without_evaluating(model_copy)
+                and any(self._declared_field_before_rename(base, rename) for base in model.__mro__[1:])
+            ):
+                raise _get_parent_rename_error(model, model_copy, rename, old_name, new_name, self._version)
+
+    def _get_names_of_own_copies_of_renamed_field(self, model: type[BaseModel], rename: "_ParentRename") -> list[str]:
+        """Return the names of the fields of the model that are its own copies of the field that the parent renamed.
+
+        That is the field that it declared under the old name before the version, and the parent's field itself if
+        the model changed it, under their current names. A model without instructions keeps its declarations.
+        """
+        if model not in rename.models_with_instructions:
+            return [rename.old_name] if rename.old_name in _get_annotations_without_evaluating(model) else []
+        identities = {rename.field_identity, rename.field_identities_before_version[model].get(rename.old_name)}
+        return [name for name, field in self.model_bundle.schemas[model].fields.items() if field.identity in identities]
+
+    def _declared_field_before_rename(self, cls: type, rename: "_ParentRename") -> bool:
+        """Whether the class declares a field with the old name that existed before the version of the rename"""
+        if cls in rename.models_with_instructions:
+            field = self.model_bundle.schemas[cast("type[BaseModel]", cls)].fields.get(rename.old_name)
+            return field is not None and field.identity in rename.field_identities_of_version
+        if rename.old_name not in _get_annotations_without_evaluating(cls):
+            return False
+        # Not a class var of a pydantic model
+        return not lenient_issubclass(cls, BaseModel) or rename.old_name in cls.__pydantic_fields__
 
     def _check_copy_outside_of_cycles(self, model: type[BaseModel], model_copy: type[BaseModel]) -> None:
         """Check a copy outside of the copied cycles if it can use the head models of these cycles.
@@ -3355,7 +3369,7 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
         )
         _check_that_deleted_fields_are_not_inherited(changes.deleted_fields, generator, str(version.value))
         version_to_context_map[str(version.value)] = generator
-        parent_renames_of_newer_versions += [rename._replace(is_of_this_version=False) for rename in parent_renames]
+        parent_renames_of_newer_versions += parent_renames
         # note that the last migration will not contain any version changes so we don't need to save the results
         field_identities_before_version = _get_field_identities(models.schemas)
         changes = _migrate_classes(context)
@@ -3549,11 +3563,11 @@ class _ParentRename(NamedTuple):
     # The name of the field before the version
     old_name: str
     version_change_name: str
-    # The identities of the fields that the subclasses with instructions declared under the old name before the
-    # version, or None for the ones that didn't declare it
-    subclass_field_identities: "collections.abc.Mapping[type[BaseModel], Union[int, None]]"
-    # Whether the rename produces the version of the generator, rather than a newer one
-    is_of_this_version: bool
+    # The models with instructions, and the identities of the fields that each of them declared before the version
+    field_identities_before_version: "collections.abc.Mapping[type[BaseModel], collections.abc.Mapping[str, int]]"
+    models_with_instructions: frozenset[type[BaseModel]]
+    # The identities of all of these fields
+    field_identities_of_version: frozenset[int]
 
 
 class _DeletedField(NamedTuple):
@@ -3597,23 +3611,24 @@ def _get_field_identities(
 def _get_parent_renames(
     first_renames: list[_FieldRename], field_identities_before_version: dict[type[BaseModel], dict[str, int]]
 ) -> list[_ParentRename]:
-    """Return the renames of the version, with the fields that the subclasses declared before any instruction of it.
+    """Return the renames of the version, with the fields that the models declared before any instruction of it.
 
     So the order of the instructions in the version doesn't matter, e.g. a subclass that renames the field to another
     name before or after the parent does.
     """
+    models_with_instructions = frozenset(field_identities_before_version)
+    field_identities_of_version = frozenset(
+        identity for identities in field_identities_before_version.values() for identity in identities.values()
+    )
     return [
         _ParentRename(
             rename.model.cls,
             rename.field.identity,
             rename.instruction.name,
             rename.version_change_name,
-            {
-                model: identities.get(rename.instruction.name)
-                for model, identities in field_identities_before_version.items()
-                if model is not rename.model.cls and issubclass(model, rename.model.cls)
-            },
-            is_of_this_version=True,
+            field_identities_before_version,
+            models_with_instructions,
+            field_identities_of_version,
         )
         for rename in first_renames
     ]
@@ -3655,13 +3670,15 @@ def _check_that_renamed_fields_are_not_inherited(
             or old_name in _get_annotations_without_evaluating(model_copy)
         ):
             continue
-        base = _get_base_that_gives_inherited_field(model_copy, old_name)
+        bases = _get_bases_that_give_inherited_field(model_copy, old_name)
         parents: dict[type, _PydanticModelWrapper[BaseModel]] = {
             parent.cls: parent for parent in model._get_parents(schemas)
         }
-        model_name, base_name = model.cls.__name__, base.__name__
-        base_field = parents[base].fields.get(old_name) if base in parents else None
-        if base not in parents:
+        model_name, base_name = model.cls.__name__, bases[0].__name__
+        base_field = parents[bases[0]].fields.get(old_name) if bases[0] in parents else None
+        if len(bases) > 1:
+            advice = _UNKNOWN_BASE_ADVICE.format(action="rename")
+        elif bases[0] not in parents:
             advice = (
                 f'"{base_name}" is not a pydantic model, so Cadwyn can\'t rename the field in it. Declare the '
                 f'field in a pydantic model instead of "{base_name}" and rename it there.'
@@ -3676,8 +3693,8 @@ def _check_that_renamed_fields_are_not_inherited(
             advice = f'Rename it in "{base_name}" in the same version too.'
         raise InvalidGenerationInstructionError(
             f'You tried to rename the field "{old_name}" of "{model_name}" to "{new_name}" in "{version_change_name}", '
-            f'but in version "{version}" "{model_name}" still inherits "{old_name}" from "{base_name}", so it would '
-            "have both fields. Pydantic models can't drop the fields that they inherit. " + advice
+            f'but in version "{version}" "{model_name}" still inherits "{old_name}" from {_format_bases(bases)}, so it '
+            "would have both fields. Pydantic models can't drop the fields that they inherit. " + advice
         )
 
 
@@ -3695,9 +3712,11 @@ def _check_that_deleted_fields_are_not_inherited(
         model_copy = generator[model.cls]
         if name not in model_copy.model_fields or name in _get_annotations_without_evaluating(model_copy):
             continue
-        base = _get_base_that_gives_inherited_field(model_copy, name)
-        model_name, base_name = model.cls.__name__, base.__name__
-        if lenient_issubclass(base, BaseModel):
+        bases = _get_bases_that_give_inherited_field(model_copy, name)
+        model_name, base_name = model.cls.__name__, bases[0].__name__
+        if len(bases) > 1:
+            advice = _UNKNOWN_BASE_ADVICE.format(action="delete")
+        elif lenient_issubclass(bases[0], BaseModel):
             advice = f'Delete it from "{base_name}" in the same version too, which deletes it from its subclasses too.'
         else:
             advice = (
@@ -3706,9 +3725,25 @@ def _check_that_deleted_fields_are_not_inherited(
             )
         raise InvalidGenerationInstructionError(
             f'You tried to delete the field "{name}" from "{model_name}" in "{version_change_name}", but in version '
-            f'"{version}" "{model_name}" still inherits "{name}" from "{base_name}", so it would still have the '
-            "field. Pydantic models can't drop the fields that they inherit. " + advice
+            f'"{version}" "{model_name}" still inherits "{name}" from {_format_bases(bases)}, so it would still have '
+            "the field. Pydantic models can't drop the fields that they inherit. " + advice
         )
+
+
+def _gets_field_from_copy_of_parent(model_copy: type[BaseModel], parent: type[BaseModel], field_name: str) -> bool:
+    """Whether the copy of the model has the field and no class before the copy of the parent in its MRO declares it.
+
+    E.g. a first base that declares the name hides the parent's field with that name.
+    """
+    if field_name not in model_copy.model_fields:
+        return False
+    for cls in model_copy.__mro__[1:]:
+        if vars(cls).get("__cadwyn_original_model__") is parent:
+            return True
+        if field_name in _get_annotations_without_evaluating(cls):
+            return False
+    # The parent has instructions, so its copy is always among the bases of the copies of its subclasses
+    return False  # pragma: no cover
 
 
 def _copy_of_parent_has_field(model_copy: type[BaseModel], parent: type[BaseModel], field_name: str) -> bool:
@@ -3739,9 +3774,11 @@ def _get_parent_rename_error(
             f'fields that its subclasses declare. Rename it in "{model_name}" in the same version too: '
             f'schema({model_name}).field("{name_in_model}").had(name="{new_name}").'
         )
-    base = _get_base_that_gives_inherited_field(model_copy, name_in_model)
-    base_name = base.__name__
-    if lenient_issubclass(base, BaseModel):
+    bases = _get_bases_that_give_inherited_field(model_copy, name_in_model)
+    base_name = bases[0].__name__
+    if len(bases) > 1:
+        advice = _UNKNOWN_BASE_ADVICE.format(action="rename")
+    elif lenient_issubclass(bases[0], BaseModel):
         advice = f'Rename it in "{base_name}" in the same version too.'
     else:
         advice = (
@@ -3749,8 +3786,8 @@ def _get_parent_rename_error(
             f'pydantic model instead of "{base_name}" and rename it there.'
         )
     return InvalidGenerationInstructionError(
-        f'{start} "{name_in_model}" next to "{new_name}", because it inherits "{name_in_model}" from "{base_name}". '
-        "Pydantic models can't drop the fields that they inherit. " + advice
+        f'{start} "{name_in_model}" next to "{new_name}", because it inherits "{name_in_model}" from '
+        f"{_format_bases(bases)}. Pydantic models can't drop the fields that they inherit. " + advice
     )
 
 
@@ -3759,28 +3796,52 @@ def _get_name_of_field(model: _PydanticModelWrapper[BaseModel], field_identity: 
     return next((name for name, field in model.fields.items() if field.identity == field_identity), None)
 
 
-def _get_base_that_gives_inherited_field(model_copy: type[BaseModel], field_name: str) -> type:
-    """Return the base (its original class, not its copy) whose field the copy of the model inherits.
+def _get_bases_that_give_inherited_field(model_copy: type[BaseModel], field_name: str) -> list[type]:
+    """Return the bases (their original classes, not their copies) that the copy of the model can get the field from.
 
-    Pydantic gives a subclass a shallow copy of the field of the first base that has it, so the field keeps the
-    same annotation and default objects. If no pydantic base declares such a field, pydantic built it from the
-    closest annotation of the name, e.g. of a mixin.
+    Pydantic gives a subclass a shallow copy of the field of its first direct base that has it, which shares the
+    metadata (e.g. constraints) and the other attribute objects of the field of the base that declares it. So we
+    return the only base that declares the name and whose field shares all of them. If several or none do (e.g. two
+    bases that both declare `x: int`), we can't be sure, and we return all of the bases that declare the name,
+    closest first. If no pydantic base declares such a field, pydantic built it from the closest annotation of the
+    name, e.g. of a mixin.
     """
     inherited = model_copy.model_fields[field_name]
     # Like pydantic, we skip `object`, which has no annotations
     candidates = [base for base in model_copy.__mro__[1:-1] if field_name in _get_annotations_without_evaluating(base)]
-    base = next(
-        (
-            base
-            for base in candidates
-            if (declared := getattr(base, "__pydantic_fields__", {}).get(field_name)) is not None
-            and declared.annotation is inherited.annotation
-            and declared.default is inherited.default
-            and declared.default_factory is inherited.default_factory
-        ),
-        candidates[0],
+    matching = [
+        base
+        for base in candidates
+        if (declared := getattr(base, "__pydantic_fields__", {}).get(field_name)) is not None
+        and _shares_attribute_objects(declared, inherited)
+    ]
+    bases = matching if len(matching) == 1 else candidates
+    return list(dict.fromkeys(vars(base).get("__cadwyn_original_model__", base) for base in bases))
+
+
+def _shares_attribute_objects(field: FieldInfo, other: FieldInfo) -> bool:
+    return (
+        field.annotation is other.annotation
+        and field.default is other.default
+        and field.default_factory is other.default_factory
+        and field.description is other.description
+        and field.json_schema_extra is other.json_schema_extra
+        and len(field.metadata) == len(other.metadata)
+        and all(
+            metadata is other_metadata for metadata, other_metadata in zip(field.metadata, other.metadata, strict=True)
+        )
     )
-    return vars(base).get("__cadwyn_original_model__", base)
+
+
+_UNKNOWN_BASE_ADVICE = (
+    "Cadwyn can't tell which of them pydantic took the field from, so {action} it in all of them in the same version "
+    "too."
+)
+
+
+def _format_bases(bases: list[type]) -> str:
+    names = ", ".join(f'"{base.__name__}"' for base in bases)
+    return names if len(bases) == 1 else f"one of {names}"
 
 
 _ALIAS_ATTRIBUTES = frozenset(("alias", "alias_priority", "validation_alias", "serialization_alias"))

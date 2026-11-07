@@ -1012,6 +1012,17 @@ class ChildWithoutInstructionsThatRedeclaresFieldThatGetsRenamed(ParentWithField
         ),
         pytest.param(
             [
+                [
+                    schema(ChildWithFieldThatGetsRenamed).field("foo").had(max_length=3),
+                    schema(ChildWithFieldThatGetsRenamed).field("foo").had(name="other_foo"),
+                    schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo"),
+                ]
+            ],
+            _parent_rename_error("ChildWithFieldThatGetsRenamed", "other_foo"),
+            id="child_changed_field_and_child_and_parent_renamed_it_to_other_names_in_one_version",
+        ),
+        pytest.param(
+            [
                 [schema(ChildWithFieldThatGetsRenamed).field("foo").had(max_length=3)],
                 [schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo")],
                 [schema(ParentWithFieldThatGetsRenamed).field("old_foo").didnt_exist],
@@ -1368,10 +1379,10 @@ class ChildOfMiddleWithField(MiddleWithField):
 @pytest.mark.parametrize(
     ("child", "expected"),
     [
-        (ChildOfFirstBaseWithField, {"old": 123}),
-        (ChildOfFirstBaseWithClassVar, {}),
-        (ChildOfGenericFirstBase, {"old": 123}),
-        (ChildOfMiddleWithField, {"old": 123}),
+        (ChildOfFirstBaseWithField, {"old": 123, "foo": "abc"}),
+        (ChildOfFirstBaseWithClassVar, {"foo": "abc"}),
+        (ChildOfGenericFirstBase, {"old": 123, "foo": "abc"}),
+        (ChildOfMiddleWithField, {"old": 123, "foo": "abc"}),
     ],
 )
 def test__schema_field_had__parent_renamed_field_to_name_that_first_base_has__should_keep_first_base_one(
@@ -1381,28 +1392,10 @@ def test__schema_field_had__parent_renamed_field_to_name_that_first_base_has__sh
         version_change(
             schema(child).field("foo").had(max_length=3),
             schema(ParentRenamedIntoFirstBase).field("foo").had(name="old"),
-            schema(child).field("foo").didnt_exist,
         )
     )
 
     assert schemas["2000-01-01"][child].model_validate({"foo": "abc", "old": 123}).model_dump() == expected
-
-
-@pytest.mark.parametrize("child", [ChildOfFirstBaseWithField, ChildOfGenericFirstBase, ChildOfMiddleWithField])
-def test__schema_field_had__parent_renamed_field_that_child_changed_to_name_that_other_base_has__should_raise_error(
-    create_runtime_schemas: CreateRuntimeSchemas, child: type[BaseModel]
-):
-    with pytest.raises(InvalidGenerationInstructionError) as exc_info:
-        create_runtime_schemas(
-            version_change(
-                schema(child).field("foo").had(max_length=3),
-                schema(ParentRenamedIntoFirstBase).field("foo").had(name="old"),
-            )
-        )
-
-    assert str(exc_info.value) == _parent_rename_error(
-        child.__name__, "foo", parent="ParentRenamedIntoFirstBase", new_name="old"
-    )
 
 
 class ParentOfDiamondWithRenamedField(BaseModel):
@@ -3596,6 +3589,223 @@ def test__schema_field_didnt_exist__parent_deletes_field_in_another_change_of_ve
     )
 
     assert list(schemas["2000-01-01"][InheritedFieldRedeclaringChild].model_fields) == ["bar"]
+
+
+class ParentWithIntFooThatGetsRenamed(BaseModel):
+    foo: int
+
+
+class ChildThatRedeclaresIntFooThatGetsRenamed(ParentWithIntFooThatGetsRenamed):
+    foo: int
+
+
+@pytest.mark.parametrize("child_has_instructions", [True, False])
+def test__schema_field_had_name__parent_renamed_field_to_class_var_and_back_to_field__should_raise_error(
+    child_has_instructions: bool,
+):
+    renamed_to_class_var = [
+        schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo", type=ClassVar[int])
+    ]
+    if child_has_instructions:
+        renamed_to_class_var.append(schema(ChildThatRedeclaresIntFooThatGetsRenamed).had(description="Old child"))
+    versions = VersionBundle(
+        Version("2002-01-01", version_change(*renamed_to_class_var)),
+        Version("2001-01-01", version_change(schema(ParentWithIntFooThatGetsRenamed).field("old_foo").had(type=int))),
+        Version("2000-01-01"),
+    )
+
+    # The rename only gives the parent a field with the new name in the oldest version
+    with pytest.raises(InvalidGenerationInstructionError) as exc_info:
+        generate_versioned_models(versions)["2000-01-01"][ChildThatRedeclaresIntFooThatGetsRenamed]
+
+    assert str(exc_info.value) == (
+        '"ParentWithIntFooThatGetsRenamed" renamed the field "foo" to "old_foo" in "MyVersionChange", but in version '
+        '"2000-01-01" "ChildThatRedeclaresIntFooThatGetsRenamed" still has it as "foo" next to "old_foo", because '
+        '"ChildThatRedeclaresIntFooThatGetsRenamed" declares "foo" itself or changed it in a newer version. The '
+        "renames of a parent don't rename the fields that its subclasses declare. Rename it in "
+        '"ChildThatRedeclaresIntFooThatGetsRenamed" in the same version too: '
+        'schema(ChildThatRedeclaresIntFooThatGetsRenamed).field("foo").had(name="old_foo").'
+    )
+
+
+class RootOfDiamondWithConstrainedFoo(BaseModel):
+    foo: int = Field(default=0, description="Root", ge=0)
+
+
+class LeftOfDiamondWithConstrainedFoo(RootOfDiamondWithConstrainedFoo):
+    pass
+
+
+class RightOfDiamondWithConstrainedFoo(RootOfDiamondWithConstrainedFoo):
+    foo: int = Field(default=0, description="Right", ge=10)
+
+
+class DiamondWithConstrainedFoo(LeftOfDiamondWithConstrainedFoo, RightOfDiamondWithConstrainedFoo):
+    foo: int = Field(default=0, description="Diamond", ge=20)
+
+
+class RootOfDiamondWithPlainFoo(BaseModel):
+    foo: int
+
+
+class LeftOfDiamondWithPlainFoo(RootOfDiamondWithPlainFoo):
+    pass
+
+
+class RightOfDiamondWithPlainFoo(RootOfDiamondWithPlainFoo):
+    foo: int
+
+
+class DiamondWithPlainFoo(LeftOfDiamondWithPlainFoo, RightOfDiamondWithPlainFoo):
+    foo: int
+
+
+@pytest.mark.parametrize(
+    ("diamond", "bases"),
+    [
+        pytest.param(DiamondWithConstrainedFoo, '"RootOfDiamondWithConstrainedFoo"', id="kept_base_is_known"),
+        # Both declare `foo: int`, so we can't tell which field pydantic kept
+        pytest.param(
+            DiamondWithPlainFoo, 'one of "RightOfDiamondWithPlainFoo", "RootOfDiamondWithPlainFoo"', id="ambiguous"
+        ),
+    ],
+)
+def test__schema_field_didnt_exist__diamond_redeclares_field__should_name_bases_that_give_it(
+    create_runtime_schemas: CreateRuntimeSchemas, diamond: type[BaseModel], bases: str
+):
+    with pytest.raises(InvalidGenerationInstructionError) as exc_info:
+        create_runtime_schemas(version_change(schema(diamond).field("foo").didnt_exist))
+
+    assert f'still inherits "foo" from {bases}, so it would still have the field.' in str(exc_info.value)
+
+
+def test__schema_field_had_name__diamond_renamed_field_that_it_redeclares__should_name_base_that_gives_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    with pytest.raises(InvalidGenerationInstructionError) as exc_info:
+        create_runtime_schemas(version_change(schema(DiamondWithConstrainedFoo).field("foo").had(name="old_foo")))
+
+    assert str(exc_info.value) == _child_rename_error(
+        "DiamondWithConstrainedFoo",
+        "foo",
+        "RootOfDiamondWithConstrainedFoo",
+        'Rename it in "RootOfDiamondWithConstrainedFoo" in the same version too.',
+    )
+
+
+class OtherParentWithFooThatGetsRenamed(BaseModel):
+    foo: int
+
+
+class DiamondWithConstrainedFooAndOtherParent(
+    LeftOfDiamondWithConstrainedFoo, RightOfDiamondWithConstrainedFoo, OtherParentWithFooThatGetsRenamed
+):
+    pass
+
+
+def test__schema_field_had_name__parent_renamed_field_that_diamond_gets_from_other_bases__should_name_kept_base(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(OtherParentWithFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    with pytest.raises(InvalidGenerationInstructionError) as exc_info:
+        schemas["2000-01-01"][DiamondWithConstrainedFooAndOtherParent]
+
+    assert 'because it inherits "foo" from "RootOfDiamondWithConstrainedFoo".' in str(exc_info.value)
+
+
+def test__schema_field_had_name__diamond_renamed_field_that_bases_declare_alike__should_name_all_of_them(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    with pytest.raises(InvalidGenerationInstructionError) as exc_info:
+        create_runtime_schemas(version_change(schema(DiamondWithPlainFoo).field("foo").had(name="old_foo")))
+
+    assert str(exc_info.value) == (
+        'You tried to rename the field "foo" of "DiamondWithPlainFoo" to "old_foo" in "MyVersionChange", but in '
+        'version "2000-01-01" "DiamondWithPlainFoo" still inherits "foo" from one of "RightOfDiamondWithPlainFoo", '
+        '"RootOfDiamondWithPlainFoo", so it would have both fields. Pydantic models can\'t drop the fields that they '
+        "inherit. Cadwyn can't tell which of them pydantic took the field from, so rename it in all of them in the "
+        "same version too."
+    )
+
+
+class DiamondWithPlainFooAndOtherParent(
+    LeftOfDiamondWithPlainFoo, RightOfDiamondWithPlainFoo, OtherParentWithFooThatGetsRenamed
+):
+    pass
+
+
+def test__schema_field_had_name__parent_renamed_field_that_diamond_gets_from_bases_alike__should_name_all_of_them(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(OtherParentWithFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    with pytest.raises(InvalidGenerationInstructionError) as exc_info:
+        schemas["2000-01-01"][DiamondWithPlainFooAndOtherParent]
+
+    assert str(exc_info.value).endswith(
+        'because it inherits "foo" from one of "RightOfDiamondWithPlainFoo", "RootOfDiamondWithPlainFoo". Pydantic '
+        "models can't drop the fields that they inherit. Cadwyn can't tell which of them pydantic took the field "
+        "from, so rename it in all of them in the same version too."
+    )
+
+
+class FirstBaseWithInstructionsAndFoo(BaseModel):
+    foo: str = ""
+    bar: int = 0
+
+
+class FirstBaseWithInstructionsWithoutFoo(BaseModel):
+    bar: int = 0
+
+
+class ChildOfFirstBaseWithInstructionsAndFoo(FirstBaseWithInstructionsAndFoo, ParentWithFieldThatGetsRenamed):
+    pass
+
+
+class ChildOfFirstBaseWithInstructionsWithoutFoo(FirstBaseWithInstructionsWithoutFoo, ParentWithFieldThatGetsRenamed):
+    pass
+
+
+def test__schema_field_had_name__parent_renamed_field_that_other_base_with_instructions_has__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(FirstBaseWithInstructionsAndFoo).field("bar").had(description="Bar"),
+            schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo"),
+        )
+    )
+
+    with pytest.raises(InvalidGenerationInstructionError) as exc_info:
+        schemas["2000-01-01"][ChildOfFirstBaseWithInstructionsAndFoo]
+
+    assert str(exc_info.value).endswith(
+        'because it inherits "foo" from "FirstBaseWithInstructionsAndFoo". Pydantic models can\'t drop the fields '
+        'that they inherit. Rename it in "FirstBaseWithInstructionsAndFoo" in the same version too.'
+    )
+
+
+def test__schema_field_had_name__parent_renamed_field_and_other_base_got_new_one_with_old_name__should_keep_both(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(ParentWithFieldThatGetsRenamed).field("foo").had(name="old_foo"),
+            schema(FirstBaseWithInstructionsWithoutFoo).field("foo").existed_as(type=bytes, info=Field(default=b"")),
+        )
+    )
+
+    child = schemas["2000-01-01"][ChildOfFirstBaseWithInstructionsWithoutFoo]
+    assert {name: field.annotation for name, field in child.model_fields.items()} == {
+        "bar": int,
+        "old_foo": str,
+        "foo": bytes,
+    }
 
 
 def test__schema_field_didnt_exist__field_is_missing__should_raise_error(create_runtime_schemas: CreateRuntimeSchemas):
