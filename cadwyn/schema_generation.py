@@ -7,6 +7,7 @@ import enum
 import functools
 import inspect
 import itertools
+import pathlib
 import reprlib
 import sys
 import threading
@@ -14,7 +15,7 @@ import types
 import typing
 import uuid
 from collections.abc import Callable, Generator, Sequence
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum, Flag, FlagBoundary, auto
 from functools import cache
 from typing import (
@@ -4648,6 +4649,10 @@ class _EnumWrapper(Generic[_T_ENUM]):
             # the copy would take the one of its base enum type
             and (k in _USER_DEFINABLE_ENUM_ATTRIBUTES or k not in mro_dict or mro_dict[k] is not v)
         }
+        # Python consumes `__slots__` when it creates the class, e.g. when it's an iterator, so we take the names of
+        # its slots from their descriptors
+        if "__slots__" in enum_cls.__dict__:
+            namespace["__slots__"] = own_slots
         # The enum machinery saves the custom __new__ of the enum as `__new_member__`, and only takes `__new__`
         # from the class body
         if "__new_member__" in enum_cls.__dict__:
@@ -4679,49 +4684,84 @@ def _is_same_member(rebuilt_member: Enum, original_member: Enum) -> bool:
     return (
         # E.g. not an alias of another member
         rebuilt_member.name == original_member.name
-        and _is_same_or_equal(rebuilt_member._value_, original_member._value_)
+        and _is_same_or_interchangeable(rebuilt_member._value_, original_member._value_)
         and rebuilt_state.keys() == original_state.keys()
-        and all(_is_same_or_equal(rebuilt_state[k], original_state[k]) for k in original_state)
+        and all(_is_same_or_interchangeable(rebuilt_state[k], original_state[k]) for k in original_state)
         # E.g. the `str` that `str.__new__` got, which can differ from the value
         and (member_type is object or member_type.__eq__(rebuilt_member, original_member) is True)
     )
 
 
-def _is_same_or_equal(rebuilt: Any, original: Any) -> bool:
-    """Whether the values are the same, or equal objects of the same type (e.g. a `date` that `__init__` makes again)"""
+# The immutable types whose equal values with the same text are interchangeable, e.g. a `date` that `__init__` makes
+# again. Their values are compared exactly (`type(value) is ...`), not their subclasses
+_INTERCHANGEABLE_VALUE_TYPES = frozenset(
+    {
+        date,
+        time,
+        datetime,
+        timedelta,
+        uuid.UUID,
+        pathlib.PurePosixPath,
+        pathlib.PureWindowsPath,
+        pathlib.PosixPath,
+        pathlib.WindowsPath,
+    }
+)
+
+
+def _is_same_or_interchangeable(rebuilt: Any, original: Any) -> bool:
+    """Whether the rebuilt value is the same as the original one, or an equal value of a type in which they're the same.
+
+    Everything else, e.g. containers, decimals (`Decimal("1.0") == Decimal("1.00")`), and the objects of other classes,
+    is compared with `is_same_value`, because equal values of them can serialize differently.
+    """
     if is_same_value(rebuilt, original):
         return True
-    try:
-        return type(rebuilt) is type(original) and (rebuilt == original) is True
-    except Exception:  # noqa: BLE001 # E.g. an `__eq__` that fails, which can't tell that they're equal
+    value_type = type(original)
+    if type(rebuilt) is not value_type or value_type not in _INTERCHANGEABLE_VALUE_TYPES or rebuilt != original:
         return False
+    if value_type in {time, datetime}:
+        return (
+            rebuilt.fold == original.fold
+            and _is_same_timezone(rebuilt.tzinfo, original.tzinfo)
+            and rebuilt.isoformat() == original.isoformat()
+        )
+    return str(rebuilt) == str(original)
 
 
-def _get_member_state(member: Enum) -> dict[tuple[str, str], Any]:
+def _is_same_timezone(rebuilt: Any, original: Any) -> bool:
+    if rebuilt is original:
+        return True
+    return (
+        type(rebuilt) is type(original) is timezone
+        and rebuilt.utcoffset(None) == original.utcoffset(None)
+        and rebuilt.tzname(None) == original.tzname(None)
+    )
+
+
+def _get_member_state(member: Enum) -> dict[tuple[Any, ...], Any]:
     """Return the attributes of the member in its `__dict__` and in the slots of its classes, except enum internals"""
-    state = {("attribute", k): v for k, v in vars(member).items() if k not in _ENUM_MEMBER_INTERNAL_ATTRIBUTES}
-    # A subclass that declares the same slot again shadows the slot of its base, so it comes last
-    for cls in reversed(type(member).__mro__):
+    state: dict[tuple[Any, ...], Any] = {
+        ("attribute", k): v for k, v in vars(member).items() if k not in _ENUM_MEMBER_INTERNAL_ATTRIBUTES
+    }
+    # A subclass can declare a slot with the same name as a slot of its base, and the member has both. The copy has the
+    # same bases as the original, so we tell the slots apart by the position of their class in the MRO
+    for position, cls in enumerate(type(member).__mro__):
         for slot_name in _get_own_slot_names(cls):
             try:
-                state["slot", slot_name] = cls.__dict__[slot_name].__get__(member, type(member))
+                state["slot", position, slot_name] = cls.__dict__[slot_name].__get__(member, type(member))
             except AttributeError:  # The slot isn't set
-                state["slot", slot_name] = _UNSET_SLOT
+                state["slot", position, slot_name] = _UNSET_SLOT
     return state
 
 
-def _get_own_slot_names(cls: type) -> frozenset[str]:
-    """Return the names of the slot descriptors of the class's own `__slots__`, with private names mangled"""
-    slots = cls.__dict__.get("__slots__", ())
-    names = (_mangle_private_name(cls.__name__, slot) for slot in ((slots,) if isinstance(slots, str) else slots))
-    return frozenset(name for name in names if isinstance(cls.__dict__.get(name), types.MemberDescriptorType))
-
-
-def _mangle_private_name(cls_name: str, name: str) -> str:
-    stripped_cls_name = cls_name.lstrip("_")
-    if name.startswith("__") and not name.endswith("__") and stripped_cls_name:
-        return f"_{stripped_cls_name}{name}"
-    return name
+def _get_own_slot_names(cls: type) -> tuple[str, ...]:
+    """Return the names of the slots that the class itself declares, as Python stores them (private names mangled)"""
+    return tuple(
+        name
+        for name, descriptor in cls.__dict__.items()
+        if isinstance(descriptor, types.MemberDescriptorType) and descriptor.__objclass__ is cls
+    )
 
 
 def _wrap_enum_nonmember(enum_cls: type[Enum], name: str, value: Any) -> Any:

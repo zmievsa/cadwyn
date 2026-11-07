@@ -1,7 +1,12 @@
+import dataclasses
 import re
-from datetime import date
+from collections.abc import Callable
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
 from enum import KEEP, Enum, Flag, FlagBoundary, IntEnum, IntFlag, StrEnum, auto, member, nonmember
+from pathlib import PurePosixPath
 from typing import Any, Self
+from uuid import UUID
 
 import pytest
 from typing_extensions import override
@@ -513,10 +518,63 @@ class StrEnumWithCustomNewThatTakesStrFromOtherArg(str, Enum):
     b = ("b", "second")
 
 
+class EnumWithCustomNewThatChangesTheExponentOfTheValue(Enum):
+    def __new__(cls, value: str, precision: str = "0.1") -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = Decimal(value).quantize(Decimal(precision))
+        return obj
+
+    a = ("1", "0.01")
+    b = ("2", "0.01")
+
+
+class EnumWithCustomNewThatChangesTheExponentOfAttribute(Enum):
+    def __new__(cls, value: int, price: str = "1.0") -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.price = Decimal(price)  # ty: ignore[unresolved-attribute]
+        return obj
+
+    a = (1, "1.00")
+    b = (2, "1.00")
+
+
+class EnumWithCustomNewThatChangesTheTypeOfNestedValue(Enum):
+    def __new__(cls, value: int, enabled: object = True) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.metadata = {"enabled": enabled}  # ty: ignore[unresolved-attribute]
+        return obj
+
+    a = (1, 1)
+    b = (2, 1)
+
+
+@dataclasses.dataclass
+class _TagWithLabelThatIsntCompared:
+    id: int
+    label: str = dataclasses.field(compare=False)
+
+
+class EnumWithCustomNewThatChangesFieldThatIsntCompared(Enum):
+    def __new__(cls, value: int, label: str = "default") -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.tag = _TagWithLabelThatIsntCompared(value, label)  # ty: ignore[unresolved-attribute]
+        return obj
+
+    a = (1, "first")
+    b = (2, "second")
+
+
 @pytest.mark.parametrize(
     ("original", "value"),
     [
         (EnumWithCustomNewThatChangesTheValue, 10),
+        (EnumWithCustomNewThatChangesTheExponentOfTheValue, Decimal("1.00")),
+        (EnumWithCustomNewThatChangesTheExponentOfAttribute, 1),
+        (EnumWithCustomNewThatChangesTheTypeOfNestedValue, 1),
+        (EnumWithCustomNewThatChangesFieldThatIsntCompared, 1),
         (EnumWithCustomNewThatSetsAttributeFromOtherArg, 1),
         (StrEnumWithCustomNewThatTakesStrFromOtherArg, "a"),
     ],
@@ -717,7 +775,48 @@ class EnumWithSlotThatCustomNewSets(Enum):
     mars = (2, 0.642)
 
 
-@pytest.mark.parametrize("original", [EnumThatInheritsSlotThatCustomNewSets, EnumWithSlotThatCustomNewSets])
+class EnumBaseWithIteratorSlotThatCustomNewSets(Enum):
+    __slots__ = iter(["mass"])
+
+    def __new__(cls, value: int, mass: float = 0) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.mass = mass  # ty: ignore[unresolved-attribute]
+        return obj
+
+
+class EnumThatInheritsIteratorSlotThatCustomNewSets(EnumBaseWithIteratorSlotThatCustomNewSets):
+    earth = (1, 5.97)
+    mars = (2, 0.642)
+
+
+class EnumBaseWithSlotThatSubclassShadows(Enum):
+    __slots__ = ("mass",)
+
+
+class EnumWithSlotThatShadowsSlotThatCustomNewSets(EnumBaseWithSlotThatSubclassShadows):
+    __slots__ = ("mass",)
+
+    def __new__(cls, value: int, mass: float = 0) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = value
+        EnumBaseWithSlotThatSubclassShadows.mass.__set__(obj, mass)
+        obj.mass = value * 2
+        return obj
+
+    earth = (1, 5.97)
+    mars = (2, 0.642)
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        EnumThatInheritsSlotThatCustomNewSets,
+        EnumWithSlotThatCustomNewSets,
+        EnumThatInheritsIteratorSlotThatCustomNewSets,
+        EnumWithSlotThatShadowsSlotThatCustomNewSets,
+    ],
+)
 def test__enum_didnt_have__custom_new_that_sets_slot_from_other_arg__should_raise_schema_generation_error(
     create_runtime_schemas: CreateRuntimeSchemas,
     original: type[Enum],
@@ -742,9 +841,26 @@ class EnumWithSlotThatInitSets(Enum):
     b = 2
 
 
-def test__enum_didnt_have__enum_with_own_slots__should_copy_the_slots(create_runtime_schemas: CreateRuntimeSchemas):
-    models = create_runtime_schemas(version_change(enum(EnumWithSlotThatInitSets).didnt_have("b")))
-    old_enum: Any = models["2000-01-01"][EnumWithSlotThatInitSets]
+class EnumWithIteratorSlotThatInitSets(Enum):
+    __slots__ = iter(["double"])
+
+    def __init__(self, value: int) -> None:
+        self.double = value * 2
+
+    a = 1
+    b = 2
+
+
+@pytest.mark.parametrize("original", [EnumWithSlotThatInitSets, EnumWithIteratorSlotThatInitSets])
+def test__enum_didnt_have__enum_with_own_slots__should_copy_the_slots(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: type[Enum],
+):
+    models = create_runtime_schemas(version_change(enum(original).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][original]
+
+    assert [(m.name, m.double) for m in old_enum] == [("a", 2)]
+    assert "double" not in vars(old_enum.a)
 
     assert [(m.name, m.double) for m in old_enum] == [("a", 2)]
 
@@ -805,3 +921,32 @@ def test__enum_didnt_have__custom_new_with_attribute_that_cant_be_compared__shou
         ),
     ):
         create_runtime_schemas(version_change(enum(EnumWithCustomNewAndInitThatSetsUncomparableObject).didnt_have("b")))
+
+
+@pytest.mark.parametrize(
+    "make_attribute",
+    [
+        lambda: datetime(2000, 1, 1, 12, tzinfo=timezone(timedelta(hours=1), "CET")),
+        lambda: time(12, 30, tzinfo=timezone.utc),
+        lambda: timedelta(days=1),
+        lambda: UUID("12345678-1234-5678-1234-567812345678"),
+        lambda: PurePosixPath("a/b"),
+    ],
+)
+def test__enum_didnt_have__custom_new_with_init_that_sets_equal_new_value_object__should_keep_the_attribute(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    make_attribute: Callable[[], object],
+):
+    def __new__(cls: Any, value: int) -> Any:  # noqa: N807
+        obj = object.__new__(cls)
+        obj._value_ = value
+        return obj
+
+    def __init__(self: Any, value: int) -> None:  # noqa: N807
+        self.attribute = make_attribute()
+
+    original: Any = Enum("EnumWithInitThatSetsValueObject", {"__new__": __new__, "__init__": __init__, "a": 1, "b": 2})
+    models = create_runtime_schemas(version_change(enum(original).didnt_have("b")))
+    old_enum: Any = models["2000-01-01"][original]
+
+    assert [(m.name, m.attribute) for m in old_enum] == [("a", make_attribute())]
