@@ -78,6 +78,7 @@ from cadwyn._utils import (
     UnionType,
     fully_unwrap_decorator,
     get_name_of_function_wrapped_in_pydantic_validator,
+    is_same_value,
     is_sqlalchemy_model,
     lenient_issubclass,
 )
@@ -3573,7 +3574,7 @@ def _apply_alter_enum_instructions(
                 enum.members.pop(member)
         elif isinstance(alter_enum_instruction, EnumHadMembersInstruction):
             for member, member_value in alter_enum_instruction.members.items():
-                if member in enum.members and enum.members[member] == member_value:
+                if member in enum.members and is_same_value(enum.members[member], member_value):
                     raise InvalidGenerationInstructionError(
                         f'You tried to add a member "{member}" to "{enum.cls.__name__}" '
                         f'in "{version_change_name}" but there is already a member with that name and value.',
@@ -3841,11 +3842,11 @@ def _change_field(
     annotation: Union[Any, None],
 ):
     if alter_schema_instruction.type is not Sentinel:
-        if field.annotation == alter_schema_instruction.type and (
+        if is_same_value(field.annotation, alter_schema_instruction.type) and (
             field.type_changed_by is None
             or issubclass(model.cls, field.type_changed_by)
             # Another model that shares the field (e.g. a sibling) could have changed its type only for itself
-            or annotation == alter_schema_instruction.type
+            or is_same_value(annotation, alter_schema_instruction.type)
         ):
             raise InvalidGenerationInstructionError(
                 f'You tried to change the type of field "{alter_schema_instruction.name}" to '
@@ -3872,18 +3873,14 @@ def _change_field(
     for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
         attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
         if attr_value is not Sentinel:
-            shared_value = field.passed_field_attributes.get(attr_name, Sentinel)
-            # Another model that shares the field (e.g. a sibling) could have set the value only for itself.
-            # We compare the shared value first, as Cadwyn always did, and avoid comparing it with the model's own
-            # value because user defaults can compare in any way (e.g. numpy arrays compare element-wise)
-            if shared_value == attr_value and (
-                (model_value := field.get_field_attributes(model.cls).get(attr_name, Sentinel)) is shared_value
-                or model_value == attr_value
+            # Another model that shares the field (e.g. a sibling) could have set the value only for itself
+            if is_same_value(field.passed_field_attributes.get(attr_name, Sentinel), attr_value) and is_same_value(
+                field.get_field_attributes(model.cls).get(attr_name, Sentinel), attr_value
             ):
                 raise InvalidGenerationInstructionError(
                     f'You tried to change the attribute "{attr_name}" of field '
                     f'"{alter_schema_instruction.name}" '
-                    f'from "{model.name}" to {attr_value!r} in "{version_change_name}" '
+                    f'of "{model.name}" to {attr_value!r} in "{version_change_name}" '
                     "but it already has that value.",
                 )
             # Like Cadwyn always did, we don't change the annotation's metadata, so a constraint from it (e.g. from

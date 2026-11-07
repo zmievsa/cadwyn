@@ -7,7 +7,6 @@ import pathlib
 import re
 import sys
 import tempfile
-import threading
 import time as time_module
 import typing
 from collections import OrderedDict
@@ -8521,16 +8520,12 @@ def test__request_body_migration__with_json_field_and_dependency_that_reads_the_
     assert [error["type"] for error in exc_info.value.errors] == ["json_type"]
 
 
-# Cadwyn compares the defaults when it generates the versions, so we only make the comparisons raise after that
-_comparisons_of_ints_raise = threading.Event()
-
-
 class _IntThatCantBeCompared(int):
+    """Cadwyn never compares it when it generates the versions, only when it plans the request migration"""
+
     @override
     def __eq__(self, other: object) -> bool:
-        if _comparisons_of_ints_raise.is_set():
-            raise RuntimeError("Can't compare")
-        return super().__eq__(other)
+        raise RuntimeError("Can't compare")
 
     __hash__ = int.__hash__
 
@@ -8556,12 +8551,8 @@ def test__request_body_migration__with_json_field_whose_planning_fails__should_f
         )
     )
 
-    _comparisons_of_ints_raise.set()
-    try:
-        with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
-            clients["2000-01-01"].post(test_path, json={"data": '{"a": 1}'})
-    finally:
-        _comparisons_of_ints_raise.clear()
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, json={"data": '{"a": 1}'})
     assert [error["type"] for error in exc_info.value.errors] == ["json_type"]
 
 

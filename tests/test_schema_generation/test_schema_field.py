@@ -1,3 +1,4 @@
+import json
 import re
 from decimal import Decimal
 from enum import Enum, auto
@@ -5,6 +6,7 @@ from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, Union, g
 
 import pytest
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -2431,7 +2433,7 @@ def test__schema_field_had__change_attr_to_same_value__should_raise_error(create
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to change the attribute "default" of field "foo" from "SchemaWithOneStrField" to \'wow\' '
+            'You tried to change the attribute "default" of field "foo" of "SchemaWithOneStrField" to \'wow\' '
             'in "MyVersionChange" but it already has that value.',
         ),
     ):
@@ -2446,7 +2448,7 @@ def test__schema_field_had__change_metadata_attr_to_same_value__should_raise_err
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to change the attribute "gt" of field "foo" from "EmptySchema" to 8 '
+            'You tried to change the attribute "gt" of field "foo" of "EmptySchema" to 8 '
             'in "MyVersionChange" but it already has that value.',
         ),
     ):
@@ -2456,6 +2458,156 @@ def test__schema_field_had__change_metadata_attr_to_same_value__should_raise_err
                 schema(EmptySchema).field("foo").existed_as(type=int, info=Field(gt=8, lt=12)),
             ),
         )
+
+
+class AlwaysEqual:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        return True  # pragma: no cover
+
+    @override
+    def __repr__(self) -> str:
+        return f"AlwaysEqual({self.name!r})"
+
+    __hash__ = object.__hash__
+
+
+nan = float("nan")
+
+
+@pytest.mark.parametrize(
+    ("old_value", "new_value"),
+    [
+        pytest.param(1, True, id="int_to_bool"),
+        pytest.param(1, 1.0, id="int_to_float"),
+        pytest.param(0.0, -0.0, id="zero_to_negative_zero"),
+        pytest.param(float("nan"), float("nan"), id="nan_to_another_nan"),
+        pytest.param(complex(1, 0.0), complex(1, -0.0), id="complex_with_zero_to_negative_zero"),
+        pytest.param(Decimal(1), Decimal("1.0"), id="decimal_to_decimal_with_another_exponent"),
+        pytest.param(Decimal("NaN"), Decimal("NaN"), id="decimal_nan_to_another_decimal_nan"),
+        pytest.param((1, 2), (1, True), id="tuple_with_int_to_tuple_with_bool"),
+        pytest.param([1], [1, 2], id="list_to_longer_list"),
+        pytest.param({"a": 1}, {"a": True}, id="dict_with_int_value_to_dict_with_bool_value"),
+        pytest.param({1: "a"}, {True: "a"}, id="dict_with_int_key_to_dict_with_bool_key"),
+        pytest.param({"a": 1, "b": 2}, {"b": 2, "a": 1}, id="dict_to_dict_in_another_order"),
+        pytest.param(frozenset({1}), frozenset({True}), id="frozenset_with_int_to_frozenset_with_bool"),
+        pytest.param(AlwaysEqual("old"), AlwaysEqual("new"), id="object_with_custom_eq_to_another_object"),
+    ],
+)
+def test__schema_field_had__default_that_equals_the_current_one_but_differs__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas, old_value: Any, new_value: Any
+):
+    class SchemaWithDefault(BaseModel):
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+        foo: Any = old_value
+
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithDefault).field("foo").had(default=new_value)))
+
+    def describe(value: Any) -> tuple[type, str]:
+        return type(value), repr(value)
+
+    assert describe(schemas["2000-01-01"][SchemaWithDefault].model_fields["foo"].default) == describe(new_value)
+    assert describe(schemas["2001-01-01"][SchemaWithDefault].model_fields["foo"].default) == describe(old_value)
+
+
+def test__schema_field_had__default_that_equals_the_current_one_but_differs__should_change_it_in_openapi(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithIntDefault(BaseModel):
+        foo: Union[int, bool] = 1
+
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithIntDefault).field("foo").had(default=True)))
+
+    assert schemas["2000-01-01"][SchemaWithIntDefault].model_json_schema()["properties"]["foo"]["default"] is True
+    assert schemas["2001-01-01"][SchemaWithIntDefault].model_json_schema()["properties"]["foo"]["default"] == 1
+
+
+def test__schema_field_had__constraint_that_equals_the_current_one_but_differs__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithIntConstraint(BaseModel):
+        foo: float = Field(gt=1)
+
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithIntConstraint).field("foo").had(gt=1.0)))
+
+    old_constraint = schemas["2000-01-01"][SchemaWithIntConstraint].model_json_schema()["properties"]["foo"]
+    assert repr(old_constraint["exclusiveMinimum"]) == "1.0"
+    new_constraint = schemas["2001-01-01"][SchemaWithIntConstraint].model_json_schema()["properties"]["foo"]
+    assert repr(new_constraint["exclusiveMinimum"]) == "1"
+
+
+@pytest.mark.parametrize(
+    ("attributes", "new_attributes"),
+    [
+        pytest.param({"default": float("1.5")}, {"default": float("1.5")}, id="float"),
+        pytest.param({"default": complex("1+2j")}, {"default": complex("1+2j")}, id="complex"),
+        pytest.param({"default": Decimal("1.0")}, {"default": Decimal("1.0")}, id="decimal"),
+        pytest.param({"default": nan}, {"default": nan}, id="the_same_nan"),
+        pytest.param({"default": {"a": [1, (2, 3)]}}, {"default": {"a": [1, (2, 3)]}}, id="dict_with_list_and_tuple"),
+        pytest.param({"default": frozenset({1, 2})}, {"default": frozenset({2, 1})}, id="frozenset"),
+        pytest.param(
+            {"validation_alias": AliasChoices("a", "b")},
+            {"validation_alias": AliasChoices("a", "b")},
+            id="dataclass",
+        ),
+    ],
+)
+def test__schema_field_had__attribute_that_is_the_same_as_the_current_one__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas, attributes: dict[str, Any], new_attributes: dict[str, Any]
+):
+    class SchemaWithAttribute(BaseModel):
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+        foo: Any = Field(**attributes)
+
+    with pytest.raises(InvalidGenerationInstructionError, match="but it already has that value"):
+        create_runtime_schemas(version_change(schema(SchemaWithAttribute).field("foo").had(**new_attributes)))
+
+
+@pytest.mark.parametrize(
+    ("old_type", "new_type"),
+    [
+        pytest.param(Union[str, int], Union[int, str], id="union_in_another_order"),
+        pytest.param(Literal["a", "b"], Literal["b", "a"], id="literal_in_another_order"),
+        pytest.param(Literal[1], Literal[True], id="literal_with_int_to_literal_with_bool"),
+    ],
+)
+def test__schema_field_had__type_that_equals_the_current_one_but_differs__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas, old_type: Any, new_type: Any
+):
+    class SchemaWithType(BaseModel):
+        foo: old_type
+
+    class SchemaWithNewType(BaseModel):
+        foo: new_type
+
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithType).field("foo").had(type=new_type)))
+
+    def field_schema(model: type[BaseModel]) -> str:
+        return json.dumps(model.model_json_schema()["properties"]["foo"])
+
+    assert field_schema(schemas["2000-01-01"][SchemaWithType]) == field_schema(SchemaWithNewType)
+    assert field_schema(schemas["2001-01-01"][SchemaWithType]) == field_schema(SchemaWithType)
+    assert field_schema(SchemaWithType) != field_schema(SchemaWithNewType)
+
+
+@pytest.mark.parametrize(
+    ("old_type", "new_type"),
+    [
+        pytest.param(list[int], list[int], id="generic_alias"),
+        pytest.param(dict[str, list[int]], dict[str, list[int]], id="nested_generic_alias"),
+    ],
+)
+def test__schema_field_had__type_that_is_the_same_as_the_current_one__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas, old_type: Any, new_type: Any
+):
+    class SchemaWithType(BaseModel):
+        foo: old_type
+
+    with pytest.raises(InvalidGenerationInstructionError, match="but it already has type"):
+        create_runtime_schemas(version_change(schema(SchemaWithType).field("foo").had(type=new_type)))
 
 
 def test__schema_field_had__nonexistent_field__should_raise_error(create_runtime_schemas: CreateRuntimeSchemas):

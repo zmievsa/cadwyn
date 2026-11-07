@@ -161,6 +161,20 @@ def test__enum_had__same_name_as_other_value__should_raise_invalid_generation_in
         create_runtime_schemas(version_change(enum(EnumWithOneMember).had(foo=83)))
 
 
+class EnumWithIntMember(Enum):
+    foo = 1
+
+
+def test__enum_had__value_that_equals_the_current_one_but_differs__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(EnumWithIntMember).had(foo=True)))
+
+    assert models["2000-01-01"][EnumWithIntMember].foo.value is True
+    assert models["2001-01-01"][EnumWithIntMember].foo.value == 1
+    assert models["2001-01-01"][EnumWithIntMember].foo.value is not True
+
+
 def test__enum_didnt_have__nonexisting_name__should_raise_invalid_generation_instruction_error(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
