@@ -250,7 +250,6 @@ else:
 
 class VersionChange:
     description: ClassVar[str] = Sentinel
-    is_hidden_from_changelog: ClassVar[bool] = False
     instructions_to_migrate_to_previous_version: ClassVar[Sequence[PossibleInstructions]] = Sentinel
     alter_schema_instructions: ClassVar[list[Union[AlterSchemaSubInstruction, SchemaHadInstruction]]] = Sentinel
     alter_enum_instructions: ClassVar[list[AlterEnumSubInstruction]] = Sentinel

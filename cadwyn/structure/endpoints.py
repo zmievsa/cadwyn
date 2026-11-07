@@ -11,7 +11,6 @@ from starlette.routing import BaseRoute
 from cadwyn.exceptions import LintingError
 
 from .._utils import DATACLASS_SLOTS, Sentinel
-from .common import _HiddenAttributeMixin
 
 HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
 
@@ -56,7 +55,7 @@ class EndpointAttributesPayload:
 
 
 @dataclass(**DATACLASS_SLOTS)
-class EndpointHadInstruction(_HiddenAttributeMixin):
+class EndpointHadInstruction:
     endpoint_path: str
     endpoint_methods: set[str]
     endpoint_func_name: Union[str, None]
@@ -64,14 +63,14 @@ class EndpointHadInstruction(_HiddenAttributeMixin):
 
 
 @dataclass(**DATACLASS_SLOTS)
-class EndpointExistedInstruction(_HiddenAttributeMixin):
+class EndpointExistedInstruction:
     endpoint_path: str
     endpoint_methods: set[str]
     endpoint_func_name: Union[str, None]
 
 
 @dataclass(**DATACLASS_SLOTS)
-class EndpointDidntExistInstruction(_HiddenAttributeMixin):
+class EndpointDidntExistInstruction:
     endpoint_path: str
     endpoint_methods: set[str]
     endpoint_func_name: Union[str, None]
@@ -86,7 +85,6 @@ class EndpointInstructionFactory:
     @property
     def didnt_exist(self) -> EndpointDidntExistInstruction:
         return EndpointDidntExistInstruction(
-            is_hidden_from_changelog=False,
             endpoint_path=self.endpoint_path,
             endpoint_methods=self.endpoint_methods,
             endpoint_func_name=self.endpoint_func_name,
@@ -95,7 +93,6 @@ class EndpointInstructionFactory:
     @property
     def existed(self) -> EndpointExistedInstruction:
         return EndpointExistedInstruction(
-            is_hidden_from_changelog=False,
             endpoint_path=self.endpoint_path,
             endpoint_methods=self.endpoint_methods,
             endpoint_func_name=self.endpoint_func_name,
@@ -124,7 +121,6 @@ class EndpointInstructionFactory:
         generate_unique_id_function: Callable[[APIRoute], str] = Sentinel,
     ) -> EndpointHadInstruction:
         return EndpointHadInstruction(
-            is_hidden_from_changelog=False,
             endpoint_path=self.endpoint_path,
             endpoint_methods=self.endpoint_methods,
             endpoint_func_name=self.endpoint_func_name,

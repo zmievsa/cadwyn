@@ -14,7 +14,7 @@ from cadwyn._utils import (
 )
 from cadwyn.exceptions import CadwynStructureError
 
-from .common import _HiddenAttributeMixin, _validate_schema_is_versionable
+from .common import _validate_schema_is_versionable
 
 if TYPE_CHECKING:
     from pydantic.typing import AbstractSetIntStr, MappingIntStrAny
@@ -107,7 +107,7 @@ class FieldChanges:
 
 
 @dataclass(**DATACLASS_SLOTS)
-class FieldHadInstruction(_HiddenAttributeMixin):
+class FieldHadInstruction:
     schema: type[BaseModel]
     name: str
     type: type
@@ -116,20 +116,20 @@ class FieldHadInstruction(_HiddenAttributeMixin):
 
 
 @dataclass(**DATACLASS_SLOTS)
-class FieldDidntHaveInstruction(_HiddenAttributeMixin):
+class FieldDidntHaveInstruction:
     schema: type[BaseModel]
     name: str
     attributes: tuple[str, ...]
 
 
 @dataclass(**DATACLASS_SLOTS)
-class FieldDidntExistInstruction(_HiddenAttributeMixin):
+class FieldDidntExistInstruction:
     schema: type[BaseModel]
     name: str
 
 
 @dataclass(**DATACLASS_SLOTS)
-class FieldExistedAsInstruction(_HiddenAttributeMixin):
+class FieldExistedAsInstruction:
     schema: type[BaseModel]
     name: str
     field: FieldInfo
@@ -185,7 +185,6 @@ class AlterFieldInstructionFactory:
         json_schema_extra: Union[dict[str, Any], Callable[[dict[str, Any]], None], None] = Sentinel,
     ) -> FieldHadInstruction:
         return FieldHadInstruction(
-            is_hidden_from_changelog=False,
             schema=self.schema,
             name=self.name,
             type=type,
@@ -237,13 +236,11 @@ class AlterFieldInstructionFactory:
                 raise CadwynStructureError(
                     f"Unknown attribute {attribute!r}. Are you sure it's a valid field attribute?"
                 )
-        return FieldDidntHaveInstruction(
-            is_hidden_from_changelog=False, schema=self.schema, name=self.name, attributes=attributes
-        )
+        return FieldDidntHaveInstruction(schema=self.schema, name=self.name, attributes=attributes)
 
     @property
     def didnt_exist(self) -> FieldDidntExistInstruction:
-        return FieldDidntExistInstruction(is_hidden_from_changelog=False, schema=self.schema, name=self.name)
+        return FieldDidntExistInstruction(schema=self.schema, name=self.name)
 
     def existed_as(
         self,
@@ -254,7 +251,7 @@ class AlterFieldInstructionFactory:
         if info is None:
             info = cast("FieldInfo", Field())
         info.annotation = type
-        return FieldExistedAsInstruction(is_hidden_from_changelog=False, schema=self.schema, name=self.name, field=info)
+        return FieldExistedAsInstruction(schema=self.schema, name=self.name, field=info)
 
 
 def _get_model_decorators(model: type[BaseModel]):
@@ -308,7 +305,7 @@ AlterSchemaSubInstruction = Union[
 
 
 @dataclass(**DATACLASS_SLOTS)
-class SchemaHadInstruction(_HiddenAttributeMixin):
+class SchemaHadInstruction:
     schema: type[BaseModel]
     name: str = Sentinel
     # The docstring of the model (`__doc__`), which pydantic uses as its description. None means no description
@@ -358,9 +355,7 @@ class AlterSchemaInstructionFactory:
                 f"The description that you passed to schema({self.schema.__name__}).had() is blank. "
                 "Pass description=None to remove the description instead."
             )
-        return SchemaHadInstruction(
-            is_hidden_from_changelog=False, schema=self.schema, name=name, description=description
-        )
+        return SchemaHadInstruction(schema=self.schema, name=name, description=description)
 
 
 def schema(model: type[BaseModel], /) -> AlterSchemaInstructionFactory:

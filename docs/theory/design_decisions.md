@@ -47,7 +47,7 @@ These follow from how Cadwyn works, which [Architecture](architecture.md) descri
 | Fields whose validation and serialization keys differ | Fix only requests and responses that would certainly fail ("rescue-only"). | Responses that passed before must not change at all, even if they lost a value. |
 | Self-referencing models | Copied when that's safe. Otherwise Cadwyn raises `SchemaGenerationError` at startup. | Failing clearly is better than serving wrong shapes silently. |
 | Enum defaults of omitted parameters on FastAPI before 0.148 | Not rewritten. | It would fix a pre-existing bug on old FastAPI only, and every attempt added new edge cases. |
-| `/changelog` and `generate_changelog()` | Deprecated, and removed in 9.0. Until then, crash fixes only. | Maintenance cost. Apps can now generate a better and more extensible changelog from their version changes themselves, e.g. with a coding agent. |
+| `/changelog`, `generate_changelog()`, and `hidden()` | Removed in 9.0. | Maintenance cost. Apps can now generate a better and more extensible changelog from their version changes themselves, e.g. with a coding agent. |
 | Options and flags | Avoided in 99% of cases, including for shipping a breaking fix early. A breaking fix waits for a major release. | Each one doubles the code paths and the tests. |
 | Minimum supported versions | Raising the FastAPI minimum to drop compatibility code is fine. The Pydantic and Python minimums are raised only when unavoidable. | FastAPI moves fast and Cadwyn depends on its internals. Raising the Pydantic or Python minimums blocks more users. |
 | FastAPI before 0.137.1 | Not supported. | Its router model is different. Supporting both doubles the routing code. |

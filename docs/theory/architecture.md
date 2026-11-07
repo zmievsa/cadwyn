@@ -25,7 +25,6 @@ So your business logic only ever sees HEAD, and every version's OpenAPI comes fr
 | `cadwyn/routing.py` | `_RootCadwynAPIRouter`, which sends a request to the routes of its version. |
 | `cadwyn/dependencies.py`, `cadwyn/_internal/context_vars.py` | `current_dependency_solver()` and the context variables behind it. |
 | `cadwyn/__main__.py`, `_render.py`, `_asts.py` | The `cadwyn render` CLI, which prints a version's copies of models as code. |
-| `cadwyn/changelogs.py` | The deprecated `/changelog` endpoint. |
 
 ## Versions and version changes
 

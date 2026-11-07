@@ -57,7 +57,6 @@ def test__header_routing__invalid_version_format__should_raise_value_error():
 def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_openapi_routes():
     assert [cast("APIRoute", r).path for r in Cadwyn(versions=VersionBundle(Version("2022-11-16"))).routes] == [
         "/docs/oauth2-redirect",
-        "/changelog",
         "/openapi.json",
         "/docs",
         "/redoc",
@@ -66,16 +65,23 @@ def test__header_routing_fastapi_init__openapi_passing_nulls__should_not_add_ope
         cast("APIRoute", r).path
         for r in Cadwyn(versions=VersionBundle(Version("2022-11-16")), docs_url=None, redoc_url=None).routes
     ] == [
-        "/changelog",
         "/openapi.json",
     ]
-    assert Cadwyn(versions=VersionBundle(Version("2022-11-16")), openapi_url=None, changelog_url=None).routes == []
+    assert Cadwyn(versions=VersionBundle(Version("2022-11-16")), openapi_url=None).routes == []
+
+
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [("changelog_url", "/changelog"), ("changelog_url", None), ("include_changelog_url_in_schema", False)],
+)
+def test__cadwyn_init__removed_changelog_argument__should_raise_type_error(argument: str, value: Any):
+    with pytest.raises(TypeError, match=f"unexpected keyword argument '{argument}'.*removed the changelog feature"):
+        Cadwyn(versions=VersionBundle(Version("2022-11-16")), **{argument: value})
 
 
 def test__header_routing_fastapi_init__passing_null_to_oauth2__should_not_add_oauth2_redirect_route():
     app = Cadwyn(versions=VersionBundle(Version("2022-11-16")), swagger_ui_oauth2_redirect_url=None)
     assert [cast("APIRoute", r).path for r in app.routes] == [
-        "/changelog",
         "/openapi.json",
         "/docs",
         "/redoc",
@@ -108,7 +114,7 @@ def test__header_routing_fastapi_init__changing_openapi_url__docs_still_return_2
 
 
 def test__header_routing_fastapi__calling_openapi_incorrectly__docs_should_return_404():
-    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             v2021_01_01_router,
@@ -285,7 +291,7 @@ def test__unversioned_include_router__route_added_after_first_request_is_availab
 
 
 def test__unversioned_include_router__hidden_late_route_does_not_create_public_openapi_schema():
-    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     parent_router = APIRouter()
     child_router = APIRouter()
     parent_router.include_router(child_router, prefix="/internal", include_in_schema=False)
@@ -307,7 +313,7 @@ def test__unversioned_include_router__hidden_late_route_does_not_create_public_o
 
 
 def test__unversioned_include_router__hidden_plain_route_does_not_create_public_openapi_schema():
-    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     router = APIRouter()
 
     async def hidden_route(_request):
@@ -328,7 +334,7 @@ def test__unversioned_include_router__hidden_plain_route_does_not_create_public_
 
 
 def test__unversioned_include_router__visible_nested_plain_route_creates_public_openapi_schema():
-    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     parent_router = APIRouter()
     child_router = APIRouter()
     parent_router.include_router(child_router, prefix="/public")
@@ -819,7 +825,7 @@ def test__get_openapi__nonexisting_version__should_return_404():
 
 def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
     root_app = FastAPI()
-    root_app.mount("/my_api", Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16"))))
+    root_app.mount("/my_api", Cadwyn(versions=VersionBundle(Version("2022-11-16"))))
     client = TestClient(root_app)
 
     resp = client.get("/my_api/openapi.json?version=2022-11-16")
@@ -829,11 +835,11 @@ def test__get_openapi__with_mounted_app__should_include_root_path_in_servers():
 
 def test__cadwyn__with_openapi_prefix__should_raise_type_error():
     with pytest.raises(TypeError, match=re.escape("unexpected keyword argument 'openapi_prefix'")):
-        Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")
+        Cadwyn(versions=VersionBundle(Version("2022-11-16")), openapi_prefix="/my_api")
 
 
 def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_urls():
-    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     with pytest.warns(DeprecationWarning, match=_ADD_HEADER_WARNING):
         app.add_header_versioned_routers(  # ty: ignore[deprecated]  # Legacy test setup.
             v2021_01_01_router,
@@ -872,7 +878,7 @@ def test__get_docs__without_unversioned_routes__should_return_all_versioned_doc_
 def test__get_docs__with_root_path__should_link_to_reachable_versioned_docs(
     server_root_path: str, mount_path: str, docs_url: str
 ):
-    app = Cadwyn(changelog_url=None, versions=VersionBundle(Version("2022-11-16")))
+    app = Cadwyn(versions=VersionBundle(Version("2022-11-16")))
     if mount_path:
         root_app = FastAPI()
         root_app.mount(mount_path, app)
@@ -895,7 +901,7 @@ def test__mount__static_files__should_serve_file(tmp_path):
     static_dir.mkdir()
     (static_dir / "hello.txt").write_text("Hello World")
 
-    app = Cadwyn(changelog_url=None, versions=VersionBundle(HeadVersion(), Version("2022-11-16")))
+    app = Cadwyn(versions=VersionBundle(HeadVersion(), Version("2022-11-16")))
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     with TestClient(app) as client:
@@ -1042,7 +1048,6 @@ def test__webhooks():
 def test__docs_dashboards__custom_static_asset_urls():
     app = Cadwyn(
         versions=VersionBundle(Version("2022-11-16")),
-        changelog_url=None,
         swagger_js_url="/static/swagger.js",
         swagger_css_url="/static/swagger.css",
         swagger_favicon_url="/static/swagger-favicon.png",

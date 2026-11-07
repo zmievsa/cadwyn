@@ -46,10 +46,3 @@ include = ["docs_src/concepts/schema_generation/render_project/**"]
 
 [overrides.rules]
 import-not-found = "ignore"
-
-[[overrides]]
-# The changelog page documents the deprecated `hidden()`
-include = ["docs_src/concepts/changelogs/block*.py"]
-
-[overrides.rules]
-deprecated = "ignore"

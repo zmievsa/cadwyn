@@ -817,10 +817,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             fields_renamed_by_parents=fields_renamed_by_parents,
         )
 
-    @override
-    def __hash__(self) -> int:
-        return hash(id(self))
-
     def _get_parents(
         self, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]"
     ) -> "list[_PydanticModelWrapper[BaseModel]]":
