@@ -116,6 +116,16 @@ def _render_pydantic_model(
 
     # The same fields as in the copies of the model
     field_attributes, annotations = wrapper.get_field_attributes_and_annotations(generator.model_bundle.schemas)
+    # `cadwyn render` doesn't render model_config, so we render the aliases that an alias generator gives the fields
+    # whose alias an instruction changed. We only generate the model for such fields
+    if wrapper.cls.model_config.get("alias_generator") is not None:
+        defined_fields = wrapper.fields_renamed_by_parents | wrapper.fields
+        if names := [name for name in field_attributes if defined_fields[name].keys_renamed_by_alias]:
+            generated_fields = generator[wrapper.cls].model_fields
+            for name in names:
+                field_attributes[name] = _with_aliases_of_generated_field(
+                    field_attributes[name], generated_fields[name]
+                )
     field_definitions = [
         ast.AnnAssign(
             target=ast.Name(name),
@@ -156,6 +166,23 @@ def _render_pydantic_model(
 
 
 _ALIAS_ATTRIBUTES = ("alias", "validation_alias", "serialization_alias")
+
+
+def _with_aliases_of_generated_field(attributes: dict[str, Any], generated_field: FieldInfo) -> dict[str, Any]:
+    """Pass the aliases that the generated field has explicitly where Field(**attributes) wouldn't get them"""
+    attributes = attributes.copy()
+    for attr_name in _ALIAS_ATTRIBUTES:
+        generated_value = getattr(generated_field, attr_name)
+        if generated_value is not None and _get_alias_of_field(attributes, attr_name) != generated_value:
+            attributes[attr_name] = generated_value
+    return attributes
+
+
+def _get_alias_of_field(attributes: dict[str, Any], attr_name: str) -> Any:
+    """Return the alias that Field(**attributes) gets. Like in Field(), the missing aliases follow alias"""
+    if attributes.get(attr_name) is None and attr_name != "alias":
+        return attributes.get("alias")
+    return attributes.get(attr_name)
 
 
 def _without_redundant_none_aliases(attributes: dict[str, Any], annotation: Any) -> dict[str, Any]:

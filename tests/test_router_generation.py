@@ -1696,6 +1696,10 @@ class ItemWithAliasInAnnotated(BaseModel):
     name: Annotated[str, Field(alias="a")]
 
 
+class ItemWithOptionalAliasInAnnotated(BaseModel):
+    name: Annotated[str, Field(alias="a")] = "default"
+
+
 class ItemWithAliasAndSerializationAlias(BaseModel):
     name: str = Field(alias="a", serialization_alias="s")
 
@@ -1752,12 +1756,20 @@ def _get_openapi_keys(client: TestClient, version: str, schema_name: str) -> tup
         ),
         pytest.param(ItemWithAlias, lambda field: field.had(alias=None), "name", "name", id="had_none"),
         pytest.param(ItemWithAlias, lambda field: field.didnt_have("alias"), "name", "name", id="didnt_have"),
+        # didnt_have() never removes an alias from the Field() in Annotated, so the field keeps it, as before
         pytest.param(
             ItemWithAliasInAnnotated,
             lambda field: field.didnt_have("alias"),
-            "name",
-            "name",
+            "a",
+            "a",
             id="didnt_have_in_annotated",
+        ),
+        pytest.param(
+            ItemWithOptionalAliasInAnnotated,
+            lambda field: field.didnt_have("alias", "validation_alias", "serialization_alias"),
+            "a",
+            "a",
+            id="didnt_have_keys_too_in_annotated",
         ),
         pytest.param(
             ItemWithAliasAndSerializationAlias,
@@ -1789,7 +1801,7 @@ def _get_openapi_keys(client: TestClient, version: str, schema_name: str) -> tup
         ),
     ],
 )
-def test__router_generation__alias_instruction__should_change_keys_in_openapi_requests_and_responses(
+def test__router_generation__alias_instruction__should_use_keys_of_resulting_field_in_openapi_requests_and_responses(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     model: type[BaseModel],
@@ -1871,12 +1883,6 @@ def test__router_generation__alias_instruction__should_change_keys_in_openapi_re
             lambda field: [field.didnt_have("alias", "validation_alias", "serialization_alias")],
             (["name"], ["name"]),
             id="didnt_have_keys_too",
-        ),
-        pytest.param(
-            ItemWithAliasInAnnotated,
-            lambda field: [field.didnt_have("alias", "validation_alias", "serialization_alias")],
-            (["name"], ["name"]),
-            id="didnt_have_keys_too_in_annotated",
         ),
         pytest.param(
             ItemWithAlias,
@@ -2020,6 +2026,84 @@ def test__router_generation__alias_instruction__should_reject_request_with_old_k
     assert [error["msg"] for error in response.json()["detail"]] == [
         'The key "a" of "ItemWithOptionalAliasedName.name" was renamed to "legacy" in this API version'
     ]
+
+
+class ItemWithOptionalNameAliasedByItsName(BaseModel):
+    name: str = Field("default", alias="name")
+
+
+class ItemWithOptionalAliasedNameAndFieldNamedLikeIt(BaseModel):
+    name: str = Field("default", alias="a")
+    a: str = Field("other", alias="b")
+
+
+class ItemWithOptionalAliasedNameAndExtras(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str = Field("default", alias="a")
+
+
+@pytest.mark.parametrize(
+    ("model", "body", "old_key"),
+    [
+        pytest.param(ItemWithOptionalNameAliasedByItsName, {"name": "x"}, "name", id="alias_is_field_name"),
+        pytest.param(
+            ItemWithOptionalAliasedNameAndFieldNamedLikeIt, {"a": "x"}, "a", id="old_key_is_name_of_another_field"
+        ),
+        pytest.param(ItemWithOptionalAliasedNameAndExtras, {"a": "x"}, "a", id="extras"),
+        pytest.param(ItemWithOptionalAliasedNameAndExtras, {"a": "x", "name": "y"}, "a", id="extra_named_like_field"),
+    ],
+)
+def test__router_generation__alias_instruction_without_migrations__should_reject_old_key_that_field_doesnt_read(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    model: type[BaseModel],
+    body: dict[str, str],
+    old_key: str,
+):
+    @router.get("/items", response_model=model)
+    async def get_item():
+        return body
+
+    @router.post("/items")
+    async def post_item(item: model):  # ty: ignore[invalid-type-form]
+        raise NotImplementedError
+
+    clients = create_versioned_clients(version_change(schema(model).field("name").had(alias="legacy")))
+    message = f'The key "{old_key}" of "{model.__name__}.name" was renamed to "legacy" in this API version'
+
+    response = clients["2000-01-01"].post("/items", json=body)
+    assert response.status_code == 422
+    assert [error["msg"] for error in response.json()["detail"]] == [message]
+    with pytest.raises(ResponseValidationError) as exc_info:
+        clients["2000-01-01"].get("/items")
+    assert [error["msg"] for error in exc_info.value.errors()] == [message]
+
+
+class ItemWithOptionalNameAliasedByItsNameThatValidatesByName(BaseModel):
+    model_config = ConfigDict(validate_by_name=True)
+    name: str = Field("default", alias="name")
+
+
+def test__router_generation__alias_instruction_keeps_field_name_that_model_validates__should_accept_it(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+):
+    @router.post("/names")
+    async def get_name(item: ItemWithOptionalNameAliasedByItsNameThatValidatesByName) -> str:
+        return item.name
+
+    @convert_request_to_next_version_for(ItemWithOptionalNameAliasedByItsNameThatValidatesByName)
+    def migrate_request(request: RequestInfo):
+        request.body["name"] = request.body.pop("legacy")
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(ItemWithOptionalNameAliasedByItsNameThatValidatesByName).field("name").had(alias="legacy"),
+            migrate_request=migrate_request,
+        )
+    )
+
+    response = clients["2000-01-01"].post("/names", json={"name": "x"})
+    assert (response.status_code, response.json()) == (200, "x")
 
 
 def test__router_generation__alias_instruction__should_accept_old_key_with_new_key(

@@ -42,7 +42,7 @@ import pydantic
 import pydantic._internal._decorators
 from fastapi import Response
 from fastapi.routing import APIRoute
-from pydantic import AliasChoices, AliasPath, BaseModel, Field, RootModel
+from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
 from pydantic._internal._config import ConfigWrapper
 from pydantic._internal._decorators import (
@@ -101,6 +101,7 @@ from cadwyn.structure.versions import (
     _CADWYN_REQUEST_PARAM_NAME,
     _CADWYN_RESPONSE_PARAM_NAME,
     VersionBundle,
+    _get_validation_paths,
     _restore_model_validation_aliases,
 )
 
@@ -179,9 +180,10 @@ class PydanticFieldWrapper:
     declared_field_attributes: dict[str, Any] = dataclasses.field(init=False)
     # The aliases that Field() copied from alias (or that are equal to it). Like in Field(), they follow alias
     aliases_derived_from_alias: frozenset[str] = dataclasses.field(init=False)
-    # The keys that the field has in the version where it was declared, i.e. in head or in its existed_as()
-    declared_keys: frozenset[str] = dataclasses.field(init=False)
-    # The declared keys that a copy of the field doesn't have anymore because its derived aliases followed alias
+    # The keys that the field got from its alias where it was declared (in head or in its existed_as()), which
+    # can differ from the alias itself, e.g. if an alias generator overrides it
+    keys_from_alias: frozenset[str] = dataclasses.field(init=False)
+    # The keys from alias that a copy of the field doesn't have anymore because its derived aliases followed alias
     keys_renamed_by_alias: frozenset[str] = dataclasses.field(init=False, default=frozenset())
     changes: list[_FieldAttributeChange] = dataclasses.field(init=False)
     # The same for all copies of the field
@@ -193,10 +195,10 @@ class PydanticFieldWrapper:
         self.passed_field_attributes = _extract_passed_field_attributes(init_model_field)
         self.declared_field_attributes = self.passed_field_attributes.copy()
         self.aliases_derived_from_alias = _get_aliases_derived_from_alias(self.declared_field_attributes)
-        self.declared_keys = frozenset(
+        self.keys_from_alias = frozenset(
             key
-            for key in (init_model_field.validation_alias, init_model_field.serialization_alias)
-            if isinstance(key, str)
+            for name in self.aliases_derived_from_alias
+            if (key := getattr(init_model_field, name)) == self.declared_field_attributes["alias"]
         )
         self.changes = []
         self.identity = next(_field_identities)
@@ -261,9 +263,7 @@ class PydanticFieldWrapper:
         if model not in self._field_attributes_by_model:
             changes = self._get_changes(model)
             self._field_attributes_by_model[model] = _make_derived_aliases_follow_alias(
-                self._apply_changes(changes),
-                self._get_derived_aliases(changes),
-                had_alias="alias" in self.declared_field_attributes,
+                self._apply_changes(changes), self._get_derived_aliases(changes)
             )
         return self._field_attributes_by_model[model]
 
@@ -280,13 +280,13 @@ class PydanticFieldWrapper:
         return self.aliases_derived_from_alias.difference(change.name for change in changes)
 
     def _get_keys_renamed_by_alias(self, model: type[BaseModel]) -> frozenset[str]:
-        """Return the declared keys that the field loses in the model because its derived aliases follow alias"""
+        """Return the keys from alias that the field loses in the model because its derived aliases follow alias"""
         changes = self._get_changes(model)
         if not self._get_derived_aliases(changes):
             # E.g. a copy of the field, whose attributes already have the aliases that followed alias
             return self.keys_renamed_by_alias
         alias = self.get_field_attributes(model).get("alias")
-        return frozenset() if alias == self.declared_field_attributes["alias"] else self.declared_keys
+        return frozenset() if alias == self.declared_field_attributes["alias"] else self.keys_from_alias
 
     def _apply_changes(self, changes: "list[_FieldAttributeChange]") -> dict[str, Any]:
         if len(changes) == len(self.changes):
@@ -312,21 +312,16 @@ def _get_aliases_derived_from_alias(field_attributes: dict[str, Any]) -> frozens
     )
 
 
-def _make_derived_aliases_follow_alias(
-    attributes: dict[str, Any], derived_aliases: frozenset[str], *, had_alias: bool
-) -> dict[str, Any]:
+def _make_derived_aliases_follow_alias(attributes: dict[str, Any], derived_aliases: frozenset[str]) -> dict[str, Any]:
     """Make the aliases that Field() derived from alias follow it when field().had() or field().didnt_have() change it.
 
-    We pass them explicitly, even as None, so that they override the ones from the Field() in the annotation of
-    the field, e.g. `Annotated[str, Field(alias="a")]`. If the alias was deleted, we pass the deleted aliases as None
-    too, because pydantic merges the Field() in the annotation in different ways for each of them.
+    We pass them explicitly so that they override the ones from the Field() in the annotation of the field, e.g.
+    `Annotated[str, Field(alias="a")]`, even as None for `had(alias=None)`. If didnt_have() deleted the alias, they
+    are deleted too. Like didnt_have() always did, this keeps an alias from the Field() in the annotation.
     """
     if "alias" in attributes:
         return attributes | dict.fromkeys(derived_aliases, attributes["alias"])
-    if had_alias:
-        deleted_aliases = {"validation_alias", "serialization_alias"}.difference(attributes)
-        return attributes | dict.fromkeys(("alias", *derived_aliases, *deleted_aliases), None)
-    return attributes
+    return {name: value for name, value in attributes.items() if name not in derived_aliases}
 
 
 def _keep_last_of_default_and_default_factory(
@@ -1026,10 +1021,10 @@ def _set_keys_renamed_by_alias(
     defined_field_names: "collections.abc.Iterable[str]",
     keys_by_field: dict[str, frozenset[str]],
 ) -> None:
-    """Set the keys that `_reject_keys_renamed_by_alias` rejects in the model, with the keys that replace them.
+    """Set the keys that `_reject_keys_renamed_by_alias` rejects in the model, with the keys that the fields read.
 
     The model inherits the keys of the fields that it inherits from its bases without defining them. We leave out
-    the keys that any field of the model accepts or returns, because they are not lost.
+    the keys that any field of the model reads, because they are not lost.
     """
     defined_field_names = frozenset(defined_field_names)
     keys_by_field = {
@@ -1041,32 +1036,23 @@ def _set_keys_renamed_by_alias(
     # The model also inherits the check and the keys of its bases, so it needs keys of its own if they have any
     if not keys_by_field and not hasattr(model, _KEYS_RENAMED_BY_ALIAS):
         return
-    keys_of_model = {key for name, field in model.model_fields.items() for key in _get_keys_of_field(name, field)}
-    renamed_keys_by_field: dict[str, tuple[tuple[str, ...], str]] = {}
+    keys_read_by_field = {
+        name: tuple(_get_keys_read_by_field(model, name, field)) for name, field in model.model_fields.items()
+    }
+    keys_of_model = {key for keys in keys_read_by_field.values() for key in keys}
+    renamed_keys_by_field: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
     for name, keys in keys_by_field.items():
         lost_keys = tuple(sorted(keys - keys_of_model))
         if lost_keys and name in model.model_fields:
-            renamed_keys_by_field[name] = (lost_keys, _get_request_key_of_field(name, model.model_fields[name]))
+            renamed_keys_by_field[name] = (lost_keys, keys_read_by_field[name])
     setattr(model, _KEYS_RENAMED_BY_ALIAS, renamed_keys_by_field)
 
 
-def _get_keys_of_field(name: str, field: FieldInfo) -> Iterator[str]:
-    """Yield the keys that the field might accept or return, i.e. the first keys of its validation paths too"""
-    yield name
-    validation_aliases = (
-        field.validation_alias.choices if isinstance(field.validation_alias, AliasChoices) else [field.validation_alias]
-    )
-    for alias in (field.alias, field.serialization_alias, *validation_aliases):
-        if isinstance(alias, AliasPath):
-            alias = alias.path[0]
-        if isinstance(alias, str):
-            yield alias
-
-
-def _get_request_key_of_field(name: str, field: FieldInfo) -> str:
-    if isinstance(field.validation_alias, str):
-        return field.validation_alias
-    return field.alias or name
+def _get_keys_read_by_field(model: type[BaseModel], name: str, field: FieldInfo) -> Iterator[str]:
+    """Yield the keys of the input whose values the field reads, i.e. the first keys of its validation paths"""
+    for path in _get_validation_paths(model, name, field):
+        # Pydantic paths always start with a key
+        yield cast("str", path[0])
 
 
 def _get_type_alias_value(alias: Any) -> Any:

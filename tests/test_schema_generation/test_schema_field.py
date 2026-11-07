@@ -2115,9 +2115,6 @@ FIELD_ATTRIBUTES_OF_PYDANTIC_V1 = {"const", "allow_mutation"}
 # they have always accepted or returned, so only these get removed
 # (json_schema_extra holds arbitrary data that validators can read, so it isn't one of them)
 ATTRIBUTES_THAT_DIDNT_HAVE_REMOVES_FROM_FIELD_IN_ANNOTATED = {"title", "description", "examples", "deprecated"}
-# Since Cadwyn 9.0, didnt_have("alias") removes the alias and the keys that pydantic copied from it, as for a field
-# whose Field() isn't in the annotation (#465)
-ATTRIBUTES_THAT_DIDNT_HAVE_OVERRIDES_IN_FIELD_IN_ANNOTATED = {"alias"}
 
 
 def _get_field_attribute(field_info: FieldInfo, attr_name: str) -> Any:
@@ -2134,7 +2131,7 @@ def test__schema_field_didnt_have__every_attribute_of_field_in_annotated__should
 
 
 @pytest.mark.parametrize("attr_name", ANNOTATED_FIELDS_WITH_EVERY_ATTRIBUTE)
-def test__schema_field_didnt_have__attribute_of_field_in_annotated__should_only_remove_documentation_and_alias(
+def test__schema_field_didnt_have__attribute_of_field_in_annotated__should_only_remove_documentation(
     create_runtime_schemas: CreateRuntimeSchemas,
     attr_name: Any,
 ):
@@ -2151,9 +2148,7 @@ def test__schema_field_didnt_have__attribute_of_field_in_annotated__should_only_
 
     head_value = _get_field_attribute(head_field, attr_name)
     assert head_value not in (None, PydanticUndefined)
-    if attr_name in ATTRIBUTES_THAT_DIDNT_HAVE_REMOVES_FROM_FIELD_IN_ANNOTATED | (
-        ATTRIBUTES_THAT_DIDNT_HAVE_OVERRIDES_IN_FIELD_IN_ANNOTATED
-    ):
+    if attr_name in ATTRIBUTES_THAT_DIDNT_HAVE_REMOVES_FROM_FIELD_IN_ANNOTATED:
         assert _get_field_attribute(old_field, attr_name) == _get_field_attribute(Field(), attr_name)
     else:
         assert _get_field_attribute(old_field, attr_name) == head_value

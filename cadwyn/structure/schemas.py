@@ -363,7 +363,8 @@ def schema(model: type[BaseModel], /) -> AlterSchemaInstructionFactory:
     return AlterSchemaInstructionFactory(model)
 
 
-# The keys that `_reject_keys_renamed_by_alias` rejects in a model: `{field_name: (renamed_keys, key_in_this_version)}`
+# The keys that `_reject_keys_renamed_by_alias` rejects in a model and the keys that the field reads instead:
+# `{field_name: (renamed_keys, keys_read_by_field)}`
 _KEYS_RENAMED_BY_ALIAS = "__cadwyn_keys_renamed_by_alias__"
 
 
@@ -376,12 +377,26 @@ def _reject_keys_renamed_by_alias(cls: type[BaseModel], data: Any, handler: Call
     """
     validated = handler(data)
     if isinstance(data, dict):
-        for name, (renamed_keys, key) in getattr(cls, _KEYS_RENAMED_BY_ALIAS, {}).items():
+        for name, (renamed_keys, keys_read_by_field) in getattr(cls, _KEYS_RENAMED_BY_ALIAS, {}).items():
             renamed_key = next((renamed_key for renamed_key in renamed_keys if renamed_key in data), None)
-            if renamed_key is not None and name not in validated.model_fields_set:
+            if renamed_key is not None and not _field_got_value(validated, name, data, keys_read_by_field):
                 raise PydanticCustomError(
                     "renamed_key",
                     'The key "{renamed_key}" of "{field}" was renamed to "{key}" in this API version',
-                    {"renamed_key": renamed_key, "field": f"{cls.__name__}.{name}", "key": key},
+                    {
+                        "renamed_key": renamed_key,
+                        "field": f"{cls.__name__}.{name}",
+                        "key": keys_read_by_field[0] if keys_read_by_field else name,
+                    },
                 )
     return validated
+
+
+def _field_got_value(
+    validated: BaseModel, name: str, data: dict[Any, Any], keys_read_by_field: tuple[str, ...]
+) -> bool:
+    """Whether the field got a value from the data, and not just an extra key with the field's name"""
+    if name not in validated.model_fields_set:
+        return False
+    extra = validated.model_extra
+    return extra is None or name not in extra or any(key in data for key in keys_read_by_field)
