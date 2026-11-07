@@ -1,5 +1,6 @@
 import sys
 from collections.abc import Callable
+from enum import Enum, Flag
 from inspect import signature
 from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
 
@@ -104,3 +105,37 @@ def is_sqlalchemy_model(model: type) -> bool:
     # __mapper__ covers imperative mappings; _sa_registry also covers declarative
     # bases and SQLModel classes without table=True. Avoid importing optional dependencies.
     return hasattr(model, "__mapper__") or hasattr(model, "_sa_registry")
+
+
+def is_enum_looked_up_by_value(enum_cls: type[Enum]) -> bool:
+    """Whether pydantic takes any member of the enum's type that has the value of a member, e.g. a member of a copy.
+
+    Pydantic looks up the members of `str`, `int`, and `float` enums by their values. Plain enums and flags only take
+    their own members, and pass anything else to `_missing_`.
+    """
+    return issubclass(enum_cls, (int, str, float))
+
+
+def get_member_with_same_value(enum_cls: type[Enum], member: Enum) -> Union[Enum, None]:
+    """Return the member of `enum_cls` that has exactly the value of `member`, or None if it has no such member.
+
+    Unlike `enum_cls(member.value)`, this never calls the `_missing_` of `enum_cls`, which can map the value to another
+    member, and it never takes a member whose value only equals the value of `member` (e.g. `1` for `True`). For flags,
+    it takes the combinations of members that have the value, but not the ones that the boundary of `enum_cls` makes of
+    a value with other bits (e.g. `CONFORM` drops the bits that `enum_cls` doesn't have).
+    """
+    value = member._value_
+    try:
+        try:
+            candidate = enum_cls._value2member_map_.get(value)
+        except TypeError:  # Enums keep the members with unhashable values only in their member map
+            candidate = next((other for other in enum_cls._member_map_.values() if other._value_ == value), None)
+        if candidate is None and issubclass(enum_cls, Flag) and type(value) is int:
+            # Flags create the combinations of their members on lookup
+            candidate = Flag._missing_.__func__(enum_cls, value)
+        is_same_value = (
+            type(candidate) is enum_cls and type(candidate._value_) is type(value) and candidate._value_ == value
+        )
+    except Exception:  # noqa: BLE001 # E.g. a value whose `__eq__` fails, or a flag boundary that rejects the bits
+        return None
+    return candidate if is_same_value else None

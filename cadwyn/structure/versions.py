@@ -12,7 +12,18 @@ import tempfile
 import threading
 import uuid
 from collections import Counter, OrderedDict, defaultdict, deque
-from collections.abc import Callable, Coroutine, Hashable, Iterator, Sequence
+from collections.abc import (
+    Callable,
+    Coroutine,
+    Hashable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    MutableSet,
+    Sequence,
+)
+from collections.abc import Set as AbstractSet
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date, datetime, time, timedelta
@@ -57,7 +68,13 @@ from starlette.datastructures import FormData, UploadFile
 from typing_extensions import ParamSpec, TypeVar, deprecated, override
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
-from cadwyn._utils import UnionType, classproperty, lenient_issubclass
+from cadwyn._utils import (
+    UnionType,
+    classproperty,
+    get_member_with_same_value,
+    is_enum_looked_up_by_value,
+    lenient_issubclass,
+)
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -539,7 +556,7 @@ class VersionBundle:
         Pydantic looks up the members of `str`, `int`, and `float` enums by their values, so the head accepts
         the members of their copies.
         """
-        return any(not issubclass(enum, (int, str, float)) for enum in self.versioned_enums.values())
+        return any(not is_enum_looked_up_by_value(enum) for enum in self.versioned_enums.values())
 
     def _replace_with_head_enum_members(self, body: Any) -> Any:
         return _replace_with_head_enum_members(body) if self._has_versioned_plain_enums else body
@@ -2348,27 +2365,18 @@ def _replace_with_head_enum_members(data: Any) -> Any:
 
     Python-mode dumps keep the members of the copies, which the head rejects for plain enums and flags. The head looks
     up the members of the copies of `str`, `int`, and `float` enums by their values anyway, so we leave them, as well
-    as the members of other enums and the ones whose values their head enums don't have. We walk into
-    dicts (and their keys), lists, tuples, sets, frozensets, and the fields of models without recursion, so that data
-    as deep as pydantic accepts never hits the recursion limit. We only copy the containers in which something
-    changes, and we don't walk into the containers that contain themselves again.
+    as the members of other enums and the ones that their head enums have no member with exactly the same value for,
+    so that the head rejects them as before.
+
+    We walk into the keys and values of mappings, the items of sequences and sets, and the fields and extra fields of
+    models, and we keep the type of each container that we copy. Iterators, which pydantic validates lazily, get their
+    members replaced as they are iterated. We walk without recursion, so that data as deep as pydantic accepts never
+    hits the recursion limit. We only copy the containers in which something changes, and we don't walk into the
+    containers that contain themselves again. If we can't walk into a container or copy it, we leave it as it is.
     """
-
-    def replace(value: Any) -> Any:
-        if not isinstance(value, Enum) or isinstance(value, (int, str, float)):
-            return value
-        head_enum: Union[type[Enum], None] = getattr(type(value), "__cadwyn_original_model__", None)
-        if head_enum is None:
-            return value
-        # We leave the member as it is if the head enum doesn't take its value, so the head fails as before
-        try:
-            return head_enum(value.value)
-        except Exception:  # noqa: BLE001
-            return value
-
-    children = _get_children_with_enum_members(data)
+    children = _get_children_that_can_be_enum_members(data)
     if children is None:
-        return replace(data)
+        return _replace_with_head_enum_member(data)
     # Each frame is [container, iterator over its children, its children with replaced members, whether any changed]
     stack: list[list[Any]] = [[data, iter(children), [], False]]
     containers_on_stack = {id(data)}
@@ -2376,9 +2384,9 @@ def _replace_with_head_enum_members(data: Any) -> Any:
         frame = stack[-1]
         child = next(frame[1], _NO_CHILD)
         if child is not _NO_CHILD:
-            grandchildren = None if id(child) in containers_on_stack else _get_children_with_enum_members(child)
+            grandchildren = None if id(child) in containers_on_stack else _get_children_that_can_be_enum_members(child)
             if grandchildren is None:
-                replaced_child = replace(child)
+                replaced_child = _replace_with_head_enum_member(child)
                 frame[2].append(replaced_child)
                 frame[3] = frame[3] or replaced_child is not child
             else:
@@ -2388,7 +2396,7 @@ def _replace_with_head_enum_members(data: Any) -> Any:
         stack.pop()
         container = frame[0]
         containers_on_stack.discard(id(container))
-        replaced = _rebuild_container(container, frame[2]) if frame[3] else container
+        replaced = _copy_container_with_children(container, frame[2]) if frame[3] else container
         if not stack:
             return replaced
         stack[-1][2].append(replaced)
@@ -2396,30 +2404,88 @@ def _replace_with_head_enum_members(data: Any) -> Any:
 
 
 _NO_CHILD = object()
+_TYPES_WITHOUT_ENUM_MEMBERS = (str, int, float, type(None), bytes, bytearray, memoryview, range)
 
 
-def _get_children_with_enum_members(value: Any) -> Union[list[Any], None]:
-    """Return the children of a container that can hold enum members, with the keys and values of dicts in turn"""
-    if type(value) is dict or isinstance(value, BaseModel):
-        items = cast("dict[Any, Any]", value if type(value) is dict else value.__dict__).items()
-        return [child for item in items for child in item]
-    if type(value) in (list, tuple, set, frozenset):
-        return list(value)
+def _replace_with_head_enum_member(value: Any) -> Any:
+    if isinstance(value, Enum):
+        head_enum: Union[type[Enum], None] = getattr(type(value), "__cadwyn_original_model__", None)
+        if head_enum is None or is_enum_looked_up_by_value(head_enum):
+            return value
+        head_member = get_member_with_same_value(head_enum, value)
+        return value if head_member is None else head_member
+    if isinstance(value, Iterator):
+        return map(_replace_with_head_enum_members, value)
+    return value
+
+
+def _get_children_that_can_be_enum_members(value: Any) -> Union[list[Any], None]:
+    """Return the children of a container, with the keys and values of mappings and models in turn, or None"""
+    if isinstance(value, (Enum, *_TYPES_WITHOUT_ENUM_MEMBERS)):
+        return None
+    try:
+        if isinstance(value, BaseModel):
+            items = itertools.chain(value.__dict__.items(), (value.__pydantic_extra__ or {}).items())
+            return [child for item in items for child in item]
+        if isinstance(value, Mapping):
+            return [child for item in value.items() for child in item]
+        if isinstance(value, (Sequence, AbstractSet)):
+            return list(value)
+    except Exception:  # noqa: BLE001
+        return None
     return None
 
 
-def _rebuild_container(container: Any, children: list[Any]) -> Any:
-    if type(container) is dict:
-        return dict(zip(children[::2], children[1::2], strict=True))
+def _copy_container_with_children(container: Any, children: list[Any]) -> Any:
+    """Return a copy of the container that has the children instead of its own, or the container if we can't copy it"""
+    try:
+        copied = _copy_container_with_children_or_fail(container, children)
+    except Exception:  # noqa: BLE001
+        return container
+    # Members of the copies don't equal the head members, so two distinct keys can become one
+    if isinstance(container, (Mapping, AbstractSet)) and len(copied) != len(container):
+        return container
+    return copied
+
+
+def _copy_container_with_children_or_fail(container: Any, children: list[Any]) -> Any:
     if isinstance(container, BaseModel):
-        # FastAPI validates the models that the head gets by their attributes
-        return container.model_copy(
-            update={
-                name: value
-                for name, value in zip(children[::2], children[1::2], strict=True)
-                if value is not container.__dict__[name]
-            }
-        )
+        field_count = len(container.__dict__)
+        pairs = dict(zip(children[::2], children[1::2], strict=True))
+        # A copy keeps the fields that are set, the private attributes, and the extra fields. FastAPI validates the
+        # models that the head gets by their attributes.
+        copied = container.model_copy()
+        copied.__dict__.update(itertools.islice(pairs.items(), field_count))
+        if copied.__pydantic_extra__ is not None:
+            copied.__pydantic_extra__.update(itertools.islice(pairs.items(), field_count, None))
+        return copied
+    if isinstance(container, Mapping):
+        items = dict(zip(children[::2], children[1::2], strict=True))
+        if type(container) is dict:
+            return items
+        if isinstance(container, MutableMapping):
+            # A copy keeps what the type has besides its items, e.g. the default factory of a `defaultdict`
+            copied = copy.copy(container)
+            copied.clear()
+            copied.update(items)
+            return copied
+        return type(container)(items)
+    if type(container) in (list, tuple, set, frozenset):
+        return type(container)(children)
+    if isinstance(container, tuple) and hasattr(type(container), "_make"):
+        return type(container)._make(children)
+    if isinstance(container, MutableSet):
+        copied = copy.copy(container)
+        copied.clear()
+        for child in children:
+            copied.add(child)
+        return copied
+    if isinstance(container, MutableSequence):
+        # A copy keeps what the type has besides its items, e.g. the `maxlen` of a `deque`
+        copied = copy.copy(container)
+        copied.clear()
+        copied.extend(children)
+        return copied
     return type(container)(children)
 
 

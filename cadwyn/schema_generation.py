@@ -77,7 +77,9 @@ from cadwyn._utils import (
     Sentinel,
     UnionType,
     fully_unwrap_decorator,
+    get_member_with_same_value,
     get_name_of_function_wrapped_in_pydantic_validator,
+    is_enum_looked_up_by_value,
     is_sqlalchemy_model,
     lenient_issubclass,
 )
@@ -4117,22 +4119,21 @@ class _EnumWrapper(Generic[_T_ENUM]):
 
 
 def _take_head_members_by_value(enum_copy: type[Enum], head_enum: type[Enum]) -> None:
-    """Make the copy of an enum take the members of its head enum as the members that have their values.
+    """Make the copy of a plain enum or flag take the members of its head enum that have the values of its members.
 
     The responses that the endpoints return have the head members, and so do the defaults of params. Pydantic looks up
-    the members of `str`, `int`, and `float` enums by their values, but for plain enums and flags it only calls
-    `_missing_`, so their copies would reject the head members. Like for those enums, we look up the head members by
-    their values, so the enum's own `_missing_` gets the value of a member that the copy doesn't have.
+    the members of `str`, `int`, and `float` enums by their values, so we leave them as they are. For plain enums and
+    flags, it only calls `_missing_`, so their copies would reject the head members. The enum's own `_missing_` gets
+    the head members that the copy has no member with the same value for, as before.
     """
+    if is_enum_looked_up_by_value(head_enum):
+        return
     inherited_missing = enum_copy._missing_
 
     def _missing_(cls: type[Enum], value: object) -> Any:
-        if not isinstance(value, head_enum):
-            return inherited_missing(value)
-        try:
-            return cls(value.value)
-        except ValueError:
-            return None
+        if isinstance(value, head_enum) and (member := get_member_with_same_value(cls, value)) is not None:
+            return member
+        return inherited_missing(value)
 
     enum_copy._missing_ = classmethod(_missing_)  # ty: ignore[invalid-assignment]
 

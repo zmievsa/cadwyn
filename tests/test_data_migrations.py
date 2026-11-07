@@ -1,3 +1,4 @@
+import collections
 import dataclasses
 import http.cookies
 import inspect
@@ -11,11 +12,12 @@ import threading
 import time as time_module
 import typing
 from collections import OrderedDict
-from collections.abc import Callable, Coroutine, Iterable, Iterator
+from collections.abc import Callable, Coroutine, Iterable, Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import Set as AbstractSet
 from contextvars import ContextVar
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
-from enum import Enum, Flag
+from enum import Enum, Flag, FlagBoundary, IntEnum
 from io import BytesIO, RawIOBase, StringIO, UnsupportedOperation
 from types import MappingProxyType
 from typing import Annotated, Any, Literal, Optional, Self, Union, cast
@@ -10132,3 +10134,347 @@ def test__response_body_migration__with_plain_enum_member_that_older_version_doe
     assert clients["2001-01-01"].post(test_path).json() == {"value": "b"}
     with pytest.raises(fastapi.exceptions.ResponseValidationError):
         clients["2000-01-01"].post(test_path)
+
+
+class NamedTupleWithPlainEnum(typing.NamedTuple):
+    value: PlainEnum
+
+
+class ModelWithPlainEnumsInMoreContainers(BaseModel):
+    deque_: collections.deque[PlainEnum]
+    default_dict: collections.defaultdict[PlainEnum, list[PlainEnum]]
+    ordered_dict: OrderedDict[str, PlainEnum]
+    counter: collections.Counter[PlainEnum]
+    sequence: Sequence[PlainEnum]
+    mutable_sequence: MutableSequence[PlainEnum]
+    mapping: Mapping[str, PlainEnum]
+    abstract_set: AbstractSet[PlainEnum]
+    set_: set[PlainEnum]
+    named_tuple: NamedTupleWithPlainEnum
+    fixed_tuple: tuple[PlainEnum, int]
+
+
+PLAIN_ENUMS_IN_MORE_CONTAINERS = {
+    "deque_": ["a"],
+    "default_dict": {"a": ["a"]},
+    "ordered_dict": {"key": "a"},
+    "counter": {"a": 1},
+    "sequence": ["a"],
+    "mutable_sequence": ["a"],
+    "mapping": {"key": "a"},
+    "abstract_set": ["a"],
+    "set_": ["a"],
+    "named_tuple": ["a"],
+    "fixed_tuple": ["a", 1],
+}
+
+
+@pytest.mark.parametrize(
+    ("annotation", "payload"),
+    [
+        pytest.param(ModelWithPlainEnumsInMoreContainers, PLAIN_ENUMS_IN_MORE_CONTAINERS, id="model"),
+        pytest.param(list[ModelWithPlainEnumsInMoreContainers], [PLAIN_ENUMS_IN_MORE_CONTAINERS], id="list_of_models"),
+        pytest.param(collections.deque[PlainEnum], ["a"], id="deque"),
+        pytest.param(collections.defaultdict[PlainEnum, list[PlainEnum]], {"a": ["a"]}, id="defaultdict"),
+        pytest.param(OrderedDict[str, PlainEnum], {"key": "a"}, id="ordered_dict"),
+        pytest.param(collections.Counter[PlainEnum], {"a": 1}, id="counter"),
+        pytest.param(NamedTupleWithPlainEnum, ["a"], id="named_tuple"),
+        pytest.param(tuple[PlainEnum, int], ["a", 1], id="fixed_tuple"),
+    ],
+)
+def test__request_body_migration__with_plain_enum_in_any_container__head_should_get_head_members_in_same_containers(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+    payload: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[annotation, Body()]):
+        expected = TypeAdapter(annotation).validate_python(payload)
+        # Members of copies of plain enums never equal the head members, and repr shows the types of the containers
+        return body == expected and repr(body) == repr(expected)
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() is True
+
+
+class ModelWithIterableOfPlainEnums(BaseModel):
+    values: Iterable[PlainEnum]
+
+
+def test__request_body_migration__with_iterable_of_plain_enums__head_should_get_head_members(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: ModelWithIterableOfPlainEnums):
+        return list(body.values) == [PlainEnum.a, PlainEnum.b]
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).had(c="c")))
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"values": ["a", "b"]}).json() is True
+
+
+class ConformFlag(Flag, boundary=FlagBoundary.CONFORM):
+    read = 1
+    write = 2
+
+
+class KeepFlag(Flag, boundary=FlagBoundary.KEEP):
+    read = 1
+    write = 2
+
+
+def test__request_body_migration__with_conform_flag_bits_that_head_drops__should_raise_head_validation_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[list[ConformFlag], Body()]):
+        return [member.value for member in body if type(member) is ConformFlag]
+
+    clients = create_versioned_clients(version_change(enum(ConformFlag).had(execute=4)))
+
+    with pytest.raises(CadwynHeadRequestValidationError):
+        clients["2000-01-01"].post(test_path, json=[5])
+    assert clients["2000-01-01"].post(test_path, json=[3]).json() == [3]
+    # The latest version's enum drops the bit itself, like FastAPI does
+    assert clients["2001-01-01"].post(test_path, json=[5]).json() == [1]
+
+
+def test__request_body_migration__with_keep_flag_bits_that_head_doesnt_have__head_should_get_the_same_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[list[KeepFlag], Body()]):
+        return [member.value for member in body if type(member) is KeepFlag]
+
+    clients = create_versioned_clients(version_change(enum(KeepFlag).had(execute=4)))
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=[5]).json() == [5]
+
+
+def test__response_body_migration__with_conform_flag_bits_that_older_version_drops__should_raise_validation_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, response_model=list[ConformFlag])
+    async def endpoint():
+        return [ConformFlag.read | ConformFlag.write]
+
+    clients = create_versioned_clients(version_change(enum(ConformFlag).didnt_have("write")))
+
+    assert clients["2001-01-01"].post(test_path).json() == [3]
+    with pytest.raises(fastapi.exceptions.ResponseValidationError):
+        clients["2000-01-01"].post(test_path)
+
+
+def test__response_body_migration__with_keep_flag_bits_that_older_version_doesnt_have__should_return_same_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, response_model=list[KeepFlag])
+    async def endpoint():
+        return [KeepFlag.read | KeepFlag.write]
+
+    clients = create_versioned_clients(version_change(enum(KeepFlag).didnt_have("write")))
+
+    for version_client in clients.values():
+        assert version_client.post(test_path).json() == [3]
+
+
+class StrEnumWithMissingForMembers(str, Enum):
+    a = "a"
+    b = "b"
+
+    @classmethod
+    @override
+    def _missing_(cls, value: object):
+        return cls.a if isinstance(value, Enum) else None
+
+
+class IntEnumWithMissingForMembers(IntEnum):
+    a = 1
+    b = 2
+
+    @classmethod
+    @override
+    def _missing_(cls, value: object):
+        return cls.a if isinstance(value, Enum) else None
+
+
+class PlainEnumWithMissingByName(Enum):
+    a = "a"
+    b = "b"
+
+    @classmethod
+    @override
+    def _missing_(cls, value: object):
+        return cls[value.name] if isinstance(value, Enum) else None
+
+
+@pytest.mark.parametrize(
+    ("enum_cls", "instruction", "expected"),
+    [
+        pytest.param(StrEnumWithMissingForMembers, enum(StrEnumWithMissingForMembers).didnt_have("b"), ["a"], id="str"),
+        pytest.param(IntEnumWithMissingForMembers, enum(IntEnumWithMissingForMembers).didnt_have("b"), [1], id="int"),
+        pytest.param(PlainEnumWithMissingByName, enum(PlainEnumWithMissingByName).had(b="old"), ["old"], id="plain"),
+    ],
+)
+def test__response_body_migration__with_missing_that_takes_members__should_give_missing_the_latest_member(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    enum_cls: Any,
+    instruction: Any,
+    expected: list[Any],
+):
+    @router.post(test_path, response_model=list[enum_cls])
+    async def endpoint():
+        return [enum_cls.b]
+
+    clients = create_versioned_clients(version_change(instruction))
+
+    assert clients["2000-01-01"].post(test_path).json() == expected
+
+
+def test__request_body_migration__with_missing_that_takes_members_by_name__head_should_get_member_with_same_name(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[list[PlainEnumWithMissingByName], Body()]):
+        return body == [PlainEnumWithMissingByName.a, PlainEnumWithMissingByName.b]
+
+    clients = create_versioned_clients(version_change(enum(PlainEnumWithMissingByName).had(b="old")))
+
+    assert clients["2000-01-01"].post(test_path, json=["a", "old"]).json() is True
+    assert clients["2001-01-01"].post(test_path, json=["a", "b"]).json() is True
+
+
+class ModelWithPlainEnumAndAnyValue(BaseModel):
+    kind: PlainEnum
+    value: Any = None
+
+
+class SetWithAttribute(set[Any]):
+    attribute = "set"
+
+
+class TupleWithoutMake(tuple[Any, ...]):
+    __slots__ = ()
+
+
+class NamedTupleWithAnyValue(typing.NamedTuple):
+    value: Any
+
+
+class ReadOnlySequence(Sequence[Any]):
+    def __init__(self, items: Iterable[Any]) -> None:
+        self.items = list(items)
+
+    @override
+    def __getitem__(self, index: Any) -> Any:
+        return self.items[index]
+
+    @override
+    def __len__(self) -> int:
+        return len(self.items)
+
+
+class SequenceThatCantBeCopied(ReadOnlySequence):
+    def __init__(self, *, items: Iterable[Any]) -> None:
+        super().__init__(items)
+
+
+class SequenceThatCantBeIterated(ReadOnlySequence):
+    @override
+    def __getitem__(self, index: Any) -> Any:
+        raise RuntimeError
+
+
+class ModelWithExtraFields(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+@pytest.mark.parametrize(
+    ("make_value", "is_expected"),
+    [
+        pytest.param(
+            lambda member: MappingProxyType({"key": member}),
+            lambda value: type(value) is MappingProxyType and value["key"] is PlainEnum.a,
+            id="read_only_mapping",
+        ),
+        pytest.param(
+            lambda member: SetWithAttribute({member}),
+            lambda value: type(value) is SetWithAttribute and value == {PlainEnum.a},
+            id="set_subclass",
+        ),
+        pytest.param(
+            NamedTupleWithAnyValue,
+            lambda value: type(value) is NamedTupleWithAnyValue and value.value is PlainEnum.a,
+            id="named_tuple",
+        ),
+        pytest.param(
+            lambda member: TupleWithoutMake((member,)),
+            lambda value: type(value) is TupleWithoutMake and value[0] is PlainEnum.a,
+            id="tuple_subclass",
+        ),
+        pytest.param(
+            lambda member: ReadOnlySequence([member]),
+            lambda value: type(value) is ReadOnlySequence and value[0] is PlainEnum.a,
+            id="read_only_sequence",
+        ),
+        pytest.param(
+            lambda member: ModelWithExtraFields(member=member),
+            lambda value: type(value) is ModelWithExtraFields and value.member is PlainEnum.a,
+            id="extra_fields_of_model",
+        ),
+        # We leave what we can't copy or walk into as it is
+        pytest.param(
+            lambda member: SequenceThatCantBeCopied(items=[member]),
+            lambda value: type(value[0]) is not PlainEnum,
+            id="sequence_that_cant_be_copied",
+        ),
+        pytest.param(
+            lambda member: SequenceThatCantBeIterated([member]),
+            lambda value: type(value.items[0]) is not PlainEnum,
+            id="sequence_that_cant_be_iterated",
+        ),
+        pytest.param(
+            lambda member: {member: 1, PlainEnum.a: 2},
+            lambda value: len(value) == 2,
+            id="keys_that_would_become_one",
+        ),
+    ],
+)
+def test__request_body_migration__with_plain_enum_members_that_migration_puts_in_containers__head_should_get_them(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    make_value: Callable[[Any], Any],
+    is_expected: Callable[[Any], bool],
+):
+    @router.post(test_path)
+    async def endpoint(body: ModelWithPlainEnumAndAnyValue):
+        return is_expected(body.value)
+
+    @convert_request_to_next_version_for(ModelWithPlainEnumAndAnyValue)
+    def migrate(request: RequestInfo):
+        request.body["value"] = make_value(request.body["kind"])
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b"), migrate=migrate))
+
+    assert clients["2000-01-01"].post(test_path, json={"kind": "a"}).json() is True
