@@ -6,6 +6,7 @@ import decimal
 import functools
 import inspect
 import itertools
+import reprlib
 import sys
 import threading
 import types
@@ -1189,6 +1190,8 @@ class _AnnotationTransformer:
         self._ids_being_recorded: set[int] = set()
         # The ids of the type aliases that we are copying right now, to detect the ones that refer to themselves
         self._type_aliases_being_copied: set[int] = set()
+        # The ids of the lists, tuples, and dicts that we are copying right now with whether they contain themselves
+        self._containers_being_copied: dict[int, bool] = {}
         # Whether we are recording the routes, whose endpoints and dependencies copying reads like _get_signature
         self._records_routes = False
         # How many positions that need the classes themselves we are in right now (see is_in_hard_position)
@@ -1232,18 +1235,56 @@ class _AnnotationTransformer:
             if self.record_only:
                 self._record_without_cycles(annotation, lambda: [*annotation.keys(), *annotation.values()])
                 return annotation
-            return {
-                self.change_version_of_annotation(key): self.change_version_of_annotation(value)
-                for key, value in annotation.items()
-            }
+            return self._change_version_of_container(annotation)
 
         elif isinstance(annotation, list | tuple):
             if self.record_only:
                 self._record_without_cycles(annotation, lambda: annotation)
                 return annotation
-            return type(annotation)(self.change_version_of_annotation(v) for v in annotation)
+            return self._change_version_of_container(annotation)
         else:
             return self.change_versions_of_a_non_container_annotation(annotation)
+
+    def _change_version_of_container(self, container: Union[dict[Any, Any], list[Any], tuple[Any, ...]]) -> Any:
+        """Return the container with this version's copies of the values within it, or the container itself.
+
+        Containers include the defaults of fields and params, so we keep the user's object whenever nothing within
+        it changes, e.g. with its type (a subclass or a NamedTuple) and its attributes. Otherwise, we rebuild it,
+        which we can only do faithfully for plain lists, tuples, and dicts that do not contain themselves.
+        """
+        if id(container) in self._containers_being_copied:
+            # It contains itself. The reference to it stays right if nothing within it changes (see below)
+            self._containers_being_copied[id(container)] = True
+            return container
+        self._containers_being_copied[id(container)] = False
+        try:
+            if isinstance(container, dict):
+                old_values = [value for item in container.items() for value in item]
+            else:
+                old_values = list(container)
+            new_values = [self.change_version_of_annotation(value) for value in old_values]
+        finally:
+            contains_itself = self._containers_being_copied.pop(id(container))
+        if all(new is old for new, old in zip(new_values, old_values, strict=True)):
+            return container
+        if contains_itself:
+            raise SchemaGenerationError(
+                f"Cadwyn cannot generate the versioned copy of {reprlib.repr(container)} because it contains itself "
+                "(directly or through other values) and also contains classes or callables that every version gets "
+                "its own copies of (e.g. models, enums, or functions). Please make sure that it does not contain "
+                "itself."
+            )
+        if type(container) not in {dict, list, tuple}:
+            raise SchemaGenerationError(
+                f"Cadwyn cannot generate the versioned copy of {reprlib.repr(container)} because it is a "
+                f"{type(container).__qualname__}, not a plain list, tuple, or dict, and it contains classes or "
+                "callables that every version gets its own copies of (e.g. models, enums, or functions). Cadwyn "
+                "cannot rebuild it with these copies without changing it. Please use a plain list, tuple, or dict "
+                "instead."
+            )
+        if isinstance(container, dict):
+            return dict(zip(new_values[::2], new_values[1::2], strict=True))
+        return type(container)(new_values)
 
     def migrate_router_to_version(self, router: fastapi.routing.APIRouter):
         for route in router.routes:

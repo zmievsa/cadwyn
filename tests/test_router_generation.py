@@ -21,6 +21,7 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
+    NamedTuple,
     NewType,
     Optional,
     TypeAlias,
@@ -3319,6 +3320,59 @@ def test__router_generation__param_default_with_custom_copy__should_keep_its_own
             openapi = client.get(f"/openapi.json?version={version}").json()
             (parameter,) = [p for p in openapi["paths"]["/test"]["get"]["parameters"] if p["name"] == "x"]
             assert parameter["schema"]["minimum"] == 0
+
+
+class _TagList(list[str]):
+    pass
+
+
+class _Options(dict[str, Any]):
+    pass
+
+
+class _Point(NamedTuple):
+    x: int
+    y: int
+
+
+def _with_source(container: Any) -> Any:
+    container.source = "config"
+    return container
+
+
+@pytest.mark.parametrize(
+    "default",
+    [
+        pytest.param(_with_source(_TagList(["a"])), id="list_subclass"),
+        pytest.param(_with_source(_Options(a=1)), id="dict_subclass"),
+        pytest.param(_Point(1, 2), id="named_tuple"),
+    ],
+)
+def test__router_generation__param_defaults_that_subclass_list_tuple_or_dict__should_reach_endpoint_and_dependency(
+    router: VersionedAPIRouter,
+    create_versioned_app: CreateVersionedApp,
+    default: Any,
+):
+    def describe(value: Any) -> list[Any]:
+        return [type(value).__name__, value, getattr(value, "source", None)]
+
+    def get_dependency_value(value: Annotated[Any, Query()] = default) -> Any:
+        return value
+
+    @router.get("/test")
+    async def route(
+        dependency_value: Annotated[Any, Depends(get_dependency_value)],
+        endpoint_value: Annotated[Any, Query()] = default,
+    ):
+        return {"dependency": describe(dependency_value), "endpoint": describe(endpoint_value)}
+
+    app = create_versioned_app(version_change())
+    with TestClient(app) as client:
+        for version in app.router.versioned_routers:
+            assert client.get("/test", headers={"x-api-version": version}).json() == {
+                "dependency": json.loads(json.dumps(describe(default))),
+                "endpoint": json.loads(json.dumps(describe(default))),
+            }
 
 
 def _async_decorator(func: Callable[..., Any]) -> Callable[..., Any]:

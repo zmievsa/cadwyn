@@ -80,6 +80,10 @@ Pydantic resolves the return types of computed fields on its own, so Cadwyn cann
 
 If older versions need the older shape of such data, expose it as a regular field instead of a computed field, e.g. `best: Item` filled in by a validator or by the endpoint. Cadwyn versions regular fields and migrates their data like any other.
 
+### Defaults
+
+Every version keeps the defaults of fields and of the params of endpoints and dependencies as you wrote them, with their types and attributes, e.g. a `NamedTuple`, a `defaultdict`, or your own subclass of `list` or `dict`. Cadwyn changes a default only where it contains a class or a function that it versions, such as the model class in `default=[Item]`: each version gets a new list with its own version of `Item`. Cadwyn can only rebuild plain lists, tuples, and dicts this way, so it raises a `SchemaGenerationError` if such a class or function is inside any other container (e.g. a subclass of `list` or a `NamedTuple`) or inside a container that contains itself. The same applies to the other attributes of fields, such as `examples` and `json_schema_extra`, and to the metadata of `Annotated`.
+
 ### Models that refer to each other
 
 Models can refer to themselves, directly or through other models, e.g. `children: "list[Category]"` or `Author.books: list[Book]` with `Book.author: Author`. When such models need versioning, Cadwyn copies all of them together, and their copies refer to each other. So if `Category` had a `title` field instead of `name` in an older version, that version uses `title` at every depth of the tree.
