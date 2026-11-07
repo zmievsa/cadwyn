@@ -67,6 +67,7 @@ from pydantic.fields import ComputedFieldInfo, FieldInfo
 from pydantic_core import PydanticUndefined
 from typing_extensions import (
     Doc,
+    Protocol,
     TypeVar,
     _AnnotatedAlias,
     override,
@@ -678,15 +679,72 @@ def _change_version_of_model_references(
         for name, attributes in field_attributes.items():
             with transformer.describing(f"the field '{name}' of {model.__qualname__}"):
                 versioned_field_attributes[name] = transformer.change_version_of_annotation(attributes)
-    # __orig_bases__ keeps bases such as Generic[T] that __bases__ loses so that the copy stays generic
     orig_bases = tuple(
         generator.change_version_of_base(base) if isinstance(base, type) else base
         for base in model.__dict__.get("__orig_bases__", model.__bases__)
     )
+    if isinstance(generator, _ReferencedModelCollector):
+        _change_version_of_model_bases(generator, model, orig_bases)
     versioned_annotations = transformer.change_version_of_annotation(annotations)
     with transformer.hard_position():
         generic_metadata = generator.change_version_of_generic_metadata(model)
     return versioned_field_attributes, orig_bases, versioned_annotations, generic_metadata
+
+
+def _change_version_of_model_bases(
+    generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier]",
+    model: type[BaseModel],
+    orig_bases: tuple[Any, ...],
+) -> tuple[type, ...]:
+    original_bases = model.__dict__.get("__orig_bases__", model.__bases__)
+    if "__orig_bases__" not in model.__dict__:
+        return orig_bases
+    has_user_hooks = any(
+        not isinstance(base, type)
+        and get_origin(base) not in (Generic, typing.Protocol, Protocol)
+        and inspect.getattr_static(base, "__mro_entries__", None) is not None
+        for base in original_bases
+    )
+    if isinstance(generator, _ReferencedModelCollector):
+        # Discovery never runs user hooks. Only their original, actual parents may need versioning.
+        if has_user_hooks:
+            for base in model.__bases__:
+                if issubclass(base, BaseModel) and not any(base is original for original in original_bases):
+                    generator.change_version_of_base(base)
+        return model.__bases__
+    if not has_user_hooks:
+        return types.resolve_bases(orig_bases)
+
+    schema_generator = generator.schema_generator if isinstance(generator, _CycleCopier) else generator
+    try:
+        bases = schema_generator._resolved_model_bases[model]
+    except KeyError:
+        # Use main's inputs and run each hook once per class in this version, including the fallback path.
+        bases = types.resolve_bases(orig_bases)
+        schema_generator._resolved_model_bases[model] = bases
+    if not schema_generator._instructions_that_differ_from_head:
+        return bases
+    originals_by_copy_id = {
+        id(base_copy): original
+        for original, base_copy in zip(original_bases, orig_bases, strict=True)
+        if isinstance(original, type)
+    }
+    if len(bases) != len(model.__bases__) or any(
+        originals_by_copy_id.get(id(base), base) is not actual
+        for base, actual in zip(bases, model.__bases__, strict=True)
+    ):
+        return bases
+    # A known, complete parent with schema instructions can be replaced safely. Uncertain shapes keep main's
+    # resolved bases; no transitive discovery or speculative startup errors are needed.
+    return tuple(
+        generator.change_version_of_base(base)
+        if issubclass(base, BaseModel)
+        and id(base) not in originals_by_copy_id
+        and base.__pydantic_fields_complete__
+        and any(parent in schema_generator._instructions_that_differ_from_head for parent in base.__mro__)
+        else base
+        for base in bases
+    )
 
 
 # The modules of the generics whose args are types that pydantic resolves, such as list, dict, Optional, or Callable
@@ -952,9 +1010,11 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 _reject_keys_renamed_by_alias
             )
 
+        # Keep hook execution at main's construction point, after copying field models and building fields.
+        bases = _change_version_of_model_bases(generator, self.cls, orig_bases)
         model_copy = type(self.cls)(
             self.name,
-            types.resolve_bases(orig_bases),
+            bases,
             self.other_attributes
             | orig_bases_attribute
             | per_field_validators
@@ -2360,6 +2420,7 @@ class SchemaGenerator:
         "_models_copied_eagerly",
         "_parent_renames",
         "_reference_cycles",
+        "_resolved_model_bases",
         "_root_models",
         "_route_versioning_thread",
         "_version",
@@ -2414,6 +2475,7 @@ class SchemaGenerator:
         # Models are generated lazily (e.g. in migrate_response_body) so several threads can generate them at once
         self._lock = threading.RLock()
         self.concrete_models: dict[type[Union[BaseModel, Enum]], type[Union[BaseModel, Enum]]] = {}
+        self._resolved_model_bases: dict[type[BaseModel], tuple[type, ...]] = {}
         # Models are generated through __getitem__ so that the copies created along the way are reused
         # instead of being created again
         for model in [*self.model_bundle.schemas, *self.model_bundle.enums]:

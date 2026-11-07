@@ -9,6 +9,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Breaking
 
+- Models with safely resolvable `__mro_entries__` bases now inherit versioned parents affected by schema instructions and their inherited-field startup checks ([#588](https://github.com/zmievsa/cadwyn/issues/588)). Update affected request and response migrations for corrected older-version fields, and fix conflicting rename or deletion instructions in the declaring models. Dynamically resolved, incomplete, or unmatched bases retain their previous behavior.
 - Cadwyn now requires Python 3.11+ and Pydantic 2.12.0+ ([#570](https://github.com/zmievsa/cadwyn/issues/570)). Upgrade them, or stay on Cadwyn 8.x.
 - Removed `/changelog`, `generate_changelog()`, and `hidden()`; remove their calls and `Cadwyn()` changelog arguments, keeping the wrapped instructions. `changelog_url=None` and `include_changelog_url_in_schema=False` still work with a `DeprecationWarning` until 10.0. Generate your own changelog if needed; `backports-strenum` is no longer a dependency ([#487](https://github.com/zmievsa/cadwyn/issues/487)).
 - Removed `Cadwyn(openapi_prefix=...)`; configure your server's root path instead ([#488](https://github.com/zmievsa/cadwyn/issues/488)).
