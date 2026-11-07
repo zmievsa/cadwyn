@@ -49,6 +49,7 @@ from fastapi import (
     Security,
     UploadFile,
 )
+from fastapi.exceptions import ResponseValidationError
 from fastapi.routing import APIRoute, _EffectiveRouteContext
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, SecurityScopes
 from fastapi.security.http import HTTPBasic
@@ -58,6 +59,7 @@ from inline_snapshot import snapshot
 from pydantic import (
     AfterValidator,
     AliasChoices,
+    AliasPath,
     AllowInfNan,
     BaseModel,
     ConfigDict,
@@ -1698,6 +1700,15 @@ class ItemWithAliasAndSerializationAlias(BaseModel):
     name: str = Field(alias="a", serialization_alias="s")
 
 
+class ItemWithAliasAndValidationAlias(BaseModel):
+    name: str = Field(alias="a", validation_alias="v")
+
+
+class ItemWithAliasAndAliasGenerator(BaseModel):
+    model_config = ConfigDict(alias_generator=str.upper)
+    name: str = Field(alias="a")
+
+
 class ItemWithoutAlias(BaseModel):
     name: str
 
@@ -1722,80 +1733,110 @@ def _get_future_warnings(create: Callable[[], object]) -> list[str]:
     return [str(warning.message) for warning in caught if warning.category is FutureWarning]
 
 
+def _get_openapi_keys(client: TestClient, version: str, schema_name: str) -> tuple[list[str], list[str]]:
+    """Return the keys that the OpenAPI of the version documents for the schema in requests and in responses"""
+    schemas = client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
+    if f"{schema_name}-Input" in schemas:
+        request_schema, response_schema = schemas[f"{schema_name}-Input"], schemas[f"{schema_name}-Output"]
+    else:
+        request_schema = response_schema = schemas[schema_name]
+    return list(request_schema.get("properties", {})), list(response_schema.get("properties", {}))
+
+
 @pytest.mark.parametrize(
-    ("model", "change_field", "expected_warning"),
+    ("model", "change_field", "validation_key", "serialization_key"),
     [
+        pytest.param(ItemWithAlias, lambda field: field.had(alias="legacy"), "legacy", "legacy", id="had"),
         pytest.param(
-            ItemWithAlias,
-            lambda field: field.had(alias="legacy"),
-            'schema(ItemWithAlias).field("name").had(alias=\'legacy\') in "MyVersionChange" changes the alias of '
-            '"ItemWithAlias.name", but in API version "2000-01-01" its validation_alias and serialization_alias are '
-            'still "a", so that version keeps using "a" instead of "legacy". Cadwyn 9.0 will change them too. '
-            "To use \"legacy\" now and silence this warning, also pass validation_alias='legacy' and "
-            "serialization_alias='legacy' to this .had(). To keep \"a\", remove alias='legacy' from it instead.",
-            id="had",
+            ItemWithAliasInAnnotated, lambda field: field.had(alias="legacy"), "legacy", "legacy", id="had_in_annotated"
         ),
+        pytest.param(ItemWithAlias, lambda field: field.had(alias=None), "name", "name", id="had_none"),
+        pytest.param(ItemWithAlias, lambda field: field.didnt_have("alias"), "name", "name", id="didnt_have"),
         pytest.param(
             ItemWithAliasInAnnotated,
-            lambda field: field.had(alias="legacy"),
-            'schema(ItemWithAliasInAnnotated).field("name").had(alias=\'legacy\') in "MyVersionChange" changes '
-            'the alias of "ItemWithAliasInAnnotated.name", but in API version "2000-01-01" its validation_alias and '
-            'serialization_alias are still "a", so that version keeps using "a" instead of "legacy". Cadwyn 9.0 will '
-            "change them too. To use \"legacy\" now and silence this warning, also pass validation_alias='legacy' "
-            "and serialization_alias='legacy' to this .had(). To keep \"a\", remove alias='legacy' from it instead.",
-            id="had_in_annotated",
-        ),
-        pytest.param(
-            ItemWithAlias,
             lambda field: field.didnt_have("alias"),
-            'schema(ItemWithAlias).field("name").didnt_have("alias") in "MyVersionChange" changes the alias of '
-            '"ItemWithAlias.name", but in API version "2000-01-01" its validation_alias and serialization_alias are '
-            'still "a", so that version keeps using "a" instead of the key that the field has without an alias. '
-            "Cadwyn 9.0 will change them too. To use the key that the field has without an alias now and silence "
-            'this warning, also pass "validation_alias" and "serialization_alias" to this .didnt_have(). To keep '
-            '"a", remove "alias" from it instead.',
-            id="didnt_have",
+            "name",
+            "name",
+            id="didnt_have_in_annotated",
         ),
         pytest.param(
             ItemWithAliasAndSerializationAlias,
             lambda field: field.had(alias="legacy"),
-            'schema(ItemWithAliasAndSerializationAlias).field("name").had(alias=\'legacy\') in "MyVersionChange" '
-            'changes the alias of "ItemWithAliasAndSerializationAlias.name", but in API version "2000-01-01" its '
-            'validation_alias is still "a", so that version keeps using "a" instead of "legacy". Cadwyn 9.0 will '
-            "change it too. To use \"legacy\" now and silence this warning, also pass validation_alias='legacy' to "
-            "this .had(). To keep \"a\", remove alias='legacy' from it instead.",
+            "legacy",
+            "s",
             id="had_with_explicit_serialization_alias",
+        ),
+        pytest.param(
+            ItemWithAliasAndValidationAlias,
+            lambda field: field.had(alias="legacy"),
+            "v",
+            "legacy",
+            id="had_with_explicit_validation_alias",
+        ),
+        pytest.param(
+            ItemWithAliasAndAliasGenerator,
+            lambda field: field.had(alias="legacy"),
+            "legacy",
+            "legacy",
+            id="had_with_alias_generator",
+        ),
+        pytest.param(
+            ItemWithAliasAndAliasGenerator,
+            lambda field: field.didnt_have("alias"),
+            "NAME",
+            "NAME",
+            id="didnt_have_with_alias_generator",
         ),
     ],
 )
-def test__router_generation__alias_instruction_keeps_keys_derived_from_old_alias__should_warn_and_keep_keys(
+def test__router_generation__alias_instruction__should_change_keys_in_openapi_requests_and_responses(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     model: type[BaseModel],
     change_field: Callable[[Any], Any],
-    expected_warning: str,
+    validation_key: str,
+    serialization_key: str,
 ):
+    head_field = model.model_fields["name"]
+    head_validation_key, head_serialization_key = head_field.validation_alias, head_field.serialization_alias
+
     @router.post("/items", response_model=model)
     async def echo(item: model):  # ty: ignore[invalid-type-form]
         return item
 
-    clients: dict[str, CadwynTestClient] = {}
-    assert _get_future_warnings(
-        lambda: clients.update(create_versioned_clients(version_change(change_field(schema(model).field("name")))))
-    ) == [expected_warning]
+    # Cadwyn dumps the request body of the older version by its serialization aliases
+    @convert_request_to_next_version_for(model)
+    def migrate_request(request: RequestInfo):
+        request.body[head_validation_key] = request.body.pop(serialization_key)
 
-    # The instruction doesn't change the keys of the older version, as before
-    latest_client, old_client = clients["2001-01-01"], clients["2000-01-01"]
-    assert old_client.get("/openapi.json?version=2000-01-01").content == latest_client.get(
-        "/openapi.json?version=2001-01-01"
-    ).content.replace(b"2001-01-01", b"2000-01-01")
-    for body in [{"a": "x"}, {"legacy": "x"}, {"name": "x"}]:
-        old_response = old_client.post("/items", json=body)
-        latest_response = latest_client.post("/items", json=body)
-        assert (old_response.status_code, old_response.content) == (
-            latest_response.status_code,
-            latest_response.content,
+    @convert_response_to_previous_version_for(model)
+    def migrate_response(response: ResponseInfo):
+        response.body[validation_key] = response.body.pop(head_serialization_key)
+
+    clients: dict[str, CadwynTestClient] = {}
+    assert (
+        _get_future_warnings(
+            lambda: clients.update(
+                create_versioned_clients(
+                    version_change(
+                        change_field(schema(model).field("name")),
+                        migrate_request=migrate_request,
+                        migrate_response=migrate_response,
+                    )
+                )
+            )
         )
+        == []
+    )
+
+    for version, keys in [
+        ("2001-01-01", (head_validation_key, head_serialization_key)),
+        ("2000-01-01", (validation_key, serialization_key)),
+    ]:
+        request_key, response_key = keys
+        assert _get_openapi_keys(clients[version], version, model.__name__) == ([request_key], [response_key])
+        response = clients[version].post("/items", json={request_key: "x"})
+        assert (response.status_code, response.json()) == (200, {response_key: "x"})
 
 
 @pytest.mark.parametrize(
@@ -1804,20 +1845,38 @@ def test__router_generation__alias_instruction_keeps_keys_derived_from_old_alias
         pytest.param(
             ItemWithAlias,
             lambda field: [field.had(alias="legacy", validation_alias="legacy", serialization_alias="legacy")],
-            ["legacy"],
+            (["legacy"], ["legacy"]),
             id="had_keys_too",
         ),
         pytest.param(
             ItemWithAliasInAnnotated,
             lambda field: [field.had(alias="legacy", validation_alias="legacy", serialization_alias="legacy")],
-            ["legacy"],
+            (["legacy"], ["legacy"]),
             id="had_keys_too_in_annotated",
         ),
         pytest.param(
             ItemWithAlias,
+            lambda field: [field.had(alias="legacy", validation_alias="a", serialization_alias="a")],
+            (["a"], ["a"]),
+            id="had_old_keys_too",
+        ),
+        pytest.param(
+            ItemWithAlias,
+            lambda field: [field.had(alias="legacy", serialization_alias="a")],
+            (["legacy"], ["a"]),
+            id="had_old_serialization_key_too",
+        ),
+        pytest.param(
+            ItemWithAlias,
             lambda field: [field.didnt_have("alias", "validation_alias", "serialization_alias")],
-            ["name"],
+            (["name"], ["name"]),
             id="didnt_have_keys_too",
+        ),
+        pytest.param(
+            ItemWithAliasInAnnotated,
+            lambda field: [field.didnt_have("alias", "validation_alias", "serialization_alias")],
+            (["name"], ["name"]),
+            id="didnt_have_keys_too_in_annotated",
         ),
         pytest.param(
             ItemWithAlias,
@@ -1825,42 +1884,59 @@ def test__router_generation__alias_instruction_keeps_keys_derived_from_old_alias
                 field.had(validation_alias="legacy", serialization_alias="legacy"),
                 field.had(alias="legacy"),
             ],
-            ["legacy"],
+            (["legacy"], ["legacy"]),
             id="another_instruction_had_keys",
         ),
-        pytest.param(ItemWithoutAlias, lambda field: [field.had(alias="legacy")], ["legacy"], id="field_without_alias"),
         pytest.param(
-            ItemWithAliasAndExplicitKeys, lambda field: [field.had(alias="legacy")], ["k"], id="explicit_keys"
+            ItemWithAlias,
+            lambda field: [field.had(validation_alias="k"), field.had(alias="legacy")],
+            (["k"], ["legacy"]),
+            id="another_instruction_had_validation_key",
+        ),
+        pytest.param(
+            ItemWithAlias,
+            lambda field: [field.didnt_have("alias"), field.had(validation_alias="a", serialization_alias="a")],
+            (["a"], ["a"]),
+            id="didnt_have_alias_and_had_old_keys",
+        ),
+        pytest.param(
+            ItemWithoutAlias,
+            lambda field: [field.had(alias="legacy")],
+            (["legacy"], ["legacy"]),
+            id="field_without_alias",
+        ),
+        pytest.param(
+            ItemWithAliasAndExplicitKeys,
+            lambda field: [field.had(alias="legacy")],
+            (["k"], ["k"]),
+            id="explicit_keys",
         ),
         pytest.param(
             ItemWithAliasThatAliasGeneratorOverrides,
             lambda field: [field.had(alias="legacy")],
-            ["NAME"],
+            (["NAME"], ["NAME"]),
             id="alias_generator_overrides_aliases",
         ),
-        # Cadwyn keeps the Field() in Annotated, so the field keeps its alias as well
         pytest.param(
-            ItemWithAliasInAnnotated,
-            lambda field: [field.didnt_have("alias")],
-            ["a"],
-            id="didnt_have_alias_that_annotated_keeps",
+            ItemWithAliasChoices,
+            lambda field: [field.had(alias="legacy")],
+            (["a"], ["legacy"]),
+            id="alias_choices",
         ),
-        # FastAPI documents such fields by their alias in query, header, and cookie models
-        pytest.param(ItemWithAliasChoices, lambda field: [field.had(alias="legacy")], ["a"], id="alias_choices"),
         pytest.param(
             ItemWithAlias,
             lambda field: [field.had(alias="legacy"), field.didnt_exist],
-            [],
+            ([], []),
             id="field_deleted_later",
         ),
     ],
 )
-def test__router_generation__alias_instruction_doesnt_keep_keys_derived_from_old_alias__should_not_warn(
+def test__router_generation__alias_instruction_with_other_alias_instructions__should_use_keys_of_resulting_field(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     model: type[BaseModel],
     change_field: Callable[[Any], list[Any]],
-    expected_keys: list[str],
+    expected_keys: tuple[list[str], list[str]],
 ):
     @router.post("/items", response_model=model)
     async def echo(item: model):  # ty: ignore[invalid-type-form]
@@ -1873,8 +1949,242 @@ def test__router_generation__alias_instruction_doesnt_keep_keys_derived_from_old
         )
         == []
     )
-    openapi = clients["2000-01-01"].get("/openapi.json?version=2000-01-01").json()
-    assert list(openapi["components"]["schemas"][model.__name__].get("properties", {})) == expected_keys
+    assert _get_openapi_keys(clients["2000-01-01"], "2000-01-01", model.__name__) == expected_keys
+
+
+def test__router_generation__repeated_didnt_have_alias__should_raise_error(
+    create_versioned_app: CreateVersionedApp,
+):
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            'You tried to delete the attribute "alias" of field "name" from "ItemWithAlias" in "MyVersionChange" '
+            "but it already doesn't have that attribute."
+        ),
+    ):
+        create_versioned_app(
+            version_change(schema(ItemWithAlias).field("name").didnt_have("alias")),
+            version_change(schema(ItemWithAlias).field("name").didnt_have("alias")),
+        )
+
+
+class ItemWithOptionalAliasedName(BaseModel):
+    name: str = Field("default", alias="a")
+
+
+class ItemWithAliasedNameAndCode(BaseModel):
+    name: str = Field("default", alias="a")
+    code: str = Field("default", alias="b")
+
+
+@pytest.fixture
+def clients_without_alias_migrations(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+) -> dict[str, CadwynTestClient]:
+    @router.get("/items", response_model=ItemWithOptionalAliasedName)
+    async def get_item():
+        return ItemWithOptionalAliasedName(a="x")
+
+    @router.post("/items", response_model=ItemWithOptionalAliasedName)
+    async def echo(item: ItemWithOptionalAliasedName):
+        raise NotImplementedError
+
+    @router.post("/names")
+    async def get_name(item: ItemWithOptionalAliasedName) -> str:
+        return item.name
+
+    return create_versioned_clients(
+        version_change(schema(ItemWithOptionalAliasedName).field("name").had(alias="legacy"))
+    )
+
+
+def test__router_generation__alias_instruction_without_response_migration__should_fail_response_with_old_key(
+    clients_without_alias_migrations: dict[str, CadwynTestClient],
+):
+    assert clients_without_alias_migrations["2001-01-01"].get("/items").json() == {"a": "x"}
+
+    # Instead of returning the default under the new key
+    with pytest.raises(ResponseValidationError) as exc_info:
+        clients_without_alias_migrations["2000-01-01"].get("/items")
+    assert [error["msg"] for error in exc_info.value.errors()] == [
+        'The key "a" of "ItemWithOptionalAliasedName.name" was renamed to "legacy" in this API version'
+    ]
+
+
+def test__router_generation__alias_instruction__should_reject_request_with_old_key(
+    clients_without_alias_migrations: dict[str, CadwynTestClient],
+):
+    # Instead of giving the field its default
+    response = clients_without_alias_migrations["2000-01-01"].post("/items", json={"a": "x"})
+    assert response.status_code == 422
+    assert [error["msg"] for error in response.json()["detail"]] == [
+        'The key "a" of "ItemWithOptionalAliasedName.name" was renamed to "legacy" in this API version'
+    ]
+
+
+def test__router_generation__alias_instruction__should_accept_old_key_with_new_key(
+    clients_without_alias_migrations: dict[str, CadwynTestClient],
+):
+    response = clients_without_alias_migrations["2000-01-01"].post("/names", json={"a": "y", "legacy": "x"})
+    # Without a request migration, the latest version doesn't get the value, as for any other renamed key
+    assert (response.status_code, response.json()) == (200, "default")
+
+
+def test__router_generation__alias_instruction_gives_old_key_to_another_field__should_accept_it(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+):
+    @router.post("/items", response_model=ItemWithAliasedNameAndCode)
+    async def echo(item: ItemWithAliasedNameAndCode):
+        return item
+
+    @convert_request_to_next_version_for(ItemWithAliasedNameAndCode)
+    def migrate_request(request: RequestInfo):
+        request.body["b"] = request.body.pop("a")
+
+    @convert_response_to_previous_version_for(ItemWithAliasedNameAndCode)
+    def migrate_response(response: ResponseInfo):
+        response.body["legacy"] = response.body.pop("a")
+        response.body["a"] = response.body.pop("b")
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(ItemWithAliasedNameAndCode).field("name").had(alias="legacy"),
+            schema(ItemWithAliasedNameAndCode).field("code").had(alias="a"),
+            migrate_request=migrate_request,
+            migrate_response=migrate_response,
+        )
+    )
+
+    response = clients["2000-01-01"].post("/items", json={"a": "x"})
+    assert (response.status_code, response.json()) == (200, {"legacy": "default", "a": "x"})
+
+
+class ChildOfItemWithOptionalAliasedName(ItemWithOptionalAliasedName):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("change_child", "expected_response"),
+    [
+        pytest.param(
+            lambda _field: [],
+            (
+                422,
+                {
+                    "detail": [
+                        {
+                            "type": "renamed_key",
+                            "loc": ["body"],
+                            "msg": 'The key "a" of "ChildOfItemWithOptionalAliasedName.name" was renamed to "legacy" '
+                            "in this API version",
+                            "input": {"a": "x"},
+                            "ctx": {
+                                "renamed_key": "a",
+                                "field": "ChildOfItemWithOptionalAliasedName.name",
+                                "key": "legacy",
+                            },
+                        }
+                    ]
+                },
+            ),
+            id="child_inherits_renamed_key",
+        ),
+        pytest.param(lambda field: [field.had(alias="a")], (200, "x"), id="child_had_old_key"),
+    ],
+)
+def test__router_generation__parent_had_alias__should_reject_old_key_in_child_only_if_child_renamed_it(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    change_child: Callable[[Any], list[Any]],
+    expected_response: tuple[int, Any],
+):
+    @router.post("/children")
+    async def get_name(item: ChildOfItemWithOptionalAliasedName) -> str:
+        return item.name
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(ItemWithOptionalAliasedName).field("name").had(alias="legacy"),
+            *change_child(schema(ChildOfItemWithOptionalAliasedName).field("name")),
+        )
+    )
+
+    response = clients["2000-01-01"].post("/children", json={"a": "x"})
+    assert (response.status_code, response.json()) == expected_response
+
+
+class ItemWithAliasedNameAndDifferentKeysOfCode(BaseModel):
+    name: str = Field(alias="a")
+    code: str = Field(validation_alias="cv", serialization_alias="cs")
+
+
+def test__router_generation__alias_instruction__should_keep_restoring_validation_keys_of_other_fields_in_responses(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+):
+    @router.get("/items", response_model=ItemWithAliasedNameAndDifferentKeysOfCode)
+    async def get_item():
+        return ItemWithAliasedNameAndDifferentKeysOfCode(a="x", cv="y")
+
+    @convert_response_to_previous_version_for(ItemWithAliasedNameAndDifferentKeysOfCode)
+    def migrate_response(response: ResponseInfo):
+        response.body["legacy"] = response.body.pop("a")
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(ItemWithAliasedNameAndDifferentKeysOfCode).field("name").had(alias="legacy"),
+            migrate_response=migrate_response,
+        )
+    )
+
+    # Responses have the dumped key of "code", which the model doesn't validate, so Cadwyn restores its validation key
+    assert clients["2001-01-01"].get("/items").json() == {"a": "x", "cs": "y"}
+    assert clients["2000-01-01"].get("/items").json() == {"legacy": "x", "cs": "y"}
+
+
+class EnvelopeOfItemWithAliasedNameAndDifferentKeysOfCode(BaseModel):
+    item: ItemWithAliasedNameAndDifferentKeysOfCode
+
+
+def test__router_generation__alias_instruction_in_nested_model__should_keep_restoring_validation_keys_in_responses(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+):
+    @router.get("/envelopes", response_model=EnvelopeOfItemWithAliasedNameAndDifferentKeysOfCode)
+    async def get_envelope():
+        return EnvelopeOfItemWithAliasedNameAndDifferentKeysOfCode(
+            item=ItemWithAliasedNameAndDifferentKeysOfCode(a="x", cv="y")
+        )
+
+    @convert_response_to_previous_version_for(EnvelopeOfItemWithAliasedNameAndDifferentKeysOfCode)
+    def migrate_response(response: ResponseInfo):
+        response.body["item"]["legacy"] = response.body["item"].pop("a")
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(ItemWithAliasedNameAndDifferentKeysOfCode).field("name").had(alias="legacy"),
+            migrate_response=migrate_response,
+        )
+    )
+
+    assert clients["2001-01-01"].get("/envelopes").json() == {"item": {"a": "x", "cs": "y"}}
+    assert clients["2000-01-01"].get("/envelopes").json() == {"item": {"legacy": "x", "cs": "y"}}
+
+
+def test__router_generation__alias_instruction_gives_old_key_to_alias_path_of_another_field__should_accept_it(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+):
+    @router.post("/codes")
+    async def get_code(item: ItemWithAliasedNameAndCode) -> str:
+        return item.code
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(ItemWithAliasedNameAndCode).field("name").had(alias="legacy"),
+            schema(ItemWithAliasedNameAndCode).field("code").had(validation_alias=AliasPath("a", "inner")),
+        )
+    )
+
+    response = clients["2000-01-01"].post("/codes", json={"a": {"inner": "x"}})
+    assert (response.status_code, response.json()) == (200, "x")
 
 
 class RecordWithAliasedCode(BaseModel):
@@ -1891,7 +2201,7 @@ class PersonalRecordWithAliasedCode(RecordWithAliasedCode):
 
 
 @pytest.mark.parametrize("in_head_version", [False, True])
-def test__router_generation__child_had_alias_of_inherited_field__should_warn_once_for_child(
+def test__router_generation__child_had_alias_of_inherited_field__should_change_keys_of_child_only(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
     in_head_version: bool,
@@ -1902,7 +2212,7 @@ def test__router_generation__child_had_alias_of_inherited_field__should_warn_onc
 
     @router.post("/business", response_model=BusinessRecordWithAliasedCode)
     async def post_business(record: BusinessRecordWithAliasedCode):
-        return record
+        raise NotImplementedError
 
     @router.post("/personal", response_model=PersonalRecordWithAliasedCode)
     async def post_personal(record: PersonalRecordWithAliasedCode):
@@ -1910,70 +2220,55 @@ def test__router_generation__child_had_alias_of_inherited_field__should_warn_onc
 
     older_change = version_change(schema(RecordWithAliasedCode).field("quantity").had(description="Units"))
     change = version_change(schema(BusinessRecordWithAliasedCode).field("code").had(alias="legacy_code"))
-    clients: dict[str, CadwynTestClient] = {}
     head_version_changes, version_changes = (
         ([change], [older_change]) if in_head_version else ([], [older_change, change])
     )
+    clients = create_versioned_clients(*version_changes, head_version_changes=head_version_changes)
 
-    assert _get_future_warnings(
-        lambda: clients.update(create_versioned_clients(*version_changes, head_version_changes=head_version_changes))
-    ) == [
-        (
-            'schema(BusinessRecordWithAliasedCode).field("code").had(alias=\'legacy_code\') in "MyVersionChange" '
-            'changes the alias of "BusinessRecordWithAliasedCode.code", but in API version "2001-01-01" its '
-            'validation_alias and serialization_alias are still "c", so that version keeps using "c" instead of '
-            '"legacy_code". Cadwyn 9.0 will change them too. To use "legacy_code" now and silence this warning, also '
-            "pass validation_alias='legacy_code' and serialization_alias='legacy_code' to this .had(). To keep \"c\", "
-            "remove alias='legacy_code' from it instead."
-        )
-    ]
-    for versioned_client in clients.values():
-        for path in ["/record", "/business", "/personal"]:
+    for version, versioned_client in clients.items():
+        for path in ["/record", "/personal"]:
             assert versioned_client.post(path, json={"c": "ABC"}).json() == {"c": "ABC", "quantity": 0}
-
-
-def test__router_generation__alias_instructions_in_several_versions__should_warn_once_per_instruction(
-    create_versioned_app: CreateVersionedApp,
-):
-    apps: list[Cadwyn] = []
-    assert _get_future_warnings(
-        lambda: apps.append(
-            create_versioned_app(
-                version_change(schema(RecordWithAliasedCode).field("code").had(alias="older_code")),
-                version_change(schema(RecordWithAliasedCode).field("code").had(alias="legacy_code")),
-                version_change(schema(RecordWithAliasedCode).field("quantity").had(description="Units")),
-            )
+        for schema_name in ["RecordWithAliasedCode", "PersonalRecordWithAliasedCode"]:
+            assert _get_openapi_keys(versioned_client, version, schema_name) == (["c", "quantity"], ["c", "quantity"])
+        business_key = "legacy_code" if version in ["2000-01-01", "2001-01-01"] else "c"
+        assert _get_openapi_keys(versioned_client, version, "BusinessRecordWithAliasedCode") == (
+            [business_key, "quantity"],
+            [business_key, "quantity"],
         )
-    ) == [
-        (
-            'schema(RecordWithAliasedCode).field("code").had(alias=\'legacy_code\') in "MyVersionChange" changes the '
-            'alias of "RecordWithAliasedCode.code", but in API version "2001-01-01" its validation_alias and '
-            'serialization_alias are still "c", so that version keeps using "c" instead of "legacy_code". Cadwyn 9.0 '
-            'will change them too. To use "legacy_code" now and silence this warning, also pass '
-            "validation_alias='legacy_code' and serialization_alias='legacy_code' to this .had(). To keep \"c\", "
-            "remove alias='legacy_code' from it instead."
-        ),
-        (
-            'schema(RecordWithAliasedCode).field("code").had(alias=\'older_code\') in "MyVersionChange" changes the '
-            'alias of "RecordWithAliasedCode.code", but in API version "2000-01-01" its validation_alias and '
-            'serialization_alias are still "c", so that version keeps using "c" instead of "older_code". Cadwyn 9.0 '
-            'will change them too. To use "older_code" now and silence this warning, also pass '
-            "validation_alias='older_code' and serialization_alias='older_code' to this .had(). To keep \"c\", "
-            "remove alias='older_code' from it instead."
-        ),
-    ]
 
-    # Generating the models again and serving the versions doesn't repeat the warnings
-    app = apps[0]
+
+def test__router_generation__alias_instructions_in_several_versions__should_use_alias_of_each_version(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    @router.post("/record", response_model=RecordWithAliasedCode)
+    async def post_record(record: RecordWithAliasedCode):
+        raise NotImplementedError
+
+    clients: dict[str, CadwynTestClient] = {}
     assert (
         _get_future_warnings(
-            lambda: [
-                generate_versioned_models(app.versions),
-                *(CadwynTestClient(app).get(f"/openapi.json?version={version.value}") for version in app.versions),
-            ]
+            lambda: clients.update(
+                create_versioned_clients(
+                    version_change(schema(RecordWithAliasedCode).field("code").had(alias="older_code")),
+                    version_change(schema(RecordWithAliasedCode).field("code").had(alias="legacy_code")),
+                    version_change(schema(RecordWithAliasedCode).field("quantity").had(description="Units")),
+                )
+            )
         )
         == []
     )
+
+    for version, key in [
+        ("2003-01-01", "c"),
+        ("2002-01-01", "c"),
+        ("2001-01-01", "legacy_code"),
+        ("2000-01-01", "older_code"),
+    ]:
+        assert _get_openapi_keys(clients[version], version, "RecordWithAliasedCode") == (
+            [key, "quantity"],
+            [key, "quantity"],
+        )
 
 
 class DeletableAttributesInFieldDefaults(BaseModel):

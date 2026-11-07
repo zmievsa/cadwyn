@@ -396,3 +396,48 @@ def test__render_model__didnt_have_description_in_annotated__should_render_annot
     )
     assert "Foo" in render_model(RenderedModelWithDescriptionInAnnotated, versions, "2001-01-01")
     assert "Foo" not in render_model(RenderedModelWithDescriptionInAnnotated, versions, "2000-01-01")
+
+
+class ModelWithAliases(BaseModel):
+    name: str = Field(alias="a")
+    code: str = Field(alias="c", validation_alias="cv", serialization_alias="cs")
+
+
+@pytest.mark.parametrize(
+    ("change_field", "expected_fields"),
+    [
+        pytest.param(
+            lambda field: field.had(alias="legacy"),
+            """
+    name: str = Field(alias='legacy', validation_alias='legacy', serialization_alias='legacy')
+    code: str = Field(alias='legacy', validation_alias='cv', serialization_alias='cs')
+""",
+            id="had",
+        ),
+        pytest.param(
+            lambda field: field.didnt_have("alias"),
+            """
+    name: str = Field()
+    code: str = Field(validation_alias='cv', serialization_alias='cs')
+""",
+            id="didnt_have",
+        ),
+    ],
+)
+def test__render_model__alias_instruction__should_render_aliases_that_follow_alias(
+    change_field: Any, expected_fields: str
+):
+    versions = VersionBundle(
+        Version(
+            "2001-01-01",
+            version_change(
+                change_field(schema(ModelWithAliases).field("name")),
+                change_field(schema(ModelWithAliases).field("code")),
+            ),
+        ),
+        Version("2000-01-01"),
+    )
+
+    assert code(render_model(ModelWithAliases, versions, "2000-01-01")) == code(
+        "\nclass ModelWithAliases(BaseModel):" + expected_fields
+    )

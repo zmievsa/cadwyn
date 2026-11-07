@@ -1,41 +1,55 @@
-import runpy
-import warnings
+from cadwyn import Cadwyn, Version, VersionBundle, VersionedAPIRouter
+from fastapi.testclient import TestClient
 
-import pytest
-from cadwyn import Version, VersionBundle, VersionChange, schema
-from cadwyn.schema_generation import generate_versioned_models
-from pydantic import BaseModel, Field
+from docs_src.concepts.schema_migrations.block005 import MySchema, RenameFooKey
 
-
-class MySchema(BaseModel):
-    foo: str = Field(alias="foo_key")
+router = VersionedAPIRouter()
 
 
-class RenameFooKey(VersionChange):
-    description = "Renamed the key of 'MySchema.foo' to 'foo_key'"
-    instructions_to_migrate_to_previous_version = (
-        schema(MySchema).field("foo").had(alias="old_foo_key"),
+@router.post("/my_schema")
+async def echo_my_schema(my_schema: MySchema) -> MySchema:
+    return my_schema
+
+
+app = Cadwyn(
+    versions=VersionBundle(
+        Version("2001-01-01", RenameFooKey),
+        Version("2000-01-01"),
+    )
+)
+app.generate_and_include_versioned_routers(router)
+client = TestClient(app)
+
+
+def _get_openapi_keys(version: str) -> list[str]:
+    openapi = client.get(f"/openapi.json?version={version}").json()
+    return list(openapi["components"]["schemas"]["MySchema"]["properties"])
+
+
+def _post(version: str, body: dict[str, str]):
+    return client.post(
+        "/my_schema", json=body, headers={"x-api-version": version}
     )
 
 
-versions = VersionBundle(
-    Version("2001-01-01", RenameFooKey),
-    Version("2000-01-01"),
-)
+def test__alias_change__older_version__should_use_old_key():
+    assert _get_openapi_keys("2000-01-01") == ["old_foo_key"]
+    response = _post("2000-01-01", {"old_foo_key": "foo"})
+    assert (response.status_code, response.json()) == (
+        200,
+        {"old_foo_key": "foo"},
+    )
 
 
-def test__alias_change__without_warning_filter__should_emit_future_warning():
-    with pytest.warns(FutureWarning, match="changes the alias of"):
-        generate_versioned_models(versions)
+def test__alias_change__newer_version__should_use_head_key():
+    assert _get_openapi_keys("2001-01-01") == ["foo_key"]
+    response = _post("2001-01-01", {"foo_key": "foo"})
+    assert (response.status_code, response.json()) == (200, {"foo_key": "foo"})
 
 
-def test__alias_change__with_warning_filter__should_not_emit_future_warning():
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        runpy.run_module("docs_src.concepts.schema_migrations.block005")
-
-        models = generate_versioned_models(versions)
-
-    # The filter only silences the warning: the older version keeps the old key
-    old_schema = models["2000-01-01"][MySchema]
-    assert old_schema.model_validate({"foo_key": "foo"}).foo == "foo"
+def test__alias_change__older_version_gets_new_key__should_return_422():
+    response = _post("2000-01-01", {"foo_key": "foo"})
+    assert response.status_code == 422
+    assert [error["loc"] for error in response.json()["detail"]] == [
+        ["body", "old_foo_key"]
+    ]

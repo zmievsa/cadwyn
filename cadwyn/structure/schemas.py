@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, Union, cast
 from pydantic import AliasChoices, AliasPath, BaseModel, Field
 from pydantic._internal._decorators import PydanticDescriptorProxy, unwrap_wrapped_function
 from pydantic.fields import FieldInfo
+from pydantic_core import PydanticCustomError
 
 from cadwyn._utils import (
     DATACLASS_SLOTS,
@@ -360,3 +361,27 @@ class AlterSchemaInstructionFactory:
 
 def schema(model: type[BaseModel], /) -> AlterSchemaInstructionFactory:
     return AlterSchemaInstructionFactory(model)
+
+
+# The keys that `_reject_keys_renamed_by_alias` rejects in a model: `{field_name: (renamed_keys, key_in_this_version)}`
+_KEYS_RENAMED_BY_ALIAS = "__cadwyn_keys_renamed_by_alias__"
+
+
+def _reject_keys_renamed_by_alias(cls: type[BaseModel], data: Any, handler: Callable[[Any], Any]) -> Any:
+    """Fail instead of silently giving a field its default when the data has the key that an alias instruction renamed.
+
+    For example, `field("x").had(alias="old")` on `x: str = Field("", alias="new")` makes an older version use "old"
+    instead of "new". So without migrations that rename the key, its clients that still send "new" and the responses
+    that the latest version returns with "new" would lose the value of the field.
+    """
+    validated = handler(data)
+    if isinstance(data, dict):
+        for name, (renamed_keys, key) in getattr(cls, _KEYS_RENAMED_BY_ALIAS, {}).items():
+            renamed_key = next((renamed_key for renamed_key in renamed_keys if renamed_key in data), None)
+            if renamed_key is not None and name not in validated.model_fields_set:
+                raise PydanticCustomError(
+                    "renamed_key",
+                    'The key "{renamed_key}" of "{field}" was renamed to "{key}" in this API version',
+                    {"renamed_key": renamed_key, "field": f"{cls.__name__}.{name}", "key": key},
+                )
+    return validated
