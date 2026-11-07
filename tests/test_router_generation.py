@@ -3412,6 +3412,72 @@ def test__router_generation__int_flag_enum_with_instructions__should_accept_comb
         assert response.json() == {"flag_permissions": None, "int_flag_permissions": combined_value}
 
 
+class PlainInnerEnum(Enum):
+    a = "a"
+    b = "b"
+
+
+class StringInnerEnum(str, Enum):
+    a = "a"
+    b = "b"
+
+
+class IntegerInnerEnum(int, Enum):
+    a = 1
+    b = 2
+
+
+@pytest.mark.parametrize(
+    ("inner", "schema_type"),
+    [(PlainInnerEnum, "string"), (StringInnerEnum, "string"), (IntegerInnerEnum, "integer")],
+)
+def test__router_generation__enum_valued_members__should_serialize_members_and_keep_openapi_values(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    inner: Any,
+    schema_type: str,
+):
+    class Outer(Enum):
+        a = inner.a
+        b = inner.b
+
+    @router.get("/member", response_model=Outer)
+    def read_member():
+        return Outer.a
+
+    clients = create_versioned_clients(version_change(enum(Outer).didnt_have("b")))
+
+    for version, values in {"2001-01-01": [inner.a.value, inner.b.value], "2000-01-01": [inner.a.value]}.items():
+        response = clients[version].get("/member")
+        assert response.status_code == 200
+        assert response.json() == inner.a.value
+        openapi = clients[version].get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["Outer"] == {
+            "title": "Outer",
+            "enum": values,
+            "type": schema_type,
+        }
+
+
+def test__router_generation__plain_enum_valued_member__should_reject_raw_value_like_original_enum(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+):
+    class Outer(Enum):
+        a = PlainInnerEnum.a
+        b = PlainInnerEnum.b
+
+    @router.get("/raw", response_model=Outer)
+    def read_raw_value():
+        return "a"
+
+    clients = create_versioned_clients(version_change(enum(Outer).didnt_have("b")))
+
+    for versioned_client in clients.values():
+        with pytest.raises(ResponseValidationError):
+            versioned_client.get("/raw")
+
+
 def test__router_generation__using_unversioned_schema_in_body(
     router: VersionedAPIRouter, create_versioned_app: CreateVersionedApp
 ):

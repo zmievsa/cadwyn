@@ -4572,6 +4572,12 @@ class _EnumWrapper(Generic[_T_ENUM]):
             self._check_that_new_recreates_the_members_from_their_values()
         with self._explain_errors_of_custom_new() if has_custom_new else contextlib.nullcontext():
             model_copy = self._create_enum(self.members)
+        for name, original in self.cls.__members__.items():
+            if name in self.members and self.members[name] is original.value:
+                copied = model_copy.__members__[name]
+                # Removing the canonical member of an alias gives the alias a new name and constructor state.
+                if copied.name == original.name:
+                    _restore_member_state(copied, original)
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         _take_head_members_by_value(model_copy, self.cls)
         return model_copy
@@ -4620,10 +4626,10 @@ class _EnumWrapper(Generic[_T_ENUM]):
                     definitions[name] = enum.member(_ValueOfMemberWithOnlyItsValue(value))
                 else:
                     # A member of the original stays a member even if its value is a function or a class (`@member`)
-                    definitions[name] = enum.member(value.value if isinstance(value, Enum) else value)
+                    definitions[name] = enum.member(value)
             else:
                 # The value that `had()` got, which the copy defines like the class body of the enum would
-                definitions[name] = value.value if isinstance(value, Enum) else value
+                definitions[name] = value
         return definitions
 
     @contextlib.contextmanager
@@ -4767,8 +4773,13 @@ def _is_same_member(rebuilt_member: Enum, original_member: Enum) -> bool:
         # E.g. not an alias of another member
         rebuilt_member.name == original_member.name
         and _is_same_or_interchangeable(rebuilt_member._value_, original_member._value_)
-        and rebuilt_state.keys() == original_state.keys()
-        and all(_is_same_or_interchangeable(rebuilt_state[k], original_state[k]) for k in original_state)
+        # Attributes absent from the reconstruction can have been assigned after class creation, e.g. by a
+        # metaclass. They are restored separately; attributes that the constructor does set must still match.
+        and rebuilt_state.keys() <= original_state.keys()
+        and all(
+            value is _UNSET_SLOT or _is_same_or_interchangeable(value, original_state[k])
+            for k, value in rebuilt_state.items()
+        )
         # E.g. the `str` that `str.__new__` got, which can differ from the value
         and (member_type is object or member_type.__eq__(rebuilt_member, original_member) is True)
     )
@@ -4844,6 +4855,16 @@ def _get_own_slot_names(cls: type) -> tuple[str, ...]:
         for name, descriptor in cls.__dict__.items()
         if isinstance(descriptor, types.MemberDescriptorType) and descriptor.__objclass__ is cls
     )
+
+
+def _restore_member_state(copied: Enum, original: Enum) -> None:
+    """Keep the state of an unchanged member, including attributes assigned outside its constructor."""
+    for key, value in _get_member_state(original).items():
+        if key[0] == "attribute":
+            vars(copied)[key[1]] = value
+        elif value is not _UNSET_SLOT:
+            # Use the descriptor itself: a subclass can shadow a base's slot with a slot of the same name.
+            type(copied).__mro__[key[1]].__dict__[key[2]].__set__(copied, value)
 
 
 def _wrap_enum_nonmember(enum_cls: type[Enum], name: str, value: Any) -> Any:
