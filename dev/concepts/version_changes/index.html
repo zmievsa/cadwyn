@@ -1515,6 +1515,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#background-tasks-added-by-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Background tasks added by dependencies
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#versioned-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2199,6 +2210,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#background-tasks-added-by-dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Background tasks added by dependencies
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#versioned-dependencies" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2655,6 +2677,59 @@ Changes:
 </code></pre></div>
 <p>but the majority of your dependencies will not need this as most dependencies should not have side effects or network calls within them.</p>
 <p>Dependencies that read uploaded files or move their position (e.g. to skip a header) need care: both runs see the same files. Do such work in the run that gives your endpoint its arguments, i.e. when <code>current_dependency_solver</code> is <code>"cadwyn"</code>, or <code>"fastapi"</code> for requests that Cadwyn doesn't migrate (requests without an API version). Before the <code>"cadwyn"</code> run, Cadwyn moves the files that FastAPI has read for <code>bytes</code> params back to their start, so a file that a dependency has moved only in the <code>"fastapi"</code> run can be moved back.</p>
+<h3 id="background-tasks-added-by-dependencies">Background tasks added by dependencies<a class="headerlink" href="#background-tasks-added-by-dependencies" title="Permanent link">&para;</a></h3>
+<p>Background tasks that a dependency adds are side effects too. FastAPI runs the tasks that dependencies add in the first run after the response. In the second run, Cadwyn keeps them only if the endpoint itself declares a <code>BackgroundTasks</code> param. Otherwise, it drops them and emits a <code>FutureWarning</code> once per route:</p>
+<ul>
+<li>Cadwyn warns after FastAPI has sent the response and run its background tasks, i.e. when the dropped tasks would have run. Requests that fail, and responses that have their own background tasks (e.g. <code>JSONResponse(..., background=...)</code>), don't warn, because FastAPI wouldn't run the dropped tasks for them either</li>
+<li>Cadwyn decides whether to warn when the endpoint returns. Tasks that a dependency adds only after that, e.g. after the <code>yield</code> of a dependency with <code>scope="function"</code>, are dropped without a warning</li>
+<li>Cadwyn warns in a worker thread, so slow log handlers don't block the event loop. If your warning filters turn the warning into an error, Cadwyn logs it instead. If logging fails too, Cadwyn ignores the error. The response and the other background tasks are never affected</li>
+</ul>
+<p>Cadwyn 10.0 will always run these tasks. To run them now, pass <code>run_background_tasks_of_latest_version_dependencies=True</code> to <code>Cadwyn()</code> or <code>generate_versioned_routers()</code>. Then every task that a dependency adds runs once after the response, in the order it was added, as in FastAPI. As in FastAPI, a response that has its own background tasks runs only them. To give the second run the background tasks that FastAPI runs, Cadwyn adds a <code>BackgroundTasks</code> param to the endpoints that don't declare one. It's named <code>cadwyn_background_tasks_param</code>, with trailing underscores if the endpoint already has a param with that name. You can see it in the signature of the route's endpoint and in <code>route.dependant.background_tasks_param_name</code>, but not in OpenAPI, and the endpoint doesn't get it.</p>
+<p>A dependency that adds a task in both runs then has it run twice, so add the task in only one of the runs. The <code>"fastapi"</code> run happens for every request, including the ones that Cadwyn doesn't migrate:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotated</span><span class="p">,</span> <span class="n">Literal</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Cadwyn</span><span class="p">,</span>
+    <span class="n">Version</span><span class="p">,</span>
+    <span class="n">VersionBundle</span><span class="p">,</span>
+    <span class="n">VersionedAPIRouter</span><span class="p">,</span>
+    <span class="n">current_dependency_solver</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">BackgroundTasks</span><span class="p">,</span> <span class="n">Depends</span>
+
+<span class="n">sent_emails</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">send_welcome_email</span><span class="p">(</span><span class="n">email</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">sent_emails</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">email</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">schedule_welcome_email</span><span class="p">(</span>
+    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">background_tasks</span><span class="p">:</span> <span class="n">BackgroundTasks</span><span class="p">,</span>
+    <span class="n">dependency_solver</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span>
+        <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;fastapi&quot;</span><span class="p">,</span> <span class="s2">&quot;cadwyn&quot;</span><span class="p">],</span> <span class="n">Depends</span><span class="p">(</span><span class="n">current_dependency_solver</span><span class="p">)</span>
+    <span class="p">],</span>
+<span class="p">):</span>
+    <span class="c1"># Dependencies run twice, so we add the task in only one of the runs</span>
+    <span class="k">if</span> <span class="n">dependency_solver</span> <span class="o">==</span> <span class="s2">&quot;fastapi&quot;</span><span class="p">:</span>
+        <span class="n">background_tasks</span><span class="o">.</span><span class="n">add_task</span><span class="p">(</span><span class="n">send_welcome_email</span><span class="p">,</span> <span class="n">email</span><span class="p">)</span>
+
+
+<span class="n">router</span> <span class="o">=</span> <span class="n">VersionedAPIRouter</span><span class="p">()</span>
+
+
+<span class="nd">@router</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">,</span> <span class="n">dependencies</span><span class="o">=</span><span class="p">[</span><span class="n">Depends</span><span class="p">(</span><span class="n">schedule_welcome_email</span><span class="p">)])</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">create_user</span><span class="p">():</span>
+    <span class="k">return</span> <span class="p">{}</span>
+
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">Cadwyn</span><span class="p">(</span>
+    <span class="n">versions</span><span class="o">=</span><span class="n">VersionBundle</span><span class="p">(</span><span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2023-02-10&quot;</span><span class="p">),</span> <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2022-11-16&quot;</span><span class="p">)),</span>
+    <span class="n">run_background_tasks_of_latest_version_dependencies</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">app</span><span class="o">.</span><span class="n">generate_and_include_versioned_routers</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
+</code></pre></div>
 <h3 id="versioned-dependencies">Versioned dependencies<a class="headerlink" href="#versioned-dependencies" title="Permanent link">&para;</a></h3>
 <p>In the first run, Cadwyn can give a dependency its version's copy, whose parameters (request bodies, query parameters, and so on) are validated and documented in OpenAPI with the request's version of their models and enums. Whether it does depends on how you declare the dependency:</p>
 <ul>
