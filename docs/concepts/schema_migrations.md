@@ -70,7 +70,7 @@ The part that causes the aforementioned problem is Cadwyn's use of `exclude_unse
 {! ./docs_src/concepts/schema_migrations/block006.py !}
 ```
 
-In the older version, `BusinessInvoice.code` has `max_length=5`, while `Invoice.code` and `PersonalInvoice.code` stay unchanged. To change the field in all of these schemas, give the instruction to the parent: `schema(Invoice).field("code").had(max_length=5)`. Renames don't work this way: `had(name=...)` for an inherited field keeps the old field next to the renamed one in that schema, so rename the field in the schema that declares it.
+In the older version, `BusinessInvoice.code` has `max_length=5`, while `Invoice.code` and `PersonalInvoice.code` stay unchanged. To change the field in all of these schemas, give the instruction to the parent: `schema(Invoice).field("code").had(max_length=5)`. Renames don't work this way. A pydantic model can't drop a field that it inherits, so `had(name=...)` in a subclass for a field that its parent still has in that version fails at startup with an `InvalidGenerationInstructionError` that names the parent. Rename the field in the schema that declares it instead: `schema(Invoice).field("code").had(name="number")` renames it in `Invoice`, `BusinessInvoice`, and `PersonalInvoice`. If a subclass changed the field in a newer version (e.g. `schema(BusinessInvoice).field("code").had(max_length=5)`) or declares it again (e.g. `code: str` in `BusinessInvoice`), rename it in that subclass and in the parent in the same version. Otherwise, the subclass keeps the old field next to the renamed one.
 
 The changes of a parent's field also apply to its subclasses, including the ones that changed the field themselves, with these exceptions:
 
