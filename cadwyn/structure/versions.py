@@ -564,7 +564,6 @@ class VersionBundle:
         # This gives us the ability to tell the user whether cadwyn is running its dependencies or FastAPI
         CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
-        is_body_restored = False
         form_model_lookup = _FormModelLookup(head_dependant)
         if request_info._form is not None:
             if uploads_read_by_fastapi:
@@ -581,7 +580,6 @@ class VersionBundle:
             )
         elif dumped_body_model is not None:
             body_for_solving = _rescue_body(head_dependant.body_params[0], request_info.body)
-            is_body_restored = body_for_solving is not request_info.body
             body_for_solving = await _encode_json_values(
                 request, head_dependant, head_route, route, body_for_solving, embed_body_fields=embed_body_fields
             )
@@ -600,9 +598,13 @@ class VersionBundle:
             )
 
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
-        solve = functools.partial(
-            solve_dependencies,
+        # We solve the head's dependencies exactly once, because solving them again would run the dependencies
+        # that aren't cached, e.g. `use_cache=False` and `yield` ones, once more. If the head rejects the restored body,
+        # we report its errors instead of solving again with the body as it is, which would also hide the client's
+        # values behind the defaults that some fields get from their core schemas.
+        result = await solve_dependencies(
             request=request,
+            body=_embed_form_model(body_for_solving, form_model_lookup),
             response=response,
             dependant=form_model_lookup.dependant,
             dependency_overrides_provider=head_route.dependency_overrides_provider,
@@ -610,14 +612,6 @@ class VersionBundle:
             embed_body_fields=embed_body_fields,
             background_tasks=background_tasks,
         )
-        result = await solve(body=_embed_form_model(body_for_solving, form_model_lookup))
-        # We only restore bodies that would fail as they are. If the head rejects the restored body too, we solve the
-        # request again with the body as it is, so that it fails with the same error as before. The second solve reuses
-        # the dependencies of the first one, so they run as many times as before.
-        if result.errors and is_body_restored:
-            result = await solve(
-                body=_embed_form_model(request_info.body, form_model_lookup), dependency_cache=result.dependency_cache
-            )
         if result.errors:
             errors = _unembed_form_model_errors(result.errors, form_model_lookup.aliases)
             raise CadwynHeadRequestValidationError(errors, body=request_info.body, version=current_version)
@@ -2861,6 +2855,8 @@ def _is_nested_key_validated(plan: _RestorePlan, key: object, data: dict[str, An
 def _get_failing_keys(model: type[BaseModel], renames: tuple["_Rename", ...]) -> frozenset[str]:
     if _get_validation_settings(model)[2] == "forbid":
         return frozenset(dumped_key for dumped_key, *_ in renames)
+    # We go by the field infos even for fields that the core schemas of their types give defaults to: such a field
+    # wouldn't fail without its value, but it would silently get its default instead of the client's value
     required_dumped_keys = {
         field.serialization_alias or name for name, field in model.model_fields.items() if field.is_required()
     }

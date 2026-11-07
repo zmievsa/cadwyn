@@ -53,6 +53,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    GetPydanticSchema,
     Json,
     OnErrorOmit,
     PlainSerializer,
@@ -9128,74 +9129,85 @@ def test__request_body_migration__with_optional_field_with_validation_alias__sho
     assert clients["2001-01-01"].post(test_path, json={"v": 15}).json() == 0
 
 
-def test__request_body_migration__with_value_that_the_head_rejects__should_run_dependencies_as_before(
+def test__request_body_migration__with_value_that_the_head_rejects__should_run_dependencies_once_per_solver(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
 ):
     calls: list[str] = []
 
-    def dependency() -> None:
-        calls.append("dependency")
+    def cached(solver: str = Depends(current_dependency_solver)) -> None:
+        calls.append(f"{solver}:cached")
 
-    def uncached_dependency() -> None:
-        calls.append("uncached_dependency")
+    def uncached(solver: str = Depends(current_dependency_solver)) -> None:
+        calls.append(f"{solver}:uncached")
 
-    def yield_dependency() -> Iterator[None]:
-        calls.append("enter")
-        yield
-        calls.append("exit")
+    def uncached_yield(solver: str = Depends(current_dependency_solver)) -> Iterator[None]:
+        calls.append(f"{solver}:enter")
+        try:
+            yield
+        finally:
+            calls.append(f"{solver}:exit")
 
-    def dependency_with_background_task(background_tasks: BackgroundTasks) -> None:
-        background_tasks.add_task(calls.append, "background_task")
+    def uncached_security(solver: str = Depends(current_dependency_solver)) -> None:
+        calls.append(f"{solver}:security")
+
+    def uncached_child(solver: str = Depends(current_dependency_solver)) -> None:
+        calls.append(f"{solver}:child")
+
+    def cached_parent(_: None = Depends(uncached_child, use_cache=False)) -> None:
+        pass
 
     class SchemaWithStricterHead(BaseModel):
         value: int = Field(alias="x", validation_alias="v", ge=10)
 
-    @router.post(
-        test_path,
-        dependencies=[
-            Depends(dependency),
-            Depends(uncached_dependency, use_cache=False),
-            Depends(yield_dependency),
-            Depends(dependency_with_background_task),
-        ],
-    )
-    async def endpoint(body: SchemaWithStricterHead):
+    # FastAPI ignores `use_cache=False` in `dependencies=[...]` of a route, so the dependencies are endpoint params
+    @router.post(test_path)
+    async def endpoint(
+        body: SchemaWithStricterHead,
+        _cached: None = Depends(cached),
+        _uncached: None = Depends(uncached, use_cache=False),
+        _uncached_yield: None = Depends(uncached_yield, use_cache=False),
+        _uncached_security: None = Security(uncached_security, use_cache=False),
+        _cached_parent: None = Depends(cached_parent),
+    ):
         return body.value
 
     clients = create_versioned_clients(version_change(schema(SchemaWithStricterHead).field("value").had(ge=0)))
+    calls_of_each_solver = ["cached", "uncached", "enter", "exit", "security", "child"]
 
-    # The dependencies run as many times as they did before: once for the version and once for the head
     assert clients["2000-01-01"].post(test_path, json={"v": 15}).json() == 15
-    assert sorted(calls) == sorted(["dependency", "uncached_dependency", "enter", "exit"] * 2 + ["background_task"])
+    assert sorted(calls) == sorted(
+        f"{solver}:{call}" for solver in ("fastapi", "cadwyn") for call in calls_of_each_solver
+    )
 
-    # The head rejects the restored body, so we solve the request again with the body as it is to fail as before.
-    # The second solve reuses the dependencies of the first one.
+    # The head rejects the restored body. It reports that error instead of solving the request once more.
     calls.clear()
     with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
         clients["2000-01-01"].post(test_path, json={"v": 5})
-    assert [error["type"] for error in exc_info.value.errors] == ["missing"]
-    assert sorted(call for call in calls if call != "exit") == sorted(
-        ["dependency", "uncached_dependency", "enter"] * 2
+    assert sorted(calls) == sorted(
+        f"{solver}:{call}" for solver in ("fastapi", "cadwyn") for call in calls_of_each_solver
     )
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [("greater_than_equal", ("body", "v"))]
 
 
-def test__request_body_migration__with_form_value_that_the_head_rejects__should_run_dependencies_as_before(
+def test__request_body_migration__with_form_value_that_the_head_rejects__should_run_dependencies_once_per_solver(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
 ):
     solvers: list[str] = []
 
-    async def dependency(solver: str = Depends(current_dependency_solver)) -> None:
+    async def uncached(solver: str = Depends(current_dependency_solver)) -> None:
         solvers.append(solver)
 
     class FormWithStricterHead(BaseModel):
         value: int = Field(validation_alias="v", serialization_alias="x", ge=10)
 
-    @router.post(test_path, dependencies=[Depends(dependency)])
-    async def endpoint(body: Annotated[FormWithStricterHead, Form()]):
+    @router.post(test_path)
+    async def endpoint(
+        body: Annotated[FormWithStricterHead, Form()], _uncached: None = Depends(uncached, use_cache=False)
+    ):
         return body.value
 
     clients = create_versioned_clients(version_change(schema(FormWithStricterHead).field("value").had(ge=0)))
@@ -9203,16 +9215,15 @@ def test__request_body_migration__with_form_value_that_the_head_rejects__should_
     assert clients["2000-01-01"].post(test_path, data={"v": "15"}).json() == 15
     assert solvers == ["fastapi", "cadwyn"]
 
-    # The head rejects the restored form, so we solve the request again with the form as it is to fail as before,
-    # reusing the dependencies of the first solve
+    # The head rejects the restored form. It reports that error instead of solving the request once more.
     solvers.clear()
     with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
         clients["2000-01-01"].post(test_path, data={"v": "5"})
-    assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [("missing", ("body", "v"))]
     assert solvers == ["fastapi", "cadwyn"]
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [("greater_than_equal", ("body", "v"))]
 
 
-def test__request_body_migration__with_required_value_that_the_head_rejects__should_fail_as_before(
+def test__request_body_migration__with_required_value_that_the_head_rejects__should_raise_the_heads_error(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -9228,8 +9239,59 @@ def test__request_body_migration__with_required_value_that_the_head_rejects__sho
 
     with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
         clients["2000-01-01"].post(test_path, json={"v": 5})
-    # The error is the one that the body would get without the value, as before
-    assert [error["type"] for error in exc_info.value.errors] == ["missing"]
+    # The error is the one that the head gives the restored body, with the value under the key that the client has sent
+    assert [(error["type"], error["loc"], error["input"]) for error in exc_info.value.errors] == [
+        ("greater_than_equal", ("body", "v"), 5)
+    ]
+
+
+# The field info says that the field is required, but the core schema of its type gives it a default when it's missing
+IntWithCoreSchemaDefault = Annotated[
+    int, GetPydanticSchema(lambda source, handler: core_schema.with_default_schema(handler(source), default=0))
+]
+
+
+class SchemaWithCoreSchemaDefaultAndStricterHead(BaseModel):
+    value: IntWithCoreSchemaDefault = Field(alias="x", validation_alias="v", ge=10)
+
+
+def test__request_body_migration__with_field_that_gets_its_default_from_core_schema__head_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithCoreSchemaDefaultAndStricterHead):
+        return body.value
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithCoreSchemaDefaultAndStricterHead).field("value").had(ge=0))
+    )
+
+    # The head gets the value that the client has sent instead of the default of the field
+    assert clients["2000-01-01"].post(test_path, json={"v": 15}).json() == 15
+    assert clients["2001-01-01"].post(test_path, json={"v": 15}).json() == 15
+
+
+def test__request_body_migration__with_field_that_gets_its_default_from_core_schema__should_raise_the_heads_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithCoreSchemaDefaultAndStricterHead):
+        raise NotImplementedError  # pragma: no cover
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithCoreSchemaDefaultAndStricterHead).field("value").had(ge=0))
+    )
+
+    # The head rejects the value that the client has sent, so the endpoint doesn't silently get the default instead
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, json={"v": 5})
+    assert [(error["type"], error["loc"], error["input"]) for error in exc_info.value.errors] == [
+        ("greater_than_equal", ("body", "v"), 5)
+    ]
 
 
 @pytest.mark.parametrize("fails_on_third_validation", [False, True], ids=["counts", "rejects_third_validation"])
