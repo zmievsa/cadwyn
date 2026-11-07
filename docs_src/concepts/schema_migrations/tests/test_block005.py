@@ -50,6 +50,8 @@ def test__alias_change__newer_version__should_use_head_key():
 def test__alias_change__older_version_gets_new_key__should_return_422():
     response = _post("2000-01-01", {"foo_key": "foo"})
     assert response.status_code == 422
-    assert [error["loc"] for error in response.json()["detail"]] == [
-        ["body", "old_foo_key"]
-    ]
+    message = (
+        'The key "foo_key" of "MySchema.foo" was renamed to "old_foo_key" in this '
+        "API version"
+    )
+    assert [error["msg"] for error in response.json()["detail"]] == [message]

@@ -46,7 +46,7 @@ Pydantic copies a field's `alias` into its `validation_alias` and `serialization
 {! ./docs_src/concepts/schema_migrations/block005.py !}
 ```
 
-If the data that the older version validates has the key that the field had before the instruction but not its new key, e.g. because a client still sends the old key or a migration is missing, Cadwyn fails instead of giving the field its default: requests get a 422, and responses fail with a `ResponseValidationError` (a 500). To keep the old key in the older version instead, remove the alias change from the instruction.
+If the data that the older version validates has the key that the field had before the instruction but not its new key, e.g. because a client still sends the old key or a migration is missing, Cadwyn fails instead of giving the field its default: requests get a 422, and responses fail with a `ResponseValidationError` (a 500). Cadwyn decides this from the data as it comes in, so this also happens when a validator of the model fills the field from other keys. To keep the old key in the older version instead, remove the alias change from the instruction.
 
 **DEFAULTS WARNING:**
 

@@ -70,6 +70,7 @@ from pydantic import (
     StringConstraints,
     conint,
     create_model,
+    field_validator,
     model_validator,
 )
 from pydantic.fields import FieldInfo
@@ -2116,6 +2117,11 @@ class ItemWithOptionalAliasedNameAndExtras(BaseModel):
     name: str = Field("default", alias="a")
 
 
+class ItemWithOptionalAliasedNameAndExtrasThatValidatesDefault(BaseModel):
+    model_config = ConfigDict(extra="allow", validate_default=True)
+    name: str = Field("default", alias="a")
+
+
 @pytest.mark.parametrize(
     ("model", "body", "old_key"),
     [
@@ -2132,6 +2138,12 @@ class ItemWithOptionalAliasedNameAndExtras(BaseModel):
         pytest.param(NodeWithOptionalAliasedName, {"child": {"a": "x"}}, "a", id="self_referencing_model"),
         pytest.param(ItemWithOptionalAliasedNameAndExtras, {"a": "x"}, "a", id="extras"),
         pytest.param(ItemWithOptionalAliasedNameAndExtras, {"a": "x", "name": "y"}, "a", id="extra_named_like_field"),
+        pytest.param(
+            ItemWithOptionalAliasedNameAndExtrasThatValidatesDefault,
+            {"a": "x", "name": "y"},
+            "a",
+            id="extra_named_like_field_that_validates_default",
+        ),
     ],
 )
 def test__router_generation__alias_instruction_without_migrations__should_reject_old_key_that_field_doesnt_read(
@@ -2225,8 +2237,43 @@ class ItemWithOptionalAliasedNameThatValidatorFills(BaseModel):
         return {**data, cast("str", cls.model_fields["name"].validation_alias): data["compatibility_name"]}
 
 
-def test__router_generation__alias_instruction_with_validator_that_fills_field__should_accept_old_key(
-    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+@pytest.mark.parametrize(
+    ("body", "expected_response"),
+    [
+        pytest.param({"compatibility_name": "x", "legacy": "y"}, (200, "x"), id="new_key"),
+        pytest.param({"compatibility_name": "x", "legacy": "y", "a": "old"}, (200, "x"), id="both_keys"),
+        # Known limitation: the check only looks at the data that comes in, so it fails even though the validator
+        # fills the field
+        pytest.param(
+            {"compatibility_name": "x", "a": "old"},
+            (
+                422,
+                {
+                    "detail": [
+                        {
+                            "type": "renamed_key",
+                            "loc": ["body"],
+                            "msg": 'The key "a" of "ItemWithOptionalAliasedNameThatValidatorFills.name" was renamed '
+                            'to "legacy" in this API version',
+                            "input": {"compatibility_name": "x", "a": "old"},
+                            "ctx": {
+                                "renamed_key": "a",
+                                "field": "ItemWithOptionalAliasedNameThatValidatorFills.name",
+                                "key": "legacy",
+                            },
+                        }
+                    ]
+                },
+            ),
+            id="old_key",
+        ),
+    ],
+)
+def test__router_generation__alias_instruction_with_validator_that_fills_field__should_reject_only_old_key(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    body: dict[str, str],
+    expected_response: tuple[int, Any],
 ):
     @router.post("/names")
     async def get_name(item: ItemWithOptionalAliasedNameThatValidatorFills) -> str:
@@ -2243,9 +2290,66 @@ def test__router_generation__alias_instruction_with_validator_that_fills_field__
         )
     )
 
-    # The extra key "name" doesn't make the field look like it has a value either
-    response = clients["2000-01-01"].post("/names", json={"compatibility_name": "x", "a": "old", "name": "extra"})
-    assert (response.status_code, response.json()) == (200, "x")
+    response = clients["2000-01-01"].post("/names", json=body)
+    assert (response.status_code, response.json()) == expected_response
+
+
+class ParentWithOptionalAliasedName(BaseModel):
+    name: str = Field("default", alias="a")
+
+
+class ChildWithPlainValidatorOfName(ParentWithOptionalAliasedName):
+    @field_validator("name", mode="plain")
+    @classmethod
+    def upper_name(cls, value: str) -> str:
+        return value.upper()
+
+
+class ItemWithOptionalAliasedNameThatAfterValidatorFills(BaseModel):
+    name: str = Field("default", alias="a")
+    compatibility_name: str
+
+    @model_validator(mode="after")
+    def fill_name(self) -> "ItemWithOptionalAliasedNameThatAfterValidatorFills":
+        self.name = self.compatibility_name.upper()
+        return self
+
+
+@pytest.mark.parametrize(
+    ("renamed_model", "model", "extra_body"),
+    [
+        pytest.param(ParentWithOptionalAliasedName, ChildWithPlainValidatorOfName, {}, id="plain_field_validator"),
+        pytest.param(
+            ItemWithOptionalAliasedNameThatAfterValidatorFills,
+            ItemWithOptionalAliasedNameThatAfterValidatorFills,
+            {"compatibility_name": "x"},
+            id="after_model_validator",
+        ),
+    ],
+)
+@pytest.mark.parametrize("keys", [pytest.param(["legacy"], id="new_key"), pytest.param(["legacy", "a"], id="both")])
+def test__router_generation__alias_instruction_with_validators__should_accept_new_key(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    renamed_model: type[BaseModel],
+    model: type[BaseModel],
+    extra_body: dict[str, str],
+    keys: list[str],
+):
+    @router.post("/names")
+    async def get_name(item: model) -> str:  # ty: ignore[invalid-type-form]
+        return item.name
+
+    @convert_request_to_next_version_for(model)
+    def migrate_request(request: RequestInfo):
+        request.body["a"] = request.body.pop("legacy")
+
+    clients = create_versioned_clients(
+        version_change(schema(renamed_model).field("name").had(alias="legacy"), migrate_request=migrate_request)
+    )
+
+    response = clients["2000-01-01"].post("/names", json=dict.fromkeys(keys, "x") | extra_body)
+    assert (response.status_code, response.json()) == (200, "X")
 
 
 class ItemWithOptionalNameAliasedByItsNameThatValidatesByName(BaseModel):

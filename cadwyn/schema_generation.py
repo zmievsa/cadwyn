@@ -107,7 +107,6 @@ from cadwyn.structure.versions import (
     _KEYS_RENAMED_BY_ALIAS,
     VersionBundle,
     _get_schema_migration_target,
-    _record_field_with_value,
     _reject_keys_renamed_by_alias,
     _rescue_model_data,
 )
@@ -946,12 +945,9 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             if defined_fields[name].keys_renamed_by_alias
         }
         if keys_renamed_by_alias:
-            # Pydantic makes them classmethods because their first parameter is "cls"
+            # Pydantic makes it a classmethod because its first parameter is "cls"
             root_validators[_REJECT_KEYS_RENAMED_BY_ALIAS] = pydantic.model_validator(mode="wrap")(
                 _reject_keys_renamed_by_alias
-            )
-            per_field_validators[_RECORD_FIELDS_WITH_VALUES] = pydantic.field_validator("*", mode="after")(
-                _record_field_with_value
             )
 
         model_copy = type(self.cls)(
@@ -977,7 +973,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
 
 _REJECT_KEYS_RENAMED_BY_ALIAS = "__cadwyn_reject_keys_renamed_by_alias__"
-_RECORD_FIELDS_WITH_VALUES = "__cadwyn_record_fields_with_values__"
 
 
 def _set_keys_renamed_by_alias(

@@ -55,7 +55,7 @@ from fastapi.dependencies.utils import get_dependant, get_validation_alias, solv
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute, _get_scope_effective_route_context
-from pydantic import AliasChoices, AliasPath, BaseModel, BeforeValidator, RootModel, ValidationInfo
+from pydantic import AliasChoices, AliasPath, BaseModel, BeforeValidator, RootModel
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticCustomError, PydanticSerializationError, PydanticUndefined, TzInfo, from_json, to_json
 from starlette._utils import is_async_callable
@@ -4919,8 +4919,6 @@ def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any]
 _KEYS_RENAMED_BY_ALIAS = "__cadwyn_keys_renamed_by_alias__"
 # The checks that each model class makes, which we compute from its compiled core schema the first time it validates
 _RENAMED_KEY_CHECKS = "__cadwyn_renamed_key_checks__"
-# The names of the fields that got values from the data that the model with the check validates
-_FIELDS_WITH_VALUES: ContextVar[Union[set[str], None]] = ContextVar("_FIELDS_WITH_VALUES", default=None)
 
 
 def _reject_keys_renamed_by_alias(cls: type[BaseModel], data: Any, handler: Callable[[Any], Any]) -> Any:
@@ -4928,41 +4926,23 @@ def _reject_keys_renamed_by_alias(cls: type[BaseModel], data: Any, handler: Call
 
     For example, `field("x").had(alias="old")` on `x: str = Field("", alias="new")` makes an older version use "old"
     instead of "new". So without migrations that rename the key, its clients that still send "new" and the responses
-    that the latest version returns with "new" would lose the value of the field. We decide after the validation,
-    so a validator that fills the field from other data passes.
+    that the latest version returns with "new" would lose the value of the field. We only look at the data as it
+    comes in: it fails if it has the key that the field lost but none of the keys that the field reads now.
     """
-    token = _FIELDS_WITH_VALUES.set(set())
-    try:
-        validated = handler(data)
-        fields_with_values = cast("set[str]", _FIELDS_WITH_VALUES.get())
-    finally:
-        _FIELDS_WITH_VALUES.reset(token)
-    if isinstance(data, dict):
-        for name, renamed_keys, key in _get_renamed_key_checks(cls):
+    if isinstance(data, Mapping):
+        for name, renamed_keys, keys_read_by_field in _get_renamed_key_checks(cls):
             renamed_key = next((renamed_key for renamed_key in renamed_keys if renamed_key in data), None)
-            # Pydantic also counts the extra keys with the name of the field as set, but they don't run its validators.
-            # Fields with `validate_default=True` run them for their defaults too, but pydantic doesn't count them
-            if renamed_key is not None and not (name in fields_with_values and name in validated.model_fields_set):
+            if renamed_key is not None and not any(key in data for key in keys_read_by_field):
                 raise PydanticCustomError(
                     "renamed_key",
                     'The key "{renamed_key}" of "{field}" was renamed to "{key}" in this API version',
-                    {"renamed_key": renamed_key, "field": f"{cls.__name__}.{name}", "key": key},
+                    {"renamed_key": renamed_key, "field": f"{cls.__name__}.{name}", "key": keys_read_by_field[0]},
                 )
-    return validated
+    return handler(data)
 
 
-def _record_field_with_value(cls: type[BaseModel], value: Any, info: ValidationInfo) -> Any:
-    """Record that the field got a value. Pydantic runs the validators of a field only if it has one.
-
-    Pydantic runs them within `_reject_keys_renamed_by_alias`, which every model with this validator has, even for
-    assignments (`validate_assignment=True`).
-    """
-    cast("set[str]", _FIELDS_WITH_VALUES.get()).add(cast("str", info.field_name))
-    return value
-
-
-def _get_renamed_key_checks(model: type[BaseModel]) -> tuple[tuple[str, tuple[str, ...], str], ...]:
-    """Return `(field_name, renamed_keys, key_that_the_field_reads)` for the renamed keys that no field reads.
+def _get_renamed_key_checks(model: type[BaseModel]) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]:
+    """Return `(field_name, renamed_keys, keys_that_the_field_reads)` for the renamed keys that no field reads.
 
     The keys come from the compiled core schema of the model itself, so subclasses that change their fields and
     the settings that pydantic changes when it compiles them get their own.
@@ -4972,7 +4952,7 @@ def _get_renamed_key_checks(model: type[BaseModel]) -> tuple[tuple[str, tuple[st
         keys_read_by_fields = _get_keys_read_by_fields(model)
         keys_read_by_model = {key for keys in keys_read_by_fields.values() for key in keys}
         checks = tuple(
-            (name, tuple(sorted(renamed_keys - keys_read_by_model)), keys_read_by_fields[name][0])
+            (name, tuple(sorted(renamed_keys - keys_read_by_model)), keys_read_by_fields[name])
             for name, renamed_keys in getattr(model, _KEYS_RENAMED_BY_ALIAS).items()
             if name in keys_read_by_fields and not renamed_keys <= keys_read_by_model
         )
