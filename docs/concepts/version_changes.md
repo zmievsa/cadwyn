@@ -129,6 +129,16 @@ Did you notice how the schema for `InvoiceResource` is specified in the migratio
 !!! note "Migrations only run for the schema you name"
     Instructions such as `schema(InvoiceResource).field(...).had(...)` change the schema everywhere it is used, including inside other schemas and generics. Request and response migrations are different: a schema-based migration only runs when its schema is the request body or the `response_model` of the route itself. It does not run for that schema nested in another one, e.g. in a field of another schema or inside a generic such as `Page[InvoiceResource]`, so write the migration for the outer schema instead. This is a deliberate choice: each migration runs exactly where you declared it and never twice for the same data.
 
+!!! note "Unions of schemas"
+    If the request body or the `response_model` is a union that has the schema as a member, e.g. `Union[InvoiceResource, RefundResource]` or `Optional[InvoiceResource]`, the migration runs only for the requests and responses that are that member. For requests, that's the member that the body of the client's version validates into. For responses, it's the member that FastAPI validates the response into in the latest version, so a subclass of the schema, such as an [internal representation](#internal-representations), counts as the schema. A migration declared for the union itself (`convert_response_to_previous_version_for(Union[InvoiceResource, RefundResource])`) replaces the migrations of its members in the same version change.
+
+    If Cadwyn can't tell which member a request or a response is, it fails instead of guessing:
+
+    * A response that the endpoint returns as a `Response` object, such as a `JSONResponse`, fails with a `CadwynError`, because FastAPI doesn't validate it. Return the content instead, or migrate the endpoint by its path.
+    * A response that the latest version's `response_model` rejects fails with FastAPI's `ResponseValidationError`, as it does in the latest version.
+    * A request body param with an alias (`Body(alias=...)`) fails with a `CadwynError`, because the endpoint doesn't get the body under the name that Cadwyn looks it up by.
+    * A migration of a member with `migrate_http_errors=True` fails at startup with a `RouterGenerationError`, because an error isn't any member of the union. Migrate the errors of the endpoint by its path instead.
+
 When a request comes in, Cadwyn migrates it to the latest version using the request migration. You then handle your business logic, return the latest response, and Cadwyn migrates it back to the requested API version. Does your business logic or database know that you have two versions? No, not at all. It is zero-cost. Consider the benefits of supporting not just two, but two hundred versions.
 
 ![The diagram showing how it works](../img/simplified_migration_model.png)

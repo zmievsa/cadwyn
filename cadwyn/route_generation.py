@@ -44,7 +44,7 @@ from cadwyn.structure.endpoints import (
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from cadwyn.structure.versions import VersionChange
+from cadwyn.structure.versions import VersionChange, _get_schema_migration_key, _get_union_members
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
@@ -233,6 +233,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
             webhook_router = copy_router(webhook_router)
             self._apply_endpoint_changes_to_router(router.routes + webhook_router.routes, version)
 
+        _validate_no_http_error_migrations_of_union_members(self.head_router, self.versions)
         if self.routes_that_never_existed:
             raise RouterGenerationError(
                 "Every route you mark with "
@@ -380,11 +381,13 @@ class _EndpointTransformer(Generic[_R, _WR]):
             if isinstance(route, APIRoute):
                 if route.response_model is not None and lenient_issubclass(route.response_model, BaseModel):
                     response_models.add(route.response_model)
-                    # Not sure if it can ever be None when it's a simple schema. Eh, I would rather be safe than sorry
+                response_models.update(_get_union_members(route.response_model))
+                # Not sure if it can ever be None when it's a simple schema. Eh, I would rather be safe than sorry
                 if _route_has_a_simple_body_schema(route) and route.body_field is not None:
                     annotation = route.body_field.field_info.annotation
                     if annotation is not None and lenient_issubclass(annotation, BaseModel):
                         request_bodies.add(annotation)
+                    request_bodies.update(_get_union_members(annotation))
                 for method in _route_methods(route):
                     path_to_route_methods_mapping[route.path][method].add(index)
 
@@ -629,6 +632,33 @@ def _get_route_from_func(
         if isinstance(route, fastapi.routing.APIRoute) and (route.endpoint == endpoint):
             return route
     return None
+
+
+def _validate_no_http_error_migrations_of_union_members(head_router: APIRouter, versions: VersionBundle) -> None:
+    """Fail if a schema migration of a member of a union response model migrates HTTP errors.
+
+    An error isn't any member of the union, so we can't tell whether the migration should run for it.
+    Responses are migrated by the response model of the latest version, so that's the one we check.
+    """
+    for route in head_router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        response_schema_key = _get_schema_migration_key(route.response_model)
+        for version_change in (change for version in versions for change in version.changes):
+            schema_instructions = version_change.alter_response_by_schema_instructions
+            if response_schema_key is not None and response_schema_key in schema_instructions:
+                continue
+            for member in _get_union_members(route.response_model):
+                for instruction in schema_instructions.get(member, ()):
+                    if instruction.migrate_http_errors:
+                        raise RouterGenerationError(
+                            f'Response by response model converter "{version_change.__name__}.'
+                            f'{_callable_name(instruction.transformer)}" migrates HTTP errors of {member.__name__}, '
+                            f"but {list(_route_methods(route))} {route.path} responds with a union of it and other "
+                            f"types ({route.response_model!r}). Cadwyn can't tell which member of the union an HTTP "
+                            "error is, so it can't tell whether this converter should run for it. Pass "
+                            "migrate_http_errors=False, and migrate the errors of this endpoint by its path."
+                        )
 
 
 def _route_has_a_simple_body_schema(route: APIRoute) -> bool:
