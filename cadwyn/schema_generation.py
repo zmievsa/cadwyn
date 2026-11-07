@@ -3,6 +3,7 @@ import contextlib
 import copy
 import dataclasses
 import decimal
+import enum
 import functools
 import inspect
 import itertools
@@ -4512,8 +4513,11 @@ class _DummyFlag(Flag):
 # The copy needs it to compute the values of the members that `had()` adds with `auto()`
 _USER_DEFINABLE_ENUM_ATTRIBUTES = frozenset({"_generate_next_value_"})
 
-# The attributes such as `_member_map_` that the enum machinery puts on every enum. It computes them for the copy again
-_ENUM_INTERNAL_ATTRIBUTES = frozenset(_DummyEnum.__dict__) - _USER_DEFINABLE_ENUM_ATTRIBUTES
+# The attributes such as `_member_map_` that the enum machinery puts on every enum. It computes them for the copy again.
+# `type()` also makes its own `__dict__` and `__weakref__` for the copy, and the ones of the original don't apply to it
+_ENUM_INTERNAL_ATTRIBUTES = (
+    frozenset(_DummyEnum.__dict__) | {"__dict__", "__weakref__"}
+) - _USER_DEFINABLE_ENUM_ATTRIBUTES
 
 # The attributes such as `_flag_mask_` that the enum machinery puts on every Flag.
 # It computes them for the copy again and doesn't accept them in a class body
@@ -4527,6 +4531,10 @@ _FLAG_INTERNAL_ATTRIBUTES = (
 )
 
 
+# The attributes that the enum machinery puts on every member. It sets them for the members of the copy again
+_ENUM_MEMBER_INTERNAL_ATTRIBUTES = frozenset({"_value_", "_name_", "__objclass__", "_sort_order_"})
+
+
 @final
 class _EnumWrapper(Generic[_T_ENUM]):
     __slots__ = "cls", "members", "name"
@@ -4534,7 +4542,8 @@ class _EnumWrapper(Generic[_T_ENUM]):
     def __init__(self, cls: type[_T_ENUM]) -> None:
         self.cls = _unwrap_model(cls)
         self.name = cls.__name__
-        self.members = {member.name: member.value for member in cls}
+        # `__members__` has the aliases too, in the order of the definition, so the copy defines them the same way
+        self.members = {name: member.value for name, member in cls.__members__.items()}
 
     def __deepcopy__(self, memo: Any) -> "_EnumWrapper[_T_ENUM]":
         result = _EnumWrapper(self.cls)
@@ -4545,19 +4554,60 @@ class _EnumWrapper(Generic[_T_ENUM]):
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_ENUM]:
         enum_dict = Enum.__prepare__(self.name, self.cls.__bases__)
 
-        raw_member_map = {k: v.value if isinstance(v, Enum) else v for k, v in self.members.items()}
-        initialization_namespace = self._get_initialization_namespace_for_enum(self.cls) | raw_member_map
-        for attr_name, attr in initialization_namespace.items():
+        namespace = self._get_initialization_namespace_for_enum(self.cls) | self._get_member_definitions()
+        for attr_name, attr in namespace.items():
             enum_dict[attr_name] = attr
         enum_dict["__doc__"] = self.cls.__doc__
         class_kwargs: dict[str, Any] = {}
         # A Flag's boundary is a class keyword, not an attribute of its body
         if issubclass(self.cls, Flag) and isinstance(boundary := getattr(self.cls, "_boundary_", None), FlagBoundary):
             class_kwargs["boundary"] = boundary
-        model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict, **class_kwargs))
+        has_custom_new = _has_custom_new(self.cls)
+        with self._explain_errors_of_custom_new() if has_custom_new else contextlib.nullcontext():
+            model_copy = cast("type[_T_ENUM]", type(self.name, self.cls.__bases__, enum_dict, **class_kwargs))
+        if has_custom_new:
+            self._check_that_new_recreated_the_original_members(model_copy)
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         _take_head_members_by_value(model_copy, self.cls)
         return model_copy
+
+    def _get_member_definitions(self) -> dict[str, Any]:
+        original_members = self.cls.__members__
+        definitions: dict[str, Any] = {}
+        for name, value in self.members.items():
+            if name in original_members and value is original_members[name].value:
+                # A member of the original stays a member even if its value is a function or a class (`@member`)
+                definitions[name] = enum.member(value.value if isinstance(value, Enum) else value)
+            else:
+                # The value that `had()` got, which the copy defines like the class body of the enum would
+                definitions[name] = value.value if isinstance(value, Enum) else value
+        return definitions
+
+    @contextlib.contextmanager
+    def _explain_errors_of_custom_new(self) -> Generator[None, None, None]:
+        try:
+            yield
+        except Exception as e:
+            raise SchemaGenerationError(
+                f'Cadwyn can\'t copy "{self.name}" for its versions because its __new__ failed to create the members '
+                f"from their values: {e!r}. {_CUSTOM_NEW_ADVICE}"
+            ) from e
+
+    def _check_that_new_recreated_the_original_members(self, model_copy: type[_T_ENUM]) -> None:
+        """Make sure that the custom __new__ of the enum recreated its members from their values.
+
+        Cadwyn only knows the values of the members, not the arguments that __new__ got in the original class body.
+        """
+        original_members = self.cls.__members__
+        copied_members = model_copy.__members__
+        for name, value in self.members.items():
+            if name not in original_members or value is not original_members[name].value:
+                continue
+            if not _is_same_member(copied_members[name], original_members[name]):
+                raise SchemaGenerationError(
+                    f"Cadwyn can't copy \"{self.name}\" for its versions because its __new__ doesn't recreate the "
+                    f'member "{name}" from its value {value!r}. {_CUSTOM_NEW_ADVICE}'
+                )
 
     @staticmethod
     def _get_initialization_namespace_for_enum(enum_cls: type[Enum]) -> dict[str, Any]:
@@ -4567,16 +4617,61 @@ class _EnumWrapper(Generic[_T_ENUM]):
         for cls in reversed(mro_without_the_class_itself):
             mro_dict.update(cls.__dict__)
 
-        return {
+        namespace = {
             k: v
             for k, v in enum_cls.__dict__.items()
-            if k not in enum_cls._member_names_
+            # `_member_map_` has the aliases too
+            if k not in enum_cls._member_map_
             and k not in _ENUM_INTERNAL_ATTRIBUTES
             and k not in _FLAG_INTERNAL_ATTRIBUTES
             # A `_generate_next_value_` that the enum takes from a mixin is the mixin's function on Python 3.11, but
             # the copy would take the one of its base enum type
             and (k in _USER_DEFINABLE_ENUM_ATTRIBUTES or k not in mro_dict or mro_dict[k] is not v)
         }
+        # The enum machinery saves the custom __new__ of the enum as `__new_member__`, and only takes `__new__`
+        # from the class body
+        if "__new_member__" in enum_cls.__dict__:
+            namespace["__new__"] = enum_cls.__dict__["__new_member__"]
+        return {k: _wrap_enum_nonmember(enum_cls, k, v) for k, v in namespace.items()}
+
+
+# The checks of the enum machinery for the names that never become members. They fail at import if they change
+_is_enum_dunder = enum._is_dunder  # ty: ignore[unresolved-attribute]
+_is_enum_sunder = enum._is_sunder  # ty: ignore[unresolved-attribute]
+_is_enum_private = enum._is_private  # ty: ignore[unresolved-attribute]
+
+_CUSTOM_NEW_ADVICE = (
+    "Cadwyn only knows the values of the members, not the arguments that __new__ got. "
+    "Compute the other attributes of the members from their values instead, e.g. with a property."
+)
+
+
+def _has_custom_new(enum_cls: type[Enum]) -> bool:
+    new_member = enum_cls._new_member_  # ty: ignore[unresolved-attribute]
+    return new_member not in {object.__new__, enum_cls._member_type_.__new__}  # ty: ignore[unresolved-attribute]
+
+
+def _is_same_member(copied_member: Enum, original_member: Enum) -> bool:
+    copied_attributes = {k: v for k, v in vars(copied_member).items() if k not in _ENUM_MEMBER_INTERNAL_ATTRIBUTES}
+    original_attributes = {k: v for k, v in vars(original_member).items() if k not in _ENUM_MEMBER_INTERNAL_ATTRIBUTES}
+    member_type = type(original_member)._member_type_  # ty: ignore[unresolved-attribute]
+    return (
+        is_same_value(copied_member._value_, original_member._value_)
+        and copied_attributes.keys() == original_attributes.keys()
+        and all(is_same_value(copied_attributes[k], original_attributes[k]) for k in original_attributes)
+        # E.g. the `str` that `str.__new__` got, which can differ from the value
+        and (member_type is object or member_type.__eq__(copied_member, original_member) is True)
+    )
+
+
+def _wrap_enum_nonmember(enum_cls: type[Enum], name: str, value: Any) -> Any:
+    """Keep the attributes that aren't members (e.g. `nonmember(10)`) from becoming members of the copy.
+
+    The enum machinery doesn't make members of dunder, sunder, and private names, and expects their values unwrapped.
+    """
+    if _is_enum_dunder(name) or _is_enum_sunder(name) or _is_enum_private(enum_cls.__name__, name):
+        return value
+    return enum.nonmember(value)
 
 
 def _take_head_members_by_value(enum_copy: type[Enum], head_enum: type[Enum]) -> None:
