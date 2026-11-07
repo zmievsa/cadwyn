@@ -1,10 +1,14 @@
+import collections.abc
 import dataclasses
+import inspect
 import math
 import sys
+import types
+import typing
 from collections.abc import Callable
 from decimal import Decimal
 from inspect import signature
-from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
 
 import annotated_types
 import fastapi.params
@@ -120,38 +124,62 @@ def _get_type_alias_value(alias: Any) -> Any:
 
         return call_evaluate_function(alias.evaluate_value, Format.FORWARDREF)
     return alias.__value__
-# We look types up by their ids because hashing a type can run the __hash__ of the user's metaclass
+
+
+# We look types up by their ids in tables built here, because hashing or comparing a type, or reading its attributes,
+# can run the code of the user's metaclass
 _SCALAR_TYPE_IDS = frozenset(map(id, (type(None), bool, int, float, complex, str, bytes, Decimal)))
-# Dataclasses of the libraries that Cadwyn supports, whose fields are all of their state, even though some of them have
-# bases that aren't dataclasses
-_ALLOWED_DATACLASS_IDS = frozenset(
-    map(
-        id,
-        (
-            pydantic.AliasChoices,
-            pydantic.AliasPath,
-            pydantic.Discriminator,
-            pydantic.StringConstraints,
-            pydantic.Strict,
-            pydantic.AllowInfNan,
-            pydantic.FailFast,
-            fastapi.params.Depends,
-            fastapi.params.Security,
-            annotated_types.Gt,
-            annotated_types.Ge,
-            annotated_types.Lt,
-            annotated_types.Le,
-            annotated_types.MultipleOf,
-            annotated_types.MinLen,
-            annotated_types.MaxLen,
-            annotated_types.Len,
-            annotated_types.Interval,
-            annotated_types.Timezone,
-            annotated_types.Predicate,
-        ),
+# The dataclasses of pydantic, FastAPI, and annotated_types that can be in field attributes and endpoint attributes,
+# with the fields that hold all of their state
+_ALLOWED_TYPE_FIELDS: dict[int, tuple[str, ...]] = {
+    id(cls): tuple(field.name for field in dataclasses.fields(cls))
+    for cls in (
+        pydantic.AliasChoices,
+        pydantic.AliasPath,
+        pydantic.Discriminator,
+        pydantic.StringConstraints,
+        pydantic.Strict,
+        pydantic.AllowInfNan,
+        pydantic.FailFast,
+        fastapi.params.Depends,
+        fastapi.params.Security,
+        annotated_types.Gt,
+        annotated_types.Ge,
+        annotated_types.Lt,
+        annotated_types.Le,
+        annotated_types.MultipleOf,
+        annotated_types.MinLen,
+        annotated_types.MaxLen,
+        annotated_types.Len,
+        annotated_types.Interval,
+        annotated_types.Timezone,
+        annotated_types.Predicate,
     )
+}
+_TYPE_VAR_TUPLE = typing.TypeVarTuple("_TYPE_VAR_TUPLE")
+_PARAM_SPEC = typing.ParamSpec("_PARAM_SPEC")
+# Type hints implemented in C, such as list[int], *tuple[int, ...], and int | str, with the attributes that hold all of
+# their state
+_C_TYPE_HINT_ATTRIBUTES: dict[int, tuple[str, ...]] = {
+    id(types.GenericAlias): ("__origin__", "__args__", "__unpacked__"),
+    id(type(collections.abc.Callable[[int], str])): ("__origin__", "__args__", "__unpacked__"),
+    id(types.UnionType): ("__args__",),
+}
+# Type hints of the typing module, such as List[int], Literal[1], and Annotated[int, Gt(1)], whose instance __dict__
+# holds all of their state
+_PYTHON_TYPE_HINT_TYPE_IDS = frozenset(
+    id(hint_type)
+    for hint_type in {
+        type(typing.List[int]),  # noqa: UP006
+        type(typing.Union[int, str]),
+        type(typing.Literal[1]),
+        type(typing.Annotated[int, 1]),
+        type(typing.Callable[[int], str]),
+        type(typing.Concatenate[int, _PARAM_SPEC]),
+        type(typing.Unpack[_TYPE_VAR_TUPLE]),
+    }
+    if id(hint_type) not in _C_TYPE_HINT_ATTRIBUTES
 )
-_TYPE_HINT_MODULES = frozenset({"typing", "types", "typing_extensions"})
 
 
 def is_same_value(left: Any, right: Any) -> bool:
@@ -164,34 +192,34 @@ def is_same_value(left: Any, right: Any) -> bool:
     * `None`, `bool`, `int`, `float`, `complex`, `str`, `bytes`, or `Decimal` values with the same value, sign, and
       exponent (NaN is never the same as another NaN object)
     * `list`, `tuple`, or `dict` values whose items (and keys) are the same in the same order, or `set` or `frozenset`
-      values whose items are the same and are all such builtin values, so that hashing and comparing them never runs
-      the user's code
-    * instances of dataclasses whose bases are only `object` and dataclasses, that have no state besides their fields
-      and don't opt out of `__eq__`, or of the dataclasses of pydantic, FastAPI, and annotated_types in
-      `_ALLOWED_DATACLASS_IDS`, whose fields are the same
-    * type hints from `typing` and `types` whose origins and args are the same
+      values whose items are the same and are all such builtin values
+    * instances of the pydantic, FastAPI, and annotated_types dataclasses in `_ALLOWED_TYPE_FIELDS` whose fields are
+      the same
+    * type hints of `typing` and `types` whose origins, args, and other attributes are the same
 
-    Anything else, including a value that refers to itself, is the same only if it is the same object. We never call
-    `__eq__` or `__hash__` of other objects because they can do anything (e.g. numpy arrays compare element-wise).
-    When we can't be sure, the values are different, so we never reject a real change.
+    Anything else, including instances of other dataclasses, classes, and values that refer to themselves, is the
+    same only if it is the same object. We never run the user's code: we check types only by identity, and we read
+    the attributes of the types above only. When we can't be sure, the values are different, so we never reject a
+    real change. Accepting an instruction that changes nothing is harmless because it applies nothing.
     """
     try:
         return _is_same_value(left, right, set())
-    except Exception:  # noqa: BLE001
-        # E.g. reading a field of a dataclass runs the user's property that raises
+    except Exception:  # noqa: BLE001  # pragma: no cover
+        # We run no user code, so only a value nested too deeply to compare (RecursionError) can get here
         return False
 
 
 def _is_same_value(left: Any, right: Any, pairs_being_compared: set[tuple[int, int]]) -> bool:
     if left is right:
         return True
-    if type(left) is not type(right):
+    value_type = type(left)
+    if value_type is not type(right):
         return False
-    if id(type(left)) in _SCALAR_TYPE_IDS:
+    if id(value_type) in _SCALAR_TYPE_IDS:
         return _are_same_scalars(left, right)
     pair = (id(left), id(right))
     if pair in pairs_being_compared:
-        # The values refer to themselves, e.g. a dataclass whose field is the dataclass itself
+        # The values refer to themselves, e.g. a dict that contains itself
         return False
     pairs_being_compared.add(pair)
     try:
@@ -216,18 +244,12 @@ def _are_same_scalars(left: Any, right: Any) -> bool:
 def _have_same_contents(left: Any, right: Any, pairs_being_compared: set[tuple[int, int]]) -> bool:
     value_type = type(left)
     if value_type is list or value_type is tuple:
-        return len(left) == len(right) and all(
-            _is_same_value(left_item, right_item, pairs_being_compared)
-            for left_item, right_item in zip(left, right, strict=True)
-        )
+        return _are_same_sequences(left, right, pairs_being_compared)
     if value_type is dict:
         # The order of the keys matters because it is the order of the keys in JSON
-        return len(left) == len(right) and all(
-            _is_same_value(left_key, right_key, pairs_being_compared)
-            and _is_same_value(left_value, right_value, pairs_being_compared)
-            for (left_key, left_value), (right_key, right_value) in zip(left.items(), right.items(), strict=True)
-        )
+        return _are_same_sequences(list(left.items()), list(right.items()), pairs_being_compared)
     if value_type is set or value_type is frozenset:
+        # Hashing and comparing builtin values never runs the user's code
         if not all(map(_is_builtin_hashable, left)) or not all(map(_is_builtin_hashable, right)):
             return False
         if len(left) != len(right) or left != right:
@@ -235,51 +257,39 @@ def _have_same_contents(left: Any, right: Any, pairs_being_compared: set[tuple[i
         # The sets are equal, so each item has an equal item (e.g. 1 for True) in the other set
         right_items = {item: item for item in right}
         return all(_is_same_value(item, right_items[item], pairs_being_compared) for item in left)
-    field_names = _get_names_of_dataclass_fields_that_are_all_of_its_state(value_type)
-    if field_names is not None:
-        return (
-            _has_no_attributes_besides(left, field_names)
-            and _has_no_attributes_besides(right, field_names)
-            and all(
-                _is_same_value(getattr(left, name), getattr(right, name), pairs_being_compared) for name in field_names
-            )
+    type_id = id(value_type)
+    if type_id in _ALLOWED_TYPE_FIELDS:
+        return _are_same_sequences(
+            [_read_attribute_statically(left, name) for name in _ALLOWED_TYPE_FIELDS[type_id]],
+            [_read_attribute_statically(right, name) for name in _ALLOWED_TYPE_FIELDS[type_id]],
+            pairs_being_compared,
         )
-    # Type hints such as list[int], Union[int, str], Literal[1, 2], and Annotated[int, Gt(1)]
-    origin = get_origin(left) if value_type.__module__ in _TYPE_HINT_MODULES else None
-    return (
-        origin is not None
-        and _is_same_value(origin, get_origin(right), pairs_being_compared)
-        and _is_same_value(get_args(left), get_args(right), pairs_being_compared)
+    if type_id in _C_TYPE_HINT_ATTRIBUTES:
+        return _are_same_sequences(
+            [getattr(left, name) for name in _C_TYPE_HINT_ATTRIBUTES[type_id]],
+            [getattr(right, name) for name in _C_TYPE_HINT_ATTRIBUTES[type_id]],
+            pairs_being_compared,
+        )
+    if type_id in _PYTHON_TYPE_HINT_TYPE_IDS:
+        return _is_same_value(vars(left), vars(right), pairs_being_compared)
+    return False
+
+
+def _are_same_sequences(left: Any, right: Any, pairs_being_compared: set[tuple[int, int]]) -> bool:
+    return len(left) == len(right) and all(
+        _is_same_value(left_item, right_item, pairs_being_compared)
+        for left_item, right_item in zip(left, right, strict=True)
     )
 
 
+def _read_attribute_statically(value: Any, name: str) -> Any:
+    attribute = inspect.getattr_static(value, name)
+    # A slot of the instance
+    return attribute.__get__(value) if type(attribute) is types.MemberDescriptorType else attribute
+
+
 def _is_builtin_hashable(value: Any) -> bool:
-    """Whether hashing and comparing the value only runs Python's own code"""
     value_type = type(value)
     return id(value_type) in _SCALAR_TYPE_IDS or (
         (value_type is tuple or value_type is frozenset) and all(map(_is_builtin_hashable, value))
     )
-
-
-def _get_names_of_dataclass_fields_that_are_all_of_its_state(cls: type) -> Union[tuple[str, ...], None]:
-    if not dataclasses.is_dataclass(cls):
-        return None
-    if id(cls) in _ALLOWED_DATACLASS_IDS:
-        return tuple(field.name for field in dataclasses.fields(cls))
-    # A base that isn't a dataclass, e.g. set, can have state that the fields don't show
-    if not all(base is object or "__dataclass_fields__" in base.__dict__ for base in cls.__mro__):
-        return None
-    # With eq=False, two instances are never equal, so we can't be sure that they are the same
-    if cls.__eq__ is object.__eq__:
-        return None
-    field_names = tuple(field.name for field in dataclasses.fields(cls))
-    for base in cls.__mro__:
-        slots = base.__dict__.get("__slots__", ())
-        slots = (slots,) if isinstance(slots, str) else slots
-        if any(slot not in field_names and slot not in {"__dict__", "__weakref__"} for slot in slots):
-            return None
-    return field_names
-
-
-def _has_no_attributes_besides(value: Any, names: tuple[str, ...]) -> bool:
-    return getattr(value, "__dict__", {}).keys() <= set(names)

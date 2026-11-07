@@ -3,6 +3,7 @@ import dataclasses
 import json
 import re
 import time
+from collections import Counter
 from collections.abc import Callable
 from decimal import Decimal
 from enum import Enum, auto
@@ -2622,29 +2623,20 @@ class SelfReferencingNode:
     label: str
 
 
-@dataclasses.dataclass(frozen=True)
-class SelfReferencingNodeThatComparesItsFields:
-    parent: Any
-    label: str
-
-
-def _self_referencing_node(label: str, node_type: type[Any] = SelfReferencingNode) -> Any:
-    node = node_type(parent=None, label=label)
+def _self_referencing_node(label: str) -> SelfReferencingNode:
+    node = SelfReferencingNode(parent=None, label=label)
     object.__setattr__(node, "parent", node)
     return node
 
 
-@pytest.mark.parametrize("node_type", [SelfReferencingNode, SelfReferencingNodeThatComparesItsFields])
 def test__schema_field_had__default_that_refers_to_itself__should_change_it(
-    create_runtime_schemas: CreateRuntimeSchemas, node_type: type[Any]
+    create_runtime_schemas: CreateRuntimeSchemas,
 ):
     class SchemaWithSelfReferencingDefault(BaseModel):
-        foo: Annotated[Any, PlainSerializer(lambda node: node.label)] = _self_referencing_node("old", node_type)
+        foo: Annotated[Any, PlainSerializer(lambda node: node.label)] = _self_referencing_node("old")
 
     schemas = create_runtime_schemas(
-        version_change(
-            schema(SchemaWithSelfReferencingDefault).field("foo").had(default=_self_referencing_node("new", node_type))
-        )
+        version_change(schema(SchemaWithSelfReferencingDefault).field("foo").had(default=_self_referencing_node("new")))
     )
 
     assert schemas["2000-01-01"][SchemaWithSelfReferencingDefault]().model_dump() == {"foo": "new"}
@@ -2828,34 +2820,140 @@ def test__schema_field_had__default_of_set_with_items_that_cant_be_compared__sho
 
 
 @dataclasses.dataclass
-class BoxWithFieldThatCantBeRead:
-    value: int
+class ParentDataclass:
+    x: int
 
 
-def _raise_when_read(box: BoxWithFieldThatCantBeRead) -> int:
-    raise RuntimeError("Can't read")
+@dataclasses.dataclass(eq=False)
+class ChildDataclassWithoutEq(ParentDataclass):
+    y: int
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "ChildDataclassWithoutEq":
+        # So the tests can tell the copies of the defaults apart
+        return self
 
 
-box_with_field_that_cant_be_read_1 = BoxWithFieldThatCantBeRead(1)
-box_with_field_that_cant_be_read_2 = BoxWithFieldThatCantBeRead(2)
-# The instances keep the value in their __dict__, but reading it runs the property
-BoxWithFieldThatCantBeRead.value = property(_raise_when_read)  # ty: ignore[invalid-assignment]
-
-
-def test__schema_field_had__default_whose_field_raises_when_read__should_change_it(
+def test__schema_field_had__default_of_dataclass_that_turns_off_eq_of_its_parent__should_change_it(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    class SchemaWithDefaultThatCantBeRead(BaseModel):
-        foo: Annotated[Any, PlainSerializer(lambda box: vars(box)["value"])] = box_with_field_that_cant_be_read_1
+    old_value, new_value = ChildDataclassWithoutEq(1, 2), ChildDataclassWithoutEq(1, 2)
+
+    class SchemaWithDataclassDefault(BaseModel):
+        foo: Any = old_value
 
     schemas = create_runtime_schemas(
-        version_change(
-            schema(SchemaWithDefaultThatCantBeRead).field("foo").had(default=box_with_field_that_cant_be_read_2)
-        )
+        version_change(schema(SchemaWithDataclassDefault).field("foo").had(default=new_value))
     )
 
-    assert schemas["2000-01-01"][SchemaWithDefaultThatCantBeRead]().model_dump() == {"foo": 2}
-    assert schemas["2001-01-01"][SchemaWithDefaultThatCantBeRead]().model_dump() == {"foo": 1}
+    assert schemas["2000-01-01"][SchemaWithDataclassDefault].model_fields["foo"].default is new_value
+    assert schemas["2001-01-01"][SchemaWithDataclassDefault].model_fields["foo"].default is old_value
+
+
+def _return_self(self: Any, memo: dict[int, Any]) -> Any:
+    return self
+
+
+def _keep_when_copied(cls: type[Any]) -> type[Any]:
+    """Make the copies of the instances the instances themselves, so the tests can tell the defaults apart"""
+    cls.__deepcopy__ = _return_self
+    return cls
+
+
+def _values_with_module_that_is_a_str_subclass(calls: list[str]) -> tuple[Any, Any]:
+    class ModuleName(str):
+        __slots__ = ()
+
+        @override
+        def __hash__(self) -> int:
+            calls.append("__hash__")  # pragma: no cover
+            return str.__hash__(self)  # pragma: no cover
+
+        @override
+        def __eq__(self, other: object) -> bool:
+            calls.append("__eq__")
+            return str.__eq__(self, other)
+
+    class WithModuleThatIsAStrSubclass:
+        pass
+
+    WithModuleThatIsAStrSubclass.__module__ = ModuleName("typing")
+    _keep_when_copied(WithModuleThatIsAStrSubclass)
+    return WithModuleThatIsAStrSubclass(), WithModuleThatIsAStrSubclass()
+
+
+def _values_whose_metaclass_has_getattr(calls: list[str]) -> tuple[Any, Any]:
+    class MetaclassWithGetattr(type):
+        def __getattr__(cls, name: str) -> Any:
+            calls.append(f"__getattr__({name})")
+            raise AttributeError(name)
+
+    class WithMetaclassThatHasGetattr(metaclass=MetaclassWithGetattr):
+        pass
+
+    _keep_when_copied(WithMetaclassThatHasGetattr)
+    return WithMetaclassThatHasGetattr(), WithMetaclassThatHasGetattr()
+
+
+def _values_with_class_property(calls: list[str]) -> tuple[Any, Any]:
+    class WithClassProperty:
+        __module__ = "typing"
+
+        @property
+        @override
+        def __class__(self) -> type:
+            calls.append("__class__")
+            return object
+
+    _keep_when_copied(WithClassProperty)
+    return WithClassProperty(), WithClassProperty()
+
+
+def _dataclass_values_whose_field_is_a_descriptor(calls: list[str]) -> tuple[Any, Any]:
+    @dataclasses.dataclass
+    class BoxWithFieldDescriptor:
+        value: int
+
+    _keep_when_copied(BoxWithFieldDescriptor)
+    old_value, new_value = BoxWithFieldDescriptor(1), BoxWithFieldDescriptor(1)
+
+    def read_value(box: BoxWithFieldDescriptor) -> int:
+        calls.append("value")  # pragma: no cover
+        return 1  # pragma: no cover
+
+    # The instances keep their values in their __dict__, but reading the field runs the property
+    BoxWithFieldDescriptor.value = property(read_value)  # ty: ignore[invalid-assignment]
+    return old_value, new_value
+
+
+@pytest.mark.parametrize(
+    "make_values",
+    [
+        pytest.param(_values_with_module_that_is_a_str_subclass, id="module_that_is_a_str_subclass"),
+        pytest.param(_values_whose_metaclass_has_getattr, id="metaclass_with_getattr"),
+        pytest.param(_values_with_class_property, id="class_property"),
+        pytest.param(_dataclass_values_whose_field_is_a_descriptor, id="dataclass_field_descriptor"),
+    ],
+)
+def test__schema_field_had__default_that_could_run_user_code_when_inspected__should_change_it_without_running_it(
+    create_runtime_schemas: CreateRuntimeSchemas, make_values: Callable[[list[str]], tuple[Any, Any]]
+):
+    calls: list[str] = []
+    old_value, new_value = make_values(calls)
+
+    class SchemaWithDefault(BaseModel):
+        foo: Any = old_value
+
+    # Pydantic and Cadwyn run some of this code anyway when they build the models of the versions, e.g. isinstance()
+    # reads __class__, so we count the calls when the instruction doesn't compare the default
+    calls.clear()
+    create_runtime_schemas(version_change(schema(SchemaWithDefault).field("foo").had(description="Foo")))
+    calls_without_comparing_the_default = Counter(calls)
+    calls.clear()
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithDefault).field("foo").had(default=new_value)))
+
+    assert Counter(calls) - calls_without_comparing_the_default == Counter()
+    assert schemas["2000-01-01"][SchemaWithDefault].model_fields["foo"].default is new_value
+    assert schemas["2001-01-01"][SchemaWithDefault].model_fields["foo"].default is old_value
 
 
 def test__schema_field_had__nonexistent_field__should_raise_error(create_runtime_schemas: CreateRuntimeSchemas):
