@@ -685,6 +685,21 @@ class VersionBundle:
         # A body is omitted if the request had none for FastAPI, or if a migration has set it to None
         elif request_info.body is None and (request_info._body_is_assigned or body_is_omitted):
             body_for_solving = _OMITTED_BODY
+        elif (  # pragma: no cover # FastAPI >= 0.158.2
+            form_model_omission is _FormModelOmission.OMITTED_NEXT_TO_OTHER_FORM_PARAMS
+        ):
+            # There is no model dump to restore, but the migrated body and the untouched form keys must reach
+            # every reader just as they do for a supplied form model.
+            body_for_solving = body_with_head_members
+            form_model_lookup = await _get_form_model_lookup(
+                request,
+                head_dependant,
+                head_route,
+                body_for_solving,
+                None,
+                embed_body_fields=embed_body_fields,
+                is_migrated=has_run_migrations,
+            )
         elif form_model_omission is _FormModelOmission.OMITTED:  # pragma: no cover # FastAPI >= 0.158.2
             # A migration has set the body of an omitted form model. It isn't a dump, so we don't restore its aliases
             body_for_solving = request_info.body
@@ -1318,7 +1333,7 @@ async def _get_form_model_lookup(
     head_dependant: Dependant,
     head_route: APIRoute,
     body: Any,
-    dumped_body: BaseModel,
+    dumped_body: Union[BaseModel, None],
     *,
     embed_body_fields: bool,
     is_migrated: bool,
@@ -1344,6 +1359,20 @@ async def _get_form_model_lookup(
     )
     if form_models:  # pragma: no cover # FastAPI >= 0.158.2
         params = _get_body_lookups(head_dependant, head_route, set(form_models), embed_body_fields=embed_body_fields)
+        if dumped_body is None and (
+            type(body) not in (dict, OrderedDict, defaultdict)
+            or not any(
+                _form_supplies_form_model(
+                    model, FormData(body), _get_known_form_param_names(head_dependant, head_route)
+                )
+                for model in form_models
+            )
+        ):
+            raise _cant_pass_form_error(
+                params[0],
+                "the migration must supply a dict with fields of the omitted form model while other params read "
+                "the form",
+            )
         lookup = _FormModelLookup(
             head_dependant,
             _get_form_model_aliases(params, own_key=False),
@@ -1667,13 +1696,14 @@ class _VirtualForm(NamedTuple):  # pragma: no cover # FastAPI >= 0.158.2
 
 
 async def _get_virtual_form(  # pragma: no cover # FastAPI >= 0.158.2
-    request: FastapiRequest, body: Any, dumped_body: BaseModel, *, is_migrated: bool
+    request: FastapiRequest, body: Any, dumped_body: Union[BaseModel, None], *, is_migrated: bool
 ) -> _VirtualForm:
     """Return the form that the client would have sent as the migrated request.
 
     If no request migration has run, it is the request's form. Otherwise, every key of the migrated body has its value
     from the body, and so do the keys that the request's form model has taken from the form: FastAPI's pick of each of
-    its fields (e.g. the first alias of `AliasChoices` that the form has) and its extra fields. A taken key that the
+    its fields (e.g. the first alias of `AliasChoices` that the form has) and its extra fields. An omitted form model
+    has taken no keys, so every original form key that the migration leaves out keeps its value. A taken key that the
     body no longer has is absent if the dump of the form model had it, and unknown otherwise, because the form model
     has dumped its value under another key. Every other key keeps the value of the form.
     """
@@ -1682,18 +1712,20 @@ async def _get_virtual_form(  # pragma: no cover # FastAPI >= 0.158.2
     form_keys = list(dict.fromkeys(form.keys()))
     if not is_migrated:
         return _VirtualForm(form, {}, form_keys)
-    taken_keys = {
-        alias
-        for alias, _, field in _extract_form_items(_get_cached_model_fields(type(dumped_body)), form)
-        if field is not None
-    }
-    taken_keys.update(dumped_body.__pydantic_extra__ or {})
+    taken_keys: set[str] = set()
+    if dumped_body is not None:
+        taken_keys.update(
+            alias
+            for alias, _, field in _extract_form_items(_get_cached_model_fields(type(dumped_body)), form)
+            if field is not None
+        )
+        taken_keys.update(dumped_body.__pydantic_extra__ or {})
     overlay: dict[str, Union[_ExpectedFormValue, _FormValueMarker]] = {}
     if isinstance(body, dict):
         # `_embed_form_model` puts the same keys of the body next to the form model
         overlay = {key: _ExpectedFormValue(key, value, is_from_form=False) for key, value in {**body}.items()}
     # The same dump as the body's, so that we know which keys the client's version of the body had
-    dump = _dump_request_body(dumped_body)
+    dump = _dump_request_body(dumped_body) if dumped_body is not None else {}
     for key in taken_keys:
         if key not in overlay:
             overlay[key] = (
@@ -1785,17 +1817,26 @@ async def _get_expected_form_model_value(  # pragma: no cover # FastAPI >= 0.158
         return _FormValueMarker.DEFAULT
     value: dict[str, Any] = {}
     field_aliases: set[str] = set()
+    own_names: set[str] = set()
     if len(models) == 1:
         for model_field in _get_cached_model_fields(models[0]):
             aliases = [alias for alias, _ in _get_param_aliases(model_field)]
-            field_aliases.update(aliases)
+            own_names.update(aliases)
             picked_value = await _pick_form_value(model_field, aliases, virtual_form)
+            # FastAPI visits aliases only through the first one with a value. Later aliases remain available
+            # as extra fields, even when another param also declares them.
+            for alias in aliases:
+                field_aliases.add(alias)
+                if isinstance(picked_value, _ExpectedFormValue) and alias == picked_value.alias:
+                    break
             if isinstance(picked_value, _ExpectedFormValue):
                 value[picked_value.alias] = picked_value.value
             elif picked_value is _FormValueMarker.UNKNOWN:
                 return picked_value
     for key in keys:
-        if key in field_aliases or (len(models) == 1 and known_param_names is not None and key in known_param_names):
+        if key in field_aliases or (
+            len(models) == 1 and known_param_names is not None and key in known_param_names and key not in own_names
+        ):
             continue
         overlay_value = virtual_form.overlay.get(key)
         if isinstance(overlay_value, _ExpectedFormValue):

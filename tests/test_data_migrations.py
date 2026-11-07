@@ -14820,3 +14820,181 @@ def test__request_body_migration__with_object_that_pydantic_doesnt_make_set_by_m
     clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b"), migrate=migrate))
 
     assert clients["2000-01-01"].post(test_path, json={"kind": "a"}).json() is True
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize(
+    "override",
+    [_get_extra_from_form_field, _get_other_form_model_and_extra_from_form],
+    ids=["form_field", "form_model_and_field"],
+)
+def test__request_body_migration__with_omitted_form_model_and_other_form_readers__head_should_get_migrated_request(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    override: Callable[..., Coroutine[Any, Any, Any]],
+):
+    endpoint = _optional_form_model_next_to_overridden_text_dependency
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    fastapi_app.dependency_overrides[_get_text] = override
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        assert request.body is None
+        request.body = {"v": "migrated"}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = override
+
+    expected = TestClient(fastapi_app).post(test_path, data={"v": "migrated", "extra": "sent"})
+    assert expected.status_code == 200
+    response = clients["2000-01-01"].post(test_path, data={"extra": "sent"})
+    assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+class _OverrideFormModelWithAliasChoicesAndExtras(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    w: str = Field(validation_alias=AliasChoices("v", "fallback"))
+
+
+async def _get_other_form_model_with_alias_choices_and_extras(
+    other: Annotated[_OverrideFormModelWithAliasChoicesAndExtras, Form()],
+) -> dict[str, Any]:
+    return other.model_dump()  # pragma: no cover # FastAPI >= 0.158.2
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS, reason="Before FastAPI 0.158.2, form models aren't looked up by alias"
+)
+@pytest.mark.parametrize("migrate", [False, True], ids=["without_migration", "with_migration"])
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"v": "primary", "fallback": "secondary"},
+        {"v": "primary", "fallback": ["secondary", "third"]},
+        {"v": "primary", "fallback": ""},
+        {"v": "", "fallback": "secondary"},
+    ],
+    ids=["unused_alias", "repeated_unused_alias", "empty_unused_alias", "visited_empty_alias"],
+)
+def test__request_body_migration__with_override_form_model_with_alias_choices__head_should_keep_unvisited_alias_extras(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    data: dict[str, Any],
+    migrate: bool,
+):
+    endpoint = _form_model_next_to_overridden_text_dependency
+    override = _get_other_form_model_with_alias_choices_and_extras
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    fastapi_app.dependency_overrides[_get_text] = override
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        if migrate:
+            request.body["v"] = "migrated"
+
+    clients = create_versioned_clients(version_change(migrator=migrator) if migrate else version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = override
+    migrated_data = {**data, **({"v": "migrated"} if migrate else {})}
+    expected = TestClient(fastapi_app).post(test_path, data=migrated_data)
+    assert expected.status_code == 200
+    response = clients["2000-01-01"].post(test_path, data=data)
+    assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+async def _get_fallback_and_other_form_model_with_alias_choices_and_extras(
+    other: Annotated[_OverrideFormModelWithAliasChoicesAndExtras, Form()], fallback: str = Form()
+) -> list[Any]:
+    return [other.model_dump(), fallback]  # pragma: no cover # FastAPI >= 0.158.2
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS, reason="Before FastAPI 0.158.2, form models aren't looked up by alias"
+)
+def test__request_body_migration__with_unvisited_alias_also_declared_as_form_field__head_should_keep_it_as_extra(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    endpoint = _form_model_next_to_overridden_text_dependency
+    override = _get_fallback_and_other_form_model_with_alias_choices_and_extras
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    fastapi_app.dependency_overrides[_get_text] = override
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = override
+    data = {"v": "primary", "fallback": "secondary"}
+
+    expected = TestClient(fastapi_app).post(test_path, data=data)
+    assert expected.status_code == 200
+    response = clients["2000-01-01"].post(test_path, data=data)
+    assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize("migrated_body", ["migrated", {}, {"unrelated": "migrated"}])
+def test__request_body_migration__with_omitted_form_model_and_unusable_migration_body__should_name_param_in_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    migrated_body: Any,
+):
+    router.post(test_path)(_optional_form_model_next_to_overridden_text_dependency)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = migrated_body
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = _get_extra_from_form_field
+
+    with pytest.raises(CadwynError, match=r"param `body`.*migration must supply a dict"):
+        clients["2000-01-01"].post(test_path, data={"extra": "sent"})
+
+
+class _OverrideFormModelWithAliasChoicesAndForbiddenExtras(_OverrideFormModelWithAliasChoicesAndExtras):
+    model_config = ConfigDict(extra="forbid")
+
+
+async def _get_other_form_model_with_alias_choices_and_forbidden_extras(
+    other: Annotated[_OverrideFormModelWithAliasChoicesAndForbiddenExtras, Form()],
+) -> dict[str, Any]:
+    return other.model_dump()  # pragma: no cover # FastAPI >= 0.158.2
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS, reason="Before FastAPI 0.158.2, form models aren't looked up by alias"
+)
+def test__request_body_migration__with_unvisited_alias_added_by_migration_and_forbidden_extras__head_should_reject_it(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    endpoint = _form_model_next_to_overridden_text_dependency
+    override = _get_other_form_model_with_alias_choices_and_forbidden_extras
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    fastapi_app.dependency_overrides[_get_text] = override
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body["fallback"] = "secondary"
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = override
+    expected = TestClient(fastapi_app).post(test_path, data={"v": "primary", "fallback": "secondary"})
+    assert expected.status_code == 422
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, data={"v": "primary"})
+    assert [dict(error, loc=list(error["loc"])) for error in exc_info.value.errors] == expected.json()["detail"]
