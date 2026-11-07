@@ -53,6 +53,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    GetPydanticSchema,
     Json,
     OnErrorOmit,
     PlainSerializer,
@@ -9239,6 +9240,55 @@ def test__request_body_migration__with_required_value_that_the_head_rejects__sho
     with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
         clients["2000-01-01"].post(test_path, json={"v": 5})
     # The error is the one that the head gives the restored body, with the value under the key that the client has sent
+    assert [(error["type"], error["loc"], error["input"]) for error in exc_info.value.errors] == [
+        ("greater_than_equal", ("body", "v"), 5)
+    ]
+
+
+# The field info says that the field is required, but the core schema of its type gives it a default when it's missing
+IntWithCoreSchemaDefault = Annotated[
+    int, GetPydanticSchema(lambda source, handler: core_schema.with_default_schema(handler(source), default=0))
+]
+
+
+class SchemaWithCoreSchemaDefaultAndStricterHead(BaseModel):
+    value: IntWithCoreSchemaDefault = Field(alias="x", validation_alias="v", ge=10)
+
+
+def test__request_body_migration__with_field_that_gets_its_default_from_core_schema__head_should_get_the_value(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithCoreSchemaDefaultAndStricterHead):
+        return body.value
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithCoreSchemaDefaultAndStricterHead).field("value").had(ge=0))
+    )
+
+    # The head gets the value that the client has sent instead of the default of the field
+    assert clients["2000-01-01"].post(test_path, json={"v": 15}).json() == 15
+    assert clients["2001-01-01"].post(test_path, json={"v": 15}).json() == 15
+
+
+def test__request_body_migration__with_field_that_gets_its_default_from_core_schema__should_raise_the_heads_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithCoreSchemaDefaultAndStricterHead):
+        raise NotImplementedError  # pragma: no cover
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithCoreSchemaDefaultAndStricterHead).field("value").had(ge=0))
+    )
+
+    # The head rejects the value that the client has sent, so the endpoint doesn't silently get the default instead
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, json={"v": 5})
     assert [(error["type"], error["loc"], error["input"]) for error in exc_info.value.errors] == [
         ("greater_than_equal", ("body", "v"), 5)
     ]

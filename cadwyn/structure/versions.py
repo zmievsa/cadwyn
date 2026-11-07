@@ -599,8 +599,9 @@ class VersionBundle:
 
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
         # We solve the head's dependencies exactly once, because solving them again would run the dependencies
-        # that aren't cached, e.g. `use_cache=False` and `yield` ones, once more. We only restore bodies that would
-        # fail as they are, so if the head rejects the restored body, we report its errors.
+        # that aren't cached, e.g. `use_cache=False` and `yield` ones, once more. If the head rejects the restored body,
+        # we report its errors instead of solving again with the body as it is, which would also hide the client's
+        # values behind the defaults that some fields get from their core schemas.
         result = await solve_dependencies(
             request=request,
             body=_embed_form_model(body_for_solving, form_model_lookup),
@@ -2854,6 +2855,8 @@ def _is_nested_key_validated(plan: _RestorePlan, key: object, data: dict[str, An
 def _get_failing_keys(model: type[BaseModel], renames: tuple["_Rename", ...]) -> frozenset[str]:
     if _get_validation_settings(model)[2] == "forbid":
         return frozenset(dumped_key for dumped_key, *_ in renames)
+    # We go by the field infos even for fields that the core schemas of their types give defaults to: such a field
+    # wouldn't fail without its value, but it would silently get its default instead of the client's value
     required_dumped_keys = {
         field.serialization_alias or name for name, field in model.model_fields.items() if field.is_required()
     }
