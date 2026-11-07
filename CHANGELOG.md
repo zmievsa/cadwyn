@@ -14,6 +14,12 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Removed `Cadwyn.add_header_versioned_routers()`, deprecated since 5.0.0. Add each version to your `VersionBundle`, describe how it differs from the latest one with version changes, and include the latest routers with `Cadwyn.generate_and_include_versioned_routers()`.
 - Removed the `version_changes` attribute of `Version` and `HeadVersion`, deprecated since 4.2.0. Use `changes` instead.
 - Removed `VersionBundle.version_dates`, deprecated since 5.0.0. Use `VersionBundle.version_values` instead.
+- `migrate_response_body()` now restores the validation aliases of a body only if the body surely fails without them, which is the rule that routes already follow: a required field, or a model that forbids extra keys, gets a dumped key (e.g. `x` of `Field(alias="x", validation_alias="v")`) instead of its validation key. Before, it also restored them when the body failed for another reason, e.g. a model validator that rejects the default that an optional field gets instead of its value. Such bodies now raise the `ValidationError` of the body. To migrate, make your response migrations set the validation key (`v`) of such fields (#565).
+- When Cadwyn restores the validation aliases of a response that fails without them, and the restored response fails too, the error is now the one of the restored response, e.g. `int_parsing` or an exception that a validator raises, instead of the `missing` error of the response as it was. This applies to route responses (`ResponseValidationError`) and to `migrate_response_body()` (`ValidationError`). Such responses failed before too. To migrate, update exception handlers and tests that check these errors to expect the errors of the restored response (#565).
+
+### Fixed
+
+- Responses whose validation aliases Cadwyn restores now go through the validators of their models once, like in FastAPI without Cadwyn. Before, routes validated the restored response and FastAPI validated it again, so `mode="after"` model validators ran twice, and `migrate_response_body()` validated the body as it was and then the restored body, so the validators of the fields that passed ran twice. Validators with side effects, such as one that increments a value, gave wrong values (#565).
 
 ## [8.2.0]
 
