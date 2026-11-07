@@ -85,6 +85,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import core_schema
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.formparsers import MultiPartParser
+from starlette.requests import ClientDisconnect
 from starlette.responses import StreamingResponse
 from typing_extensions import TypeAliasType, TypedDict, override
 
@@ -8109,7 +8110,7 @@ _UPLOAD_OUTCOMES = [
     pytest.param(
         _stream_the_upload,
         _ASGIRequestDriver(fail_sending="http.response.body"),
-        OSError,
+        ClientDisconnect,
         [len(_LARGE_UPLOAD) // 4],
         id="disconnect_during_stream",
     ),
@@ -8150,6 +8151,47 @@ async def _run_request(driver: _ASGIRequestDriver, app: Any, headers: dict[str, 
     else:
         with pytest.raises(expected_error):
             await driver(app, headers)
+
+
+@pytest.mark.parametrize("route_kind", ["plain_fastapi", "unversioned", "failing_dependency"])
+@pytest.mark.parametrize("fail_sending", ["http.response.start", "http.response.body"])
+def test__uploads__disconnect_before_versioned_endpoint_wrapper__should_close_disk_backed_files(
+    route_kind: Literal["plain_fastapi", "unversioned", "failing_dependency"], fail_sending: str
+):
+    uploads: list[UploadFile] = []
+
+    async def capture_upload(upload: UploadFile) -> None:
+        uploads.append(upload)
+        if route_kind == "failing_dependency":
+            raise HTTPException(400, "Dependency failed")
+
+    async def endpoint(upload: UploadFile):
+        return {"size": upload.size}
+
+    app = FastAPI() if route_kind == "plain_fastapi" else Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+    router = APIRouter()
+    router.post("/test", dependencies=[Depends(capture_upload)])(endpoint)
+    if isinstance(app, Cadwyn) and route_kind == "failing_dependency":
+        app.generate_and_include_versioned_routers(router)
+    else:
+        app.include_router(router)
+
+    async def disconnect_and_check_uploads():
+        try:
+            await _run_request(
+                _ASGIRequestDriver(fail_sending=fail_sending),
+                app,
+                {"x-api-version": "2000-01-01"} if route_kind == "failing_dependency" else {},
+                OSError,
+            )
+            assert len(uploads) == 1
+            assert uploads[0].size == len(_LARGE_UPLOAD)
+            assert uploads[0].file.closed
+        finally:
+            for upload in uploads:
+                await upload.close()
+
+    asyncio.run(disconnect_and_check_uploads())
 
 
 @pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
@@ -8265,6 +8307,9 @@ def test__form_migration__with_upload_put_into_the_form_of_router_outside_cadwyn
         api_version_var.set("2000-01-01")
         return await call_next(request)
 
+    # This app still uses BaseHTTPMiddleware: its send error doesn't reach StreamingResponse.
+    if expected_error is ClientDisconnect:
+        expected_error = OSError
     asyncio.run(_run_request(driver, app, {}, expected_error))
 
     assert reads == expected_reads
