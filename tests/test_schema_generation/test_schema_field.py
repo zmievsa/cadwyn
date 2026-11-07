@@ -6,6 +6,7 @@ import json
 import re
 import threading
 import time
+import types
 import typing
 from collections import Counter
 from collections.abc import Callable
@@ -44,7 +45,16 @@ from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 from typing_extensions import TypeAliasType, override
 
-from cadwyn import Version, VersionBundle, VersionChange
+from cadwyn import (
+    RequestInfo,
+    ResponseInfo,
+    Version,
+    VersionBundle,
+    VersionChange,
+    VersionedAPIRouter,
+    convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
+)
 from cadwyn.exceptions import (
     CadwynStructureError,
     InvalidGenerationInstructionError,
@@ -55,6 +65,8 @@ from cadwyn.structure import enum, schema
 from cadwyn.structure.schemas import PossibleFieldAttributes
 from tests.conftest import (
     CreateRuntimeSchemas,
+    CreateVersionedApp,
+    CreateVersionedClients,
     assert_models_are_equal,
     version_change,
 )
@@ -3872,18 +3884,197 @@ def test__schema_field_had_name__parent_renamed_field_that_child_of_mro_entries_
     )
 
 
-def test__schema_field_had_name__parent_renamed_field_that_child_of_mro_entries_base_redeclares__should_keep_it(
+def test__schema_field_had_name__parent_renamed_field_that_child_of_mro_entries_base_redeclares__should_raise_error(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    # A known limitation: the copies of the subclasses of an object with `__mro_entries__` inherit from the parent
-    # itself instead of its copy, so the parent's instructions, including its renames, don't reach them
     schemas = create_runtime_schemas(
         version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
     )
 
-    child = schemas["2000-01-01"][RedeclaringChildOfAliasOfParentWithIntFooThatGetsRenamed]
-    assert ParentWithIntFooThatGetsRenamed in child.__mro__
-    assert list(child.model_fields) == ["foo"]
+    with pytest.raises(InvalidGenerationInstructionError) as exc_info:
+        schemas["2000-01-01"][RedeclaringChildOfAliasOfParentWithIntFooThatGetsRenamed]
+
+    assert '"RedeclaringChildOfAliasOfParentWithIntFooThatGetsRenamed" still has it as "foo" next to "old_foo"' in str(
+        exc_info.value
+    )
+
+
+def test__schema_field_had_name__parent_renamed_field_that_child_of_mro_entries_base_inherits__should_rename_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    old = schemas["2000-01-01"]
+    child = old[ChildOfAliasOfParentWithIntFooThatGetsRenamed]
+    assert child.__bases__ == (old[ParentWithIntFooThatGetsRenamed],)
+    assert ParentWithIntFooThatGetsRenamed not in child.__mro__
+    assert child.model_validate({"old_foo": 42}).model_dump() == {"old_foo": 42}
+    assert list(child.model_json_schema()["properties"]) == ["old_foo"]
+    assert list(schemas["2001-01-01"][ChildOfAliasOfParentWithIntFooThatGetsRenamed].model_fields) == ["foo"]
+
+
+class AliasOfBases:
+    def __init__(self, *bases: type) -> None:
+        self.bases = bases
+
+    def __mro_entries__(self, bases: tuple[object, ...]) -> tuple[type, ...]:
+        return self.bases
+
+
+class MixinForAlias:
+    def label(self) -> str:
+        return "mixin"
+
+
+@pytest.mark.parametrize(
+    "bases",
+    [
+        (AliasOfBases(ParentWithIntFooThatGetsRenamed, MixinForAlias),),
+        (AliasOfBases(ParentWithIntFooThatGetsRenamed), AliasOfBases(MixinForAlias)),
+        (AliasOfBases(), ParentWithIntFooThatGetsRenamed, MixinForAlias),
+    ],
+    ids=["expanding_alias", "multiple_aliases", "empty_alias"],
+)
+def test__schema_field_had_name__mro_entries_expand_to_several_bases__should_version_resolved_bases(
+    create_runtime_schemas: CreateRuntimeSchemas, bases: tuple[object, ...]
+):
+    child = types.new_class("Child", bases)
+    schemas = create_runtime_schemas(
+        version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    old_child = schemas["2000-01-01"][child]
+    assert old_child.__bases__ == (schemas["2000-01-01"][ParentWithIntFooThatGetsRenamed], MixinForAlias)
+    instance = old_child.model_validate({"old_foo": 42})
+    assert instance.model_dump() == {"old_foo": 42}
+    assert instance.label() == "mixin"
+
+
+def test__schema_field_had_name__mro_entries_depend_on_other_bases__should_resolve_before_versioning(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class ContextualAlias:
+        def __mro_entries__(self, bases: tuple[object, ...]) -> tuple[type, ...]:
+            assert ParentWithIntFooThatGetsRenamed in bases, "The alias needs the original parent in its bases"
+            return (MixinForAlias,)
+
+    class Child(ParentWithIntFooThatGetsRenamed, ContextualAlias()):
+        pass
+
+    schemas = create_runtime_schemas(
+        version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    assert schemas["2000-01-01"][Child].model_validate({"old_foo": 42}).model_dump() == {"old_foo": 42}
+
+
+def test__schema_field_had_name__generic_child_of_mro_entries_base__should_keep_type_parameters(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Child(AliasOfParentWithIntFooThatGetsRenamed(), Generic[_T]):
+        payload: _T
+
+    schemas = create_runtime_schemas(
+        version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    old_child = schemas["2000-01-01"][Child]
+    assert old_child[int].model_validate({"old_foo": 42, "payload": "3"}).model_dump() == {"old_foo": 42, "payload": 3}
+    assert old_child.__parameters__ == Child.__parameters__
+
+
+@pytest.mark.parametrize("bases", [(), (BaseModel,), (BaseModel, MixinForAlias)])
+def test__generate_versioned_routers__mro_entries_no_longer_match_actual_bases__should_fail_at_startup(
+    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter, bases: tuple[type, ...]
+):
+    alias = AliasOfBases(ParentWithIntFooThatGetsRenamed)
+
+    class Child(alias):
+        pass
+
+    alias.bases = bases
+    router.get("/", response_model=Child)(lambda: {"foo": 42})
+
+    with pytest.raises(
+        SchemaGenerationError, match=r'original bases of ".*Child" no longer resolve to its actual bases'
+    ):
+        create_versioned_app()
+
+
+def test__generate_versioned_routers__mro_entries_resolution_fails__should_fail_at_startup(
+    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter
+):
+    class FailingAlias:
+        fail = False
+
+        def __mro_entries__(self, bases: tuple[object, ...]) -> tuple[type, ...]:
+            if self.fail:
+                raise ValueError("Cannot resolve this alias again")
+            return (ParentWithIntFooThatGetsRenamed,)
+
+    alias = FailingAlias()
+
+    class Child(alias):
+        pass
+
+    alias.fail = True
+    router.get("/", response_model=Child)(lambda: {"foo": 42})
+
+    with pytest.raises(SchemaGenerationError, match=r'Cannot resolve the original bases of ".*Child"') as exc_info:
+        create_versioned_app()
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+def test__generate_versioned_routers__mro_entries_child_deletes_redeclared_field__should_fail_at_startup(
+    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter
+):
+    child = RedeclaringChildOfAliasOfParentWithIntFooThatGetsRenamed
+    router.get("/", response_model=child)(lambda: {"foo": 42})
+
+    with pytest.raises(InvalidGenerationInstructionError, match='still inherits "foo"'):
+        create_versioned_app(version_change(schema(child).field("foo").didnt_exist))
+
+
+def test__generate_versioned_routers__mro_entries_child_inherits_renamed_field__should_use_versioned_contract(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+):
+    child = ChildOfAliasOfParentWithIntFooThatGetsRenamed
+
+    @router.post("/", response_model=child)
+    def echo(body: child):
+        return body
+
+    @convert_request_to_next_version_for(child)
+    def rename_request(request: RequestInfo) -> None:
+        request.body["foo"] = request.body.pop("old_foo")
+
+    @convert_response_to_previous_version_for(child)
+    def rename_response(response: ResponseInfo) -> None:
+        response.body["old_foo"] = response.body.pop("foo")
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"),
+            rename_request=rename_request,
+            rename_response=rename_response,
+        )
+    )
+    old_client = clients["2000-01-01"]
+    new_client = clients["2001-01-01"]
+    old_response = old_client.post("/", json={"old_foo": 42})
+    new_response = new_client.post("/", json={"foo": 42})
+    assert old_response.status_code == new_response.status_code == 200
+    assert old_response.json() == {"old_foo": 42}
+    assert new_response.json() == {"foo": 42}
+    assert old_client.post("/", json={"foo": 42}).status_code == 422
+    assert new_client.post("/", json={"old_foo": 42}).status_code == 422
+    old_openapi = old_client.get("/openapi.json?version=2000-01-01").json()
+    new_openapi = new_client.get("/openapi.json?version=2001-01-01").json()
+    assert list(old_openapi["components"]["schemas"][child.__name__]["properties"]) == ["old_foo"]
+    assert list(new_openapi["components"]["schemas"][child.__name__]["properties"]) == ["foo"]
 
 
 def test__schema_field_didnt_exist__field_is_missing__should_raise_error(create_runtime_schemas: CreateRuntimeSchemas):

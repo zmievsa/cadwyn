@@ -666,7 +666,7 @@ def _change_version_of_model_references(
     model: type[BaseModel],
     field_attributes: dict[str, dict[str, Any]],
     annotations: dict[str, Any],
-) -> tuple[dict[str, dict[str, Any]], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
+) -> tuple[dict[str, dict[str, Any]], tuple[type, ...], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
     """Version everything in the model that can refer to other models: field attributes, bases, and annotations.
 
     Only the annotations are type positions (see _AnnotationTransformer.is_in_hard_position). The field attributes,
@@ -678,7 +678,13 @@ def _change_version_of_model_references(
         for name, attributes in field_attributes.items():
             with transformer.describing(f"the field '{name}' of {model.__qualname__}"):
                 versioned_field_attributes[name] = transformer.change_version_of_annotation(attributes)
-    # __orig_bases__ keeps bases such as Generic[T] that __bases__ loses so that the copy stays generic
+    # Resolve before versioning: an __mro_entries__ hook returns HEAD classes and may depend on the other bases.
+    bases = tuple(
+        generator.change_version_of_base(base) if issubclass(base, (BaseModel, Enum)) else base
+        for base in _get_resolved_model_bases(model)
+    )
+    # Keep the original generic aliases as metadata so that the copy stays generic, but don't resolve them again
+    # after versioning: that would reintroduce the HEAD classes returned by custom __mro_entries__ hooks.
     orig_bases = tuple(
         generator.change_version_of_base(base) if isinstance(base, type) else base
         for base in model.__dict__.get("__orig_bases__", model.__bases__)
@@ -686,7 +692,26 @@ def _change_version_of_model_references(
     versioned_annotations = transformer.change_version_of_annotation(annotations)
     with transformer.hard_position():
         generic_metadata = generator.change_version_of_generic_metadata(model)
-    return versioned_field_attributes, orig_bases, versioned_annotations, generic_metadata
+    return versioned_field_attributes, bases, orig_bases, versioned_annotations, generic_metadata
+
+
+def _get_resolved_model_bases(model: type[BaseModel]) -> tuple[type, ...]:
+    original_bases = model.__dict__.get("__orig_bases__", model.__bases__)
+    try:
+        resolved_bases = types.resolve_bases(original_bases)
+    except Exception as error:
+        raise SchemaGenerationError(
+            f'Cannot resolve the original bases of "{model.__qualname__}" through __mro_entries__. '
+            "Use explicit base classes instead."
+        ) from error
+    if len(resolved_bases) != len(model.__bases__) or any(
+        resolved is not actual for resolved, actual in zip(resolved_bases, model.__bases__, strict=True)
+    ):
+        raise SchemaGenerationError(
+            f'The original bases of "{model.__qualname__}" no longer resolve to its actual bases through '
+            "__mro_entries__. Use explicit base classes instead."
+        )
+    return model.__bases__
 
 
 # The modules of the generics whose args are types that pydantic resolves, such as list, dict, Optional, or Callable
@@ -884,7 +909,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         self,
         generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier]",
         schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
-    ) -> tuple[dict[str, dict[str, Any]], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
+    ) -> tuple[dict[str, dict[str, Any]], tuple[type, ...], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
         return _change_version_of_model_references(
             generator, self.cls, *self.get_field_attributes_and_annotations(schemas)
         )
@@ -935,7 +960,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 per_field_validators[name] = validator.decorator(*validator.fields, **validator.kwargs)(func)
             else:
                 root_validators[name] = validator.decorator(**validator.kwargs)(func)
-        field_attributes, orig_bases, annotations, generic_metadata = self._change_version_of_references(
+        field_attributes, bases, orig_bases, annotations, generic_metadata = self._change_version_of_references(
             generator, generator.model_bundle.schemas
         )
         fields = {name: pydantic.Field(**attributes) for name, attributes in field_attributes.items()}
@@ -954,7 +979,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         model_copy = type(self.cls)(
             self.name,
-            types.resolve_bases(orig_bases),
+            bases,
             self.other_attributes
             | orig_bases_attribute
             | per_field_validators

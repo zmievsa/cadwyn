@@ -40,6 +40,12 @@ Cadwyn can generate versioned schemas from its version changes even without Fast
 
 Cadwyn generates a copy of every model for every version, except for the enums without enum instructions and the models that refer to themselves (directly or through other models, e.g. `children: "list[Category]"`) when neither they nor the models they refer to have instructions in any version (including `HeadVersion`) and they are not parents of models with versioned copies. Cadwyn uses such enums and models as they are: `schema_generators["2025-11-16"][Category] is Category`. Cadwyn makes this decision when it first needs a model, so the models defined after that (e.g. new subclasses) do not change it.
 
+### Bases supplied through `__mro_entries__`
+
+Models whose bases are supplied by an object's `__mro_entries__` hook inherit the versioned copies of the resolved parents. The parents' schema instructions and the [checks for inherited fields](./schema_migrations.md#fields-that-a-schema-inherits) apply just as they do to explicit base classes. When upgrading from Cadwyn 8, update affected request and response migrations to use the corrected older-version fields.
+
+Cadwyn resolves the original bases before versioning them, preserving generic type parameters and hooks that depend on other bases. The hook must consistently resolve to the model's actual bases. If resolution fails or returns different bases, Cadwyn raises `SchemaGenerationError` at startup; use explicit base classes for that model.
+
 ### Generic models
 
 Parametrized generic models such as `Page[Item]` use the versioned copies of their type args in every version. For example, take the app from [issue #416](https://github.com/zmievsa/cadwyn/issues/416):
