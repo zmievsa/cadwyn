@@ -1197,6 +1197,67 @@ def test__router_generation__changing_attribute_to_the_same_value__should_raise_
         create_versioned_app(version_change(endpoint(test_path, ["GET"]).had(path=test_path)))
 
 
+def test__router_generation__changing_attribute_to_equal_value_of_another_type__should_change_it(
+    router: VersionedAPIRouter,
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+):
+    @router.get("/test", openapi_extra={"x-limit": 1})
+    async def test():
+        raise NotImplementedError
+
+    routes_2000, routes_2001 = create_versioned_api_routes(
+        version_change(endpoint("/test", ["GET"]).had(openapi_extra={"x-limit": True})),
+    )
+
+    assert routes_2000[1].openapi_extra is not None
+    assert routes_2000[1].openapi_extra["x-limit"] is True
+    assert routes_2001[1].openapi_extra is not None
+    assert routes_2001[1].openapi_extra["x-limit"] is not True
+
+
+def test__router_generation__changing_attribute_to_type_hint_that_unpacks_a_tuple__should_change_it(
+    router: VersionedAPIRouter,
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+):
+    @router.get("/test", openapi_extra={"x-hint": tuple[tuple[int, ...]]})
+    async def test():
+        raise NotImplementedError
+
+    routes_2000, routes_2001 = create_versioned_api_routes(
+        version_change(endpoint("/test", ["GET"]).had(openapi_extra={"x-hint": tuple[*tuple[int, ...]]})),
+    )
+
+    assert routes_2000[1].openapi_extra is not None
+    assert repr(routes_2000[1].openapi_extra["x-hint"]) == "tuple[*tuple[int, ...]]"
+    assert routes_2001[1].openapi_extra is not None
+    assert repr(routes_2001[1].openapi_extra["x-hint"]) == "tuple[tuple[int, ...]]"
+
+
+def _dict_that_contains_itself(label: str) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    value["self"] = value
+    value["label"] = label
+    return value
+
+
+def test__router_generation__changing_attribute_to_value_that_contains_itself__should_change_it(
+    router: VersionedAPIRouter,
+    create_versioned_api_routes: CreateVersionedAPIRoutes,
+):
+    @router.get("/test", openapi_extra={"x-node": _dict_that_contains_itself("old")})
+    async def test():
+        raise NotImplementedError
+
+    routes_2000, routes_2001 = create_versioned_api_routes(
+        version_change(endpoint("/test", ["GET"]).had(openapi_extra={"x-node": _dict_that_contains_itself("new")})),
+    )
+
+    assert routes_2000[1].openapi_extra is not None
+    assert routes_2000[1].openapi_extra["x-node"]["label"] == "new"
+    assert routes_2001[1].openapi_extra is not None
+    assert routes_2001[1].openapi_extra["x-node"]["label"] == "old"
+
+
 def test__router_generation__non_api_route_added(
     router: VersionedAPIRouter,
     test_endpoint: Endpoint,

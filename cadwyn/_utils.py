@@ -1,8 +1,18 @@
+import collections.abc
+import dataclasses
+import inspect
+import math
 import sys
+import types
+import typing
 from collections.abc import Callable
+from decimal import Decimal
 from inspect import signature
 from typing import TYPE_CHECKING, Any, Concatenate, Generic, TypeVar, Union
 
+import annotated_types
+import fastapi.params
+import pydantic
 from pydantic._internal._decorators import DecoratedType, unwrap_wrapped_function
 from typing_extensions import ParamSpec, override
 
@@ -114,3 +124,172 @@ def _get_type_alias_value(alias: Any) -> Any:
 
         return call_evaluate_function(alias.evaluate_value, Format.FORWARDREF)
     return alias.__value__
+
+
+# We look types up by their ids in tables built here, because hashing or comparing a type, or reading its attributes,
+# can run the code of the user's metaclass
+_SCALAR_TYPE_IDS = frozenset(map(id, (type(None), bool, int, float, complex, str, bytes, Decimal)))
+# The dataclasses of pydantic, FastAPI, and annotated_types that can be in field attributes and endpoint attributes,
+# with the fields that hold all of their state
+_ALLOWED_TYPE_FIELDS: dict[int, tuple[str, ...]] = {
+    id(cls): tuple(field.name for field in dataclasses.fields(cls))
+    for cls in (
+        pydantic.AliasChoices,
+        pydantic.AliasPath,
+        pydantic.Discriminator,
+        pydantic.StringConstraints,
+        pydantic.Strict,
+        pydantic.AllowInfNan,
+        pydantic.FailFast,
+        fastapi.params.Depends,
+        fastapi.params.Security,
+        annotated_types.Gt,
+        annotated_types.Ge,
+        annotated_types.Lt,
+        annotated_types.Le,
+        annotated_types.MultipleOf,
+        annotated_types.MinLen,
+        annotated_types.MaxLen,
+        annotated_types.Len,
+        annotated_types.Interval,
+        annotated_types.Timezone,
+        annotated_types.Predicate,
+    )
+}
+_TYPE_VAR_TUPLE = typing.TypeVarTuple("_TYPE_VAR_TUPLE")
+_PARAM_SPEC = typing.ParamSpec("_PARAM_SPEC")
+# Type hints implemented in C, such as list[int], *tuple[int, ...], and int | str, with the attributes that hold all of
+# their state
+_C_TYPE_HINT_ATTRIBUTES: dict[int, tuple[str, ...]] = {
+    id(types.GenericAlias): ("__origin__", "__args__", "__unpacked__"),
+    id(type(collections.abc.Callable[[int], str])): ("__origin__", "__args__", "__unpacked__"),
+    id(types.UnionType): ("__args__",),
+}
+# Type hints of the typing module, such as List[int], Literal[1], and Annotated[int, Gt(1)], whose instance __dict__
+# holds all of their state
+_PYTHON_TYPE_HINT_TYPE_IDS = frozenset(
+    id(hint_type)
+    for hint_type in {
+        type(typing.List[int]),  # noqa: UP006
+        type(typing.Union[int, str]),
+        type(typing.Literal[1]),
+        type(typing.Annotated[int, 1]),
+        type(typing.Callable[[int], str]),
+        type(typing.Concatenate[int, _PARAM_SPEC]),
+        type(typing.Unpack[_TYPE_VAR_TUPLE]),
+    }
+    if id(hint_type) not in _C_TYPE_HINT_ATTRIBUTES
+)
+
+
+def is_same_value(left: Any, right: Any) -> bool:
+    """Whether Cadwyn can be sure that the values are the same, so changing one to the other changes nothing.
+
+    `==` is not enough: `True == 1`, `1.0 == 1`, `-0.0 == 0.0`, `Decimal("1.0") == Decimal("1")`, and
+    `Union[int, str] == Union[str, int]`, while OpenAPI and serialization tell them apart. Different objects are the
+    same only if both have exactly the same type and they are:
+
+    * `None`, `bool`, `int`, `float`, `complex`, `str`, `bytes`, or `Decimal` values with the same value, sign, and
+      exponent (NaN is never the same as another NaN object)
+    * `list`, `tuple`, or `dict` values whose items (and keys) are the same in the same order, or `set` or `frozenset`
+      values whose items are the same and are all such builtin values
+    * instances of the pydantic, FastAPI, and annotated_types dataclasses in `_ALLOWED_TYPE_FIELDS` whose fields are
+      the same
+    * type hints of `typing` and `types` whose origins, args, and other attributes are the same
+
+    Anything else, including instances of other dataclasses, classes, and values that refer to themselves, is the
+    same only if it is the same object. We never run the user's code: we check types only by identity, and we read
+    the attributes of the types above only. When we can't be sure, the values are different, so we never reject a
+    real change. Accepting an instruction that changes nothing is harmless because it applies nothing.
+    """
+    try:
+        return _is_same_value(left, right, set())
+    except Exception:  # noqa: BLE001  # pragma: no cover
+        # We run no user code, so only a value nested too deeply to compare (RecursionError) can get here
+        return False
+
+
+def _is_same_value(left: Any, right: Any, pairs_being_compared: set[tuple[int, int]]) -> bool:
+    if left is right:
+        return True
+    value_type = type(left)
+    if value_type is not type(right):
+        return False
+    if id(value_type) in _SCALAR_TYPE_IDS:
+        return _are_same_scalars(left, right)
+    pair = (id(left), id(right))
+    if pair in pairs_being_compared:
+        # The values refer to themselves, e.g. a dict that contains itself
+        return False
+    pairs_being_compared.add(pair)
+    try:
+        return _have_same_contents(left, right, pairs_being_compared)
+    finally:
+        pairs_being_compared.discard(pair)
+
+
+def _are_same_scalars(left: Any, right: Any) -> bool:
+    value_type = type(left)
+    if value_type is float:
+        # -0.0 == 0.0. NaN is never equal to another NaN
+        return left == right and math.copysign(1.0, left) == math.copysign(1.0, right)
+    if value_type is complex:
+        return _are_same_scalars(left.real, right.real) and _are_same_scalars(left.imag, right.imag)
+    if value_type is Decimal:
+        # Decimal("1.0") == Decimal("1") and a signaling NaN raises in ==
+        return not left.is_nan() and left.as_tuple() == right.as_tuple()
+    return left == right
+
+
+def _have_same_contents(left: Any, right: Any, pairs_being_compared: set[tuple[int, int]]) -> bool:
+    value_type = type(left)
+    if value_type is list or value_type is tuple:
+        return _are_same_sequences(left, right, pairs_being_compared)
+    if value_type is dict:
+        # The order of the keys matters because it is the order of the keys in JSON
+        return _are_same_sequences(list(left.items()), list(right.items()), pairs_being_compared)
+    if value_type is set or value_type is frozenset:
+        # Hashing and comparing builtin values never runs the user's code
+        if not all(map(_is_builtin_hashable, left)) or not all(map(_is_builtin_hashable, right)):
+            return False
+        if len(left) != len(right) or left != right:
+            return False
+        # The sets are equal, so each item has an equal item (e.g. 1 for True) in the other set
+        right_items = {item: item for item in right}
+        return all(_is_same_value(item, right_items[item], pairs_being_compared) for item in left)
+    type_id = id(value_type)
+    if type_id in _ALLOWED_TYPE_FIELDS:
+        return _are_same_sequences(
+            [_read_attribute_statically(left, name) for name in _ALLOWED_TYPE_FIELDS[type_id]],
+            [_read_attribute_statically(right, name) for name in _ALLOWED_TYPE_FIELDS[type_id]],
+            pairs_being_compared,
+        )
+    if type_id in _C_TYPE_HINT_ATTRIBUTES:
+        return _are_same_sequences(
+            [getattr(left, name) for name in _C_TYPE_HINT_ATTRIBUTES[type_id]],
+            [getattr(right, name) for name in _C_TYPE_HINT_ATTRIBUTES[type_id]],
+            pairs_being_compared,
+        )
+    if type_id in _PYTHON_TYPE_HINT_TYPE_IDS:
+        return _is_same_value(vars(left), vars(right), pairs_being_compared)
+    return False
+
+
+def _are_same_sequences(left: Any, right: Any, pairs_being_compared: set[tuple[int, int]]) -> bool:
+    return len(left) == len(right) and all(
+        _is_same_value(left_item, right_item, pairs_being_compared)
+        for left_item, right_item in zip(left, right, strict=True)
+    )
+
+
+def _read_attribute_statically(value: Any, name: str) -> Any:
+    attribute = inspect.getattr_static(value, name)
+    # A slot of the instance
+    return attribute.__get__(value) if type(attribute) is types.MemberDescriptorType else attribute
+
+
+def _is_builtin_hashable(value: Any) -> bool:
+    value_type = type(value)
+    return id(value_type) in _SCALAR_TYPE_IDS or (
+        (value_type is tuple or value_type is frozenset) and all(map(_is_builtin_hashable, value))
+    )

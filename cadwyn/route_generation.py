@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from starlette.routing import BaseRoute
 from typing_extensions import TypeVar
 
-from cadwyn._utils import DATACLASS_SLOTS, Sentinel, _callable_name, lenient_issubclass
+from cadwyn._utils import DATACLASS_SLOTS, Sentinel, _callable_name, is_same_value, lenient_issubclass
 from cadwyn.exceptions import (
     CadwynError,
     RouteAlreadyExistsError,
@@ -583,7 +583,7 @@ def _apply_endpoint_had_instruction(
     for attr_name in instruction.attributes.__dataclass_fields__:
         attr = getattr(instruction.attributes, attr_name)
         if attr is not Sentinel:
-            if getattr(original_route, attr_name) == attr:
+            if is_same_value(getattr(original_route, attr_name), attr):
                 raise RouterGenerationError(
                     f'Expected attribute "{attr_name}" of endpoint'
                     f' "{list(_route_methods(original_route))} {original_route.path}"'
