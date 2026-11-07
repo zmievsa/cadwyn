@@ -1,15 +1,18 @@
+import asyncio
 import functools
 import inspect
 import logging
 import re
 import warnings
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
+import httpx
 import pytest
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -33,9 +36,6 @@ from tests._resources.versioned_app.app import (
     versioned_router,
 )
 from tests.conftest import version_change, versions
-
-if TYPE_CHECKING:
-    from fastapi.routing import APIRoute
 
 
 def _two_versions() -> VersionBundle:
@@ -1292,7 +1292,7 @@ def _add_background_task_after_yield(
     background_tasks.add_task(_background_task_calls.append, f"dependency of {solver}")
 
 
-def test__background_tasks__added_after_yield_of_function_scoped_dependency__should_be_dropped_with_a_warning(
+def test__background_tasks__added_only_after_yield_of_function_scoped_dependency__should_be_dropped_without_a_warning(
     background_task_calls: list[str],
 ):
     router = VersionedAPIRouter()
@@ -1301,10 +1301,8 @@ def test__background_tasks__added_after_yield_of_function_scoped_dependency__sho
     async def handler():
         return "ok"
 
-    with (
-        _client_of(router) as client,
-        pytest.warns(FutureWarning, match=_DROPPED_BACKGROUND_TASK_WARNING.format(path="/test")),
-    ):
+    # A documented limitation: Cadwyn decides whether to warn when the endpoint returns, before the teardown
+    with _client_of(router) as client:
         assert client.post("/test").json() == "ok"
     assert background_task_calls == ["dependency of fastapi"]
 
@@ -1369,6 +1367,176 @@ def test__background_tasks__dropped_in_request_that_fails_after_the_solve__shoul
     assert [warning.category for warning in caught_warnings] == [FutureWarning]
     assert re.match(_DROPPED_BACKGROUND_TASK_WARNING.format(path="/test"), str(caught_warnings[0].message))
     assert background_task_calls == ["dependency of fastapi"]
+
+
+class _FailingLogHandler(logging.Handler):
+    """A log handler whose transport fails, e.g. a `FileHandler` whose directory is gone."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ran_on_event_loop: list[bool] = []
+
+    @override
+    def handle(self, record: logging.LogRecord) -> bool:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self.ran_on_event_loop.append(False)
+        else:
+            self.ran_on_event_loop.append(True)
+        raise OSError("The log transport is unavailable")
+
+
+@pytest.fixture
+def failing_log_handler() -> Iterator[_FailingLogHandler]:
+    handler = _FailingLogHandler()
+    logger = logging.getLogger("cadwyn")
+    logger.addHandler(handler)
+    yield handler
+    logger.removeHandler(handler)
+
+
+def _drop_background_task_and_add_one_after_yield(
+    background_tasks: BackgroundTasks, solver: Annotated[str, Depends(current_dependency_solver)]
+) -> Iterator[None]:
+    if solver == "cadwyn":
+        background_tasks.add_task(_background_task_calls.append, "dropped")
+    yield
+    if solver == "fastapi":
+        background_tasks.add_task(_background_task_calls.append, "user task")
+
+
+def test__background_tasks__dropped_while_warnings_are_errors_and_logging_fails__should_still_run_the_user_tasks(
+    background_task_calls: list[str], failing_log_handler: _FailingLogHandler
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_drop_background_task_and_add_one_after_yield, scope="function")])
+    async def handler():
+        return "ok"
+
+    # Tests turn every warning into an error, so Cadwyn falls back to logging, which fails too
+    with _client_of(router) as client:
+        assert client.post("/test").json() == "ok"
+    assert background_task_calls == ["user task"]
+    assert failing_log_handler.ran_on_event_loop == [False]
+
+
+def test__background_tasks__dropped_while_warnings_are_errors__should_log_the_warning_off_the_event_loop(
+    background_task_calls: list[str], failing_log_handler: _FailingLogHandler
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task)])
+    async def handler():
+        return "ok"
+
+    with _client_of(router) as client:
+        assert client.post("/test").json() == "ok"
+    assert background_task_calls == ["dependency of fastapi"]
+    assert failing_log_handler.ran_on_event_loop == [False]
+
+
+class _RouteThatRecordsBackgroundTasks(APIRoute):
+    """Records how many background tasks the response has, or "None" if it has no background."""
+
+    @override
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        handle = super().get_route_handler()
+
+        async def handle_and_record_background_tasks(request: Request) -> Response:
+            response = await handle(request)
+            background = response.background
+            response.headers["x-background-tasks"] = (
+                "None" if background is None else str(len(cast("BackgroundTasks", background).tasks))
+            )
+            return response
+
+        return handle_and_record_background_tasks
+
+
+def _router_with_route_that_returns_its_params(dependencies: list[Any]) -> VersionedAPIRouter:
+    router = VersionedAPIRouter(route_class=_RouteThatRecordsBackgroundTasks)
+
+    @router.post("/test", dependencies=dependencies)
+    async def handler(request: Request):
+        route = request.scope["route"]
+        return {
+            "background_tasks_param_name": route.dependant.background_tasks_param_name,
+            "params": list(inspect.signature(route.endpoint).parameters),
+        }
+
+    return router
+
+
+_PARAMS_OF_ROUTE_WITHOUT_BACKGROUND_TASKS = {
+    "background_tasks_param_name": None,
+    "params": ["request", "cadwyn_response_param"],
+}
+
+
+def test__background_tasks__of_route_without_background_tasks__should_leave_the_route_and_the_response_as_in_fastapi():
+    with _client_of(_router_with_route_that_returns_its_params([])) as client:
+        response = client.post("/test")
+
+    assert response.json() == _PARAMS_OF_ROUTE_WITHOUT_BACKGROUND_TASKS
+    assert response.headers["x-background-tasks"] == "None"
+
+
+def test__background_tasks__of_route_that_drops_no_tasks__should_leave_the_route_and_the_response_as_in_fastapi(
+    background_task_calls: list[str],
+):
+    router = _router_with_route_that_returns_its_params([Depends(_add_background_task_once)])
+
+    with _client_of(router) as client:
+        response = client.post("/test")
+
+    assert response.json() == _PARAMS_OF_ROUTE_WITHOUT_BACKGROUND_TASKS
+    assert response.headers["x-background-tasks"] == "1"
+    assert background_task_calls == ["dependency of fastapi"]
+
+
+def test__background_tasks__of_route_that_drops_tasks__should_leave_the_route_and_the_response_as_in_fastapi(
+    background_task_calls: list[str],
+):
+    router = _router_with_route_that_returns_its_params([Depends(_add_background_task)])
+
+    with (
+        _client_of(router) as client,
+        pytest.warns(FutureWarning, match=_DROPPED_BACKGROUND_TASK_WARNING.format(path="/test")),
+    ):
+        response = client.post("/test")
+
+    assert response.json() == _PARAMS_OF_ROUTE_WITHOUT_BACKGROUND_TASKS
+    assert response.headers["x-background-tasks"] == "1"
+    assert background_task_calls == ["dependency of fastapi"]
+
+
+def test__background_tasks__dropped_in_concurrent_requests__should_warn_once(background_task_calls: list[str]):
+    router = VersionedAPIRouter()
+    both_requests_have_arrived = asyncio.Barrier(2)
+
+    @router.post("/test", dependencies=[Depends(_add_background_task)])
+    async def handler():
+        # Both requests return before either of them warns
+        await both_requests_have_arrived.wait()
+        return "ok"
+
+    app = _client_of(router).app
+
+    async def send_two_requests() -> tuple[httpx.Response, httpx.Response]:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://test", headers=BASIC_HEADERS
+        ) as client:
+            return await asyncio.gather(client.post("/test"), client.post("/test"))
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        responses = asyncio.run(send_two_requests())
+
+    assert [response.json() for response in responses] == ["ok", "ok"]
+    assert [warning.category for warning in caught_warnings] == [FutureWarning]
+    assert background_task_calls == ["dependency of fastapi"] * 2
 
 
 def test__webhooks():

@@ -584,17 +584,13 @@ def _add_data_migrations_to_route(
             f"for route {list(_route_methods(route))} {route.path} which should not be possible. "
             "Please, contact my author.",
         )
-    # We need the BackgroundTasks that FastAPI runs after the response, either to add the tasks of the latest version
-    # to it or to warn that they are dropped. FastAPI only creates one if something asks for it, so we ask for it.
+    # The solve of the latest version needs the BackgroundTasks that FastAPI runs after the response. FastAPI only
+    # creates one if something asks for it, so with the flag we ask for it if the endpoint doesn't.
     background_tasks_param_name = route.dependant.background_tasks_param_name
-    is_background_tasks_param_hidden = background_tasks_param_name is None
-    if background_tasks_param_name is None:
-        background_tasks_param_name = _get_hidden_background_tasks_param_name(route.endpoint)
-        route.dependant.background_tasks_param_name = background_tasks_param_name
-    # The tasks of the latest version are only dropped if the endpoint doesn't declare BackgroundTasks
-    drops_background_tasks_of_latest_version = (
-        is_background_tasks_param_hidden and not run_background_tasks_of_latest_version_dependencies
-    )
+    hidden_background_tasks_param_name = None
+    if background_tasks_param_name is None and run_background_tasks_of_latest_version_dependencies:
+        hidden_background_tasks_param_name = _get_hidden_background_tasks_param_name(route.endpoint)
+        route.dependant.background_tasks_param_name = hidden_background_tasks_param_name
 
     route.endpoint = versions._versioned(
         template_body_field,
@@ -604,11 +600,9 @@ def _add_data_migrations_to_route(
         dependant_for_request_migrations,
         request_param_name=route.dependant.request_param_name,
         background_tasks_param_name=background_tasks_param_name,
-        is_background_tasks_param_hidden=is_background_tasks_param_hidden,
+        hidden_background_tasks_param_name=hidden_background_tasks_param_name,
         response_param_name=route.dependant.response_param_name,
-        dropped_background_tasks_warning=(
-            dropped_background_tasks_warning if drops_background_tasks_of_latest_version else None
-        ),
+        dropped_background_tasks_warning=dropped_background_tasks_warning,
     )(route.endpoint)
     route.dependant.call = route.endpoint
 
