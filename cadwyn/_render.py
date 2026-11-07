@@ -126,15 +126,19 @@ def _render_pydantic_model(
                 field_attributes[name] = _with_aliases_of_generated_field(
                     field_attributes[name], generated_fields[name]
                 )
-    field_definitions = [
-        ast.AnnAssign(
-            target=ast.Name(name),
-            annotation=ast.Name(get_fancy_repr(annotations[name])),
-            value=_generate_field_ast(_without_redundant_none_aliases(attributes, annotations[name])),
-            simple=1,
-        )
-        for name, attributes in field_attributes.items()
-    ]
+    field_definitions = []
+    for name, attributes in field_attributes.items():
+        try:
+            field_definitions.append(
+                ast.AnnAssign(
+                    target=ast.Name(name),
+                    annotation=ast.Name(get_fancy_repr(annotations[name])),
+                    value=_generate_field_ast(_without_redundant_none_aliases(attributes, annotations[name])),
+                    simple=1,
+                )
+            )
+        except CadwynRenderError as error:
+            raise CadwynRenderError(f"Cannot render field {wrapper.name}.{name}: {error}") from error
     validator_definitions = [
         ast.parse(textwrap.dedent(inspect.getsource(validator.func))).body[0]
         for validator in wrapper.validators.values()

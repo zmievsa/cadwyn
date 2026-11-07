@@ -30,6 +30,10 @@ This command prints to stdout how the `UserCreateRequest` schema would look in v
 
 The rendered fields are the ones that the schema has in that version. When a schema has instructions for a field that it inherits, it is rendered with its own version of that field, and its parents and siblings are rendered with theirs (see [Fields that a schema inherits](./schema_migrations.md#fields-that-a-schema-inherits)).
 
+Rendering preserves the types and contents of builtin containers, named tuples defined with `NamedTuple` or `collections.namedtuple`, `defaultdict` (with a type, a named Python function, or `None` as its factory), `OrderedDict`, and `Counter`. Named tuples are rendered with `tuple.__new__` to preserve their stored values without running their constructors again. As with other references in rendered models, make the referenced classes and functions available when executing the output.
+
+Rendering raises `CadwynRenderError` for other subclasses of `list`, `tuple`, `dict`, `set`, or `frozenset`, containers with additional instance attributes, containers that contain themselves or share a nested container, and unsupported `defaultdict` factories (such as lambdas or callable instances). For these defaults, use `Field(default_factory=...)` with a named function that creates the whole value, so rendering can refer to the function without reconstructing its result.
+
 ## Generating schemas without FastAPI
 
 Cadwyn can generate versioned schemas from its version changes even without FastAPI:

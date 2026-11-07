@@ -1,19 +1,201 @@
 import re
 import sys
+from collections import Counter, OrderedDict, defaultdict, namedtuple
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, ClassVar
+from functools import partial
+from typing import Annotated, Any, ClassVar, NamedTuple
 
 import pytest
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from cadwyn import VersionChange, schema
 from cadwyn._render import render_model, render_model_by_path, render_module_by_path
-from cadwyn.exceptions import ImportFromStringError
+from cadwyn.exceptions import CadwynRenderError, ImportFromStringError
 from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure.versions import Version, VersionBundle
 from tests.conftest import version_change
 from tests.test_cli import code
+
+
+class Point(NamedTuple):
+    x: int
+    y: int
+
+
+class RecursivePoint(NamedTuple):
+    values: list[Any]
+
+
+EmptyPoint = namedtuple("EmptyPoint", ())  # noqa: PYI024 # Cover collections.namedtuple as well as typing.NamedTuple
+
+
+class ModelWithContainerDefault(BaseModel):
+    value: Any = None
+
+
+def missing_count() -> int:
+    return 5
+
+
+def render_container_default(default: Any) -> str:
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(ModelWithContainerDefault).field("value").had(default=default))),
+        Version("2000-01-01"),
+    )
+    return render_model(ModelWithContainerDefault, versions, "2000-01-01")
+
+
+def evaluate_rendered_default(default: Any) -> Any:
+    namespace: dict[str, Any] = dict(globals())
+    exec(render_container_default(default), namespace)
+    return namespace["ModelWithContainerDefault"].model_fields["value"].default
+
+
+@pytest.mark.parametrize(
+    "default",
+    [
+        Point(1, 2),
+        EmptyPoint(),
+        RecursivePoint([None, int, list[int]]),
+        ("one",),
+        (None, int),
+        (),
+        [],
+        [None, int, list[int]],
+        type(None),
+        [None, type(None)],
+        {},
+        {None: None, int: list[int]},
+        set(),
+        frozenset(),
+        {None, int},
+        frozenset({None, int}),
+    ],
+)
+def test__render_model__container_default__should_recreate_its_type_and_value(default: Any):
+    rendered_default = evaluate_rendered_default(default)
+    assert type(rendered_default) is type(default)
+    assert rendered_default == default
+
+
+@pytest.mark.parametrize(("factory", "missing_value"), [(int, 0), (missing_count, 5), (list, []), (type(None), None)])
+def test__render_model__defaultdict_default__should_keep_items_and_factory(factory: Any, missing_value: Any):
+    rendered_default = evaluate_rendered_default(defaultdict(factory, a=1, empty=None))
+    assert type(rendered_default) is defaultdict
+    assert dict(rendered_default) == {"a": 1, "empty": None}
+    assert rendered_default.default_factory is factory
+    assert rendered_default["missing"] == missing_value
+
+
+def test__render_model__defaultdict_without_factory__should_keep_missing_key_error():
+    rendered_default = evaluate_rendered_default(defaultdict(None, a=1))
+    assert type(rendered_default) is defaultdict
+    assert dict(rendered_default) == {"a": 1}
+    assert rendered_default.default_factory is None
+    with pytest.raises(KeyError):
+        rendered_default["missing"]
+
+
+def test__render_model__ordered_dict_default__should_keep_insertion_order():
+    default = OrderedDict((("z", None), ("a", int)))
+    rendered_default = evaluate_rendered_default(default)
+    assert type(rendered_default) is OrderedDict
+    assert list(rendered_default.items()) == list(default.items())
+
+
+@pytest.mark.parametrize("default", [Counter(a=3, b=0, c=-2), Counter()])
+def test__render_model__counter_default__should_keep_exact_counts(default: Counter[str]):
+    rendered_default = evaluate_rendered_default(default)
+    assert type(rendered_default) is Counter
+    assert dict(rendered_default) == dict(default)
+    assert rendered_default["missing"] == 0
+
+
+def test__render_model__nested_container_defaults__should_keep_types_keys_and_factory():
+    default = [Point(1, 2), {Point(3, 4): defaultdict(int, a=1), "counts": Counter(a=3)}]
+    rendered_default = evaluate_rendered_default(default)
+    assert rendered_default == default
+    assert type(rendered_default[0]) is Point
+    key = next(iter(rendered_default[1]))
+    assert type(key) is Point
+    assert type(rendered_default[1][key]) is defaultdict
+    assert rendered_default[1][key].default_factory is int
+    assert type(rendered_default[1]["counts"]) is Counter
+
+
+class CustomList(list):
+    pass
+
+
+class CustomTuple(tuple):
+    __slots__ = ()
+
+
+class CustomDict(dict):
+    pass
+
+
+class CustomSet(set):
+    pass
+
+
+class CustomFrozenSet(frozenset):
+    pass
+
+
+@pytest.mark.parametrize(
+    "default", [CustomList([1]), CustomTuple((1,)), CustomDict(a=1), CustomSet({1}), CustomFrozenSet({1})]
+)
+def test__render_model__custom_container_default__should_fail_instead_of_losing_its_type(default: Any):
+    with pytest.raises(
+        CadwynRenderError, match=rf"ModelWithContainerDefault.value.*{type(default).__name__}.*default_factory"
+    ):
+        render_container_default(default)
+
+
+@pytest.mark.parametrize("container_type", [list, dict])
+def test__render_model__recursive_default__should_fail_with_render_error(container_type: type):
+    default = container_type()
+    if isinstance(default, list):
+        default.append(default)
+    else:
+        default["self"] = default
+
+    with pytest.raises(CadwynRenderError, match=r"recursive.*default_factory"):
+        render_container_default(default)
+
+
+def test__render_model__shared_container_in_default__should_fail_instead_of_duplicating_it():
+    shared: list[int] = []
+    with pytest.raises(CadwynRenderError, match=r"shared.*default_factory"):
+        render_container_default([shared, shared])
+
+
+def test__render_model__default_with_cycle_through_namedtuple__should_fail_with_render_error():
+    values: list[Any] = []
+    point = RecursivePoint(values)
+    values.append(point)
+    with pytest.raises(CadwynRenderError, match=r"recursive.*default_factory"):
+        render_container_default(point)
+
+
+@pytest.mark.parametrize("container_type", [Counter, OrderedDict])
+def test__render_model__container_default_with_attributes__should_fail_instead_of_losing_them(container_type: type):
+    default = container_type()
+    default.label = "keep"
+
+    class ModelWithStatefulDefault(BaseModel):
+        value: Any = default
+
+    with pytest.raises(CadwynRenderError, match=r"attributes.*default_factory"):
+        render_model(ModelWithStatefulDefault, VersionBundle(Version("2000-01-01")), "2000-01-01")
+
+
+@pytest.mark.parametrize("factory", [lambda: 1, partial(int, 1)])
+def test__render_model__defaultdict_with_unsupported_factory__should_fail_with_render_error(factory: Any):
+    with pytest.raises(CadwynRenderError, match=r"factory.*default_factory"):
+        render_container_default(defaultdict(factory))
 
 
 def test__render_model__with_weird_types():
@@ -42,7 +224,7 @@ class ModelWithWeirdFields(A):
     baz: typing.Literal[MyEnum.foo] = Field()
     saz: {rend_ann}[str, StringConstraints(to_upper=True)] = Field()
     laz: {rend_ann}[int, None, {rend_interval}, None] = Field(gt=12)
-    taz: typing.Union[int, str, None] = Field(default_factory={rendered_lambda})
+    taz: typing.Union[int, str, type(None)] = Field(default_factory={rendered_lambda})
     naz: list[int] = Field(default=[1, 2, 3])
     gaz: {rend_ann}[bytes, Strict(strict=True), {rend_len}] = Field(title='Hewwo', min_length=3)
 '''
