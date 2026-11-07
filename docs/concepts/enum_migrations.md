@@ -22,6 +22,8 @@ It is recommended to add `enum` members in new versions as well.
 
 For every version, Cadwyn copies the enums that have `enum(...)` instructions. A copy behaves like the enum that you would write by hand for that version: it keeps aliases, `nonmember()` attributes, and `@member` functions, and `had()` takes the same values that you would write in the class body.
 
+`had(member=auto())` uses the enum's `_generate_next_value_`; use explicit values to preserve values from an earlier Cadwyn release. Plain enums and flags accept latest-version members with matching values (including flag combinations with no unknown bits), before trying `_missing_`. Request migrations still see the client version's members; endpoints get the latest members, so compare union fields to members rather than raw values.
+
 Cadwyn only knows the values of the members, not the arguments that they were defined with. So an enum with a custom `__new__` that sets attributes from more than the value (e.g. `mass` from `earth = (1, 5.97)` for `__new__(cls, value, mass)`) can't be copied, and Cadwyn raises a `SchemaGenerationError` at startup. Compute such attributes from the value instead, e.g. with a property:
 
 ```python

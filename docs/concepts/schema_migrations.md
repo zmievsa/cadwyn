@@ -38,9 +38,11 @@ The following code un-sets an attribute of a field, as if it never existed:
 {! ./docs_src/concepts/schema_migrations/block004.py [ln:1,6-13] !}
 ```
 
+Instructions reject unchanged values, but distinguish values such as `True` and `1`, `-0.0` and `0.0`, or `Decimal("1.0")` and `Decimal("1.00")`. They compare supported builtin values, containers, and type hints without calling user comparison methods; sequence and dict order matters, and unknown objects use identity. Passing the very same object is always redundant, even for NaN.
+
 **ALIAS WARNING:**
 
-Pydantic copies a field's `alias` into its `validation_alias` and `serialization_alias` unless you pass them. Like `Field()`, `.had(alias=...)` and `.didnt_have("alias")` change these copies too, so the older version uses the new key in requests, responses, and OpenAPI. The `validation_alias` and `serialization_alias` that you pass explicitly, in the field or in the instruction, stay as they are. `.didnt_have()` keeps the aliases of a `Field()` in `Annotated`, e.g. `Annotated[str, Field(alias="foo_key")]`, like its other attributes that don't only document the field, unless the module uses `from __future__ import annotations`. So an alias change needs request and response migrations that rename the key:
+Pydantic copies a field's `alias` into its `validation_alias` and `serialization_alias` unless you pass them. Like `Field()`, `.had(alias=...)` and `.didnt_have("alias")` change these copies too, so the older version uses the new key in requests, responses, and OpenAPI. Aliases equal to the original `alias` follow it too, even if passed explicitly in `Field()`. Other explicit aliases stay as they are; an instruction can also set them explicitly to keep the newer key, e.g. `.had(alias="legacy", validation_alias="a", serialization_alias="a")` for `Field(alias="a")`. `.didnt_have()` keeps the aliases of a `Field()` in `Annotated`, e.g. `Annotated[str, Field(alias="foo_key")]`, like its other attributes that don't only document the field, unless the module uses `from __future__ import annotations`. So an alias change needs request and response migrations that rename the key:
 
 ```python
 {! ./docs_src/concepts/schema_migrations/block005.py !}
@@ -73,6 +75,8 @@ The part that causes the aforementioned problem is Cadwyn's use of `exclude_unse
 ```
 
 In the older version, `BusinessInvoice.code` has `max_length=5`, while `Invoice.code` and `PersonalInvoice.code` stay unchanged. To change the field in all of these schemas, give the instruction to the parent: `schema(Invoice).field("code").had(max_length=5)`. Renames don't work this way. A pydantic model can't drop a field that it inherits, so `had(name=...)` in a subclass for a field that its parent still has, in that version or in an older one, fails at startup with an `InvalidGenerationInstructionError` that names the parent. Rename the field in the schema that declares it instead: `schema(Invoice).field("code").had(name="number")` renames it in `Invoice`, `BusinessInvoice`, and `PersonalInvoice`. If a subclass changed the field in a newer version (e.g. `schema(BusinessInvoice).field("code").had(max_length=5)`) or declares it again (e.g. `code: str` in `BusinessInvoice`), rename it in that subclass and in the parent in the same version. The subclass then keeps its own changes under the new name. Otherwise, it would keep the old field next to the renamed one, so Cadwyn fails at startup with an `InvalidGenerationInstructionError` that names the subclass. The same happens when a subclass gets a field with the old name from another base, e.g. a mixin.
+
+To preserve both names instead of renaming an inherited field, use `schema(Child).field("y").existed_as(type=..., info=Field(...))` with the attributes of `Child.x`. If `Child` redeclares `x`, also restore its type and attributes to the parent's values with `.had(...)` and remove child-only attributes with `.didnt_have(...)`, including constraints in `Annotated`. Deleting a field with `.didnt_exist` likewise fails if the schema would still inherit it: delete it from the base in the same version too.
 
 The changes of a parent's field also apply to its subclasses, including the ones that changed the field themselves, with these exceptions:
 

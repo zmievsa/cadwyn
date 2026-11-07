@@ -118,6 +118,12 @@ At this point, you have described not only how the schemas have changed, but als
 
 If the body is a list or a dict of schemas, such as `list[InvoiceCreateRequest]`, or a tuple or a set of them, `request.body` holds the instances of the schemas of the client's version instead of dicts. A migration can change their attributes or replace them with dicts. After the migrations, Cadwyn passes the fields that are set and the extra keys of the instances in lists and dicts to the latest version, so it gets what the client has sent, as long as Cadwyn can be sure that it's right (see the [known limitations](../theory/design_decisions.md#known-limitations)).
 
+Computed fields are left out of model request bodies, including nested models: migrations that need their values must compute them, and endpoints should not expect them in `model_extra`. Models that override `model_dump()` keep their previous dumping behavior (see [known limitations](../theory/design_decisions.md#known-limitations)).
+
+Cadwyn follows FastAPI's `strict_content_type` setting when reading bodies. Send `Content-Type: application/json` for JSON; without it, migrations may receive raw bytes rather than a dict. To accept JSON without that header, set `strict_content_type=False` on the app, router, or route.
+
+If Cadwyn restores validation aliases before validating the latest request, it solves the latest dependencies once and reports that restored body's errors in `CadwynHeadRequestValidationError`. A field with a default supplied only by a custom core schema no longer falls back to that default for a rejected value: remove the value in a request migration if that fallback is intended.
+
 A request migration can also remove a body that is not a form: if it sets `request.body = None`, the latest version gets the request without a body, so the defaults of its body params apply. If no migration assigns `request.body`, an omitted body stays omitted, and on FastAPI 0.151.0 and newer, a JSON `null` body stays `null`.
 
 But wait... What happens to the `Invoice` responses? Your business logic now returns `created_at`, which means clients using previous API versions will be affected. Cadwyn solves this as well by allowing you to define response migrations. Requests are migrated forward in versions while responses are migrated backward in versions. In other words, your business logic returns a response of the latest version and Cadwyn will use your response migrations to migrate the response back to the version of your client's request:
@@ -183,6 +189,8 @@ Cadwyn can migrate more than just request bodies.
 
 If a migration reads an uploaded file from `form`, it must `seek` the file back to where the latest version should start reading it, usually `upload.file.seek(0)`. Otherwise, the latest version gets the file as the migration left it, e.g. empty.
 
+Uploads of versioned routes remain open through background tasks, including uploads that migrations add and later replace or remove. Once the versioned endpoint starts, Cadwyn shields cleanup from cancellation, gives each upload three seconds to close, and logs a warning on timeout; cancellation before that point and unversioned routes depend on FastAPI's cleanup.
+
 `ResponseInfo` has the following interfaces to migrate responses:
 
 * `body: Any`
@@ -231,6 +239,8 @@ Often you will need to migrate your data outside of routing, manually. For examp
 ```
 
 The returned `body_from_2000_01_01` is your data passed through all converters (as it would be when returned from your route) and wrapped in the `2000-01-01` version of `UserResource`. Because the data is wrapped, you can include Pydantic’s defaults.
+
+Like route responses, `migrate_response_body()` restores validation aliases only when missing keys would certainly fail validation, such as required fields or forbidden extras. In other cases, make migrations set validation keys explicitly, e.g. `v` for `Field(alias="x", validation_alias="v")`. Restored bodies are validated once and report their own errors; aliased fields whose defaults come only from custom core schemas keep supplied values or reject invalid ones instead of silently using defaults. To request the default, delete the value in a response migration, or from `latest_body` before calling `migrate_response_body()`.
 
 #### StreamingResponse and FileResponse migrations
 
