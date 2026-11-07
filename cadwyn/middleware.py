@@ -9,9 +9,10 @@ from typing import Annotated, Any, Literal, Optional, Protocol, Union
 
 import fastapi
 from fastapi import Request
-from starlette.datastructures import MutableHeaders
-from starlette.middleware.base import _CachedRequest
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
+from starlette.responses import Response
+from starlette.types import ASGIApp
+from typing_extensions import override
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn.structure.common import VersionType
@@ -86,7 +87,7 @@ def _generate_api_version_dependency(
     return api_version_dependency
 
 
-class VersionPickingMiddleware:
+class VersionPickingMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app: ASGIApp,
@@ -95,26 +96,21 @@ class VersionPickingMiddleware:
         api_version_default_value: Union[str, Callable[[Request], Awaitable[str]], None],
         api_version_var: ContextVar[Union[VersionType, None]],
         api_version_manager: VersionManager,
+        dispatch: Union[DispatchFunction, None] = None,
     ) -> None:
-        if hasattr(self, "dispatch"):
-            raise TypeError(
-                "VersionPickingMiddleware no longer supports dispatch overrides. "
-                "Override the ASGI __call__(scope, receive, send) method instead."
-            )
-        self.app = app
+        super().__init__(app, dispatch)
 
         self.api_version_parameter_name = api_version_parameter_name
         self._api_version_manager = api_version_manager
         self.api_version_var = api_version_var
         self.api_version_default_value = api_version_default_value
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        # Preserve body reads by a callable default, just as BaseHTTPMiddleware did.
-        request = _CachedRequest(scope, receive)
+    @override
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
         # We handle api version at middleware level because if we try to add a Dependency to all routes, it won't work:
         # we use this header for routing so the user will simply get a 404 if the header is invalid.
         api_version = self._api_version_manager.get(request)
@@ -127,12 +123,11 @@ class VersionPickingMiddleware:
             DEFAULT_API_VERSION_VAR.set(api_version)
 
         self.api_version_var.set(api_version)
+        response = await call_next(request)
 
-        async def send_with_version(message: Message) -> None:
-            if message["type"] == "http.response.start" and api_version is not None:
-                # Return the matched version, which can differ from the requested one after waterfalling.
-                headers = MutableHeaders(scope=message)
-                headers[self.api_version_parameter_name] = scope.get("cadwyn.api_version", api_version)
-            await send(message)
+        if api_version is not None:
+            # We return it because we will be returning the **matched** version, not the requested one.
+            # In date-based versioning with waterfalling, it makes sense.
+            response.headers[self.api_version_parameter_name] = request.scope.get("cadwyn.api_version", api_version)
 
-        await self.app(scope, request.wrapped_receive, send_with_version)
+        return response

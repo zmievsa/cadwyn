@@ -99,13 +99,3 @@ You can pass a title and/or a description to the `Cadwyn()` constructor. It is e
 Cadwyn automatically converts your data to the correct version and has "version checks" when dealing with side effects as described in [the section above](./version_changes.md#version-changes-with-side-effects). It can only do so using a special [context variable](https://docs.python.org/3/library/contextvars.html) that stores the current API version.
 
 You can also pass a different compatible `contextvar` to your `cadwyn.VersionBundle()` constructor.
-
-The matched version stays available in endpoints, background tasks, and exception handlers. Since 9.0, Cadwyn's version middleware runs in the same task as the downstream app. Outer pure ASGI middleware and server error handlers therefore also see context changes made downstream, including the matched version after waterfalling. Previously, they saw the requested version. Read the original header or path if you need the version the client requested. A `BaseHTTPMiddleware` of your own still imposes its own context isolation.
-
-## Custom version-picking middleware
-
-Pass a subclass of `cadwyn.middleware.VersionPickingMiddleware` as `versioning_middleware_class` to `Cadwyn()` to customize version selection. Since 9.0, it is pure ASGI middleware, so replace `dispatch(request, call_next)` overrides and the `dispatch=` constructor argument with an async `__call__(scope, receive, send)` method. Old `dispatch` overrides and arguments raise `TypeError` rather than silently losing your version-selection logic.
-
-In `__call__`, forward non-HTTP scopes to `self.app(scope, receive, send)`. For HTTP requests, construct a `Request(scope, receive)` if needed, set `self.api_version_var`, and await `self.app(scope, receive, send)` to replace version selection. To extend the built-in selection instead, await `super().__call__(scope, receive, send)`. Response headers can be changed by wrapping `send` and editing the `http.response.start` message.
-
-The middleware forwards streaming response chunks without buffering and lets FastAPI finish upload cleanup when sending fails. Exceptions propagate after request cleanup, and original exception groups reach outer middleware unchanged. If your Starlette version previously unwrapped single-member exception groups in `BaseHTTPMiddleware`, use `except*` to handle their members. On ASGI HTTP 2.4 and newer, Starlette's `StreamingResponse` converts a send `OSError` into `starlette.requests.ClientDisconnect`; handlers that previously caught only `OSError` must also handle `ClientDisconnect`.

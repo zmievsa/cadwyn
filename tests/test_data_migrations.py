@@ -20,7 +20,7 @@ from contextvars import ContextVar
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum, Flag, FlagBoundary, IntEnum
-from io import BytesIO, RawIOBase, StringIO, UnsupportedOperation
+from io import BufferedRandom, BytesIO, FileIO, RawIOBase, StringIO, UnsupportedOperation
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Optional, Self, Union, cast
 from uuid import UUID
@@ -85,6 +85,8 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import core_schema
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.formparsers import MultiPartParser
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import ClientDisconnect
 from starlette.responses import StreamingResponse
 from typing_extensions import TypeAliasType, TypedDict, override
@@ -8110,7 +8112,7 @@ _UPLOAD_OUTCOMES = [
     pytest.param(
         _stream_the_upload,
         _ASGIRequestDriver(fail_sending="http.response.body"),
-        ClientDisconnect,
+        OSError,
         [len(_LARGE_UPLOAD) // 4],
         id="disconnect_during_stream",
     ),
@@ -8153,10 +8155,18 @@ async def _run_request(driver: _ASGIRequestDriver, app: Any, headers: dict[str, 
             await driver(app, headers)
 
 
-@pytest.mark.parametrize("route_kind", ["plain_fastapi", "unversioned", "failing_dependency"])
+@pytest.mark.parametrize(
+    ("route_kind", "middleware_position"),
+    [
+        ("plain_fastapi", "none"),
+        *itertools.product(["unversioned", "failing_dependency"], ["none", "inner", "outer"]),
+    ],
+)
 @pytest.mark.parametrize("fail_sending", ["http.response.start", "http.response.body"])
 def test__uploads__disconnect_before_versioned_endpoint_wrapper__should_close_disk_backed_files(
-    route_kind: Literal["plain_fastapi", "unversioned", "failing_dependency"], fail_sending: str
+    route_kind: Literal["plain_fastapi", "unversioned", "failing_dependency"],
+    middleware_position: Literal["none", "inner", "outer"],
+    fail_sending: str,
 ):
     uploads: list[UploadFile] = []
 
@@ -8168,7 +8178,21 @@ def test__uploads__disconnect_before_versioned_endpoint_wrapper__should_close_di
     async def endpoint(upload: UploadFile):
         return {"size": upload.size}
 
-    app = FastAPI() if route_kind == "plain_fastapi" else Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+    class PassThrough(BaseHTTPMiddleware):
+        @override
+        async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+            return await call_next(request)
+
+    app = (
+        FastAPI()
+        if route_kind == "plain_fastapi"
+        else Cadwyn(
+            versions=VersionBundle(Version("2000-01-01")),
+            middleware=[Middleware(PassThrough)] if middleware_position == "inner" else None,
+        )
+    )
+    if middleware_position == "outer":
+        app.add_middleware(PassThrough)
     router = APIRouter()
     router.post("/test", dependencies=[Depends(capture_upload)])(endpoint)
     if isinstance(app, Cadwyn) and route_kind == "failing_dependency":
@@ -8192,6 +8216,30 @@ def test__uploads__disconnect_before_versioned_endpoint_wrapper__should_close_di
                 await upload.close()
 
     asyncio.run(disconnect_and_check_uploads())
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("handler_exception", [OSError, ClientDisconnect])
+def test__uploads__send_failure_with_registered_handler__should_keep_original_oserror(
+    streaming: bool, handler_exception: type[Exception]
+):
+    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+
+    @app.exception_handler(handler_exception)
+    async def handle_disconnect(request: Request, exc: Exception):
+        raise AssertionError("A send failure must not invoke registered exception handlers")
+
+    @app.post("/test")
+    async def endpoint(upload: UploadFile):
+        if streaming:
+
+            async def chunks():
+                yield b"unchanged"
+
+            return StreamingResponse(chunks())
+        return Response(b"unchanged")
+
+    asyncio.run(_run_request(_ASGIRequestDriver(fail_sending="http.response.body"), app, {}, OSError))
 
 
 @pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
@@ -8307,9 +8355,6 @@ def test__form_migration__with_upload_put_into_the_form_of_router_outside_cadwyn
         api_version_var.set("2000-01-01")
         return await call_next(request)
 
-    # This app still uses BaseHTTPMiddleware: its send error doesn't reach StreamingResponse.
-    if expected_error is ClientDisconnect:
-        expected_error = OSError
     asyncio.run(_run_request(driver, app, {}, expected_error))
 
     assert reads == expected_reads
@@ -8337,6 +8382,50 @@ class _UploadThatNeverCloses(UploadFile):
     @override
     async def close(self) -> None:
         await anyio.sleep_forever()
+
+
+def test__uploads__slow_file_cleanup__should_bound_shielding_and_warn(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+):
+    class SlowClosingFile(BufferedRandom):
+        @override
+        def close(self) -> None:
+            if not self.closed:
+                time_module.sleep(4)
+            super().close()
+
+    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+    uploads: list[UploadFile] = []
+
+    async def replace_file(upload: UploadFile, other: UploadFile):
+        await upload.close()
+        upload.file = SlowClosingFile(FileIO(tmp_path / "slow.bin", "w+"))
+        uploads.extend((upload, other))
+
+    @app.post("/test", dependencies=[Depends(replace_file)])
+    async def endpoint():
+        return "unchanged"
+
+    async def run_request():
+        try:
+            with anyio.fail_after(30):
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                    response = await client.post("/test", files={"upload": _LARGE_UPLOAD, "other": _LARGE_UPLOAD})
+            assert response.status_code == 200
+            assert response.json() == "unchanged"
+            assert len(uploads) == 2
+            assert not uploads[1].file.closed
+            assert [record.getMessage() for record in caplog.records] == [
+                (
+                    "Cadwyn couldn't finish closing the request's uploaded files within 3 seconds, "
+                    "so some uploads may stay open"
+                )
+            ]
+        finally:
+            for upload in uploads:
+                await upload.close()
+
+    asyncio.run(run_request())
 
 
 def test__form_migration__with_upload_that_never_closes__should_finish_the_request_and_log_it(

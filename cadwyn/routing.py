@@ -1,10 +1,13 @@
 import bisect
 from collections.abc import Sequence
+from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from functools import cached_property
 from logging import getLogger
+from types import TracebackType
 from typing import Any, Union
 
+import anyio
 from fastapi.routing import APIRouter
 from starlette.datastructures import URL
 from starlette.responses import RedirectResponse
@@ -16,8 +19,29 @@ from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn._utils import same_method_definition_as_in
 from cadwyn.middleware import APIVersionFormat
 from cadwyn.structure.common import VersionType
+from cadwyn.structure.versions import _UPLOAD_CLOSE_TIMEOUT_SECONDS
 
 _logger = getLogger(__name__)
+
+
+class _ShieldedFileStack(AsyncExitStack):
+    @override
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        suppressed: bool | None = False
+        with anyio.move_on_after(_UPLOAD_CLOSE_TIMEOUT_SECONDS, shield=True) as cancel_scope:
+            suppressed = await super().__aexit__(exc_type, exc_value, traceback)
+        if cancel_scope.cancelled_caught:
+            _logger.warning(
+                "Cadwyn couldn't finish closing the request's uploaded files within %s seconds, "
+                "so some uploads may stay open",
+                _UPLOAD_CLOSE_TIMEOUT_SECONDS,
+            )
+        return suppressed
 
 
 class _RootCadwynAPIRouter(APIRouter):
@@ -93,7 +117,16 @@ class _RootCadwynAPIRouter(APIRouter):
             # We use this order because if versioned routes go first and there is a versioned route that is
             # the same as an unversioned route -- the unversioned one becomes impossible to match.
             routes = self.unversioned_routes + routes
-        await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
+        file_stack = scope.get("fastapi_middleware_astack")
+        if scope["type"] == "http" and isinstance(file_stack, AsyncExitStack):
+            # FastAPI owns this stack and uses it only for files, not yield dependencies. Drain it here, in
+            # the same task and with the same exception, shielding only its exit from middleware cancellation.
+            # FastAPI's enclosing middleware then exits the already empty stack as usual.
+            async with _ShieldedFileStack() as cleanup:
+                cleanup.push_async_exit(file_stack)
+                await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
+        else:
+            await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
 
     @cached_property
     def versions(self):
