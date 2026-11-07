@@ -2621,6 +2621,51 @@ def test__router_generation__field_didnt_have_default_that_annotation_metadata_l
         assert versioned_client.post("/test", json={"foo": "ab"}).json() == {"foo": "ab"}
 
 
+class ParentWhoseFieldGetsRenamed(BaseModel):
+    kind: str
+
+
+class ChildThatRedeclaresFieldThatParentRenames(ParentWhoseFieldGetsRenamed):
+    kind: Literal["child"]  # ty: ignore[invalid-mutable-override]
+
+
+def test__router_generation__parent_renamed_field_that_route_model_redeclares__should_fail_at_startup(
+    router: VersionedAPIRouter, create_versioned_app: CreateVersionedApp
+):
+    @router.post("/test")
+    async def route(payload: ChildThatRedeclaresFieldThatParentRenames):
+        raise NotImplementedError
+
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match=re.escape(
+            '"ChildThatRedeclaresFieldThatParentRenames" still has it as "kind" next to "type", because '
+            '"ChildThatRedeclaresFieldThatParentRenames" declares "kind" itself or changed it in a newer version.'
+        ),
+    ):
+        create_versioned_app(version_change(schema(ParentWhoseFieldGetsRenamed).field("kind").had(name="type")))
+
+
+def test__router_generation__parent_and_route_model_renamed_field_that_route_model_redeclares__should_rename_both(
+    router: VersionedAPIRouter, create_versioned_clients: CreateVersionedClients
+):
+    @router.post("/test")
+    async def route(payload: ChildThatRedeclaresFieldThatParentRenames):
+        return payload.model_dump()
+
+    clients = create_versioned_clients(
+        version_change(
+            schema(ParentWhoseFieldGetsRenamed).field("kind").had(name="type"),
+            schema(ChildThatRedeclaresFieldThatParentRenames).field("kind").had(name="type"),
+        )
+    )
+
+    old_schema = clients["2000-01-01"].get("/openapi.json?version=2000-01-01").json()["components"]["schemas"]
+    assert list(old_schema["ChildThatRedeclaresFieldThatParentRenames"]["properties"]) == ["type"]
+    assert old_schema["ChildThatRedeclaresFieldThatParentRenames"]["required"] == ["type"]
+    assert clients["2001-01-01"].post("/test", json={"kind": "child"}).json() == {"kind": "child"}
+
+
 def test__router_generation__updating_request_depends(
     router: VersionedAPIRouter, create_versioned_app: CreateVersionedApp
 ):
