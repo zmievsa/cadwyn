@@ -1273,11 +1273,11 @@ def test__schema_field_had__parent_renamed_field_with_mutable_default__should_no
     assert child.old_foo.items == []  # ty: ignore[unresolved-attribute]
 
 
-def _child_rename_error(model: str, inherited: str, parent: str, advice: str) -> str:
+def _child_rename_error(model: str, inherited: str, parent: str, advice: str, version: str = "2000-01-01") -> str:
     return (
-        f'You tried to rename the field "foo" of "{model}" to "old_foo" in "MyVersionChange", but "{model}" still '
-        f'inherits "{inherited}" from "{parent}", so it would have both fields. Pydantic models can\'t drop the '
-        f"fields that they inherit. {advice}"
+        f'You tried to rename the field "foo" of "{model}" to "old_foo" in "MyVersionChange", but in version '
+        f'"{version}" "{model}" still inherits "{inherited}" from "{parent}", so it would have both fields. Pydantic '
+        f"models can't drop the fields that they inherit. {advice}"
     )
 
 
@@ -1286,6 +1286,22 @@ def _rename_in_parent_instead(parent: str) -> str:
         f'Rename it in "{parent}" instead, which renames it in its subclasses too. If a subclass changed the field '
         f'in a newer version, rename it in that subclass and in "{parent}" in the same version.'
     )
+
+
+class ChildOfSchemaWithOneIntField(SchemaWithOneIntField):
+    pass
+
+
+class MixinWithIntFoo:
+    foo: int
+
+
+class ParentWithStrFoo(BaseModel):
+    foo: str
+
+
+class ChildOfMixinAndParentWithFoo(MixinWithIntFoo, ParentWithStrFoo):
+    foo: int  # ty: ignore[invalid-attribute-override]
 
 
 class MixinWithFooAnnotation:
@@ -1394,9 +1410,39 @@ class ChildThatRedeclaresFooHiddenByParent(ParentThatHidesFooAsClassVar):
                 [schema(InheritedFieldChild).field("old_foo").had(name="foo")],
             ],
             _child_rename_error(
-                "InheritedFieldChild", "foo", "InheritedFieldParent", _rename_in_parent_instead("InheritedFieldParent")
+                "InheritedFieldChild",
+                "foo",
+                "InheritedFieldParent",
+                _rename_in_parent_instead("InheritedFieldParent"),
+                version="2001-01-01",
             ),
             id="child_renamed_inherited_field_in_newer_version_than_rename_back",
+        ),
+        pytest.param(
+            [
+                [
+                    schema(ChildOfSchemaWithOneIntField).field("foo").had(name="old_foo"),
+                    schema(SchemaWithOneIntField).field("foo").didnt_exist,
+                ],
+                [schema(SchemaWithOneIntField).field("foo").existed_as(type=int)],
+            ],
+            _child_rename_error(
+                "ChildOfSchemaWithOneIntField",
+                "foo",
+                "SchemaWithOneIntField",
+                'Rename it in "SchemaWithOneIntField" in the same version too.',
+            ),
+            id="parent_deleted_field_then_got_it_back_in_older_version",
+        ),
+        pytest.param(
+            [[schema(ChildOfMixinAndParentWithFoo).field("foo").had(name="old_foo")]],
+            _child_rename_error(
+                "ChildOfMixinAndParentWithFoo",
+                "foo",
+                "ParentWithStrFoo",
+                'Rename it in "ParentWithStrFoo" in the same version too.',
+            ),
+            id="child_of_mixin_and_parent_renamed_field_that_both_declare",
         ),
     ],
 )
@@ -1526,6 +1572,18 @@ def test__schema_field_had_name__child_renamed_inherited_field_and_deleted_new_n
     child = schemas["2000-01-01"][InheritedFieldChild]
     assert list(child.model_fields) == ["foo", "bar"]
     assert child.model_validate({"foo": "v"}).foo == "v"
+
+
+def test__schema_field_had_name__child_renamed_inherited_field_to_class_var__should_keep_only_inherited_field(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(ChildOfSchemaWithOneIntField).field("foo").had(name="old_foo", type=ClassVar[int]))
+    )
+
+    child = schemas["2000-01-01"][ChildOfSchemaWithOneIntField]
+    assert list(child.model_fields) == ["foo"]
+    assert child.model_validate({"foo": 1}).model_dump() == {"foo": 1}
 
 
 def test__schema_field_had_name__renamed_field_and_added_field_with_old_name__should_keep_both_fields(
