@@ -695,14 +695,13 @@ def _is_type_position_in_generic(origin: Any, index: int) -> bool:
 
 def _rebuild_generic_alias(annotation: Any, new_args: tuple[Any, ...]) -> Any:
     """Rebuild a generic alias such as list[Item] or Optional[Item] with new args"""
-    from typing_inspection.typing_objects import is_unpack
-
     origin = get_origin(annotation)
     # A bare `typing.Callable` has nothing to version and cannot be rebuilt as `Callable[()]`
     if origin is collections.abc.Callable and not new_args:
         return annotation
-    # Classvar and Unpack do not support generic tuple arguments
-    if origin is ClassVar or is_unpack(origin):
+    # The special forms that take a single arg (e.g. ClassVar, Final, TypeGuard, and Unpack) reject a tuple of it.
+    # A single arg is also what the user's code passed to any other generic, e.g. `list[Item]`
+    if len(new_args) == 1:
         return origin[new_args[0]]
     return origin[new_args]
 
