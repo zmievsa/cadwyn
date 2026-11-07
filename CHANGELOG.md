@@ -5,6 +5,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ## [Unreleased]
 
+### Breaking
+
+- Removed the deprecated `openapi_prefix` argument of `Cadwyn()` (#488). FastAPI 0.145.0 had already removed it. Passing it now raises a `TypeError` on every FastAPI version, including the ones before 0.145.0 that still accept it. Set the root path on your server instead, e.g. with `root_path` or your proxy's prefix.
+
 ## [8.2.0]
 
 ### Possibly breaking
