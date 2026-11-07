@@ -9,7 +9,6 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Breaking
 
-- Enum copies now retain unchanged members' attributes assigned after class creation or by a metaclass, and preserve enum-valued member values, including those passed to `had()` ([#589](https://github.com/zmievsa/cadwyn/issues/589)). JSON serialization and OpenAPI values stay the same, but copies with a plain inner `Enum` now reject its raw values like the original enum does. Return outer members from endpoints, or define the outer members and `had()` values with the inner members' `.value` explicitly to keep accepting raw values.
 - Cadwyn now requires Python 3.11+ and Pydantic 2.12.0+ ([#570](https://github.com/zmievsa/cadwyn/issues/570)). Upgrade them, or stay on Cadwyn 8.x.
 - Removed `/changelog`, `generate_changelog()`, and `hidden()`; remove their calls and `Cadwyn()` changelog arguments, keeping the wrapped instructions. `changelog_url=None` and `include_changelog_url_in_schema=False` still work with a `DeprecationWarning` until 10.0. Generate your own changelog if needed; `backports-strenum` is no longer a dependency ([#487](https://github.com/zmievsa/cadwyn/issues/487)).
 - Removed `Cadwyn(openapi_prefix=...)`; configure your server's root path instead ([#488](https://github.com/zmievsa/cadwyn/issues/488)).
@@ -53,6 +52,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
+- Enum copies now preserve unchanged members' attributes assigned outside construction and keep inner enum members as values, including values passed to `had()`. Constructor state is rebuilt for each version, and raw-value acceptance, JSON serialization, and OpenAPI values are preserved ([#589](https://github.com/zmievsa/cadwyn/issues/589)).
 - Responses whose validation aliases are restored now run model validators once, avoiding duplicated side effects in routes and `migrate_response_body()` ([#565](https://github.com/zmievsa/cadwyn/issues/565)).
 - Supported request and response bodies with versioned plain enums or flags no longer fail with a 500; omitted enum defaults work on FastAPI before 0.148 when that version has the member. See [known limitations](https://docs.cadwyn.dev/theory/design_decisions/#known-limitations) for strict responses and unsupported containers ([#521](https://github.com/zmievsa/cadwyn/issues/521)).
 - On FastAPI 0.153.0+, unions of form models no longer fail with a 500 for supported container fields; optional unions also receive their data on 0.161.0+ ([#532](https://github.com/zmievsa/cadwyn/issues/532)).

@@ -3459,23 +3459,80 @@ def test__router_generation__enum_valued_members__should_serialize_members_and_k
         }
 
 
-def test__router_generation__plain_enum_valued_member__should_reject_raw_value_like_original_enum(
+@pytest.mark.parametrize("inner", [PlainInnerEnum, StringInnerEnum, IntegerInnerEnum])
+def test__router_generation__enum_valued_member__should_keep_accepting_raw_responses(
     router: VersionedAPIRouter,
     create_versioned_clients: CreateVersionedClients,
+    inner: Any,
 ):
     class Outer(Enum):
-        a = PlainInnerEnum.a
-        b = PlainInnerEnum.b
+        a = inner.a
+        b = inner.b
 
     @router.get("/raw", response_model=Outer)
     def read_raw_value():
-        return "a"
+        return inner.a.value
 
     clients = create_versioned_clients(version_change(enum(Outer).didnt_have("b")))
 
     for versioned_client in clients.values():
-        with pytest.raises(ResponseValidationError):
-            versioned_client.get("/raw")
+        response = versioned_client.get("/raw")
+        assert response.status_code == 200
+        assert response.json() == inner.a.value
+
+
+@pytest.mark.parametrize("inner", [PlainInnerEnum, StringInnerEnum, IntegerInnerEnum])
+def test__router_generation__enum_valued_member__should_accept_raw_requests_as_latest_members(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    inner: Any,
+):
+    class Outer(Enum):
+        a = inner.a
+        b = inner.b
+
+    @router.post("/echo", response_model=Outer)
+    def echo(value: Outer = Body()):
+        assert value is Outer.a
+        return inner.a.value
+
+    clients = create_versioned_clients(version_change(enum(Outer).didnt_have("b")))
+
+    for versioned_client in clients.values():
+        response = versioned_client.post("/echo", json=inner.a.value)
+        assert response.status_code == 200
+        assert response.json() == inner.a.value
+
+
+@pytest.mark.parametrize("inner", [PlainInnerEnum, StringInnerEnum, IntegerInnerEnum])
+def test__router_generation__enum_valued_member__should_migrate_raw_requests_to_latest_members(
+    router: VersionedAPIRouter,
+    create_versioned_clients: CreateVersionedClients,
+    inner: Any,
+):
+    class Outer(Enum):
+        a = inner.a
+        b = inner.b
+
+    migrated_values = []
+
+    @convert_request_to_next_version_for("/echo", ["POST"])
+    def migrate(request: RequestInfo):
+        migrated_values.append(request.body.value)
+        request.body = Outer.a
+
+    @router.post("/echo", response_model=Outer)
+    def echo(value: Outer = Body()):
+        assert value is Outer.a
+        return inner.a.value
+
+    clients = create_versioned_clients(version_change(enum(Outer).didnt_have("b"), migrate=migrate))
+
+    for versioned_client in clients.values():
+        response = versioned_client.post("/echo", json=inner.a.value)
+        assert response.status_code == 200
+        assert response.json() == inner.a.value
+    assert migrated_values == [inner.a]
 
 
 def test__router_generation__using_unversioned_schema_in_body(

@@ -4858,8 +4858,11 @@ def _get_own_slot_names(cls: type) -> tuple[str, ...]:
 
 
 def _restore_member_state(copied: Enum, original: Enum) -> None:
-    """Keep the state of an unchanged member, including attributes assigned outside its constructor."""
+    """Restore missing state without replacing what construction computed for this version."""
+    copied_state = _get_member_state(copied)
     for key, value in _get_member_state(original).items():
+        if copied_state.get(key, _UNSET_SLOT) is not _UNSET_SLOT:
+            continue
         if key[0] == "attribute":
             vars(copied)[key[1]] = value
         elif value is not _UNSET_SLOT:
@@ -4881,17 +4884,28 @@ def _take_head_members_by_value(enum_copy: type[Enum], head_enum: type[Enum]) ->
     """Make the copy of a plain enum or flag take the members of its head enum that have the values of its members.
 
     The responses that the endpoints return have the head members, and so do the defaults of params. Pydantic looks up
-    the members of `str`, `int`, and `float` enums by their values, so we leave them as they are. For plain enums and
-    flags, it only calls `_missing_`, so their copies would reject the head members. The enum's own `_missing_` gets
-    the head members that the copy has no member with the same value for, as before.
+    the members of `str`, `int`, and `float` enums by their values, so we leave them as they are unless their values
+    are themselves enums. For plain enums and flags, it only calls `_missing_`, so their copies would reject the
+    head members. The enum's own `_missing_` gets the head members that the copy has no member with the same value
+    for, as before.
+
+    Enum-valued members also accept their inner raw values, which copies used to store as their values.
     """
-    if is_enum_looked_up_by_value(head_enum):
+    if is_enum_looked_up_by_value(head_enum) and not any(
+        isinstance(member.value, Enum) for member in enum_copy.__members__.values()
+    ):
         return
     inherited_missing = enum_copy._missing_
 
     def _missing_(cls: type[Enum], value: object) -> Any:
         if isinstance(value, head_enum) and (member := get_member_with_same_value(cls, value)) is not None:
             return member
+        for member in cls.__members__.values():
+            if isinstance(member.value, Enum):
+                raw_value = member.value.value
+                # Match enum lookup: identity handles NaN, and equality also accepts e.g. True for 1.
+                if raw_value is value or raw_value == value:
+                    return member
         return inherited_missing(value)
 
     enum_copy._missing_ = classmethod(_missing_)  # ty: ignore[invalid-assignment]

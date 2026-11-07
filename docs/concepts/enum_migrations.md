@@ -22,9 +22,11 @@ It is recommended to add `enum` members in new versions as well.
 
 For every version, Cadwyn copies the enums that have `enum(...)` instructions. A copy behaves like the enum that you would write by hand for that version: it keeps aliases, `nonmember()` attributes, and `@member` functions, and `had()` takes the same values that you would write in the class body.
 
-Unchanged members also keep attributes assigned after class creation or by a metaclass, including slots. Replaced members and aliases that become canonical members are constructed for their version instead of inheriting the old member's state.
+Copies retain the state that construction computes for their version, including attributes such as a member's position in the enum. Unchanged members also keep missing attributes and slots assigned after class creation or by a metaclass. Replaced members and aliases that become canonical members are constructed for their version instead of inheriting the old member's state.
 
-Enum-valued members keep the inner enum member as their value, and `had()` also accepts these values as written. Pydantic serializes them to the inner member's JSON value and documents that value in OpenAPI, as it does for the original enum. If the inner enum is a plain `Enum`, Pydantic rejects its raw value (e.g. `"a"` for `Inner.a`): return the outer member from endpoints instead. To keep accepting raw values, define the outer enum and its `had()` instructions with the inner members' `.value` explicitly.
+Enum-valued members keep the inner enum member as their value, and `had()` also accepts these values as written. Generated copies still accept the inner members' raw values in requests and responses, so JSON serialization and OpenAPI values stay the same.
+
+Cadwyn does not replay a metaclass declared only on the enum itself: metaclasses can require class-creation arguments that the enum has not stored. Members added with `had()` and aliases that become canonical members can therefore lack attributes assigned only by the metaclass. Use a property or member constructor for attributes that these members need.
 
 `had(member=auto())` uses the enum's `_generate_next_value_`; use explicit values to preserve values from an earlier Cadwyn release. Plain enums and flags accept latest-version members with matching values (including flag combinations with no unknown bits), before trying `_missing_`. Request migrations still see the client version's members; endpoints get the latest members, so compare union fields to members rather than raw values.
 
