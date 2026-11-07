@@ -73,6 +73,8 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - With FastAPI 0.161.0 or newer, endpoints that take a union of form models no longer fail with a 500 error when the body has a list, set, or tuple in a field that a model of the union takes as a single value or as an extra field, e.g. a field of type `Any` that a validator or a migration fills with a list. Endpoints that take an optional union of form models (e.g. `body: Annotated[Optional[Union[ModelA, ModelB]], Form()] = None`) get the form data in this case instead of `None`. The endpoint gets the value, like in FastAPI itself. If a model of the union takes the field as a single value and another one takes it as repeated values or as an extra field, or a form model outside the union (e.g. of a dependency override) shares the body, the request still fails, but with a `CadwynError` that names the field and the models instead of a `CadwynHeadRequestValidationError` (#532).
 - With FastAPI 0.153.0 to 0.160.x, endpoints that take a union of form models no longer fail with a 500 error when a model of the union has a `set`, `frozenset`, or `tuple` field (#532).
 - Copying a model with a `Final[...]` annotation (e.g. `x: Final[int] = 1` in a module without `from __future__ import annotations`) no longer crashes at startup with a `TypeError` when the model or its subclass has schema instructions. The same goes for the other forms that take a single type, such as `TypeGuard` and `TypeIs` (e.g. in `Callable[[Any], TypeGuard[Item]]`) and `ClassVar[Final[...]]` (#576).
+- Background tasks can now read the `UploadFile` params of a request. Before, Cadwyn closed the uploaded files when the endpoint returned, so the task failed with `ValueError: I/O operation on closed file`. Cadwyn now closes the uploads of versioned routes once, after the response and its background tasks, also when the client disconnects or the request gets cancelled.
+- Uploads that request migrations put into the form (e.g. `request.form[:] = [("upload", UploadFile(...))]`) are now closed after the request. Before, nothing closed them, so their files stayed open.
 
 ### Added
 
@@ -87,10 +89,6 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Fixed
 
 - Request bodies with `Json[...]` fields that get a string or a member of a string enum (e.g. `Json[str]`, `Json[Any]` with `"\"abc\""`, or `Json[Kind]` for `class Kind(str, Enum)`) no longer fail with a 500 error in the latest API version and in the older versions whose body models are the same as the latest version's, including when a request migration has encoded other `Json[...]` values of the body itself (#538).
-
-### Fixed
-
-- Background tasks can now read the `UploadFile` params of a request. Before, Cadwyn closed the uploaded files when the endpoint returned, so the task failed with `ValueError: I/O operation on closed file`. FastAPI closes them after the response, as it does without Cadwyn.
 
 ## [8.2.0]
 
