@@ -7,6 +7,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Breaking
 
+- Endpoints whose request body has a `Json[...]` field that accepts strings and other JSON values (e.g. `Json[Any]`, `Json[Union[str, int]]`, or `Json[Optional[str]]`) now get the string that the client has sent, like in FastAPI itself, in the latest API version and in the older versions whose body models are the same as the latest version's. Before, Cadwyn parsed the string as JSON once more and gave the endpoint another value with a 200, e.g. `123` instead of `"123"`, or `None` instead of `"null"`. `Json[str]` fields that get a string with JSON in it now get it as it is too (e.g. `'"x"'` instead of `"x"`). If your clients encode these values twice to get the old values, make them encode the values once. Strings that request migrations set behave as before, so migrations that encode `Json[...]` values themselves with `json.dumps()` keep working. [Known limitations](https://docs.cadwyn.dev/theory/design_decisions/#known-limitations) lists the bodies in which Cadwyn still parses these strings once more (#538).
 - Removed the deprecated `openapi_prefix` argument of `Cadwyn()` (#488). FastAPI 0.145.0 had already removed it. Passing it now raises a `TypeError` on every FastAPI version, including the ones before 0.145.0 that still accept it. Set the root path on your server instead, e.g. with `root_path` or your proxy's prefix.
 - Removed the deprecated changelog: the `/changelog` endpoint, `Cadwyn.generate_changelog()`, `cadwyn.hidden()`, and the `changelog_url` and `include_changelog_url_in_schema` arguments of `Cadwyn()`. Apps can generate a better and more extensible changelog from their version changes themselves, e.g. with a coding agent. To upgrade, remove these arguments from `Cadwyn()`, and remove the calls to `generate_changelog()` and `hidden()` (keep the instructions and version changes that you wrapped in `hidden()`). `Cadwyn()` now raises `TypeError` if you pass `changelog_url` or `include_changelog_url_in_schema` (#487). Cadwyn also no longer depends on `backports-strenum`, which only the changelog used on Python 3.10.
 - Dropped support for Python 3.10, which reached its end of life in October 2026. Cadwyn now requires Python 3.11 or newer. To migrate, upgrade your app to Python 3.11 or newer, or stay on Cadwyn 8.x. Cadwyn no longer depends on `backports-strenum`.
@@ -14,6 +15,10 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Removed `Cadwyn.add_header_versioned_routers()`, deprecated since 5.0.0. Add each version to your `VersionBundle`, describe how it differs from the latest one with version changes, and include the latest routers with `Cadwyn.generate_and_include_versioned_routers()`.
 - Removed the `version_changes` attribute of `Version` and `HeadVersion`, deprecated since 4.2.0. Use `changes` instead.
 - Removed `VersionBundle.version_dates`, deprecated since 5.0.0. Use `VersionBundle.version_values` instead.
+
+### Fixed
+
+- Request bodies with `Json[...]` fields that get a string or a member of a string enum (e.g. `Json[str]`, `Json[Any]` with `"\"abc\""`, or `Json[Kind]` for `class Kind(str, Enum)`) no longer fail with a 500 error in the latest API version and in the older versions whose body models are the same as the latest version's, including when a request migration has encoded other `Json[...]` values of the body itself (#538).
 
 ## [8.2.0]
 
