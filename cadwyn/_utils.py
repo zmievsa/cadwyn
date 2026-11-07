@@ -104,3 +104,13 @@ def is_sqlalchemy_model(model: type) -> bool:
     # __mapper__ covers imperative mappings; _sa_registry also covers declarative
     # bases and SQLModel classes without table=True. Avoid importing optional dependencies.
     return hasattr(model, "__mapper__") or hasattr(model, "_sa_registry")
+
+
+def _get_type_alias_value(alias: Any) -> Any:
+    # The values of typing.TypeAliasType (but not of typing_extensions.TypeAliasType) are evaluated lazily so they
+    # can contain names that are only imported for type checking
+    if sys.version_info >= (3, 14) and hasattr(alias, "evaluate_value"):  # pragma: no cover
+        from annotationlib import Format, call_evaluate_function
+
+        return call_evaluate_function(alias.evaluate_value, Format.FORWARDREF)
+    return alias.__value__

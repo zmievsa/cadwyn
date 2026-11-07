@@ -14,8 +14,8 @@ _R = TypeVar("_R")
 Endpoint: TypeAlias = Callable[_P, _R]
 
 
-def _validate_schema_is_versionable(model: type) -> None:
-    if is_sqlalchemy_model(model):
+def _validate_schema_is_versionable(model: object) -> None:
+    if isinstance(model, type) and is_sqlalchemy_model(model):
         raise CadwynStructureError(
             f"SQLAlchemy class '{model.__name__}' cannot be migrated. "
             "Use a separate Pydantic model for versioned request and response schemas."
