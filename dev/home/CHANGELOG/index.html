@@ -1555,6 +1555,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="[Unreleased]">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5892,6 +5909,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="[Unreleased]">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Breaking
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -10007,6 +10041,10 @@
 <p>All notable changes to this project will be documented in this file.
 Please follow <a href="https://keepachangelog.com/en/1.0.0/">the Keep a Changelog standard</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="breaking">Breaking<a class="headerlink" href="#breaking" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Removed the deprecated <code>openapi_prefix</code> argument of <code>Cadwyn()</code> (#488). FastAPI 0.145.0 had already removed it. Passing it now raises a <code>TypeError</code> on every FastAPI version, including the ones before 0.145.0 that still accept it. Set the root path on your server instead, e.g. with <code>root_path</code> or your proxy's prefix.</li>
+</ul>
 <h2 id="820">[8.2.0]<a class="headerlink" href="#820" title="Permanent link">&para;</a></h2>
 <h3 id="possibly-breaking">Possibly breaking<a class="headerlink" href="#possibly-breaking" title="Permanent link">&para;</a></h3>
 <ul>
