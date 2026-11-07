@@ -1,9 +1,8 @@
-import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Optional, Self, Union, assert_never, cast, overload
+from typing import TYPE_CHECKING, Any, Optional, Self, Union, assert_never, cast, overload
 from urllib.parse import quote
 
 import fastapi
@@ -25,7 +24,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 from starlette.types import Lifespan, Receive, Scope, Send
-from typing_extensions import deprecated, override
+from typing_extensions import override
 
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
