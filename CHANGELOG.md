@@ -48,6 +48,14 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 - Responses whose validation aliases Cadwyn restores now go through the validators of their models once, like in FastAPI without Cadwyn. Before, routes validated the restored response and FastAPI validated it again, so `mode="after"` model validators ran twice, and `migrate_response_body()` validated the body as it was and then the restored body, so the validators of the fields that passed ran twice. Validators with side effects, such as one that increments a value, gave wrong values (#565).
 
+### Added
+
+- `Cadwyn()` and `generate_versioned_routers()` now take `run_background_tasks_of_latest_version_dependencies`. With `True`, the background tasks that dependencies add while Cadwyn solves the dependencies of the latest version run after the response, as in FastAPI. Without it, Cadwyn keeps these tasks only if the endpoint itself declares a `BackgroundTasks` param, and silently drops them otherwise (#568).
+
+### Deprecated
+
+- Dropping the background tasks that dependencies add while Cadwyn solves the dependencies of the latest version. Cadwyn still does it by default when the endpoint doesn't declare a `BackgroundTasks` param, but now emits a `FutureWarning` once per route when it drops such a task. Cadwyn 10.0 will run these tasks by default. To switch now, pass `run_background_tasks_of_latest_version_dependencies=True` to `Cadwyn()`. Dependencies run for both the request's version and the latest version, so a dependency that adds a task in both runs will then have it run twice. To keep a single run, add the task only when `current_dependency_solver` is `"fastapi"` (#568).
+
 ## [8.2.0]
 
 ### Possibly breaking

@@ -44,7 +44,13 @@ from cadwyn.structure.endpoints import (
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from cadwyn.structure.versions import VersionChange, _get_request_body_target, _get_schema_migration_target
+from cadwyn.structure.versions import (
+    _CADWYN_BACKGROUND_TASKS_PARAM_NAME,
+    VersionChange,
+    _DroppedBackgroundTasksWarning,
+    _get_request_body_target,
+    _get_schema_migration_target,
+)
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
@@ -82,11 +88,17 @@ def generate_versioned_routers(
     webhooks: Union[_WR, None] = None,
     api_version_parameter_name: str = "X-API-Version",
     api_version_location: "APIVersionLocation" = "custom_header",
+    run_background_tasks_of_latest_version_dependencies: bool = False,
 ) -> GeneratedRouters[_R, _WR]:
     if webhooks is None:
         webhooks = cast("_WR", APIRouter())
     return _EndpointTransformer(
-        router, versions, webhooks, api_version_parameter_name, api_version_location
+        router,
+        versions,
+        webhooks,
+        api_version_parameter_name,
+        api_version_location,
+        run_background_tasks_of_latest_version_dependencies=run_background_tasks_of_latest_version_dependencies,
     ).transform()
 
 
@@ -193,9 +205,12 @@ class _EndpointTransformer(Generic[_R, _WR]):
         webhooks: _WR,
         api_version_parameter_name: str,
         api_version_location: "APIVersionLocation",
+        *,
+        run_background_tasks_of_latest_version_dependencies: bool,
     ) -> None:
         super().__init__()
         self.parent_router = parent_router
+        self.run_background_tasks_of_latest_version_dependencies = run_background_tasks_of_latest_version_dependencies
         self.versions = versions
         self.parent_webhooks_router = webhooks
         self.api_version_parameter_name = api_version_parameter_name
@@ -250,6 +265,9 @@ class _EndpointTransformer(Generic[_R, _WR]):
             )
             _add_request_and_response_params(head_route)
             copy_of_dependant = copy(head_route.dependant)
+            dropped_background_tasks_warning = _DroppedBackgroundTasksWarning(
+                f'"{list(_route_methods(head_route))} {head_route.path}"'
+            )
 
             for older_router in list(routers.values()):
                 older_route = older_router.routes[route_index]
@@ -274,6 +292,10 @@ class _EndpointTransformer(Generic[_R, _WR]):
                     older_route.body_field.alias if older_route.body_field is not None else None,
                     copy_of_dependant,
                     self.versions,
+                    run_background_tasks_of_latest_version_dependencies=(
+                        self.run_background_tasks_of_latest_version_dependencies
+                    ),
+                    dropped_background_tasks_warning=dropped_background_tasks_warning,
                 )
         for router in routers.values():
             router.routes = [
@@ -552,6 +574,9 @@ def _add_data_migrations_to_route(
     template_body_field_name: Union[str, None],
     dependant_for_request_migrations: "Dependant",
     versions: VersionBundle,
+    *,
+    run_background_tasks_of_latest_version_dependencies: bool,
+    dropped_background_tasks_warning: _DroppedBackgroundTasksWarning,
 ):
     if not (route.dependant.request_param_name and route.dependant.response_param_name):  # pragma: no cover
         raise CadwynError(
@@ -559,6 +584,10 @@ def _add_data_migrations_to_route(
             f"for route {list(_route_methods(route))} {route.path} which should not be possible. "
             "Please, contact my author.",
         )
+    # The solve of the latest version needs the BackgroundTasks of the request's version, which FastAPI runs after the
+    # response. FastAPI only creates one if something asks for it, so we always ask for it.
+    if run_background_tasks_of_latest_version_dependencies and not route.dependant.background_tasks_param_name:
+        route.dependant.background_tasks_param_name = _CADWYN_BACKGROUND_TASKS_PARAM_NAME
 
     route.endpoint = versions._versioned(
         template_body_field,
@@ -569,6 +598,7 @@ def _add_data_migrations_to_route(
         request_param_name=route.dependant.request_param_name,
         background_tasks_param_name=route.dependant.background_tasks_param_name,
         response_param_name=route.dependant.response_param_name,
+        dropped_background_tasks_warning=dropped_background_tasks_warning,
     )(route.endpoint)
     route.dependant.call = route.endpoint
 

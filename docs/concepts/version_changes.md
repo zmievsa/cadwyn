@@ -266,6 +266,18 @@ but the majority of your dependencies will not need this as most dependencies sh
 
 Dependencies that read uploaded files or move their position (e.g. to skip a header) need care: both runs see the same files. Do such work in the run that gives your endpoint its arguments, i.e. when `current_dependency_solver` is `"cadwyn"`, or `"fastapi"` for requests that Cadwyn doesn't migrate (requests without an API version). Before the `"cadwyn"` run, Cadwyn moves the files that FastAPI has read for `bytes` params back to their start, so a file that a dependency has moved only in the `"fastapi"` run can be moved back.
 
+### Background tasks added by dependencies
+
+Background tasks that a dependency adds are side effects too. FastAPI runs the tasks that dependencies add in the first run after the response. In the second run, Cadwyn keeps them only if the endpoint itself declares a `BackgroundTasks` param. Otherwise, it drops them and emits a `FutureWarning` once per route.
+
+Cadwyn 10.0 will always run them. To run them now, pass `run_background_tasks_of_latest_version_dependencies=True` to `Cadwyn()` or `generate_versioned_routers()`. Then every task that a dependency adds runs once after the response, in the order it was added, as in FastAPI. As in FastAPI, a response that has its own background tasks (e.g. `JSONResponse(..., background=...)`) runs only them.
+
+A dependency that adds a task in both runs then has it run twice, so add the task in only one of the runs. The `"fastapi"` run happens for every request, including the ones that Cadwyn doesn't migrate:
+
+```python
+{! ./docs_src/concepts/version_changes/block017.py !}
+```
+
 ### Versioned dependencies
 
 In the first run, Cadwyn can give a dependency its version's copy, whose parameters (request bodies, query parameters, and so on) are validated and documented in OpenAPI with the request's version of their models and enums. Whether it does depends on how you declare the dependency:
