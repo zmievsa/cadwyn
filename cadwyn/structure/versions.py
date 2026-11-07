@@ -12,6 +12,7 @@ import tempfile
 import threading
 import uuid
 import warnings
+import weakref
 from collections import Counter, OrderedDict, defaultdict, deque
 from collections.abc import Callable, Coroutine, Hashable, Iterable, Iterator, Sequence
 from contextlib import AsyncExitStack
@@ -42,7 +43,6 @@ from fastapi import Request as FastapiRequest
 from fastapi import Response as FastapiResponse
 from fastapi._compat import (
     ModelField,
-    field_annotation_is_sequence,
     is_bytes_or_nonable_bytes_annotation,
     is_bytes_sequence_annotation,
 )
@@ -53,7 +53,7 @@ from fastapi.dependencies.utils import get_dependant, get_validation_alias, solv
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute, _get_scope_effective_route_context
-from pydantic import AliasChoices, AliasPath, BaseModel, RootModel
+from pydantic import AliasChoices, AliasPath, BaseModel, BeforeValidator, RootModel
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticSerializationError, PydanticUndefined, TzInfo, to_json
 from starlette._utils import is_async_callable
@@ -143,10 +143,40 @@ _should_embed_body_fields = cast(
 _get_multidict_value = cast(
     "Callable[[ModelField, FormData, str], Any]", getattr(fastapi.dependencies.utils, "_get_multidict_value", None)
 )
-# Since FastAPI 0.161.0, FastAPI normalizes the dict body of a union of form models with this function for each model
+# Since FastAPI 0.153.0, FastAPI normalizes the dict body of a union of form models with this function for each model.
+# It takes the fields of the model from the dict with `_extract_form_items`
 _normalize_form_model = cast(
     "Callable[..., dict[str, Any]]", getattr(fastapi.dependencies.utils, "_normalize_form_model", None)
 )
+_extract_form_items = cast(
+    "Callable[[list[ModelField], FormData], Iterator[tuple[str, Any, Union[ModelField, None]]]]",
+    getattr(fastapi.dependencies.utils, "_extract_form_items", None),
+)
+
+
+def _can_be_called_with(  # pragma: no cover # FastAPI >= 0.153
+    function: Union[Callable[..., Any], None], *args: Any, **kwargs: Any
+) -> bool:
+    try:
+        inspect.signature(cast("Callable[..., Any]", function)).bind(*args, **kwargs)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+# We call these functions as FastAPI 0.153.0 to 0.162 do, so a change of their arguments must fail at import
+if _normalize_form_model is not None and not (  # pragma: no cover
+    _can_be_called_with(_normalize_form_model, None, model=None)
+    and _can_be_called_with(_extract_form_items, None, None)
+    and _can_be_called_with(_get_multidict_value, None, None, None)
+    and _can_be_called_with(_get_cached_model_fields, None)
+):
+    raise ImportError(
+        "Cadwyn does not support this version of FastAPI: `_normalize_form_model`, `_extract_form_items`, "
+        "`_get_multidict_value`, or `get_cached_model_fields` is missing from `fastapi.dependencies.utils` or takes "
+        "other arguments. Cadwyn uses them to pass unions of form models to FastAPI. Please, open an issue on "
+        "Cadwyn's GitHub."
+    )
 
 
 def _get_form_models_before_fastapi_0_161(field: ModelField) -> list[type[BaseModel]]:  # pragma: no cover
@@ -1113,10 +1143,19 @@ class _FormModelLookup(NamedTuple):
     dependant: Dependant
     # The keys to put the dict body of the form model under
     aliases: tuple[str, ...] = ()
-    # Since FastAPI 0.161.0, FastAPI validates every model of a union of form models from the dict body as if it were
-    # form data, so it takes a value that isn't a list as a single form value. These are the keys of the fields that
-    # FastAPI gets repeated form values for in every model of the union that has them
-    repeated_value_aliases: frozenset[str] = frozenset()
+    # The form models that read the dict body of the head's union of form models, if FastAPI validates the models of
+    # the union from it as if it were form data
+    form_union_readers: tuple["_FormModelReader", ...] = ()
+    # Whether the union is a form model, as it is since FastAPI 0.161.0
+    form_union_is_form_model: bool = False
+
+
+class _FormModelReader(NamedTuple):
+    """A form model that reads the dict body of a union of form models."""
+
+    model: type[BaseModel]
+    # Whether FastAPI validates the model from the dict as if it were form data, as it does for a model of a union
+    is_validated_as_form_data: bool
 
 
 async def _get_form_model_lookup(
@@ -1145,33 +1184,83 @@ async def _get_form_model_lookup(
     """
     body_field = head_dependant.body_params[0]
     form_models = _get_form_models(body_field) if _FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS else []
+    form_union_readers = _get_form_union_readers(
+        head_dependant, head_route, is_form_model=bool(form_models), embed_body_fields=embed_body_fields
+    )
     if form_models:  # pragma: no cover # FastAPI >= 0.158.2
-        repeated_value_aliases = frozenset[str]()
-        if len(form_models) > 1:
-            repeated_value_aliases, single_value_aliases = _get_value_aliases_of_union(form_models)
-            # FastAPI takes a list as repeated form values, so a model of the union that takes a single value for the
-            # field would get only one of them. Like the last release, we don't embed the body then, which fails
-            if isinstance(body, dict) and any(
-                isinstance(body.get(alias), (list, set, frozenset, tuple, deque)) for alias in single_value_aliases
-            ):
-                return _FormModelLookup(head_dependant)
         lookups = _get_body_lookups(head_dependant, head_route, embed_body_fields=embed_body_fields)
         form_model_aliases = tuple(lookups.form_model_aliases)
         clashing_params = [
             param for param in lookups.other_params if not lookups.form_model_aliases.keys().isdisjoint(param.aliases)
         ]
         if not clashing_params or lookups.is_whole_body_read or not isinstance(body, dict):
-            return _FormModelLookup(head_dependant, form_model_aliases, repeated_value_aliases)
+            return _FormModelLookup(
+                head_dependant, form_model_aliases, form_union_readers, form_union_is_form_model=True
+            )
         params_without_value = [param for param in clashing_params if body.keys().isdisjoint(param.aliases)]
         if not all(param.has_default for param in params_without_value) or (
             params_without_value
             and await _form_gives_values_that_form_models_lack(request, route, params_without_value, dumped_body_model)
         ):
-            return _FormModelLookup(head_dependant, form_model_aliases, repeated_value_aliases)
+            return _FormModelLookup(
+                head_dependant, form_model_aliases, form_union_readers, form_union_is_form_model=True
+            )
         dependant = _with_form_models_under_own_key(head_dependant)
         lookups = _get_body_lookups(dependant, head_route, embed_body_fields=embed_body_fields)
-        return _FormModelLookup(dependant, tuple(lookups.form_model_aliases), repeated_value_aliases)
-    return _FormModelLookup(head_dependant)
+        return _FormModelLookup(
+            dependant, tuple(lookups.form_model_aliases), form_union_readers, form_union_is_form_model=True
+        )
+    return _FormModelLookup(head_dependant, form_union_readers=form_union_readers)
+
+
+def _get_form_union_readers(
+    head_dependant: Dependant, head_route: APIRoute, *, is_form_model: bool, embed_body_fields: bool
+) -> tuple[_FormModelReader, ...]:
+    """Return the form models that read the dict body of the head's union of form models.
+
+    We return them only if FastAPI validates the models of the union from the dict as if it were form data. Before
+    FastAPI 0.161.0, the union isn't a form model, so only a body param that isn't embedded gets the whole
+    body. Since then, every form model of the tree that FastAPI solves reads the body under its param's alias.
+    """
+    body_field = head_dependant.body_params[0]
+    if not _get_models_validated_as_form_data(body_field):
+        return ()
+    if is_form_model:  # pragma: no cover # FastAPI >= 0.161
+        fields = [
+            field
+            for dependant in _iter_dependants_that_fastapi_solves(head_dependant, head_route)
+            for field in dependant.body_params
+            if _get_form_models(field)
+        ]
+    elif embed_body_fields:  # pragma: no cover # FastAPI >= 0.153
+        return ()
+    else:  # pragma: no cover # FastAPI >= 0.153
+        fields = [body_field]
+    readers: dict[_FormModelReader, None] = {}  # pragma: no cover # FastAPI >= 0.153
+    for field in fields:  # pragma: no cover # FastAPI >= 0.153
+        models = _get_models_validated_as_form_data(field)
+        for model in models or _get_form_models(field):
+            readers[_FormModelReader(model, is_validated_as_form_data=bool(models))] = None
+    return tuple(readers)  # pragma: no cover # FastAPI >= 0.153
+
+
+def _get_models_validated_as_form_data(field: ModelField) -> list[type[BaseModel]]:
+    """Return the models of a union of form models that FastAPI validates from a dict as if it were form data.
+
+    Since FastAPI 0.153.0, FastAPI adds a validator that does this to each of them.
+    """
+    if _normalize_form_model is None:
+        return []
+    return [  # pragma: no cover # FastAPI >= 0.153
+        validator.func.keywords["model"]
+        for arg in get_args(field.field_info.annotation)
+        if get_origin(arg) is Annotated
+        for validator in arg.__metadata__
+        if isinstance(validator, BeforeValidator)
+        and isinstance(validator.func, functools.partial)
+        and validator.func.func is _normalize_form_model
+        and lenient_issubclass(validator.func.keywords.get("model"), BaseModel)
+    ]
 
 
 def _get_omitted_form_model_lookup(  # pragma: no cover # FastAPI >= 0.158.2
@@ -1222,8 +1311,13 @@ def _get_omitted_form_model_lookup(  # pragma: no cover # FastAPI >= 0.158.2
         return _FormModelLookup(head_dependant)
     lookup = _FormModelLookup(head_dependant, tuple(aliases))
     if len(form_models) > 1:
-        lookup = lookup._replace(repeated_value_aliases=_get_value_aliases_of_union(list(form_models))[0])
-        if _form_model_union_changes_body(_embed_form_model(body, lookup)[lookup.aliases[0]], form_models):
+        readers = tuple(_FormModelReader(model, is_validated_as_form_data=True) for model in form_models)
+        lookup = lookup._replace(form_union_readers=readers, form_union_is_form_model=True)
+        try:
+            form_model_body = _get_form_union_body(body, readers)
+        except _FormUnionValueError:
+            return _FormModelLookup(head_dependant)
+        if _form_model_union_changes_body(form_model_body, form_models):
             return _FormModelLookup(head_dependant)
     return lookup
 
@@ -1247,33 +1341,6 @@ def _form_model_union_changes_body(  # pragma: no cover # FastAPI >= 0.161
     so we compare the whole dict.
     """
     return any(_normalize_form_model(body, model=model) != body for model in form_models)
-
-
-def _get_value_aliases_of_union(  # pragma: no cover # FastAPI >= 0.161
-    form_models: list[type[BaseModel]],
-) -> tuple[frozenset[str], frozenset[str]]:
-    """Return the keys of the fields that get repeated form values, and of the fields that get a single form value.
-
-    A key gets repeated form values only if it does in every model of the union that has it. A migration can make the
-    head validate another model of the union than the one that the request matched, so we look at all of them.
-    """
-    repeated_value_aliases: set[str] = set()
-    single_value_aliases: set[str] = set()
-    aliases_of_models: list[tuple[type[BaseModel], set[str]]] = []
-    for model in form_models:
-        aliases_of_model: set[str] = set()
-        for field in _get_cached_model_fields(model):
-            # FastAPI passes `field_info.annotation` to `field_annotation_is_sequence` too, but types it as a type
-            is_sequence = field_annotation_is_sequence(field.field_info.annotation)  # ty: ignore[invalid-argument-type]
-            field_aliases = [alias for alias, _ in _get_param_aliases(field)]
-            (repeated_value_aliases if is_sequence else single_value_aliases).update(field_aliases)
-            aliases_of_model.update(field_aliases)
-        aliases_of_models.append((model, aliases_of_model))
-    # A model that allows extra fields can take a key that it doesn't have as an extra field with a single value
-    for model, aliases_of_model in aliases_of_models:
-        if model.model_config.get("extra") == "allow":
-            single_value_aliases.update(repeated_value_aliases - aliases_of_model)
-    return frozenset(repeated_value_aliases - single_value_aliases), frozenset(single_value_aliases)
 
 
 def _with_form_models_under_own_key(dependant: Dependant) -> Dependant:  # pragma: no cover # FastAPI >= 0.158.2
@@ -1401,20 +1468,282 @@ def _embed_form_model(body: Any, form_model_lookup: _FormModelLookup) -> Any:
     Other form fields, e.g. the ones that only a dependency override declares, look their values up in the body itself,
     as they did before FastAPI 0.158.2. A form model of an override wins over a form field with the same alias.
 
-    FastAPI takes the dict body of a union of form models as form data, so in the copy that we embed, we pass the sets
-    and tuples of the fields that get repeated form values as lists, which is how FastAPI gets repeated form values.
+    FastAPI takes the dict body of a union of form models as form data, so we pass the union a copy that FastAPI turns
+    back into the body's values. If there's no such copy, then since FastAPI 0.161.0, we raise, because the last
+    release failed for this body too. Before FastAPI 0.161.0, the last release passed the body as it is, and FastAPI
+    gave one of the models only part of a value. That works for some apps, e.g. if that model rejects the body anyway
+    because of another field, so we keep it.
     """
     form_model_body = body
-    aliases = form_model_lookup.repeated_value_aliases
-    if aliases and isinstance(body, dict):  # pragma: no cover # FastAPI >= 0.161
-        form_model_body = {
-            key: list(value) if key in aliases and isinstance(value, (set, frozenset, tuple, deque)) else value
+    if form_model_lookup.form_union_readers and isinstance(body, dict):  # pragma: no cover # FastAPI >= 0.153
+        try:
+            form_model_body = _get_form_union_body(body, form_model_lookup.form_union_readers)
+        except _FormUnionValueError:
+            if form_model_lookup.form_union_is_form_model:
+                raise
+            return body
+    if not form_model_lookup.aliases:
+        return form_model_body
+    return {  # pragma: no cover # FastAPI >= 0.158.2
+        **(body if isinstance(body, dict) else {}),
+        **dict.fromkeys(form_model_lookup.aliases, form_model_body),
+    }
+
+
+class _FormUnionValueError(CadwynError):
+    pass
+
+
+_FORM_VALUE_COLLECTIONS = (list, set, frozenset, tuple, deque)
+
+
+def _get_form_union_body(  # pragma: no cover # FastAPI >= 0.153
+    body: dict[str, Any], readers: tuple[_FormModelReader, ...]
+) -> dict[str, Any]:
+    """Return a copy of the body that FastAPI turns back into the body's values for every form model that reads it.
+
+    FastAPI validates every model of a union of form models from the dict body as if it were form data: it takes a
+    list as repeated form values, so a field that takes a single value gets only the last of them, and any other value
+    as a single form value, so a field that takes repeated values gets the whole set or tuple as one of them. So for
+    every list, set, frozenset, tuple, or deque, we pass its items as repeated form values, or the whole value as a
+    single form value (a list in a list). Form models outside the union validate the dict as it is.
+
+    We start with what the fields of each key take, and check the whole copy with FastAPI's own function, because the
+    keys affect each other: a field takes the first of its aliases that has a value, and FastAPI takes the others as
+    extra fields. While some keys come out wrong, we switch a single key, first a wrong one, then another alias of a
+    field of a wrong one, and keep the switch if fewer keys come out wrong and no other one does. If no switch helps,
+    a model would silently get a wrong value, e.g. because it takes a single value for the key and another one takes
+    repeated values, so we raise.
+    """
+    fields_of_readers = {reader: _get_form_model_fields(reader.model) for reader in readers}
+    readers_of_keys = {
+        key: [reader for reader in readers if fields_of_readers[reader].reads(key)]
+        for key, value in body.items()
+        if isinstance(value, _FORM_VALUE_COLLECTIONS)
+    }
+    # Only the models of the union get the values as form data, so the other values reach every model as they are
+    keys = [
+        key
+        for key, key_readers in readers_of_keys.items()
+        if any(reader.is_validated_as_form_data for reader in key_readers)
+    ]
+    if not keys:
+        return body
+    checked_readers = {reader for key in keys for reader in readers_of_keys[key]}
+
+    def get_wrong_keys(single_value_keys: frozenset[str]) -> tuple[dict[str, Any], set[str]]:
+        union_body = {
+            key: _as_form_value(value, as_single_value=key in single_value_keys) if key in keys else value
             for key, value in body.items()
         }
+        bodies_of_readers = {
+            reader: _normalize_form_model(union_body, model=reader.model)
+            if reader.is_validated_as_form_data
+            else union_body
+            for reader in checked_readers
+        }
+        wrong_keys = {
+            key
+            for key in keys
+            if not all(
+                _form_model_gets_value(fields_of_readers[reader], key, body[key], bodies_of_readers[reader])
+                for reader in readers_of_keys[key]
+            )
+        }
+        return union_body, wrong_keys
+
+    single_value_keys = frozenset(
+        key for key in keys if _takes_single_form_value(body[key], readers_of_keys[key], fields_of_readers, key)
+    )
+    union_body, wrong_keys = get_wrong_keys(single_value_keys)
+    # Each switch that we keep fixes a key, so this is at most quadratic in the number of keys
+    switches_left = 2 * len(keys)
+    while wrong_keys:
+        switched = False
+        for key in _get_keys_to_switch(wrong_keys, keys, readers_of_keys, fields_of_readers):
+            if switches_left == 0:
+                break
+            switches_left -= 1
+            candidate_keys = single_value_keys ^ {key}
+            candidate_body, candidate_wrong_keys = get_wrong_keys(candidate_keys)
+            if candidate_wrong_keys < wrong_keys:
+                single_value_keys, union_body, wrong_keys = candidate_keys, candidate_body, candidate_wrong_keys
+                switched = True
+                break
+        if not switched:
+            key = next(key for key in keys if key in wrong_keys)
+            raise _FormUnionValueError(_describe_form_union_value_error(key, body[key], readers_of_keys[key]))
+    return union_body
+
+
+def _takes_single_form_value(  # pragma: no cover # FastAPI >= 0.153
+    value: Any,
+    readers: list[_FormModelReader],
+    fields_of_readers: "dict[_FormModelReader, _FormModelFields]",
+    key: str,
+) -> bool:
+    """Return whether to start with the value as a single form value.
+
+    That's the case if no field with the key takes repeated values, and no model outside the union would get the list
+    in a list.
+    """
+    if isinstance(value, list) and not all(reader.is_validated_as_form_data for reader in readers):
+        return False
+    return not any(
+        fields_of_readers[reader].takes_repeated_values(field)
+        for reader in readers
+        if reader.is_validated_as_form_data
+        for field in fields_of_readers[reader].fields_of_keys.get(key, ())
+    )
+
+
+def _get_keys_to_switch(  # pragma: no cover # FastAPI >= 0.153
+    wrong_keys: set[str],
+    keys: list[str],
+    readers_of_keys: dict[str, list[_FormModelReader]],
+    fields_of_readers: "dict[_FormModelReader, _FormModelFields]",
+) -> list[str]:
+    """Return the wrong keys, and then the other aliases of the fields of the wrong keys, in the order of the body."""
+    related_keys = {
+        alias
+        for key in wrong_keys
+        for reader in readers_of_keys[key]
+        for field in fields_of_readers[reader].fields_of_keys.get(key, ())
+        for alias in fields_of_readers[reader].aliases_of_field(field)
+    }
+    return [key for key in keys if key in wrong_keys] + [
+        key for key in keys if key in related_keys and key not in wrong_keys
+    ]
+
+
+def _as_form_value(value: Any, *, as_single_value: bool) -> Any:  # pragma: no cover # FastAPI >= 0.153
+    if as_single_value:
+        # FastAPI takes any value that isn't a list as a single form value
+        return [value] if isinstance(value, list) else value
+    return value if isinstance(value, list) else list(value)
+
+
+def _describe_form_union_value_error(  # pragma: no cover # FastAPI >= 0.153
+    key: str, value: Any, readers: list[_FormModelReader]
+) -> str:
+    model_names = ", ".join(
+        f"`{reader.model.__name__}`" + ("" if reader.is_validated_as_form_data else " outside the union")
+        for reader in readers
+    )
     return (
-        {**(body if isinstance(body, dict) else {}), **dict.fromkeys(form_model_lookup.aliases, form_model_body)}
-        if form_model_lookup.aliases
-        else body
+        f"Cadwyn can't pass the {type(value).__name__} in {key!r} of the request body to every form model that reads "
+        f"it ({model_names}). FastAPI validates the models of a union of form models from the body as if it were form "
+        "data, so a field that takes a single form value would get only the last item of a list, a field that takes "
+        "repeated form values would get a set or a tuple as one item, and a form model outside the union would get a "
+        f"list in a list. Make {key!r} take repeated values (e.g. `list[str]`) in all of these models or in none of "
+        "them, or don't put a list, set, or tuple into it in a validator or a migration."
+    )
+
+
+def _form_model_gets_value(  # pragma: no cover # FastAPI >= 0.153
+    fields: "_FormModelFields", key: str, value: Any, model_body: dict[str, Any]
+) -> bool:
+    """Return whether the form model gets exactly the value from the dict that FastAPI validates it from.
+
+    A list may be another list with the same items. A set, a frozenset, a tuple, a deque, or a subclass of a list may
+    be a list of its items only if every field that Pydantic validates from the key takes repeated form values, so
+    that Pydantic turns the list back into the field's type. Pydantic validates a field from the first of its aliases
+    that the dict has.
+    """
+    result = model_body.get(key, PydanticUndefined)
+    if result is value:
+        return True
+    items = value if type(value) is list else list(value)
+    if type(result) is not list or len(result) != len(items):
+        return False
+    if any(result_item is not item for result_item, item in zip(result, items, strict=True)):
+        return False
+    if type(value) is list:
+        return True
+    fields_of_key = [
+        field
+        for field in fields.fields_of_keys.get(key, ())
+        if not any(alias in model_body for alias in fields.aliases_before(field, key))
+    ]
+    return bool(fields_of_key) and all(fields.takes_repeated_values(field) for field in fields_of_key)
+
+
+@dataclasses.dataclass(frozen=True)
+class _FormModelFields:  # pragma: no cover # FastAPI >= 0.153
+    """How FastAPI and Pydantic take the keys of form data for the fields of a form model. It depends only on the model.
+
+    The fields are FastAPI's cached fields of the model, so we key them by identity.
+    """
+
+    allows_extra_fields: bool
+    # The fields that FastAPI takes each key as an alias of
+    fields_of_keys: dict[str, tuple[ModelField, ...]]
+    # The aliases of each field, in the order in which Pydantic looks them up
+    aliases_of_fields: dict[int, tuple[str, ...]]
+    repeated_value_fields: frozenset[int]
+    # The keys that Pydantic reads through an `AliasPath`, which FastAPI takes as extra fields
+    alias_path_keys: frozenset[str]
+
+    def reads(self, key: str) -> bool:
+        return self.allows_extra_fields or key in self.fields_of_keys or key in self.alias_path_keys
+
+    def aliases_of_field(self, field: ModelField) -> tuple[str, ...]:
+        return self.aliases_of_fields[id(field)]
+
+    def aliases_before(self, field: ModelField, key: str) -> tuple[str, ...]:
+        aliases = self.aliases_of_field(field)
+        return aliases[: aliases.index(key)]
+
+    def takes_repeated_values(self, field: ModelField) -> bool:
+        return id(field) in self.repeated_value_fields
+
+
+_FORM_MODEL_FIELDS: "weakref.WeakKeyDictionary[type[BaseModel], _FormModelFields]" = weakref.WeakKeyDictionary()
+
+
+def _get_form_model_fields(model: type[BaseModel]) -> _FormModelFields:  # pragma: no cover # FastAPI >= 0.153
+    fields = _FORM_MODEL_FIELDS.get(model)
+    if fields is None:
+        fields = _FORM_MODEL_FIELDS[model] = _build_form_model_fields(model)
+    return fields
+
+
+def _build_form_model_fields(model: type[BaseModel]) -> _FormModelFields:  # pragma: no cover # FastAPI >= 0.153
+    """Find the aliases of the fields by asking FastAPI about each name that Pydantic could validate a field from."""
+    fields_of_keys: dict[str, list[ModelField]] = {}
+    aliases_of_fields: dict[int, tuple[str, ...]] = {}
+    repeated_value_fields: set[int] = set()
+    alias_path_keys: set[str] = set()
+    for field in _get_cached_model_fields(model):
+        validation_alias = field.field_info.validation_alias
+        choices = validation_alias.choices if isinstance(validation_alias, AliasChoices) else [validation_alias]
+        alias_path_keys.update(
+            choice.path[0] for choice in choices if isinstance(choice, AliasPath) and isinstance(choice.path[0], str)
+        )
+        possible_keys: list[Union[str, None]] = [choice for choice in choices if isinstance(choice, str)]
+        possible_keys += [field.field_info.alias, field.alias, field.name]
+        aliases = tuple(
+            key
+            for key in dict.fromkeys(possible_keys)
+            if isinstance(key, str)
+            and any(
+                alias == key and item_field is field
+                for alias, _, item_field in _extract_form_items([field], FormData([(key, "value")]))
+            )
+        )
+        aliases_of_fields[id(field)] = aliases
+        for alias in aliases:
+            fields_of_keys.setdefault(alias, []).append(field)
+        if aliases and isinstance(
+            _get_multidict_value(field, FormData([(aliases[0], "a"), (aliases[0], "b")]), aliases[0]), list
+        ):
+            repeated_value_fields.add(id(field))
+    return _FormModelFields(
+        allows_extra_fields=model.model_config.get("extra") == "allow",
+        fields_of_keys={key: tuple(fields) for key, fields in fields_of_keys.items()},
+        aliases_of_fields=aliases_of_fields,
+        repeated_value_fields=frozenset(repeated_value_fields),
+        alias_path_keys=frozenset(alias_path_keys),
     )
 
 

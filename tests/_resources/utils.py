@@ -38,3 +38,5 @@ FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS = FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS
 FASTAPI_SUPPORTS_FORM_MODEL_UNIONS = _FASTAPI_MINOR_VERSION >= (0, 161)
 # Since FastAPI 0.153.0, FastAPI validates every model of a union of form models from the body as if it were form data
 FASTAPI_VALIDATES_FORM_MODEL_UNIONS_AS_FORM_DATA = _FASTAPI_MINOR_VERSION >= (0, 153)
+# Since FastAPI 0.157.0, a form field takes the first of its aliases that has a value, not the values of all of them
+FASTAPI_TAKES_FIRST_ALIAS_OF_FORM_FIELDS_WITH_VALUE = _FASTAPI_MINOR_VERSION >= (0, 157)
