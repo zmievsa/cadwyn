@@ -52,6 +52,30 @@ def test__generate_versioned_routers__generic_metaclass_adds_a_base__should_pres
         assert response.json() == {"value": 42}
 
 
+def test__generate_versioned_routers__metaclass_parent_has_overridden_forward_ref__should_preserve_responses(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+):
+    class Parent(BaseModel):
+        value: "NotDefined"  # noqa: F821  # ty: ignore[unresolved-reference]  # Intentionally incomplete; child overrides.
+
+    class Meta(type(BaseModel)):
+        def __new__(mcs, name: str, bases: tuple[type, ...], namespace: dict[str, Any], **kwargs: Any):
+            if not any(issubclass(base, Parent) for base in bases):
+                bases = (Parent, *bases)
+            return super().__new__(mcs, name, bases, namespace, **kwargs)
+
+    class Model(BaseModel, Generic[BoolT], metaclass=Meta):
+        value: BoolT
+
+    router.get("/", response_model=Model[int])(lambda: {"value": 42})
+    clients = create_versioned_clients(version_change())
+
+    for client in clients.values():
+        response = client.get("/")
+        assert response.status_code == 200
+        assert response.json() == {"value": 42}
+
+
 ATTR_MAP: tuple[tuple[str, str], list[tuple[PossibleFieldAttributes, Any]]] = (
     ("attr", "value"),
     [

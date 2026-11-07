@@ -42,9 +42,9 @@ Cadwyn generates a copy of every model for every version, except for the enums w
 
 ### Bases supplied through `__mro_entries__`
 
-Models whose bases are supplied by an object's `__mro_entries__` hook inherit the versioned copies of the resolved parents. The parents' schema instructions and the [checks for inherited fields](./schema_migrations.md#fields-that-a-schema-inherits) apply just as they do to explicit base classes. When upgrading from Cadwyn 8, update affected request and response migrations to use the corrected older-version fields.
+Models whose bases are supplied by an object's `__mro_entries__` hook use the versioned parents when the resolved bases match the original model's bases and those parents are complete models affected by schema instructions for that version. The parents' schema instructions and the [checks for inherited fields](./schema_migrations.md#fields-that-a-schema-inherits) then apply as they do to explicit base classes. When upgrading from Cadwyn 8, update affected request and response migrations to use the corrected older-version fields.
 
-Cadwyn resolves the original bases before versioning them when they match the model's actual bases, preserving generic type parameters and hooks that depend on other bases. A metaclass can legitimately change the bases after resolution; models whose bases cannot be matched keep their previous construction behavior. If that behavior would leave a parent affected by version changes hidden behind a hook at HEAD, Cadwyn raises `SchemaGenerationError` at startup; use explicit base classes for that model.
+Cadwyn resolves the bases once per copied class per version, at the same construction point and with the same inputs as before. Cadwyn caches the result and reuses it for construction. Dynamically resolved, incomplete, or unmatched bases keep their previous behavior; use explicit base classes if you need schema instructions to reach those parents reliably.
 
 ### Generic models
 

@@ -3923,6 +3923,89 @@ class AliasOfBases:
         return self.bases
 
 
+def test__generate_versioned_routers__mro_entries_create_fresh_bases__should_preserve_defaults_and_hook_calls(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+):
+    class Factory:
+        def __init__(self) -> None:
+            self.models: list[type[BaseModel]] = []
+
+        def __mro_entries__(self, bases: tuple[object, ...]) -> tuple[type, ...]:
+            model = create_model("ResolvedBase", value=(int, len(self.models) + 1))
+            self.models.append(model)
+            return (model,)
+
+    factory = Factory()
+
+    class Model(factory):
+        pass
+
+    @router.get("/", response_model=Model)
+    def empty_response() -> dict[str, object]:
+        return {}
+
+    clients = create_versioned_clients(version_change())
+
+    for version, default in [("2000-01-01", 3), ("2001-01-01", 2)]:
+        client = clients[version]
+        response = client.get("/")
+        assert response.status_code == 200
+        assert response.json() == {"value": default}
+        openapi = client.get(f"/openapi.json?version={version}").json()
+        assert openapi["components"]["schemas"]["Model"]["properties"]["value"]["default"] == default
+
+    assert len(factory.models) == 3
+
+
+def test__generate_versioned_routers__mro_entries_parent_has_overridden_forward_ref__should_preserve_responses(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+):
+    class Parent(BaseModel):
+        value: "NotDefined"  # noqa: F821  # ty: ignore[unresolved-reference]  # Intentionally incomplete; child overrides.
+
+    class Model(AliasOfBases(Parent)):
+        value: int
+
+    router.get("/", response_model=Model)(lambda: {"value": 42})
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithOneStrField).field("foo").had(description="Old unrelated field"))
+    )
+
+    for client in clients.values():
+        response = client.get("/")
+        assert response.status_code == 200
+        assert response.json() == {"value": 42}
+
+
+def test__generate_versioned_routers__mro_entries_shared_with_field_model__should_preserve_hook_order(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+):
+    class Factory:
+        calls = 0
+
+        def __mro_entries__(self, bases: tuple[object, ...]) -> tuple[type, ...]:
+            self.calls += 1
+            return (create_model("ResolvedBase", value=(int, self.calls)),)
+
+    factory = Factory()
+
+    class Child(factory):
+        pass
+
+    class Model(factory):
+        child: Child
+
+    router.get("/", response_model=Model)(lambda: {"child": {}})
+    clients = create_versioned_clients(version_change())
+
+    for version, value, child_value in [("2000-01-01", 6, 5), ("2001-01-01", 4, 3)]:
+        response = clients[version].get("/")
+        assert response.status_code == 200
+        assert response.json() == {"value": value, "child": {"value": child_value}}
+
+    assert factory.calls == 6
+
+
 class MixinForAlias:
     def label(self) -> str:
         return "mixin"
@@ -3956,13 +4039,19 @@ def test__generate_versioned_routers__metaclass_changes_unversioned_mro_entries_
         assert response.json() == {"foo": 42}
 
 
-def test__generate_versioned_routers__metaclass_changes_versioned_mro_entries_bases__should_fail_at_startup(
-    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter
+def test__generate_versioned_routers__metaclass_changes_versioned_mro_entries_bases__should_preserve_fields(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
 ):
     router.get("/", response_model=ChildOfAliasWithMetaclass)(lambda: {"foo": 42})
 
-    with pytest.raises(SchemaGenerationError, match='would keep the latest parent "ParentWithIntFooThatGetsRenamed"'):
-        create_versioned_app(version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo")))
+    clients = create_versioned_clients(
+        version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    for client in clients.values():
+        response = client.get("/")
+        assert response.status_code == 200
+        assert response.json() == {"foo": 42}
 
 
 @pytest.mark.parametrize(
@@ -3989,12 +4078,12 @@ def test__schema_field_had_name__mro_entries_expand_to_several_bases__should_ver
     assert instance.label() == "mixin"
 
 
-def test__schema_field_had_name__mro_entries_depend_on_other_bases__should_resolve_before_versioning(
+def test__schema_field_had_name__mro_entries_depend_on_other_bases__should_preserve_base_context(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     class ContextualAlias:
         def __mro_entries__(self, bases: tuple[object, ...]) -> tuple[type, ...]:
-            assert ParentWithIntFooThatGetsRenamed in bases, "The alias needs the original parent in its bases"
+            assert any(isinstance(base, type) and issubclass(base, BaseModel) for base in bases)
             return (MixinForAlias,)
 
     class Child(ParentWithIntFooThatGetsRenamed, ContextualAlias()):
@@ -4022,25 +4111,28 @@ def test__schema_field_had_name__generic_child_of_mro_entries_base__should_keep_
     assert old_child.__parameters__ == Child.__parameters__
 
 
-@pytest.mark.parametrize("bases", [(), (BaseModel,), (BaseModel, MixinForAlias)])
-def test__generate_versioned_routers__mro_entries_no_longer_match_actual_bases__should_fail_at_startup(
-    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter, bases: tuple[type, ...]
+def test__generate_versioned_routers__mro_entries_no_longer_match_actual_bases__should_preserve_resolved_fields(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
 ):
     alias = AliasOfBases(ParentWithIntFooThatGetsRenamed)
 
     class Child(alias):
         pass
 
-    alias.bases = bases
+    alias.bases = (create_model("OtherParent", foo=(int, ...)),)
     router.get("/", response_model=Child)(lambda: {"foo": 42})
 
-    with pytest.raises(
-        SchemaGenerationError, match=r'original bases of ".*Child" no longer resolve to its actual bases'
-    ):
-        create_versioned_app(version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo")))
+    clients = create_versioned_clients(
+        version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    for client in clients.values():
+        response = client.get("/")
+        assert response.status_code == 200
+        assert response.json() == {"foo": 42}
 
 
-def test__generate_versioned_routers__mro_entries_resolution_fails__should_fail_at_startup(
+def test__generate_versioned_routers__mro_entries_resolution_fails__should_preserve_hook_error(
     create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter
 ):
     class FailingAlias:
@@ -4059,10 +4151,8 @@ def test__generate_versioned_routers__mro_entries_resolution_fails__should_fail_
     alias.fail = True
     router.get("/", response_model=Child)(lambda: {"foo": 42})
 
-    with pytest.raises(SchemaGenerationError, match=r'Cannot resolve the original bases of ".*Child"') as exc_info:
+    with pytest.raises(ValueError, match="Cannot resolve this alias again"):
         create_versioned_app(version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo")))
-
-    assert isinstance(exc_info.value.__cause__, ValueError)
 
 
 def test__generate_versioned_routers__mro_entries_child_deletes_redeclared_field__should_fail_at_startup(
