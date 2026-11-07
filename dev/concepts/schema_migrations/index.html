@@ -2064,12 +2064,39 @@
     <span class="p">)</span>
 </code></pre></div>
 <p><strong>ALIAS WARNING:</strong></p>
-<p>Pydantic copies a field's <code>alias</code> into its <code>validation_alias</code> and <code>serialization_alias</code>. For a field that already has an alias, <code>.had(alias=...)</code> and <code>.didnt_have("alias")</code> currently change only <code>alias</code>, so the older version keeps using the old key in requests, responses, and OpenAPI. Cadwyn 9.0 will change the copied aliases too, so Cadwyn emits a <code>FutureWarning</code> for such instructions when it generates the versioned models, and the warning says what to pass. To use the new key now, also change the copied aliases, e.g. <code>.had(alias="old_foo", validation_alias="old_foo", serialization_alias="old_foo")</code>, and add request and response migrations for the key. To keep the current key, remove the alias change from the instruction.</p>
-<p>Cadwyn generates the versioned models when the app first runs, at startup or on the first request, so with <code>-W error</code> or pytest's <code>filterwarnings = ["error"]</code> this warning fails the app there. Fix the instruction if you can. Otherwise, filter the warning:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
+<p>Pydantic copies a field's <code>alias</code> into its <code>validation_alias</code> and <code>serialization_alias</code> unless you pass them. Like <code>Field()</code>, <code>.had(alias=...)</code> and <code>.didnt_have("alias")</code> change these copies too, so the older version uses the new key in requests, responses, and OpenAPI. The <code>validation_alias</code> and <code>serialization_alias</code> that you pass explicitly, in the field or in the instruction, stay as they are. <code>.didnt_have()</code> keeps the aliases of a <code>Field()</code> in <code>Annotated</code>, e.g. <code>Annotated[str, Field(alias="foo_key")]</code>, like its other attributes that don't only document the field, unless the module uses <code>from __future__ import annotations</code>. So an alias change needs request and response migrations that rename the key:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">RequestInfo</span><span class="p">,</span>
+    <span class="n">ResponseInfo</span><span class="p">,</span>
+    <span class="n">VersionChange</span><span class="p">,</span>
+    <span class="n">convert_request_to_next_version_for</span><span class="p">,</span>
+    <span class="n">convert_response_to_previous_version_for</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
 
-<span class="n">warnings</span><span class="o">.</span><span class="n">filterwarnings</span><span class="p">(</span><span class="s2">&quot;ignore&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;.* changes the alias of &quot;</span><span class="p">,</span> <span class="ne">FutureWarning</span><span class="p">)</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MySchema</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">foo</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;foo_key&quot;</span><span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RenameFooKey</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;Renamed the key of &#39;MySchema.foo&#39; from &#39;old_foo_key&#39; to &#39;foo_key&#39;&quot;</span>
+    <span class="p">)</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">MySchema</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;foo&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;old_foo_key&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="nd">@convert_request_to_next_version_for</span><span class="p">(</span><span class="n">MySchema</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">rename_old_foo_key</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">RequestInfo</span><span class="p">):</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;foo_key&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;old_foo_key&quot;</span><span class="p">)</span>
+
+    <span class="nd">@convert_response_to_previous_version_for</span><span class="p">(</span><span class="n">MySchema</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">rename_foo_key</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="n">ResponseInfo</span><span class="p">):</span>
+        <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;old_foo_key&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;foo_key&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p>If the data that the older version validates has the key that the field had before the instruction but not its new key, e.g. because a client still sends the old key or a migration is missing, Cadwyn fails instead of giving the field its default: requests get a 422, and responses fail with a <code>ResponseValidationError</code> (a 500). Cadwyn decides this from the data as it comes in, so this also happens when a validator of the model fills the field from other keys. To keep the old key in the older version instead, remove the alias change from the instruction.</p>
 <p><strong>DEFAULTS WARNING:</strong></p>
 <p>If you add <code>default</code> or <code>default_factory</code> to the old version of a schema, it will not manifest in the code automatically. Instead, you should add the <code>default</code> or <code>default_factory</code>, and then also add the default value using a request migration.</p>
 <p>The reason for such behaviour is the way Cadwyn works with Pydantic and unfortunately this cannot be changed:</p>
