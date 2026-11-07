@@ -612,16 +612,18 @@ class VersionBundle:
         start = self.reversed_version_values.index(current_version)
         head_route_id = id(head_route)
         has_run_migrations = False
+        # Migrations can put new uploads into the form, which FastAPI doesn't know about
+        uploads = _get_uploads_to_close(request) if request_info._form is not None else None
         for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
                 for instruction in _get_schema_migrations(
                     version_change.alter_request_by_schema_instructions, body_target, get_body_union_member
                 ):
-                    instruction(request_info)
+                    _run_request_migration(instruction, request_info, uploads)
                     has_run_migrations = True
                 if head_route_id in version_change._route_to_request_migration_mapping:
                     for instruction in version_change._route_to_request_migration_mapping[head_route_id]:
-                        instruction(request_info)
+                        _run_request_migration(instruction, request_info, uploads)
                         has_run_migrations = True
         if has_run_migrations:
             client_json_strings.forget_shared_strings()
@@ -1005,7 +1007,7 @@ class VersionBundle:
             kwargs.pop(request_param_name)
         if route.body_field is not None and isinstance(route.body_field.field_info, params.Form):
             # FastAPI has already parsed this form, so this returns its cached form
-            _get_uploads_to_close(request).add_fastapi_form(await request.form())
+            _get_uploads_to_close(request).add((await request.form()).multi_items())
 
         api_version = self.api_version_var.get()
         if api_version is None:
@@ -1052,9 +1054,6 @@ class VersionBundle:
             form_model_is_omitted or await _fastapi_got_no_body(request, route, embed_body_fields=embed_body_fields)
         )
         request_info = RequestInfo(request, body)
-        if request_info._form is not None:
-            # Migrations can put new uploads into the form, and FastAPI doesn't know about them
-            _get_uploads_to_close(request).add_migrated_form(request_info._form)
         if not request_target.union_members:
             get_body_union_member = _no_union_member
         elif validated_body is _UNKNOWN_BODY:
@@ -1997,6 +1996,8 @@ def _get_strict_content_type(request: FastapiRequest) -> bool:
 
 
 _UPLOADS_TO_CLOSE_SCOPE_KEY = "cadwyn.uploads_to_close"
+# How long we wait for each upload to close, so that an upload that never closes can't keep the request running forever
+_UPLOAD_CLOSE_TIMEOUT_SECONDS = 3
 
 
 class _UploadsToClose:
@@ -2004,41 +2005,36 @@ class _UploadsToClose:
 
     FastAPI closes the uploads of the form that it has parsed, but it doesn't shield closing them. So when the
     request gets cancelled, e.g. by a `BaseHTTPMiddleware` (like Cadwyn's) after the client has disconnected,
-    the uploaded files stay open. FastAPI also doesn't know about the uploads that migrations put into the form.
-    We read the forms only when we close them, so we see every upload that a migration has put there, even if a
-    later migration has failed.
+    the uploaded files stay open. FastAPI also doesn't know about the uploads that migrations put into the form,
+    including the ones that later migrations replace or remove.
     """
 
-    __slots__ = ("_fastapi_forms", "_migrated_forms", "_runs_after_fastapi")
+    __slots__ = ("_uploads",)
 
-    def __init__(self, *, runs_after_fastapi: bool) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        # If we close the uploads before FastAPI does, FastAPI would close the uploads of its own form again
-        self._runs_after_fastapi = runs_after_fastapi
-        self._fastapi_forms: list[FormData] = []
-        self._migrated_forms: list[list[tuple[str, Union[UploadFile, str]]]] = []
+        # Keyed by id, so that we close every upload once. The values keep the ids valid
+        self._uploads: dict[int, UploadFile] = {}
 
-    def add_fastapi_form(self, form: FormData) -> None:
-        self._fastapi_forms.append(form)
-
-    def add_migrated_form(self, form: list[tuple[str, Union[UploadFile, str]]]) -> None:
-        self._migrated_forms.append(form)
+    def add(self, form: Iterable[tuple[str, Union[UploadFile, str]]]) -> None:
+        for _, value in form:
+            if isinstance(value, UploadFile):
+                self._uploads.setdefault(id(value), value)
 
     async def close(self) -> None:
-        # Background tasks and streams have finished by now, so nothing reads the uploads anymore
-        with anyio.CancelScope(shield=True):
-            handled = (
-                set()
-                if self._runs_after_fastapi
-                else {id(value) for form in self._fastapi_forms for _, value in form.multi_items()}
-            )
-            forms = [form.multi_items() for form in self._fastapi_forms] + [list(f) for f in self._migrated_forms]
-            for form in forms:
-                for _, value in form:
-                    if isinstance(value, UploadFile) and id(value) not in handled:
-                        handled.add(id(value))
-                        if not getattr(value.file, "closed", False):
-                            await value.close()
+        # Background tasks and streams have finished by now, so nothing reads the uploads anymore. If FastAPI closes
+        # its uploads after us, closing them again does nothing
+        for upload in self._uploads.values():
+            if getattr(upload.file, "closed", False):
+                continue
+            with anyio.move_on_after(_UPLOAD_CLOSE_TIMEOUT_SECONDS, shield=True) as scope:
+                await upload.close()
+            if scope.cancelled_caught:
+                _logger.warning(
+                    "Cadwyn couldn't close the upload %r within %s seconds after the request, so it may stay open",
+                    upload.filename,
+                    _UPLOAD_CLOSE_TIMEOUT_SECONDS,
+                )
 
 
 def _get_uploads_to_close(request: FastapiRequest) -> _UploadsToClose:
@@ -2046,10 +2042,21 @@ def _get_uploads_to_close(request: FastapiRequest) -> _UploadsToClose:
     if uploads is None:
         # Outside of a Cadwyn app (e.g. with the routers of `generate_versioned_routers()`), we close them with the
         # stack that FastAPI closes its forms with
-        uploads = _UploadsToClose(runs_after_fastapi=False)
+        uploads = _UploadsToClose()
         request.scope[_UPLOADS_TO_CLOSE_SCOPE_KEY] = uploads
         request.scope["fastapi_middleware_astack"].push_async_callback(uploads.close)
     return uploads
+
+
+def _run_request_migration(
+    migration: Callable[[RequestInfo], None], request_info: RequestInfo, uploads: Union[_UploadsToClose, None]
+) -> None:
+    try:
+        migration(request_info)
+    finally:
+        # A later migration can replace or remove the uploads that this one has put into the form
+        if uploads is not None and request_info._form is not None:
+            uploads.add(request_info._form)
 
 
 # We use this instead of `.body()` to automatically guess body type and load the correct body, even if it's a form

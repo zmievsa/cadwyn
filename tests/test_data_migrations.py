@@ -7356,14 +7356,18 @@ def test__request_body_migration__with_upload_file_read_by_background_task__task
 
 
 class _CloseCountingFile:
-    """Wraps the file of an upload to count how many times it gets closed."""
+    """Wraps the file of an upload to count how many times it gets closed.
+
+    Closing a file that is closed already does nothing, so we only count the calls that close an open file.
+    """
 
     def __init__(self, file: Any) -> None:
         self.wrapped_file = file
         self.close_calls = 0
 
     def close(self) -> None:
-        self.close_calls += 1
+        if not self.wrapped_file.closed:
+            self.close_calls += 1
         self.wrapped_file.close()
 
     def __getattr__(self, name: str) -> Any:
@@ -7633,27 +7637,83 @@ def test__form_migration__with_upload_put_into_the_form__should_close_it_and_the
     assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1)]
 
 
-def test__form_migration__with_upload_put_into_the_form_of_router_outside_cadwyn_app__should_close_it_once(
-    router: VersionedAPIRouter, api_version_var: ContextVar[Union[str, None]]
+@pytest.mark.parametrize(("behavior", "driver", "expected_error", "expected_reads"), _UPLOAD_OUTCOMES)
+def test__form_migration__with_upload_put_into_the_form_of_router_outside_cadwyn_app__should_close_both_once(
+    router: VersionedAPIRouter,
+    api_version_var: ContextVar[Union[str, None]],
+    behavior: _UploadBehavior,
+    driver: _ASGIRequestDriver,
+    expected_error: Any,
+    expected_reads: Any,
 ):
     files: list[_CloseCountingFile] = []
     reads: list[int] = []
-    _add_endpoint_that_tracks_closes_of_the_upload(router, _read_the_upload_in_background_task, files, reads)
+    _add_endpoint_that_tracks_closes_of_the_upload(router, behavior, files, reads)
     migration = convert_request_to_next_version_for("/test", ["POST"])(_replace_the_upload(files))
     versions = VersionBundle(*conftest_versions(version_change(migrator=migration)), api_version_var=api_version_var)
     app = FastAPI()
     app.include_router(generate_versioned_routers(router, versions=versions).endpoints["2000-01-01"])
 
+    # A `BaseHTTPMiddleware` cancels the request when the client disconnects, which interrupts FastAPI's closing
     @app.middleware("http")
     async def pick_version(request: Request, call_next: Callable[[Request], Any]):
         api_version_var.set("2000-01-01")
         return await call_next(request)
 
-    with TestClient(app) as client:
-        assert client.post("/test", files={"upload": _LARGE_UPLOAD}).status_code == 200
+    asyncio.run(_run_request(driver, app, {}, expected_error))
+
+    assert reads == expected_reads
+    # The original upload and the one that the migration has put into the form
+    assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1)]
+
+
+def test__form_migration__with_uploads_replaced_by_later_migrations__should_close_every_upload_once(
+    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter
+):
+    files: list[_CloseCountingFile] = []
+    reads: list[int] = []
+    _add_endpoint_that_tracks_closes_of_the_upload(router, _read_the_upload, files, reads)
+    replace_the_upload = convert_request_to_next_version_for("/test", ["POST"])(_replace_the_upload(files))
+    app = create_versioned_app(version_change(migrator=replace_the_upload), version_change(migrator=replace_the_upload))
+
+    asyncio.run(_run_request(_ASGIRequestDriver(), app, {"x-api-version": "2000-01-01"}, None))
 
     assert reads == [len(_LARGE_UPLOAD)]
-    assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1)]
+    # The original upload, the one that the first migration has put into the form, and the one that replaced it
+    assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1), (True, 1)]
+
+
+class _UploadThatNeverCloses(UploadFile):
+    @override
+    async def close(self) -> None:
+        await anyio.sleep_forever()
+
+
+def test__form_migration__with_upload_that_never_closes__should_finish_the_request_and_log_it(
+    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter, caplog: pytest.LogCaptureFixture
+):
+    files: list[_CloseCountingFile] = []
+    reads: list[int] = []
+    _add_endpoint_that_tracks_closes_of_the_upload(router, _read_the_upload, files, reads)
+    upload = _UploadThatNeverCloses(BytesIO(b"content"), filename="stuck.txt")
+
+    @convert_request_to_next_version_for("/test", ["POST"])
+    def add_upload(request: RequestInfo) -> None:
+        assert request.form is not None
+        request.form.append(("other", upload))
+
+    app = create_versioned_app(version_change(migrator=add_upload))
+
+    async def run_request() -> None:
+        with anyio.fail_after(30):
+            await _run_request(_ASGIRequestDriver(), app, {"x-api-version": "2000-01-01"}, None)
+
+    asyncio.run(run_request())
+
+    assert reads == [len(_LARGE_UPLOAD)]
+    assert [(file.closed, file.close_calls) for file in files] == [(True, 1)]
+    assert not upload.file.closed
+    assert [record.getMessage() for record in caplog.records] == [IsStr(regex=".*'stuck.txt'.*")]
 
 
 async def _close_upload(upload: UploadFile = File()) -> None:

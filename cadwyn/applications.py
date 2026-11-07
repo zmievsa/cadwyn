@@ -329,7 +329,7 @@ class Cadwyn(FastAPI):
             await super().__call__(scope, receive, send)
             return
         # We close the uploads after everything else, including FastAPI's own closing of them and background tasks
-        uploads = _UploadsToClose(runs_after_fastapi=True)
+        uploads = _UploadsToClose()
         scope[_UPLOADS_TO_CLOSE_SCOPE_KEY] = uploads
         try:
             await super().__call__(scope, receive, send)
