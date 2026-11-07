@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time as time_module
 import typing
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable, Coroutine, Iterable, Iterator
 from contextvars import ContextVar
 from datetime import datetime, time, timedelta, timezone
@@ -1712,6 +1712,460 @@ def test__request_body_migration__with_validation_aliases_in_nested_models__head
 
     for version_client in clients.values():
         assert version_client.post(test_path, json={"j": payload}).json() == {"inner": expected, "unset_inner": None}
+
+
+class ItemWithExtraKeys(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str
+    count: int = 0
+
+
+class FrozenItemWithExtraKeys(BaseModel):
+    model_config = ConfigDict(extra="allow", frozen=True)
+    name: str
+    count: int = 0
+
+
+class OtherItemWithExtraKeys(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    other: int
+
+
+class ItemsWithExtraKeys(RootModel[list[ItemWithExtraKeys]]):
+    pass
+
+
+class OuterItemWithExtraKeys(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    inner: ItemWithExtraKeys
+    inners: list[ItemWithExtraKeys] = []
+
+
+def _describe_body(value: Any) -> Any:
+    """Describe the models in the body by their dumps and set fields, so that the test sees what the head got"""
+    if isinstance(value, RootModel):
+        return {"root": _describe_body(value.root)}
+    if isinstance(value, BaseModel):
+        fields = {name: _describe_body(getattr(value, name)) for name in type(value).model_fields}
+        return {**fields, **(value.model_extra or {}), "fields_set": sorted(value.model_fields_set)}
+    if isinstance(value, dict):
+        return {key: _describe_body(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset, deque)):
+        return [_describe_body(item) for item in value]
+    return value
+
+
+_ITEM_WITH_EXTRA_KEYS = {"name": "n", "k": 1}
+_DESCRIBED_ITEM_WITH_EXTRA_KEYS = {"name": "n", "count": 0, "k": 1, "fields_set": ["k", "name"]}
+
+
+@pytest.mark.parametrize(
+    ("annotation", "payload", "expected"),
+    [
+        pytest.param(list[ItemWithExtraKeys], [_ITEM_WITH_EXTRA_KEYS], [_DESCRIBED_ITEM_WITH_EXTRA_KEYS], id="list"),
+        pytest.param(
+            tuple[ItemWithExtraKeys, ...], [_ITEM_WITH_EXTRA_KEYS], [_DESCRIBED_ITEM_WITH_EXTRA_KEYS], id="tuple"
+        ),
+        pytest.param(
+            tuple[ItemWithExtraKeys, int],
+            [_ITEM_WITH_EXTRA_KEYS, 2],
+            [_DESCRIBED_ITEM_WITH_EXTRA_KEYS, 2],
+            id="fixed_tuple",
+        ),
+        pytest.param(
+            set[FrozenItemWithExtraKeys], [_ITEM_WITH_EXTRA_KEYS], [_DESCRIBED_ITEM_WITH_EXTRA_KEYS], id="set"
+        ),
+        pytest.param(
+            frozenset[FrozenItemWithExtraKeys],
+            [_ITEM_WITH_EXTRA_KEYS],
+            [_DESCRIBED_ITEM_WITH_EXTRA_KEYS],
+            id="frozenset",
+        ),
+        pytest.param(deque[ItemWithExtraKeys], [_ITEM_WITH_EXTRA_KEYS], [_DESCRIBED_ITEM_WITH_EXTRA_KEYS], id="deque"),
+        pytest.param(
+            dict[str, ItemWithExtraKeys],
+            {"a": _ITEM_WITH_EXTRA_KEYS},
+            {"a": _DESCRIBED_ITEM_WITH_EXTRA_KEYS},
+            id="dict",
+        ),
+        pytest.param(
+            Optional[list[ItemWithExtraKeys]],
+            [_ITEM_WITH_EXTRA_KEYS],
+            [_DESCRIBED_ITEM_WITH_EXTRA_KEYS],
+            id="optional_list",
+        ),
+        pytest.param(
+            list[list[ItemWithExtraKeys]], [[_ITEM_WITH_EXTRA_KEYS]], [[_DESCRIBED_ITEM_WITH_EXTRA_KEYS]], id="lists"
+        ),
+        pytest.param(
+            dict[str, list[ItemWithExtraKeys]],
+            {"a": [_ITEM_WITH_EXTRA_KEYS]},
+            {"a": [_DESCRIBED_ITEM_WITH_EXTRA_KEYS]},
+            id="dict_of_lists",
+        ),
+        pytest.param(
+            list[Union[ItemWithExtraKeys, OtherItemWithExtraKeys]],
+            [_ITEM_WITH_EXTRA_KEYS, {"other": 1, "k": 2}],
+            [_DESCRIBED_ITEM_WITH_EXTRA_KEYS, {"other": 1, "k": 2, "fields_set": ["k", "other"]}],
+            id="list_of_union",
+        ),
+        pytest.param(
+            list[ItemsWithExtraKeys],
+            [[_ITEM_WITH_EXTRA_KEYS]],
+            [{"root": [_DESCRIBED_ITEM_WITH_EXTRA_KEYS]}],
+            id="list_of_root_models",
+        ),
+        pytest.param(
+            list[OuterItemWithExtraKeys],
+            [{"inner": _ITEM_WITH_EXTRA_KEYS, "j": 2}],
+            [{"inner": _DESCRIBED_ITEM_WITH_EXTRA_KEYS, "inners": [], "j": 2, "fields_set": ["inner", "j"]}],
+            id="list_of_nested_models",
+        ),
+        pytest.param(Union[list[ItemWithExtraKeys], int], 5, 5, id="union_with_value_that_is_not_a_container"),
+        pytest.param(
+            Annotated[list[ItemWithExtraKeys], Body(embed=True)],
+            {"body": [_ITEM_WITH_EXTRA_KEYS]},
+            [_DESCRIBED_ITEM_WITH_EXTRA_KEYS],
+            id="embedded_list",
+        ),
+        pytest.param(
+            OuterItemWithExtraKeys,
+            {"inner": _ITEM_WITH_EXTRA_KEYS, "inners": [_ITEM_WITH_EXTRA_KEYS]},
+            {
+                "inner": _DESCRIBED_ITEM_WITH_EXTRA_KEYS,
+                "inners": [_DESCRIBED_ITEM_WITH_EXTRA_KEYS],
+                "fields_set": ["inner", "inners"],
+            },
+            id="model",
+        ),
+    ],
+)
+def test__request_body_migration__with_extra_keys_in_container_body__head_should_get_what_the_client_has_sent(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+    payload: Any,
+    expected: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: annotation):
+        return _describe_body(body)
+
+    clients = create_versioned_clients(version_change(schema(ItemWithExtraKeys).field("count").had(description="x")))
+
+    for version_client in clients.values():
+        # The second request takes what Cadwyn has cached during the first one
+        for _ in range(2):
+            assert version_client.post(test_path, json=payload).json() == expected
+
+
+class ItemWithAlias(BaseModel):
+    value: int = Field(alias="x")
+
+
+class ItemWithOptionalAlias(BaseModel):
+    value: int = Field(default=0, alias="x")
+
+
+class ItemWithAliasGenerator(BaseModel):
+    model_config = ConfigDict(alias_generator=lambda name: name.upper())
+    value: int
+
+
+@pytest.mark.parametrize(
+    ("annotation", "payload"),
+    [
+        pytest.param(list[ItemWithAlias], [{"x": 1}], id="required"),
+        pytest.param(list[ItemWithOptionalAlias], [{"x": 1}], id="optional"),
+        pytest.param(dict[str, ItemWithOptionalAlias], {"a": {"x": 1}}, id="dict"),
+        pytest.param(list[ItemWithAliasGenerator], [{"VALUE": 1}], id="alias_generator"),
+    ],
+)
+def test__request_body_migration__with_aliased_models_in_container_body__head_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+    payload: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: annotation):
+        items = body.values() if isinstance(body, dict) else body
+        return [item.value for item in items]
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() == [1]
+
+
+def test__request_body_migration__with_container_body__migrations_should_get_models_and_head_should_get_their_changes(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: list[ItemWithExtraKeys]):
+        return _describe_body(body)
+
+    types_seen_by_migration: list[type] = []
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        types_seen_by_migration.extend(type(item) for item in request.body)
+        request.body[0].name = "migrated"
+        request.body.append({"name": "added", "k": 2})
+        request.body.append(ItemWithExtraKeys(name="latest", k=3))
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, json=[_ITEM_WITH_EXTRA_KEYS]).json() == [
+        {"name": "migrated", "count": 0, "k": 1, "fields_set": ["k", "name"]},
+        {"name": "added", "count": 0, "k": 2, "fields_set": ["k", "name"]},
+        {"name": "latest", "count": 0, "k": 3, "fields_set": ["k", "name"]},
+    ]
+    assert len(types_seen_by_migration) == 1
+    assert issubclass(types_seen_by_migration[0], BaseModel)
+    assert types_seen_by_migration[0].__name__ == "ItemWithExtraKeys"
+
+
+class ItemWithComputedFieldAndExtraKeys(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str
+
+    @computed_field
+    @property
+    def upper_name(self) -> str:  # pragma: no cover # The head's dump of the body is never needed
+        return self.name.upper()
+
+
+def test__request_body_migration__with_computed_fields_in_container_body__head_should_not_get_them_as_extra_keys(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: list[ItemWithComputedFieldAndExtraKeys]):
+        return [{"extra": item.model_extra, "fields_set": sorted(item.model_fields_set)} for item in body]
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=[_ITEM_WITH_EXTRA_KEYS]).json() == [
+            {"extra": {"k": 1}, "fields_set": ["k", "name"]}
+        ]
+
+
+class ItemWithExcludedField(BaseModel):
+    secret: str = Field(default="", exclude=True)
+
+
+class ItemWithValueChangingSerializer(BaseModel):
+    amount: int = 0
+
+    @field_serializer("amount")
+    def to_cents(self, value: int) -> int:  # pragma: no cover # Cadwyn doesn't dump models with such serializers
+        return value * 100
+
+
+class ItemWithSerializationAlias(BaseModel):
+    value: int = Field(default=0, serialization_alias="x")
+
+
+class ItemWithValidationAliasAndValidationByName(BaseModel):
+    model_config = ConfigDict(validate_by_name=True)
+    value: int = Field(default=0, validation_alias="v", serialization_alias="x")
+
+
+@pydantic_dataclass
+class DataclassWithSerializationAlias:
+    value: int = Field(default=0, serialization_alias="x")
+
+
+class ItemWithDataclassWithSerializationAlias(BaseModel):
+    inner: DataclassWithSerializationAlias
+
+
+class ItemWithSetOfModels(BaseModel):
+    names: set[FrozenItemWithExtraKeys]
+
+
+@pytest.mark.parametrize(
+    ("model", "payload", "expected"),
+    [
+        pytest.param(ItemWithExcludedField, {"secret": "s"}, {"secret": "s"}, id="excluded_field"),
+        pytest.param(ItemWithValueChangingSerializer, {"amount": 1}, {"amount": 1}, id="serializer"),
+        pytest.param(ItemWithSerializationAlias, {"value": 1}, {"value": 1}, id="serialization_alias"),
+        pytest.param(
+            ItemWithValidationAliasAndValidationByName,
+            {"v": 1},
+            {"value": 1},
+            id="serialization_alias_that_is_not_validated",
+        ),
+        pytest.param(
+            ItemWithDataclassWithSerializationAlias,
+            {"inner": {"value": 1}},
+            {"inner": {"value": 1}},
+            id="dataclass_with_serialization_alias",
+        ),
+        pytest.param(
+            ItemWithSetOfModels,
+            {"names": [{"name": "n"}]},
+            {"names": [{"name": "n", "count": 0}]},
+            id="set_of_models",
+        ),
+    ],
+)
+def test__request_body_migration__with_undumpable_models_in_container_body__head_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    model: Any,
+    payload: dict[str, Any],
+    expected: dict[str, Any],
+):
+    @router.post(test_path)
+    async def endpoint(body: list[model]):
+        return [{name: getattr(item, name) for name in model.model_fields} for item in body]
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=[payload]).json() == [expected]
+
+
+class ItemWithDefault(BaseModel):
+    count: int = 5
+
+
+class ItemWithDefaultFactory(BaseModel):
+    count: int = Field(default_factory=lambda: 5)
+
+
+@pytest.mark.parametrize(
+    ("model", "old_default"),
+    [
+        pytest.param(ItemWithDefault, {"default": 3}, id="default"),
+        pytest.param(ItemWithDefaultFactory, {"default_factory": lambda: 3}, id="default_factory"),
+    ],
+)
+def test__request_body_migration__with_older_default_in_container_body__head_should_get_the_old_default(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    model: Any,
+    old_default: dict[str, Any],
+):
+    @router.post(test_path)
+    async def endpoint(body: list[model]):
+        return [item.count for item in body]
+
+    clients = create_versioned_clients(version_change(schema(model).field("count").had(**old_default)))
+
+    assert clients["2000-01-01"].post(test_path, json=[{}]).json() == [3]
+    assert clients["2001-01-01"].post(test_path, json=[{}]).json() == [5]
+
+
+class ListThatCantBeCompared(list[int]):
+    @override
+    def __eq__(self, other: object) -> bool:
+        raise TypeError("Can't be compared")
+
+    __hash__ = None
+
+
+class ItemWithDefaultThatCantBeCompared(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str
+    # Cadwyn copies list defaults, so the default of the request's version is compared with the head's
+    tags: list[int] = ListThatCantBeCompared()
+
+
+def test__request_body_migration__with_default_that_cant_be_compared_in_container_body__head_should_get_the_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: list[ItemWithDefaultThatCantBeCompared]):
+        return [item.name for item in body]
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=[_ITEM_WITH_EXTRA_KEYS]).json() == ["n"]
+
+
+class ItemWithForbiddenExtraKeys(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+
+
+def test__request_body_migration__with_field_that_only_older_version_has_in_container_body__head_should_not_get_it(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: list[ItemWithForbiddenExtraKeys]):
+        return [item.name for item in body]
+
+    clients = create_versioned_clients(
+        version_change(schema(ItemWithForbiddenExtraKeys).field("old").existed_as(type=int))
+    )
+
+    assert clients["2000-01-01"].post(test_path, json=[{"name": "n", "old": 1}]).json() == ["n"]
+
+
+@pytest.mark.parametrize(
+    ("annotation", "payload", "loc"),
+    [
+        pytest.param(list[ItemWithForbiddenExtraKeys], [_ITEM_WITH_EXTRA_KEYS], ["body", 0, "k"], id="list"),
+        pytest.param(
+            dict[str, ItemWithForbiddenExtraKeys], {"a": _ITEM_WITH_EXTRA_KEYS}, ["body", "a", "k"], id="dict"
+        ),
+    ],
+)
+def test__request_body_migration__with_extra_keys_of_models_that_forbid_them_in_container_body__should_return_422(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+    payload: Any,
+    loc: list[Any],
+):
+    @router.post(test_path)
+    async def endpoint(body: annotation):  # pragma: no cover # The request fails before it reaches the endpoint
+        raise NotImplementedError
+
+    clients = create_versioned_clients(version_change())
+
+    for version_client in clients.values():
+        response = version_client.post(test_path, json=payload)
+        assert response.status_code == 422
+        assert response.json()["detail"] == [IsPartialDict(type="extra_forbidden", loc=loc)]
+
+
+def test__response_migration__with_models_with_extra_keys_in_container_response__should_keep_the_extra_keys(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, response_model=dict[str, list[ItemWithExtraKeys]])
+    async def endpoint():
+        return {"a": [ItemWithExtraKeys(name="n", k=1)]}
+
+    @convert_response_to_previous_version_for(test_path, ["POST"])
+    def migrator(response: ResponseInfo):
+        response.body["a"][0]["name"] = "migrated"
+
+    clients = create_versioned_clients(
+        version_change(schema(ItemWithExtraKeys).field("count").had(description="x"), migrator=migrator)
+    )
+
+    assert clients["2000-01-01"].post(test_path).json() == {"a": [{"name": "migrated", "count": 0, "k": 1}]}
+    assert clients["2001-01-01"].post(test_path).json() == {"a": [{"name": "n", "count": 0, "k": 1}]}
 
 
 class RootSchemaWithValidationAliases(RootModel[list[InnerSchemaWithValidationAlias]]):

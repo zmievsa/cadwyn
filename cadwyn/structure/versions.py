@@ -596,7 +596,12 @@ class VersionBundle:
             )
         else:
             body_for_solving = await _encode_json_values(
-                request, head_dependant, head_route, route, request_info.body, embed_body_fields=embed_body_fields
+                request,
+                head_dependant,
+                head_route,
+                route,
+                _dump_models_of_version(route, request_info.body),
+                embed_body_fields=embed_body_fields,
             )
 
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
@@ -1604,6 +1609,177 @@ def _rescue_body(body_field: ModelField, data: Any) -> Any:
     _RESTORATION.has_failing_renames = False
     restored = _restore_data(spec, data)
     return restored if _RESTORATION.has_failing_renames else data
+
+
+# The containers that FastAPI validates bodies into, in which the body can hold models of the request's version
+_BODY_CONTAINER_TYPES = (list, tuple, set, frozenset, deque, dict)
+# Whether the core schemas of the body fields have models, by the ids of the fields
+_BODY_FIELDS_WITH_MODELS: dict[int, tuple[ModelField, bool]] = {}
+
+
+def _dump_models_of_version(route: APIRoute, body: Any) -> Any:
+    """Return the migrated body with the models of the request's version in it replaced by their dumps.
+
+    Bodies that aren't models themselves, such as `list[Model]`, reach migrations as FastAPI validates them, with
+    the models of the request's version in them. FastAPI validates such models for the head with
+    `from_attributes=True`, which only reads the attributes of their fields by their validation aliases. So the head
+    would lose their extra keys, take all of their fields as set, and miss the fields with aliases. We dump them as we
+    dump model bodies, but only the models whose dumps are surely their valid input, and we leave all other values,
+    such as the models of the head that a migration adds, as they are. We only copy the containers in which something
+    changes, and lists replace tuples and sets, which can't hold the dumped dicts.
+    """
+    if len(route.dependant.body_params) != 1 or not _body_field_has_models(route.dependant.body_params[0]):
+        return body
+    if not isinstance(body, _BODY_CONTAINER_TYPES):
+        return _dump_model_of_version(body)
+    # Each frame is [container, iterator of its (key, value) items, its new items, whether an item has changed,
+    # key of the item being walked]. We walk without recursion, so that bodies as deep as pydantic accepts never hit
+    # the recursion limit, and we skip the containers that contain themselves, which the head rejects anyway.
+    stack: list[list[Any]] = [[body, _iter_body_items(body), [], False, None]]
+    containers_on_stack = {id(body)}
+    while True:
+        frame = stack[-1]
+        item = next(frame[1], None)
+        if item is not None:
+            key, value = item
+            if isinstance(value, _BODY_CONTAINER_TYPES) and id(value) not in containers_on_stack:
+                frame[4] = key
+                containers_on_stack.add(id(value))
+                stack.append([value, _iter_body_items(value), [], False, None])
+                continue
+            new_value = _dump_model_of_version(value)
+            frame[2].append((key, new_value))
+            frame[3] = frame[3] or new_value is not value
+            continue
+        stack.pop()
+        container, _, new_items, has_changed, _ = frame
+        containers_on_stack.discard(id(container))
+        if has_changed:
+            new_container = dict(new_items) if isinstance(container, dict) else [value for _, value in new_items]
+        else:
+            new_container = container
+        if not stack:
+            return new_container
+        parent = stack[-1]
+        parent[2].append((parent[4], new_container))
+        parent[3] = parent[3] or has_changed
+
+
+def _iter_body_items(container: Any) -> Iterator[tuple[Any, Any]]:
+    if isinstance(container, dict):
+        return iter(container.items())
+    return ((None, value) for value in container)
+
+
+def _body_field_has_models(body_field: ModelField) -> bool:
+    cached = _BODY_FIELDS_WITH_MODELS.get(id(body_field))
+    if cached is not None and cached[0] is body_field:
+        return cached[1]
+    try:
+        schema = _register_core_schema_definitions(cast("dict[str, Any]", body_field._type_adapter.core_schema))
+        has_models = _has_core_schema_of_types(schema, frozenset(("model",)))
+    except _CORE_SCHEMA_ERRORS:  # pragma: no cover # FastAPI and Pydantic don't build such schemas
+        has_models = False
+    _BODY_FIELDS_WITH_MODELS[id(body_field)] = (body_field, has_models)
+    return has_models
+
+
+def _dump_model_of_version(value: Any) -> Any:
+    """Return the dump of a model of the request's version (a copy of a head model), or the value as it is.
+
+    The dump is like the one of model bodies, but in the round-trip mode, so that it skips computed fields, which
+    the head would take as extra keys.
+    """
+    if (
+        isinstance(value, BaseModel)
+        and hasattr(type(value), "__cadwyn_original_model__")
+        and _is_dump_valid_input(type(value))
+    ):
+        return value.model_dump(by_alias=True, exclude_unset=True, round_trip=True)
+    return value
+
+
+@functools.cache
+def _is_dump_valid_input(model: type[BaseModel]) -> bool:
+    """Whether the head validates the dump of each instance of the model into what the client has sent.
+
+    That's the case if nothing that the model reaches changes values when it's dumped (e.g. a serializer), every field
+    of its models is dumped to a key that the model validates, and no field is excluded from the dump.
+    Dataclasses and typed dicts can have such fields as well, so we don't dump the models that reach them.
+    The head reads the attributes of the fields that it has, which keeps the defaults of the request's version and
+    ignores the fields that only the request's version has, while it would get the dumps of these fields as extra keys.
+    So we only dump the models whose versions keep the fields of the head's models with their keys and defaults.
+    """
+    try:
+        schema = _register_core_schema_definitions(cast("dict[str, Any]", model.__pydantic_core_schema__))
+        if not _is_field_schema_safe({"model": schema}, "model"):
+            return False
+        stack = [schema]
+        seen: set[int] = set()
+        while stack:
+            node = stack.pop()
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            if node["type"] in ("dataclass", "typed-dict"):
+                return False
+            # The dumps of models are dicts, which sets and the keys of dicts can't hold
+            if node["type"] in ("set", "frozenset", "dict") and _has_core_schema_of_types(
+                node.get("items_schema" if node["type"] != "dict" else "keys_schema", {}), frozenset(("model",))
+            ):
+                return False
+            if node["type"] == "definition-ref":
+                stack.append(_CORE_SCHEMA_DEFINITIONS[node["schema_ref"]])
+                continue
+            if node["type"] == "model" and not (
+                _dumps_fields_to_validated_keys(node["cls"]) and _has_fields_of_original_model(node["cls"])
+            ):
+                return False
+            stack.extend(_get_child_core_schemas(node))
+    # `_is_field_schema_safe` has already rejected the types and definitions that we know nothing about, and the
+    # models that Cadwyn doesn't copy (e.g. SQLModel models, which override `model_dump`)
+    except _CORE_SCHEMA_ERRORS:  # pragma: no cover
+        return False
+    return True
+
+
+def _dumps_fields_to_validated_keys(model: type[BaseModel]) -> bool:
+    if issubclass(model, RootModel):
+        return True
+    inner_schema = _get_model_inner_core_schema(model)
+    # `_is_field_schema_safe` has already rejected such models, unless a custom core schema changes their settings
+    if inner_schema is None:  # pragma: no cover
+        return False
+    field_schemas = inner_schema["fields"]
+    return set(field_schemas) == set(model.model_fields) and all(
+        _do_compiled_aliases_match(field, field_schemas[name])
+        and not field_schemas[name].get("serialization_exclude")
+        and field_schemas[name].get("serialization_exclude_if") is None
+        and [field.serialization_alias or name] in _get_validation_paths(model, name, field)
+        for name, field in model.model_fields.items()
+    )
+
+
+def _has_fields_of_original_model(model: type[BaseModel]) -> bool:
+    """Whether a copy of a head model has the fields of the head model, with the same keys and defaults"""
+    original: type[BaseModel] = model.__cadwyn_original_model__  # ty: ignore[unresolved-attribute]
+    if model.model_fields.keys() != original.model_fields.keys():
+        return False
+    for name, field in model.model_fields.items():
+        original_field = original.model_fields[name]
+        if (
+            (field.serialization_alias or name) != (original_field.serialization_alias or name)
+            or _get_validation_paths(model, name, field) != _get_validation_paths(original, name, original_field)
+            or field.default_factory is not original_field.default_factory
+        ):
+            return False
+        # Defaults are values of users, whose comparison can fail or give something other than a bool
+        try:
+            if field.default is not original_field.default and (field.default == original_field.default) is not True:
+                return False
+        except Exception:  # noqa: BLE001
+            return False
+    return True
 
 
 async def _encode_json_values(
