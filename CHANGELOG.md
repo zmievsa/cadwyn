@@ -14,6 +14,15 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Removed `Cadwyn.add_header_versioned_routers()`, deprecated since 5.0.0. Add each version to your `VersionBundle`, describe how it differs from the latest one with version changes, and include the latest routers with `Cadwyn.generate_and_include_versioned_routers()`.
 - Removed the `version_changes` attribute of `Version` and `HeadVersion`, deprecated since 4.2.0. Use `changes` instead.
 - Removed `VersionBundle.version_dates`, deprecated since 5.0.0. Use `VersionBundle.version_values` instead.
+- With FastAPI 0.153.0 or newer, for endpoints that take a union of form models (e.g. `body: Annotated[Union[ModelA, ModelB], Form()]`), a list, set, or tuple that a validator or a migration puts into the body now reaches the endpoint as it is, like in FastAPI itself (#532). Requests that worked before change in these cases:
+    - With FastAPI 0.153.0 to 0.160.x, a list in a field that a model of the union takes as a single value (e.g. `value: Any`) gave that model only the last item of the list. Now it gets the whole list.
+    - A one-item list in an extra field of a model that allows extra fields (`extra="allow"`) gave the model the item instead of the list. Now it gets the list.
+    - With FastAPI 0.153.0 to 0.160.x, when a model of the union takes a field as a single value and another one takes it as repeated values (e.g. `value: Any` in one model and `value: list[str]` in another), or takes it as an extra field, a list, set, or tuple in that field now fails with a `CadwynError` that names the field and the models. Before, FastAPI gave one of the models only part of the value, so the endpoint could silently get a wrong value. With FastAPI 0.161.0 or newer, this failed with a `CadwynHeadRequestValidationError` before. To migrate, make the field take repeated values (e.g. `list[str]`) in all of these models or in none of them, or don't put a list, set, or tuple into it in a validator or a migration.
+
+### Fixed
+
+- With FastAPI 0.161.0 or newer, endpoints that take a union of form models no longer fail with a 500 error when the body has a list, set, or tuple in a field that a model of the union takes as a single value or as an extra field, e.g. a field of type `Any` that a validator or a migration fills with a list. Endpoints that take an optional union of form models (e.g. `body: Annotated[Optional[Union[ModelA, ModelB]], Form()] = None`) get the form data in this case instead of `None`. The endpoint gets the value, like in FastAPI itself (#532).
+- With FastAPI 0.153.0 to 0.160.x, endpoints that take a union of form models no longer fail with a 500 error when a model of the union has a `set`, `frozenset`, or `tuple` field (#532).
 
 ## [8.2.0]
 
