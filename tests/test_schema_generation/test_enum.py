@@ -113,12 +113,24 @@ class EnumThatInheritsCustomAutoValues(EnumBaseWithCustomAutoValues):
     b = auto()
 
 
+class MixinWithCustomAutoValues:
+    def _generate_next_value_(name: str, start: int, count: int, last_values: list[Any]) -> int:
+        return (count + 1) * 10
+
+
+class EnumThatTakesCustomAutoValuesFromMixin(MixinWithCustomAutoValues, Enum):
+    _generate_next_value_ = MixinWithCustomAutoValues._generate_next_value_
+    a = auto()
+    b = auto()
+
+
 @pytest.mark.parametrize(
     ("original", "expected"),
     [
         (EnumWithCustomAutoValues, {"a": 10, "b": 20, "c": 30}),
         (StrEnumWithCustomAutoValues, {"a": "A", "b": "B", "c": "C"}),
         (EnumThatInheritsCustomAutoValues, {"a": "a!", "b": "b!", "c": "c!"}),
+        (EnumThatTakesCustomAutoValuesFromMixin, {"a": 10, "b": 20, "c": 30}),
     ],
 )
 def test__enum_had__auto_value_with_custom_generate_next_value__should_use_the_custom_generate_next_value(

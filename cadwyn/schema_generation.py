@@ -4123,7 +4123,9 @@ class _EnumWrapper(Generic[_T_ENUM]):
             if k not in enum_cls._member_names_
             and k not in _ENUM_INTERNAL_ATTRIBUTES
             and k not in _FLAG_INTERNAL_ATTRIBUTES
-            and (k not in mro_dict or mro_dict[k] is not v)
+            # A `_generate_next_value_` that the enum takes from a mixin is the mixin's function on Python 3.11, but
+            # the copy would take the one of its base enum type
+            and (k in _USER_DEFINABLE_ENUM_ATTRIBUTES or k not in mro_dict or mro_dict[k] is not v)
         }
 
 
