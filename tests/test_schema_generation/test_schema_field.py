@@ -1,13 +1,20 @@
+import contextlib
+import dataclasses
+import json
 import re
+import time
+from collections.abc import Callable
 from decimal import Decimal
 from enum import Enum, auto
 from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, Union, get_args, get_origin, get_type_hints
 
 import pytest
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
+    PlainSerializer,
     StringConstraints,
     ValidationError,
     computed_field,
@@ -2431,7 +2438,7 @@ def test__schema_field_had__change_attr_to_same_value__should_raise_error(create
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to change the attribute "default" of field "foo" from "SchemaWithOneStrField" to \'wow\' '
+            'You tried to change the attribute "default" of field "foo" of "SchemaWithOneStrField" to \'wow\' '
             'in "MyVersionChange" but it already has that value.',
         ),
     ):
@@ -2446,7 +2453,7 @@ def test__schema_field_had__change_metadata_attr_to_same_value__should_raise_err
     with pytest.raises(
         InvalidGenerationInstructionError,
         match=re.escape(
-            'You tried to change the attribute "gt" of field "foo" from "EmptySchema" to 8 '
+            'You tried to change the attribute "gt" of field "foo" of "EmptySchema" to 8 '
             'in "MyVersionChange" but it already has that value.',
         ),
     ):
@@ -2456,6 +2463,399 @@ def test__schema_field_had__change_metadata_attr_to_same_value__should_raise_err
                 schema(EmptySchema).field("foo").existed_as(type=int, info=Field(gt=8, lt=12)),
             ),
         )
+
+
+class AlwaysEqual:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        return True  # pragma: no cover
+
+    @override
+    def __repr__(self) -> str:
+        return f"AlwaysEqual({self.name!r})"
+
+    __hash__ = object.__hash__
+
+
+nan = float("nan")
+
+
+@pytest.mark.parametrize(
+    ("old_value", "new_value"),
+    [
+        pytest.param(1, True, id="int_to_bool"),
+        pytest.param(1, 1.0, id="int_to_float"),
+        pytest.param(0.0, -0.0, id="zero_to_negative_zero"),
+        pytest.param(float("nan"), float("nan"), id="nan_to_another_nan"),
+        pytest.param(complex(1, 0.0), complex(1, -0.0), id="complex_with_zero_to_negative_zero"),
+        pytest.param(Decimal(1), Decimal("1.0"), id="decimal_to_decimal_with_another_exponent"),
+        pytest.param(Decimal("NaN"), Decimal("NaN"), id="decimal_nan_to_another_decimal_nan"),
+        pytest.param((1, 2), (1, True), id="tuple_with_int_to_tuple_with_bool"),
+        pytest.param([1], [1, 2], id="list_to_longer_list"),
+        pytest.param({"a": 1}, {"a": True}, id="dict_with_int_value_to_dict_with_bool_value"),
+        pytest.param({1: "a"}, {True: "a"}, id="dict_with_int_key_to_dict_with_bool_key"),
+        pytest.param({"a": 1, "b": 2}, {"b": 2, "a": 1}, id="dict_to_dict_in_another_order"),
+        pytest.param(frozenset({1}), frozenset({True}), id="frozenset_with_int_to_frozenset_with_bool"),
+        pytest.param({(1, frozenset({2}))}, {(1, frozenset({True}))}, id="set_with_nested_int_to_set_with_nested_bool"),
+        pytest.param(AlwaysEqual("old"), AlwaysEqual("new"), id="object_with_custom_eq_to_another_object"),
+    ],
+)
+def test__schema_field_had__default_that_equals_the_current_one_but_differs__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas, old_value: Any, new_value: Any
+):
+    class SchemaWithDefault(BaseModel):
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+        foo: Any = old_value
+
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithDefault).field("foo").had(default=new_value)))
+
+    def describe(value: Any) -> tuple[type, str]:
+        return type(value), repr(value)
+
+    assert describe(schemas["2000-01-01"][SchemaWithDefault].model_fields["foo"].default) == describe(new_value)
+    assert describe(schemas["2001-01-01"][SchemaWithDefault].model_fields["foo"].default) == describe(old_value)
+
+
+def test__schema_field_had__default_that_equals_the_current_one_but_differs__should_change_it_in_openapi(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithIntDefault(BaseModel):
+        foo: Union[int, bool] = 1
+
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithIntDefault).field("foo").had(default=True)))
+
+    assert schemas["2000-01-01"][SchemaWithIntDefault].model_json_schema()["properties"]["foo"]["default"] is True
+    assert schemas["2001-01-01"][SchemaWithIntDefault].model_json_schema()["properties"]["foo"]["default"] == 1
+
+
+def test__schema_field_had__constraint_that_equals_the_current_one_but_differs__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithIntConstraint(BaseModel):
+        foo: float = Field(gt=1)
+
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithIntConstraint).field("foo").had(gt=1.0)))
+
+    old_constraint = schemas["2000-01-01"][SchemaWithIntConstraint].model_json_schema()["properties"]["foo"]
+    assert repr(old_constraint["exclusiveMinimum"]) == "1.0"
+    new_constraint = schemas["2001-01-01"][SchemaWithIntConstraint].model_json_schema()["properties"]["foo"]
+    assert repr(new_constraint["exclusiveMinimum"]) == "1"
+
+
+@pytest.mark.parametrize(
+    ("attributes", "new_attributes"),
+    [
+        pytest.param({"default": float("1.5")}, {"default": float("1.5")}, id="float"),
+        pytest.param({"default": complex("1+2j")}, {"default": complex("1+2j")}, id="complex"),
+        pytest.param({"default": Decimal("1.0")}, {"default": Decimal("1.0")}, id="decimal"),
+        pytest.param({"default": nan}, {"default": nan}, id="the_same_nan"),
+        pytest.param({"default": {"a": [1, (2, 3)]}}, {"default": {"a": [1, (2, 3)]}}, id="dict_with_list_and_tuple"),
+        pytest.param({"default": frozenset({1, 2})}, {"default": frozenset({2, 1})}, id="frozenset"),
+        pytest.param(
+            {"validation_alias": AliasChoices("a", "b")},
+            {"validation_alias": AliasChoices("a", "b")},
+            id="dataclass",
+        ),
+    ],
+)
+def test__schema_field_had__attribute_that_is_the_same_as_the_current_one__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas, attributes: dict[str, Any], new_attributes: dict[str, Any]
+):
+    class SchemaWithAttribute(BaseModel):
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+        foo: Any = Field(**attributes)
+
+    with pytest.raises(InvalidGenerationInstructionError, match="but it already has that value"):
+        create_runtime_schemas(version_change(schema(SchemaWithAttribute).field("foo").had(**new_attributes)))
+
+
+@pytest.mark.parametrize(
+    ("old_type", "new_type"),
+    [
+        pytest.param(Union[str, int], Union[int, str], id="union_in_another_order"),
+        pytest.param(Literal["a", "b"], Literal["b", "a"], id="literal_in_another_order"),
+        pytest.param(Literal[1], Literal[True], id="literal_with_int_to_literal_with_bool"),
+    ],
+)
+def test__schema_field_had__type_that_equals_the_current_one_but_differs__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas, old_type: Any, new_type: Any
+):
+    class SchemaWithType(BaseModel):
+        foo: old_type
+
+    class SchemaWithNewType(BaseModel):
+        foo: new_type
+
+    schemas = create_runtime_schemas(version_change(schema(SchemaWithType).field("foo").had(type=new_type)))
+
+    def field_schema(model: type[BaseModel]) -> str:
+        return json.dumps(model.model_json_schema()["properties"]["foo"])
+
+    assert field_schema(schemas["2000-01-01"][SchemaWithType]) == field_schema(SchemaWithNewType)
+    assert field_schema(schemas["2001-01-01"][SchemaWithType]) == field_schema(SchemaWithType)
+    assert field_schema(SchemaWithType) != field_schema(SchemaWithNewType)
+
+
+@pytest.mark.parametrize(
+    ("old_type", "new_type"),
+    [
+        pytest.param(list[int], list[int], id="generic_alias"),
+        pytest.param(dict[str, list[int]], dict[str, list[int]], id="nested_generic_alias"),
+    ],
+)
+def test__schema_field_had__type_that_is_the_same_as_the_current_one__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas, old_type: Any, new_type: Any
+):
+    class SchemaWithType(BaseModel):
+        foo: old_type
+
+    with pytest.raises(InvalidGenerationInstructionError, match="but it already has type"):
+        create_runtime_schemas(version_change(schema(SchemaWithType).field("foo").had(type=new_type)))
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class SelfReferencingNode:
+    parent: Any
+    label: str
+
+
+@dataclasses.dataclass(frozen=True)
+class SelfReferencingNodeThatComparesItsFields:
+    parent: Any
+    label: str
+
+
+def _self_referencing_node(label: str, node_type: type[Any] = SelfReferencingNode) -> Any:
+    node = node_type(parent=None, label=label)
+    object.__setattr__(node, "parent", node)
+    return node
+
+
+@pytest.mark.parametrize("node_type", [SelfReferencingNode, SelfReferencingNodeThatComparesItsFields])
+def test__schema_field_had__default_that_refers_to_itself__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas, node_type: type[Any]
+):
+    class SchemaWithSelfReferencingDefault(BaseModel):
+        foo: Annotated[Any, PlainSerializer(lambda node: node.label)] = _self_referencing_node("old", node_type)
+
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithSelfReferencingDefault).field("foo").had(default=_self_referencing_node("new", node_type))
+        )
+    )
+
+    assert schemas["2000-01-01"][SchemaWithSelfReferencingDefault]().model_dump() == {"foo": "new"}
+    assert schemas["2001-01-01"][SchemaWithSelfReferencingDefault]().model_dump() == {"foo": "old"}
+
+
+def test__schema_field_had__default_that_refers_to_itself_and_is_the_same_object__should_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    node = _self_referencing_node("old")
+
+    class SchemaWithSelfReferencingDefault(BaseModel):
+        foo: Any = node
+
+    with pytest.raises(InvalidGenerationInstructionError, match="but it already has that value"):
+        create_runtime_schemas(version_change(schema(SchemaWithSelfReferencingDefault).field("foo").had(default=node)))
+
+
+@pytest.mark.parametrize(
+    "new_value",
+    [
+        pytest.param(set(range(19_999)) | {99_999}, id="another_set"),
+        pytest.param(set(range(20_000)), id="the_same_set"),
+    ],
+)
+def test__schema_field_had__default_that_is_a_large_set__should_compare_it_quickly(
+    create_runtime_schemas: CreateRuntimeSchemas, new_value: set[int]
+):
+    class SchemaWithLargeSetDefault(BaseModel):
+        foo: Any = set(range(20_000))
+
+    started_at = time.perf_counter()
+    with contextlib.suppress(InvalidGenerationInstructionError):
+        create_runtime_schemas(version_change(schema(SchemaWithLargeSetDefault).field("foo").had(default=new_value)))
+
+    # Comparing every item with every other item takes minutes
+    assert time.perf_counter() - started_at < 5
+
+
+class TaggedList(list[int]):
+    tag: str
+
+
+class TaggedTuple(tuple[int, ...]):  # noqa: SLOT001 # It needs __dict__ to hold the tag
+    tag: str
+
+
+class TaggedDict(dict[str, int]):
+    tag: str
+
+
+class TaggedSet(set[int]):
+    tag: str
+
+
+class TaggedFrozenset(frozenset[int]):
+    tag: str
+
+
+@dataclasses.dataclass
+class Box:
+    value: int
+
+
+class WithTagSlot:
+    __slots__ = "tag"
+
+
+@dataclasses.dataclass
+class BoxWithInheritedSlot(WithTagSlot):
+    value: int
+
+
+@dataclasses.dataclass
+class BoxWithExtraSlot:
+    __slots__ = ("tag", "value")
+    value: int
+
+
+def _tagged(value: Any, tag: str) -> Any:
+    value.tag = tag
+    return value
+
+
+@pytest.mark.parametrize(
+    "make_value",
+    [
+        pytest.param(lambda: TaggedList([1]), id="list_subclass"),
+        pytest.param(lambda: TaggedTuple((1,)), id="tuple_subclass"),
+        pytest.param(lambda: TaggedDict({"a": 1}), id="dict_subclass"),
+    ],
+)
+def test__schema_field_had__default_of_container_subclass_with_state_that_equality_ignores__should_not_raise_error(
+    create_runtime_schemas: CreateRuntimeSchemas, make_value: Callable[[], Any]
+):
+    # The generated versions don't keep the state of these defaults, so we can only check that Cadwyn accepts them
+    class SchemaWithTaggedDefault(BaseModel):
+        foo: Any = _tagged(make_value(), "old")
+
+    create_runtime_schemas(
+        version_change(schema(SchemaWithTaggedDefault).field("foo").had(default=_tagged(make_value(), "new")))
+    )
+
+
+@pytest.mark.parametrize(
+    "make_value",
+    [
+        pytest.param(lambda: TaggedSet({1}), id="set_subclass"),
+        pytest.param(lambda: TaggedFrozenset({1}), id="frozenset_subclass"),
+        pytest.param(lambda: Box(1), id="dataclass_with_attribute_that_is_not_a_field"),
+        pytest.param(lambda: BoxWithExtraSlot(1), id="dataclass_with_slot_that_is_not_a_field"),
+        pytest.param(lambda: BoxWithInheritedSlot(1), id="dataclass_with_base_that_is_not_a_dataclass"),
+    ],
+)
+def test__schema_field_had__default_with_state_that_equality_ignores__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas, make_value: Callable[[], Any]
+):
+    class SchemaWithTaggedDefault(BaseModel):
+        foo: Annotated[Any, PlainSerializer(lambda value: value.tag)] = _tagged(make_value(), "old")
+
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithTaggedDefault).field("foo").had(default=_tagged(make_value(), "new")))
+    )
+
+    assert schemas["2000-01-01"][SchemaWithTaggedDefault]().model_dump() == {"foo": "new"}
+    assert schemas["2001-01-01"][SchemaWithTaggedDefault]().model_dump() == {"foo": "old"}
+
+
+@dataclasses.dataclass(frozen=True, init=False)
+class DataclassSet(set[int]):
+    tag: str = "same tag"
+
+
+def _dataclass_set(*items: int) -> DataclassSet:
+    value = DataclassSet()
+    value.update(items)
+    return value
+
+
+def test__schema_field_had__default_of_dataclass_that_subclasses_set_with_other_items__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithDataclassSetDefault(BaseModel):
+        foo: Annotated[Any, PlainSerializer(sorted)] = _dataclass_set(1)
+
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithDataclassSetDefault).field("foo").had(default=_dataclass_set(2)))
+    )
+
+    assert schemas["2000-01-01"][SchemaWithDataclassSetDefault]().model_dump() == {"foo": [2]}
+    assert schemas["2001-01-01"][SchemaWithDataclassSetDefault]().model_dump() == {"foo": [1]}
+
+
+class CantBeCompared:
+    def __init__(self, label: str) -> None:
+        self.label = label
+
+    @override
+    def __hash__(self) -> int:
+        return 1
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        raise RuntimeError("Can't compare")  # pragma: no cover
+
+
+def test__schema_field_had__default_of_set_with_items_that_cant_be_compared__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithSetDefault(BaseModel):
+        foo: Annotated[Any, PlainSerializer(lambda value: sorted(item.label for item in value))] = {
+            CantBeCompared("old")
+        }
+
+    schemas = create_runtime_schemas(
+        version_change(schema(SchemaWithSetDefault).field("foo").had(default={CantBeCompared("new")}))
+    )
+
+    assert schemas["2000-01-01"][SchemaWithSetDefault]().model_dump() == {"foo": ["new"]}
+    assert schemas["2001-01-01"][SchemaWithSetDefault]().model_dump() == {"foo": ["old"]}
+
+
+@dataclasses.dataclass
+class BoxWithFieldThatCantBeRead:
+    value: int
+
+
+def _raise_when_read(box: BoxWithFieldThatCantBeRead) -> int:
+    raise RuntimeError("Can't read")
+
+
+box_with_field_that_cant_be_read_1 = BoxWithFieldThatCantBeRead(1)
+box_with_field_that_cant_be_read_2 = BoxWithFieldThatCantBeRead(2)
+# The instances keep the value in their __dict__, but reading it runs the property
+BoxWithFieldThatCantBeRead.value = property(_raise_when_read)  # ty: ignore[invalid-assignment]
+
+
+def test__schema_field_had__default_whose_field_raises_when_read__should_change_it(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class SchemaWithDefaultThatCantBeRead(BaseModel):
+        foo: Annotated[Any, PlainSerializer(lambda box: vars(box)["value"])] = box_with_field_that_cant_be_read_1
+
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(SchemaWithDefaultThatCantBeRead).field("foo").had(default=box_with_field_that_cant_be_read_2)
+        )
+    )
+
+    assert schemas["2000-01-01"][SchemaWithDefaultThatCantBeRead]().model_dump() == {"foo": 2}
+    assert schemas["2001-01-01"][SchemaWithDefaultThatCantBeRead]().model_dump() == {"foo": 1}
 
 
 def test__schema_field_had__nonexistent_field__should_raise_error(create_runtime_schemas: CreateRuntimeSchemas):
