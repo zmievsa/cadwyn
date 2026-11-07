@@ -78,7 +78,6 @@ These are accepted for now. They are listed so that nobody "discovers" and fixes
     String values of `Json[...]` fields stay as they are: `Json[str]` returns a 500, and a type that also accepts other JSON values (e.g. `Json[Any]`, `Json[Union[str, int]]`, or `Json[Optional[str]]`) parses them as JSON once more, e.g. `"123"` becomes `123` (#538).
 * Schema instructions: diamond inheritance takes the field from the first base, like Pydantic does. A parent's rename reaches a subclass's own changes only through single, non-generic inheritance. `had(default=PydanticUndefined)` doesn't make a field required when its default is declared in `Annotated[..., Field(default=...)]`. `didnt_have(...)` fails with an `AttributeError` when the attribute is a read-only property of an `Annotated` metadata object. `schema(Model).validator(...).existed` for a computed field fails on Python versions before 3.13.
 * `cadwyn render` doesn't render `model_config`, and it renders `AliasChoices` and `AliasPath` as calls that raise a `TypeError`.
-* When a request has no `Content-Type` header, Cadwyn parses its body as JSON for an endpoint with several `Body()` params, while FastAPI ignores the body.
 
 ## Rules for changing Cadwyn
 
