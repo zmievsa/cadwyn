@@ -55,7 +55,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute, _get_scope_effective_route_context
 from pydantic import AliasChoices, AliasPath, BaseModel, RootModel
 from pydantic.fields import FieldInfo
-from pydantic_core import PydanticSerializationError, PydanticUndefined, TzInfo, to_json
+from pydantic_core import PydanticSerializationError, PydanticUndefined, TzInfo, from_json, to_json
 from starlette._utils import is_async_callable
 from starlette.datastructures import FormData, UploadFile
 from typing_extensions import ParamSpec, TypeVar, override
@@ -575,18 +575,24 @@ class VersionBundle:
         form_model_is_omitted: bool,
         uploads_read_by_fastapi: "Union[_UploadPositions, None]",
         get_body_union_member: "Callable[[], Union[type[BaseModel], None]]",
+        client_json_strings: "_ClientJsonStrings",
     ) -> dict[str, Any]:
         start = self.reversed_version_values.index(current_version)
         head_route_id = id(head_route)
+        has_run_migrations = False
         for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
                 for instruction in _get_schema_migrations(
                     version_change.alter_request_by_schema_instructions, body_target, get_body_union_member
                 ):
                     instruction(request_info)
+                    has_run_migrations = True
                 if head_route_id in version_change._route_to_request_migration_mapping:
                     for instruction in version_change._route_to_request_migration_mapping[head_route_id]:
                         instruction(request_info)
+                        has_run_migrations = True
+        if has_run_migrations:
+            client_json_strings.forget_shared_strings()
 
         request.scope["headers"] = tuple((key.encode(), value.encode()) for key, value in request_info.headers.items())
         del request._headers
@@ -612,7 +618,13 @@ class VersionBundle:
         elif dumped_body_model is not None:
             body_for_solving = _rescue_body(head_dependant.body_params[0], body_with_head_members)
             body_for_solving = await _encode_json_values(
-                request, head_dependant, head_route, route, body_for_solving, embed_body_fields=embed_body_fields
+                request,
+                head_dependant,
+                head_route,
+                route,
+                body_for_solving,
+                client_json_strings,
+                embed_body_fields=embed_body_fields,
             )
             form_model_lookup = await _get_form_model_lookup(
                 request,
@@ -625,7 +637,13 @@ class VersionBundle:
             )
         else:
             body_for_solving = await _encode_json_values(
-                request, head_dependant, head_route, route, body_with_head_members, embed_body_fields=embed_body_fields
+                request,
+                head_dependant,
+                head_route,
+                route,
+                body_with_head_members,
+                client_json_strings,
+                embed_body_fields=embed_body_fields,
             )
 
         # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
@@ -959,6 +977,8 @@ class VersionBundle:
         uploads_read_by_fastapi: Union[_UploadPositions, None] = None
         # The validated body that tells which member of a union body the request matches, if we have it
         validated_body: object = _UNKNOWN_BODY
+        # The copies of the strings that the client has sent in `Json[...]` fields, by their paths in the body
+        client_json_strings = _ClientJsonStrings()
         # This is a kind of body param you get when you define a single pydantic schema in your route's body
         if (
             len(route.dependant.body_params) == 1
@@ -979,6 +999,9 @@ class VersionBundle:
             else:
                 body = raw_body.model_dump(by_alias=True, exclude_unset=True)
                 dumped_body_model = type(raw_body)
+            if body is not None:
+                plan = _get_route_json_values_plan(head_dependant, route, embed_body_fields=embed_body_fields)
+                body = _copy_decoded_json_strings(plan, body, client_json_strings)
         else:
             # This is for requests without body or with complex body such as form or file
             body = await _get_body(
@@ -1017,6 +1040,7 @@ class VersionBundle:
             form_model_is_omitted=form_model_is_omitted,
             uploads_read_by_fastapi=uploads_read_by_fastapi,
             get_body_union_member=get_body_union_member,
+            client_json_strings=client_json_strings,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
         if _CADWYN_REQUEST_PARAM_NAME in new_kwargs:
@@ -1937,38 +1961,142 @@ def _restore_surely_failing_data(spec: "_RestorerSpec", data: Any) -> Any:
     return restored if _RESTORATION.has_failing_renames else data
 
 
+def _get_route_json_values_plan(
+    head_dependant: Dependant, route: APIRoute, *, embed_body_fields: bool
+) -> "Union[_JsonValuesPlan, None]":
+    if embed_body_fields or len(head_dependant.body_params) != 1 or len(route.dependant.body_params) != 1:
+        return None
+    return _get_json_values_plan(head_dependant.body_params[0], route.dependant.body_params[0])
+
+
+@dataclasses.dataclass(slots=True)
+class _ClientJsonStrings:
+    """The strings that the client has sent in `Json[...]` fields, by their paths in the body.
+
+    We put new copies of them into the body, which nothing else can have. Python shares some strings, though, e.g.
+    the empty string, and some versions of pydantic decode strings of one character into the ones that Python
+    shares, so we can't copy them. A migration might set the same string objects, so we only treat them as the
+    client's if no migration has run, and then nothing can have changed them.
+    """
+
+    by_path: "dict[_JsonPath, str]" = dataclasses.field(default_factory=dict)
+    shared_paths: "set[_JsonPath]" = dataclasses.field(default_factory=set)
+
+    def forget_shared_strings(self) -> None:
+        for path in self.shared_paths:
+            del self.by_path[path]
+
+
+def _copy_decoded_json_strings(plan: "Union[_JsonValuesPlan, None]", body: Any, strings: _ClientJsonStrings) -> Any:
+    """Return the body of the request's version with new copies of the strings that it has decoded from JSON.
+
+    The head would decode these strings once more, so we encode them, e.g. `"123"` as `'"123"'`. But a string that
+    a migration sets might be JSON already (e.g. one that it has encoded to work around the 500s of `Json[...]`
+    fields before 8.2.0), so we remember the copies that we put into the body by their paths in `strings`, and only
+    encode a string if it is the very copy that we have put at its path. Python and pydantic share other strings
+    (e.g. `"5"`, or the strings that pydantic caches as it decodes JSON) with whatever code makes the same ones,
+    and a migration can still get a copy, e.g. with `sys.intern()`, but not put it at its path by accident.
+    It skips the containers that it doesn't expect, e.g. in a default that FastAPI gives without validating it.
+    """
+    if plan is None:
+        return body
+    return _replace_planned_json_values(
+        plan, body, functools.partial(_copy_decoded_json_string, strings=strings), (), is_strict=False
+    )
+
+
+def _copy_decoded_json_string(_check: Any, value: Any, path: "_JsonPath", *, strings: _ClientJsonStrings) -> Any:
+    if type(value) is not str:
+        return value
+    if len(value) > 1:
+        copy = value[:1] + value[1:]
+    elif value and ord(value) > 0xFF:
+        copy = chr(ord(value))
+    else:
+        # Python shares the empty string and the strings of one character up to "\xff", but some versions of
+        # pydantic decode them anew (e.g. "5"). We can't copy the shared ones.
+        copy = from_json(to_json(value), cache_strings=False)
+        if copy is value or (value and copy is chr(ord(value))):
+            strings.by_path[path] = value
+            strings.shared_paths.add(path)
+            return value
+    strings.by_path[path] = copy
+    return copy
+
+
 async def _encode_json_values(
     request: FastapiRequest,
     head_dependant: Dependant,
     head_route: APIRoute,
     route: APIRoute,
     body: Any,
+    client_json_strings: _ClientJsonStrings,
     *,
     embed_body_fields: bool,
 ) -> Any:
     """Return a copy of the migrated body with the parsed values of the head's `Json[...]` fields encoded as JSON.
 
     We dump bodies in Python mode, so `Json[...]` fields get their parsed values, which they reject because they only
-    accept strings and bytes. Request migrations see these parsed values, so we encode them only for the head.
-    We only encode the values that we can find for sure: anything else stays as it is and fails as before.
+    accept strings and bytes, or decode once more if they are strings. Request migrations see these parsed values,
+    so we encode them only for the head. We only encode the values that we can find for sure: anything else stays as
+    it is and fails as before.
     """
-    if embed_body_fields or len(head_dependant.body_params) != 1 or len(route.dependant.body_params) != 1:
-        return body
-    plan = _get_json_values_plan(head_dependant.body_params[0], route.dependant.body_params[0])
+    plan = _get_route_json_values_plan(head_dependant, route, embed_body_fields=embed_body_fields)
     # FastAPI gives the body param its default without validating it if the request has no body, so the values of
     # the default might not have the types that the request's version validates them into
     if plan is None or await _fastapi_got_no_body(request, route, embed_body_fields=embed_body_fields):
         return body
-    # If we can't encode one of the values, e.g. a string that a migration has encoded already or that the request's
-    # version has parsed into a string, the head would decode the other values once more, so we encode none of them.
-    # Whatever else goes wrong, we leave the body as it is too, because encoding must never break a request.
+    client_strings = client_json_strings.by_path
+    # Whatever goes wrong, we leave the body as it is, because encoding must never break a request
     try:
         # Encoding copies containers and hashes their keys, and checking the dependencies builds the dependants of
         # the overrides, both of which run code of users (e.g. `__hash__` or schema hooks). So we only do them if
-        # a read-only pass finds a value to encode, which makes the request fail as it is anyway.
-        if not _has_json_values_to_encode(plan, body) or _has_other_body_readers(head_dependant, head_route):
+        # a read-only pass finds a value to encode, which makes the request fail or get a wrong value as it is.
+        try:
+            client_strings_check = None
+            has_values_to_encode = _has_json_values_to_encode(
+                plan, body, functools.partial(_is_json_value_to_encode, strings=client_strings), ()
+            )
+        # If we can't encode one of the values, e.g. a string that a migration has encoded already, a migration might
+        # have encoded the others too, so we leave them as they are and only encode the strings that the client has
+        # sent. Values that aren't strings fail in the head as they are, as before. But if a string that the client
+        # has sent isn't at its place anymore (e.g. a migration has moved or removed it), or if we can't walk into
+        # a part of the body (e.g. a tuple that a migration has put there), the head might decode a string that the
+        # client has sent once more, so the whole body stays as it is. If we couldn't copy one of the strings that the
+        # client has sent, we can't tell whether it is still at its place, so the whole body stays as it is too.
+        except _UnsafeJsonValueError:
+            if client_json_strings.shared_paths:
+                raise
+            client_strings_check = _ClientJsonStringsCheck(client_strings)
+            has_values_to_encode = _has_json_values_to_encode(plan, body, client_strings_check, ())
+            client_strings_check.check_that_all_are_in_place()
+        if not has_values_to_encode or _has_other_body_readers(head_dependant, head_route):
             return body
-        return _encode_planned_json_values(plan, body)
+        if client_strings_check is not None:
+            # Checking the dependencies might have changed the body, so we check it again as we encode it
+            client_strings_check = _ClientJsonStringsCheck(client_strings)
+            encoded = _replace_planned_json_values(
+                plan,
+                body,
+                lambda check, value, path: (
+                    _encode_json_value(value) if client_strings_check(check, value, path) else value
+                ),
+                (),
+                is_strict=True,
+            )
+            client_strings_check.check_that_all_are_in_place()
+            return encoded
+        return _replace_planned_json_values(
+            plan,
+            body,
+            lambda check, value, path: (
+                _encode_json_value(value)
+                if _is_json_value_to_encode(check, value, path, strings=client_strings)
+                else value
+            ),
+            (),
+            is_strict=True,
+        )
     except Exception:  # noqa: BLE001
         return body
 
@@ -2005,6 +2133,8 @@ class _UnsafeJsonValueError(Exception):
 # In `Json[...]` values, it says what the parsed value must look like for us to encode it. The plan of what to encode
 # is the description without the parts that have no `Json[...]` values.
 _JsonValuesPlan: TypeAlias = tuple[Any, ...]
+# Where a value is in the body: the keys of models, the types and keys of other dicts, and the indexes of lists
+_JsonPath: TypeAlias = tuple[Any, ...]
 # The keys of the child schemas of the core schema types that hold other values, and the kinds of their descriptions
 _JSON_CHILD_SCHEMA_KEYS = {
     "nullable": ("schema", "nullable"),
@@ -2445,65 +2575,140 @@ def _describe_json_model(
     return "model", keys, tuple(children)
 
 
-def _has_json_values_to_encode(plan: _JsonValuesPlan, data: Any) -> bool:
+def _has_json_values_to_encode(
+    plan: _JsonValuesPlan,
+    data: Any,
+    is_to_encode: Callable[[_JsonValuesPlan, Any, "_JsonPath"], bool],
+    path: "_JsonPath",
+) -> bool:
     """Whether the data has a value to encode, found without changing anything or running code of users.
 
-    It doesn't copy, hash, or compare anything of users (e.g. keys). It raises `_UnsafeJsonValueError` if we can't
-    encode the data, like `_encode_planned_json_values` does, so it walks all of the data.
+    It doesn't copy, hash, or compare anything of users (e.g. keys). It walks all of the data, because `is_to_encode`
+    raises `_UnsafeJsonValueError` for a value that we can't encode, and it raises for containers that we can't walk
+    into too.
     """
     kind = plan[0]
     if kind == "json":
-        return _is_json_value_to_encode(plan[1], data)
+        return is_to_encode(plan[1], data, path)
     if kind == "nullable":
-        return data is not None and _has_json_values_to_encode(plan[1], data)
-    _check_json_container(kind, data)
+        return data is not None and _has_json_values_to_encode(plan[1], data, is_to_encode, path)
+    _is_json_container(kind, data, is_strict=True)
     if kind == "items":
-        return any([_has_json_values_to_encode(plan[1], item) for item in data])  # noqa: C419
-    if kind == "values":
-        return any([_has_json_values_to_encode(plan[1], item) for item in data.values()])  # noqa: C419
-    return any([_has_json_values_to_encode(child, data[key]) for key, child in plan[2] if key in data])  # noqa: C419
+        children = [(plan[1], item, (*path, index)) for index, item in enumerate(data)]
+    elif kind == "values":
+        children = [(plan[1], item, (*path, _get_json_path_key(key))) for key, item in data.items()]
+    else:
+        children = [(child, data[key], (*path, key)) for key, child in plan[2] if key in data]
+    # We check every child before `any()` stops at the first value to encode
+    results = [_has_json_values_to_encode(child, item, is_to_encode, item_path) for child, item, item_path in children]
+    return any(results)
 
 
-def _encode_planned_json_values(plan: _JsonValuesPlan, data: Any) -> Any:
-    """Encode the values of the plan in the data, copying only the containers in which something changes.
+def _replace_planned_json_values(
+    plan: _JsonValuesPlan,
+    data: Any,
+    replace: Callable[[_JsonValuesPlan, Any, "_JsonPath"], Any],
+    path: "_JsonPath",
+    *,
+    is_strict: bool,
+) -> Any:
+    """Replace the values of the plan in the data, copying only the containers in which something changes.
 
     Checking the dependencies runs code of users (e.g. schema hooks) after `_has_json_values_to_encode`, which might
-    change the data, so we check the data again as we copy it, and raise `_UnsafeJsonValueError` like it does.
+    change the data, so if `is_strict`, we check the data again as we copy it, and raise `_UnsafeJsonValueError` like
+    it does. Otherwise, we skip the containers that we can't walk into.
     """
     kind = plan[0]
     if kind == "json":
-        return _encode_json_value(data) if _is_json_value_to_encode(plan[1], data) else data
+        return replace(plan[1], data, path)
     if kind == "nullable":
-        return data if data is None else _encode_planned_json_values(plan[1], data)
-    _check_json_container(kind, data)
+        return data if data is None else _replace_planned_json_values(plan[1], data, replace, path, is_strict=is_strict)
+    if not _is_json_container(kind, data, is_strict=is_strict):
+        return data
     if kind == "items":
-        items = [_encode_planned_json_values(plan[1], item) for item in data]
+        items = [
+            _replace_planned_json_values(plan[1], item, replace, (*path, index), is_strict=is_strict)
+            for index, item in enumerate(data)
+        ]
         return data if all(new is old for new, old in zip(items, data, strict=True)) else items
     if kind == "values":
-        values = {key: _encode_planned_json_values(plan[1], value) for key, value in data.items()}
+        values = {
+            key: _replace_planned_json_values(
+                plan[1], value, replace, (*path, _get_json_path_key(key)), is_strict=is_strict
+            )
+            for key, value in data.items()
+        }
         return data if all(values[key] is value for key, value in data.items()) else values
-    encoded = data
+    replaced = data
     for key, field_plan in plan[2]:
-        if key in data and (value := _encode_planned_json_values(field_plan, data[key])) is not data[key]:
-            if encoded is data:
-                encoded = dict(data)
-            encoded[key] = value
-    return encoded
+        if (
+            key in data
+            and (
+                value := _replace_planned_json_values(field_plan, data[key], replace, (*path, key), is_strict=is_strict)
+            )
+            is not data[key]
+        ):
+            if replaced is data:
+                replaced = dict(data)
+            replaced[key] = value
+    return replaced
 
 
-def _is_json_value_to_encode(check: _JsonValuesPlan, value: Any) -> bool:
+def _get_json_path_key(key: Any) -> tuple[type, Any]:
+    # Keys of different types can be equal, e.g. `1` and `True`, but aren't the same key in JSON
+    return type(key), key
+
+
+def _is_json_value_to_encode(
+    check: _JsonValuesPlan, value: Any, path: "_JsonPath", *, strings: "dict[_JsonPath, str]"
+) -> bool:
     """Whether to encode the value of a `Json[...]` field, or raise `_UnsafeJsonValueError` if we can't encode it"""
     # None stays as it is because FastAPI before 0.151.0 gives a body that is None its default
     if value is None:
         return False
-    # A string might be JSON that a migration has encoded already
-    if isinstance(value, str) or not _passes_json_value_check(check, value):
+    # Any other string might be JSON that a migration has encoded already
+    if (type(value) is str and not _is_client_json_string(value, path, strings)) or not _passes_json_value_check(
+        check, value
+    ):
         raise _UnsafeJsonValueError
     return True
 
 
-def _check_json_container(kind: str, data: Any) -> None:
-    """Raise `_UnsafeJsonValueError` unless the data is the container of the kind, as dumps have them.
+def _is_client_json_string(value: Any, path: "_JsonPath", strings: "dict[_JsonPath, str]") -> bool:
+    """Whether the value is the copy of a string that the client has sent, which we have put at the path"""
+    # Paths only have the keys of dicts that `_is_json_container` has checked, so hashing them runs no code of users
+    return type(value) is str and strings.get(path) is value
+
+
+class _ClientJsonStringsCheck:
+    """Says whether a `Json[...]` value is a string that the client has sent, as `_is_client_json_string` does.
+
+    It raises `_UnsafeJsonValueError` if a string that the client has sent is at the place of another value, and
+    `check_that_all_are_in_place()` raises it if one of their places isn't in the body anymore, e.g. because
+    a migration has moved or removed it. A place that has another value, e.g. JSON that a migration has encoded, is
+    fine. The check must see every `Json[...]` value of the body, so walk it strictly.
+    """
+
+    def __init__(self, strings: "dict[_JsonPath, str]") -> None:
+        self.strings = strings
+        self.strings_by_id = {id(string): string for string in strings.values()}
+        self.seen_paths: set[_JsonPath] = set()
+
+    def __call__(self, _check: _JsonValuesPlan, value: Any, path: "_JsonPath") -> bool:
+        if path in self.strings:
+            self.seen_paths.add(path)
+        is_client_string = _is_client_json_string(value, path, self.strings)
+        if not is_client_string and self.strings_by_id.get(id(value)) is value:
+            raise _UnsafeJsonValueError
+        return is_client_string
+
+    def check_that_all_are_in_place(self) -> None:
+        if len(self.seen_paths) != len(self.strings):
+            raise _UnsafeJsonValueError
+
+
+def _is_json_container(kind: str, data: Any, *, is_strict: bool) -> bool:
+    """Whether the data is the container of the kind, as dumps have them, or raise `_UnsafeJsonValueError` if strict.
 
     Dumps only have lists and dicts. We don't accept other containers, even subclasses (e.g. a tuple or a mapping that
     a migration has put in the data), whose `Json[...]` values we might not encode. Looking keys up and copying dicts
@@ -2513,10 +2718,12 @@ def _check_json_container(kind: str, data: Any) -> None:
     """
     key_types = (str,) if kind == "model" else _JSON_NATIVE_TYPES
     if kind == "items":
-        if type(data) is not list:
-            raise _UnsafeJsonValueError
-    elif type(data) is not dict or any(type(key) not in key_types for key in data):
+        is_container = type(data) is list
+    else:
+        is_container = type(data) is dict and all(type(key) in key_types for key in data)
+    if not is_container and is_strict:
         raise _UnsafeJsonValueError
+    return is_container
 
 
 def _encode_json_value(value: Any) -> str:
