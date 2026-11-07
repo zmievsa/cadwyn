@@ -2150,6 +2150,45 @@ def test__schema_field__container_subclass_default_that_cannot_be_deep_copied__s
         schemas["2000-01-01"][model]
 
 
+def test__schema_field__default_of_changed_model_that_cannot_be_deep_copied__should_raise_schema_generation_error(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    model = create_model(
+        "ModelWithInstructionsAndDefaultThatCannotBeDeepCopied",
+        __config__=ConfigDict(arbitrary_types_allowed=True),
+        foo=(Any, _make_list_subclass_with_lock()),
+    )
+
+    with pytest.raises(
+        SchemaGenerationError,
+        match=re.escape(
+            "in the field 'foo' of ModelWithInstructionsAndDefaultThatCannotBeDeepCopied because it cannot deep copy it"
+        ),
+    ):
+        create_runtime_schemas(version_change(schema(model).field("foo").had(description="Old")))
+
+
+class ShallowCopyList(list[Any]):
+    def __deepcopy__(self, memo: dict[int, Any]) -> "ShallowCopyList":
+        return ShallowCopyList(self)
+
+
+def test__schema_field__container_subclass_default_whose_deepcopy_shares_what_cannot_be_copied__should_use_its_copy(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    default = ShallowCopyList([_make_list_subclass_with_lock()])
+    model = create_model(
+        "ModelWithShallowCopyDefault", __config__=ConfigDict(arbitrary_types_allowed=True), foo=(Any, default)
+    )
+    schemas = create_runtime_schemas(version_change())
+
+    for version in ("2000-01-01", "2001-01-01"):
+        value = _get_default(schemas, version, model)
+        assert type(value) is ShallowCopyList
+        assert value is not default
+        assert value[0] is default[0]
+
+
 def make_tags_from_registry(registry: Any = None) -> list[str]:  # pragma: no cover # Generation fails first
     return []
 

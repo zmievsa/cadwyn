@@ -221,10 +221,13 @@ class PydanticFieldWrapper:
                 )
         field_copy = copy.copy(self)
         field_copy.annotation = copy.deepcopy(self.annotation, memo)
-        field_copy.passed_field_attributes = {
-            attr_name: copy.deepcopy(attr_value, memo)
-            for attr_name, attr_value in self.get_field_attributes(model).items()
-        }
+        field_copy.passed_field_attributes = {}
+        for attr_name, attr_value in self.get_field_attributes(model).items():
+            try:
+                field_copy.passed_field_attributes[attr_name] = copy.deepcopy(attr_value, memo)
+            except Exception as error:
+                description = f"{reprlib.repr(attr_value)} in the field '{name}' of {model.__qualname__}"
+                raise _get_deep_copy_error(description, error) from error
         field_copy.declared_field_attributes = field_copy.passed_field_attributes
         field_copy.changes = []
         field_copy.models_that_changed_it = set()
@@ -265,6 +268,14 @@ class PydanticFieldWrapper:
                 else:
                     attributes[change.name] = change.value
         return _keep_last_of_default_and_default_factory(attributes, changes)
+
+
+def _get_deep_copy_error(description: str, error: Exception) -> SchemaGenerationError:
+    return SchemaGenerationError(
+        f"Cadwyn cannot generate the versioned copy of {description} because it cannot deep copy it "
+        f"({type(error).__name__}: {error}). Every version gets its own deep copy of it, as pydantic gives every "
+        "instance its own copy of a mutable default. Please make it deep-copyable, e.g. with __deepcopy__."
+    )
 
 
 def _keep_last_of_default_and_default_factory(
@@ -1183,6 +1194,8 @@ class _AnnotationTransformer:
         # anything within a container gets replaced. Typing objects, such as `list[int]`, get rebuilt even when
         # nothing within them gets replaced, so we cannot tell it by comparing the results with the originals.
         self._replacement_count = 0
+        # How many containers that get deep copied as a whole we are in (see _change_version_of_container)
+        self._only_checking_depth = 0
         # The places that we are versioning right now (e.g. fields), innermost last (see describing)
         self._locations: list[str] = []
         # Whether we are recording the routes, whose endpoints and dependencies copying reads like _get_signature
@@ -1254,19 +1267,22 @@ class _AnnotationTransformer:
             return container
         self._containers_being_copied[id(container)] = False
         replacement_count = self._replacement_count
+        is_plain = type(container) in {dict, list, tuple}
         try:
-            # The (key, value) pairs of dicts
-            values: list[Any] = (
-                [
-                    (self.change_version_of_annotation(key), self.change_version_of_annotation(value))
-                    for key, value in container.items()
-                ]
-                if isinstance(container, dict)
-                else [self.change_version_of_annotation(value) for value in container]
-            )
+            # We deep copy other containers as a whole, so that their own __deepcopy__ decides how to copy the values
+            # within them (e.g. it can keep the ones that cannot be copied), and we only check these values
+            with contextlib.nullcontext() if is_plain else self._only_checking_containers():
+                # The (key, value) pairs of dicts
+                values: list[Any] = (
+                    [
+                        (self.change_version_of_annotation(key), self.change_version_of_annotation(value))
+                        for key, value in container.items()
+                    ]
+                    if isinstance(container, dict)
+                    else [self.change_version_of_annotation(value) for value in container]
+                )
         finally:
             contains_itself = self._containers_being_copied.pop(id(container))
-        is_plain = type(container) in {dict, list, tuple}
         if is_plain and not contains_itself:
             if isinstance(container, dict):
                 return dict(values)
@@ -1283,18 +1299,24 @@ class _AnnotationTransformer:
                 "with instructions, the models that use them, or functions). Cadwyn cannot rebuild it with these "
                 "copies without changing it. Please use a plain list, tuple, or dict that does not contain itself."
             )
+        if self._only_checking_depth:
+            return container
         try:
             return copy.deepcopy(container)
         except Exception as error:
-            raise SchemaGenerationError(
-                f"Cadwyn cannot generate the versioned copy of {self._describe(container)} because it cannot "
-                f"deep copy it ({type(error).__name__}: {error}). Every version gets its own deep copy of such "
-                "a container, as pydantic gives every instance its own copy of a mutable default. Please make it "
-                "deep-copyable, e.g. with __deepcopy__, or use a plain list, tuple, or dict."
-            ) from error
+            raise _get_deep_copy_error(self._describe(container), error) from error
 
     def _describe(self, container: Any) -> str:
         return " in ".join([reprlib.repr(container), *self._locations[-1:]])
+
+    @contextlib.contextmanager
+    def _only_checking_containers(self) -> Generator[None, None, None]:
+        """Check the containers within a container that gets deep copied as a whole instead of copying them"""
+        self._only_checking_depth += 1
+        try:
+            yield
+        finally:
+            self._only_checking_depth -= 1
 
     @contextlib.contextmanager
     def describing(self, location: str) -> Generator[None, None, None]:
