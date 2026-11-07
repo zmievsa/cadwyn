@@ -8050,6 +8050,32 @@ class SchemaWithSerializedJsonDict(BaseModel):
     data: Annotated[Json[dict[str, Any]], PlainSerializer(lambda value: json.dumps(value))]
 
 
+class _JsonStrEnum(str, Enum):
+    A = "a"
+    ONE = "1"
+
+
+class _InnerWithJsonAny(BaseModel):
+    value: Json[Any]
+
+
+class SchemaWithJsonStrings(BaseModel):
+    data: Json[dict[str, Any]] = {}
+    anything: Json[Any] = None
+    text: Json[str] = "default"
+    text_or_number: Json[Union[str, int]] = 0
+    maybe_text: Json[Optional[str]] = None
+    kind: Json[_JsonStrEnum] = _JsonStrEnum.A
+    items: list[Json[Any]] = []
+    mapping: dict[str, Json[Any]] = {}
+    old: Optional[_InnerWithJsonAny] = None
+    new: Optional[_InnerWithJsonAny] = None
+
+
+class FormModelWithJsonAny(BaseModel):
+    anything: Json[Any]
+
+
 async def _json_form_model_endpoint(body: Annotated[SchemaWithJsonDict, Form()]):
     return body
 
@@ -8124,6 +8150,18 @@ async def _json_model_with_empty_alias_endpoint(body: Annotated[Json[InnerOfJson
     return body
 
 
+async def _json_strings_body_endpoint(body: SchemaWithJsonStrings):
+    return body
+
+
+async def _json_any_form_model_endpoint(body: Annotated[FormModelWithJsonAny, Form()]):
+    return body
+
+
+async def _raw_json_any_body_endpoint(body: Annotated[Json[Any], Body()]):
+    return body
+
+
 @pytest.mark.parametrize(
     ("endpoint", "request_kwargs"),
     [
@@ -8188,6 +8226,34 @@ async def _json_model_with_empty_alias_endpoint(body: Annotated[Json[InnerOfJson
         pytest.param(_optional_json_and_tuple_keys_endpoint, {"json": {"other": {}}}, id="default_with_tuple_keys"),
         pytest.param(_json_by_alias_body_endpoint, {"json": {"d": '{"a": 1}'}}, id="alias"),
         pytest.param(_json_by_alias_body_endpoint, {"json": {"data": '{"a": 1}'}}, id="name"),
+        # The request's version has decoded these strings already, so the head mustn't decode them once more (#538)
+        pytest.param(_json_strings_body_endpoint, {"json": {"anything": '"123"'}}, id="string_in_any"),
+        pytest.param(_json_strings_body_endpoint, {"json": {"anything": '"5"'}}, id="one_character_string"),
+        # Some versions of pydantic share these strings, but without migrations nothing else can have set them
+        pytest.param(
+            _json_strings_body_endpoint,
+            {"json": {"anything": '"abc"', "text_or_number": '"5"'}},
+            id="one_character_string_next_to_another_string",
+        ),
+        pytest.param(_json_strings_body_endpoint, {"json": {"anything": '"é"'}}, id="one_character_string_below_x100"),
+        pytest.param(_json_strings_body_endpoint, {"json": {"anything": '""'}}, id="empty_string"),
+        pytest.param(_json_strings_body_endpoint, {"json": {"anything": '"€"'}}, id="one_character_string_above_xff"),
+        pytest.param(_json_strings_body_endpoint, {"json": {"anything": '"abc"'}}, id="string_that_isnt_json"),
+        pytest.param(_json_strings_body_endpoint, {"json": {"items": ['"1"', "2"]}}, id="strings_in_list"),
+        pytest.param(_json_strings_body_endpoint, {"json": {"text_or_number": '"123"'}}, id="string_in_union"),
+        pytest.param(_json_strings_body_endpoint, {"json": {"maybe_text": '"null"'}}, id="string_in_optional"),
+        pytest.param(_json_strings_body_endpoint, {"json": {"text": json.dumps('"x"')}}, id="json_in_string"),
+        pytest.param(_json_strings_body_endpoint, {"json": {"kind": '"1"'}}, id="member_of_string_enum"),
+        pytest.param(
+            _json_strings_body_endpoint,
+            {"json": {"anything": '"1"', "text": '"[]"', "text_or_number": "7", "maybe_text": '"x"', "kind": '"a"'}},
+            id="several_strings",
+        ),
+        pytest.param(
+            _json_strings_body_endpoint, {"json": {"data": "{}", "anything": '"123"'}}, id="string_next_to_dict"
+        ),
+        pytest.param(_json_any_form_model_endpoint, {"data": {"anything": '"123"'}}, id="string_in_form_model"),
+        pytest.param(_raw_json_any_body_endpoint, {"json": '"123"'}, id="string_as_raw_body"),
     ],
 )
 def test__request_body_migration__with_json_fields__should_be_the_same_as_in_fastapi(
@@ -8263,6 +8329,262 @@ def test__request_body_migration__with_json_field__should_get_its_parsed_value_a
 
     assert clients["2000-01-01"].post(test_path, json={"data": data}).json() == expected
     assert seen_bodies == [{"data": json.loads(data)}]
+
+
+@pytest.mark.parametrize(
+    ("migrate", "expected"),
+    [
+        pytest.param(lambda _body: None, "123", id="string_that_the_migration_keeps"),
+        # A migration that encodes the value itself keeps working as before
+        pytest.param(
+            lambda body: body.update(anything=json.dumps(body["anything"])),
+            "123",
+            id="string_that_the_migration_encodes",
+        ),
+        # Cadwyn can't tell whether a string that a migration sets is JSON, so the head decodes it as before
+        pytest.param(lambda body: body.update(anything="456"), 456, id="string_that_the_migration_sets"),
+        pytest.param(
+            lambda body: body.update(anything=body["anything"] + "4"), 1234, id="string_that_the_migration_changes"
+        ),
+        pytest.param(lambda body: body.update(anything=["a"]), ["a"], id="list_that_the_migration_sets"),
+        # Cadwyn can't tell an equal string that a migration makes from JSON that it sets on purpose
+        pytest.param(
+            lambda body: body.update(anything=body["anything"].encode().decode()),
+            123,
+            id="string_that_the_migration_makes_anew",
+        ),
+        # The head would decode the copy once more, so the whole body stays as it is
+        pytest.param(
+            lambda body: body.update(items=[body["anything"]]), 123, id="string_that_the_migration_copies_elsewhere"
+        ),
+    ],
+)
+def test__request_body_migration__with_string_in_json_field__should_get_the_decoded_string_and_keep_what_it_sets(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    migrate: Callable[[dict[str, Any]], None],
+    expected: Any,
+):
+    seen_bodies = []
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithJsonStrings):
+        return body.anything
+
+    @convert_request_to_next_version_for(SchemaWithJsonStrings)
+    def migrator(request: RequestInfo):
+        seen_bodies.append(dict(request.body))
+        migrate(request.body)
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    assert clients["2000-01-01"].post(test_path, json={"anything": '"123"'}).json() == expected
+    assert seen_bodies == [{"anything": "123"}]
+
+
+def test__request_body_migration__with_string_in_json_field_next_to_value_that_the_migration_encodes__should_get_both(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithJsonStrings):
+        return body
+
+    # Apps that worked around the 500s of `Json[...]` fields before 8.2.0 encode the values themselves
+    @convert_request_to_next_version_for(SchemaWithJsonStrings)
+    def migrator(request: RequestInfo):
+        request.body["data"] = json.dumps(request.body["data"])
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    response = clients["2000-01-01"].post(test_path, json={"data": '{"a": 1}', "anything": '"123"'})
+    assert response.json() == IsPartialDict(data={"a": 1}, anything="123")
+
+
+def test__request_body_migration__with_string_in_json_field_next_to_value_cadwyn_cant_encode__should_get_the_string(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithJsonStrings):
+        raise NotImplementedError
+
+    @convert_request_to_next_version_for(SchemaWithJsonStrings)
+    def migrator(request: RequestInfo):
+        request.body["data"] = {"a": Decimal("1.5")}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # The head gets the dict as it is and rejects it, but the string doesn't fail as one that it decodes once more
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, json={"data": "{}", "anything": '"abc"'})
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [("json_type", ("body", "data"))]
+
+
+def test__request_body_migration__with_json_string_next_to_list_that_the_migration_replaces__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithJsonStrings):
+        raise NotImplementedError
+
+    @convert_request_to_next_version_for(SchemaWithJsonStrings)
+    def migrator(request: RequestInfo):
+        request.body["items"] = tuple(request.body["items"])
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # Cadwyn can't walk into the tuple, so it can't encode the string in it. If it encoded the other string, the head
+    # would decode the string in the tuple once more and accept the request with `123` instead of `"123"`.
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, json={"items": ['"123"'], "anything": '"abc"'})
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [
+        ("json_invalid", ("body", "anything"))
+    ]
+
+
+def test__request_body_migration__with_client_string_that_the_migration_puts_elsewhere__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    encoded = json.dumps([73912653, 28176493])
+    is_the_client_string: list[bool] = []
+
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithJsonStrings):
+        return body
+
+    @convert_request_to_next_version_for(SchemaWithJsonStrings)
+    def migrator(request: RequestInfo):
+        sys.intern(request.body["anything"])
+        # Interning gives the migration the very string object that the client has sent
+        own_json = sys.intern(json.dumps([73912653, 28176493]))
+        is_the_client_string.append(own_json is request.body["anything"])
+        request.body["items"] = [own_json]
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    response = clients["2000-01-01"].post(test_path, json={"anything": json.dumps(encoded)})
+    assert is_the_client_string == [True]
+    # The client's string is at a place where it wasn't, so the whole body stays as it is and the head decodes the JSON
+    # that the migration has set, as before, instead of getting it as a string
+    assert response.json() == IsPartialDict(anything=[73912653, 28176493], items=[[73912653, 28176493]])
+
+
+def _swap_mapping_keys(body: dict[str, Any]) -> None:
+    body["mapping"] = {"b" if key == "a" else "a": value for key, value in body["mapping"].items()}
+
+
+@pytest.mark.parametrize(
+    ("payload", "migrate"),
+    [
+        pytest.param({"items": ['"123"', '"456"']}, lambda body: body["items"].reverse(), id="reversed_list"),
+        pytest.param({"mapping": {"a": '"123"', "b": '"456"'}}, _swap_mapping_keys, id="renamed_keys"),
+        pytest.param({"old": {"value": '"123"'}}, lambda body: body.update(new=body.pop("old")), id="moved_model"),
+        pytest.param({"items": ['"123"', '"456"']}, lambda body: body["items"].pop(0), id="removed_first_item"),
+        # A value that Cadwyn can't encode makes it encode only the strings that the client has sent
+        pytest.param(
+            {"items": ['"123"', '"456"']},
+            lambda body: (body["items"].pop(), body.update(mapping={"k": json.dumps(1)})),
+            id="removed_last_item_next_to_json_that_the_migration_sets",
+        ),
+    ],
+)
+def test__request_body_migration__with_client_json_strings_that_the_migration_moves__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    payload: dict[str, Any],
+    migrate: Callable[[dict[str, Any]], None],
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithJsonStrings):
+        raise NotImplementedError
+
+    @convert_request_to_next_version_for(SchemaWithJsonStrings)
+    def migrator(request: RequestInfo):
+        migrate(request.body)
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # If Cadwyn encoded `anything`, the head would accept the moved strings decoded once more, e.g. `123` for `"123"`
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, json={"anything": '"abc"', **payload})
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [
+        ("json_invalid", ("body", "anything"))
+    ]
+
+
+def test__request_body_migration__with_client_json_string_that_the_migration_removes__should_encode_the_others(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithJsonStrings):
+        return body
+
+    @convert_request_to_next_version_for(SchemaWithJsonStrings)
+    def migrator(request: RequestInfo):
+        request.body["items"].pop()
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # Cadwyn encodes every value that is left, so the head decodes none of them once more
+    response = clients["2000-01-01"].post(test_path, json={"anything": '"abc"', "items": ['"123"', '"456"']})
+    assert response.json() == IsPartialDict(anything="abc", items=["123"])
+
+
+def test__request_body_migration__with_client_json_string_that_the_migration_replaces_in_place__should_get_both(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithJsonStrings):
+        return body
+
+    @convert_request_to_next_version_for(SchemaWithJsonStrings)
+    def migrator(request: RequestInfo):
+        request.body["items"][0] = json.dumps([1])
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    response = clients["2000-01-01"].post(test_path, json={"anything": '"abc"', "items": ['"123"']})
+    assert response.json() == IsPartialDict(anything="abc", items=[[1]])
+
+
+@pytest.mark.parametrize("value", [pytest.param("", id="empty_string"), pytest.param("é", id="one_character_string")])
+def test__request_body_migration__with_json_string_that_python_shares_and_a_migration__should_stay_as_before(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    value: str,
+):
+    @router.post(test_path)
+    async def endpoint(body: SchemaWithJsonStrings):
+        raise NotImplementedError
+
+    @convert_request_to_next_version_for(SchemaWithJsonStrings)
+    def migrator(request: RequestInfo):
+        request.body["data"] = json.dumps({"set_by_migration": True})
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+
+    # Python shares these strings, so Cadwyn can't tell them from ones that a migration sets. If it encoded only
+    # `anything`, the head would decode them once more, so the whole body stays as it is.
+    with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, json={"anything": '"abc"', "text": json.dumps(value)})
+    assert [(error["type"], error["loc"]) for error in exc_info.value.errors] == [
+        ("json_invalid", ("body", "anything")),
+        ("json_invalid", ("body", "text")),
+    ]
 
 
 class _NotJsonSerializable:
@@ -8468,11 +8790,6 @@ class SchemaWithJsonDictAndJsonStrOrDecimal(BaseModel):
 class SchemaWithJsonDictAndJsonInUnion(BaseModel):
     data: Json[dict[str, Any]]
     value: Union[Json[Union[str, int]], int]
-
-
-class SchemaWithJsonDictAndJsonAny(BaseModel):
-    data: Json[dict[str, Any]]
-    value: Json[Any]
 
 
 class JsonNode(BaseModel):
@@ -8741,10 +9058,6 @@ async def _json_and_json_in_union_endpoint(body: SchemaWithJsonDictAndJsonInUnio
     raise NotImplementedError
 
 
-async def _json_and_json_any_endpoint(body: SchemaWithJsonDictAndJsonAny):
-    raise NotImplementedError
-
-
 async def _json_node_endpoint(body: JsonNode):
     raise NotImplementedError
 
@@ -8862,7 +9175,6 @@ async def _json_tree_with_children_endpoint(body: JsonTree):
             _json_and_json_str_or_decimal_endpoint, {"data": "{}", "value": '"5"'}, id="string_in_json_we_cant_encode"
         ),
         pytest.param(_json_and_json_in_union_endpoint, {"data": "{}", "value": '"5"'}, id="string_in_json_in_union"),
-        pytest.param(_json_and_json_any_endpoint, {"data": "{}", "value": '"123"'}, id="string_in_json_we_encode"),
         pytest.param(
             _json_node_endpoint, {"value": "1", "children": [{"value": '"5"'}]}, id="string_in_json_of_self_reference"
         ),
