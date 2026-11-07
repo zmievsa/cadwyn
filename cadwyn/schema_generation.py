@@ -6,6 +6,7 @@ import decimal
 import functools
 import inspect
 import itertools
+import reprlib
 import sys
 import threading
 import types
@@ -76,6 +77,7 @@ from cadwyn._utils import (
     DATACLASS_SLOTS,
     Sentinel,
     UnionType,
+    _callable_name,
     _get_type_alias_value,
     fully_unwrap_decorator,
     get_member_with_same_value,
@@ -219,10 +221,13 @@ class PydanticFieldWrapper:
                 )
         field_copy = copy.copy(self)
         field_copy.annotation = copy.deepcopy(self.annotation, memo)
-        field_copy.passed_field_attributes = {
-            attr_name: copy.deepcopy(attr_value, memo)
-            for attr_name, attr_value in self.get_field_attributes(model).items()
-        }
+        field_copy.passed_field_attributes = {}
+        for attr_name, attr_value in self.get_field_attributes(model).items():
+            try:
+                field_copy.passed_field_attributes[attr_name] = copy.deepcopy(attr_value, memo)
+            except Exception as error:
+                description = f"{reprlib.repr(attr_value)} in the field '{name}' of {model.__qualname__}"
+                raise _get_deep_copy_error(description, error) from error
         field_copy.declared_field_attributes = field_copy.passed_field_attributes
         field_copy.changes = []
         field_copy.models_that_changed_it = set()
@@ -263,6 +268,14 @@ class PydanticFieldWrapper:
                 else:
                     attributes[change.name] = change.value
         return _keep_last_of_default_and_default_factory(attributes, changes)
+
+
+def _get_deep_copy_error(description: str, error: Exception) -> SchemaGenerationError:
+    return SchemaGenerationError(
+        f"Cadwyn cannot generate the versioned copy of {description} because it cannot deep copy it "
+        f"({type(error).__name__}: {error}). Every version gets its own deep copy of it, as pydantic gives every "
+        "instance its own copy of a mutable default. Please make it deep-copyable, e.g. with __deepcopy__."
+    )
 
 
 def _keep_last_of_default_and_default_factory(
@@ -644,9 +657,10 @@ def _change_version_of_model_references(
     """
     transformer = generator.annotation_transformer
     with transformer.hard_position():
-        versioned_field_attributes = {
-            name: transformer.change_version_of_annotation(attributes) for name, attributes in field_attributes.items()
-        }
+        versioned_field_attributes = {}
+        for name, attributes in field_attributes.items():
+            with transformer.describing(f"the field '{name}' of {model.__qualname__}"):
+                versioned_field_attributes[name] = transformer.change_version_of_annotation(attributes)
     # __orig_bases__ keeps bases such as Generic[T] that __bases__ loses so that the copy stays generic
     orig_bases = tuple(
         generator.change_version_of_base(base) if isinstance(base, type) else base
@@ -1174,6 +1188,16 @@ class _AnnotationTransformer:
         self._ids_being_recorded: set[int] = set()
         # The ids of the type aliases that we are copying right now, to detect the ones that refer to themselves
         self._type_aliases_being_copied: set[int] = set()
+        # The ids of the lists, tuples, and dicts that we are copying right now with whether they contain themselves
+        self._containers_being_copied: dict[int, bool] = {}
+        # How many classes and callables we have replaced with this version's copies, so that we can tell whether
+        # anything within a container gets replaced. Typing objects, such as `list[int]`, get rebuilt even when
+        # nothing within them gets replaced, so we cannot tell it by comparing the results with the originals.
+        self._replacement_count = 0
+        # How many containers that get deep copied as a whole we are in (see _change_version_of_container)
+        self._only_checking_depth = 0
+        # The places that we are versioning right now (e.g. fields), innermost last (see describing)
+        self._locations: list[str] = []
         # Whether we are recording the routes, whose endpoints and dependencies copying reads like _get_signature
         self._records_routes = False
         # How many positions that need the classes themselves we are in right now (see is_in_hard_position)
@@ -1217,18 +1241,91 @@ class _AnnotationTransformer:
             if self.record_only:
                 self._record_without_cycles(annotation, lambda: [*annotation.keys(), *annotation.values()])
                 return annotation
-            return {
-                self.change_version_of_annotation(key): self.change_version_of_annotation(value)
-                for key, value in annotation.items()
-            }
+            return self._change_version_of_container(annotation)
 
         elif isinstance(annotation, list | tuple):
             if self.record_only:
                 self._record_without_cycles(annotation, lambda: annotation)
                 return annotation
-            return type(annotation)(self.change_version_of_annotation(v) for v in annotation)
+            return self._change_version_of_container(annotation)
         else:
             return self.change_versions_of_a_non_container_annotation(annotation)
+
+    def _change_version_of_container(self, container: Union[dict[Any, Any], list[Any], tuple[Any, ...]]) -> Any:
+        """Return this version's own copy of the container, with this version's copies of the classes within it.
+
+        Containers include the defaults of fields and params, so every version must get its own copies of them, as
+        pydantic gives every instance its own copy of a mutable default. Plain lists, tuples, and dicts get rebuilt
+        with their versioned values, as Cadwyn always did. We cannot rebuild other containers (e.g. subclasses, named
+        tuples, or containers that contain themselves) without changing them, so they get deep copies, which follow
+        their own __deepcopy__ and __reduce__, if nothing within them gets replaced (see _replacement_count).
+        Otherwise, we fail instead of using the latest classes or giving them another type.
+        """
+        if id(container) in self._containers_being_copied:
+            # It contains itself, so we deep copy it as a whole once we know that nothing within it gets replaced
+            self._containers_being_copied[id(container)] = True
+            return container
+        self._containers_being_copied[id(container)] = False
+        replacement_count = self._replacement_count
+        is_plain = type(container) in {dict, list, tuple}
+        try:
+            # We deep copy other containers as a whole, so that their own __deepcopy__ decides how to copy the values
+            # within them (e.g. it can keep the ones that cannot be copied), and we only check these values
+            with contextlib.nullcontext() if is_plain else self._only_checking_containers():
+                # The (key, value) pairs of dicts
+                values: list[Any] = (
+                    [
+                        (self.change_version_of_annotation(key), self.change_version_of_annotation(value))
+                        for key, value in container.items()
+                    ]
+                    if isinstance(container, dict)
+                    else [self.change_version_of_annotation(value) for value in container]
+                )
+        finally:
+            contains_itself = self._containers_being_copied.pop(id(container))
+        if is_plain and not contains_itself:
+            if isinstance(container, dict):
+                return dict(values)
+            return values if isinstance(container, list) else tuple(values)
+        if self._replacement_count != replacement_count:
+            reason = (
+                "it contains itself (directly or through other values)"
+                if contains_itself
+                else f"it is a {type(container).__qualname__}, not a plain list, tuple, or dict"
+            )
+            raise SchemaGenerationError(
+                f"Cadwyn cannot generate the versioned copy of {self._describe(container)} because {reason}, and it "
+                "contains classes or functions that the version replaces with its own copies (e.g. models or enums "
+                "with instructions, the models that use them, or functions). Cadwyn cannot rebuild it with these "
+                "copies without changing it. Please use a plain list, tuple, or dict that does not contain itself."
+            )
+        if self._only_checking_depth:
+            return container
+        try:
+            return copy.deepcopy(container)
+        except Exception as error:
+            raise _get_deep_copy_error(self._describe(container), error) from error
+
+    def _describe(self, container: Any) -> str:
+        return " in ".join([reprlib.repr(container), *self._locations[-1:]])
+
+    @contextlib.contextmanager
+    def _only_checking_containers(self) -> Generator[None, None, None]:
+        """Check the containers within a container that gets deep copied as a whole instead of copying them"""
+        self._only_checking_depth += 1
+        try:
+            yield
+        finally:
+            self._only_checking_depth -= 1
+
+    @contextlib.contextmanager
+    def describing(self, location: str) -> Generator[None, None, None]:
+        """Name the place that we are versioning right now (e.g. a field) in the errors about the values within it"""
+        self._locations.append(location)
+        try:
+            yield
+        finally:
+            self._locations.pop()
 
     def migrate_router_to_version(self, router: fastapi.routing.APIRouter):
         for route in router.routes:
@@ -1386,16 +1483,18 @@ class _AnnotationTransformer:
                     annotation, lambda: self._get_annotations_and_defaults_to_record(annotation, callable_kind)
                 )
                 return annotation
-            return self._modify_callable_annotations(
-                annotation,
-                modifier,
-                modifier,
-                annotation_modifying_wrapper_factory=functools.partial(
-                    self._copy_function_through_class_based_wrapper,
-                    is_called_by_fastapi=callable_kind is not _CallableKind.OTHER,
-                ),
-                callable_kind=callable_kind,
-            )
+            self._replacement_count += 1
+            with self.describing(f"the parameters of {_callable_name(annotation)}"):
+                return self._modify_callable_annotations(
+                    annotation,
+                    modifier,
+                    modifier,
+                    annotation_modifying_wrapper_factory=functools.partial(
+                        self._copy_function_through_class_based_wrapper,
+                        is_called_by_fastapi=callable_kind is not _CallableKind.OTHER,
+                    ),
+                    callable_kind=callable_kind,
+                )
 
     def _record_expanded_type_alias(self, annotation: Any) -> bool:
         """Record the value of the type alias with its args, if the annotation is a type alias that we can expand.
@@ -1545,7 +1644,10 @@ class _AnnotationTransformer:
 
     def _change_version_of_type(self, annotation: type) -> type:
         if lenient_issubclass(annotation, (BaseModel, Enum)):
-            return self.generator[annotation]
+            versioned_class = self.generator[annotation]
+            if versioned_class is not annotation:
+                self._replacement_count += 1
+            return versioned_class
         else:
             return annotation
 
