@@ -172,3 +172,14 @@ def test__enum_didnt_have__nonexisting_name__should_raise_invalid_generation_ins
         ),
     ):
         create_runtime_schemas(version_change(enum(EnumWithOneMember).didnt_have("hoo")))
+
+
+def test__enum_didnt_have__copy_called_with_latest_member__should_return_member_with_same_value(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(EnumWithTwoMembers).didnt_have("bar")))
+    old_enum = models["2000-01-01"][EnumWithTwoMembers]
+
+    assert old_enum(EnumWithTwoMembers.foo) is old_enum.foo
+    with pytest.raises(ValueError, match="is not a valid EnumWithTwoMembers"):
+        old_enum(EnumWithTwoMembers.bar)
