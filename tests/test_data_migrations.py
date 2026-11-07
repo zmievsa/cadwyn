@@ -79,7 +79,7 @@ from starlette.formparsers import MultiPartParser
 from starlette.responses import StreamingResponse
 from typing_extensions import TypeAliasType, TypedDict, override
 
-from cadwyn import VersionedAPIRouter, current_dependency_solver
+from cadwyn import Cadwyn, VersionedAPIRouter, current_dependency_solver, generate_versioned_routers
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -109,6 +109,7 @@ from tests._resources.utils import (
 from tests.conftest import (
     CreateVersionedApp,
     CreateVersionedClients,
+    TestClientWithHardcodedAPIVersion,
     client,
     version_change,
 )
@@ -1341,6 +1342,192 @@ def test__request_body_parsing__omitted_null_and_present_bodies__should_be_handl
     expected = TestClient(fastapi_app).post(test_path, content=content, headers=headers)
     for version_client in clients.values():
         response = version_client.post(test_path, content=content, headers=headers)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+class _NameModel(BaseModel):
+    name: str
+
+
+async def _required_embedded_bodies(name: str = Body(), age: Optional[int] = Body(None)):
+    return {"name": name, "age": age}
+
+
+async def _optional_model_and_embedded_body(payload: Optional[_NameModel] = None, age: Optional[int] = Body(None)):
+    return {"payload": payload, "age": age}
+
+
+async def _required_model_body(payload: _NameModel):
+    return {"payload": payload}
+
+
+async def _optional_form_fields(name: Optional[str] = Form(None), age: Optional[int] = Form(None)):
+    return {"name": name, "age": age}
+
+
+async def _aliased_body(payload: str = Body(alias="wire")):
+    return {"payload": payload}
+
+
+async def _get_payload(payload: str = Body()) -> str:
+    return payload
+
+
+async def _body_in_dependency(payload: Annotated[str, Depends(_get_payload)]):
+    return {"payload": payload}
+
+
+def _add_post_route(
+    router: APIRouter, path: str, endpoint: Callable[..., Any], strict_content_type: bool, level: str
+) -> APIRouter:
+    """Add the endpoint to the router with `strict_content_type` set at the level, and return the router to include."""
+    if level == "route":
+        router.add_api_route(path, endpoint, methods=["POST"], strict_content_type=strict_content_type)
+    elif level == "router":
+        router = type(router)(strict_content_type=strict_content_type)
+        router.post(path)(endpoint)
+    elif level == "included_router":
+        included_router = APIRouter(strict_content_type=strict_content_type)
+        included_router.post(path)(endpoint)
+        router.include_router(included_router)
+    else:
+        router.post(path)(endpoint)
+    return router
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        _optional_embedded_bodies,
+        _required_embedded_bodies,
+        _optional_embedded_body,
+        _optional_model_and_embedded_body,
+        _required_model_body,
+        _non_nullable_body_with_none_default,
+        _optional_form_fields,
+        _aliased_body,
+        _body_in_dependency,
+    ],
+)
+@pytest.mark.parametrize(
+    "content",
+    [b"", b"null", b"[1]", b'"hello"', b'{"name": "n", "age": 1, "payload": {"name": "p"}}', b'{"name": '],
+)
+# FastAPI treats an empty content type like none
+@pytest.mark.parametrize("headers", [{}, {"content-type": ""}], ids=["no_content_type", "empty_content_type"])
+@pytest.mark.parametrize("strict_content_type", [True, False])
+@pytest.mark.parametrize("level", ["app", "router", "route", "included_router"])
+def test__request_body_parsing__body_without_content_type__should_be_read_as_in_fastapi(
+    test_path: Literal["/test"],
+    endpoint: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
+    content: bytes,
+    headers: dict[str, str],
+    strict_content_type: bool,
+    level: str,
+):
+    # True is the default of both apps
+    app_strict_content_type = strict_content_type if level == "app" else True
+    fastapi_app = fastapi.FastAPI(strict_content_type=app_strict_content_type)
+    fastapi_app.include_router(_add_post_route(APIRouter(), test_path, endpoint, strict_content_type, level))
+    app = Cadwyn(
+        versions=VersionBundle(Version("2001-01-01", version_change()), Version("2000-01-01")),
+        strict_content_type=app_strict_content_type,
+    )
+    app.generate_and_include_versioned_routers(
+        _add_post_route(VersionedAPIRouter(), test_path, endpoint, strict_content_type, level)
+    )
+
+    expected = TestClient(fastapi_app).post(test_path, content=content, headers=headers)
+    for version in ("2000-01-01", "2001-01-01"):
+        response = TestClient(app).post(test_path, content=content, headers={**headers, "x-api-version": version})
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.parametrize(
+    ("strict_content_type", "expected_body"),
+    [(True, b'{"name": "n", "age": 1}'), (False, {"name": "n", "age": 1})],
+)
+def test__request_migration__body_without_content_type__should_get_the_body_that_fastapi_reads(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    strict_content_type: bool,
+    expected_body: Any,
+):
+    router = VersionedAPIRouter(strict_content_type=strict_content_type)
+    router.post(test_path)(_optional_embedded_bodies)
+    migrated_bodies: list[Any] = []
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def record_body(request: RequestInfo):
+        migrated_bodies.append(request.body)
+
+    clients = create_versioned_clients(version_change(record_body=record_body), router=router)
+    response = clients["2000-01-01"].post(test_path, content=b'{"name": "n", "age": 1}')
+
+    assert migrated_bodies == [expected_body]
+    assert response.json() == ({"name": None, "age": None} if strict_content_type else {"name": "n", "age": 1})
+
+
+async def _no_body():
+    return {"ok": True}
+
+
+def _include_router(router: APIRouter, strict_content_type: Optional[bool], level: str) -> fastapi.FastAPI:
+    """Return an app that includes the router, with `strict_content_type` set at the level, or nowhere if None."""
+    if strict_content_type is None:
+        app = fastapi.FastAPI()
+        app.include_router(router)
+    elif level == "app":
+        app = fastapi.FastAPI(strict_content_type=strict_content_type)
+        app.include_router(router)
+    else:
+        app = fastapi.FastAPI()
+        outer_router = APIRouter(strict_content_type=strict_content_type)
+        outer_router.include_router(router)
+        app.include_router(outer_router)
+    return app
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "request_kwargs"),
+    [
+        ("POST", "/embedded", {"json": {"name": "n", "age": 1}}),
+        ("POST", "/embedded", {"content": b'{"name": "n", "age": 1}'}),
+        ("POST", "/embedded", {"content": b'{"name": "n", "age": 1}', "headers": {"content-type": ""}}),
+        ("POST", "/form", {"data": {"name": "n", "age": "1"}}),
+        ("GET", "/no_body", {}),
+    ],
+)
+@pytest.mark.parametrize("strict_content_type", [None, True, False])
+@pytest.mark.parametrize("level", ["app", "outer_router"])
+def test__generate_versioned_routers__included_in_fastapi_app__should_read_bodies_as_in_fastapi(
+    api_version_var: ContextVar[Union[str, None]],
+    method: str,
+    path: str,
+    request_kwargs: dict[str, Any],
+    strict_content_type: Optional[bool],
+    level: str,
+):
+    def add_routes(router: APIRouter) -> APIRouter:
+        router.post("/embedded")(_optional_embedded_bodies)
+        router.post("/form")(_optional_form_fields)
+        router.get("/no_body")(_no_body)
+        return router
+
+    routers = generate_versioned_routers(
+        add_routes(VersionedAPIRouter()),
+        versions=VersionBundle(
+            Version("2001-01-01", version_change()), Version("2000-01-01"), api_version_var=api_version_var
+        ),
+    )
+    expected = TestClient(_include_router(add_routes(APIRouter()), strict_content_type, level)).request(
+        method, path, **request_kwargs
+    )
+    for version, versioned_router in routers.endpoints.items():
+        app = _include_router(versioned_router, strict_content_type, level)
+        response = TestClientWithHardcodedAPIVersion(app, api_version=version, api_version_var=api_version_var).request(
+            method, path, **request_kwargs
+        )
         assert (response.status_code, response.json()) == (expected.status_code, expected.json())
 
 
