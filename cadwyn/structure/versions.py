@@ -21,11 +21,13 @@ from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Annotated,
+    Any,
     BinaryIO,
     ClassVar,
     NamedTuple,
     TypeAlias,
     Union,
+    assert_never,
     cast,
     get_args,
     get_origin,
@@ -52,7 +54,7 @@ from pydantic.fields import FieldInfo
 from pydantic_core import PydanticSerializationError, PydanticUndefined, TzInfo, to_json
 from starlette._utils import is_async_callable
 from starlette.datastructures import FormData, UploadFile
-from typing_extensions import Any, ParamSpec, TypeVar, assert_never, deprecated, override
+from typing_extensions import ParamSpec, TypeVar, deprecated, override
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
 from cadwyn._utils import UnionType, classproperty, lenient_issubclass

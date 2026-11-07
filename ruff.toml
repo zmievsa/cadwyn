@@ -1,4 +1,4 @@
-target-version = "py310"
+target-version = "py311"
 line-length = 120
 extend-exclude = [
     "scripts/*.py",
@@ -196,6 +196,9 @@ ignore = [
     "N805",    # First argument of a method should be named `self` (pydantic validators don't play well with this)
     "UP007",   # Use `X | Y` for type annotations (we need this for testing and our runtime logic)
     "UP045",   # Use `X | None` for type annotations (same runtime-annotation constraint as UP007)
+    "UP017",   # Use `datetime.UTC` alias (`timezone.utc` is the same object)
+    "UP042",   # Use `StrEnum` instead of `(str, Enum)` (they format differently, and tests cover both)
+    "UP044",   # Use `*Ts` instead of `Unpack[Ts]` (tests cover the `Unpack` form)
     "RET506",  # Unnecessary `elif` after `raise` statement
     "FURB101", # Refurb: open and read should be replaced by Path({filename}).{suggestion}
     "FURB103", # Refurb: open and write should be replaced by Path({filename}).{suggestion}
@@ -203,7 +206,6 @@ ignore = [
     "FURB118", # Use operator.* alternative instead of defining a function
     "FURB140", # Use itertools.starmap instead of the generator
     "FURB148", # enumerate value is unused, use for x in range(len(y)) instead
-    "FURB162", # Unnecessary timezone replacement with zero offset. TODO: Remove this when we drop support for python 3.10
 
     # Reviewed stable rules that are intentionally disabled
     "ANN202", # Missing return type annotation for private function

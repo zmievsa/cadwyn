@@ -2,7 +2,7 @@
 
 ## Setting up the environment
 
-* The minimum supported version is Python 3.10. It is recommended to manage multiple Python versions on your system with [uv](https://docs.astral.sh/uv/)
+* The minimum supported version is Python 3.11. It is recommended to manage multiple Python versions on your system with [uv](https://docs.astral.sh/uv/)
 * Running the full local check suite also requires Node.js and npm for link validation
 * Run `make` to see the available developer commands
 

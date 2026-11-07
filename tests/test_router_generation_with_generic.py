@@ -17,6 +17,7 @@ from typing import (
     Generic,
     Literal,
     Optional,
+    Self,
     TypeVar,
     Union,
 )
@@ -38,7 +39,7 @@ from pydantic import (
 )
 from pydantic.json_schema import SkipJsonSchema
 from starlette.status import HTTP_200_OK, HTTP_204_NO_CONTENT, HTTP_422_UNPROCESSABLE_CONTENT
-from typing_extensions import Self, TypeAliasType, TypeVarTuple, Unpack, override
+from typing_extensions import TypeAliasType, TypeVarTuple, Unpack, override
 
 from cadwyn import (
     Cadwyn,

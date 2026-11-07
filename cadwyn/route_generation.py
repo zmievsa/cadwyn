@@ -9,6 +9,7 @@ from typing import (
     Final,
     Generic,
     Union,
+    assert_never,
     cast,
 )
 
@@ -18,7 +19,7 @@ from fastapi.datastructures import _Unset
 from fastapi.routing import APIRoute, _EffectiveRouteContext, _iter_routes_with_context
 from pydantic import BaseModel
 from starlette.routing import BaseRoute
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import TypeVar
 
 from cadwyn._utils import DATACLASS_SLOTS, Sentinel, _callable_name, lenient_issubclass
 from cadwyn.exceptions import (
