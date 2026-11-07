@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Annotated, Any, ClassVar
 
 import pytest
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from cadwyn import VersionChange, schema
 from cadwyn._render import render_model, render_model_by_path, render_module_by_path
@@ -396,3 +396,91 @@ def test__render_model__didnt_have_description_in_annotated__should_render_annot
     )
     assert "Foo" in render_model(RenderedModelWithDescriptionInAnnotated, versions, "2001-01-01")
     assert "Foo" not in render_model(RenderedModelWithDescriptionInAnnotated, versions, "2000-01-01")
+
+
+class ModelWithAliases(BaseModel):
+    name: str = Field(alias="a")
+    code: str = Field(alias="c", validation_alias="cv", serialization_alias="cs")
+
+
+@pytest.mark.parametrize(
+    ("change_field", "expected_fields"),
+    [
+        pytest.param(
+            lambda field: field.had(alias="legacy"),
+            """
+    name: str = Field(alias='legacy', validation_alias='legacy', serialization_alias='legacy')
+    code: str = Field(alias='legacy', validation_alias='cv', serialization_alias='cs')
+""",
+            id="had",
+        ),
+        pytest.param(
+            lambda field: field.didnt_have("alias"),
+            """
+    name: str = Field()
+    code: str = Field(validation_alias='cv', serialization_alias='cs')
+""",
+            id="didnt_have",
+        ),
+    ],
+)
+def test__render_model__alias_instruction__should_render_aliases_that_follow_alias(
+    change_field: Any, expected_fields: str
+):
+    versions = VersionBundle(
+        Version(
+            "2001-01-01",
+            version_change(
+                change_field(schema(ModelWithAliases).field("name")),
+                change_field(schema(ModelWithAliases).field("code")),
+            ),
+        ),
+        Version("2000-01-01"),
+    )
+
+    assert code(render_model(ModelWithAliases, versions, "2000-01-01")) == code(
+        "\nclass ModelWithAliases(BaseModel):" + expected_fields
+    )
+
+
+class ModelWithAliasGenerator(BaseModel):
+    model_config = ConfigDict(alias_generator=str.upper)
+    name: str = Field(default="default", alias="a")
+    unchanged: str = Field(default="default")
+
+
+@pytest.mark.parametrize(
+    ("instruction", "expected_fields", "key_of_name"),
+    [
+        # `cadwyn render` doesn't render model_config, so it passes the aliases from the generator explicitly
+        pytest.param(
+            schema(ModelWithAliasGenerator).field("name").didnt_have("alias"),
+            """
+    name: str = Field(default='default', alias='NAME')
+    unchanged: str = Field(default='default')
+""",
+            "NAME",
+            id="alias_instruction",
+        ),
+        pytest.param(
+            schema(ModelWithAliasGenerator).field("unchanged").had(description="Old"),
+            """
+    name: str = Field(default='default', alias='a', validation_alias='a', serialization_alias='a')
+    unchanged: str = Field(default='default', description='Old')
+""",
+            "a",
+            id="other_instruction",
+        ),
+    ],
+)
+def test__render_model__model_with_alias_generator__should_render_aliases_of_fields_whose_alias_changed(
+    instruction: Any, expected_fields: str, key_of_name: str
+):
+    versions = VersionBundle(Version("2001-01-01", version_change(instruction)), Version("2000-01-01"))
+
+    rendered = render_model(ModelWithAliasGenerator, versions, "2000-01-01")
+
+    assert code(rendered) == code("\nclass ModelWithAliasGenerator(BaseModel):" + expected_fields)
+    namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field}
+    exec(rendered, namespace)
+    assert namespace["ModelWithAliasGenerator"].model_validate({key_of_name: "x"}).name == "x"

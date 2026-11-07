@@ -40,13 +40,13 @@ The following code un-sets an attribute of a field, as if it never existed:
 
 **ALIAS WARNING:**
 
-Pydantic copies a field's `alias` into its `validation_alias` and `serialization_alias`. For a field that already has an alias, `.had(alias=...)` and `.didnt_have("alias")` currently change only `alias`, so the older version keeps using the old key in requests, responses, and OpenAPI. Cadwyn 9.0 will change the copied aliases too, so Cadwyn emits a `FutureWarning` for such instructions when it generates the versioned models, and the warning says what to pass. To use the new key now, also change the copied aliases, e.g. `.had(alias="old_foo", validation_alias="old_foo", serialization_alias="old_foo")`, and add request and response migrations for the key. To keep the current key, remove the alias change from the instruction.
-
-Cadwyn generates the versioned models when the app first runs, at startup or on the first request, so with `-W error` or pytest's `filterwarnings = ["error"]` this warning fails the app there. Fix the instruction if you can. Otherwise, filter the warning:
+Pydantic copies a field's `alias` into its `validation_alias` and `serialization_alias` unless you pass them. Like `Field()`, `.had(alias=...)` and `.didnt_have("alias")` change these copies too, so the older version uses the new key in requests, responses, and OpenAPI. The `validation_alias` and `serialization_alias` that you pass explicitly, in the field or in the instruction, stay as they are. `.didnt_have()` keeps the aliases of a `Field()` in `Annotated`, e.g. `Annotated[str, Field(alias="foo_key")]`, like its other attributes that don't only document the field, unless the module uses `from __future__ import annotations`. So an alias change needs request and response migrations that rename the key:
 
 ```python
 {! ./docs_src/concepts/schema_migrations/block005.py !}
 ```
+
+If the data that the older version validates has the key that the field had before the instruction but not its new key, e.g. because a client still sends the old key or a migration is missing, Cadwyn fails instead of giving the field its default: requests get a 422, and responses fail with a `ResponseValidationError` (a 500). Cadwyn decides this from the data as it comes in, so this also happens when a validator of the model fills the field from other keys. To keep the old key in the older version instead, remove the alias change from the instruction.
 
 **DEFAULTS WARNING:**
 

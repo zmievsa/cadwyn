@@ -2,10 +2,11 @@ import ast
 import inspect
 import textwrap
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
 import typer
 from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 
 from cadwyn._asts import get_fancy_repr, pop_docstring_from_cls_body
 from cadwyn._utils import lenient_issubclass
@@ -115,11 +116,21 @@ def _render_pydantic_model(
 
     # The same fields as in the copies of the model
     field_attributes, annotations = wrapper.get_field_attributes_and_annotations(generator.model_bundle.schemas)
+    # `cadwyn render` doesn't render model_config, so we render the aliases that an alias generator gives the fields
+    # whose alias an instruction changed. We only generate the model for such fields
+    if wrapper.cls.model_config.get("alias_generator") is not None:
+        defined_fields = wrapper.fields_renamed_by_parents | wrapper.fields
+        if names := [name for name in field_attributes if defined_fields[name].keys_renamed_by_alias]:
+            generated_fields = generator[wrapper.cls].model_fields
+            for name in names:
+                field_attributes[name] = _with_aliases_of_generated_field(
+                    field_attributes[name], generated_fields[name]
+                )
     field_definitions = [
         ast.AnnAssign(
             target=ast.Name(name),
             annotation=ast.Name(get_fancy_repr(annotations[name])),
-            value=_generate_field_ast(attributes),
+            value=_generate_field_ast(_without_redundant_none_aliases(attributes, annotations[name])),
             simple=1,
         )
         for name, attributes in field_attributes.items()
@@ -152,6 +163,44 @@ def _render_pydantic_model(
     if not original_cls_node.body:
         original_cls_node.body = [ast.Pass()]
     return original_cls_node
+
+
+_ALIAS_ATTRIBUTES = ("alias", "validation_alias", "serialization_alias")
+
+
+def _with_aliases_of_generated_field(attributes: dict[str, Any], generated_field: FieldInfo) -> dict[str, Any]:
+    """Pass the aliases that the generated field has explicitly where Field(**attributes) wouldn't get them"""
+    attributes = attributes.copy()
+    for attr_name in _ALIAS_ATTRIBUTES:
+        generated_value = getattr(generated_field, attr_name)
+        if generated_value is not None and _get_alias_of_field(attributes, attr_name) != generated_value:
+            attributes[attr_name] = generated_value
+    return attributes
+
+
+def _get_alias_of_field(attributes: dict[str, Any], attr_name: str) -> Any:
+    """Return the alias that Field(**attributes) gets. Like in Field(), the missing aliases follow alias"""
+    if attributes.get(attr_name) is None and attr_name != "alias":
+        return attributes.get("alias")
+    return attributes.get(attr_name)
+
+
+def _without_redundant_none_aliases(attributes: dict[str, Any], annotation: Any) -> dict[str, Any]:
+    """Skip the aliases that are None if Field() is the same without them.
+
+    Cadwyn passes the deleted aliases as None so that they override the ones from the Field() in the annotation of
+    the field. Without such a Field() and without an alias for the others to follow, None is the same as no alias.
+    """
+    if attributes.get("alias") is not None or (
+        get_origin(annotation) is Annotated
+        and any(isinstance(metadata, FieldInfo) for metadata in get_args(annotation)[1:])
+    ):
+        return attributes
+    return {
+        attr_name: attr_value
+        for attr_name, attr_value in attributes.items()
+        if not (attr_name in _ALIAS_ATTRIBUTES and attr_value is None)
+    }
 
 
 def _generate_field_ast(field_attributes: dict[str, Any]) -> ast.Call:

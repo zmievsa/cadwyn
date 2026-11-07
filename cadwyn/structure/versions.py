@@ -57,7 +57,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute, _get_scope_effective_route_context
 from pydantic import AliasChoices, AliasPath, BaseModel, BeforeValidator, RootModel
 from pydantic.fields import FieldInfo
-from pydantic_core import PydanticSerializationError, PydanticUndefined, TzInfo, from_json, to_json
+from pydantic_core import PydanticCustomError, PydanticSerializationError, PydanticUndefined, TzInfo, from_json, to_json
 from starlette._utils import is_async_callable
 from starlette.datastructures import FormData, UploadFile
 from typing_extensions import ParamSpec, TypeVar, override
@@ -4214,9 +4214,10 @@ def _is_body_field_safe(body_field: ModelField, spec: "_RestorerSpec") -> bool:
         schema = _register_core_schema_definitions(cast("dict[str, Any]", body_field._type_adapter.core_schema))
         while True:
             # `OnErrorOmit` and other defaults that swallow errors make invalid data pass, so we stop at them
-            while schema["type"] in ("definition-ref", "nullable", "default", "function-after") and (
-                schema.get("on_error", "raise") == "raise"
-            ):
+            while (
+                schema["type"] in ("definition-ref", "nullable", "default", "function-after")
+                or _is_renamed_key_check(schema)
+            ) and schema.get("on_error", "raise") == "raise":
                 schema = (
                     _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
                     if schema["type"] == "definition-ref"
@@ -4892,7 +4893,7 @@ def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any]
         if schema["type"] == "definition-ref":
             schema = _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
         # "after" model validators wrap the model schema and only get the validated model
-        while schema["type"] == "function-after":
+        while schema["type"] == "function-after" or _is_renamed_key_check(schema):
             schema = schema["schema"]
         # A custom `__init__` might expect the input that the dump doesn't have
         if (
@@ -4911,6 +4912,92 @@ def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any]
     except _CORE_SCHEMA_ERRORS:
         return None
     return inner_schema
+
+
+# The keys that the fields of a generated model lost because their aliases followed `alias`, which
+# `_reject_keys_renamed_by_alias` rejects unless a field of the model reads them: `{field_name: renamed_keys}`
+_KEYS_RENAMED_BY_ALIAS = "__cadwyn_keys_renamed_by_alias__"
+# The checks that each model class makes, which we compute from its compiled core schema the first time it validates
+_RENAMED_KEY_CHECKS = "__cadwyn_renamed_key_checks__"
+
+
+def _reject_keys_renamed_by_alias(cls: type[BaseModel], data: Any, handler: Callable[[Any], Any]) -> Any:
+    """Fail instead of silently giving a field its default when the data has the key that an alias instruction renamed.
+
+    For example, `field("x").had(alias="old")` on `x: str = Field("", alias="new")` makes an older version use "old"
+    instead of "new". So without migrations that rename the key, its clients that still send "new" and the responses
+    that the latest version returns with "new" would lose the value of the field. We only look at the data as it
+    comes in: it fails if it has the key that the field lost but none of the keys that the field reads now.
+    """
+    if isinstance(data, Mapping):
+        for name, renamed_keys, keys_read_by_field in _get_renamed_key_checks(cls):
+            renamed_key = next((renamed_key for renamed_key in renamed_keys if renamed_key in data), None)
+            if renamed_key is not None and not any(key in data for key in keys_read_by_field):
+                raise PydanticCustomError(
+                    "renamed_key",
+                    'The key "{renamed_key}" of "{field}" was renamed to "{key}" in this API version',
+                    {"renamed_key": renamed_key, "field": f"{cls.__name__}.{name}", "key": keys_read_by_field[0]},
+                )
+    return handler(data)
+
+
+def _get_renamed_key_checks(model: type[BaseModel]) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]:
+    """Return `(field_name, renamed_keys, keys_that_the_field_reads)` for the renamed keys that no field reads.
+
+    The keys come from the compiled core schema of the model itself, so subclasses that change their fields and
+    the settings that pydantic changes when it compiles them get their own.
+    """
+    checks = model.__dict__.get(_RENAMED_KEY_CHECKS)
+    if checks is None:
+        keys_read_by_fields = _get_keys_read_by_fields(model)
+        keys_read_by_model = {key for keys in keys_read_by_fields.values() for key in keys}
+        checks = tuple(
+            (name, tuple(sorted(renamed_keys - keys_read_by_model)), keys_read_by_fields[name])
+            for name, renamed_keys in getattr(model, _KEYS_RENAMED_BY_ALIAS).items()
+            if name in keys_read_by_fields and not renamed_keys <= keys_read_by_model
+        )
+        setattr(model, _RENAMED_KEY_CHECKS, checks)
+    return checks
+
+
+def _get_keys_read_by_fields(model: type[BaseModel]) -> dict[str, tuple[str, ...]]:
+    """Return the keys of the input that pydantic reads for each field, from the compiled core schema of the model"""
+    schema = cast("dict[str, Any]", model.__pydantic_core_schema__)
+    definitions: dict[str, dict[str, Any]] = {}
+    if schema["type"] == "definitions":
+        definitions = {definition["ref"]: definition for definition in schema["definitions"]}
+        schema = schema["schema"]
+    # Validators of the model, including `_reject_keys_renamed_by_alias`, wrap it
+    while schema["type"] != "model":
+        schema = definitions[schema["schema_ref"]] if schema["type"] == "definition-ref" else schema["schema"]
+    config = schema.get("config", {})
+    # Like pydantic-core, which reads the alias if it validates by alias, and the name if it validates by name or if
+    # the field has no alias
+    validate_by_alias, validate_by_name = config.get("validate_by_alias", True), config.get("validate_by_name", False)
+    fields_schema = schema["schema"]
+    # "before" and "after" validators of the model wrap its fields schema
+    while fields_schema["type"] != "model-fields":
+        fields_schema = fields_schema["schema"]
+    keys_read_by_fields = {}
+    for name, field_schema in fields_schema["fields"].items():
+        alias = field_schema.get("validation_alias")
+        paths = cast("list[list[str]]", _normalize_validation_alias(alias)) if alias is not None else []
+        keys = [path[0] for path in paths] if validate_by_alias else []
+        if alias is None or validate_by_name:
+            keys.append(name)
+        keys_read_by_fields[name] = tuple(keys)
+    return keys_read_by_fields
+
+
+def _is_renamed_key_check(schema: dict[str, Any]) -> bool:
+    """Whether the core schema is the check that Cadwyn adds to the models whose alias instructions renamed keys.
+
+    It only rejects some data and never changes any, so it's safe wherever the model that it wraps is.
+    """
+    return (
+        schema["type"] == "function-wrap"
+        and getattr(schema["function"]["function"], "__func__", None) is _reject_keys_renamed_by_alias
+    )
 
 
 def _get_fields_core_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -5009,6 +5096,8 @@ def _has_unsafe_core_schema(
     if schema_type == "definition-ref":
         units["ref", schema["schema_ref"]] = None
         return False
+    if _is_renamed_key_check(schema):
+        return _has_unsafe_core_schema(schema["schema"], units, is_unit_body=is_unit_body)
     if schema_type == "model" and not is_unit_body:
         _CORE_SCHEMA_MODELS.setdefault(schema["cls"], schema)
         units["model", schema["cls"]] = None

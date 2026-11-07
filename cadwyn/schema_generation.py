@@ -12,7 +12,6 @@ import threading
 import types
 import typing
 import uuid
-import warnings
 from collections.abc import Callable, Generator, Sequence
 from datetime import date, datetime, time, timedelta
 from enum import Enum, Flag, FlagBoundary, auto
@@ -105,8 +104,10 @@ from cadwyn.structure.schemas import (
 from cadwyn.structure.versions import (
     _CADWYN_REQUEST_PARAM_NAME,
     _CADWYN_RESPONSE_PARAM_NAME,
+    _KEYS_RENAMED_BY_ALIAS,
     VersionBundle,
     _get_schema_migration_target,
+    _reject_keys_renamed_by_alias,
     _rescue_model_data,
 )
 
@@ -183,6 +184,13 @@ class PydanticFieldWrapper:
     # The model of the last instruction that changed the type of the field
     type_changed_by: Union[type[BaseModel], None] = dataclasses.field(init=False, default=None)
     declared_field_attributes: dict[str, Any] = dataclasses.field(init=False)
+    # The aliases that Field() copied from alias (or that are equal to it). Like in Field(), they follow alias
+    aliases_derived_from_alias: frozenset[str] = dataclasses.field(init=False)
+    # The keys that the field got from its alias where it was declared (in head or in its existed_as()), which
+    # can differ from the alias itself, e.g. if an alias generator overrides it
+    keys_from_alias: frozenset[str] = dataclasses.field(init=False)
+    # The keys from alias that a copy of the field doesn't have anymore because its derived aliases followed alias
+    keys_renamed_by_alias: frozenset[str] = dataclasses.field(init=False, default=frozenset())
     changes: list[_FieldAttributeChange] = dataclasses.field(init=False)
     # The same for all copies of the field
     identity: int = dataclasses.field(init=False)
@@ -192,6 +200,12 @@ class PydanticFieldWrapper:
     def __post_init__(self, init_model_field: FieldInfo) -> None:
         self.passed_field_attributes = _extract_passed_field_attributes(init_model_field)
         self.declared_field_attributes = self.passed_field_attributes.copy()
+        self.aliases_derived_from_alias = _get_aliases_derived_from_alias(self.declared_field_attributes)
+        self.keys_from_alias = frozenset(
+            key
+            for name in self.aliases_derived_from_alias
+            if (key := getattr(init_model_field, name)) == self.declared_field_attributes["alias"]
+        )
         self.changes = []
         self.identity = next(_field_identities)
         self.models_that_changed_it = set()
@@ -223,6 +237,9 @@ class PydanticFieldWrapper:
                 description = f"{reprlib.repr(attr_value)} in the field '{name}' of {model.__qualname__}"
                 raise _get_deep_copy_error(description, error) from error
         field_copy.declared_field_attributes = field_copy.passed_field_attributes
+        # Its attributes already have the aliases that followed alias
+        field_copy.aliases_derived_from_alias = frozenset()
+        field_copy.keys_renamed_by_alias = self._get_keys_renamed_by_alias(model)
         field_copy.changes = []
         field_copy.models_that_changed_it = set()
         field_copy._field_attributes_by_model = {}
@@ -244,14 +261,37 @@ class PydanticFieldWrapper:
         """Return the attributes of the field in the model: only the changes of the model and its parents apply.
 
         So the changes that a subclass makes to an inherited field do not change its parents and their other subclasses.
+        Like in Field(), the aliases that Field() copied from alias follow it unless an instruction changed them.
         """
         if model not in self._field_attributes_by_model:
-            self._field_attributes_by_model[model] = self._apply_changes(model)
+            changes = self._get_changes(model)
+            self._field_attributes_by_model[model] = _make_derived_aliases_follow_alias(
+                self._apply_changes(changes), self._get_derived_aliases(changes)
+            )
         return self._field_attributes_by_model[model]
 
-    def _apply_changes(self, model: type[BaseModel]) -> dict[str, Any]:
+    def get_changed_field_attributes(self, model: type[BaseModel]) -> dict[str, Any]:
+        """Return the attributes of the field in the model as the instructions changed them, without following alias"""
+        return self._apply_changes(self._get_changes(model))
+
+    def _get_changes(self, model: type[BaseModel]) -> "list[_FieldAttributeChange]":
         applies = {changed_by: issubclass(model, changed_by) for changed_by in self.models_that_changed_it}
-        changes = [change for change in self.changes if applies[change.changed_by]]
+        return [change for change in self.changes if applies[change.changed_by]]
+
+    def _get_derived_aliases(self, changes: "list[_FieldAttributeChange]") -> frozenset[str]:
+        # The aliases that were changed explicitly don't follow alias anymore
+        return self.aliases_derived_from_alias.difference(change.name for change in changes)
+
+    def _get_keys_renamed_by_alias(self, model: type[BaseModel]) -> frozenset[str]:
+        """Return the keys from alias that the field loses in the model because its derived aliases follow alias"""
+        changes = self._get_changes(model)
+        if not self._get_derived_aliases(changes):
+            # E.g. a copy of the field, whose attributes already have the aliases that followed alias
+            return self.keys_renamed_by_alias
+        alias = self.get_field_attributes(model).get("alias")
+        return frozenset() if alias == self.declared_field_attributes["alias"] else self.keys_from_alias
+
+    def _apply_changes(self, changes: "list[_FieldAttributeChange]") -> dict[str, Any]:
         if len(changes) == len(self.changes):
             attributes = self.passed_field_attributes
         else:
@@ -270,6 +310,29 @@ def _get_deep_copy_error(description: str, error: Exception) -> SchemaGeneration
         f"({type(error).__name__}: {error}). Every version gets its own deep copy of it, as pydantic gives every "
         "instance its own copy of a mutable default. Please make it deep-copyable, e.g. with __deepcopy__."
     )
+
+
+def _get_aliases_derived_from_alias(field_attributes: dict[str, Any]) -> frozenset[str]:
+    """Return the aliases that Field() set to alias because they were not passed (pydantic stores both the same way)"""
+    if "alias" not in field_attributes:
+        return frozenset()
+    return frozenset(
+        name
+        for name in ("validation_alias", "serialization_alias")
+        if field_attributes.get(name, Sentinel) == field_attributes["alias"]
+    )
+
+
+def _make_derived_aliases_follow_alias(attributes: dict[str, Any], derived_aliases: frozenset[str]) -> dict[str, Any]:
+    """Make the aliases that Field() derived from alias follow it when field().had() or field().didnt_have() change it.
+
+    We pass them explicitly so that they override the ones from the Field() in the annotation of the field, e.g.
+    `Annotated[str, Field(alias="a")]`, even as None for `had(alias=None)`. If didnt_have() deleted the alias, they
+    are deleted too. Like didnt_have() always did, this keeps an alias from the Field() in the annotation.
+    """
+    if "alias" in attributes:
+        return attributes | dict.fromkeys(derived_aliases, attributes["alias"])
+    return {name: value for name, value in attributes.items() if name not in derived_aliases}
 
 
 def _keep_last_of_default_and_default_factory(
@@ -875,6 +938,17 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         )
         fields = {name: pydantic.Field(**attributes) for name, attributes in field_attributes.items()}
         orig_bases_attribute = {"__orig_bases__": orig_bases} if "__orig_bases__" in self.cls.__dict__ else {}
+        defined_fields = self.fields_renamed_by_parents | self.fields
+        keys_renamed_by_alias = {
+            name: defined_fields[name].keys_renamed_by_alias
+            for name in field_attributes
+            if defined_fields[name].keys_renamed_by_alias
+        }
+        if keys_renamed_by_alias:
+            # Pydantic makes it a classmethod because its first parameter is "cls"
+            root_validators[_REJECT_KEYS_RENAMED_BY_ALIAS] = pydantic.model_validator(mode="wrap")(
+                _reject_keys_renamed_by_alias
+            )
 
         model_copy = type(self.cls)(
             self.name,
@@ -893,7 +967,34 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
         )
 
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
-        return cast("type[_T_PYDANTIC_MODEL]", model_copy)
+        typed_model_copy = cast("type[_T_PYDANTIC_MODEL]", model_copy)
+        _set_keys_renamed_by_alias(typed_model_copy, field_attributes, keys_renamed_by_alias)
+        return typed_model_copy
+
+
+_REJECT_KEYS_RENAMED_BY_ALIAS = "__cadwyn_reject_keys_renamed_by_alias__"
+
+
+def _set_keys_renamed_by_alias(
+    model: type[BaseModel],
+    defined_field_names: "collections.abc.Iterable[str]",
+    keys_by_field: dict[str, frozenset[str]],
+) -> None:
+    """Set the keys that the fields of the model lost because their aliases followed alias.
+
+    The model inherits them for the fields that it inherits from its bases without defining them. Each model class
+    leaves out the keys that its own fields read (see `_get_renamed_key_checks`) when it first validates data.
+    """
+    defined_field_names = frozenset(defined_field_names)
+    keys_by_field = {
+        name: renamed_keys
+        for base in reversed(model.__bases__)
+        for name, renamed_keys in getattr(base, _KEYS_RENAMED_BY_ALIAS, {}).items()
+        if name not in defined_field_names
+    } | keys_by_field
+    # The model also inherits the check and the keys of its bases, so it needs keys of its own if they have any
+    if keys_by_field or hasattr(model, _KEYS_RENAMED_BY_ALIAS):
+        setattr(model, _KEYS_RENAMED_BY_ALIAS, keys_by_field)
 
 
 def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, types.MethodType]]:
@@ -3386,7 +3487,6 @@ def generate_versioned_models(versions: "VersionBundle") -> "dict[str, SchemaGen
     instructions_that_differ_from_head = _get_instructions_by_model(versions.head_version, {})
 
     for version in versions.versions:
-        _warn_about_alias_changes_that_keep_old_keys(changes.alias_changes, str(version.value))
         context = _RuntimeSchemaGenContext(current_version=version, models=models)
         parent_renames = _get_parent_renames(first_renames, field_identities_before_version)
         generator = SchemaGenerator(
@@ -3574,13 +3674,6 @@ def _create_model_bundle(versions: "VersionBundle"):
     )
 
 
-class _AliasChange(NamedTuple):
-    model: _PydanticModelWrapper[BaseModel]
-    field: PydanticFieldWrapper
-    instruction: Union[FieldHadInstruction, FieldDidntHaveInstruction]
-    version_change_name: str
-
-
 class _FieldRename(NamedTuple):
     model: _PydanticModelWrapper[BaseModel]
     field: PydanticFieldWrapper
@@ -3610,13 +3703,12 @@ class _DeletedField(NamedTuple):
 
 
 class _SchemaChanges(NamedTuple):
-    alias_changes: list[_AliasChange]
     renames: list[_FieldRename]
     deleted_fields: list[_DeletedField]
 
 
 def _migrate_classes(context: _RuntimeSchemaGenContext) -> _SchemaChanges:
-    changes = _SchemaChanges(alias_changes=[], renames=[], deleted_fields=[])
+    changes = _SchemaChanges(renames=[], deleted_fields=[])
     for version_change in context.current_version.changes:
         _apply_alter_schema_instructions(
             context.models.schemas,
@@ -3861,61 +3953,6 @@ def _format_bases(bases: list[type]) -> str:
     return names if len(bases) == 1 else f"one of {names}"
 
 
-_ALIAS_ATTRIBUTES = frozenset(("alias", "alias_priority", "validation_alias", "serialization_alias"))
-
-
-def _warn_about_alias_changes_that_keep_old_keys(alias_changes: list[_AliasChange], version: str) -> None:
-    """Warn about instructions that change the alias of a field but leave the keys that pydantic copied from it.
-
-    Pydantic copies `alias` into `validation_alias` and `serialization_alias` unless they are passed, and Cadwyn
-    passes them on unchanged, so the field keeps using its old keys. Cadwyn 9.0 will change them too (#465).
-    """
-    for model, field, instruction, version_change_name in alias_changes:
-        field_name = next((name for name, model_field in model.fields.items() if model_field is field), None)
-        old_alias = field.declared_field_attributes.get("alias")
-        # If in doubt, we don't warn: e.g. alias generators can replace the aliases of the field
-        if field_name is None or old_alias is None or model.cls.model_config.get("alias_generator") is not None:
-            continue
-        # The aliases of the field in the copy of the model: pydantic merges its Field() with the one in Annotated
-        attributes = field.get_field_attributes(model.cls)
-        field_info = FieldInfo.from_annotated_attribute(
-            model.annotations[field_name],
-            Field(**{name: value for name, value in attributes.items() if name in _ALIAS_ATTRIBUTES}),
-        )
-        validation_alias = field_info.validation_alias
-        # FastAPI documents the fields whose validation_alias is AliasChoices or AliasPath by their alias
-        if field_info.alias == old_alias or (validation_alias is not None and not isinstance(validation_alias, str)):
-            continue
-        # Pydantic stores the copied aliases in the same way as the ones that were passed with the same value
-        kept_aliases = [
-            name
-            for name in ("validation_alias", "serialization_alias")
-            if getattr(field_info, name) == old_alias
-            and not any(change.name == name and issubclass(model.cls, change.changed_by) for change in field.changes)
-        ]
-        if not kept_aliases:
-            continue
-        alias = field_info.alias
-        if isinstance(instruction, FieldHadInstruction):
-            method, alias_part = "had", f"alias={instruction.field_changes.alias!r}"
-            recipe = " and ".join(f"{name}={alias!r}" for name in kept_aliases)
-        else:
-            method, alias_part = "didnt_have", '"alias"'
-            recipe = " and ".join(f'"{name}"' for name in kept_aliases)
-        new_key = "the key that the field has without an alias" if alias is None else f'"{alias}"'
-        model_name, is_plural = instruction.schema.__name__, len(kept_aliases) > 1
-        warnings.warn(
-            f'schema({model_name}).field("{instruction.name}").{method}({alias_part}) in "{version_change_name}" '
-            f'changes the alias of "{model_name}.{instruction.name}", but in API version "{version}" its '
-            f'{" and ".join(kept_aliases)} {"are" if is_plural else "is"} still "{old_alias}", so that version keeps '
-            f'using "{old_alias}" instead of {new_key}. Cadwyn 9.0 will change {"them" if is_plural else "it"} too. '
-            f"To use {new_key} now and silence this warning, also pass {recipe} to this .{method}(). "
-            f'To keep "{old_alias}", remove {alias_part} from it instead.',
-            FutureWarning,
-            stacklevel=2,
-        )
-
-
 def _apply_alter_schema_instructions(
     modified_schemas: dict[type[BaseModel], _PydanticModelWrapper[BaseModel]],
     alter_schema_instructions: Sequence[Union[AlterSchemaSubInstruction, SchemaHadInstruction]],
@@ -3933,14 +3970,6 @@ def _apply_alter_schema_instructions(
                 alter_schema_instruction,
                 version_change_name,
             )
-            if (
-                alter_schema_instruction.field_changes.alias is not Sentinel
-                if isinstance(alter_schema_instruction, FieldHadInstruction)
-                else "alias" in alter_schema_instruction.attributes
-            ):
-                changes.alias_changes.append(
-                    _AliasChange(schema_info, field, alter_schema_instruction, version_change_name)
-                )
             if isinstance(alter_schema_instruction, FieldHadInstruction) and (
                 alter_schema_instruction.new_name is not Sentinel
             ):
@@ -4416,7 +4445,7 @@ def _delete_field_attributes(
         deleted = False
 
         # Another model that shares the field (e.g. a sibling) could have already deleted it from the shared attributes
-        if attr_name in field.passed_field_attributes or attr_name in field.get_field_attributes(model.cls):
+        if attr_name in field.passed_field_attributes or attr_name in field.get_changed_field_attributes(model.cls):
             deleted = True
         # Any metadata with such an attribute counts (even if it is None) to keep accepting the same instructions
         if get_origin(annotation) == Annotated and any(
