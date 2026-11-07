@@ -40,7 +40,7 @@ The following code un-sets an attribute of a field, as if it never existed:
 
 **ALIAS WARNING:**
 
-Pydantic copies a field's `alias` into its `validation_alias` and `serialization_alias` unless you pass them. Like `Field()`, `.had(alias=...)` and `.didnt_have("alias")` change these copies too, so the older version uses the new key in requests, responses, and OpenAPI. The `validation_alias` and `serialization_alias` that you pass explicitly, in the field or in the instruction, stay as they are. So an alias change needs request and response migrations that rename the key:
+Pydantic copies a field's `alias` into its `validation_alias` and `serialization_alias` unless you pass them. Like `Field()`, `.had(alias=...)` and `.didnt_have("alias")` change these copies too, so the older version uses the new key in requests, responses, and OpenAPI. The `validation_alias` and `serialization_alias` that you pass explicitly, in the field or in the instruction, stay as they are. `.didnt_have()` keeps the aliases of a `Field()` in `Annotated`, e.g. `Annotated[str, Field(alias="foo_key")]`, like its other attributes that don't only document the field, unless the module uses `from __future__ import annotations`. So an alias change needs request and response migrations that rename the key:
 
 ```python
 {! ./docs_src/concepts/schema_migrations/block005.py !}
