@@ -1,20 +1,23 @@
 import functools
 import inspect
 import re
-from collections.abc import Awaitable, Callable
+import warnings
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 import pytest
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response as StarletteResponse
 from typing_extensions import override
 
-from cadwyn import Cadwyn
+from cadwyn import Cadwyn, current_dependency_solver
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import VersionPickingMiddleware
 from cadwyn.route_generation import VersionedAPIRouter
@@ -925,6 +928,302 @@ def test__background_tasks():
         resp = client.post("/send-notification/test@example.com", headers=BASIC_HEADERS)
         assert resp.status_code == 200, resp.json()
         assert background_task_data == ("test@example.com", "some notification")
+
+
+def _add_background_task(
+    background_tasks: BackgroundTasks, solver: Annotated[str, Depends(current_dependency_solver)]
+) -> None:
+    background_tasks.add_task(_background_task_calls.append, f"dependency of {solver}")
+
+
+def _dependency_of_dependency(_: Annotated[None, Depends(_add_background_task)]) -> None:
+    pass
+
+
+def _yield_dependency(
+    background_tasks: BackgroundTasks, solver: Annotated[str, Depends(current_dependency_solver)]
+) -> Iterator[None]:
+    background_tasks.add_task(_background_task_calls.append, f"dependency of {solver}")
+    yield
+
+
+def _add_background_task_once(
+    background_tasks: BackgroundTasks, solver: Annotated[str, Depends(current_dependency_solver)]
+) -> None:
+    if solver == "fastapi":
+        background_tasks.add_task(_background_task_calls.append, f"dependency of {solver}")
+
+
+_background_task_calls: list[str] = []
+_DEPENDENCIES_THAT_ADD_BACKGROUND_TASKS = [_add_background_task, _dependency_of_dependency, _yield_dependency]
+_DROPPED_BACKGROUND_TASK_WARNING = (
+    r"Cadwyn has dropped a background task of \"\['POST'\] {path}\".*Cadwyn 10\.0 will run such tasks.*"
+    r"run_background_tasks_of_latest_version_dependencies=True.*current_dependency_solver"
+)
+
+
+@pytest.fixture
+def background_task_calls() -> Iterator[list[str]]:
+    _background_task_calls.clear()
+    yield _background_task_calls
+    _background_task_calls.clear()
+
+
+def _client_of(
+    router: VersionedAPIRouter,
+    *version_changes: type[VersionChange],
+    run_background_tasks_of_latest_version_dependencies: bool = False,
+) -> TestClient:
+    app = Cadwyn(
+        versions=VersionBundle(Version("2022-02-02", *version_changes), Version(DEFAULT_API_VERSION)),
+        run_background_tasks_of_latest_version_dependencies=run_background_tasks_of_latest_version_dependencies,
+    )
+    app.generate_and_include_versioned_routers(router)
+    return TestClient(app, headers=BASIC_HEADERS)
+
+
+# Tests treat warnings as errors, so the tests below also check that Cadwyn doesn't warn unless they expect it
+
+
+@pytest.mark.parametrize("dependency", _DEPENDENCIES_THAT_ADD_BACKGROUND_TASKS)
+def test__background_tasks__added_by_dependencies_of_endpoint_without_background_tasks__should_drop_the_tasks_of_the_latest_version_and_warn_once_per_route(  # noqa: E501
+    background_task_calls: list[str], dependency: Callable[..., Any]
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/first", dependencies=[Depends(dependency)])
+    async def first():
+        background_task_calls.append("endpoint")
+
+    @router.post("/second", dependencies=[Depends(dependency)])
+    async def second():
+        background_task_calls.append("endpoint")
+
+    with _client_of(router) as client, warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        assert client.post("/first").status_code == 200
+        assert client.post("/first").status_code == 200
+        assert client.post("/first", headers={"X-API-VERSION": "2022-02-02"}).status_code == 200
+        assert client.post("/second").status_code == 200
+
+    assert [warning.category for warning in caught_warnings] == [FutureWarning, FutureWarning]
+    assert re.match(_DROPPED_BACKGROUND_TASK_WARNING.format(path="/first"), str(caught_warnings[0].message))
+    assert re.match(_DROPPED_BACKGROUND_TASK_WARNING.format(path="/second"), str(caught_warnings[1].message))
+    assert background_task_calls == ["endpoint", "dependency of fastapi"] * 4
+
+
+def test__background_tasks__added_by_dependency_that_only_the_latest_version_has__should_be_dropped_with_a_warning(
+    background_task_calls: list[str],
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task)])
+    async def handler():
+        pass
+
+    class RemoveDependency(VersionChange):
+        description = "..."
+        instructions_to_migrate_to_previous_version = (endpoint("/test", ["POST"]).had(dependencies=[]),)
+
+    with (
+        _client_of(router, RemoveDependency) as client,
+        pytest.warns(FutureWarning, match=_DROPPED_BACKGROUND_TASK_WARNING.format(path="/test")),
+    ):
+        assert client.post("/test").status_code == 200
+    assert background_task_calls == []
+
+
+@pytest.mark.parametrize("dependency", _DEPENDENCIES_THAT_ADD_BACKGROUND_TASKS)
+def test__background_tasks__added_by_dependencies_with_run_background_tasks_of_latest_version_dependencies__should_run_once_per_solve(  # noqa: E501
+    background_task_calls: list[str], dependency: Callable[..., Any]
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(dependency)])
+    async def handler():
+        background_task_calls.append("endpoint")
+
+    with _client_of(router, run_background_tasks_of_latest_version_dependencies=True) as client:
+        assert client.post("/test").status_code == 200
+    assert background_task_calls == ["endpoint", "dependency of fastapi", "dependency of cadwyn"]
+
+
+@pytest.mark.parametrize("run_background_tasks_of_latest_version_dependencies", [False, True])
+@pytest.mark.parametrize("dependency", _DEPENDENCIES_THAT_ADD_BACKGROUND_TASKS)
+def test__background_tasks__added_by_dependencies_of_endpoint_with_background_tasks__should_run_once_per_solve(
+    background_task_calls: list[str],
+    dependency: Callable[..., Any],
+    run_background_tasks_of_latest_version_dependencies: bool,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(dependency)])
+    async def handler(background_tasks: BackgroundTasks):
+        background_tasks.add_task(background_task_calls.append, "endpoint task")
+        background_task_calls.append("endpoint")
+
+    with _client_of(
+        router, run_background_tasks_of_latest_version_dependencies=run_background_tasks_of_latest_version_dependencies
+    ) as client:
+        assert client.post("/test").status_code == 200
+    assert background_task_calls == ["endpoint", "dependency of fastapi", "dependency of cadwyn", "endpoint task"]
+
+
+@pytest.mark.parametrize("run_background_tasks_of_latest_version_dependencies", [False, True])
+def test__background_tasks__added_by_dependency_only_for_the_request_version__should_run_once_without_a_warning(
+    background_task_calls: list[str], run_background_tasks_of_latest_version_dependencies: bool
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task_once)])
+    async def handler():
+        pass
+
+    with _client_of(
+        router, run_background_tasks_of_latest_version_dependencies=run_background_tasks_of_latest_version_dependencies
+    ) as client:
+        assert client.post("/test").status_code == 200
+    assert background_task_calls == ["dependency of fastapi"]
+
+
+def test__background_tasks__added_by_dependency_that_only_the_latest_version_has_with_run_background_tasks_of_latest_version_dependencies__should_run(  # noqa: E501
+    background_task_calls: list[str],
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task)])
+    async def handler():
+        pass
+
+    class RemoveDependency(VersionChange):
+        description = "..."
+        instructions_to_migrate_to_previous_version = (endpoint("/test", ["POST"]).had(dependencies=[]),)
+
+    with _client_of(router, RemoveDependency, run_background_tasks_of_latest_version_dependencies=True) as client:
+        assert client.post("/test").status_code == 200
+    assert background_task_calls == ["dependency of cadwyn"]
+
+
+def test__background_tasks__with_returned_response_without_background_and_run_background_tasks_of_latest_version_dependencies__should_run_tasks_of_both_solves(  # noqa: E501
+    background_task_calls: list[str],
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task)])
+    async def handler():
+        return JSONResponse("ok")
+
+    with _client_of(router, run_background_tasks_of_latest_version_dependencies=True) as client:
+        assert client.post("/test").json() == "ok"
+    assert background_task_calls == ["dependency of fastapi", "dependency of cadwyn"]
+
+
+def test__background_tasks__with_returned_response_without_background__should_drop_the_tasks_of_the_latest_version_with_a_warning(  # noqa: E501
+    background_task_calls: list[str],
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task)])
+    async def handler():
+        return JSONResponse("ok")
+
+    with (
+        _client_of(router) as client,
+        pytest.warns(FutureWarning, match=_DROPPED_BACKGROUND_TASK_WARNING.format(path="/test")),
+    ):
+        assert client.post("/test").json() == "ok"
+    assert background_task_calls == ["dependency of fastapi"]
+
+
+async def _respond_with_own_background():
+    return JSONResponse("ok", background=BackgroundTask(_background_task_calls.append, "response"))
+
+
+async def _respond_with_own_background_and_background_tasks(background_tasks: BackgroundTasks):
+    background_tasks.add_task(_background_task_calls.append, "endpoint task")
+    return JSONResponse("ok", background=BackgroundTask(_background_task_calls.append, "response"))
+
+
+@pytest.mark.parametrize("run_background_tasks_of_latest_version_dependencies", [False, True])
+@pytest.mark.parametrize("handler", [_respond_with_own_background, _respond_with_own_background_and_background_tasks])
+def test__background_tasks__with_returned_response_with_its_own_background__should_run_only_it_as_in_fastapi(
+    background_task_calls: list[str],
+    run_background_tasks_of_latest_version_dependencies: bool,
+    handler: Callable[..., Any],
+):
+    router = VersionedAPIRouter()
+    router.post("/test", dependencies=[Depends(_add_background_task)])(handler)
+
+    with _client_of(
+        router, run_background_tasks_of_latest_version_dependencies=run_background_tasks_of_latest_version_dependencies
+    ) as client:
+        assert client.post("/test").json() == "ok"
+    assert background_task_calls == ["response"]
+
+
+def test__background_tasks__with_streaming_response_and_run_background_tasks_of_latest_version_dependencies__should_run_after_the_stream(  # noqa: E501
+    background_task_calls: list[str],
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task)])
+    async def handler():
+        async def stream() -> AsyncIterator[bytes]:
+            background_task_calls.append("stream")
+            yield b"ok"
+
+        return StreamingResponse(stream())
+
+    with _client_of(router, run_background_tasks_of_latest_version_dependencies=True) as client:
+        assert client.post("/test").content == b"ok"
+    assert background_task_calls == ["stream", "dependency of fastapi", "dependency of cadwyn"]
+
+
+def test__background_tasks__with_streaming_response__should_drop_the_tasks_of_the_latest_version_with_a_warning(
+    background_task_calls: list[str],
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test", dependencies=[Depends(_add_background_task)])
+    async def handler():
+        async def stream() -> AsyncIterator[bytes]:
+            background_task_calls.append("stream")
+            yield b"ok"
+
+        return StreamingResponse(stream())
+
+    with (
+        _client_of(router) as client,
+        pytest.warns(FutureWarning, match=_DROPPED_BACKGROUND_TASK_WARNING.format(path="/test")),
+    ):
+        assert client.post("/test").content == b"ok"
+    assert background_task_calls == ["stream", "dependency of fastapi"]
+
+
+async def _raise_http_exception():
+    raise HTTPException(status_code=400)
+
+
+async def _raise_http_exception_with_background_tasks(background_tasks: BackgroundTasks):
+    background_tasks.add_task(_background_task_calls.append, "endpoint task")
+    raise HTTPException(status_code=400)
+
+
+@pytest.mark.parametrize("run_background_tasks_of_latest_version_dependencies", [False, True])
+@pytest.mark.parametrize("handler", [_raise_http_exception, _raise_http_exception_with_background_tasks])
+def test__background_tasks__when_endpoint_raises_http_exception__should_not_run_without_a_warning(
+    background_task_calls: list[str],
+    run_background_tasks_of_latest_version_dependencies: bool,
+    handler: Callable[..., Any],
+):
+    router = VersionedAPIRouter()
+    router.post("/test", dependencies=[Depends(_add_background_task)])(handler)
+
+    with _client_of(
+        router, run_background_tasks_of_latest_version_dependencies=run_background_tasks_of_latest_version_dependencies
+    ) as client:
+        assert client.post("/test").status_code == 400
+    assert background_task_calls == []
 
 
 def test__webhooks():
