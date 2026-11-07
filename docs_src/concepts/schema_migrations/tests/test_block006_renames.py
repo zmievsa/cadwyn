@@ -1,6 +1,8 @@
 """Test what the page says about renaming a field that a schema inherits."""
 
+import pytest
 from cadwyn import Version, VersionBundle, VersionChange, schema
+from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.schema_generation import generate_versioned_models
 
 from docs_src.concepts.schema_migrations.block006 import (
@@ -37,9 +39,11 @@ def test__inherited_field_had_name__in_declaring_schema__should_rename_field_in_
     assert list(old_models[BusinessInvoice].model_fields) == ["number"]
 
 
-def test__inherited_field_had_name__in_subclass__should_keep_old_field_next_to_renamed_one():
+def test__inherited_field_had_name__in_subclass__should_raise_error_that_names_declaring_schema():
     # The page tells users to rename the field in the schema that declares it
     # because of this. If this test fails, update "Fields that a schema inherits"
-    old_models = _get_old_models(RenameCodeInBusinessInvoice)
-    assert list(old_models[BusinessInvoice].model_fields) == ["code", "number"]
-    assert list(old_models[Invoice].model_fields) == ["code"]
+    with pytest.raises(
+        InvalidGenerationInstructionError,
+        match='Rename it in "Invoice" instead',
+    ):
+        _get_old_models(RenameCodeInBusinessInvoice)

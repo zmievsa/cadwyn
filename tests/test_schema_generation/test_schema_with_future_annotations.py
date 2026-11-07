@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Generic, TypeAlias, TypeVar
+import warnings
+from typing import Annotated, ClassVar, Final, Generic, TypeAlias, TypeVar
 
 import pytest
 from pydantic import BaseModel, WithJsonSchema
+from pydantic.warnings import PydanticDeprecatedSince211
 
 from cadwyn.exceptions import InvalidGenerationInstructionError
 from cadwyn.structure.schemas import schema
@@ -74,3 +76,61 @@ def test__schema_field_had__recursive_type_arg_field_of_other_parent_of_diamond_
         "value": {"children": [{"children": []}]},
         "bar": 0,
     }
+
+
+_ClassVarAlias = ClassVar
+
+
+class ParentWithFooAsQuotedClassVar(BaseModel):
+    foo: ClassVar[int]
+
+
+class ChildThatDeclaresFooHiddenByQuotedClassVar(ParentWithFooAsQuotedClassVar):
+    foo: str  # ty: ignore[invalid-attribute-override]
+
+
+class ParentWithFooAsAliasedClassVar(BaseModel):
+    foo: _ClassVarAlias[int]
+
+
+class ChildThatDeclaresFooHiddenByAliasedClassVar(ParentWithFooAsAliasedClassVar):
+    foo: str  # ty: ignore[invalid-attribute-override]
+
+
+# Pydantic warns that it will treat such a name as a field in V3, and that the child's field shadows the class var
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", PydanticDeprecatedSince211)
+    warnings.filterwarnings("ignore", 'Field name "foo" in "ChildThatDeclaresFooOverFinal" shadows', UserWarning)
+
+    class ParentWithFinalFoo(BaseModel):
+        foo: Final[int] = 1
+
+    class ChildThatDeclaresFooOverFinal(ParentWithFinalFoo):
+        foo: str  # ty: ignore[override-of-final-variable]
+
+
+@pytest.mark.parametrize(
+    "child",
+    [
+        pytest.param(ChildThatDeclaresFooHiddenByQuotedClassVar, id="quoted_class_var"),
+        pytest.param(ChildThatDeclaresFooHiddenByAliasedClassVar, id="aliased_class_var"),
+        pytest.param(
+            ChildThatDeclaresFooOverFinal,
+            id="final_with_default",
+            # The copies of the models get the same warnings as the models
+            marks=[
+                pytest.mark.filterwarnings("ignore::pydantic.warnings.PydanticDeprecatedSince211"),
+                pytest.mark.filterwarnings('ignore:Field name "foo" in "ChildThatDeclaresFooOverFinal" shadows'),
+            ],
+        ),
+    ],
+)
+def test__schema_field_had_name__parent_declares_field_name_as_class_var__should_rename_field_in_child(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    child: type[BaseModel],
+):
+    schemas = create_runtime_schemas(version_change(schema(child).field("foo").had(name="old_foo")))
+
+    copied_child = schemas["2000-01-01"][child]
+    assert list(copied_child.model_fields) == ["old_foo"]
+    assert copied_child.model_validate({"old_foo": "v"}).model_dump() == {"old_foo": "v"}
