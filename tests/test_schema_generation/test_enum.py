@@ -3,6 +3,7 @@ from enum import KEEP, Enum, Flag, IntEnum, IntFlag, auto
 from typing import Any
 
 import pytest
+from typing_extensions import override
 
 from cadwyn.exceptions import (
     InvalidGenerationInstructionError,
@@ -78,6 +79,57 @@ def test__enum_didnt_have__original_enum_has_two_members(create_runtime_schemas:
 def test__enum_had__original_schema_is_empty(create_runtime_schemas: CreateRuntimeSchemas):
     models = create_runtime_schemas(version_change(enum(EmptyEnum).had(b=7)))
     assert serialize_enum(models["2000-01-01"][EmptyEnum]) == {"b": 7}
+
+
+class EnumWithCustomAutoValues(Enum):
+    @staticmethod
+    @override
+    def _generate_next_value_(name: str, start: int, count: int, last_values: list[Any]) -> int:
+        return (count + 1) * 10
+
+    a = auto()
+    b = auto()
+
+
+class StrEnumWithCustomAutoValues(str, Enum):
+    @staticmethod
+    @override
+    def _generate_next_value_(name: str, start: int, count: int, last_values: list[Any]) -> str:
+        return name.upper()
+
+    a = auto()
+    b = auto()
+
+
+class EnumBaseWithCustomAutoValues(Enum):
+    @staticmethod
+    @override
+    def _generate_next_value_(name: str, start: int, count: int, last_values: list[Any]) -> str:
+        return f"{name}!"
+
+
+class EnumThatInheritsCustomAutoValues(EnumBaseWithCustomAutoValues):
+    a = auto()
+    b = auto()
+
+
+@pytest.mark.parametrize(
+    ("original", "expected"),
+    [
+        (EnumWithCustomAutoValues, {"a": 10, "b": 20, "c": 30}),
+        (StrEnumWithCustomAutoValues, {"a": "A", "b": "B", "c": "C"}),
+        (EnumThatInheritsCustomAutoValues, {"a": "a!", "b": "b!", "c": "c!"}),
+    ],
+)
+def test__enum_had__auto_value_with_custom_generate_next_value__should_use_the_custom_generate_next_value(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: type[Enum],
+    expected: dict[str, Any],
+):
+    models = create_runtime_schemas(version_change(enum(original).had(c=auto())))
+
+    assert serialize_enum(models["2000-01-01"][original]) == expected
+    assert serialize_enum(models["2001-01-01"][original]) == {"a": expected["a"], "b": expected["b"]}
 
 
 class FlagWithTwoMembers(Flag):

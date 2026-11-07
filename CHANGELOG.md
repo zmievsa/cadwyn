@@ -14,6 +14,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Removed `Cadwyn.add_header_versioned_routers()`, deprecated since 5.0.0. Add each version to your `VersionBundle`, describe how it differs from the latest one with version changes, and include the latest routers with `Cadwyn.generate_and_include_versioned_routers()`.
 - Removed the `version_changes` attribute of `Version` and `HeadVersion`, deprecated since 4.2.0. Use `changes` instead.
 - Removed `VersionBundle.version_dates`, deprecated since 5.0.0. Use `VersionBundle.version_values` instead.
+- `enum(MyEnum).had(member=auto())` now uses the `_generate_next_value_` that `MyEnum` defines (#554). Before, the older versions of the enum ignored it and used the default one of `Enum`, so the new member got another value than `auto()` gives in a hand-written enum (e.g. `21` instead of `30` for a `_generate_next_value_` that returns `(count + 1) * 10`), or the versions failed to build with a `TypeError` when it returned strings. The older versions of such enums now accept and document the values that `_generate_next_value_` returns. If your clients rely on the old values, pass them explicitly, e.g. `had(member=21)`.
 
 ## [8.2.0]
 
