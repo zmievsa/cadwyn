@@ -77,7 +77,7 @@ from .data import (
 )
 from .endpoints import AlterEndpointSubInstruction
 from .enums import AlterEnumSubInstruction
-from .schemas import AlterSchemaSubInstruction, SchemaHadInstruction
+from .schemas import AlterSchemaSubInstruction, SchemaHadInstruction, _reject_keys_renamed_by_alias
 
 _CADWYN_REQUEST_PARAM_NAME = "cadwyn_request_param"
 _CADWYN_RESPONSE_PARAM_NAME = "cadwyn_response_param"
@@ -2440,9 +2440,10 @@ def _is_body_field_safe(body_field: ModelField, spec: "_RestorerSpec") -> bool:
         schema = _register_core_schema_definitions(cast("dict[str, Any]", body_field._type_adapter.core_schema))
         while True:
             # `OnErrorOmit` and other defaults that swallow errors make invalid data pass, so we stop at them
-            while schema["type"] in ("definition-ref", "nullable", "default", "function-after") and (
-                schema.get("on_error", "raise") == "raise"
-            ):
+            while (
+                schema["type"] in ("definition-ref", "nullable", "default", "function-after")
+                or _is_renamed_key_check(schema)
+            ) and schema.get("on_error", "raise") == "raise":
                 schema = (
                     _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
                     if schema["type"] == "definition-ref"
@@ -3116,7 +3117,7 @@ def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any]
         if schema["type"] == "definition-ref":
             schema = _CORE_SCHEMA_DEFINITIONS[schema["schema_ref"]]
         # "after" model validators wrap the model schema and only get the validated model
-        while schema["type"] == "function-after":
+        while schema["type"] == "function-after" or _is_renamed_key_check(schema):
             schema = schema["schema"]
         # A custom `__init__` might expect the input that the dump doesn't have
         if (
@@ -3135,6 +3136,17 @@ def _get_model_inner_core_schema(model: type[BaseModel]) -> Union[dict[str, Any]
     except _CORE_SCHEMA_ERRORS:
         return None
     return inner_schema
+
+
+def _is_renamed_key_check(schema: dict[str, Any]) -> bool:
+    """Whether the core schema is the check that Cadwyn adds to the models whose alias instructions renamed keys.
+
+    It only rejects some data and never changes any, so it's safe wherever the model that it wraps is.
+    """
+    return (
+        schema["type"] == "function-wrap"
+        and getattr(schema["function"]["function"], "__func__", None) is _reject_keys_renamed_by_alias
+    )
 
 
 def _get_fields_core_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -3233,6 +3245,8 @@ def _has_unsafe_core_schema(
     if schema_type == "definition-ref":
         units["ref", schema["schema_ref"]] = None
         return False
+    if _is_renamed_key_check(schema):
+        return _has_unsafe_core_schema(schema["schema"], units, is_unit_body=is_unit_body)
     if schema_type == "model" and not is_unit_body:
         _CORE_SCHEMA_MODELS.setdefault(schema["cls"], schema)
         units["model", schema["cls"]] = None
