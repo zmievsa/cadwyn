@@ -15,13 +15,13 @@ import threading
 import time as time_module
 import typing
 from collections import OrderedDict, deque
-from collections.abc import Callable, Coroutine, Iterable, Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import Callable, Coroutine, Generator, Iterable, Iterator, Mapping, MutableSequence, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
-from enum import Enum, Flag, FlagBoundary, IntEnum
+from enum import Enum, Flag, FlagBoundary, IntEnum, StrEnum
 from io import BufferedRandom, BytesIO, FileIO, RawIOBase, StringIO, UnsupportedOperation
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Optional, Self, Union, cast
@@ -63,6 +63,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    GetCoreSchemaHandler,
     GetPydanticSchema,
     Json,
     OnErrorOmit,
@@ -14325,6 +14326,12 @@ class PlainEnum(Enum):
     b = "b"
 
 
+class PlainFlag(Flag):
+    read = 1
+    write = 2
+    execute = 4
+
+
 class ModelWithPlainEnum(BaseModel):
     value: PlainEnum
 
@@ -14402,6 +14409,539 @@ def test__request_body_migration__with_plain_enum_that_has_enum_instructions__he
 
     for version_client in clients.values():
         assert version_client.post(test_path, json=payload).json() is True
+
+
+@pytest.mark.parametrize("container", [Iterable, Generator, Sequence, list])
+@pytest.mark.parametrize("nested", [False, True], ids=["members", "nested_containers"])
+def test__request_body_migration__with_plain_enums_in_lazy_or_sequence_fields__should_give_head_members(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    container: Any,
+    nested: bool,
+):
+    item = list[PlainEnum] if nested else PlainEnum
+    # This parametrized annotation is consumed by Pydantic at runtime.
+    annotation: Any = Generator[item, None, None] if container is Generator else container[item]
+
+    class Payload(BaseModel):
+        values: annotation
+
+    calls: list[str] = []
+
+    def dependency(solver: str = Depends(current_dependency_solver)) -> None:
+        calls.append(solver)
+
+    @router.post(test_path)
+    async def endpoint(body: Payload, _: None = Depends(dependency, use_cache=False)):
+        values = [member for group in body.values for member in group] if nested else list(body.values)
+        return all(member is PlainEnum.a for member in values) and len(values) == 2
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+
+    for version_client in clients.values():
+        calls.clear()
+        response = version_client.post(test_path, json={"values": [["a"], ["a"]] if nested else ["a", "a"]})
+        assert response.status_code == 200
+        assert response.json() is True
+        assert calls == ["fastapi", "cadwyn"]
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["model", "nested_model"])
+@pytest.mark.parametrize("enum_type", [PlainEnum, PlainFlag])
+@pytest.mark.parametrize("container", [Sequence, Iterable, Generator])
+def test__response_body_migration__with_strict_plain_enum_fields__should_return_member_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    nested: bool,
+    enum_type: Any,
+    container: Any,
+):
+    member = PlainEnum.a if enum_type is PlainEnum else PlainFlag.read | PlainFlag.write
+
+    values_type: Any = Generator[enum_type, None, None] if container is Generator else container[enum_type]
+
+    class StrictItem(BaseModel):
+        model_config = ConfigDict(strict=True)
+        value: enum_type
+        values: values_type
+
+    class Envelope(BaseModel):
+        items: list[StrictItem]
+
+    @router.get(test_path, response_model=Envelope if nested else StrictItem)
+    async def endpoint():
+        item = StrictItem(value=member, values=[member])
+        return Envelope(items=[item]) if nested else item
+
+    removed = "b" if enum_type is PlainEnum else "execute"
+    clients = create_versioned_clients(version_change(enum(enum_type).didnt_have(removed)))
+
+    expected = {"value": member.value, "values": [member.value]}
+    for version_client in clients.values():
+        response = version_client.get(test_path)
+        assert response.status_code == 200
+        assert response.json() == ({"items": [expected]} if nested else expected)
+
+
+@pytest.mark.parametrize("annotation", [Iterable[PlainEnum], Generator[PlainEnum, None, None]])
+def test__request_body_migration__with_lazy_plain_enum_body__should_give_head_members(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[annotation, Body()]):
+        return list(body) == [PlainEnum.a, PlainEnum.a]
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=["a", "a"]).json() is True
+
+
+def test__request_body_migration__with_lazy_plain_enum_validation__should_validate_only_consumed_items(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    events: list[str] = []
+
+    def validated(member: PlainEnum) -> PlainEnum:
+        events.append("validated")
+        return member
+
+    class Payload(BaseModel):
+        values: Iterable[Annotated[PlainEnum, AfterValidator(validated)]]
+
+    @router.post(test_path)
+    async def endpoint(body: Payload):
+        events.append("endpoint")
+        return next(iter(body.values)) is PlainEnum.a
+
+    @convert_request_to_next_version_for(Payload)
+    def migrate(request: RequestInfo):
+        events.append("migration")
+        assert not isinstance(request.body["values"], list)
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b"), migrate=migrate))
+    # The invalid second member is never consumed, just as in plain FastAPI.
+    response = clients["2000-01-01"].post(test_path, json={"values": ["a", "invalid"]})
+    assert response.json() is True
+    assert events == ["migration", "endpoint", "validated", "validated"]
+
+
+def test__request_body_migration__with_lazy_member_absent_from_head__should_fail_when_consumed(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class Payload(BaseModel):
+        values: Iterable[PlainEnum]
+
+    @router.post(test_path)
+    async def endpoint(body: Payload):
+        return list(body.values)
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).had(c="c")))
+    with pytest.raises(ValidationError) as exc_info:
+        clients["2000-01-01"].post(test_path, json={"values": ["a", "c"]})
+    assert [(error["loc"], error["input"].name) for error in exc_info.value.errors()] == [((1,), "c")]
+
+
+@pytest.mark.parametrize(
+    ("annotation", "payload"),
+    [
+        (RootModel[Iterable[PlainEnum]], ["a"]),
+        (dict[str, Iterable[PlainEnum]], {"values": ["a"]}),
+        (list[dict[str, Iterable[PlainEnum]]], [{"values": ["a"]}]),
+    ],
+)
+def test__request_body_migration__with_nested_lazy_enums__should_give_head_members(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    annotation: Any,
+    payload: Any,
+):
+    @router.post(test_path)
+    async def endpoint(body: Annotated[annotation, Body()]):
+        if isinstance(body, RootModel):
+            values = body.root
+        else:
+            values = (body[0] if isinstance(body, list) else body)["values"]
+        return list(values) == [PlainEnum.a]
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    for version_client in clients.values():
+        assert version_client.post(test_path, json=payload).json() is True
+
+
+def test__request_body_migration__with_recursive_lazy_model__should_keep_recursive_values_untouched(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class Payload(BaseModel):
+        values: Iterable[PlainEnum] = []
+        child: Optional["Payload"] = None
+
+    @router.post(test_path)
+    async def endpoint(body: Payload):
+        return list(body.values) == [PlainEnum.a] and body.child is None
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"values": ["a"]}).json() is True
+
+
+@pytest.mark.parametrize("alias", [AliasPath("outer", "values"), "shared", AliasChoices("preferred", "values")])
+def test__request_body_migration__with_complex_or_shared_lazy_aliases__should_keep_defaults(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    alias: Any,
+):
+    class Payload(BaseModel):
+        values: Iterable[PlainEnum] = Field(default_factory=list, validation_alias=alias)
+        other: Any = Field(default=None, validation_alias="shared")
+
+    @router.post(test_path)
+    async def endpoint(body: Payload):
+        return list(body.values)
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={}).json() == []
+
+
+def test__request_body_migration__with_other_lazy_body_reader__should_preserve_its_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class Payload(BaseModel):
+        values: Iterable[PlainEnum]
+
+    seen: list[Any] = []
+
+    def dependency(body: dict = Body()):
+        seen.append(next(iter(body["values"])))
+
+    @router.post(test_path, dependencies=[Depends(dependency)])
+    async def endpoint(body: Payload):
+        with pytest.raises(ValidationError):
+            next(iter(body.values))
+        return "legacy"
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    for version_client in clients.values():
+        seen.clear()
+        assert version_client.post(test_path, json={"values": ["a", "a"]}).json() == "legacy"
+        assert seen[0] == "a"
+        assert isinstance(seen[1], Enum)
+        assert type(seen[1]) is not PlainEnum
+        assert seen[1].value == "a"
+
+
+@pytest.mark.parametrize("wrap_fields", [False, True])
+def test__request_body_migration__with_custom_lazy_model_schema__should_keep_defaults(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    wrap_fields: bool,
+):
+    class Payload(BaseModel):
+        values: Iterable[PlainEnum] = []
+
+        @classmethod
+        @override
+        def __get_pydantic_core_schema__(cls, source: type, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+            schema = handler(source)
+            assert schema["type"] == "model"
+            if wrap_fields:
+                schema["schema"] = core_schema.no_info_before_validator_function(lambda data: data, schema["schema"])
+            else:
+                schema["config"] = {"validate_by_name": True, "validate_by_alias": False}
+            return schema
+
+    @router.post(test_path)
+    async def endpoint(body: Payload):
+        return list(body.values)
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={}).json() == []
+
+
+def test__request_body_migration__with_lazy_custom_enum_lookup__should_preserve_its_result(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class Payload(BaseModel):
+        values: Iterable[PlainEnumWithMissing]
+
+    @router.post(test_path)
+    async def endpoint(body: Payload):
+        return list(body.values) == [PlainEnumWithMissing.unknown]
+
+    clients = create_versioned_clients(version_change(enum(PlainEnumWithMissing).didnt_have("b")))
+    for version_client in clients.values():
+        assert version_client.post(test_path, json={"values": ["a"]}).json() is True
+
+
+@pytest.mark.parametrize("pydantic_iterator", [False, True])
+def test__request_body_migration__with_latest_lazy_items_from_migration__should_keep_their_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    pydantic_iterator: bool,
+):
+    class Payload(BaseModel):
+        values: Iterable[list[PlainEnum]]
+
+    @convert_request_to_next_version_for(Payload)
+    def migrate(request: RequestInfo):
+        values = iter([(PlainEnum.a,)])
+        request.body["values"] = (
+            TypeAdapter(Iterable[tuple[PlainEnum, ...]]).validate_python(values) if pydantic_iterator else values
+        )
+
+    @router.post(test_path)
+    async def endpoint(body: Payload):
+        return list(body.values) == [[PlainEnum.a]]
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b"), migrate=migrate))
+    assert clients["2000-01-01"].post(test_path, json={"values": []}).json() is True
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize(
+    ("union_mode", "fallback_first"),
+    [("smart", False), ("smart", True), ("left_to_right", False), ("left_to_right", True)],
+)
+def test__response_body_migration__with_plain_enum_and_union_fallback__should_keep_existing_branch_selection(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    strict: bool,
+    fallback_first: bool,
+    union_mode: Literal["smart", "left_to_right"],
+):
+    fallback = Annotated[Any, AfterValidator(lambda _: "fallback")]
+    annotation: Any = Union[fallback, PlainEnum] if fallback_first else Union[PlainEnum, fallback]
+
+    class Payload(BaseModel):
+        model_config = ConfigDict(strict=strict)
+        value: annotation = Field(union_mode=union_mode)
+
+    @router.get(test_path, response_model=Payload)
+    async def endpoint():
+        return {"value": PlainEnum.a}
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    expected = "a" if union_mode == "left_to_right" and not strict and not fallback_first else "fallback"
+    for version, version_client in clients.items():
+        response = version_client.get(test_path)
+        assert response.status_code == 200
+        assert response.content == json.dumps({"value": expected}, separators=(",", ":")).encode()
+        assert dict(response.headers) == {
+            "content-length": str(len(response.content)),
+            "content-type": "application/json",
+            "x-api-version": version,
+        }
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("union_mode", ["smart", "left_to_right"])
+@pytest.mark.parametrize("kind", ["any", "str", "model", "optional"])
+def test__response_body_migration__with_enum_unions__should_preserve_wire_values_and_openapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    strict: bool,
+    union_mode: Literal["smart", "left_to_right"],
+    kind: str,
+):
+    class SomeModel(BaseModel):
+        model_config = ConfigDict(from_attributes=True)
+        value: Any
+
+    annotation: Any = {
+        "any": Union[PlainEnum, Any],
+        "str": Union[PlainEnum, str],
+        "model": Union[PlainEnum, SomeModel],
+        "optional": Optional[PlainEnum],
+    }[kind]
+
+    class Payload(BaseModel):
+        model_config = ConfigDict(strict=strict)
+        value: annotation = Field() if kind == "optional" else Field(union_mode=union_mode)
+
+    @router.get(test_path, response_model=Payload)
+    async def endpoint():
+        return {"value": PlainEnum.a}
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    expected = b'{"value":{"value":"a"}}' if kind == "model" and (strict or union_mode == "smart") else b'{"value":"a"}'
+    for version, version_client in clients.items():
+        # Strict Enum|str keeps its previous rejection; Optional has no competing value branch and is fixed.
+        if kind == "str" and strict:
+            with pytest.raises(fastapi.exceptions.ResponseValidationError):
+                version_client.get(test_path)
+        else:
+            response = version_client.get(test_path)
+            assert response.status_code == 200
+            assert response.content == expected
+            assert dict(response.headers) == {
+                "content-length": str(len(expected)),
+                "content-type": "application/json",
+                "x-api-version": version,
+            }
+        expected_schema = Payload.model_json_schema(ref_template="#/components/schemas/{model}")
+        definitions = expected_schema.pop("$defs")
+        definitions["Payload"] = expected_schema
+        if version == "2000-01-01":
+            definitions["PlainEnum"]["enum"].remove("b")
+        api = version_client.get("/openapi.json", params={"version": version})
+        assert api.status_code == 200
+        schemas = api.json()["components"]["schemas"]
+        assert {name: schemas[name] for name in definitions} == definitions
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("union_mode", ["smart", "left_to_right"])
+@pytest.mark.parametrize("kind", ["any", "str", "model", "optional"])
+@pytest.mark.parametrize("lazy", [False, True])
+def test__request_body_migration__with_enum_unions__should_keep_successful_endpoint_values(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    strict: bool,
+    union_mode: Literal["smart", "left_to_right"],
+    kind: str,
+    lazy: bool,
+):
+    class SomeModel(BaseModel):
+        model_config = ConfigDict(from_attributes=True)
+        value: Any
+
+    item: Any = {
+        "any": Union[PlainEnum, Any],
+        "str": Union[PlainEnum, str],
+        "model": Union[PlainEnum, SomeModel],
+        "optional": Optional[PlainEnum],
+    }[kind]
+    union_item: Any = item if kind == "optional" else Annotated[item, Field(union_mode=union_mode)]
+    annotation: Any = Iterable[union_item] if lazy else union_item
+
+    class Payload(BaseModel):
+        model_config = ConfigDict(strict=strict)
+        value: annotation
+
+    seen: list[Any] = []
+
+    @router.post(test_path)
+    async def endpoint(body: Payload):
+        value = next(iter(body.value)) if lazy else body.value
+        seen.append(value)
+        if isinstance(value, Enum):
+            return "latest" if type(value) is PlainEnum else "generated"
+        return "model" if isinstance(value, SomeModel) else value
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    raw: Any = None if kind == "optional" else ({"value": "a"} if kind == "model" and strict else "a")
+    expected: Any = "a"
+    if kind == "optional":
+        expected = None
+    elif kind == "model":
+        expected = "model" if lazy or strict else "latest"
+    elif not strict and union_mode == "left_to_right":
+        expected = ("generated" if kind == "any" else "a") if lazy else "latest"
+    for version, version_client in clients.items():
+        response = version_client.post(test_path, json={"value": [raw] if lazy else raw})
+        assert response.status_code == 200
+        assert response.content == json.dumps(expected, separators=(",", ":")).encode()
+        assert dict(response.headers) == {
+            "content-length": str(len(response.content)),
+            "content-type": "application/json",
+            "x-api-version": version,
+        }
+        assert len(seen) == 1
+        value = seen.pop()
+        if expected == "latest":
+            assert value is PlainEnum.a
+        elif expected == "generated":
+            assert isinstance(value, Enum)
+            assert type(value) is not PlainEnum
+            assert value.value == "a"
+        elif expected == "model":
+            assert type(value) is SomeModel
+            assert value.value == "a"
+        else:
+            assert value == expected
+            assert type(value) is type(expected)
+
+
+@pytest.mark.parametrize(
+    "enum_type", [StrEnum("StringEnum", {"a": "a", "b": "b"}), IntEnum("IntegerEnum", {"a": 1, "b": 2})]
+)
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("union_mode", ["smart", "left_to_right"])
+@pytest.mark.parametrize("lazy", [False, True])
+def test__data_migration__with_value_enum_union__should_keep_lax_and_strict_request_and_response_behavior(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    enum_type: Any,
+    strict: bool,
+    union_mode: Literal["smart", "left_to_right"],
+    lazy: bool,
+):
+    request_item: Any = Annotated[Union[enum_type, Any], Field(union_mode=union_mode)]
+    request_annotation: Any = Iterable[request_item] if lazy else request_item
+    response_fallback = Annotated[Any, AfterValidator(lambda _: "fallback")]
+    response_annotation: Any = Union[enum_type, response_fallback]
+
+    class Input(BaseModel):
+        model_config = ConfigDict(strict=strict)
+        value: request_annotation
+
+    class Output(BaseModel):
+        model_config = ConfigDict(strict=strict)
+        value: response_annotation = Field(union_mode=union_mode)
+
+    received: list[Any] = []
+
+    @router.post(test_path, response_model=Output)
+    async def endpoint(body: Input):
+        received.append(next(iter(body.value)) if lazy else body.value)
+        return {"value": enum_type.a}
+
+    clients = create_versioned_clients(version_change(enum(enum_type).didnt_have("b")))
+    enum_branch = union_mode == "left_to_right" and not strict
+    expected = enum_type.a if enum_branch else enum_type.a.value
+    response_value = enum_type.a.value if enum_branch else "fallback"
+    for version, version_client in clients.items():
+        payload = [enum_type.a.value] if lazy else enum_type.a.value
+        response = version_client.post(test_path, json={"value": payload})
+        assert response.status_code == 200
+        assert response.content == json.dumps({"value": response_value}, separators=(",", ":")).encode()
+        assert dict(response.headers) == {
+            "content-length": str(len(response.content)),
+            "content-type": "application/json",
+            "x-api-version": version,
+        }
+        assert received == [expected]
+        assert type(received.pop()) is type(expected)
+        api = version_client.get("/openapi.json", params={"version": version})
+        assert api.status_code == 200
+        expected_enum_schema = TypeAdapter(enum_type).json_schema()
+        if version == "2000-01-01":
+            expected_enum_schema["enum"].remove(enum_type.b.value)
+        assert api.json()["components"]["schemas"][enum_type.__name__] == expected_enum_schema
 
 
 def test__request_body_migration__with_plain_enum_member_that_only_older_version_has__migration_should_get_the_member(
@@ -14554,12 +15094,6 @@ def test__response_body_migration__with_plain_enum_whose_missing_returns_a_membe
     # The enum's own `_missing_` gets the values of the members that the version doesn't have
     assert clients["2001-01-01"].post(test_path, params={"value": "b"}).json() == {"value": "b"}
     assert clients["2000-01-01"].post(test_path, params={"value": "b"}).json() == {"value": "unknown"}
-
-
-class PlainFlag(Flag):
-    read = 1
-    write = 2
-    execute = 4
 
 
 class ModelWithPlainFlags(BaseModel):

@@ -35,3 +35,9 @@ Cadwyn only knows the values of the members, not the arguments that they were de
 ```python
 {! ./docs_src/concepts/enum_migrations/block003.py !}
 ```
+
+Plain enums and flags with `enum(...)` instructions can be used in supported lazy request fields such as `Iterable[Kind]` and `Generator[Kind, None, None]`. Cadwyn converts their members to the latest enum as the endpoint consumes them; unconsumed items stay unvalidated. Request migrations still see the request version's members. Conversion leaves unions with alternative branches and opaque validation paths unchanged; see [known limitations](../theory/design_decisions.md#known-limitations).
+
+Strict response fields of these plain enums and flags, including fields inside nested models and containers, accept the latest enum's members when their values match a member of the client's version exactly. Strict validation still rejects raw values and members of unrelated enums. A member that the older version doesn't have needs a response migration as usual.
+
+Unions with alternative branches keep their existing validation and serialization behavior. In a version that uses an enum through such a union, that enum's strict fields can still reject latest members, including fields outside the union: Cadwyn shares one enum copy per version. `Optional[Kind]` alone has no alternative value branch and supports strict validation. Enums with class-level `__get_pydantic_core_schema__` or `__get_pydantic_json_schema__` hooks, and enums based on `str`, `int`, or `float`, also retain their previous strict behavior. Use `Field(strict=False)` on affected response fields or a response migration that supplies the client's own members.
