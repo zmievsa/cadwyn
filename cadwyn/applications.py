@@ -112,6 +112,7 @@ class Cadwyn(FastAPI):
         api_version_title: Optional[str] = None,
         api_version_description: Optional[str] = None,
         versioning_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
+        run_background_tasks_of_latest_version_dependencies: bool = False,
         debug: bool = False,
         title: str = "FastAPI",
         summary: Union[str, None] = None,
@@ -172,6 +173,7 @@ class Cadwyn(FastAPI):
                 "Set the root path on your server instead (e.g. `root_path` or your proxy's prefix)."
             )
         self.versions = versions
+        self.run_background_tasks_of_latest_version_dependencies = run_background_tasks_of_latest_version_dependencies
         self._cadwyn_initialized = False
 
         # FastAPI keeps unknown keyword arguments in app.extra, so a removed argument would be ignored without this
@@ -332,6 +334,9 @@ class Cadwyn(FastAPI):
                 versions=self.versions,
                 api_version_parameter_name=self.api_version_parameter_name,
                 api_version_location=self._api_version_location,
+                run_background_tasks_of_latest_version_dependencies=(
+                    self.run_background_tasks_of_latest_version_dependencies
+                ),
             )
         except RecursionError as e:
             raise ImportError(
