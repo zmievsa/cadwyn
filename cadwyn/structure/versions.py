@@ -83,6 +83,7 @@ from typing_extensions import ParamSpec, TypeVar, override
 from typing_inspection.typing_objects import is_typealiastype
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
+from cadwyn._internal.response import _preserve_response_instances
 from cadwyn._utils import (
     UnionType,
     _get_type_alias_value,
@@ -995,7 +996,11 @@ class VersionBundle:
             else:
                 status_code = 200
             fastapi_response_dependency.status_code = status_code
-            if use_head_response_model:
+            if (
+                use_head_response_model
+                and head_route.response_field is not None
+                and _preserve_response_instances(head_route.response_field, response_or_response_body)
+            ):
                 return response_or_response_body
             response_info = ResponseInfo(
                 fastapi_response_dependency,

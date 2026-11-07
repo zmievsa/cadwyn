@@ -295,9 +295,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 use_head_response_model = (
                     head_route.response_field is not None
                     and not getattr(older_route, _RESPONSE_MODEL_CHANGED, False)
-                    and not self.schema_generators[version_value].response_model_differs_from_head(
-                        head_route.response_model
-                    )
+                    and not self.schema_generators[version_value].response_model_may_differ_from_head()
                     and not any(
                         id(head_route) in change._route_to_response_migration_mapping
                         or any(
@@ -307,8 +305,12 @@ class _EndpointTransformer(Generic[_R, _WR]):
                         for change in newer_changes
                     )
                 )
-                if use_head_response_model and head_route.response_field is not None:
-                    _use_head_response_model(older_route, head_route.response_field)
+                if (
+                    use_head_response_model
+                    and head_route.response_field is not None
+                    and older_route.response_field is not None
+                ):
+                    _use_head_response_model(older_route, head_route.response_field, older_route.response_field)
                 _add_data_migrations_to_route(
                     older_route,
                     # NOTE: The fact that we use latest here assumes that the route can never change its response schema

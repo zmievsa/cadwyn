@@ -2931,17 +2931,6 @@ class SchemaGenerator:
             return False
         collector = _ReferencedModelCollector(expands_type_aliases=True)
         collector.annotation_transformer.record_dependency(dependency)
-        return self._collected_models_differ_from_head(collector)
-
-    def response_model_differs_from_head(self, annotation: Any) -> bool:
-        """Whether the response annotation reaches a model or enum changed in this version."""
-        if not self._instructions_that_differ_from_head:
-            return False
-        collector = _ReferencedModelCollector(expands_type_aliases=True)
-        collector.annotation_transformer.change_version_of_annotation(annotation)
-        return not collector.is_complete or self._collected_models_differ_from_head(collector)
-
-    def _collected_models_differ_from_head(self, collector: _ReferencedModelCollector) -> bool:
         models_to_visit = [*collector.models, *collector.arg_models]
         visited_models: set[type[Union[BaseModel, Enum]]] = set()
         while models_to_visit:
@@ -2956,6 +2945,14 @@ class SchemaGenerator:
                     return True
                 models_to_visit.extend(_get_models_validated_by_fields(model))
         return False
+
+    def response_model_may_differ_from_head(self) -> bool:
+        """Conservatively keep versioned validation whenever schema or enum instructions differ from HEAD.
+
+        Defaults, factories, metadata and validators can refer to changed models outside the declared field types.
+        Their references can also be opaque, so extra validation is safer than returning a HEAD-only shape.
+        """
+        return bool(self._instructions_that_differ_from_head)
 
     def _base_differs_from_head(self, model: type[BaseModel], base_index: int) -> bool:
         instructions = self._instructions_that_differ_from_head.get(model.__mro__[base_index])

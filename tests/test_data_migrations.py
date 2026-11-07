@@ -6227,13 +6227,14 @@ def _subclass_instance(cls: type[SchemaWithRequiredValidationAlias]) -> SchemaWi
 
 
 _response_alias_cases = pytest.mark.parametrize(
-    ("response_model", "get_response", "expected"),
+    ("response_model", "get_response", "expected", "unmigrated_expected"),
     [
         # The response passes validation with the default, so we keep it as it is
         pytest.param(
             SchemaWithDefaultAndValidationAlias,
             lambda: SchemaWithDefaultAndValidationAlias.model_validate({"v": 1}),
             {"x": 0},
+            {"x": 1},
             id="response_that_passes_validation",
         ),
         # `OnErrorOmit` omits the items that fail validation, so the response passes as it is
@@ -6241,6 +6242,7 @@ _response_alias_cases = pytest.mark.parametrize(
             list[OnErrorOmit[SchemaWithRequiredValidationAlias]],
             lambda: [SchemaWithRequiredValidationAlias.model_validate({"v": 1})],
             [],
+            [{"x": 1}],
             id="list_of_items_that_are_omitted_on_error",
         ),
         pytest.param(
@@ -6249,6 +6251,7 @@ _response_alias_cases = pytest.mark.parametrize(
                 items=[SchemaWithRequiredValidationAlias.model_validate({"v": 1})], total=1
             ),
             {"items": [], "total": 1},
+            {"items": [{"x": 1}], "total": 1},
             id="nested_list_of_items_that_are_omitted_on_error",
         ),
         pytest.param(
@@ -6257,13 +6260,15 @@ _response_alias_cases = pytest.mark.parametrize(
                 items={"a": SchemaWithRequiredValidationAlias.model_validate({"v": 1})}
             ),
             {"items": {}},
+            {"items": {"a": {"x": 1}}},
             id="nested_dict_of_items_that_are_omitted_on_error",
         ),
         # FastAPI validates the dicts that the endpoint returns as they are
-        pytest.param(SchemaWithRequiredValidationAlias, lambda: {"x": 1}, FAILS_AS_BEFORE, id="dict"),
+        pytest.param(SchemaWithRequiredValidationAlias, lambda: {"x": 1}, FAILS_AS_BEFORE, FAILS_AS_BEFORE, id="dict"),
         pytest.param(
             list[SchemaWithRequiredValidationAlias],
             lambda: [SchemaWithRequiredValidationAlias.model_validate({"v": 1}), {"x": 2}],
+            FAILS_AS_BEFORE,
             FAILS_AS_BEFORE,
             id="list_of_model_and_dict",
         ),
@@ -6272,11 +6277,13 @@ _response_alias_cases = pytest.mark.parametrize(
             SchemaWithRequiredValidationAlias,
             lambda: SchemaWithTheDumpedKeyOfAnotherSchema(),
             FAILS_AS_BEFORE,
+            FAILS_AS_BEFORE,
             id="other_model",
         ),
         pytest.param(
             list[SchemaWithRequiredValidationAlias],
             lambda: RootSchemaWithRequiredValidationAlias([SchemaWithRequiredValidationAlias.model_validate({"v": 1})]),
+            FAILS_AS_BEFORE,
             FAILS_AS_BEFORE,
             id="root_model_for_list",
         ),
@@ -6285,6 +6292,7 @@ _response_alias_cases = pytest.mark.parametrize(
             pytest.param(
                 SchemaWithRequiredValidationAlias,
                 lambda cls=cls, value=value: cls.model_validate({"v": value}),
+                FAILS_AS_BEFORE,
                 FAILS_AS_BEFORE,
                 id=id,
             )
@@ -6302,6 +6310,7 @@ _response_alias_cases = pytest.mark.parametrize(
             list[SchemaWithRequiredValidationAlias],
             lambda: [_subclass_instance(SubclassWithFieldSerializer)],
             FAILS_AS_BEFORE,
+            FAILS_AS_BEFORE,
             id="list_of_subclass_with_field_serializer",
         ),
         pytest.param(
@@ -6310,11 +6319,13 @@ _response_alias_cases = pytest.mark.parametrize(
                 [_subclass_instance(SchemaWithRequiredValidationAlias)]
             ),
             FAILS_AS_BEFORE,
+            FAILS_AS_BEFORE,
             id="subclass_of_root_model",
         ),
         pytest.param(
             Annotated[list[SchemaWithRequiredValidationAlias], BeforeValidator(lambda value: value)],
             lambda: [SchemaWithRequiredValidationAlias.model_validate({"v": 1})],
+            FAILS_AS_BEFORE,
             FAILS_AS_BEFORE,
             id="response_model_with_before_validator",
         ),
@@ -6330,6 +6341,7 @@ def test__response_migration__with_validation_aliases_in_dicts_other_models_or_u
     response_model: Any,
     get_response: Callable[[], Any],
     expected: Any,
+    unmigrated_expected: Any,
 ):
     @router.get(test_path, response_model=response_model)
     async def endpoint():
@@ -6350,38 +6362,373 @@ def test__response_migration__with_validation_aliases_in_dicts_other_models_or_u
 
 
 @_response_alias_cases
-def test__response_validation__without_migrations_and_with_validation_aliases__should_match_fastapi(
+def test__response_validation__without_migrations_and_with_aliases__should_preserve_only_exact_instances(
     create_versioned_clients: CreateVersionedClients,
     router: VersionedAPIRouter,
     response_model: Any,
     get_response: Callable[[], Any],
     expected: Any,
+    unmigrated_expected: Any,
 ):
     @router.get("/test", response_model=response_model)
     def endpoint():
         return get_response()
 
-    def outcome(client: TestClient) -> Any:
-        try:
-            return client.get("/test").json()
-        except fastapi.exceptions.ResponseValidationError as error:
-            return [(item["type"], item["loc"]) for item in error.errors()]
-        except UserWarning as error:
-            return str(error)
+    for version_client in create_versioned_clients(version_change()).values():
+        if unmigrated_expected is FAILS_AS_BEFORE:
+            with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+                version_client.get("/test")
+            assert {item["type"] for item in exc_info.value.errors()} == {"missing"}
+        else:
+            assert version_client.get("/test").json() == unmigrated_expected
+
+
+@pytest.mark.parametrize("required", [False, True])
+@pytest.mark.parametrize("shape", ["model", "list", "mapping", "envelope"])
+def test__response_validation__with_other_model_class__should_keep_prepared_values(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    required: bool,
+    shape: Literal["model", "list", "mapping", "envelope"],
+):
+    class Expected(BaseModel):
+        value: Annotated[int, Field(alias="wire", default=... if required else 0)]
+
+    class Actual(BaseModel):
+        value: int = Field(alias="wire")
+
+    class Envelope(BaseModel):
+        inner: Expected
+
+    response_models = {"model": Expected, "list": list[Expected], "mapping": dict[str, Expected], "envelope": Envelope}
+
+    @router.get("/test", response_model=response_models[shape])
+    def endpoint():
+        actual = Actual(wire=7)
+        return {"model": actual, "list": [actual], "mapping": {"inner": actual}, "envelope": {"inner": actual}}[shape]
+
+    expected = {
+        "model": {"wire": 7},
+        "list": [{"wire": 7}],
+        "mapping": {"inner": {"wire": 7}},
+        "envelope": {"inner": {"wire": 7}},
+    }
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/test").json() == expected[shape]
+
+
+def test__response_validation__with_changed_default_factory__should_keep_the_older_shape(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+):
+    class Inner(BaseModel):
+        x: str = "head"
+
+    class Envelope(BaseModel):
+        inner: Any = Field(default_factory=Inner)
+
+    @router.get("/test", response_model=Envelope)
+    def endpoint():
+        return {}
+
+    clients = create_versioned_clients(version_change(schema(Inner).field("x").didnt_exist))
+    assert clients["2001-01-01"].get("/test").json() == {"inner": {"x": "head"}}
+    assert clients["2000-01-01"].get("/test").json() == {"inner": {}}
+
+
+@pytest.mark.parametrize("kind", ["dict", "other", "subclass", "orm"])
+def test__response_validation__with_prepared_values__should_keep_versioned_validator_behavior(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    kind: Literal["dict", "other", "subclass", "orm"],
+):
+    class Expected(BaseModel):
+        value: int = Field(alias="wire")
+
+        @field_validator("value")
+        @classmethod
+        def validate_value(cls, value: int) -> int:
+            return value if cls is Expected else value + 1
+
+    class Other(BaseModel):
+        value: int = Field(alias="wire")
+
+    class Subclass(Expected):
+        pass
+
+    class ORMObject:
+        wire = 7
+
+    @router.get("/test", response_model=Expected)
+    def endpoint():
+        return {"dict": {"wire": 7}, "other": Other(wire=7), "subclass": Subclass(wire=7), "orm": ORMObject()}[kind]
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/test").json() == {"wire": 9 if kind == "subclass" else 8}
+
+
+class ResponseWithHiddenReferencesInner(BaseModel):
+    x: str = "head"
+
+
+class ResponseWithHiddenReferencesCounter(BaseModel):
+    value: int
+
+    @field_validator("value")
+    @classmethod
+    def increment(cls, value: int) -> int:
+        return value + 1
+
+
+def _identity_with_hidden_response_reference(value: int) -> Annotated[int, ResponseWithHiddenReferencesInner]:
+    return value
+
+
+class ResponseWithHiddenDefault(ResponseWithHiddenReferencesCounter):
+    inner: Any = ResponseWithHiddenReferencesInner()
+
+
+class ResponseWithHiddenDefaultFactory(ResponseWithHiddenReferencesCounter):
+    inner: Any = Field(default_factory=ResponseWithHiddenReferencesInner)
+
+
+class ResponseWithHiddenMetadata(ResponseWithHiddenReferencesCounter):
+    value: Annotated[int, AfterValidator(_identity_with_hidden_response_reference)]
+
+
+class ResponseWithHiddenValidator(ResponseWithHiddenReferencesCounter):
+    @field_validator("value")
+    @classmethod
+    def identity(cls, value: int) -> Annotated[int, ResponseWithHiddenReferencesInner]:
+        return value
+
+
+class ResponseHiddenEnum(Enum):
+    a = "a"
+    b = "b"
+
+
+class ResponseWithHiddenEnumDefault(ResponseWithHiddenReferencesCounter):
+    kind: Any = ResponseHiddenEnum.a
+
+
+@pytest.mark.parametrize(
+    ("response_model", "change"),
+    [
+        (model, version_change(schema(ResponseWithHiddenReferencesInner).field("x").didnt_exist))
+        for model in [
+            ResponseWithHiddenDefault,
+            ResponseWithHiddenDefaultFactory,
+            ResponseWithHiddenMetadata,
+            ResponseWithHiddenValidator,
+        ]
+    ]
+    + [
+        (ResponseWithHiddenEnumDefault, version_change(enum(ResponseHiddenEnum).didnt_have("b"))),
+    ],
+)
+def test__response_validation__with_changed_hidden_reference__should_validate_against_the_older_model(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    response_model: type[ResponseWithHiddenReferencesCounter],
+    change: type[VersionChange],
+):
+    @router.get("/test", response_model=response_model)
+    def endpoint():
+        return response_model(value=1)
+
+    clients = create_versioned_clients(change)
+    assert clients["2001-01-01"].get("/test").json()["value"] == 2
+    assert clients["2000-01-01"].get("/test").json()["value"] == 3
+
+
+@pytest.mark.filterwarnings("ignore:Pydantic serializer warnings:UserWarning")
+def test__response_validation__with_mutated_exact_instance__should_match_fastapi(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+):
+    class Payload(BaseModel):
+        value: int
+
+    @router.get("/test", response_model=Payload)
+    def endpoint():
+        result = Payload(value=7)
+        result.value = "bad"  # ty: ignore[invalid-assignment]  # Intentionally corrupt a previously validated instance.
+        return result
 
     plain = FastAPI()
     plain.include_router(router)
-    expected_outcome = outcome(TestClient(plain))
-    clients = create_versioned_clients(version_change())
-    for version_client in clients.values():
-        assert outcome(version_client) == expected_outcome
+    expected = TestClient(plain).get("/test")
+    assert expected.json() == {"value": "bad"}
+    for version_client in create_versioned_clients(version_change()).values():
+        response = version_client.get("/test")
+        assert response.status_code == expected.status_code
+        assert response.content == expected.content
 
 
-@pytest.mark.parametrize("response_shape", ["model", "list", "dict", "nested", "union", "alias"])
+@pytest.mark.filterwarnings("ignore:Pydantic serializer warnings:UserWarning")
+def test__response_validation__with_always_revalidated_mutated_instance__should_raise_like_fastapi(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+):
+    class Payload(BaseModel):
+        model_config = ConfigDict(revalidate_instances="always")
+        value: int
+
+    @router.get("/test", response_model=Payload)
+    def endpoint():
+        result = Payload(value=7)
+        result.value = "bad"  # ty: ignore[invalid-assignment]  # Intentionally corrupt a previously validated instance.
+        return result
+
+    plain = FastAPI()
+    plain.include_router(router)
+    for version_client in [TestClient(plain), *create_versioned_clients(version_change()).values()]:
+        with pytest.raises(fastapi.exceptions.ResponseValidationError) as exc_info:
+            version_client.get("/test")
+        assert [(item["type"], item["loc"]) for item in exc_info.value.errors()] == [
+            ("int_parsing", ("response", "value"))
+        ]
+
+
+def test__response_validation__with_exclude_none_and_non_null_default__should_match_fastapi(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+):
+    class Payload(BaseModel):
+        value: int = 7
+        optional: Optional[int] = 7
+
+    @router.get("/test", response_model=Payload, response_model_exclude_none=True)
+    def endpoint():
+        return Payload(optional=None)
+
+    plain = FastAPI()
+    plain.include_router(router)
+    expected = TestClient(plain).get("/test")
+    assert expected.json() == {"value": 7}
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/test").content == expected.content
+
+
+@pytest.mark.parametrize("labeled", [False, True])
+@pytest.mark.parametrize(
+    ("mode", "member", "expected"),
+    [
+        ("smart", "first", {"value": 2}),
+        ("smart", "second", {"other": 11}),
+        ("left_to_right", "first", {"value": 2}),
+        ("left_to_right", "second", {"other": 21}),
+    ],
+)
+def test__response_validation__with_model_union__should_preserve_only_certain_members(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    mode: Literal["smart", "left_to_right"],
+    member: Literal["first", "second"],
+    expected: dict[str, int],
+    labeled: bool,
+):
+    class First(BaseModel):
+        value: int
+
+        @field_validator("value")
+        @classmethod
+        def increment(cls, value: int) -> int:
+            return value + 1
+
+    class Second(BaseModel):
+        other: int
+
+        @field_validator("other")
+        @classmethod
+        def increment(cls, value: int) -> int:
+            return value + 10
+
+    def label_choices(source: Any, handler: Any) -> Any:
+        result = handler(source)
+        result["choices"] = [(choice, str(index)) for index, choice in enumerate(result["choices"])]
+        return result
+
+    models = {
+        False: Annotated[Union[First, Second], Field(union_mode=mode)],
+        True: Annotated[Union[First, Second], Field(union_mode=mode), GetPydanticSchema(label_choices)],
+    }
+
+    @router.get("/test", response_model=models[labeled])
+    def endpoint():
+        return {"first": First(value=1), "second": Second(other=1)}[member]
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/test").json() == expected
+
+
+@pytest.mark.parametrize("kind", ["numeric_keys", "non_model_union"])
+def test__response_validation__with_uncertain_container_schema__should_keep_preparation(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    kind: Literal["numeric_keys", "non_model_union"],
+):
+    class Payload(BaseModel):
+        value: int
+
+        @field_validator("value")
+        @classmethod
+        def increment(cls, value: int) -> int:
+            return value + 1
+
+    models = {"numeric_keys": dict[int, Payload], "non_model_union": Union[Payload, int]}
+
+    @router.get("/test", response_model=models[kind])
+    def endpoint():
+        instance = Payload(value=1)
+        return {"numeric_keys": {1: instance}, "non_model_union": instance}[kind]
+
+    expected = {"numeric_keys": {"1": {"value": 3}}, "non_model_union": {"value": 3}}
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/test").json() == expected[kind]
+
+
+ResponseJsonData = TypeAliasType(
+    "ResponseJsonData", Union[dict[str, "ResponseJsonData"], list["ResponseJsonData"], str, None]
+)
+
+
+def test__response_validation__with_recursive_json_alias__should_keep_preparation(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+):
+    @router.get("/test", response_model=ResponseJsonData)
+    def endpoint():
+        return {"items": [{"value": "kept"}, None]}
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/test").json() == {"items": [{"value": "kept"}, None]}
+
+
+def test__response_validation__with_explicit_response_class__should_select_the_correct_field_each_time(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+):
+    class Payload(BaseModel):
+        value: int = Field(alias="wire")
+
+        @field_validator("value")
+        @classmethod
+        def change_generated_value(cls, value: int) -> int:
+            return value if cls is Payload else value + 1
+
+    @router.get("/test", response_model=Payload, response_class=JSONResponse)
+    def endpoint(kept: bool = True):
+        return Payload(wire=7) if kept else {"wire": 7}
+
+    for version_client in create_versioned_clients(version_change()).values():
+        assert version_client.get("/test", params={"kept": True}).json() == {"wire": 7}
+        assert version_client.get("/test", params={"kept": False}).json() == {"wire": 8}
+        assert version_client.get("/test", params={"kept": True}).json() == {"wire": 7}
+
+
+@pytest.mark.parametrize(
+    "response_shape", ["model", "list", "dict", "nested", "union", "alias", "optional_list", "null", "root"]
+)
 @pytest.mark.parametrize("single_version", [False, True])
 def test__response_validation__with_validated_model__should_match_fastapi(
     router: VersionedAPIRouter,
-    response_shape: Literal["model", "list", "dict", "nested", "union", "alias"],
+    response_shape: Literal["model", "list", "dict", "nested", "union", "alias", "optional_list", "null", "root"],
     single_version: bool,
 ):
     calls: list[str] = []
@@ -6403,6 +6750,9 @@ def test__response_validation__with_validated_model__should_match_fastapi(
     class Envelope(BaseModel):
         payload: Payload
 
+    class Wrapped(RootModel[Payload]):
+        pass
+
     PayloadAlias = TypeAliasType("PayloadAlias", list[Payload])  # noqa: N806
     response_models = {
         "model": Payload,
@@ -6411,6 +6761,9 @@ def test__response_validation__with_validated_model__should_match_fastapi(
         "nested": Envelope,
         "union": Union[Payload, None],
         "alias": PayloadAlias,
+        "optional_list": list[Optional[Payload]],
+        "null": Optional[Payload],
+        "root": Wrapped,
     }
 
     @router.get("/test", response_model=response_models[response_shape])
@@ -6423,6 +6776,9 @@ def test__response_validation__with_validated_model__should_match_fastapi(
             "nested": Envelope(payload=payload),
             "union": payload,
             "alias": [payload],
+            "optional_list": [payload, None],
+            "null": None,
+            "root": Wrapped(payload),
         }[response_shape]
 
     @router.get("/other", response_model=int)
@@ -6632,12 +6988,9 @@ def test__response_validation__with_revalidation_config__should_match_fastapi(
         def increment(cls, value: int) -> int:
             return value + 1
 
-    class Subclass(Payload):
-        secret: str = "hidden"
-
     @router.get("/test", response_model=Payload)
     def endpoint():
-        return Subclass(value=1)
+        return Payload(value=1)
 
     plain = FastAPI()
     plain.include_router(router)
