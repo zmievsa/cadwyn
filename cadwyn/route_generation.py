@@ -1,6 +1,6 @@
 import re
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import (
@@ -44,7 +44,7 @@ from cadwyn.structure.endpoints import (
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from cadwyn.structure.versions import VersionChange, _get_schema_migration_key, _get_union_members
+from cadwyn.structure.versions import VersionChange, _get_request_body_target, _get_schema_migration_target
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
@@ -233,7 +233,6 @@ class _EndpointTransformer(Generic[_R, _WR]):
             webhook_router = copy_router(webhook_router)
             self._apply_endpoint_changes_to_router(router.routes + webhook_router.routes, version)
 
-        _validate_no_http_error_migrations_of_union_members(self.head_router, self.versions)
         if self.routes_that_never_existed:
             raise RouterGenerationError(
                 "Every route you mark with "
@@ -246,6 +245,9 @@ class _EndpointTransformer(Generic[_R, _WR]):
         for route_index, head_route in enumerate(self.head_router.routes):
             if not isinstance(head_route, APIRoute):
                 continue
+            _validate_no_http_error_migrations_of_union_members(
+                head_route, _get_version_changes_that_migrate_route(route_index, self.versions, routers)
+            )
             _add_request_and_response_params(head_route)
             copy_of_dependant = copy(head_route.dependant)
 
@@ -291,7 +293,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
         # This method is way out of its league in terms of complexity. We gotta refactor it.
 
         path_to_route_methods_mapping, head_response_models, head_request_bodies = (
-            self._extract_all_routes_identifiers_for_route_to_converter_matching(router)
+            self._extract_all_routes_identifiers_for_route_to_converter_matching(router, head_router)
         )
 
         for version_change in version.changes:
@@ -314,7 +316,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             f"Request by body schema converter "
                             f'"{version_change.__name__}.{_callable_name(by_schema_converter.transformer)}" '
                             f"failed to find routes with the following body schemas: "
-                            f"{[m.__name__ for m in missing_models]}. "
+                            f"{[_schema_name(m) for m in missing_models]}. "
                             f"This means that you are trying to apply this converter to non-existing endpoint(s). "
                         )
             for by_schema_converters in version_change.alter_response_by_schema_instructions.values():
@@ -327,7 +329,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
                             f"Response by response model converter "
                             f'"{version_change.__name__}.{_callable_name(by_schema_converter.transformer)}" '
                             f"failed to find routes with the following response models: "
-                            f"{[m.__name__ for m in missing_models]}. "
+                            f"{[_schema_name(m) for m in missing_models]}. "
                             f"This means that you are trying to apply this converter to non-existing endpoint(s). "
                             "If this is intentional and this converter really does not apply to any endpoints, then "
                             "pass check_usage=False argument to "
@@ -365,7 +367,7 @@ class _EndpointTransformer(Generic[_R, _WR]):
             )
 
     def _extract_all_routes_identifiers_for_route_to_converter_matching(
-        self, router: APIRouter
+        self, router: APIRouter, head_router: APIRouter
     ) -> tuple[dict[_RoutePath, dict[_RouteMethod, set[_RouteId]]], set[Any], set[Any]]:
         # int is the index of the route in the router.routes list.
         # So we essentially keep track of which routes have which response models and request bodies.
@@ -381,13 +383,18 @@ class _EndpointTransformer(Generic[_R, _WR]):
             if isinstance(route, APIRoute):
                 if route.response_model is not None and lenient_issubclass(route.response_model, BaseModel):
                     response_models.add(route.response_model)
-                response_models.update(_get_union_members(route.response_model))
+                # Migrations are looked up by the latest version of the route, e.g. for a union or a type alias.
+                # The routers of all versions have the same routes in the same order, so it's an APIRoute too
+                head_route = cast("APIRoute", head_router.routes[index])
+                response_target = _get_schema_migration_target(head_route.response_model)
+                response_models.update(response_target.keys, response_target.union_members)
                 # Not sure if it can ever be None when it's a simple schema. Eh, I would rather be safe than sorry
                 if _route_has_a_simple_body_schema(route) and route.body_field is not None:
                     annotation = route.body_field.field_info.annotation
                     if annotation is not None and lenient_issubclass(annotation, BaseModel):
                         request_bodies.add(annotation)
-                    request_bodies.update(_get_union_members(annotation))
+                    request_target = _get_request_body_target(annotation, head_route)
+                    request_bodies.update(request_target.keys, request_target.union_members)
                 for method in _route_methods(route):
                     path_to_route_methods_mapping[route.path][method].add(index)
 
@@ -634,31 +641,53 @@ def _get_route_from_func(
     return None
 
 
-def _validate_no_http_error_migrations_of_union_members(head_router: APIRouter, versions: VersionBundle) -> None:
-    """Fail if a schema migration of a member of a union response model migrates HTTP errors.
+def _get_version_changes_that_migrate_route(
+    route_index: int, versions: VersionBundle, routers: "Mapping[VersionType, APIRouter]"
+) -> list[type[VersionChange]]:
+    """Return the version changes whose migrations run for the requests to a route in the versions it exists in.
+
+    A request to a version runs the migrations of every newer version, so these are the changes of the versions that
+    are newer than the oldest version that has the route.
+    """
+    version_list = list(versions)
+    existing_indices = [
+        index
+        for index, version in enumerate(version_list)
+        if _DELETED_ROUTE_TAG not in cast("APIRoute", routers[version.value].routes[route_index]).tags
+    ]
+    if not existing_indices:  # pragma: no cover # Route generation fails for routes that exist in no version
+        return []
+    return [change for version in version_list[: max(existing_indices)] for change in version.changes]
+
+
+def _validate_no_http_error_migrations_of_union_members(
+    head_route: APIRoute, version_changes: Sequence[type[VersionChange]]
+) -> None:
+    """Fail if a schema migration of a member of a union response model migrates HTTP errors of this route.
 
     An error isn't any member of the union, so we can't tell whether the migration should run for it.
     Responses are migrated by the response model of the latest version, so that's the one we check.
     """
-    for route in head_router.routes:
-        if not isinstance(route, APIRoute):
+    target = _get_schema_migration_target(head_route.response_model)
+    for version_change in version_changes:
+        schema_instructions = version_change.alter_response_by_schema_instructions
+        if any(key in schema_instructions for key in target.keys):
             continue
-        response_schema_key = _get_schema_migration_key(route.response_model)
-        for version_change in (change for version in versions for change in version.changes):
-            schema_instructions = version_change.alter_response_by_schema_instructions
-            if response_schema_key is not None and response_schema_key in schema_instructions:
-                continue
-            for member in _get_union_members(route.response_model):
-                for instruction in schema_instructions.get(member, ()):
-                    if instruction.migrate_http_errors:
-                        raise RouterGenerationError(
-                            f'Response by response model converter "{version_change.__name__}.'
-                            f'{_callable_name(instruction.transformer)}" migrates HTTP errors of {member.__name__}, '
-                            f"but {list(_route_methods(route))} {route.path} responds with a union of it and other "
-                            f"types ({route.response_model!r}). Cadwyn can't tell which member of the union an HTTP "
-                            "error is, so it can't tell whether this converter should run for it. Pass "
-                            "migrate_http_errors=False, and migrate the errors of this endpoint by its path."
-                        )
+        for member in target.union_members:
+            for instruction in schema_instructions.get(member, ()):
+                if instruction.migrate_http_errors:
+                    raise RouterGenerationError(
+                        f'Response by response model converter "{version_change.__name__}.'
+                        f'{_callable_name(instruction.transformer)}" migrates HTTP errors of {member.__name__}, '
+                        f"but {list(_route_methods(head_route))} {head_route.path} responds with a union of it and "
+                        f"other types ({head_route.response_model!r}). Cadwyn can't tell which member of the union "
+                        "an HTTP error is, so it can't tell whether this converter should run for it. Pass "
+                        "migrate_http_errors=False, and migrate the errors of this endpoint by its path."
+                    )
+
+
+def _schema_name(schema: object) -> str:
+    return schema.__name__ if isinstance(schema, type) else repr(schema)
 
 
 def _route_has_a_simple_body_schema(route: APIRoute) -> bool:

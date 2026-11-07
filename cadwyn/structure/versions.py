@@ -12,7 +12,7 @@ import tempfile
 import threading
 import uuid
 from collections import Counter, OrderedDict, defaultdict, deque
-from collections.abc import Callable, Coroutine, Hashable, Iterator, Sequence
+from collections.abc import Callable, Coroutine, Hashable, Iterable, Iterator, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date, datetime, time, timedelta
@@ -25,6 +25,7 @@ from typing import (
     BinaryIO,
     ClassVar,
     NamedTuple,
+    NoReturn,
     TypeAlias,
     Union,
     assert_never,
@@ -46,7 +47,7 @@ from fastapi._compat import (
 from fastapi.concurrency import run_in_threadpool
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import get_dependant, get_validation_alias, solve_dependencies
-from fastapi.exceptions import RequestValidationError, ResponseValidationError
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import AliasChoices, AliasPath, BaseModel, RootModel
@@ -55,9 +56,10 @@ from pydantic_core import PydanticSerializationError, PydanticUndefined, TzInfo,
 from starlette._utils import is_async_callable
 from starlette.datastructures import FormData, UploadFile
 from typing_extensions import ParamSpec, TypeVar, override
+from typing_inspection.typing_objects import is_typealiastype
 
 from cadwyn._internal.context_vars import CURRENT_DEPENDENCY_SOLVER_VAR
-from cadwyn._utils import UnionType, classproperty, lenient_issubclass
+from cadwyn._utils import UnionType, _get_type_alias_value, classproperty, lenient_issubclass
 from cadwyn.exceptions import (
     CadwynError,
     CadwynHeadRequestValidationError,
@@ -499,14 +501,20 @@ class VersionBundle:
             for instruction in list(version_change.alter_schema_instructions)
         }
 
+        # Migrations for a union (e.g. `Union[A, B]`) are migrations for its members
         migrated_schemas = {
-            get_cls_pythonpath(schema): schema
+            get_cls_pythonpath(model): model
             for version in self._all_versions
             for version_change in version.changes
             for schema in list(version_change.alter_request_by_schema_instructions.keys())
+            for model in _get_models_of_schema(schema)
         }
 
         return altered_schemas | migrated_schemas
+
+    @functools.cached_property
+    def _all_changes(self) -> tuple[type["VersionChange"], ...]:
+        return tuple(version_change for version in self.versions for version_change in version.changes)
 
     @functools.cached_property
     def versioned_enums(self) -> dict[IdentifierPythonPath, type[Enum]]:
@@ -525,7 +533,7 @@ class VersionBundle:
 
     async def _migrate_request(
         self,
-        body_type: object,
+        body_target: "_SchemaMigrationTarget",
         head_dependant: Dependant,
         request: FastapiRequest,
         response: FastapiResponse,
@@ -541,19 +549,14 @@ class VersionBundle:
         body_is_omitted: bool,
         form_model_is_omitted: bool,
         uploads_read_by_fastapi: "Union[_UploadPositions, None]",
-        body_union_members: tuple[type[BaseModel], ...],
         get_body_union_member: "Callable[[], Union[type[BaseModel], None]]",
     ) -> dict[str, Any]:
         start = self.reversed_version_values.index(current_version)
         head_route_id = id(head_route)
-        body_schema_key = _get_schema_migration_key(body_type)
         for v in self.reversed_versions[start + 1 :]:
             for version_change in v.changes:
                 for instruction in _get_schema_migrations(
-                    version_change.alter_request_by_schema_instructions,
-                    body_schema_key,
-                    body_union_members,
-                    get_body_union_member,
+                    version_change.alter_request_by_schema_instructions, body_target, get_body_union_member
                 ):
                     instruction(request_info)
                 if head_route_id in version_change._route_to_request_migration_mapping:
@@ -622,23 +625,23 @@ class VersionBundle:
         self,
         response_info: ResponseInfo,
         current_version: VersionType,
-        head_response_model: object,
         head_route: Union[APIRoute, None],
-        *,
-        response_union_members: tuple[type[BaseModel], ...] = (),
-        get_response_union_member: "Callable[[], Union[type[BaseModel], None]]" = lambda: None,
+        response_target: "_SchemaMigrationTarget",
+        get_response_union_member: "Union[Callable[[], Union[type[BaseModel], None]], None]" = None,
     ) -> ResponseInfo:
+        if get_response_union_member is None:
+            get_response_union_member = _no_union_member
         head_route_id = id(head_route)
         end = self.version_values.index(current_version)
-        response_schema_key = _get_schema_migration_key(head_response_model)
         for v in self.versions[:end]:
             for version_change in v.changes:
                 migrations_to_apply: list[_BaseAlterResponseInstruction] = list(
                     _get_schema_migrations(
                         version_change.alter_response_by_schema_instructions,
-                        response_schema_key,
                         # Route generation makes sure that the migrations of the members don't migrate HTTP errors
-                        response_union_members if response_info.status_code < 300 else (),
+                        response_target
+                        if response_info.status_code < 300
+                        else response_target._replace(union_members=()),
                         get_response_union_member,
                     )
                 )
@@ -664,8 +667,17 @@ class VersionBundle:
         background_tasks_param_name: Union[str, None],
         response_param_name: str,
     ) -> "Callable[[Endpoint[_P, _R]], Callable[..., Coroutine[Any, Any, _R]]]":
-        body_union_members = _get_union_members(head_body_field)
-        response_union_members = _get_union_members(head_route.response_model)
+        request_target = _get_request_body_target(head_body_field, head_route)
+        response_target = _get_schema_migration_target(head_route.response_model)
+        # Routes whose union members have no migrations don't need to tell which member a body or a response is
+        if not _has_union_member_migrations(
+            request_target, (change.alter_request_by_schema_instructions for change in self._all_changes)
+        ):
+            request_target = request_target._replace(union_members=())
+        if not _has_union_member_migrations(
+            response_target, (change.alter_response_by_schema_instructions for change in self._all_changes)
+        ):
+            response_target = response_target._replace(union_members=())
 
         def wrapper(endpoint: "Endpoint[_P, _R]") -> "Callable[..., Coroutine[Any, Any, _R]]":
             @functools.wraps(endpoint)
@@ -692,7 +704,7 @@ class VersionBundle:
                         exit_stack=exit_stack,
                         embed_body_fields=route._embed_body_fields,
                         background_tasks=background_tasks,
-                        body_union_members=body_union_members,
+                        request_target=request_target,
                     )
 
                     response = await self._convert_endpoint_response_to_version(
@@ -703,7 +715,7 @@ class VersionBundle:
                         response_param_name,
                         kwargs,
                         response_param,
-                        response_union_members=response_union_members,
+                        response_target=response_target,
                     )
                 if response is Sentinel:  # pragma: no cover
                     raise CadwynError(
@@ -736,7 +748,7 @@ class VersionBundle:
         kwargs: dict[str, Any],
         fastapi_response_dependency: FastapiResponse,
         *,
-        response_union_members: tuple[type[BaseModel], ...],
+        response_target: "_SchemaMigrationTarget",
     ) -> Any:
         raised_exception = None
         if response_param_name == _CADWYN_RESPONSE_PARAM_NAME:
@@ -803,31 +815,22 @@ class VersionBundle:
                 ),
             )
 
-        @functools.cache
-        def get_response_union_member() -> Union[type[BaseModel], None]:
-            # FastAPI doesn't validate response objects, so nothing tells which member they are
-            if isinstance(response_or_response_body, FastapiResponse):
-                raise CadwynError(
-                    f"Cadwyn can't tell which member of {head_route.response_model!r} the response of "
-                    f"{sorted(route.methods or ())} {route.path} is because the endpoint has returned a "
-                    f"{type(response_or_response_body).__name__}, which FastAPI doesn't validate. So it can't tell "
-                    "which of their schema migrations to run. Return the content instead, or migrate this endpoint "
-                    "by its path instead."
-                )
-            # It's how FastAPI validates the response of the latest version, so the member is the one it would pick
-            response_field = cast("ModelField", head_route.response_field)
-            value, errors = response_field.validate(response_or_response_body, {}, loc=("response",))
-            if errors:
-                raise ResponseValidationError(errors=errors, body=response_or_response_body)
-            return _get_matched_union_member(value, response_union_members, head_route.response_model)
-
         response_info = self._migrate_response(
             response_info,
             api_version,
-            head_route.response_model,
             head_route,
-            response_union_members=response_union_members,
-            get_response_union_member=get_response_union_member,
+            response_target,
+            (
+                functools.partial(
+                    _get_union_member_of_response,
+                    response_or_response_body,
+                    response_target.union_members,
+                    route,
+                    head_route,
+                )
+                if response_target.union_members
+                else _no_union_member
+            ),
         )
 
         if isinstance(response_or_response_body, FastapiResponse):
@@ -894,7 +897,7 @@ class VersionBundle:
         exit_stack: AsyncExitStack,
         embed_body_fields: bool,
         background_tasks: Union[BackgroundTasks, None],
-        body_union_members: tuple[type[BaseModel], ...],
+        request_target: "_SchemaMigrationTarget",
     ) -> dict[str, Any]:
         request: FastapiRequest = kwargs[request_param_name]
         if request_param_name == _CADWYN_REQUEST_PARAM_NAME:
@@ -940,21 +943,17 @@ class VersionBundle:
             form_model_is_omitted or await _fastapi_got_no_body(request, route, embed_body_fields=embed_body_fields)
         )
         request_info = RequestInfo(request, body)
-
-        @functools.cache
-        def get_body_union_member() -> Union[type[BaseModel], None]:
-            if validated_body is _UNKNOWN_BODY:
-                raise CadwynError(
-                    f"Cadwyn can't tell which member of {head_body_field!r} the body of "
-                    f"{sorted(route.methods or ())} {route.path} is because the endpoint doesn't get the body as its "
-                    f'"{body_field_alias}" argument, e.g. because the body param has an alias. '
-                    "So it can't tell which of their schema migrations to run. Give the body param of the endpoint "
-                    "no alias, or migrate this endpoint by its path instead."
-                )
-            return _get_matched_union_member(validated_body, body_union_members, head_body_field)
+        if not request_target.union_members:
+            get_body_union_member = _no_union_member
+        elif validated_body is _UNKNOWN_BODY:
+            get_body_union_member = functools.partial(_raise_unknown_union_member_of_body, route, body_field_alias)
+        else:
+            get_body_union_member = functools.partial(
+                _get_union_member_of_body, validated_body, request_target.union_members, head_body_field
+            )
 
         new_kwargs = await self._migrate_request(
-            head_body_field,
+            request_target,
             head_dependant,
             request,
             response,
@@ -969,7 +968,6 @@ class VersionBundle:
             body_is_omitted=body_is_omitted,
             form_model_is_omitted=form_model_is_omitted,
             uploads_read_by_fastapi=uploads_read_by_fastapi,
-            body_union_members=body_union_members,
             get_body_union_member=get_body_union_member,
         )
         # Because we re-added it into our kwargs when we did solve_dependencies
@@ -1628,28 +1626,43 @@ def _get_schema_migration_key(annotation: object) -> object:
 _SchemaInstruction = TypeVar("_SchemaInstruction")
 
 
-def _get_schema_migrations(
-    schema_instructions: "dict[Any, list[_SchemaInstruction]]",
-    schema_key: object,
-    union_members: tuple[type[BaseModel], ...],
-    get_union_member: "Callable[[], Union[type[BaseModel], None]]",
-) -> "list[_SchemaInstruction]":
-    """Return the schema migrations of a version change for a body or a response of the schema with this key.
+class _SchemaMigrationTarget(NamedTuple):
+    """What the schema migrations of a request body or a response model are looked up by."""
 
-    The migrations of a union itself replace the ones of its members, so that none of them runs twice. We only look
-    up the member if one of them has migrations, because that can fail or validate the response.
+    # The annotations whose migrations the body or the response gets as a whole, e.g. the model `A` or `Union[A, B]`.
+    # Their migrations replace the ones of the union members, so that none of them runs twice
+    keys: tuple[object, ...] = ()
+    # The latest versions of the models that are members of the annotation if it's a union, e.g. `Optional[A]`
+    union_members: tuple[type[BaseModel], ...] = ()
+
+
+def _get_schema_migration_target(annotation: object) -> _SchemaMigrationTarget:
+    """Return what the schema migrations of a body or a response with this annotation are looked up by.
+
+    Annotated and named type aliases (e.g. `TypeAliasType("Alias", Union[A, B])`) mean the same as their value.
     """
-    if schema_key is not None and schema_key in schema_instructions:
-        return schema_instructions[schema_key]
-    if any(member in schema_instructions for member in union_members):
-        member = get_union_member()
-        if member is not None and member in schema_instructions:
-            return schema_instructions[member]
-    return []
+    resolved = _resolve_type_aliases(annotation)
+    keys: dict[object, None] = {}
+    for candidate in (annotation, resolved):
+        if lenient_issubclass(candidate, BaseModel):
+            candidate = getattr(candidate, "__cadwyn_original_model__", candidate)
+        key = _get_schema_migration_key(candidate)
+        if key is not None:
+            keys[key] = None
+    return _SchemaMigrationTarget(tuple(keys), _get_union_members(resolved))
 
 
-# Marks that the body param doesn't get the request body as an endpoint argument, so we don't have its validated value
-_UNKNOWN_BODY = object()
+def _resolve_type_aliases(annotation: object) -> object:
+    """Return the annotation without the Annotated and the named type aliases around it."""
+    seen_aliases: set[int] = set()
+    while True:
+        if get_origin(annotation) is Annotated:
+            annotation = get_args(annotation)[0]
+        elif is_typealiastype(annotation) and id(annotation) not in seen_aliases:
+            seen_aliases.add(id(annotation))
+            annotation = _get_type_alias_value(annotation)
+        else:
+            return annotation
 
 
 def _get_union_members(annotation: object) -> tuple[type[BaseModel], ...]:
@@ -1657,14 +1670,12 @@ def _get_union_members(annotation: object) -> tuple[type[BaseModel], ...]:
 
     Other annotations, including models in lists, dicts, or generics, have none: migrations don't run for them.
     """
-    if get_origin(annotation) is Annotated:
-        annotation = get_args(annotation)[0]
+    annotation = _resolve_type_aliases(annotation)
     if not isinstance(annotation, UnionType):
         return ()
     members: dict[type[BaseModel], None] = {}
     for arg in get_args(annotation):
-        if get_origin(arg) is Annotated:
-            arg = get_args(arg)[0]
+        arg = _resolve_type_aliases(arg)
         if isinstance(arg, UnionType):
             members.update(dict.fromkeys(_get_union_members(arg)))
         elif lenient_issubclass(arg, BaseModel):
@@ -1672,16 +1683,53 @@ def _get_union_members(annotation: object) -> tuple[type[BaseModel], ...]:
     return tuple(members)
 
 
-def _get_matched_union_member(
-    value: object, members: tuple[type[BaseModel], ...], annotation: object
-) -> Union[type[BaseModel], None]:
-    """Return the member of the union whose migrations the validated value gets, or None if it's no member's model.
+def _get_models_of_schema(schema: object) -> tuple[type[BaseModel], ...]:
+    """Return the models that a schema of a migration is: the model itself, or the members of a union."""
+    if lenient_issubclass(schema, BaseModel):
+        return (schema,)
+    return _get_union_members(schema)
 
-    A subclass of a member, such as an internal representation, gets the migrations of that member. A value that is
+
+def _has_union_member_migrations(target: _SchemaMigrationTarget, version_changes: "Iterable[dict[Any, Any]]") -> bool:
+    """Whether any of these schema instructions of version changes is for a member of the target's union."""
+    return any(member in instructions for instructions in version_changes for member in target.union_members)
+
+
+def _get_schema_migrations(
+    schema_instructions: "dict[Any, list[_SchemaInstruction]]",
+    target: _SchemaMigrationTarget,
+    get_union_member: "Callable[[], Union[type[BaseModel], None]]",
+) -> "list[_SchemaInstruction]":
+    """Return the schema migrations of a version change for a body or a response with this target.
+
+    We only look up the member if one of the members has migrations, because that can fail.
+    """
+    for key in target.keys:
+        if key in schema_instructions:
+            return schema_instructions[key]
+    if any(member in schema_instructions for member in target.union_members):
+        member = get_union_member()
+        if member is not None and member in schema_instructions:
+            return schema_instructions[member]
+    return []
+
+
+def _no_union_member() -> None:
+    """Find no union member: for the bodies and responses whose union members have no migrations."""
+
+
+# Marks that the body param doesn't get the request body as an endpoint argument, so we don't have its validated value
+_UNKNOWN_BODY = object()
+
+
+def _get_closest_union_member(
+    value: BaseModel, members: tuple[type[BaseModel], ...], annotation: object
+) -> Union[type[BaseModel], None]:
+    """Return the member of the union that the model object is, or None if it's no member.
+
+    A subclass of a member, such as an internal representation, gets the migrations of that member. A model that is
     a subclass of several members that don't inherit from each other is ambiguous, so we fail instead of guessing.
     """
-    if not isinstance(value, BaseModel):
-        return None
     value_type = type(value)
     model = getattr(value_type, "__cadwyn_original_model__", value_type)
     matches = [member for member in members if issubclass(model, member)]
@@ -1693,7 +1741,72 @@ def _get_matched_union_member(
     raise CadwynError(
         f"Cadwyn can't tell which member of {annotation!r} the {value_type.__name__} object is because it is "
         f"several of them: {[match.__name__ for match in matches]}. So it can't tell which of their schema "
-        "migrations to run. Use a value of one of them, or migrate this endpoint by its path instead."
+        "migrations to run. Use an object of only one of them, or migrate this endpoint by its path instead."
+    )
+
+
+def _get_union_member_of_body(
+    validated_body: object, members: tuple[type[BaseModel], ...], annotation: object
+) -> Union[type[BaseModel], None]:
+    """Return the member of the union that the body that the request's version has validated is, if any."""
+    if not isinstance(validated_body, BaseModel):
+        return None
+    return _get_closest_union_member(validated_body, members, annotation)
+
+
+def _raise_unknown_union_member_of_body(route: APIRoute, body_field_alias: Union[str, None]) -> NoReturn:
+    body_annotation = route.body_field.field_info.annotation if route.body_field is not None else None
+    raise CadwynError(
+        f"Cadwyn can't tell which member of {body_annotation!r} the body of {sorted(route.methods or ())} "
+        f'{route.path} is because the endpoint doesn\'t get the body as its "{body_field_alias}" argument, e.g. '
+        "because the body param has an alias. So it can't tell which of their schema migrations to run. Give the "
+        "body param of the endpoint no alias, or migrate this endpoint by its path instead."
+    )
+
+
+def _get_request_body_target(head_body_field: object, head_route: APIRoute) -> _SchemaMigrationTarget:
+    """Return what the schema migrations of the body of a route with a single body param are looked up by.
+
+    `head_body_field` is the model of the body of the route's version in the latest version. A union keeps the models
+    of the route's version, so we look it up by the annotation of the latest version's route instead.
+    """
+    if head_body_field is None:
+        return _SchemaMigrationTarget()
+    annotation = head_route.body_field.field_info.annotation if head_route.body_field is not None else head_body_field
+    target = _get_schema_migration_target(annotation)
+    key = _get_schema_migration_key(head_body_field)
+    if key is None or key in target.keys:
+        return target
+    return target._replace(keys=(key, *target.keys))
+
+
+def _get_union_member_of_response(
+    returned: object, members: tuple[type[BaseModel], ...], route: APIRoute, head_route: APIRoute
+) -> Union[type[BaseModel], None]:
+    """Return the member of the union that the endpoint has returned.
+
+    FastAPI validates the response after the migrations, with the models of the client's version, so we can't reuse
+    that validation. Validating the response before the migrations would run the validators of its models twice, so
+    we only tell the member by the type of what the endpoint returns: a model object (or None, which is no member).
+    """
+    if returned is None:
+        return None
+    if isinstance(returned, BaseModel):
+        member = _get_closest_union_member(returned, members, head_route.response_model)
+        if member is not None:
+            return member
+    if isinstance(returned, FastapiResponse):
+        reason = f"has returned a {type(returned).__name__}, which FastAPI doesn't validate"
+    else:
+        reason = (
+            f"has returned a {type(returned).__name__} object instead of an object of a member, and Cadwyn would have "
+            "to validate it to find out which member it becomes, which would run its validators twice"
+        )
+    raise CadwynError(
+        f"Cadwyn can't tell which member of {head_route.response_model!r} the response of "
+        f"{sorted(route.methods or ())} {route.path} is because the endpoint {reason}. So it can't tell which of "
+        "their schema migrations to run. Return an object of the member's model instead, or migrate this endpoint "
+        "by its path instead."
     )
 
 

@@ -40,7 +40,6 @@ from fastapi import (
     Security,
     UploadFile,
 )
-from fastapi.exceptions import ResponseValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.security import SecurityScopes
@@ -5505,6 +5504,21 @@ async def _optional_discriminated_union_body(
     return body
 
 
+_UnionMembersAlias = TypeAliasType("_UnionMembersAlias", Union[FirstUnionMember, SecondUnionMember])
+_NestedUnionMembersAlias = TypeAliasType(
+    "_NestedUnionMembersAlias", Optional[Annotated[_UnionMembersAlias, "nested in Annotated"]]
+)
+
+
+async def _type_alias_union_body(body: _UnionMembersAlias):
+    return body
+
+
+# FastAPI only takes the nested type alias as a body if it's told to
+async def _nested_type_alias_union_body(body: Annotated[_NestedUnionMembersAlias, Body()] = None):
+    return body
+
+
 async def _form_union_body(body: Annotated[Union[FirstUnionMember, SecondUnionMember], Form()]):
     return body  # pragma: no cover # FastAPI >= 0.161
 
@@ -5517,6 +5531,8 @@ async def _form_union_body(body: Annotated[Union[FirstUnionMember, SecondUnionMe
         pytest.param(_optional_union_body, id="optional_union"),
         pytest.param(_discriminated_union_body, id="discriminated_union"),
         pytest.param(_optional_discriminated_union_body, id="optional_discriminated_union"),
+        pytest.param(_type_alias_union_body, id="type_alias_union"),
+        pytest.param(_nested_type_alias_union_body, id="nested_type_alias_union"),
     ],
 )
 @pytest.mark.parametrize("kind", ["first", "second"])
@@ -5553,6 +5569,33 @@ def test__request_by_schema_migration__with_form_union_body__should_run_only_for
     payload = {"kind": kind, "value": "sent"}
     assert clients["2000-01-01"].post(test_path, data=payload).json() == {"kind": kind, "value": f"{kind} migrated"}
     assert clients["2001-01-01"].post(test_path, data=payload).json() == payload
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        pytest.param(Union[FirstUnionMember, SecondUnionMember], id="union"),
+        pytest.param(FirstUnionMember | SecondUnionMember, id="pep_604_union"),
+    ],
+)
+def test__request_by_schema_migration__for_union_that_also_has_member_migration__should_run_only_the_union_migration(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    schema: Any,
+):
+    router.post(test_path)(_union_body)
+
+    @convert_request_to_next_version_for(schema)
+    def migrate_union(request: RequestInfo):
+        request.body["value"] += " union migrated"
+
+    clients = create_versioned_clients(version_change(first=_migrate_first_union_member_request, union=migrate_union))
+
+    assert clients["2000-01-01"].post(test_path, json={"kind": "first", "value": "sent"}).json() == {
+        "kind": "first",
+        "value": "sent union migrated",
+    }
 
 
 def test__request_by_schema_migration__with_optional_body_that_the_request_omits__should_not_run(
@@ -5599,23 +5642,21 @@ def test__request_by_schema_migration__with_aliased_union_body__should_raise_err
             Optional[Annotated[Union[FirstUnionMember, SecondUnionMember], Field(discriminator="kind")]],
             id="optional_discriminated_union",
         ),
+        pytest.param(_UnionMembersAlias, id="type_alias_union"),
+        pytest.param(_NestedUnionMembersAlias, id="nested_type_alias_union"),
     ],
 )
-@pytest.mark.parametrize("returns_model", [False, True], ids=["returns_dict", "returns_model"])
 @pytest.mark.parametrize("kind", ["first", "second"])
 def test__response_by_schema_migration__with_union_response_model__should_run_only_for_the_member_that_it_matches(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
     response_model: Any,
-    returns_model: bool,
     kind: str,
 ):
     @router.post(test_path, response_model=response_model)
     async def endpoint(kind: str):
         body = {"kind": kind, "value": "returned"}
-        if not returns_model:
-            return body
         return FirstUnionMember.model_validate(body) if kind == "first" else SecondUnionMember.model_validate(body)
 
     clients = create_versioned_clients(
@@ -5627,6 +5668,48 @@ def test__response_by_schema_migration__with_union_response_model__should_run_on
         "value": f"{kind} migrated",
     }
     assert clients["2001-01-01"].post(test_path, params={"kind": kind}).json() == {"kind": kind, "value": "returned"}
+
+
+_FirstUnionMemberAlias = TypeAliasType("_FirstUnionMemberAlias", Annotated[FirstUnionMember, "in Annotated"])
+
+
+async def _type_alias_model_body(body: _FirstUnionMemberAlias) -> _FirstUnionMemberAlias:
+    return body
+
+
+async def _annotated_type_alias_model_body(
+    body: Annotated[_FirstUnionMemberAlias, Body()],
+) -> Annotated[_FirstUnionMemberAlias, "metadata"]:
+    return body
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        pytest.param(_type_alias_model_body, id="type_alias"),
+        pytest.param(_annotated_type_alias_model_body, id="annotated_type_alias"),
+    ],
+)
+def test__request_and_response_by_schema_migrations__with_type_alias_of_model__should_run(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    endpoint: Callable[..., Coroutine[Any, Any, Any]],
+):
+    router.post(test_path)(endpoint)
+
+    @convert_response_to_previous_version_for(FirstUnionMember)
+    def migrate_response(response: ResponseInfo):
+        response.body["value"] += " and response migrated"
+
+    clients = create_versioned_clients(
+        version_change(request=_migrate_first_union_member_request, response=migrate_response)
+    )
+
+    assert clients["2000-01-01"].post(test_path, json={"value": "sent"}).json() == {
+        "kind": "first",
+        "value": "first migrated and response migrated",
+    }
 
 
 def test__response_by_schema_migration__with_union_response_model_and_internal_representation__should_run_for_member(
@@ -5649,18 +5732,71 @@ def test__response_by_schema_migration__with_union_response_model_and_internal_r
     assert clients["2000-01-01"].post(test_path).json() == {"kind": "first", "value": "internal"}
 
 
-def test__response_by_schema_migration__with_union_response_model_and_model_of_no_member__should_not_run(
+_validations_of_counted_union_member: list[int] = []
+
+
+class CountedUnionMember(BaseModel):
+    kind: Literal["counted"] = "counted"
+    value: int
+
+    @field_validator("value")
+    @classmethod
+    def count_validations(cls, value: int) -> int:
+        _validations_of_counted_union_member.append(value)
+        return value + len(_validations_of_counted_union_member)
+
+
+@dataclasses.dataclass
+class _CountedUnionMemberRecord:
+    kind: str
+    value: int
+
+
+@pytest.mark.parametrize(
+    "returned",
+    [
+        pytest.param({"kind": "counted", "value": 0}, id="dict"),
+        pytest.param(_CountedUnionMemberRecord(kind="counted", value=0), id="object_with_attributes"),
+        pytest.param(SecondUnionMember(value="returned"), id="model_of_no_member"),
+    ],
+)
+def test__response_by_schema_migration__with_union_response_model_and_response_that_is_no_member__should_raise_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    returned: Any,
+):
+    @router.post(test_path, response_model=Union[FirstUnionMember, CountedUnionMember])
+    async def endpoint():
+        return returned
+
+    clients = create_versioned_clients(version_change(first=_migrate_first_union_member_response))
+    _validations_of_counted_union_member.clear()
+
+    # Cadwyn could only tell the member by validating the response, which would run its validators twice
+    with pytest.raises(CadwynError, match="can't tell which member"):
+        clients["2000-01-01"].post(test_path)
+    assert _validations_of_counted_union_member == []
+
+
+def test__response_by_schema_migration__with_union_response_model_of_members_without_migrations__should_validate_once(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
 ):
-    @router.post(test_path, response_model=Union[FirstUnionMember, Any])
+    @router.post(test_path, response_model=Union[FirstUnionMember, CountedUnionMember])
     async def endpoint():
-        return SecondUnionMember(value="returned")
+        return {"kind": "counted", "value": 0}
 
-    clients = create_versioned_clients(version_change(first=_migrate_first_union_member_response))
+    @router.post("/other", response_model=SecondUnionMember)
+    async def other_endpoint():
+        raise NotImplementedError
 
-    assert clients["2000-01-01"].post(test_path).json() == {"kind": "second", "value": "returned"}
+    clients = create_versioned_clients(version_change(second=_migrate_second_union_member_response))
+    _validations_of_counted_union_member.clear()
+
+    assert clients["2000-01-01"].post(test_path).json() == {"kind": "counted", "value": 1}
+    assert _validations_of_counted_union_member == [0]
 
 
 def test__response_by_schema_migration__with_optional_response_model_and_none__should_not_run(
@@ -5685,13 +5821,9 @@ def test__response_by_schema_migration__for_union_that_also_has_member_migration
 ):
     @router.post(test_path, response_model=Union[FirstUnionMember, SecondUnionMember])
     async def endpoint():
-        return {"kind": "first", "value": "returned"}
+        return FirstUnionMember(value="returned")
 
-    # Cadwyn accepts unions here even though the type hint doesn't
-    @convert_response_to_previous_version_for(
-        Union[FirstUnionMember, SecondUnionMember],  # ty: ignore[invalid-argument-type]
-        check_usage=False,
-    )
+    @convert_response_to_previous_version_for(Union[FirstUnionMember, SecondUnionMember])
     def migrate_union(response: ResponseInfo):
         response.body["value"] += " union migrated"
 
@@ -5730,22 +5862,6 @@ def test__response_by_schema_migration__with_union_response_model_and_response_o
     with pytest.raises(CadwynError, match="can't tell which member"):
         clients["2000-01-01"].post(test_path)
     assert clients["2001-01-01"].post(test_path).json() == {"kind": "first", "value": "returned"}
-
-
-def test__response_by_schema_migration__with_union_response_model_and_invalid_response__should_raise_validation_error(
-    create_versioned_clients: CreateVersionedClients,
-    test_path: Literal["/test"],
-    router: VersionedAPIRouter,
-):
-    @router.post(test_path, response_model=Union[FirstUnionMember, SecondUnionMember])
-    async def endpoint():
-        return {"kind": "third", "value": "returned"}
-
-    clients = create_versioned_clients(version_change(first=_migrate_first_union_member_response))
-
-    for version_client in clients.values():
-        with pytest.raises(ResponseValidationError):
-            version_client.post(test_path)
 
 
 class SchemaWithFirstValue(BaseModel):
@@ -5801,6 +5917,33 @@ def test__response_by_schema_migration__for_http_errors_of_union_member__should_
         create_versioned_clients(version_change(first=migrate_first))
 
 
+def test__response_by_schema_migration__for_http_errors_of_union_member_and_newer_union_route__should_not_raise_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    @router.post(test_path, response_model=Union[FirstUnionMember, SecondUnionMember])
+    async def endpoint():
+        return FirstUnionMember(value="returned")
+
+    @router.post("/plain", response_model=FirstUnionMember)
+    async def plain_endpoint():
+        raise HTTPException(status_code=404)
+
+    @convert_response_to_previous_version_for(FirstUnionMember, migrate_http_errors=True)
+    def migrate_first(response: ResponseInfo):
+        response.status_code = 400
+
+    # The union route only exists in the newest version, so the older migration never runs for it
+    clients = create_versioned_clients(
+        version_change(first=migrate_first),
+        version_change(cadwyn_endpoint(test_path, ["POST"]).didnt_exist),
+    )
+
+    assert clients["2002-01-01"].post(test_path).json() == {"kind": "first", "value": "returned"}
+    assert clients["2000-01-01"].post("/plain").status_code == 400
+
+
 def test__response_by_schema_migration__for_http_errors_of_union_member_and_of_union__should_run_only_for_union(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
@@ -5814,12 +5957,7 @@ def test__response_by_schema_migration__for_http_errors_of_union_member_and_of_u
     def migrate_first(response: ResponseInfo):
         raise NotImplementedError
 
-    # Cadwyn accepts unions here even though the type hint doesn't
-    @convert_response_to_previous_version_for(
-        Union[FirstUnionMember, SecondUnionMember],  # ty: ignore[invalid-argument-type]
-        migrate_http_errors=True,
-        check_usage=False,
-    )
+    @convert_response_to_previous_version_for(Union[FirstUnionMember, SecondUnionMember], migrate_http_errors=True)
     def migrate_union(response: ResponseInfo):
         response.status_code = 400
 
