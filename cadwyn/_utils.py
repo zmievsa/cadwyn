@@ -113,53 +113,96 @@ def is_same_value(left: Any, right: Any) -> bool:
     """Whether Cadwyn can be sure that the values are the same, so changing one to the other changes nothing.
 
     `==` is not enough: `True == 1`, `1.0 == 1`, `-0.0 == 0.0`, `Decimal("1.0") == Decimal("1")`, and
-    `Union[int, str] == Union[str, int]`, while OpenAPI and serialization tell them apart. So the values must have the
-    same type, and containers must have the same items in the same order. Other objects (e.g. with a custom `__eq__`)
-    are the same only if they are the same object. When we can't be sure, the values are different, so we never
-    reject a real change. Different objects are the same only if they are also equal (`==`).
+    `Union[int, str] == Union[str, int]`, while OpenAPI and serialization tell them apart. So we compare only what we
+    can fully inspect cheaply: `str`, `bytes`, `int`, `float`, `complex`, and `Decimal` values of the same type,
+    `list`, `tuple`, `dict`, `set`, and `frozenset` (but not their subclasses) with the same items, dataclass instances
+    that have no state besides their fields, and type hints. Anything else, including a value that refers to itself,
+    is the same only if it is the same object. When we can't be sure, the values are different, so we never reject a
+    real change.
     """
+    return _is_same_value(left, right, set())
+
+
+def _is_same_value(left: Any, right: Any, pairs_being_compared: set[tuple[int, int]]) -> bool:
     if left is right:
         return True
-    if type(left) is not type(right) or not _have_same_contents(left, right):
+    if type(left) is not type(right):
         return False
-    # A user's __eq__ (e.g. of a dataclass or of a tuple subclass) can still tell them apart. We call it only after
-    # comparing the contents, which never calls __eq__ of unknown objects because they can compare in any way
-    # (e.g. numpy arrays compare element-wise)
-    return (left == right) is True
+    pair = (id(left), id(right))
+    if pair in pairs_being_compared:
+        # The values refer to themselves, e.g. a list that contains itself
+        return False
+    pairs_being_compared.add(pair)
+    try:
+        return _have_same_contents(left, right, pairs_being_compared)
+    finally:
+        pairs_being_compared.discard(pair)
 
 
-def _have_same_contents(left: Any, right: Any) -> bool:
-    """Compare two values of the same type without calling `__eq__` of unknown objects"""
+def _have_same_contents(left: Any, right: Any, pairs_being_compared: set[tuple[int, int]]) -> bool:
+    """Compare two values of the same type without calling `__eq__` of objects that can compare in any way"""
     value_type = type(left)
     if value_type in (str, bytes, int):
-        return True
+        return left == right
     if value_type is float:
         # -0.0 == 0.0. NaN is never equal to another NaN
-        return math.copysign(1.0, left) == math.copysign(1.0, right)
+        return left == right and math.copysign(1.0, left) == math.copysign(1.0, right)
     if value_type is complex:
-        return is_same_value(left.real, right.real) and is_same_value(left.imag, right.imag)
+        return _is_same_value(left.real, right.real, pairs_being_compared) and _is_same_value(
+            left.imag, right.imag, pairs_being_compared
+        )
     if value_type is Decimal:
         # Decimal("1.0") == Decimal("1") and a signaling NaN raises in ==
         return not left.is_nan() and left.as_tuple() == right.as_tuple()
-    if isinstance(left, (list, tuple)):
-        return len(left) == len(right) and all(map(is_same_value, left, right))
-    if isinstance(left, dict):
+    if value_type in (list, tuple):
         return len(left) == len(right) and all(
-            is_same_value(left_key, right_key) and is_same_value(left_value, right_value)
+            _is_same_value(left_item, right_item, pairs_being_compared)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    if value_type is dict:
+        # The order of the keys matters because it is the order of the keys in JSON
+        return len(left) == len(right) and all(
+            _is_same_value(left_key, right_key, pairs_being_compared)
+            and _is_same_value(left_value, right_value, pairs_being_compared)
             for (left_key, left_value), (right_key, right_value) in zip(left.items(), right.items(), strict=True)
         )
-    if isinstance(left, (set, frozenset)):
-        return len(left) == len(right) and all(any(is_same_value(item, other) for other in right) for item in left)
+    if value_type in (set, frozenset):
+        if len(left) != len(right) or left != right:
+            return False
+        # The sets are equal, so each item has an equal item (e.g. 1 for True) in the other set
+        right_items = {item: item for item in right}
+        return all(_is_same_value(item, right_items.get(item, Sentinel), pairs_being_compared) for item in left)
     if dataclasses.is_dataclass(left) and not isinstance(left, type):
-        # E.g. AliasChoices, FastAPI's Depends, and constraints from annotated_types such as Gt
-        return all(
-            is_same_value(getattr(left, field.name, Sentinel), getattr(right, field.name, Sentinel))
-            for field in dataclasses.fields(left)
+        # E.g. AliasChoices, FastAPI's Depends, and constraints from annotated_types such as Gt.
+        # The dataclass can still tell them apart in its __eq__, e.g. with eq=False
+        return (
+            _has_only_dataclass_fields(left)
+            and _has_only_dataclass_fields(right)
+            and all(
+                _is_same_value(
+                    getattr(left, field.name, Sentinel), getattr(right, field.name, Sentinel), pairs_being_compared
+                )
+                for field in dataclasses.fields(left)
+            )
+            and (left == right) is True
         )
     # Type hints such as list[int], Union[int, str], Literal[1, 2], and Annotated[int, Gt(1)]
     origin = get_origin(left)
     return (
         origin is not None
-        and is_same_value(origin, get_origin(right))
-        and is_same_value(get_args(left), get_args(right))
+        and _is_same_value(origin, get_origin(right), pairs_being_compared)
+        and _is_same_value(get_args(left), get_args(right), pairs_being_compared)
+        and (left == right) is True
     )
+
+
+def _has_only_dataclass_fields(value: Any) -> bool:
+    """Whether the dataclass instance has no state that its fields don't show, e.g. a slot or an attribute"""
+    field_names = {field.name for field in dataclasses.fields(value)}
+    for cls in type(value).__mro__:
+        slots = cls.__dict__.get("__slots__", ())
+        if isinstance(slots, str):
+            slots = (slots,)
+        if any(slot not in field_names and slot not in {"__dict__", "__weakref__"} for slot in slots):
+            return False
+    return getattr(value, "__dict__", {}).keys() <= field_names
