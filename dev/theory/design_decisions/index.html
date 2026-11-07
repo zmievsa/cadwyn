@@ -1947,7 +1947,7 @@
 <li><strong>Business logic sees only the latest version.</strong> Older versions are generated copies of the latest models, and migrations are written against the latest models.</li>
 <li><strong>Older versions use copies, not the original classes.</strong> Cadwyn copies models and changed enums for every version. Code that compares by identity (<code>isinstance</code>, <code>is</code>, dicts keyed by enum members) can see these copies, e.g. in the first run of a versioned dependency. Objects that can't be deep-copied (e.g. a validator holding a <code>threading.Lock</code>) fail when their models are versioned.</li>
 <li><strong>Requests are validated twice, and dependencies run twice.</strong> A request is validated by its version's route, migrated, and validated again by the latest version's route. Dependencies run in both passes, so their side effects happen twice unless they check <code>current_dependency_solver</code>. Uploaded <code>bytes</code> files are held in memory twice.</li>
-<li><strong>Migrations only run for the schema you name.</strong> Request and response migrations run when their schema is the route's own body or <code>response_model</code>, not for that schema nested in other schemas or generics. Schema instructions, on the other hand, change a schema everywhere it's used. This is deliberate: it keeps each migration running exactly once, where it was declared.</li>
+<li><strong>Migrations only run for the schema you name.</strong> Request and response migrations run when their schema is the route's own body or <code>response_model</code>, or a member of a union that is (only for the requests and responses that are that member), not for that schema nested in other schemas or generics. Schema instructions, on the other hand, change a schema everywhere it's used. This is deliberate: it keeps each migration running exactly once, where it was declared.</li>
 <li><strong>Cadwyn relies on FastAPI, Pydantic, and <code>typing</code> internals.</strong> For example: <code>solve_dependencies</code>, <code>fastapi._compat</code>, FastAPI's lazily included routers, <code>FieldInfo</code> internals, and <code>typing</code>'s alias cache. Upstream minor releases can break Cadwyn. The twice-daily workflow upgrades every dependency and runs the tests to catch this. It must always pass, and failures are fixed in Cadwyn, never by pinning or capping a dependency.</li>
 <li><strong>Startup copies every model for every version.</strong> Copying only changed models would make startup much faster, but it changes OpenAPI names and model behavior. It's too large a change, and it isn't planned.</li>
 </ul>
@@ -1975,6 +1975,11 @@
 <td><code>Annotated[T, Depends(f)]</code></td>
 <td>Versioned only in the versions that change the models or enums <code>f</code> validates.</td>
 <td>Versioning it everywhere gave copies to identity checks in every version (#467). Missing an exotic case (e.g. a recursive type alias) keeps the previous behavior, which is acceptable.</td>
+</tr>
+<tr>
+<td>Converters of union members (<code>Union[A, B]</code>, <code>Optional[A]</code>)</td>
+<td>9.0 runs them for the member that the request or the response is: the body that the client's version validates, or the model of the object that the endpoint returns. If Cadwyn can't tell the member, it fails. Migrations of the union itself replace the ones of its members in the same version change.</td>
+<td>User-reported bug (#530). Before 9.0, they never ran for unions. Running a member's migration on another member's data would change values silently. Responses aren't validated to find the member: FastAPI validates them again with the client's version's models after the migrations, so their validators would run twice.</td>
 </tr>
 <tr>
 <td>Converters inside nested models</td>
