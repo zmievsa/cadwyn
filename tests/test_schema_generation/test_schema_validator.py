@@ -1,6 +1,6 @@
 import re
 from functools import partial, wraps
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import pytest
 from pydantic import (
@@ -306,6 +306,28 @@ def test__schema_validator__unregistered_bound_instance__should_not_match_anothe
         schema(Model).validator(second.normalize).didnt_exist
 
 
+def test__schema_validator__unregistered_model_bound_method__should_not_match_another_owner():
+    class Normalizer(BaseModel):
+        suffix: ClassVar[str] = "!"
+
+        @classmethod
+        def normalize(cls, value):
+            return value + cls.suffix
+
+    class OtherNormalizer(BaseModel):
+        suffix: ClassVar[str] = "?"
+        normalize = classmethod(Normalizer.normalize.__func__)
+
+    class Model(BaseModel):
+        x: str
+        check_x = field_validator("x")(staticmethod(Normalizer.normalize))
+
+    assert Model(x="x").x == "x!"
+    assert OtherNormalizer.normalize("x") == "x?"
+    with pytest.raises(CadwynStructureError, match="The passed function must be a pydantic validator"):
+        schema(Model).validator(OtherNormalizer.normalize).didnt_exist
+
+
 def test__validator_didnt_exist__different_bound_classes__should_only_remove_matching_registration(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
@@ -390,7 +412,7 @@ def test__validator_didnt_exist__function_reused_in_models_and_inheritance__shou
         x: str
         check_x = field_validator("x")(function)
 
-    references = {"attribute": Child.normalize_x, "function": function, "name": "normalize_x"}
+    references = {"attribute": Parent.normalize_x, "function": function, "name": "normalize_x"}
     schemas = create_runtime_schemas(version_change(schema(Parent).validator(references[reference]).didnt_exist))
 
     assert schemas["2000-01-01"][Parent](x="hello").x == "hello"
@@ -509,8 +531,9 @@ def test__validator_existed__attribute_name__should_raise_clear_error():
         schema(Model).validator("normalize_x").existed
 
 
+@pytest.mark.parametrize("reference", ["owner", "inherited"])
 def test__validator_didnt_exist__existing_method_with_another_registration__should_keep_name_based_removal(
-    create_runtime_schemas: CreateRuntimeSchemas,
+    create_runtime_schemas: CreateRuntimeSchemas, reference: str
 ):
     def normalize(cls, value):
         return value.upper()
@@ -524,9 +547,14 @@ def test__validator_didnt_exist__existing_method_with_another_registration__shou
         normalize = validator_x
         normalize_y = validator_y
 
-    schemas = create_runtime_schemas(version_change(schema(Model).validator(Model.normalize).didnt_exist))
+    class Child(Model):
+        pass
+
+    references = {"owner": Model.normalize, "inherited": Child.normalize}
+    schemas = create_runtime_schemas(version_change(schema(Model).validator(references[reference]).didnt_exist))
 
     assert schemas["2000-01-01"][Model](x="x", y="y").model_dump() == {"x": "x", "y": "Y"}
+    assert schemas["2000-01-01"][Child](x="x", y="y").model_dump() == {"x": "x", "y": "Y"}
 
 
 def test__validator_didnt_exist__method_from_another_model__should_keep_existing_generation_error(

@@ -297,17 +297,7 @@ def _validator_functions_match(registered: object, reference: object) -> bool:
         return False
     if not isinstance(reference, MethodType):
         return registered.__func__ is reference
-    # Pydantic rebinds class validators to each model, including inherited ones.
-    # Other bound methods must keep their instance/class identity.
-    return registered.__func__ is reference.__func__ and (
-        registered.__self__ is reference.__self__
-        or (
-            isinstance(registered.__self__, type)
-            and issubclass(registered.__self__, BaseModel)
-            and isinstance(reference.__self__, type)
-            and issubclass(reference.__self__, BaseModel)
-        )
-    )
+    return registered.__func__ is reference.__func__ and registered.__self__ is reference.__self__
 
 
 def _raise_for_ambiguous_validator(model: type[BaseModel], names: list[str]) -> None:
