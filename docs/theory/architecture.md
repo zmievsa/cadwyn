@@ -21,7 +21,7 @@ So your business logic only ever sees HEAD, and every version's OpenAPI comes fr
 | `cadwyn/schema_generation.py` | Copies of models and enums for every version: `generate_versioned_models()` and `SchemaGenerator`. Also `migrate_response_body()`. |
 | `cadwyn/route_generation.py` | Copies of routes for every version: `generate_versioned_routers()` and `VersionedAPIRouter`. |
 | `cadwyn/applications.py` | `Cadwyn`, the FastAPI app. It wires everything together and serves the OpenAPI and docs pages of every version. |
-| `cadwyn/middleware.py` | `VersionPickingMiddleware` and the version managers that read the version from a header or the path. `URLVersionManager` reads it from the version path parameter of the route that each version's router would pick. The middleware picks the version of HTTP requests; `_RootCadwynAPIRouter` picks it for WebSockets with the same manager. |
+| `cadwyn/middleware.py` | `VersionPickingMiddleware` and the version managers that read the version from a header or the path. `URLVersionManager` reads it from the version path parameter of the route that each version's router would pick, and hands that route to `_RootCadwynAPIRouter` so it isn't matched twice. If no versioned route matches, it uses the first version anywhere in the URL. The middleware picks the version of HTTP requests; `_RootCadwynAPIRouter` picks it for WebSockets with the same manager. |
 | `cadwyn/routing.py` | `_RootCadwynAPIRouter`, which sends a request to the routes of its version. |
 | `cadwyn/dependencies.py`, `cadwyn/_internal/context_vars.py` | `current_dependency_solver()` and the context variables behind it. |
 | `cadwyn/__main__.py`, `_render.py`, `_asts.py` | The `cadwyn render` CLI, which prints a version's copies of models as code. |

@@ -23,7 +23,14 @@ from typing_extensions import override
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn._utils import same_method_definition_as_in
 from cadwyn.exceptions import CadwynError
-from cadwyn.middleware import APIVersionFormat, APIVersionLocation, HeaderVersionManager, URLVersionManager
+from cadwyn.middleware import (
+    _PATH_VERSION_MATCH_SCOPE_KEY,
+    APIVersionFormat,
+    APIVersionLocation,
+    HeaderVersionManager,
+    URLVersionManager,
+    _match_key,
+)
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.versions import _UPLOAD_CLOSE_TIMEOUT_SECONDS
 
@@ -236,6 +243,17 @@ class _RootCadwynAPIRouter(APIRouter):
     async def process_request(self, scope: Scope, receive: Receive, send: Send, routes: Sequence[BaseRoute]) -> None:
         # It's a copy-paste from starlette.routing.Router
         # but in this version self.routes were replaced with routes from the function arguments
+
+        # URLVersionManager has already found the route while picking the version from the path
+        path_version_match = scope.pop(_PATH_VERSION_MATCH_SCOPE_KEY, None)
+        if (
+            path_version_match is not None
+            and path_version_match.routes is routes
+            and path_version_match.key == _match_key(scope)
+        ):
+            scope.update(path_version_match.child_scope)
+            await path_version_match.route.handle(scope, receive, send)
+            return None
 
         partial = None
         partial_scope = {}

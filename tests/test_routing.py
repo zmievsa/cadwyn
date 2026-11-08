@@ -313,3 +313,40 @@ def test__path_routing__url_matching_version_positions_of_several_versions__shou
         pytest.raises(CadwynError, match=r"matches routes of several API versions \(2024-02-01, 2024-01-01\)"),
     ):
         client.get("/2024-02-01/2024-01-01/ping")
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "status_code", "body"),
+    [
+        ("GET", "/2024-01-01/items", 200, '"versioned"'),
+        ("GET", "/2024-01-01/missing", 404, '{"detail":"Not Found"}'),
+        ("GET", "/2024-01-01/items/", 307, ""),
+        ("POST", "/2024-01-01/missing", 404, '{"detail":"Not Found"}'),
+    ],
+)
+def test__path_routing__no_versioned_route_matches__should_keep_the_url_version_instead_of_unversioned_fallback(
+    method: str, path: str, status_code: int, body: str
+):
+    app = Cadwyn(
+        versions=VersionBundle(Version("2024-02-01"), Version("2024-01-01")),
+        api_version_location="path",
+        api_version_parameter_name="api_version",
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/{api_version}/items")
+    async def items():
+        return "versioned"
+
+    app.generate_and_include_versioned_routers(router)
+
+    @app.get("/{path:path}")
+    async def fallback(path: str):
+        return "unversioned fallback"
+
+    with TestClient(app) as client:
+        assert client.get("/about").json() == "unversioned fallback"
+        response = client.request(method, path, follow_redirects=False)
+    assert response.status_code == status_code
+    assert response.text == body
+    assert response.headers["api_version"] == "2024-01-01"

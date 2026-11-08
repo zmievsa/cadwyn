@@ -2,9 +2,10 @@
 # we can simply remove waterfalling from any_string api version style.
 
 import inspect
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
-from typing import Annotated, Any, Literal, Optional, Protocol, Union
+from typing import Annotated, Any, Literal, NamedTuple, Optional, Protocol, Union
 
 import fastapi
 from fastapi import Request
@@ -43,10 +44,12 @@ class HeaderVersionManager:
 
 
 class URLVersionManager:
-    """Reads the API version from the version path parameter of the route that the URL matches
+    """Reads the API version from the URL path
 
-    Other path parameters, such as a tenant ID, can hold a value that looks like a version, so we only accept
-    a version if the route that this version's router would pick has that version in its version parameter.
+    Other path parameters, such as a tenant ID, can hold a value that looks like a version. So if a versioned
+    route matches the URL, we only accept a version that this version's router would pick a route for with
+    that version in its version parameter. If no versioned route matches, we pick the first version anywhere
+    in the URL as before, so the request keeps its version for the 404 or 405 response.
     """
 
     __slots__ = ("api_version_path_parameter_name", "versioned_routers")
@@ -58,41 +61,77 @@ class URLVersionManager:
 
     def get(self, request: HTTPConnection) -> Union[str, None]:
         scope = request.scope
-        versions = [
-            version
-            for version, router in self.versioned_routers.items()
-            if version in scope["path"] and self._get_path_version(router, scope) == version
-        ]
-        if len(versions) > 1:
+        route_matched = False
+        matches: list[tuple[str, _PathVersionMatch | None]] = []
+        for version, router in self.versioned_routers.items():
+            if version not in scope["path"]:
+                continue
+            route_match = _match_route(router, scope)
+            if route_match is None:
+                continue
+            route_matched = True
+            route, child_scope, is_redirect = route_match
+            if child_scope.get("path_params", {}).get(self.api_version_path_parameter_name) == version:
+                reusable = (
+                    None if is_redirect else _PathVersionMatch(_match_key(scope), router.routes, route, child_scope)
+                )
+                matches.append((version, reusable))
+        if len(matches) > 1:
             raise CadwynError(
-                f"The path {scope['path']!r} matches routes of several API versions ({', '.join(versions)}) "
-                "with the API version in different positions, so Cadwyn can't pick one. "
-                "Keep the API version path parameter in the same position in every version."
+                f"The path {scope['path']!r} matches routes of several API versions "
+                f"({', '.join(version for version, _ in matches)}) with the API version in different positions, "
+                "so Cadwyn can't pick one. Keep the API version path parameter in the same position in every version."
             )
-        return versions[0] if versions else None
+        if matches:
+            version, reusable = matches[0]
+            if reusable is not None:
+                # _RootCadwynAPIRouter.process_request reuses this match instead of matching the routes again
+                scope[_PATH_VERSION_MATCH_SCOPE_KEY] = reusable
+            return version
+        # WebSockets never picked a version from the URL alone: a socket that matches no route is rejected
+        if route_matched or scope["type"] == "websocket":
+            return None
+        versions_regex = "|".join(re.escape(version) for version in self.versioned_routers)
+        if m := re.search(f"/({versions_regex})/", request.url.path):
+            return m.group(1)
+        return None
 
-    def _get_path_version(self, router: Router, scope: Scope) -> Union[str, None]:
-        # The same search as in _RootCadwynAPIRouter.process_request: a full match, a partial match (405),
-        # and then a match with the trailing slash added or removed (a redirect)
-        if (child_scope := _match_route(router.routes, scope)) is None:
-            if scope["type"] != "http" or not router.redirect_slashes or scope["path"] == "/":
-                return None
-            path = scope["path"]
-            redirect_scope = {**scope, "path": path.rstrip("/") if path.endswith("/") else path + "/"}
-            if (child_scope := _match_route(router.routes, redirect_scope, redirect=True)) is None:
-                return None
-        return child_scope.get("path_params", {}).get(self.api_version_path_parameter_name)
+
+_PATH_VERSION_MATCH_SCOPE_KEY = "cadwyn.path_version_match"
 
 
-def _match_route(routes: Sequence[BaseRoute], scope: Scope, *, redirect: bool = False) -> Union[Scope, None]:
+class _PathVersionMatch(NamedTuple):
+    key: tuple[Any, ...]
+    routes: Sequence[BaseRoute]
+    route: BaseRoute
+    child_scope: Scope
+
+
+def _match_key(scope: Scope) -> tuple[Any, ...]:
+    return scope["type"], scope["path"], scope.get("root_path"), scope.get("method")
+
+
+def _match_route(router: Router, scope: Scope) -> Union[tuple[BaseRoute, Scope, bool], None]:
+    # The same search as in _RootCadwynAPIRouter.process_request: the first full match, then the first partial
+    # match (405), and then the first match with the trailing slash added or removed (a redirect)
     partial = None
-    for route in routes:
+    for route in router.routes:
         match, child_scope = route.matches(scope)
-        if match == Match.FULL or (redirect and match == Match.PARTIAL):
-            return child_scope
+        if match == Match.FULL:
+            return route, child_scope, False
         if match == Match.PARTIAL and partial is None:
-            partial = child_scope
-    return partial
+            partial = route, child_scope, False
+    if partial is not None:
+        return partial
+    path = scope["path"]
+    if scope["type"] != "http" or not router.redirect_slashes or path == "/":
+        return None
+    redirect_scope = {**scope, "path": path.rstrip("/") if path.endswith("/") else path + "/"}
+    for route in router.routes:
+        match, child_scope = route.matches(redirect_scope)
+        if match != Match.NONE:
+            return route, child_scope, True
+    return None
 
 
 def _generate_api_version_dependency(
