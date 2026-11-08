@@ -136,7 +136,7 @@ def transform_collection(
     context: _ReprContext,
 ) -> PlainRepr:
     cls = type(value)
-    if isinstance(value, tuple) and isinstance(getattr(cls, "_fields", None), tuple):
+    if isinstance(value, tuple) and _has_generated_namedtuple_constructor(cls):
         # Named tuples take their fields as separate arguments rather than as one iterable
         return PlainRepr(f"{cls.__name__}({', '.join(_container_item_repr(item, context) for item in value)})")
     try:
@@ -149,6 +149,20 @@ def transform_collection(
         ) from error
 
 
+def _inherits_constructor(cls: type, base: type) -> bool:
+    return cls.__new__ is base.__new__ and cls.__init__ is base.__init__
+
+
+def _has_generated_namedtuple_constructor(cls: type) -> bool:
+    # A subclass may override __new__ or __init__ to take other arguments, so then we render through its repr
+    generated = next((base for base in cls.__mro__ if "_fields" in vars(base)), None)
+    return (
+        generated is not None
+        and isinstance(vars(generated)["_fields"], tuple)
+        and _inherits_constructor(cls, generated)
+    )
+
+
 def _mapping_repr(value: dict[object, object], context: _ReprContext) -> dict[PlainRepr, PlainRepr]:
     mapping = {_container_item_repr(k, context): _container_item_repr(v, context) for k, v in value.items()}
     if len(mapping) != len(value):
@@ -158,7 +172,10 @@ def _mapping_repr(value: dict[object, object], context: _ReprContext) -> dict[Pl
 
 def transform_dict(value: dict[object, object], context: _ReprContext) -> PlainRepr:
     cls = type(value)
-    if (cls is OrderedDict or cls is Counter) and vars(value):
+    is_plain_counter = (
+        isinstance(value, Counter) and _inherits_constructor(cls, Counter) and cls.__repr__ is Counter.__repr__
+    )
+    if (cls is OrderedDict or is_plain_counter) and vars(value):
         raise CadwynRenderError(
             f"Cannot render {cls.__name__} with instance attributes faithfully. Use a named default_factory instead."
         )
@@ -171,9 +188,10 @@ def transform_dict(value: dict[object, object], context: _ReprContext) -> PlainR
                 "Cannot render defaultdict factory faithfully. Use a named default_factory for the whole field instead."
             )
         return PlainRepr(f"defaultdict({_container_item_repr(factory, context)}, {_mapping_repr(value, context)!r})")
-    if cls is Counter:
-        # Counter(iterable_of_pairs) would count the pairs instead of keeping the counts
-        return PlainRepr(f"Counter({_mapping_repr(value, context)!r})" if value else "Counter()")
+    if is_plain_counter:
+        # Counter(iterable_of_pairs) would count the pairs instead of keeping the counts, and Counter's repr
+        # would sort them instead of keeping their order
+        return PlainRepr(f"{cls.__name__}({_mapping_repr(value, context)!r})" if value else f"{cls.__name__}()")
     try:
         if isinstance(value, Counter):
             rebuilt = type(value)(_mapping_repr(value, context))

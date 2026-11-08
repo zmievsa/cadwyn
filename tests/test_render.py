@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from datetime import date, datetime
 from enum import Enum
 from functools import partial
-from typing import Annotated, Any, ClassVar, NamedTuple
+from typing import Annotated, Any, ClassVar, NamedTuple, Self
 from uuid import UUID
 
 import pytest
@@ -36,6 +36,31 @@ EmptyPoint = namedtuple("EmptyPoint", ())  # noqa: PYI024 # Cover collections.na
 
 class PointSubclass(namedtuple("PointBase", "x y")):  # noqa: PYI024 # Cover subclasses of collections.namedtuple
     __slots__ = ()
+
+
+class IterablePoint(namedtuple("PointBase", "x y")):  # noqa: PYI024
+    __slots__ = ()
+
+    def __new__(cls, values: Any) -> Self:
+        return super().__new__(cls, *values)
+
+    def __getnewargs__(self) -> tuple[tuple[Any, ...]]:
+        return (tuple(self),)
+
+    @override
+    def __repr__(self) -> str:
+        return f"IterablePoint({tuple.__repr__(self)})"
+
+
+class IncrementingPoint(namedtuple("PointBase", "x y")):  # noqa: PYI024
+    __slots__ = ()
+
+    def __new__(cls, x: int, y: int) -> Self:
+        return super().__new__(cls, x + 1, y)
+
+    @override
+    def __repr__(self) -> str:
+        return f"IncrementingPoint({self.x - 1!r}, {self.y!r})"
 
 
 class ModelWithContainerDefault(BaseModel):
@@ -215,10 +240,17 @@ def test__render_model__namedtuple_with_nested_subclass__should_keep_none_value_
     assert actual.x[0] is None
 
 
-def test__render_model__counter_subclass__should_keep_type_and_counts():
-    rendered_default = evaluate_rendered_default(MyCounter(a=3, b=1))
-    assert type(rendered_default) is MyCounter
-    assert dict(rendered_default) == {"a": 3, "b": 1}
+class ReprCounter(Counter):
+    @override
+    def __repr__(self) -> str:
+        return f"ReprCounter({dict(self)!r})"
+
+
+@pytest.mark.parametrize("counter_type", [Counter, MyCounter, ReprCounter])
+def test__render_model__counter_or_subclass__should_keep_type_counts_and_order(counter_type: type[Counter[str]]):
+    rendered_default = evaluate_rendered_default(counter_type(a=1, b=3, c=2))
+    assert type(rendered_default) is counter_type
+    assert list(rendered_default.items()) == [("a", 1), ("b", 3), ("c", 2)]
 
 
 def test__render_model__defaultdict_subclass__should_wrap_constructor_error_with_field_context():
@@ -276,7 +308,9 @@ def test__render_model__finite_float_default__should_render_its_repr():
             "defaultdict(list, {'a': [UUID('00000000-0000-0000-0000-000000000001')]})",
         ),
         (PointSubclass(1, [None, int]), "PointSubclass(1, [None, int])"),
-        (MyCounter(a=3), "MyCounter({'a': 3})"),
+        (MyCounter(a=3, b=4), "MyCounter({'a': 3, 'b': 4})"),
+        (ReprCounter(a=3, b=4), "ReprCounter({'a': 3, 'b': 4})"),
+        (IterablePoint([1, date(2020, 1, 1)]), "IterablePoint((1, datetime.date(2020, 1, 1)))"),
     ],
 )
 def test__render_model__container_with_qualified_or_custom_items__should_render_reprs_of_items(
@@ -288,6 +322,11 @@ def test__render_model__container_with_qualified_or_custom_items__should_render_
     rendered_default = evaluate_rendered_default(default)
     assert type(rendered_default) is type(default)
     assert rendered_default == default
+
+
+def test__render_model__namedtuple_subclass_with_own_constructor__should_fail_instead_of_changing_values():
+    with pytest.raises(CadwynRenderError, match=r"ModelWithContainerDefault.value.*IncrementingPoint.*default_factory"):
+        render_container_default(IncrementingPoint(1, 2))
 
 
 class SameRepr:
@@ -442,7 +481,7 @@ def test__render_model__default_with_cycle_through_namedtuple__should_fail_with_
         render_container_default(point)
 
 
-@pytest.mark.parametrize("container_type", [Counter, OrderedDict])
+@pytest.mark.parametrize("container_type", [Counter, MyCounter, OrderedDict])
 def test__render_model__container_default_with_attributes__should_fail_instead_of_losing_them(container_type: type):
     default = container_type()
     default.label = "keep"
