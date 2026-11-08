@@ -1498,6 +1498,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#change-model-configuration-in-the-older-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Change model configuration in the older version
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#change-the-description-of-a-schema-in-the-older-version" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1964,6 +1975,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#change-model-configuration-in-the-older-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Change model configuration in the older version
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#change-the-description-of-a-schema-in-the-older-version" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2222,6 +2244,71 @@
         <span class="n">schema</span><span class="p">(</span><span class="n">MySchema</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;OtherSchema&quot;</span><span class="p">),</span>
     <span class="p">)</span>
 </code></pre></div>
+<h2 id="change-model-configuration-in-the-older-version">Change model configuration in the older version<a class="headerlink" href="#change-model-configuration-in-the-older-version" title="Permanent link">&para;</a></h2>
+<p>Pass <code>config=ConfigDict(...)</code> to <code>schema(Model).had(...)</code> to patch selected Pydantic config keys. Keys you omit keep their current values. The supported keys are <code>extra</code>, <code>populate_by_name</code>, <code>validate_by_alias</code>, <code>validate_by_name</code>, <code>str_strip_whitespace</code>, <code>frozen</code>, <code>title</code>, <code>json_schema_extra</code>, and <code>arbitrary_types_allowed</code>.</p>
+<p>For example, this older API forbids extra fields and has no <code>nickname</code> field:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Cadwyn</span><span class="p">,</span>
+    <span class="n">RequestInfo</span><span class="p">,</span>
+    <span class="n">ResponseInfo</span><span class="p">,</span>
+    <span class="n">Version</span><span class="p">,</span>
+    <span class="n">VersionBundle</span><span class="p">,</span>
+    <span class="n">VersionChange</span><span class="p">,</span>
+    <span class="n">VersionedAPIRouter</span><span class="p">,</span>
+    <span class="n">convert_request_to_next_version_for</span><span class="p">,</span>
+    <span class="n">convert_response_to_previous_version_for</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">ConfigDict</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">User</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">model_config</span> <span class="o">=</span> <span class="n">ConfigDict</span><span class="p">(</span><span class="n">extra</span><span class="o">=</span><span class="s2">&quot;allow&quot;</span><span class="p">)</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">nickname</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;anonymous&quot;</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">AllowExtraUserFields</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;User requests and responses now allow extra fields.&quot;&quot;&quot;</span>
+
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">User</span><span class="p">)</span><span class="o">.</span><span class="n">had</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">ConfigDict</span><span class="p">(</span><span class="n">extra</span><span class="o">=</span><span class="s2">&quot;forbid&quot;</span><span class="p">)),</span>
+        <span class="n">schema</span><span class="p">(</span><span class="n">User</span><span class="p">)</span><span class="o">.</span><span class="n">field</span><span class="p">(</span><span class="s2">&quot;nickname&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">didnt_exist</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="nd">@convert_request_to_next_version_for</span><span class="p">(</span><span class="n">User</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">supply_nickname</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">RequestInfo</span><span class="p">):</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;nickname&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span>
+
+    <span class="nd">@convert_response_to_previous_version_for</span><span class="p">(</span><span class="n">User</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">remove_newer_keys</span><span class="p">(</span><span class="n">response</span><span class="p">:</span> <span class="n">ResponseInfo</span><span class="p">):</span>
+        <span class="k">del</span> <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;nickname&quot;</span><span class="p">]</span>
+        <span class="k">del</span> <span class="n">response</span><span class="o">.</span><span class="n">body</span><span class="p">[</span><span class="s2">&quot;server_note&quot;</span><span class="p">]</span>
+
+
+<span class="n">router</span> <span class="o">=</span> <span class="n">VersionedAPIRouter</span><span class="p">()</span>
+
+
+<span class="nd">@router</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/users&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">create_user</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="n">User</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">User</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">User</span><span class="o">.</span><span class="n">model_validate</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">model_dump</span><span class="p">()</span> <span class="o">|</span> <span class="p">{</span><span class="s2">&quot;server_note&quot;</span><span class="p">:</span> <span class="s2">&quot;created&quot;</span><span class="p">})</span>
+
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">Cadwyn</span><span class="p">(</span>
+    <span class="n">versions</span><span class="o">=</span><span class="n">VersionBundle</span><span class="p">(</span>
+        <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2001-01-01&quot;</span><span class="p">,</span> <span class="n">AllowExtraUserFields</span><span class="p">),</span>
+        <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2000-01-01&quot;</span><span class="p">),</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+<span class="n">app</span><span class="o">.</span><span class="n">generate_and_include_versioned_routers</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
+</code></pre></div>
+<p>Request validation uses the client's config <strong>before</strong> request migrations. Sending <code>{"name": "Alice", "nickname": "Al"}</code> to the older version returns a 422, so a request migration cannot remove an unknown key to make it acceptable. Sending only <code>{"name": "Alice"}</code> succeeds: the request migration supplies the nickname for HEAD. Responses migrate <strong>before</strong> validation with the client's config. The response migration above removes <code>nickname</code> and <code>server_note</code> so the older version returns <code>{"name": "Alice"}</code>. Cadwyn never silently removes these keys for you; without the response migration, older response validation fails.</p>
+<p>Config instructions only support <strong>leaf models</strong>. If a model has subclasses among the app's versioned models, an instruction changing its config fails at startup. Put the config instruction on each subclass (leaf model) instead. Pydantic stores merged configs without recording whether each setting was inherited or explicitly overridden, so Cadwyn cannot safely propagate a parent's config change. An instruction on a leaf subclass leaves its parent and siblings unchanged; unused subclasses elsewhere in your code do not prevent it.</p>
+<p>Generic parametrizations such as <code>Bag[Item]</code> and Cadwyn's generated copies do not count as user subclasses. A config patch on <code>Bag</code> also applies to its parametrizations, including the specialization used when a route accepts bare <code>Bag</code>. An instruction on a particular parametrization can override those keys for that parametrization alone. A declared subclass such as <code>class SpecialBag(Bag[Item])</code> still counts as a subclass and prevents config instructions on <code>Bag</code>.</p>
+<p>Changing <code>populate_by_name</code> also sets <code>validate_by_alias=True</code> and <code>validate_by_name</code> to its older value. Explicit <code>validate_by_alias</code> and <code>validate_by_name</code> entries in the same patch take precedence. To change those flags individually, patch them directly. At least one must remain enabled, as in Pydantic.</p>
+<p>There is no config <code>didnt_have</code> instruction: set the older value explicitly, such as <code>ConfigDict(frozen=False)</code> or <code>ConfigDict(json_schema_extra=None)</code>. Cadwyn rejects a key whose value is already the current value, including an implicit Pydantic default. An empty patch on its own is also rejected.</p>
+<p>Unknown and unsupported keys fail when the instruction is declared, with an error naming the model and key. In particular, aliases and field titles already stored on fields cannot be regenerated safely with <code>alias_generator</code> or <code>field_title_generator</code>. Model construction hooks (<code>model_title_generator</code>, <code>schema_generator</code>, and <code>plugin_settings</code>), attribute classification (<code>ignored_types</code> and <code>protected_namespaces</code>), <code>use_attribute_docstrings</code>, and <code>defer_build</code> cannot be versioned either. Config keys outside the supported list remain unchanged across versions. Enabling <code>arbitrary_types_allowed</code> permits arbitrary Python instances, but those types still need their own JSON schema support to appear in OpenAPI, as in Pydantic.</p>
+<p>You can combine <code>config=</code>, <code>name=</code>, and <code>description=</code> in one instruction. <code>cadwyn render</code> includes changed model configs. Apps without config instructions keep their existing behavior and OpenAPI.</p>
 <h2 id="change-the-description-of-a-schema-in-the-older-version">Change the description of a schema in the older version<a class="headerlink" href="#change-the-description-of-a-schema-in-the-older-version" title="Permanent link">&para;</a></h2>
 <p>Pydantic uses the docstring of a schema as its description in openapi.json, and Cadwyn copies it into every version of the schema. Use <code>had(description=...)</code> to give the older versions a different description:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
