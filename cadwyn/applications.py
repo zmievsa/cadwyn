@@ -489,7 +489,7 @@ class Cadwyn(FastAPI):
     def _mark_api_version_header_as_required_in_openapi(self, openapi: dict[str, Any]) -> None:
         # Every route of a versioned document is only reachable with this header, so we also mark it as required
         # when a route declares a header with the same name itself.
-        header_name = self.api_version_pythonic_parameter_name.replace("_", "-")
+        header_name = self.api_version_parameter_name
         for path_item in openapi.get("paths", {}).values():
             for operation in path_item.values():
                 for parameter in operation.get("parameters", ()):
@@ -581,6 +581,7 @@ class Cadwyn(FastAPI):
             dependencies=[
                 Depends(
                     _generate_api_version_dependency(
+                        api_version_parameter_name=self.api_version_parameter_name,
                         api_version_pythonic_parameter_name=self.api_version_pythonic_parameter_name,
                         default_value=version,
                         fastapi_depends_class=self._api_version_fastapi_depends_class,
