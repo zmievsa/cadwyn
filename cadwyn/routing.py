@@ -32,7 +32,7 @@ from cadwyn.middleware import (
     _match_key,
 )
 from cadwyn.structure.common import VersionType
-from cadwyn.structure.versions import _UPLOAD_CLOSE_TIMEOUT_SECONDS
+from cadwyn.structure.versions._uploads import _UPLOAD_CLOSE_TIMEOUT_SECONDS
 
 _logger = getLogger(__name__)
 _DATE_ADAPTER = TypeAdapter(date)

@@ -1,118 +1,62 @@
-from pydantic._internal._generics import get_model_typevars_map as get_model_typevars_map
-from pydantic._internal._model_construction import unpack_lenient_weakvaluedict as unpack_lenient_weakvaluedict
-
 from cadwyn._utils import present_private_submodules_as_package
 
 from . import (
-    _annotations,
-    _bundle,
-    _config,
+    _annotation_evaluation as _annotation_evaluation,
+)
+from . import (
+    _annotation_transformer,
     _enums,
     _fields,
-    _generator,
     _generics,
     _instructions,
     _models,
     _references,
+    _schema_generator,
 )
-from ._annotation_utils import (
-    _UNRESOLVED as _UNRESOLVED,
+from . import (
+    _callables as _callables,
 )
-from ._annotation_utils import (
-    _contains_forward_refs as _contains_forward_refs,
+from . import (
+    _common as _common,
 )
-from ._annotation_utils import (
-    _eval_forward_refs as _eval_forward_refs,
+from . import (
+    _core_schema as _core_schema,
 )
-from ._annotation_utils import (
-    _evaluate_user_annotations as _evaluate_user_annotations,
+from . import (
+    _versioned_models as _versioned_models,
 )
-from ._annotation_utils import (
-    _get_model_annotations as _get_model_annotations,
-)
-from ._annotation_utils import (
-    _get_model_field_names as _get_model_field_names,
-)
-from ._annotation_utils import (
-    _get_rebuilt_model_fields as _get_rebuilt_model_fields,
-)
-from ._annotation_utils import (
-    _get_value_of_type_alias_with_args as _get_value_of_type_alias_with_args,
-)
-from ._annotations import (
-    _AnnotationTransformer as _AnnotationTransformer,
-)
-from ._annotations import (
-    _ReferencedModelCollector as _ReferencedModelCollector,
-)
-from ._callables import (
-    _add_request_and_response_params as _add_request_and_response_params,
-)
-from ._callables import (
-    _CallableWrapper as _CallableWrapper,
-)
-from ._common import (
-    _is_versionable_model as _is_versionable_model,
-)
-from ._common import (
-    _unwrap_model as _unwrap_model,
-)
-from ._enums import (
-    _EnumWrapper as _EnumWrapper,
-)
-from ._fields import (
-    _extract_passed_field_attributes as _extract_passed_field_attributes,
-)
-from ._generation import (
-    generate_versioned_models as generate_versioned_models,
-)
-from ._generation import (
-    get_models_that_routes_request as get_models_that_routes_request,
-)
-from ._generation import (
-    migrate_response_body as migrate_response_body,
-)
-from ._generator import (
-    SchemaGenerator as SchemaGenerator,
-)
-from ._models import (
-    _change_version_of_model_references as _change_version_of_model_references,
-)
-from ._models import (
-    _get_head_model_references as _get_head_model_references,
-)
-from ._models import (
-    _PydanticModelWrapper as _PydanticModelWrapper,
-)
-from ._references import (
-    _BareGenericCopier as _BareGenericCopier,
-)
-from ._references import (
-    _BareGenericCopies as _BareGenericCopies,
-)
-from ._references import (
-    _CycleCopier as _CycleCopier,
-)
+from ._callables import is_async_gen_callable as is_async_gen_callable
+from ._callables import is_coroutine_callable as is_coroutine_callable
+from ._callables import is_gen_callable as is_gen_callable
+from ._callables import is_regular_function as is_regular_function
+from ._fields import EXTRA_FIELD_NAME as EXTRA_FIELD_NAME
+from ._fields import PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP as PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP
+from ._fields import VALIDATOR_CONFIG_KEY as VALIDATOR_CONFIG_KEY
+from ._fields import PydanticFieldWrapper as PydanticFieldWrapper
+from ._fields import dict_of_empty_field_info as dict_of_empty_field_info
+from ._schema_generator import SchemaGenerator as SchemaGenerator
+from ._versioned_models import generate_versioned_models as generate_versioned_models
+from ._versioned_models import get_models_that_routes_request as get_models_that_routes_request
+from ._versioned_models import migrate_response_body as migrate_response_body
 
-# Resolve annotation back-references after all defining modules have loaded, without cyclic imports.
-_annotations.SchemaGenerator = SchemaGenerator
-_annotations._CycleCopier = _CycleCopier
-_bundle._EnumWrapper = _EnumWrapper
-_bundle._PydanticModelWrapper = _PydanticModelWrapper
-_config._PydanticModelWrapper = _PydanticModelWrapper
+# These modules import some names only for type checking because importing them at runtime would be cyclic.
+# Bind them now that every module has loaded so that runtime annotation introspection can resolve them.
+_annotation_transformer.SchemaGenerator = SchemaGenerator
+_annotation_transformer._CycleCopier = _references._CycleCopier
 _enums.SchemaGenerator = SchemaGenerator
-_fields._PydanticModelWrapper = _PydanticModelWrapper
-_generator._ParentRename = _instructions._ParentRename
-_generator._PydanticModelWrapper = _PydanticModelWrapper
-_generator._ReferenceCycles = _references._ReferenceCycles
+_fields._PydanticModelWrapper = _models._PydanticModelWrapper
 _generics.SchemaGenerator = SchemaGenerator
-_generics._PydanticModelWrapper = _PydanticModelWrapper
-_generics._CycleCopier = _CycleCopier
+_generics._PydanticModelWrapper = _models._PydanticModelWrapper
+_generics._CycleCopier = _references._CycleCopier
 _instructions.SchemaGenerator = SchemaGenerator
-_instructions._PydanticModelWrapper = _PydanticModelWrapper
+_instructions._PydanticModelWrapper = _models._PydanticModelWrapper
+_instructions._RuntimeSchemaGenContext = _schema_generator._RuntimeSchemaGenContext
 _models.SchemaGenerator = SchemaGenerator
-_models._CycleCopier = _CycleCopier
+_models._CycleCopier = _references._CycleCopier
 _references.SchemaGenerator = SchemaGenerator
+_schema_generator._ParentRename = _instructions._ParentRename
+_schema_generator._PydanticModelWrapper = _models._PydanticModelWrapper
+_schema_generator._ReferenceCycles = _references._ReferenceCycles
 
 # This package used to be a single module. Keep its objects' __module__ and namespace as they were then.
 present_private_submodules_as_package(__name__)

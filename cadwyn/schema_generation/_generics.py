@@ -18,21 +18,21 @@ from cadwyn._utils import (
     lenient_issubclass,
 )
 
-from ._annotation_utils import (
+from ._annotation_evaluation import (
     _eval_forward_refs,
     _get_extra_fields_annotation,
     _is_type_position_in_generic,
 )
 
 if TYPE_CHECKING:
-    from ._generator import (
-        SchemaGenerator,
-    )
     from ._models import (
         _PydanticModelWrapper,
     )
     from ._references import (
         _CycleCopier,
+    )
+    from ._schema_generator import (
+        SchemaGenerator,
     )
 
 

@@ -54,14 +54,14 @@ from cadwyn import (
 )
 from cadwyn.exceptions import CadwynHeadRequestValidationError
 from cadwyn.route_generation import VersionedAPIRouter
-from cadwyn.schema_generation import (
+from cadwyn.schema_generation import generate_versioned_models
+from cadwyn.schema_generation._annotation_evaluation import (
     _contains_forward_refs,
     _eval_forward_refs,
     _evaluate_user_annotations,
-    _get_head_model_references,
     _get_rebuilt_model_fields,
-    generate_versioned_models,
 )
+from cadwyn.schema_generation._models import _get_head_model_references
 from cadwyn.structure.enums import enum
 from cadwyn.structure.schemas import schema
 from cadwyn.structure.versions import VersionChange
@@ -1786,7 +1786,7 @@ def test__get_rebuilt_model_fields__failure_outside_of_user_annotations__should_
         raise TypeError("Cadwyn's own bug")
 
     assert not ModelWithUnresolvedFieldForPlumbing.__pydantic_fields_complete__
-    monkeypatch.setattr("cadwyn.schema_generation._annotation_utils.get_model_typevars_map", fail)
+    monkeypatch.setattr("cadwyn.schema_generation._annotation_evaluation.get_model_typevars_map", fail)
 
     with pytest.raises(TypeError, match="Cadwyn's own bug"):
         _get_rebuilt_model_fields(ModelWithUnresolvedFieldForPlumbing)
@@ -1798,7 +1798,7 @@ def test__eval_forward_refs__failure_outside_of_user_annotations__should_not_be_
     def fail(*args: Any, **kwargs: Any) -> Any:
         raise TypeError("Cadwyn's own bug")
 
-    monkeypatch.setattr("cadwyn.schema_generation._annotation_utils.unpack_lenient_weakvaluedict", fail)
+    monkeypatch.setattr("cadwyn.schema_generation._annotation_evaluation.unpack_lenient_weakvaluedict", fail)
 
     with pytest.raises(TypeError, match="Cadwyn's own bug"):
         _eval_forward_refs("Item", Page[Item])

@@ -15,16 +15,18 @@ So your business logic only ever sees HEAD, and every version's OpenAPI comes fr
 
 | Module | What it does |
 | --- | --- |
-| `cadwyn/structure/versions.py` | `VersionChange`, `Version`, `HeadVersion`, and `VersionBundle`. It also runs request and response migrations during a request (`VersionBundle._versioned()` and the methods it calls). |
+| `cadwyn/structure/versions/` | `VersionChange`, `Version`, and `HeadVersion` (`_changes.py`), and `VersionBundle` (`_bundle.py`). The other submodules run request and response migrations during a request (`VersionBundle._versioned()` and the methods it calls): `_requests.py` and `_responses.py` run them, `_migration_targets.py` picks the migrations by schema, and most of the rest prepare request bodies, forms, and files for the latest version. |
 | `cadwyn/structure/schemas.py`, `enums.py`, `endpoints.py` | The `schema()`, `enum()`, and `endpoint()` instructions. They only hold data: the generators apply them. |
 | `cadwyn/structure/data.py` | `RequestInfo`, `ResponseInfo`, and the `convert_request_to_next_version_for()` and `convert_response_to_previous_version_for()` migrations. |
-| `cadwyn/schema_generation.py` | Copies of models and enums for every version: `generate_versioned_models()` and `SchemaGenerator`. Also `migrate_response_body()`. |
+| `cadwyn/schema_generation/` | Copies of models and enums for every version. `_versioned_models.py` has `generate_versioned_models()` and `migrate_response_body()`, and `_schema_generator.py` has `SchemaGenerator`. `_models.py`, `_fields.py`, and `_enums.py` describe models, fields, and enums, and `_instructions.py` applies schema instructions to them. `_annotation_transformer.py` replaces models in annotations with their copies, `_annotation_evaluation.py` evaluates annotations, `_callables.py` copies endpoints and dependencies, and `_generics.py` and `_references.py` handle generics and models that refer to each other. |
 | `cadwyn/route_generation.py` | Copies of routes for every version: `generate_versioned_routers()` and `VersionedAPIRouter`. |
 | `cadwyn/applications.py` | `Cadwyn`, the FastAPI app. It wires everything together and serves the OpenAPI and docs pages of every version. |
 | `cadwyn/middleware.py` | `VersionPickingMiddleware` and the version managers that read the version from a header or the path. `URLVersionManager` reads it from the version path parameter of the route that each version's router would pick, and hands that route to `_RootCadwynAPIRouter` so it isn't matched twice. If no versioned route matches, it uses the first version anywhere in the URL. The middleware picks the version of HTTP requests; `_RootCadwynAPIRouter` picks it for WebSockets with the same manager. |
 | `cadwyn/routing.py` | `_RootCadwynAPIRouter`, which sends a request to the routes of its version. |
 | `cadwyn/dependencies.py`, `cadwyn/_internal/context_vars.py` | `current_dependency_solver()` and the context variables behind it. |
 | `cadwyn/__main__.py`, `_render.py`, `_asts.py` | The `cadwyn render` CLI, which prints a version's copies of models as code. |
+
+`cadwyn/structure/versions/` and `cadwyn/schema_generation/` used to be single modules. `present_private_submodules_as_package()` keeps the old `__module__` of every object in their private submodules. Their `__init__.py` files export only the public names, so Cadwyn's own code imports private names from the submodules.
 
 ## Versions and version changes
 
@@ -39,7 +41,7 @@ Schema generation and route generation read only these sorted attributes. See [V
 
 ## Schema generation
 
-`generate_versioned_models()` in `schema_generation.py` returns a `SchemaGenerator` for every version:
+`generate_versioned_models()` returns a `SchemaGenerator` for every version:
 
 1. It wraps the models and enums that schema and enum instructions or request migrations by schema mention (`VersionBundle.versioned_schemas` and `versioned_enums`) into an editable description of the class: a `_PydanticModelWrapper` (fields, annotations, validators, and bases) or an `_EnumWrapper` (members). Other models are wrapped when they are first needed.
 2. It applies the `HeadVersion` instructions to these wrappers. Then it goes through the versions from newest to oldest. For each version, it saves a copy of the current wrappers in that version's `SchemaGenerator`, and then applies that version's schema and enum instructions so that the next, older version sees them.

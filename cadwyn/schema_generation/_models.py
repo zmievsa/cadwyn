@@ -42,12 +42,12 @@ from cadwyn.structure.schemas import (
     FieldHadInstruction,
     _get_model_decorators,
 )
-from cadwyn.structure.versions import (
+from cadwyn.structure.versions._core_schema import (
     _KEYS_RENAMED_BY_ALIAS,
     _reject_keys_renamed_by_alias,
 )
 
-from ._annotation_utils import (
+from ._annotation_evaluation import (
     _NO_REDEFINED_FIELDS,
     _eval_forward_refs,
     _get_annotation_with_metadata,
@@ -57,7 +57,7 @@ from ._annotation_utils import (
     _has_undefined_names_in_lazy_annotations,
     _rebuild_model,
 )
-from ._annotations import (
+from ._annotation_transformer import (
     _ModelReferences,
     _ReferencedModelCollector,
 )
@@ -84,12 +84,12 @@ from ._instructions import (
 )
 
 if TYPE_CHECKING:
-    from ._generator import (
-        SchemaGenerator,
-    )
     from ._references import (
         _BareGenericCopier,
         _CycleCopier,
+    )
+    from ._schema_generator import (
+        SchemaGenerator,
     )
 
 _FieldName: TypeAlias = str

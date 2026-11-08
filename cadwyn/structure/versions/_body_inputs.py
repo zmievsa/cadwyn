@@ -350,6 +350,6 @@ def _has_fields_of_head_model(model: type[BaseModel], head_model: type[BaseModel
 
 def _unwrap_default_factory(factory: object) -> object:
     # Copies of models wrap the default factories of the head's models. `schema_generation` imports this module.
-    from cadwyn.schema_generation import _CallableWrapper
+    from cadwyn.schema_generation._callables import _CallableWrapper
 
     return factory._original_callable if isinstance(factory, _CallableWrapper) else factory

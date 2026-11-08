@@ -18,7 +18,7 @@ from typing_extensions import (
 )
 
 from cadwyn._utils import iscoroutinefunction
-from cadwyn.structure.versions import (
+from cadwyn.structure.versions._common import (
     _CADWYN_REQUEST_PARAM_NAME,
     _CADWYN_RESPONSE_PARAM_NAME,
 )

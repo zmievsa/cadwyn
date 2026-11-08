@@ -34,7 +34,7 @@ from ._common import (
 )
 
 if TYPE_CHECKING:
-    from ._generator import (
+    from ._schema_generator import (
         SchemaGenerator,
     )
 

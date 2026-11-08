@@ -48,7 +48,7 @@ from cadwyn.structure.schemas import (
     FieldHadInstruction,
 )
 
-from ._annotation_utils import (
+from ._annotation_evaluation import (
     _copy_field_info,
 )
 from ._common import (

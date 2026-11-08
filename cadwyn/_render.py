@@ -14,12 +14,9 @@ from pydantic.fields import FieldInfo
 from cadwyn._asts import _ReprContext, get_fancy_repr, pop_docstring_from_cls_body
 from cadwyn._utils import lenient_issubclass
 from cadwyn.exceptions import CadwynRenderError
-from cadwyn.schema_generation import (
-    SchemaGenerator,
-    _EnumWrapper,
-    _PydanticModelWrapper,
-    generate_versioned_models,
-)
+from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
+from cadwyn.schema_generation._enums import _EnumWrapper
+from cadwyn.schema_generation._models import _PydanticModelWrapper
 from cadwyn.structure.versions import VersionBundle, get_cls_pythonpath
 
 from ._importer import import_attribute_from_string, import_module_from_string
