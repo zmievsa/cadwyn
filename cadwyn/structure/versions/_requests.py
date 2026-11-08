@@ -129,7 +129,7 @@ async def _migrate_request(
     ):
         # The form model stays omitted, so every other param reads the form that the client would have sent
         body_for_solving = await _get_form_for_omitted_form_model(
-            request, head_dependant, head_route, body_with_head_members
+            request, head_dependant, head_route, body_with_head_members, embed_body_fields=embed_body_fields
         )
     # A body is omitted if the request had none for FastAPI, or if a migration has set it to None
     elif request_info.body is None and (request_info._body_is_assigned or body_is_omitted):

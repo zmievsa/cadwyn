@@ -16043,6 +16043,94 @@ def test__request_body_migration__with_omitted_form_model_and_body_that_isnt_dic
         clients["2000-01-01"].post(test_path, data={"extra": "sent"})
 
 
+async def _get_any_list_from_form_field(extra: Annotated[list[Any], Form()]) -> list[Any]:
+    return extra  # pragma: no cover # FastAPI >= 0.158
+
+
+class _OverrideFormModelWithAnyList(BaseModel):
+    extra: list[Any]
+
+
+async def _get_any_list_from_form_model(other: Annotated[_OverrideFormModelWithAnyList, Form()]) -> list[Any]:
+    return other.extra  # pragma: no cover # FastAPI >= 0.158
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize(
+    "override", [_get_any_list_from_form_field, _get_any_list_from_form_model], ids=["form_field", "form_model"]
+)
+@pytest.mark.parametrize(
+    "migrated_value",
+    [["a", "b"], ("a", "b"), {"a"}, frozenset({"a"}), deque(["a", "b"]), ["a"], "a"],
+    ids=["list", "tuple", "set", "frozenset", "deque", "single_item_list", "string"],
+)
+def test__request_body_migration__with_omitted_form_model_and_migrated_collection__head_should_get_its_items(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    override: Callable[..., Coroutine[Any, Any, Any]],
+    migrated_value: Any,
+):
+    endpoint = _optional_form_model_next_to_overridden_text_dependency
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    fastapi_app.dependency_overrides[_get_text] = override
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = {"extra": migrated_value}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = override
+
+    # The client sends a collection as repeated form items
+    sent_value = migrated_value if isinstance(migrated_value, str) else list(migrated_value)
+    expected = TestClient(fastapi_app).post(test_path, data={"extra": sent_value})
+    assert expected.status_code == 200
+    response = clients["2000-01-01"].post(test_path, data={"extra": "sent"})
+    assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize(
+    ("override", "param_description"),
+    [
+        (_get_any_list_from_form_field, "`extra` of `_get_any_list_from_form_field`"),
+        (_get_any_list_from_form_model, "`other` of `_get_any_list_from_form_model`"),
+    ],
+    ids=["form_field", "form_model"],
+)
+@pytest.mark.parametrize(
+    "migrated_value",
+    [{"k": "v"}, [["a"]], [{"k": "v"}], [("a",)], [{"a"}]],
+    ids=["dict", "nested_list", "dict_in_list", "tuple_in_list", "set_in_list"],
+)
+def test__request_body_migration__with_omitted_form_model_and_nested_migrated_value__should_name_param_in_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    override: Callable[..., Coroutine[Any, Any, Any]],
+    param_description: str,
+    migrated_value: Any,
+):
+    router.post(test_path)(_optional_form_model_next_to_overridden_text_dependency)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = {"extra": migrated_value}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = override
+
+    with pytest.raises(CadwynError, match=rf"param {re.escape(param_description)}.*can't be sent as form items"):
+        clients["2000-01-01"].post(test_path, data={"extra": "sent"})
+
+
 class _OverrideFormModelWithAliasChoicesAndForbiddenExtras(_OverrideFormModelWithAliasChoicesAndExtras):
     model_config = ConfigDict(extra="forbid")
 

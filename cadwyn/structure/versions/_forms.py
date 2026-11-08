@@ -129,14 +129,19 @@ async def _get_omission_of_optional_form_model(  # pragma: no cover # FastAPI >=
 
 
 async def _get_form_for_omitted_form_model(  # pragma: no cover # FastAPI >= 0.158.2
-    request: FastapiRequest, head_dependant: Dependant, head_route: APIRoute, migrated_body: Any
+    request: FastapiRequest,
+    head_dependant: Dependant,
+    head_route: APIRoute,
+    migrated_body: Any,
+    *,
+    embed_body_fields: bool,
 ) -> FormData:
     """Return the form for the head when its form model is omitted, but other params of the tree can read the form.
 
     Either no migration has set the body, or the migration has set a dict without fields of the form model, so the
     head gives the form model its default, and every other param the value that FastAPI gives it from the form that the
-    client would have sent as the migrated request: the request's form with the keys of the migrated body. That is
-    only so if this form doesn't supply the form model in the head either.
+    client would have sent as the migrated request: the request's form with the keys of the migrated body, where a
+    collection is a form item per value. That is only so if this form doesn't supply the form model in the head either.
     """
     # FastAPI has already parsed the form, so this returns its cached form without reading it again or closing it
     form = await request.form()
@@ -144,17 +149,17 @@ async def _get_form_for_omitted_form_model(  # pragma: no cover # FastAPI >= 0.1
     _get_uploads_to_close(request).add(form.multi_items())
     if migrated_body is not None:
         virtual_form = await _get_virtual_form(request, migrated_body, None, is_migrated=True)
-        form = FormData(
-            [
-                item
-                for key in virtual_form.keys
-                for item in (
-                    [(key, migrated_body[key])]
-                    if key in migrated_body
-                    else [(key, value) for value in virtual_form.form.getlist(key)]
+        items: list[tuple[str, Any]] = []
+        for key in virtual_form.keys:
+            values = (
+                _get_form_values_of_migrated_value(
+                    head_dependant, head_route, key, migrated_body[key], embed_body_fields=embed_body_fields
                 )
-            ]
-        )
+                if key in migrated_body
+                else virtual_form.form.getlist(key)
+            )
+            items.extend((key, value) for value in values)
+        form = FormData(items)
     body_param = head_dependant.body_params[0]
     known_param_names = _get_known_form_param_names(head_dependant, head_route)
     if any(_form_supplies_form_model(model, form, known_param_names) for model in _get_form_models(body_param)):
@@ -166,6 +171,44 @@ async def _get_form_for_omitted_form_model(  # pragma: no cover # FastAPI >= 0.1
             "of the form model."
         )
     return form
+
+
+def _get_form_values_of_migrated_value(  # pragma: no cover # FastAPI >= 0.158.2
+    head_dependant: Dependant, head_route: APIRoute, key: str, value: Any, *, embed_body_fields: bool
+) -> list[Any]:
+    """Return the form values that the client would send for the value that a migration has set under the key.
+
+    A client sends a collection as a form item per value, and FastAPI gives a param that takes a collection all of
+    them. A form can't have a dict or a collection in a collection, so we fail for them instead of passing a value
+    that no client could send.
+    """
+    values = list(value) if isinstance(value, _FORM_VALUE_COLLECTIONS) else [value]
+    if not any(isinstance(item, (Mapping, *_FORM_VALUE_COLLECTIONS)) for item in values):
+        return values
+    params = _get_body_lookups(
+        head_dependant,
+        head_route,
+        set(_get_form_models(head_dependant.body_params[0])),
+        embed_body_fields=embed_body_fields,
+    )
+    other_params = [param for param in params if param.kind is not _BodyParamKind.SAME_FORM_MODEL]
+    reader = next(
+        (
+            param
+            for param in other_params
+            if key in param.aliases
+            or (
+                param.kind is _BodyParamKind.OTHER_FORM_MODEL
+                and key in _get_field_aliases_of_models(set(_get_form_models(param.field)))
+            )
+        ),
+        (other_params or params)[0],
+    )
+    raise _cant_pass_form_error(
+        reader,
+        f"the migration has set `{key}` to a value that can't be sent as form items: a dict or a collection in a "
+        "collection. Set it to a single value or to a collection of single values",
+    )
 
 
 def _migrated_body_supplies_omitted_form_model(  # pragma: no cover # FastAPI >= 0.158.2
