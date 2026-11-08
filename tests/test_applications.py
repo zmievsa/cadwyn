@@ -25,7 +25,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from starlette.websockets import WebSocket
 from typing_extensions import override
 
-from cadwyn import Cadwyn, current_dependency_solver
+from cadwyn import Cadwyn, OpenAPICustomizer, current_dependency_solver
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import VersionPickingMiddleware
 from cadwyn.route_generation import VersionedAPIRouter
@@ -537,6 +537,211 @@ def test__get_openapi():
 
     resp = client_without_headers.get("/openapi.json?version=2021-01-01")
     assert resp.status_code == 200
+
+
+@pytest.mark.parametrize("customizer_kwargs", [{}, {"openapi_customizer": None}])
+@pytest.mark.parametrize("version", ["2022-02-02", "2021-01-01", "unversioned"])
+def test__openapi_customizer__omitted_or_none__should_preserve_response_bytes(customizer_kwargs, version: str):
+    app = Cadwyn(versions=_two_versions(), **customizer_kwargs)
+
+    @app.get("/health", operation_id="health", summary="Health", response_class=Response)
+    def health() -> Response:
+        raise NotImplementedError
+
+    # Captured from main before introducing the customizer, including JSON key order and whitespace.
+    expected_paths = (
+        b'{"/health":{"get":{"summary":"Health","operationId":"health",'
+        b'"responses":{"200":{"description":"Successful Response"}}}}}'
+        if version == "unversioned"
+        else b"{}"
+    )
+    expected = (
+        b'{"openapi":"3.1.0","info":{"title":"FastAPI","version":"'
+        + version.encode()
+        + b'"},"servers":[{"url":"/proxy"}],"paths":'
+        + expected_paths
+        + b"}"
+    )
+    with TestClient(app, root_path="/proxy") as client:
+        response = client.get("/openapi.json", params={"version": version})
+    assert response.status_code == 200
+    assert response.content == expected
+
+
+@pytest.mark.parametrize(("api_version_format", "version"), [("date", "2022-02-02"), ("string", "v2")])
+@pytest.mark.parametrize("use_header", [True, False])
+def test__openapi_customizer__version_selected__should_receive_version_and_final_header_schema(
+    api_version_format, version: str, use_header: bool
+):
+    def customize(schema: dict[str, Any], selected_version: str | None) -> dict[str, Any]:
+        schema["x-selected-version"] = selected_version
+        # This would be undone if Cadwyn's required-header adjustment ran after the callback.
+        parameter = schema["paths"]["/items"]["get"]["parameters"][0]
+        schema["x-original-required"] = parameter["required"]
+        parameter["required"] = False
+        return schema
+
+    customizer: OpenAPICustomizer = customize
+    app = Cadwyn(
+        versions=VersionBundle(Version(version)), api_version_format=api_version_format, openapi_customizer=customizer
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    def get_items() -> list[str]:
+        raise NotImplementedError
+
+    app.generate_and_include_versioned_routers(router)
+    with TestClient(app) as client:
+        response = client.get(
+            "/openapi.json",
+            headers={"x-api-version": version} if use_header else {},
+            params={} if use_header else {"version": version},
+        )
+    assert response.status_code == 200
+    schema = response.json()
+    assert schema["info"]["version"] == version
+    assert schema["x-selected-version"] == version
+    assert schema["x-original-required"] is True
+    assert schema["paths"]["/items"]["get"]["parameters"][0]["required"] is False
+
+
+def test__openapi_customizer__unversioned_document__should_receive_none():
+    def customize(schema: dict[str, Any], version: str | None) -> dict[str, Any]:
+        return {**schema, "x-selected-version": version}
+
+    app = Cadwyn(versions=_two_versions(), openapi_customizer=customize)
+
+    @app.get("/health")
+    def health() -> str:
+        raise NotImplementedError
+
+    with TestClient(app) as client:
+        response = client.get("/openapi.json?version=unversioned")
+    assert response.status_code == 200
+    assert response.json()["info"]["version"] == "unversioned"
+    assert response.json()["x-selected-version"] is None
+
+
+def test__openapi_customizer__replacement_dict__should_serialize_replacement_without_further_changes():
+    def customize(schema: dict[str, Any], version: str | None) -> dict[str, Any]:
+        return {"replacement": version}
+
+    with TestClient(Cadwyn(versions=_two_versions(), openapi_customizer=customize)) as client:
+        response = client.get("/openapi.json?version=2022-02-02")
+    assert response.status_code == 200
+    assert response.content == b'{"replacement":"2022-02-02"}'
+
+
+@pytest.mark.parametrize("invalid_return", [None, [], "schema", 1])
+def test__openapi_customizer__non_dict_return__should_raise_type_error_naming_callback(invalid_return):
+    def invalid_customizer(schema: dict[str, Any], version: str | None):
+        return invalid_return
+
+    with (
+        TestClient(Cadwyn(versions=_two_versions(), openapi_customizer=invalid_customizer)) as client,
+        pytest.raises(TypeError, match=r"invalid_customizer.*must return a dict"),
+    ):
+        client.get("/openapi.json?version=2022-02-02")
+
+
+def test__openapi_customizer__async_callback__should_raise_type_error_naming_callback():
+    async def async_customizer(schema: dict[str, Any], version: str | None) -> dict[str, Any]:
+        raise AssertionError("Async customizers must not be awaited")
+
+    app = Cadwyn(versions=_two_versions(), openapi_customizer=async_customizer)  # ty: ignore[invalid-argument-type]  # Intentionally async.
+    with TestClient(app) as client, pytest.raises(TypeError, match=r"async_customizer.*must return a dict"):
+        client.get("/openapi.json?version=2022-02-02")
+
+
+def test__openapi_customizer__callback_raises__should_propagate_exception():
+    error = ValueError("could not customize schema")
+
+    def customize(schema: dict[str, Any], version: str | None) -> dict[str, Any]:
+        raise error
+
+    with (
+        TestClient(Cadwyn(versions=_two_versions(), openapi_customizer=customize)) as client,
+        pytest.raises(ValueError, match="could not customize schema") as caught,
+    ):
+        client.get("/openapi.json?version=2022-02-02")
+    assert caught.value is error
+
+
+@pytest.mark.parametrize(
+    ("url", "status_code"),
+    [
+        ("/docs", 200),
+        ("/redoc?version=2022-02-02", 200),
+        ("/openapi.json", 404),
+        ("/openapi.json?version=missing", 404),
+        ("/openapi.json?version=unversioned", 404),
+    ],
+)
+def test__openapi_customizer__request_without_document__should_not_call_customizer(url: str, status_code: int):
+    def customize(schema: dict[str, Any], version: str | None) -> dict[str, Any]:
+        raise AssertionError("Only served OpenAPI documents should invoke the customizer")
+
+    with TestClient(Cadwyn(versions=_two_versions(), openapi_customizer=customize)) as client:
+        assert client.get(url).status_code == status_code
+
+
+def test__openapi_customizer__repeated_requests__should_isolate_versions_and_regenerate_nested_dicts():
+    def customize(schema: dict[str, Any], version: str | None) -> dict[str, Any]:
+        schema["info"].setdefault("x-visits", []).append(version)
+        schema["components"]["schemas"]["HTTPValidationError"].setdefault("x-visits", []).append(version)
+        schema["servers"][0]["url"] += "/customized"
+        return schema
+
+    app = Cadwyn(versions=_two_versions(), servers=[{"url": "/api"}], openapi_customizer=customize)
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    def get_items() -> list[str]:
+        raise NotImplementedError
+
+    app.generate_and_include_versioned_routers(router)
+    with TestClient(app) as client:
+        for version in ("2022-02-02", "2021-01-01", "2022-02-02", "2021-01-01"):
+            response = client.get("/openapi.json", params={"version": version})
+            assert response.status_code == 200
+            schema = response.json()
+            assert schema["info"]["version"] == version
+            assert schema["info"]["x-visits"] == [version]
+            assert schema["components"]["schemas"]["HTTPValidationError"]["x-visits"] == [version]
+            assert schema["servers"] == [{"url": "/api/customized"}]
+
+
+@pytest.mark.parametrize("root_path", ["", "/proxy"])
+@pytest.mark.parametrize("root_path_in_servers", [True, False])
+@pytest.mark.parametrize("version", ["2022-02-02", "unversioned"])
+def test__openapi_customizer__mounted_app__should_receive_final_servers_and_allow_replacing_them(
+    root_path: str, root_path_in_servers: bool, version: str
+):
+    def customize(schema: dict[str, Any], selected_version: str | None) -> dict[str, Any]:
+        return {"original_servers": schema["servers"], "servers": [{"url": "/custom"}]}
+
+    app = Cadwyn(
+        versions=_two_versions(),
+        servers=[{"url": "/configured"}],
+        root_path_in_servers=root_path_in_servers,
+        openapi_customizer=customize,
+    )
+
+    @app.get("/health")
+    def health() -> str:
+        raise NotImplementedError
+
+    root_app = FastAPI()
+    root_app.mount("/mounted", app)
+    with TestClient(root_app, root_path=root_path) as client:
+        response = client.get(f"{root_path}/mounted/openapi.json", params={"version": version})
+    assert response.status_code == 200
+    expected_servers = [{"url": f"{root_path}/mounted"}, {"url": "/configured"}]
+    assert response.json() == {
+        "original_servers": expected_servers if root_path_in_servers else [{"url": "/configured"}],
+        "servers": [{"url": "/custom"}],
+    }
 
 
 def test__get_openapi__api_version_header_has_configured_metadata_and_date_schema():
