@@ -2,6 +2,7 @@ import bisect
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
+from datetime import date
 from functools import cached_property
 from logging import getLogger
 from types import TracebackType
@@ -9,15 +10,21 @@ from typing import Any, Union
 
 import anyio
 from fastapi.routing import APIRouter
+from pydantic import TypeAdapter, ValidationError
+from starlette import status
 from starlette.datastructures import URL, FormData, UploadFile
+from starlette.exceptions import WebSocketException
+from starlette.requests import Request
 from starlette.responses import RedirectResponse
 from starlette.routing import BaseRoute, Match
 from starlette.types import Receive, Scope, Send
+from starlette.websockets import WebSocket
 from typing_extensions import ParamSpec, override
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn._utils import same_method_definition_as_in
-from cadwyn.middleware import APIVersionFormat
+from cadwyn.exceptions import CadwynError
+from cadwyn.middleware import APIVersionFormat, APIVersionLocation
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.versions import (
     _UPLOAD_CLOSE_TIMEOUT_SECONDS,
@@ -93,6 +100,8 @@ class _RootCadwynAPIRouter(APIRouter):
         api_version_parameter_name: str,
         api_version_var: ContextVar[Union[str, None]],
         api_version_format: APIVersionFormat,
+        api_version_location: APIVersionLocation = "custom_header",
+        api_version_default_value: str | Callable[[Request], Awaitable[str]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -101,6 +110,9 @@ class _RootCadwynAPIRouter(APIRouter):
         self.api_version_var = api_version_var
         self.unversioned_routes: list[BaseRoute] = []
         self.api_version_format = api_version_format
+        self._api_version_location = api_version_location
+        self._api_version_path_parameter_name = api_version_parameter_name.replace("-", "_")
+        self._api_version_default_value = api_version_default_value
 
     async def _get_routes_from_closest_suitable_version(self, version: VersionType) -> list[BaseRoute]:
         """Pick the versioned routes for the given version in case we failed to pick a concrete version
@@ -133,6 +145,9 @@ class _RootCadwynAPIRouter(APIRouter):
 
     @override
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "websocket":
+            await self._handle_websocket(scope, receive, send)
+            return
         if "router" not in scope:  # pragma: no cover
             scope["router"] = self
 
@@ -176,6 +191,68 @@ class _RootCadwynAPIRouter(APIRouter):
                     scope["fastapi_middleware_astack"] = file_stack
         else:
             await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
+
+    async def _handle_websocket(self, scope: Scope, receive: Receive, send: Send) -> None:
+        scope.setdefault("router", self)
+        version = self.api_version_var.get(None)
+        version_token = self.api_version_var.set(version)
+        default_token = DEFAULT_API_VERSION_VAR.set(DEFAULT_API_VERSION_VAR.get(None))
+        try:
+            if version is None:
+                # These sockets were already reachable before WebSocket version picking existed,
+                # even with an invalid header or a Request-based default. Keep them unversioned.
+                if any(route.matches(scope)[0] == Match.FULL for route in self.unversioned_routes):
+                    scope["cadwyn.api_version"] = None
+                    await self.process_request(scope, receive, send, self.unversioned_routes)
+                    return
+                version = self._pick_websocket_version(WebSocket(scope, receive, send))
+                self.api_version_var.set(version)
+
+            if version in self.versioned_routers:
+                routes = self.versioned_routers[version].routes
+            else:
+                routes = await self._get_routes_from_closest_suitable_version(version)
+            if not routes:
+                raise WebSocketException(status.WS_1008_POLICY_VIOLATION, "No matching API version")
+            scope["cadwyn.api_version"] = self.api_version_var.get(None)
+            if DEFAULT_API_VERSION_VAR.get(None):
+                routes = self.unversioned_routes + routes
+            await self.process_request(scope, receive, send, routes)
+        finally:
+            self.api_version_var.reset(version_token)
+            DEFAULT_API_VERSION_VAR.reset(default_token)
+
+    def _pick_websocket_version(self, websocket: WebSocket) -> str:
+        version = None
+        if self._api_version_location == "custom_header":
+            version = websocket.headers.get(self.api_version_parameter_name)
+        else:
+            # Match the actual version parameter, including dates between declared versions.
+            # Looking for a version-like URL segment could pick an unrelated path parameter.
+            for router in self.versioned_routers.values():
+                for route in router.routes:
+                    match, child_scope = route.matches(websocket.scope)
+                    if match == Match.FULL:
+                        version = child_scope.get("path_params", {}).get(self._api_version_path_parameter_name)
+                        break
+                if version is not None:
+                    break
+        if version is None:
+            if callable(self._api_version_default_value):
+                raise CadwynError(
+                    "A callable api_version_default_value is unsupported for WebSocket connections; "
+                    "send an explicit API version or use a constant default."
+                )
+            version = self._api_version_default_value
+            DEFAULT_API_VERSION_VAR.set(version)
+        if not version:
+            raise WebSocketException(status.WS_1008_POLICY_VIOLATION, "Missing API version")
+        if self.api_version_format == "date":
+            try:
+                TypeAdapter(date).validate_python(version)
+            except ValidationError as exc:
+                raise WebSocketException(status.WS_1008_POLICY_VIOLATION, "Invalid API version") from exc
+        return version
 
     @cached_property
     def versions(self):
