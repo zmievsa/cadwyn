@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from cadwyn import __version__
 from cadwyn.__main__ import app
+from tests._resources.render import container_defaults
 
 
 def code(c: str) -> str:
@@ -59,6 +60,64 @@ def test__render_model():
 class A(BaseModel):
     pass
 """
+    )
+
+
+def render_container_defaults_from_cli(mode: str, target: str) -> dict:
+    module = "tests._resources.render.container_defaults"
+    path = module if mode == "module" else f"{module}:{target}"
+    result = CliRunner().invoke(app, ["render", mode, path, f"--app={module}:app", "--version=2000-01-01", "--raw"])
+    assert result.exit_code == 0, result.exception
+    namespace = vars(container_defaults).copy()
+    exec(result.stdout, namespace)
+    assert namespace[target] is not getattr(container_defaults, target)
+    return namespace
+
+
+@pytest.mark.parametrize("mode", ["model", "module"])
+def test__cadwyn_render__namedtuple_default__should_output_executable_source(mode: str):
+    namespace = render_container_defaults_from_cli(mode, "Named")
+    point = namespace["Named"]().point
+    assert point.x == 1
+    assert point.y == 2
+    assert isinstance(point, namespace["Point"])
+
+
+@pytest.mark.parametrize("mode", ["model", "module"])
+def test__cadwyn_render__defaultdict_default__should_output_executable_source(mode: str):
+    namespace = render_container_defaults_from_cli(mode, "DefaultDict")
+    counts = namespace["DefaultDict"]().counts
+    assert counts == {"a": 1}
+    assert counts.default_factory is int
+    assert counts["missing"] == 0
+
+
+def test__cadwyn_render__set_defaults__should_preserve_main_source_bytes():
+    module = "tests._resources.render.container_defaults"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "cadwyn",
+            "render",
+            "model",
+            f"{module}:SetFormattingDefaults",
+            f"--app={module}:app",
+            "--version=2000-01-01",
+            "--raw",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "PYTHONHASHSEED": "0"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "class SetFormattingDefaults(BaseModel):\n"
+        "    empty: Any = Field(default=frozenset())\n"
+        "    items: Any = Field(default={2, 1, 3})\n"
+        "    frozen: Any = Field(default=frozenset({2, 1, 3}))\n"
     )
 
 

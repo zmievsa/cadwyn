@@ -30,6 +30,12 @@ This command prints to stdout how the `UserCreateRequest` schema would look in v
 
 The rendered fields are the ones that the schema has in that version. When a schema has instructions for a field that it inherits, it is rendered with its own version of that field, and its parents and siblings are rendered with theirs (see [Fields that a schema inherits](./schema_migrations.md#fields-that-a-schema-inherits)).
 
+Rendering supports named tuples defined with `NamedTuple` or `collections.namedtuple`, `defaultdict` (with a type, a named Python function, or `None` as its factory), and `Counter` defaults. Nested builtin containers retain references such as `None` and types instead of quoting them as strings. As with other references in rendered models, make the referenced classes and functions available when executing the output.
+
+Recursive containers and shared builtin or standard-library mutable containers raise `CadwynRenderError`, as do `OrderedDict` and `Counter` defaults with extra instance attributes, unsupported `defaultdict` factories (such as lambdas or callable instances), and subclasses whose representations lose their type by printing a builtin container literal. Use `Field(default_factory=...)` with a named function that creates the whole value for these defaults.
+
+Container subclass expressions and the new named-tuple, defaultdict, and Counter paths are checked by reconstructing their source with the model's referenced types and comparing contents, types, and instance state. Rendering raises `CadwynRenderError` if it cannot verify fidelity; use a named factory for such values. Repeated immutable containers and the formatting of correctly rendered defaults are preserved. Nonfinite floats use executable `float('inf')`, `float('-inf')`, and `float('nan')` expressions.
+
 ## Generating schemas without FastAPI
 
 Cadwyn can generate versioned schemas from its version changes even without FastAPI:
