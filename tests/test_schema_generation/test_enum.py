@@ -1,4 +1,5 @@
 import dataclasses
+import gc
 import re
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta, timezone
@@ -32,6 +33,7 @@ from cadwyn.exceptions import (
     InvalidGenerationInstructionError,
     SchemaGenerationError,
 )
+from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure import enum
 from tests.conftest import CreateRuntimeSchemas, serialize_enum, version_change
 
@@ -1165,6 +1167,131 @@ def test__enum_didnt_have__metaclass_requires_class_arguments__should_keep_exist
 
     assert old.a.label == "A"
     assert old.a.value == 1
+
+
+def _make_enum_whose_init_sets_label(use_slots: bool) -> Any:
+    class Labeled(Enum):
+        __slots__ = ("label",) if use_slots else ()
+
+        def __init__(self, value: int) -> None:
+            self.label = f"constructed {value}"
+
+        a = 1
+        b = 2
+
+    return Labeled
+
+
+@pytest.mark.parametrize("use_slots", [False, True])
+def test__enum_didnt_have__constructor_attribute_overwritten_after_creation__should_keep_the_new_value(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    use_slots: bool,
+):
+    labeled = _make_enum_whose_init_sets_label(use_slots)
+    labeled.a.label = "overwritten"
+    models = create_runtime_schemas(version_change(enum(labeled).didnt_have("b")))
+
+    for version in ("2001-01-01", "2000-01-01"):
+        assert models[version][labeled].a.label == "overwritten"
+
+
+@pytest.mark.parametrize("use_slots", [False, True])
+def test__enum_didnt_have__constructor_attribute_deleted_after_creation__should_not_have_the_attribute(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    use_slots: bool,
+):
+    labeled = _make_enum_whose_init_sets_label(use_slots)
+    del labeled.a.label
+    models = create_runtime_schemas(version_change(enum(labeled).didnt_have("b")))
+
+    for version in ("2001-01-01", "2000-01-01"):
+        assert not hasattr(models[version][labeled].a, "label")
+
+
+def test__enum_had__constructor_attribute_overwritten_after_creation__should_construct_replaced_member_again(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    labeled = _make_enum_whose_init_sets_label(use_slots=False)
+    labeled.a.label = "overwritten"
+    models = create_runtime_schemas(version_change(enum(labeled).had(a=3)))
+
+    assert models["2000-01-01"][labeled].a.label == "constructed 3"
+
+
+def test__enum_had__earlier_member_gets_value_of_member_with_attributes__should_not_give_it_the_attributes(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Kind(Enum):
+        x = 1
+        a = 2
+
+    Kind.a.label = "A"  # ty: ignore[unresolved-attribute]
+    models = create_runtime_schemas(version_change(enum(Kind).had(x=2)))
+    old: Any = models["2000-01-01"][Kind]
+
+    assert old.a is old.x
+    assert not hasattr(old.x, "label")
+
+
+def test__enum_didnt_have__constructor_makes_new_object_every_time__should_keep_what_the_copys_constructor_made(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Box:
+        def __init__(self, members_before: int) -> None:
+            self.members_before = members_before
+
+    class Ordered(Enum):
+        def __init__(self, value: int) -> None:
+            self.box = Box(len(type(self)._member_map_))
+
+        a = 1
+        b = 2
+
+    models = create_runtime_schemas(version_change(enum(Ordered).didnt_have("a")))
+    old: Any = models["2000-01-01"][Ordered]
+
+    assert old.b.box.members_before == 0
+    assert Ordered.b.box.members_before == 1
+
+
+def test__enum_didnt_have__attribute_set_after_creation_that_constructor_of_version_sets__should_keep_set_value(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Ordered(Enum):
+        def __init__(self, value: int) -> None:
+            if not type(self)._member_map_:
+                self.first = True
+
+        a = 1
+        b = 2
+
+    Ordered.b.first = False
+    models = create_runtime_schemas(version_change(enum(Ordered).didnt_have("a")))
+
+    assert models["2000-01-01"][Ordered].b.first is False
+
+
+def test__generate_versioned_models__slotted_enum_after_cache_is_cleared__should_be_garbage_collected(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    def generate() -> None:
+        class CollectableSlottedEnum(Enum):
+            __slots__ = ("label",)
+
+            def __init__(self, value: int) -> None:
+                self.label = str(value)
+
+            a = 1
+            b = 2
+
+        create_runtime_schemas(version_change(enum(CollectableSlottedEnum).didnt_have("a")))
+
+    generate()
+    generate_versioned_models.cache_clear()
+    gc.collect()
+
+    # The enum, its copies, and the enums that Cadwyn builds again to compare their members
+    assert [o for o in gc.get_objects() if isinstance(o, EnumType) and o.__name__ == "CollectableSlottedEnum"] == []
 
 
 @pytest.mark.parametrize("value", ["foo", EnumWithTwoMembers.bar, StrEnum("Other", {"foo": "foo"}).foo])
