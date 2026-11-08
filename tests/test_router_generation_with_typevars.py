@@ -8,7 +8,7 @@ import json
 import sys
 import types
 from enum import Enum
-from typing import Annotated, Any, ClassVar, Generic, TypeVar, Union
+from typing import Annotated, Any, ClassVar, Generic, Optional, TypeVar, Union
 
 import pytest
 from fastapi import Body, Depends
@@ -65,6 +65,58 @@ class RecursiveNode(BaseModel, Generic[_RecursiveItemT]):
 _FirstT = TypeVar("_FirstT", bound="_SecondT")  # ty: ignore[invalid-type-variable-bound] # Deliberately recursive.
 _SecondT = TypeVar("_SecondT", bound=_FirstT)  # ty: ignore[invalid-type-variable-bound] # Deliberately recursive.
 _alias_of_recursive_fallbacks = TypeAliasType("_alias_of_recursive_fallbacks", list[_FirstT], type_params=(_FirstT,))
+
+
+_ReentrantT = TypeVar("_ReentrantT", bound="ReentrantPage")
+_ReentrantInnerT = TypeVar("_ReentrantInnerT")
+
+
+class ReentrantInner(BaseModel, Generic[_ReentrantInnerT]):
+    value: _ReentrantInnerT
+
+
+class ReentrantPage(BaseModel, Generic[_ReentrantT]):
+    inner: ReentrantInner[_ReentrantT]
+    name: str
+
+
+class ShapeItem(BaseModel):
+    name: str
+
+
+_ShapeT = TypeVar("_ShapeT", bound=ShapeItem)
+
+
+class ShapePage(BaseModel, Generic[_ShapeT]):
+    item: _ShapeT
+
+
+class ShapeItemPage(ShapePage):
+    pass
+
+
+class ShapeFirst(BaseModel, Generic[_ShapeT]):
+    item: _ShapeT
+    second: Optional["ShapeSecond[_ShapeT]"] = None
+    other_second: Optional["ShapeSecond[_ShapeT]"] = None
+
+
+class ShapeSecond(BaseModel, Generic[_ShapeT]):
+    item: _ShapeT
+    first: Optional[ShapeFirst[_ShapeT]] = None
+
+
+ShapeFirst.model_rebuild()
+
+
+class ShapeWithClassVar(BaseModel, Generic[_ShapeT]):
+    marker: ClassVar[type[ShapeItem]] = ShapeItem
+    item: _ShapeT
+
+
+class ShapeWithItselfInMetadata(BaseModel, Generic[_ShapeT]):
+    item: _ShapeT
+    marker: "Annotated[int, [ShapeWithItselfInMetadata]]" = 0
 
 
 class AliasDefaultItem(BaseModel):
@@ -163,6 +215,59 @@ def test__router_generation__unparametrized_generic__should_keep_openapi_names_a
         expected_item = {"name": "a"} if version == "2000-01-01" else {"name": "a", "extra": 0}
         assert client.post("/page", json={"items": [{"name": "a"}]}).json() == {"items": [expected_item]}
         assert client.post("/pair", json={"other": 1, "item": {"name": "a"}}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_titles_by_name"),
+    [
+        # Cadwyn 8.2.0 gives every version these names and titles
+        pytest.param("unchanged", {"Item": "Item", "Outer": "Outer", "Page": "Page"}, id="unchanged_quoted_bound"),
+        pytest.param("changed", {"Item": "Item", "Outer": "Outer", "Page": "Page"}, id="nested"),
+        pytest.param("recursive", {"Item": "Item", "Node-Input": "Node", "Node-Output": "Node"}, id="recursive"),
+    ],
+)
+def test__router_generation__nested_and_recursive_unparametrized_generics__should_keep_openapi_names(
+    mode: str, expected_titles_by_name: dict[str, str], create_versioned_app: CreateVersionedApp
+):
+    class Item(BaseModel):
+        name: str
+
+    class Unrelated(BaseModel):
+        count: int
+
+    # A quoted bound needs resolving even when nothing about it changes
+    bound: Any = "Item" if mode == "unchanged" else Item
+    ItemT = TypeVar("ItemT", bound=bound)
+
+    class Page(BaseModel, Generic[ItemT]):
+        item: ItemT
+
+    class Outer(BaseModel, Generic[ItemT]):
+        page: Page[ItemT]
+
+    class Node(BaseModel, Generic[ItemT]):
+        item: ItemT
+        children: list["Node[ItemT]"] = []
+
+    model = Node if mode == "recursive" else Outer
+    router = VersionedAPIRouter()
+
+    def exchange(body: Any) -> Any: ...
+
+    exchange.__annotations__["body"] = model
+    router.post("/items", response_model=model)(exchange)
+    instruction = (
+        schema(Unrelated).field("count").had(description="Old")
+        if mode == "unchanged"
+        else schema(Item).field("name").had(type=int)
+    )
+    app = create_versioned_app(version_change(instruction), router=router)
+    for version in ("2001-01-01", "2000-01-01"):
+        client = TestClient(app, headers={"x-api-version": version})
+        schemas = client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
+        assert {name: value["title"] for name, value in schemas.items() if "ValidationError" not in name} == (
+            expected_titles_by_name
+        )
 
 
 @pytest.mark.parametrize(
@@ -290,6 +395,36 @@ def test__router_generation__typevar_in_non_generic_model__should_validate_and_d
     assert old.post("/items", json=wrap({"name": "a"})).status_code == 422
     old_openapi = old.get("/openapi.json?version=2000-01-01").json()
     assert old_openapi["components"]["schemas"]["Item"]["properties"].keys() == {"old_name"}
+
+
+@pytest.mark.parametrize(
+    ("model", "body"),
+    [
+        pytest.param(ShapeItemPage, {"item": {"name": 1}}, id="subclass"),
+        pytest.param(
+            ShapeFirst,
+            {"item": {"name": 1}, "second": {"item": {"name": 2}, "first": {"item": {"name": 3}}}},
+            id="mutual_recursion",
+        ),
+        pytest.param(ShapeWithClassVar, {"item": {"name": 1}}, id="class_var"),
+    ],
+)
+def test__generate_versioned_models__unparametrized_generic_shapes__should_validate_old_model(
+    model: type[BaseModel], body: dict[str, Any], create_runtime_schemas: CreateRuntimeSchemas
+):
+    old = create_runtime_schemas(version_change(schema(ShapeItem).field("name").had(type=int)))["2000-01-01"][model]
+    assert old.__name__ == model.__name__
+    assert old.model_validate(body).model_dump(exclude_unset=True) == body
+    with pytest.raises(ValidationError):
+        old.model_validate(json.loads(json.dumps(body).replace("3}", '"latest"}').replace("1}", '"latest"}')))
+
+
+def test__generate_versioned_models__unparametrized_generic_with_itself_in_metadata__should_fail_loudly(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(version_change(schema(ShapeItem).field("name").had(type=int)))
+    with pytest.raises(SchemaGenerationError, match=r"ShapeWithItselfInMetadata.*refers to itself"):
+        schemas["2000-01-01"][ShapeWithItselfInMetadata]
 
 
 @pytest.mark.parametrize("node", [SelfBoundNode, SelfDefaultNode, NonGenericSelfBoundNode])
@@ -534,9 +669,7 @@ def test__generate_versioned_models__typevar_bound_keeps_recursive_generic_args_
             generator[Payload]
 
 
-@pytest.mark.parametrize("reentrant", [False, True])
-def test__generate_versioned_models__bare_generic_overriding_parametrization__should_fail_loudly(
-    reentrant: bool,
+def test__generate_versioned_models__bare_generic_overriding_parametrization__should_not_parametrize_it(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     class Item(BaseModel):
@@ -549,12 +682,45 @@ def test__generate_versioned_models__bare_generic_overriding_parametrization__sh
 
         @override
         def __class_getitem__(cls, typevar_values: Any) -> Any:
-            return schemas["2000-01-01"][cls] if reentrant else int
+            raise AssertionError("Cadwyn parametrized the generic")
 
+    old = create_runtime_schemas(version_change(schema(Item).field("name").had(type=int)))["2000-01-01"][Page]
+    assert old.model_validate({"item": {"name": 1}}).model_dump() == {"item": {"name": 1}}
+    with pytest.raises(ValidationError):
+        old.model_validate({"item": {"name": "latest"}})
+
+
+def test__generate_versioned_models__partially_parametrized_generic_overriding_parametrization__should_fail_loudly(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Item(BaseModel):
+        name: str
+
+    ItemT = TypeVar("ItemT", bound=Item)
+    OtherT = TypeVar("OtherT")
+    is_overridden = False
+
+    class Pair(BaseModel, Generic[OtherT, ItemT]):
+        other: OtherT
+        item: ItemT
+
+        @override
+        def __class_getitem__(cls, typevar_values: Any) -> Any:
+            return int if is_overridden else super().__class_getitem__(typevar_values)
+
+    partial_pair = Pair[int, ItemT]
+    is_overridden = True
     schemas = create_runtime_schemas(version_change(schema(Item).field("name").had(type=int)))
-    message = "fallbacks refer back to it" if reentrant else "cannot safely parametrize the bare generic"
-    with pytest.raises(SchemaGenerationError, match=message):
-        schemas["2000-01-01"][Page]
+    with pytest.raises(SchemaGenerationError, match="cannot safely parametrize the bare generic"):
+        schemas["2000-01-01"][partial_pair]
+
+
+def test__generate_versioned_models__bare_generic_whose_nested_fallback_refers_to_it__should_fail_loudly(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(version_change(schema(ReentrantPage).field("name").had(description="Old")))
+    with pytest.raises(SchemaGenerationError, match=r"ReentrantPage.*fallbacks refer back to it"):
+        schemas["2000-01-01"][ReentrantPage]
 
 
 def test__generate_versioned_models__recursive_builtin_alias_default__should_preserve_validation(
@@ -967,25 +1133,37 @@ def test__router_generation__typed_extras_with_concrete_annotation__should_valid
     assert schemas["Item"]["properties"]["name"]["type"] == "integer"
 
 
-def test__router_generation__typed_extras_with_typevar_of_unparametrized_generic__should_fail_at_startup(
-    create_versioned_app: CreateVersionedApp,
+class _TypedExtrasItem(BaseModel):
+    name: str
+
+
+_TypedExtrasItemT = TypeVar("_TypedExtrasItemT", bound=_TypedExtrasItem)
+_TypedExtrasOtherT = TypeVar("_TypedExtrasOtherT")
+
+
+class TypedExtrasPage(BaseModel, Generic[_TypedExtrasOtherT, _TypedExtrasItemT]):
+    model_config = ConfigDict(extra="allow")
+    other: _TypedExtrasOtherT
+    __pydantic_extra__: dict[str, _TypedExtrasItemT]  # ty: ignore[invalid-mutable-override] # Typed extras.
+
+
+def test__generate_versioned_models__typed_extras_with_typevar_of_unparametrized_generic__should_validate_old_model(
+    create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    class Item(BaseModel):
-        name: str
+    schemas = create_runtime_schemas(version_change(schema(_TypedExtrasItem).field("name").had(type=int)))
+    old = schemas["2000-01-01"][TypedExtrasPage]
+    assert old.model_validate({"other": 1, "extra": {"name": 1}}).model_dump() == {"other": 1, "extra": {"name": 1}}
+    with pytest.raises(ValidationError):
+        old.model_validate({"other": 1, "extra": {"name": "latest"}})
 
-    ItemT = TypeVar("ItemT", bound=Item)
 
-    class Page(BaseModel, Generic[ItemT]):
-        model_config = ConfigDict(extra="allow")
-        __pydantic_extra__: dict[str, ItemT]  # ty: ignore[invalid-mutable-override] # Pydantic supports typed extras.
-
-    router = VersionedAPIRouter()
-
-    @router.post("/items")
-    def create_items(body: Page) -> None: ...
-
-    with pytest.raises(SchemaGenerationError, match=r"typed extra fields.*Page.*ItemT.*2000-01-01"):
-        create_versioned_app(version_change(schema(Item).field("name").had(type=int)), router=router)
+def test__generate_versioned_models__typed_extras_with_typevar_of_partially_parametrized_generic__should_fail_loudly(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(version_change(schema(_TypedExtrasItem).field("name").had(type=int)))
+    # Pydantic versions differ in how they substitute parameters in the typed extras of parametrizations
+    with pytest.raises(SchemaGenerationError, match=r"typed extra fields.*_TypedExtrasItemT.*2000-01-01"):
+        schemas["2000-01-01"][TypedExtrasPage[int, _TypedExtrasItemT]]
 
 
 def test__generate_versioned_models__typed_extras_with_typevar_of_non_generic_model__should_validate_old_model(

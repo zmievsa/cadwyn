@@ -99,6 +99,7 @@ if TYPE_CHECKING:
         SchemaGenerator,
     )
     from ._references import (
+        _BareGenericCopier,
         _CycleCopier,
     )
 
@@ -109,7 +110,7 @@ _Call = TypeVar("_Call", bound=Callable[..., Any])
 class _AnnotationTransformer:
     def __init__(
         self,
-        generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier]",
+        generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier, _BareGenericCopier]",
         *,
         record_only: bool = False,
         expands_type_aliases: bool = False,
@@ -150,6 +151,8 @@ class _AnnotationTransformer:
         self._records_routes = False
         # How many positions that need the classes themselves we are in right now (see is_in_hard_position)
         self._hard_position_depth = 0
+        # The copies of the parameters of the model that a _BareGenericCopier copies, by the parameters
+        self.versioned_parameters: dict[Any, Any] = {}
         self.change_versions_of_a_non_container_annotation = self._change_version_of_a_non_container_annotation
         # This cache cannot be used until something is done regarding https://github.com/fastapi/fastapi/pull/14320
         # This cache is not here for speeding things up. It's for preventing the creation of copies of the same object
@@ -468,13 +471,16 @@ class _AnnotationTransformer:
         if collector.is_complete and not generator.validates_models_that_differ_from_head(
             collector.models | collector.arg_models
         ):
-            if all(resolved is value for resolved, value in zip(resolved_values, values, strict=True)):
-                return param
-            versioned_values = resolved_values
-        else:
-            versioned_values = self._change_version_of_typevar_values(resolved_values)
-            for value in versioned_values:
-                self._check_typevar_value(generator, param, value)
+            return param
+        # One copy per version, so that e.g. `Page[T]` within `Outer[T]` stays the copy of the bare `Page`
+        key = (param, resolved_values)
+        try:
+            return generator.typevar_copies[key]
+        except (KeyError, TypeError):  # Unhashable values get a copy each time
+            pass
+        versioned_values = self._change_version_of_typevar_values(resolved_values)
+        for value in versioned_values:
+            self._check_typevar_value(generator, param, value)
         # Runtime reconstruction uses the third-party factory dynamically; static TypeVar syntax
         # cannot express bounds, constraints, and defaults discovered at runtime.
         factory = sys.modules["typing_extensions"].TypeVar
@@ -488,6 +494,8 @@ class _AnnotationTransformer:
         else:
             copied = factory(param.__name__, **{kind: versioned_values[0]}, **variance)
         copied.__module__ = param.__module__
+        with contextlib.suppress(TypeError):
+            generator.typevar_copies[key] = copied
         return copied
 
     def _change_version_of_typevar_values(self, values: tuple[Any, ...]) -> tuple[Any, ...]:

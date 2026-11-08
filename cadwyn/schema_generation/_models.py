@@ -49,6 +49,7 @@ from cadwyn.structure.versions import (
 
 from ._annotation_utils import (
     _NO_REDEFINED_FIELDS,
+    _eval_forward_refs,
     _get_annotation_with_metadata,
     _get_model_annotations,
     _get_model_field_names,
@@ -87,6 +88,7 @@ if TYPE_CHECKING:
         SchemaGenerator,
     )
     from ._references import (
+        _BareGenericCopier,
         _CycleCopier,
     )
 
@@ -128,7 +130,7 @@ def _get_head_model_references(
 
 
 def _change_version_of_model_references(
-    generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier]",
+    generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier, _BareGenericCopier]",
     model: type[BaseModel],
     field_attributes: dict[str, dict[str, Any]],
     annotations: dict[str, Any],
@@ -154,9 +156,16 @@ def _change_version_of_model_references(
         if generator.schema_generator is None:
             _change_version_of_model_bases(generator, model, orig_bases)
         # The TypeVars that are not the model's parameters validate values as their bounds, constraints, or defaults
+        if transformer.versioned_parameters:
+            # Quoted references such as "Node[T]" must not reach pydantic, which would parametrize the copy with
+            # the original parameters. In the model's namespace, they are the model itself (see _BareGenericCopier)
+            annotations = {name: _eval_forward_refs(annotation, model) for name, annotation in annotations.items()}
         with transformer.typevar_namespace(model):
             transformer.typevar_copies.update(
-                {param: param for param in model.__pydantic_generic_metadata__["parameters"]}
+                {
+                    param: transformer.versioned_parameters.get(param, param)
+                    for param in model.__pydantic_generic_metadata__["parameters"]
+                }
             )
             versioned_annotations = transformer.change_version_of_annotation(annotations)
         with transformer.hard_position():
@@ -167,7 +176,7 @@ def _change_version_of_model_references(
 
 
 def _change_version_of_model_bases(
-    generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier]",
+    generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier, _BareGenericCopier]",
     model: type[BaseModel],
     orig_bases: tuple[Any, ...],
 ) -> tuple[type, ...]:
@@ -362,7 +371,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
     def _change_version_of_references(
         self,
-        generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier]",
+        generator: "Union[SchemaGenerator, _ReferencedModelCollector, _CycleCopier, _BareGenericCopier]",
         schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
     ) -> tuple[dict[str, dict[str, Any]], tuple[Any, ...], dict[str, Any], PydanticGenericMetadata]:
         return _change_version_of_model_references(
@@ -404,7 +413,9 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                     )
         return field_attributes, annotations
 
-    def generate_model_copy(self, generator: "Union[SchemaGenerator, _CycleCopier]") -> type[_T_PYDANTIC_MODEL]:
+    def generate_model_copy(
+        self, generator: "Union[SchemaGenerator, _CycleCopier, _BareGenericCopier]"
+    ) -> type[_T_PYDANTIC_MODEL]:
         per_field_validators = {}
         root_validators = {}
         for name, validator in self.validators.items():
@@ -454,6 +465,16 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         typed_model_copy = cast("type[_T_PYDANTIC_MODEL]", model_copy)
+        # Pydantic took the namespace of this function. Quoted names that are still unresolved, such as the bound
+        # of a TypeVar that names a class defined in a function, resolve in the model's own namespace instead
+        typed_model_copy.__pydantic_parent_namespace__ = self.cls.__pydantic_parent_namespace__
+        # The copies of reference cycles get rebuilt once all of them exist (see _CycleCopier)
+        if (
+            not typed_model_copy.__pydantic_complete__
+            and not typed_model_copy.model_config.get("defer_build")
+            and generator.schema_generator is generator
+        ):
+            typed_model_copy.model_rebuild(raise_errors=False, _types_namespace={})
         _set_keys_renamed_by_alias(typed_model_copy, field_attributes, keys_renamed_by_alias)
         return typed_model_copy
 
