@@ -1512,6 +1512,7 @@ class _AnnotationTransformer:
         """callable_kind tells how FastAPI uses the annotation if it is a callable"""
         from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
 
+        self._preserve_enums_in_schema_hooks((annotation,))
         if self._expands_type_aliases and self._record_expanded_type_alias(annotation):
             return annotation
         if isinstance(annotation, GenericAliasUnionArgs):
@@ -1891,6 +1892,8 @@ class _AnnotationTransformer:
 
         origin = get_origin(annotation)
         args = get_args(annotation)
+        # Metadata hooks can inspect the schemas of their arguments, so mark them before copying those arguments.
+        self._preserve_enums_in_schema_hooks((origin, *args[1:]) if origin is Annotated else (origin,))
         if origin in (typing.Union, types.UnionType) and len([arg for arg in args if arg is not type(None)]) > 1:
             self._preserve_enum_union_validation(args)
         if origin is ClassVar or origin is collections.abc.Callable:
@@ -1954,6 +1957,21 @@ class _AnnotationTransformer:
             generator = generator.schema_generator
         if isinstance(generator, SchemaGenerator):
             generator._preserve_enum_validation(annotations)
+
+    def _preserve_enums_in_schema_hooks(self, annotations: tuple[Any, ...]) -> None:
+        if self.record_only:
+            return
+        generator = self.generator
+        if isinstance(generator, _CycleCopier):
+            generator = generator.schema_generator
+        if (
+            isinstance(generator, SchemaGenerator)
+            and generator.model_bundle.enums
+            and any(_has_custom_core_schema_hook(annotation) for annotation in annotations)
+        ):
+            # A hook can request any enum, including one absent from its annotation. Enum copies are shared
+            # throughout the version, so retain legacy validation instead of guessing what the hook produces.
+            generator._enums_with_legacy_validation.update(generator.model_bundle.enums)
 
     def _has_dependency_that_differs_from_head(self, annotated_args: tuple[Any, ...]) -> bool:
         generator = self.generator
@@ -5387,6 +5405,33 @@ def _wrap_enum_nonmember(enum_cls: type[Enum], name: str, value: Any) -> Any:
     if _is_enum_dunder(name) or _is_enum_sunder(name) or _is_enum_private(enum_cls.__name__, name):
         return value
     return enum.nonmember(value)
+
+
+def _has_custom_core_schema_hook(annotation: Any) -> bool:
+    # Static lookup avoids executing a provider merely to discover whether it has a schema hook. Inspect the head
+    # of generated classes so Cadwyn's own enum hook never makes a normal enum opaque.
+    annotation = inspect.getattr_static(annotation, "__cadwyn_original_model__", annotation)
+    if isinstance(annotation, pydantic.GetPydanticSchema):
+        return True
+    hook = inspect.getattr_static(annotation, "__get_pydantic_core_schema__", None)
+    if hook is vars(BaseModel)["__get_pydantic_core_schema__"]:
+        # Decorator validators also wrap the enum schema, although the model inherits BaseModel's schema hook.
+        decorators = inspect.getattr_static(annotation, "__pydantic_decorators__")
+        return bool(
+            decorators.validators
+            or decorators.field_validators
+            or decorators.root_validators
+            or decorators.model_validators
+        )
+    if hook is not None:
+        return True
+    # A dynamic provider may expose the hook through __getattr__. EnumType's own lookup only finds enum members.
+    dynamic_lookup = inspect.getattr_static(annotation, "__getattr__", None)
+    return (
+        dynamic_lookup is not None
+        and dynamic_lookup is not vars(enum.EnumType).get("__getattr__")
+        and type(annotation).__module__ not in ("typing", "typing_extensions")
+    )
 
 
 def _take_head_members_by_value(

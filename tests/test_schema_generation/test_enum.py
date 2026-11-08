@@ -10,13 +10,17 @@ from uuid import UUID
 
 import pytest
 from pydantic import (
+    AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     GetCoreSchemaHandler,
     GetJsonSchemaHandler,
+    PlainValidator,
     TypeAdapter,
     ValidationError,
+    WrapValidator,
 )
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
@@ -1213,6 +1217,36 @@ def test__enum_didnt_have__deferred_union_schema__should_preserve_values_after_r
         copied.model_rebuild(_types_namespace={"UnknownAtGeneration": Any})
         member = EnumWithTwoMembers.foo
         assert copied.model_validate({"value": member}, strict=True).value is member
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        AfterValidator(lambda value: value),
+        BeforeValidator(lambda value: value),
+        PlainValidator(lambda value: value),
+        WrapValidator(lambda value, _: value),
+    ],
+)
+def test__enum_didnt_have__validator_metadata__should_keep_shared_enum_validation_legacy(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    metadata: Any,
+):
+    annotation: Any = Annotated[EnumWithTwoMembers, metadata]
+
+    class Payload(BaseModel):
+        opaque: annotation
+        value: EnumWithTwoMembers
+
+    models = create_runtime_schemas(version_change(enum(EnumWithTwoMembers).didnt_have("bar")))
+    for version in ("2000-01-01", "2001-01-01"):
+        copied = models[version][Payload]
+        member = EnumWithTwoMembers.foo
+        data = {"opaque": member, "value": member}
+        assert copied.model_validate(data).value is models[version][EnumWithTwoMembers].foo
+        with pytest.raises(ValidationError) as exc_info:
+            copied.model_validate(data, strict=True)
+        assert any(error["loc"] == ("value",) for error in exc_info.value.errors())
 
 
 def test__enum_didnt_have__union_metadata_with_unresolved_annotation__should_preserve_its_result(

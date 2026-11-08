@@ -17,7 +17,7 @@ import typing
 from collections import OrderedDict, deque
 from collections.abc import Callable, Coroutine, Generator, Iterable, Iterator, Mapping, MutableSequence, Sequence
 from collections.abc import Set as AbstractSet
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -14752,6 +14752,121 @@ def test__response_body_migration__with_plain_enum_and_union_fallback__should_ke
             "content-type": "application/json",
             "x-api-version": version,
         }
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test__response_body_migration__with_enum_wrap_validator__should_keep_its_error_fallback(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    strict: bool,
+):
+    class Payload(BaseModel):
+        model_config = ConfigDict(strict=strict)
+        value: PlainEnum
+
+        @field_validator("value", mode="wrap")
+        @classmethod
+        def validate_value(cls, value: Any, handler: Callable[[Any], Any]) -> Any:
+            try:
+                return handler(value)
+            except ValidationError:
+                return "fallback"
+
+    @router.get(test_path, response_model=Payload)
+    async def endpoint():
+        return {"value": PlainEnum.a}
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    expected = b'{"value":"fallback"}' if strict else b'{"value":"a"}'
+    for version, version_client in clients.items():
+        warning_context = (
+            pytest.warns(UserWarning, match="PydanticSerializationUnexpectedValue") if strict else nullcontext()
+        )
+        with warning_context:
+            response = version_client.get(test_path)
+        assert response.status_code == 200
+        assert response.content == expected
+        assert dict(response.headers) == {
+            "content-length": str(len(expected)),
+            "content-type": "application/json",
+            "x-api-version": version,
+        }
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("hook_kind", ["get_pydantic_schema", "metadata", "dynamic_metadata", "wrapper"])
+def test__response_body_migration__with_enum_union_in_core_schema_hook__should_keep_the_fallback(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    strict: bool,
+    hook_kind: str,
+):
+    def with_fallback(schema: core_schema.CoreSchema) -> core_schema.CoreSchema:
+        return core_schema.union_schema(
+            [
+                schema,
+                core_schema.any_schema(
+                    serialization=core_schema.plain_serializer_function_ser_schema(lambda _: "fallback")
+                ),
+            ]
+        )
+
+    def schema_hook(source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        return with_fallback(handler(source))
+
+    class Metadata:
+        def __get_pydantic_core_schema__(self, source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+            return schema_hook(source, handler)
+
+    class DynamicMetadata:
+        def __getattr__(self, name: str):
+            if name == "__get_pydantic_core_schema__":
+                return schema_hook
+            raise AttributeError(name)
+
+    item = typing.TypeVar("item")
+
+    class Wrapper(typing.Generic[item]):
+        @classmethod
+        def __get_pydantic_core_schema__(cls, source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+            return with_fallback(handler.generate_schema(typing.get_args(source)[0]))
+
+    annotation: Any = {
+        "get_pydantic_schema": Annotated[PlainEnum, GetPydanticSchema(schema_hook)],
+        "metadata": Annotated[PlainEnum, Metadata()],
+        "dynamic_metadata": Annotated[PlainEnum, DynamicMetadata()],
+        "wrapper": Wrapper[PlainEnum],
+    }[hook_kind]
+
+    class Payload(BaseModel):
+        model_config = ConfigDict(strict=strict)
+        value: annotation
+
+    @router.get(test_path, response_model=Payload)
+    async def endpoint():
+        return {"value": PlainEnum.a}
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    for version, version_client in clients.items():
+        response = version_client.get(test_path)
+        assert response.status_code == 200
+        assert response.content == b'{"value":"fallback"}'
+        assert dict(response.headers) == {
+            "content-length": "20",
+            "content-type": "application/json",
+            "x-api-version": version,
+        }
+        expected = Payload.model_json_schema(mode="serialization", ref_template="#/components/schemas/{model}")
+        definitions = expected.pop("$defs")
+        definitions["Payload"] = expected
+        if version == "2000-01-01":
+            definitions["PlainEnum"]["enum"].remove("b")
+        api = version_client.get("/openapi.json", params={"version": version})
+        assert api.status_code == 200
+        schemas = api.json()["components"]["schemas"]
+        assert {name: schemas[name] for name in definitions} == definitions
 
 
 @pytest.mark.parametrize("strict", [False, True])
