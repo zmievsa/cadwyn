@@ -169,14 +169,9 @@ def _change_version_of_model_bases(
     original_bases = model.__dict__.get("__orig_bases__", model.__bases__)
     if "__orig_bases__" not in model.__dict__:
         return orig_bases
-    # Typing aliases such as Generic[T] or Mixin[int] resolve the same way every time, so only the other objects
-    # with __mro_entries__ are the user's hooks
-    has_user_hooks = any(
-        not isinstance(base, type)
-        and get_origin(base) is None
-        and inspect.getattr_static(base, "__mro_entries__", None) is not None
-        for base in original_bases
-    )
+    # Python has replaced every base that isn't a class through its __mro_entries__. Typing aliases such as
+    # Generic[T] or Mixin[int] resolve the same way every time, so only the other objects are the user's hooks.
+    has_user_hooks = any(not isinstance(base, type) and get_origin(base) is None for base in original_bases)
     if not has_user_hooks:
         return orig_bases if generator.schema_generator is None else types.resolve_bases(orig_bases)
     # Python has already run the user's hooks and put their results into __bases__, so we never run them again

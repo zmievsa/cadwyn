@@ -3915,6 +3915,27 @@ def test__schema_field_had_name__parent_renamed_field_that_child_of_mro_entries_
     assert list(schemas["2001-01-01"][ChildOfAliasOfParentWithIntFooThatGetsRenamed].model_fields) == ["foo"]
 
 
+def test__schema_field_had_name__child_of_mro_entries_base_from_getattr__should_rename_inherited_field(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class AliasWithHookFromGetattr:
+        def __getattr__(self, name: str) -> Any:
+            if name != "__mro_entries__":
+                raise AttributeError(name)
+            return lambda _bases: (ParentWithIntFooThatGetsRenamed,)
+
+    class Child(AliasWithHookFromGetattr()):  # ty: ignore[invalid-base]
+        pass
+
+    schemas = create_runtime_schemas(
+        version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    old_child = schemas["2000-01-01"][Child]
+    assert old_child.__bases__ == (schemas["2000-01-01"][ParentWithIntFooThatGetsRenamed],)
+    assert old_child.model_validate({"old_foo": 42}).model_dump() == {"old_foo": 42}
+
+
 class AliasOfBases:
     def __init__(self, *bases: type) -> None:
         self.bases = bases
