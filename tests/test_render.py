@@ -914,3 +914,48 @@ def test__render_model__schema_config_patch__should_render_older_config():
     generated = generate_versioned_models(versions)["2000-01-01"][RenderedConfig]
     assert rendered.model_config == generated.model_config
     assert rendered.model_json_schema() == generated.model_json_schema()
+
+
+def add_legacy_config_example(json_schema: dict[str, Any]) -> None:
+    json_schema["x-legacy"] = True
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ConfigDict(json_schema_extra=lambda s: s.update({"x-legacy": True})),
+        {"json_schema_extra": lambda s: s.update({"x-legacy": True})},
+        ConfigDict(json_schema_extra=add_legacy_config_example),
+    ],
+)
+def test__render_model__config_callable__should_preserve_json_schema(extra: ConfigDict):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=extra))),
+        Version("2000-01-01"),
+    )
+    namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field, **globals()}
+    exec(render_model(RenderedConfig, versions, "2000-01-01"), namespace)
+    generated = generate_versioned_models(versions)["2000-01-01"][RenderedConfig]
+    assert namespace["RenderedConfig"].model_json_schema() == generated.model_json_schema()
+    assert namespace["RenderedConfig"].model_json_schema()["x-legacy"] is True
+
+
+def test__render_model__config_lambda_without_source__should_name_model_and_key():
+    extra = eval('lambda s: s.update({"x-legacy": True})')
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=ConfigDict(json_schema_extra=extra)))),
+        Version("2000-01-01"),
+    )
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra"):
+        render_model(RenderedConfig, versions, "2000-01-01")
+
+
+def test__render_model__config_lambda_with_closure__should_name_model_and_key():
+    legacy = {"x-legacy": True}
+    extra = ConfigDict(json_schema_extra=lambda s: s.update(legacy))
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=extra))),
+        Version("2000-01-01"),
+    )
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra.*captured variables"):
+        render_model(RenderedConfig, versions, "2000-01-01")

@@ -165,12 +165,17 @@ def _render_pydantic_model(
     config = wrapper.other_attributes["model_config"]
     if config_changes := wrapper.get_config_changes(generator.model_bundle.schemas):
         config = config | config_changes
+        config_values = []
+        for key, value in config.items():
+            try:
+                expression = _field_attribute_repr(value, vars(sys.modules[wrapper.cls.__module__]), lambda_keyword=key)
+                config_values.append(ast.parse(expression, mode="eval").body)
+            except Exception as error:  # User callables and reprs can fail in arbitrary ways.
+                raise CadwynRenderError(f"Cannot render config {wrapper.name}.{key}: {error}") from error
         config_definitions = [
             ast.Assign(
                 targets=[ast.Name("model_config", ctx=ast.Store())],
-                value=ast.parse(
-                    _field_attribute_repr(config, vars(sys.modules[wrapper.cls.__module__])), mode="eval"
-                ).body,
+                value=ast.Dict(keys=[ast.Constant(key) for key in config], values=config_values),
                 lineno=0,
             )
         ]
@@ -238,7 +243,7 @@ def _generate_field_ast(field_attributes: dict[str, Any], namespace: dict[str, A
     )
 
 
-def _field_attribute_repr(value: Any, namespace: dict[str, Any]) -> str:
-    context = _ReprContext()
+def _field_attribute_repr(value: Any, namespace: dict[str, Any], *, lambda_keyword: str = "default_factory") -> str:
+    context = _ReprContext(lambda_keyword=lambda_keyword)
     context.namespace.update(namespace)
     return "type(None)" if value is type(None) else get_fancy_repr(value, context)

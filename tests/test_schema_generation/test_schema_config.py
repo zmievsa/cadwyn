@@ -183,9 +183,11 @@ def test__schema_had_config__leaf_subclass__should_preserve_parent_and_sibling(
 
 
 @pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("in_head", [False, True])
 def test__schema_had_config__parent_with_route_subclass__should_fail_startup(
     create_versioned_clients: CreateVersionedClients,
     nested: bool,
+    in_head: bool,
 ):
     class Envelope(BaseModel):
         child: Child
@@ -196,9 +198,11 @@ def test__schema_had_config__parent_with_route_subclass__should_fail_startup(
     def endpoint() -> Any:
         raise AssertionError("Startup must reject the config instruction before serving requests")
 
+    change = version_change(schema(ConfiguredModel).had(config=ConfigDict(extra="forbid")))
     with pytest.raises(InvalidGenerationInstructionError, match=r"ConfiguredModel.*Child.*leaf"):
         create_versioned_clients(
-            version_change(schema(ConfiguredModel).had(config=ConfigDict(extra="forbid"))),
+            *(() if in_head else (change,)),
+            head_version_changes=(change,) if in_head else (),
             router=router,
         )
 
@@ -444,3 +448,33 @@ def test__schema_had_config__parametrization_restores_newer_generic_value__shoul
         "item": 1,
         "unknown": 2,
     }
+
+
+def test__schema_had_config__head_leaf__should_apply_to_every_served_version(
+    create_versioned_clients: CreateVersionedClients,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/test")
+    def echo(body: ConfiguredModel) -> ConfiguredModel:
+        return body
+
+    clients = create_versioned_clients(
+        version_change(),
+        head_version_changes=(version_change(schema(ConfiguredModel).had(config=ConfigDict(extra="forbid"))),),
+        router=router,
+    )
+    for client in clients.values():
+        response = client.post("/test", json={"value": "x", "unknown": 1})
+        assert response.status_code == 422, response.json()
+        assert response.json()["detail"][0]["type"] == "extra_forbidden"
+        response = client.post("/test", json={"value": "x"})
+        assert response.status_code == 200, response.json()
+        assert response.json() == {"value": "x"}
+
+
+def test__schema_had_config__head_noop__should_reject_at_startup(create_versioned_clients: CreateVersionedClients):
+    with pytest.raises(InvalidGenerationInstructionError, match=r"ConfiguredModel.*extra.*already"):
+        create_versioned_clients(
+            head_version_changes=(version_change(schema(ConfiguredModel).had(config=ConfigDict(extra="allow"))),),
+        )

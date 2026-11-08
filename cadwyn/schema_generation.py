@@ -4170,7 +4170,8 @@ def _create_model_bundle(versions: "VersionBundle"):
         schemas={schema: _wrap_pydantic_model(schema) for schema in versions.versioned_schemas.values()},
         models_with_config_instructions=frozenset(
             instruction.schema
-            for change in versions._all_changes
+            for version in versions._all_versions
+            for change in version.changes
             for instruction in change.alter_schema_instructions
             if isinstance(instruction, SchemaHadInstruction) and instruction.config
         ),
