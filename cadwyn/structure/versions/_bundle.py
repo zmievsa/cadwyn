@@ -37,7 +37,13 @@ from cadwyn.structure.data import (
 from ._background import _add_keyword_only_parameter, _DroppedBackgroundTasksWarning
 from ._changes import HeadVersion, IdentifierPythonPath, Version, VersionChange, get_cls_pythonpath
 from ._common import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME
-from ._enums import _can_lazy_items_be_plain_enum_copies, _replace_with_head_enum_members
+from ._dependencies import _has_several_body_readers
+from ._enums import (
+    _can_body_have_lazy_iterators,
+    _can_lazy_items_be_plain_enum_copies,
+    _get_lazy_item_walker,
+    _to_head_values,
+)
 from ._forms import (
     _FormModelOmission,  # noqa: TC001 # Needed by runtime annotation introspection.
 )
@@ -164,10 +170,28 @@ class VersionBundle:
         """
         return any(not is_enum_looked_up_by_value(enum) for enum in self.versioned_enums.values())
 
-    def _replace_with_head_enum_members(self, body: Any, route: APIRoute) -> Any:
-        if not self._has_versioned_plain_enums:
+    def _to_head_values(self, body: Any, route: APIRoute, head_dependant: Dependant, head_route: APIRoute) -> Any:
+        replace_enum_members = self._has_versioned_plain_enums
+        # A single param can't share the iterators with anyone
+        replay_lazy_iterators = _can_body_have_lazy_iterators(route, in_lazy_items=False) and _has_several_body_readers(
+            head_dependant, head_route
+        )
+        if not replace_enum_members and not replay_lazy_iterators:
             return body
-        return _replace_with_head_enum_members(body, wrap_lazy_iterators=_can_lazy_items_be_plain_enum_copies(route))
+        replace_lazy_enum_members = replace_enum_members and _can_lazy_items_be_plain_enum_copies(route)
+        walk_lazy_items = replace_lazy_enum_members or (
+            replay_lazy_iterators and _can_body_have_lazy_iterators(route, in_lazy_items=True)
+        )
+        return _to_head_values(
+            body,
+            replace_enum_members=replace_enum_members,
+            replay_lazy_iterators=replay_lazy_iterators,
+            walk_lazy_item=_get_lazy_item_walker(
+                replace_enum_members=replace_lazy_enum_members, replay_lazy_iterators=replay_lazy_iterators
+            )
+            if walk_lazy_items
+            else None,
+        )
 
     def _get_closest_lesser_version(self, version: VersionType):
         for defined_version in self.version_values:

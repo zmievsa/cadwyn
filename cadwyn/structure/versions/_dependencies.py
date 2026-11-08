@@ -85,3 +85,24 @@ def _has_other_body_readers(head_dependant: Dependant, head_route: APIRoute) -> 
         if dependant is not head_dependant
         for field in dependant.body_params
     )
+
+
+def _has_several_body_readers(head_dependant: Dependant, head_route: APIRoute) -> bool:
+    """Whether more than one param in the head's dependency tree reads the body.
+
+    FastAPI builds the dependants of the overrides on each request, which runs code of users, so in apps with
+    overrides we take it that several params read it. Without overrides, we check the dependants once per route.
+    """
+    if _get_dependency_overrides(head_route):
+        return True
+    cached = _HAS_SEVERAL_BODY_READERS.get(id(head_dependant))
+    if cached is not None and cached[0] is head_dependant:
+        return cached[1]
+    readers = sum(
+        len(dependant.body_params) for dependant in _iter_dependants_that_fastapi_solves(head_dependant, head_route)
+    )
+    _HAS_SEVERAL_BODY_READERS[id(head_dependant)] = head_dependant, readers > 1
+    return readers > 1
+
+
+_HAS_SEVERAL_BODY_READERS: dict[int, tuple[Dependant, bool]] = {}
