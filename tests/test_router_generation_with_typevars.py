@@ -89,6 +89,49 @@ class ReentrantPage(BaseModel, Generic[_ReentrantT]):
     name: str
 
 
+_SelfReferringT = TypeVar("_SelfReferringT", bound="MiddleSelfReferringNode")
+
+
+class MiddleSelfReferringNode(BaseModel, Generic[_SelfReferringT]):
+    child: Optional[_SelfReferringT] = None
+    name: str
+
+
+# Sorted by name, one of them comes before the node and the other after it. Their fields use the node first and last
+class AOuterWithNodeFirst(BaseModel, Generic[_SelfReferringT]):
+    node: MiddleSelfReferringNode[_SelfReferringT]
+    item: _SelfReferringT
+
+
+class ZOuterWithItemFirst(BaseModel, Generic[_SelfReferringT]):
+    item: _SelfReferringT
+    node: MiddleSelfReferringNode[_SelfReferringT]
+
+
+_FactoryBoundT = TypeVar("_FactoryBoundT", bound="FirstFactoryModel")  # ty: ignore[invalid-type-form] # A class.
+
+
+def _make_factory_model() -> Any:
+    class Model(BaseModel, Generic[_FactoryBoundT]):
+        model_config = ConfigDict(defer_build=True)
+        child: Optional[_FactoryBoundT] = None
+        name: str
+
+    return Model
+
+
+# Two models with the same module and qualname
+FirstFactoryModel = _make_factory_model()
+SecondFactoryModel = _make_factory_model()
+FirstFactoryModel.model_rebuild()
+SecondFactoryModel.model_rebuild()
+
+
+class OuterOfFactoryModels(BaseModel, Generic[_FactoryBoundT]):
+    first: FirstFactoryModel[_FactoryBoundT]  # ty: ignore[invalid-type-form] # A class from a factory.
+    second: SecondFactoryModel[_FactoryBoundT]  # ty: ignore[invalid-type-form] # A class from a factory.
+
+
 class ShapeItem(BaseModel):
     name: str
 
@@ -1180,6 +1223,50 @@ def test__generate_versioned_models__bare_generic_sharing_quoted_parameter_acros
     body: dict[str, Any] = {"page": {"item": {"b": 1 if changed_item else "B"}}}
     if envelope is typevar_namespace_first.EnvelopeWithItem:
         body["item"] = {"a": "A"}
+    assert old.model_validate(body).model_dump() == body
+
+
+@pytest.mark.parametrize("outer", [AOuterWithNodeFirst, ZOuterWithItemFirst])
+def test__generate_versioned_models__bare_generic_whose_nested_model_is_its_parameters_bound__should_validate_old_model(
+    outer: type[BaseModel], create_runtime_schemas: CreateRuntimeSchemas
+):
+    schemas = create_runtime_schemas(version_change(schema(MiddleSelfReferringNode).field("name").had(type=int)))
+    old = schemas["2000-01-01"][outer]
+    body = {"node": {"name": 1}, "item": {"name": 2}}
+    assert old.model_validate(body).model_dump(exclude_unset=True) == body
+    with pytest.raises(ValidationError):
+        old.model_validate({"node": {"name": 1}, "item": {"name": "latest"}})
+
+
+def test__generate_versioned_models__bare_generic_whose_nested_models_share_a_qualname__should_validate_old_model(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(version_change(schema(FirstFactoryModel).field("name").had(type=int)))
+    old = schemas["2000-01-01"][OuterOfFactoryModels]
+    body = {"first": {"name": 1}, "second": {"name": "second", "child": {"name": 2}}}
+    assert old.model_validate(body).model_dump(exclude_unset=True) == body
+    with pytest.raises(ValidationError):
+        old.model_validate({"first": {"name": 1}, "second": {"name": "second", "child": {"name": "latest"}}})
+
+
+def test__generate_versioned_models__bare_generic_whose_nested_model_has_no_module__should_validate_old_model(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Item(BaseModel):
+        name: str
+
+    ItemT = TypeVar("ItemT", bound=Item)
+
+    class Page(BaseModel, Generic[ItemT]):
+        item: ItemT
+
+    class Envelope(BaseModel, Generic[ItemT]):
+        page: Page[ItemT]
+        item: ItemT
+
+    Page.__module__ = None  # ty: ignore[invalid-assignment] # Some generated classes have no module.
+    old = create_runtime_schemas(version_change(schema(Item).field("name").had(type=int)))["2000-01-01"][Envelope]
+    body = {"page": {"item": {"name": 1}}, "item": {"name": 2}}
     assert old.model_validate(body).model_dump() == body
 
 

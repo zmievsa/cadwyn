@@ -121,6 +121,8 @@ class _AnnotationTransformer:
         self.typevar_copies: dict[typing.TypeVar, typing.TypeVar] = {}
         self._typevars_being_copied: set[typing.TypeVar] = set()
         self._typevar_owners: list[Any] = []
+        # The models whose own fields use the TypeVars of each namespace (see typevar_namespace)
+        self._typevar_users: list[list[Any]] = []
         self._model_owners: list[type[BaseModel]] = []
         self._typevar_scope_model_depth = 0
         self._template_position_depth = 0
@@ -400,15 +402,23 @@ class _AnnotationTransformer:
             self._template_position_depth -= 1
 
     @contextlib.contextmanager
-    def typevar_namespace(self, owner: Any) -> Generator[None, None, None]:
+    def typevar_namespace(self, owner: Any, *, users: Union[list[Any], None] = None) -> Generator[None, None, None]:
+        """Version the TypeVars with their quoted fallbacks resolved in the namespace of the owner.
+
+        The users are the models whose own fields use the TypeVars, by default the owner itself. They all resolve
+        the fallbacks to the same classes (see SchemaGenerator._get_typevar_owner).
+        """
+        users = [owner] if users is None else users
         if (
             self._typevar_owners
             and self._typevar_owners[-1] is owner
+            and self._typevar_users[-1] == users
             and self._typevar_scope_model_depth == len(self._model_owners)
         ):
             yield
             return
         self._typevar_owners.append(owner)
+        self._typevar_users.append(users)
         saved_depth = self._typevar_scope_model_depth
         self._typevar_scope_model_depth = len(self._model_owners)
         saved_copies, saved_active = self.typevar_copies, self._typevars_being_copied
@@ -419,6 +429,7 @@ class _AnnotationTransformer:
             self.typevar_copies, self._typevars_being_copied = saved_copies, saved_active
             self._typevar_scope_model_depth = saved_depth
             self._typevar_owners.pop()
+            self._typevar_users.pop()
 
     def _change_version_of_typevar(self, param: typing.TypeVar) -> typing.TypeVar:
         if param in self.typevar_copies:
@@ -443,8 +454,8 @@ class _AnnotationTransformer:
     def _copy_typevar(self, param: typing.TypeVar) -> typing.TypeVar:
         """Return the TypeVar whose bound, constraints, or default validate this version's models.
 
-        The TypeVar stays the same when they refer back to the model that uses it, as pydantic resolves such
-        quoted references to the copy of the model, like in its other fields. When they validate the same models
+        The TypeVar stays the same when they refer back to every model whose fields use it, as pydantic resolves
+        such quoted references to the copy of the model, like in its other fields. When they validate the same models
         as in head in this version, the TypeVar stays the same too, so that the models that use it keep their
         names and behavior, unless they have forward refs that the copies of the models could not resolve.
         """
@@ -452,18 +463,22 @@ class _AnnotationTransformer:
         resolved_values = tuple(self._resolve_typevar_value(param, value) for value in values)
         collector = _ReferencedModelCollector()
         collector.annotation_transformer._typevar_owners = self._typevar_owners.copy()
+        collector.annotation_transformer._typevar_users = self._typevar_users.copy()
         # Stops at the models and TypeVars that lead back to themselves, as in this transformer
         collector.annotation_transformer._ids_being_recorded = self._ids_being_recorded
         collector.annotation_transformer._typevars_being_copied = self._typevars_being_copied
         collector.annotation_transformer._change_version_of_typevar_values(resolved_values)
-        owner = self._typevar_owners[-1]
+        # Pydantic resolves a quoted reference to a model to its copy only within that copy itself, so the
+        # TypeVar can stay the same only if every model whose fields use it is the model that it refers to
+        users = {_unwrap_model(user) for user in self._typevar_users[-1]}
         generator = self.generator.schema_generator
-        if lenient_issubclass(owner, BaseModel) and _unwrap_model(owner) in collector.models:
-            other_models = (collector.models | collector.arg_models) - {_unwrap_model(owner)}
+        if all(lenient_issubclass(user, BaseModel) for user in users) and users <= collector.models:
+            other_models = (collector.models | collector.arg_models) - users
             if generator is not None and generator.validates_models_that_differ_from_head(other_models):
                 raise SchemaGenerationError(
                     f"Cadwyn cannot version type parameter {param.__name__}: its bound, constraints, or default "
-                    f"refer back to {owner.__qualname__} and also to models that change in version "
+                    f"refer back to {', '.join(user.__qualname__ for user in self._typevar_users[-1])} and also "
+                    "to models that change in version "
                     f"{generator._version}. Use explicit type arguments instead."
                 )
             return param

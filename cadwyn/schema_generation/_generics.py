@@ -41,7 +41,7 @@ def _get_typevar_uses(
     ignored: frozenset[Any] = frozenset(),
     *,
     extra_uses: Union[set[typing.TypeVar], None] = None,
-) -> dict[typing.TypeVar, set[type[BaseModel]]]:
+) -> dict[typing.TypeVar, dict[type[BaseModel], None]]:
     """Find the TypeVars that validate values as fallbacks in the annotation, with the models whose fields use them.
 
     `ignored` holds the parameters of a type alias that its args replace. The parameters of nested aliases are
@@ -50,7 +50,8 @@ def _get_typevar_uses(
     """
     from typing_inspection.typing_objects import is_typealiastype
 
-    found: dict[typing.TypeVar, set[type[BaseModel]]] = {}
+    # The models that use each TypeVar, in the order of their fields
+    found: dict[typing.TypeVar, dict[type[BaseModel], None]] = {}
     # The annotations with their models and ignored parameters, and whether they type extra fields
     pending: list[tuple[Any, Any, frozenset[Any], bool]] = [(annotation, None, ignored, False)]
     # Keeps the annotations alive so that their ids stay unique
@@ -64,15 +65,15 @@ def _get_typevar_uses(
         visited[key] = annotation
         if isinstance(annotation, typing.TypeVar):
             if annotation not in ignored:
-                found.setdefault(annotation, set()).add(owner)
+                found.setdefault(annotation, {})[owner] = None
                 if is_extra and extra_uses is not None:
                     extra_uses.add(annotation)
         elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            pending.extend(
-                (field.annotation, annotation, frozenset(), False) for field in annotation.model_fields.values()
-            )
+            nested = [(field.annotation, annotation, frozenset(), False) for field in annotation.model_fields.values()]
             if annotation.model_config.get("extra") == "allow":
-                pending.append((_get_extra_fields_annotation(annotation), annotation, frozenset(), True))
+                nested.append((_get_extra_fields_annotation(annotation), annotation, frozenset(), True))
+            # Reversed so that the models come out in the order of the fields
+            pending.extend(reversed(nested))
         else:
             origin = get_origin(annotation)
             args = get_args(annotation)
@@ -87,10 +88,14 @@ def _get_typevar_uses(
                     pending.append((_get_type_alias_value(alias), owner, alias_ignored, is_extra))
             # The args of a type alias replace its parameters in its value
             pending.extend(
-                (arg, owner, ignored, is_extra)
-                for index, arg in enumerate(args)
-                if alias is origin
-                or (_is_type_position_in_generic(origin, index) and origin is not collections.abc.Callable)
+                reversed(
+                    [
+                        (arg, owner, ignored, is_extra)
+                        for index, arg in enumerate(args)
+                        if alias is origin
+                        or (_is_type_position_in_generic(origin, index) and origin is not collections.abc.Callable)
+                    ]
+                )
             )
     return found
 

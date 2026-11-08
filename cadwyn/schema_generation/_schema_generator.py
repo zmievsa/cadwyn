@@ -321,45 +321,49 @@ class SchemaGenerator:
         return result
 
     def _change_version_of_bare_parameter(
-        self, original: type[BaseModel], param: typing.TypeVar, owners: set[type[BaseModel]]
+        self, original: type[BaseModel], param: typing.TypeVar, owners: "collections.abc.Collection[type[BaseModel]]"
     ) -> typing.TypeVar:
         """Return the parameter whose bound, constraints, and default validate this version's models."""
         owner = self._get_typevar_owner(original, param, owners)
         if owner is None:
             return param
         transformer = self.annotation_transformer
-        with transformer.typevar_namespace(owner):
+        users = list(dict.fromkeys(_unwrap_model(owner) for owner in owners))
+        with transformer.typevar_namespace(owner, users=users):
             return transformer._change_version_of_typevar(param)
 
     def _get_typevar_owner(
-        self, original: type[BaseModel], param: typing.TypeVar, owners: set[type[BaseModel]]
+        self, original: type[BaseModel], param: typing.TypeVar, owners: "collections.abc.Collection[type[BaseModel]]"
     ) -> Union[type[BaseModel], None]:
-        """Choose the namespace that validates a parameter, rejecting incompatible bare uses.
+        """Return the model whose namespace resolves the quoted fallbacks of a parameter, rejecting incompatible uses.
 
-        Return None if its quoted fallbacks resolve to different classes for different users that are not versioned,
-        so that the copy of each user resolves them in its own namespace.
+        The owners are the models whose fields use the parameter, in the order of the fields. They must resolve its
+        fallbacks to the same classes, so it's the generic itself if it uses the parameter, or else its first nested
+        model that does. Return None if they resolve to different classes that are not versioned, so that the copy
+        of each owner resolves them in its own namespace.
         """
-        # Sorted so that the chosen namespace and the error do not depend on set order
-        sorted_owners = sorted({_unwrap_model(owner) for owner in owners}, key=lambda m: (m.__module__, m.__qualname__))
-        owner = sorted_owners[0]
+        owners = list(dict.fromkeys(_unwrap_model(owner) for owner in owners))
+        if original in owners:
+            owners.remove(original)
+            owners.insert(0, original)
         for value in _get_typevar_fallbacks(param)[1]:
             if not _contains_forward_refs(value):
                 continue
-            resolved = [_eval_forward_refs(value, context) for context in sorted_owners]
+            resolved = [_eval_forward_refs(value, owner) for owner in owners]
             if all(target == resolved[0] for target in resolved):
                 continue
             collector = _ReferencedModelCollector()
             for target in resolved:
                 collector.annotation_transformer.change_version_of_annotation(target)
             if any(self._is_versioned(model) for model in collector.models):
+                names = ", ".join(f"{owner.__module__}.{owner.__qualname__}" for owner in owners)
                 raise SchemaGenerationError(
                     f"Cadwyn cannot version the bare generic {original.__qualname__}: type parameter "
-                    f"{param.__name__} resolves differently across the namespaces of "
-                    f"{', '.join(f'{m.__module__}.{m.__qualname__}' for m in sorted_owners)}. "
+                    f"{param.__name__} resolves differently across the namespaces of {names}. "
                     "Use explicit type arguments."
                 )
             return None
-        return owner
+        return owners[0]
 
     def _get_template(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
         if not _is_versionable_model(model):
