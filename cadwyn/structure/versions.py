@@ -14,7 +14,16 @@ import uuid
 import warnings
 import weakref
 from collections import Counter, OrderedDict, defaultdict, deque
-from collections.abc import AsyncIterator, Callable, Coroutine, Hashable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Callable,
+    Coroutine,
+    Hashable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from datetime import date, datetime, time, timedelta
@@ -39,6 +48,7 @@ from typing import (
 )
 
 import anyio
+import anyio.to_thread
 import fastapi.dependencies.utils
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -2451,6 +2461,24 @@ _UPLOADS_TO_CLOSE_SCOPE_KEY = "cadwyn.uploads_to_close"
 # How long we wait for each upload to close, so that an upload that never closes can't keep the request running forever
 _UPLOAD_CLOSE_TIMEOUT_SECONDS = 3
 
+# AnyIO renamed this keyword in 4.1. Select it once without emitting deprecation warnings on newer releases.
+if "abandon_on_cancel" in inspect.signature(anyio.to_thread.run_sync).parameters:
+    _close_file_in_thread = functools.partial(anyio.to_thread.run_sync, abandon_on_cancel=True)
+else:  # pragma: no cover # AnyIO < 4.1; exercised in the dependency compatibility matrix
+    _close_file_in_thread = functools.partial(anyio.to_thread.run_sync, cancellable=True)
+
+
+async def _close_upload(upload: UploadFile) -> None:
+    if (
+        getattr(upload.close, "__func__", None) in (UploadFile.close, fastapi.UploadFile.close)
+        and not upload._in_memory
+    ):
+        # Starlette's default thread offload shields the worker even from our cleanup deadline.
+        await _close_file_in_thread(upload.file.close)
+    else:
+        # Keep in-memory closing and user-defined async close overrides in their original context.
+        await upload.close()
+
 
 class _UploadsToClose:
     """The uploads of a request that Cadwyn closes once the request is done, even if it gets cancelled.
@@ -2461,32 +2489,44 @@ class _UploadsToClose:
     including the ones that later migrations replace or remove.
     """
 
-    __slots__ = ("_uploads",)
+    __slots__ = ("_deferred_files", "_uploads")
 
     def __init__(self) -> None:
         super().__init__()
         # Keyed by id, so that we close every upload once. The values keep the ids valid
         self._uploads: dict[int, UploadFile] = {}
+        self._deferred_files: dict[int, BinaryIO] = {}
 
     def add(self, form: Iterable[tuple[str, Union[UploadFile, str]]]) -> None:
         for _, value in form:
             if isinstance(value, UploadFile):
                 self._uploads.setdefault(id(value), value)
 
+    def defer(self, form: Iterable[tuple[str, Union[UploadFile, str]]]) -> None:
+        # Hold the streams, not just their ids: aliases must not retry a close whose worker may still be running.
+        for _, value in form:
+            if isinstance(value, UploadFile):
+                self._deferred_files.setdefault(id(value.file), value.file)
+
     async def close(self) -> None:
         # Background tasks and streams have finished by now, so nothing reads the uploads anymore. If FastAPI closes
         # its uploads after us, closing them again does nothing
         for upload in self._uploads.values():
-            if getattr(upload.file, "closed", False):
+            file = upload.file
+            if id(file) in self._deferred_files or getattr(file, "closed", False):
                 continue
             with anyio.move_on_after(_UPLOAD_CLOSE_TIMEOUT_SECONDS, shield=True) as scope:
-                await upload.close()
-            if scope.cancelled_caught:
-                _logger.warning(
-                    "Cadwyn couldn't close the upload %r within %s seconds after the request, so it may stay open",
-                    upload.filename,
-                    _UPLOAD_CLOSE_TIMEOUT_SECONDS,
-                )
+                try:
+                    await _close_upload(upload)
+                finally:
+                    if scope.cancel_called:
+                        self._deferred_files.setdefault(id(file), file)
+                        _logger.warning(
+                            "Cadwyn couldn't close the upload %r within %s seconds after the request, "
+                            "so it may stay open",
+                            upload.filename,
+                            _UPLOAD_CLOSE_TIMEOUT_SECONDS,
+                        )
 
 
 def _get_uploads_to_close(request: FastapiRequest) -> _UploadsToClose:

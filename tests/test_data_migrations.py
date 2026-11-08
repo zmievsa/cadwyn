@@ -11,11 +11,13 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time as time_module
 import typing
 from collections import OrderedDict, deque
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Mapping, MutableSequence, Sequence
 from collections.abc import Set as AbstractSet
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -26,6 +28,7 @@ from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Optional, S
 from uuid import UUID
 
 import anyio
+import anyio.to_thread
 import fastapi
 import httpx
 import pytest
@@ -8034,12 +8037,16 @@ class _ASGIRequestDriver:
         *,
         fail_sending: Optional[str] = None,
         cancel_after_first_chunk: Optional[Literal["task", "anyio_scope"]] = None,
+        form_fields: Optional[Mapping[str, str]] = None,
     ) -> None:
         self.fail_sending = fail_sending
         self.cancel_after_first_chunk = cancel_after_first_chunk
+        self.form_fields = form_fields
 
     async def __call__(self, app: Any, headers: dict[str, str]) -> None:
-        request = httpx.Request("POST", "http://test/test", headers=headers, files={"upload": _LARGE_UPLOAD})
+        request = httpx.Request(
+            "POST", "http://test/test", headers=headers, files={"upload": _LARGE_UPLOAD}, data=self.form_fields
+        )
         body = request.read()
         first_chunk_is_sent = asyncio.Event()
 
@@ -8384,44 +8391,97 @@ class _UploadThatNeverCloses(UploadFile):
         await anyio.sleep_forever()
 
 
-def test__uploads__slow_file_cleanup__should_bound_shielding_and_warn(
-    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize("route_kind", ["unversioned", "versioned", "failing_dependency", "migration"])
+def test__uploads__blocked_file_close__should_finish_request_and_shutdown_at_deadline(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    route_kind: Literal["unversioned", "versioned", "failing_dependency", "migration"],
 ):
-    class SlowClosingFile(BufferedRandom):
+    release = threading.Event()
+    finished = threading.Event()
+    shutdown = threading.Event()
+    started_at: list[float] = []
+    # Release the worker even on the broken implementation, so a failing test cannot hang the suite.
+    timer = threading.Timer(6, release.set)
+
+    class BlockingFile(BufferedRandom):
         @override
         def close(self) -> None:
             if not self.closed:
-                time_module.sleep(4)
+                started_at.append(time_module.monotonic())
+                timer.start()
+                release.wait()
             super().close()
+            finished.set()
 
-    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            yield
+        finally:
+            shutdown.set()
+
     uploads: list[UploadFile] = []
 
-    async def replace_file(upload: UploadFile, other: UploadFile):
-        await upload.close()
-        upload.file = SlowClosingFile(FileIO(tmp_path / "slow.bin", "w+"))
-        uploads.extend((upload, other))
+    def add_blocked_file(request: RequestInfo):
+        assert request.form is not None
+        upload = UploadFile(BlockingFile(FileIO(tmp_path / "blocked.bin", "w+")), filename="blocked.bin")
+        uploads.append(upload)
+        request.form.append(("added", upload))
 
-    @app.post("/test", dependencies=[Depends(replace_file)])
-    async def endpoint():
+    if route_kind == "migration":
+        change = version_change(migrator=convert_request_to_next_version_for("/test", ["POST"])(add_blocked_file))
+        bundle = VersionBundle(Version("2001-01-01", change), Version("2000-01-01"))
+    else:
+        bundle = VersionBundle(Version("2000-01-01"))
+    app = Cadwyn(versions=bundle, lifespan=lifespan)
+
+    async def replace_file(upload: UploadFile):
+        if route_kind == "migration":
+            return
+        if not isinstance(upload.file, BlockingFile):
+            await upload.close()
+            upload.file = BlockingFile(FileIO(tmp_path / "blocked.bin", "w+"))
+            uploads.append(upload)
+        if route_kind == "failing_dependency":
+            raise HTTPException(400, "Dependency failed")
+
+    router = APIRouter()
+
+    @router.post("/test", dependencies=[Depends(replace_file)])
+    async def endpoint(upload: UploadFile):
         return "unchanged"
+
+    if route_kind == "unversioned":
+        app.include_router(router)
+    else:
+        app.generate_and_include_versioned_routers(router)
 
     async def run_request():
         try:
-            with anyio.fail_after(30):
-                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-                    response = await client.post("/test", files={"upload": _LARGE_UPLOAD, "other": _LARGE_UPLOAD})
-            assert response.status_code == 200
-            assert response.json() == "unchanged"
-            assert len(uploads) == 2
-            assert not uploads[1].file.closed
-            assert [record.getMessage() for record in caplog.records] == [
-                (
-                    "Cadwyn couldn't finish closing the request's uploaded files within 3 seconds, "
-                    "so some uploads may stay open"
+            async with app.router.lifespan_context(app):
+                await _run_request(
+                    _ASGIRequestDriver(fail_sending="http.response.start", form_fields={"note": "unchanged"}),
+                    app,
+                    {} if route_kind == "unversioned" else {"x-api-version": "2000-01-01"},
+                    OSError,
                 )
-            ]
+            assert len(started_at) == 1
+            assert time_module.monotonic() - started_at[0] < 5
+            assert shutdown.is_set()
+            assert not release.is_set()
+            assert not uploads[0].file.closed
+            expected_warning = (
+                "Cadwyn couldn't close the upload 'blocked.bin' within 3 seconds after the request, so it may stay open"
+                if route_kind == "migration"
+                else "Cadwyn couldn't finish closing the request's uploaded files within 3 seconds, "
+                "so some uploads may stay open"
+            )
+            assert [record.getMessage() for record in caplog.records] == [expected_warning]
         finally:
+            release.set()
+            timer.cancel()
+            assert await anyio.to_thread.run_sync(finished.wait, 10)
             for upload in uploads:
                 await upload.close()
 

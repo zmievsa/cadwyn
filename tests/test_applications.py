@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal, cast
 
 import httpx
 import pytest
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
@@ -947,6 +947,51 @@ def test__cadwyn__unversioned_websocket__should_exchange_messages():
 
     with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
         assert websocket.receive_text() == "unchanged"
+
+
+def test__file_cleanup__mounted_fastapi_app__should_keep_host_cleanup_and_response():
+    app = Cadwyn(versions=_two_versions())
+    mounted = FastAPI()
+    uploads = []
+
+    @mounted.post("/test")
+    async def endpoint(upload: UploadFile):
+        uploads.append(upload)
+        return {"size": upload.size}
+
+    app.mount("/mounted", mounted)
+    body = b"x" * (2 * 1024 * 1024)
+    with TestClient(app) as client:
+        response = client.post("/mounted/test", files={"upload": body})
+
+    assert response.status_code == 200
+    assert response.json() == {"size": len(body)}
+    assert len(uploads) == 1
+    assert uploads[0].file.closed
+
+
+def test__file_cleanup__additional_fastapi_callback__should_keep_arguments_identity_and_context():
+    app = Cadwyn(versions=_two_versions())
+    context = ContextVar("cleanup_context", default="original")
+    observed: list[tuple[str, str]] = []
+
+    async def cleanup(value: str):
+        observed.append((value, context.get()))
+
+    @app.get("/test")
+    async def endpoint(request: Request):
+        context.set("endpoint")
+        # FastAPI's file stack is also an AsyncExitStack for application-registered cleanup.
+        registered = request.scope["fastapi_middleware_astack"].push_async_callback(cleanup, "closed")
+        assert registered is cleanup
+        return "unchanged"
+
+    with TestClient(app) as client:
+        response = client.get("/test")
+
+    assert response.status_code == 200
+    assert response.json() == "unchanged"
+    assert observed == [("closed", "endpoint")]
 
 
 @pytest.mark.parametrize("group_depth", [0, 1, 2])
