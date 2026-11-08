@@ -223,7 +223,7 @@ def test__router_generation__unparametrized_generic__should_keep_openapi_names_a
         # Cadwyn 8.2.0 gives every version these names and titles
         pytest.param("unchanged", {"Item": "Item", "Outer": "Outer", "Page": "Page"}, id="unchanged_quoted_bound"),
         pytest.param("changed", {"Item": "Item", "Outer": "Outer", "Page": "Page"}, id="nested"),
-        pytest.param("recursive", {"Item": "Item", "Node-Input": "Node", "Node-Output": "Node"}, id="recursive"),
+        pytest.param("recursive", {"Item": "Item", "Node": "Node"}, id="recursive"),
     ],
 )
 def test__router_generation__nested_and_recursive_unparametrized_generics__should_keep_openapi_names(
@@ -265,9 +265,14 @@ def test__router_generation__nested_and_recursive_unparametrized_generics__shoul
     for version in ("2001-01-01", "2000-01-01"):
         client = TestClient(app, headers={"x-api-version": version})
         schemas = client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
-        assert {name: value["title"] for name, value in schemas.items() if "ValidationError" not in name} == (
-            expected_titles_by_name
-        )
+        # Whether pydantic splits a schema into "-Input" and "-Output" ones depends on the versions of FastAPI
+        # and pydantic, just like with Cadwyn 8.2.0
+        titles_by_name = {
+            name.removesuffix("-Input").removesuffix("-Output"): value["title"]
+            for name, value in schemas.items()
+            if "ValidationError" not in name
+        }
+        assert titles_by_name == expected_titles_by_name
 
 
 @pytest.mark.parametrize(
