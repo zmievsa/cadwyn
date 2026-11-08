@@ -1,3 +1,4 @@
+import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
 import contextlib
 import functools
 import inspect
@@ -81,8 +82,6 @@ from ._references import (
 )
 
 if TYPE_CHECKING:
-    import collections.abc
-
     from ._instructions import (
         _ParentRename,
     )

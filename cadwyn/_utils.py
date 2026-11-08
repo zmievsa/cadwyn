@@ -1,5 +1,6 @@
 import collections.abc
 import dataclasses
+import functools
 import inspect
 import math
 import sys
@@ -104,6 +105,54 @@ def lenient_issubclass(
         return issubclass(cls, other)  # ty: ignore[invalid-argument-type]
     except TypeError:  # pragma: no cover
         return False
+
+
+def present_private_submodules_as_package(package_name: str) -> None:
+    """Make a package look like the single module it was split from.
+
+    `cadwyn.structure.versions` and `cadwyn.schema_generation` used to be single modules. Everything defined
+    or imported in their private submodules stays importable from the package, and every class, function,
+    and type variable defined there keeps the package as its `__module__`. So error messages, reprs,
+    pickling, `typing.get_type_hints()`, and documentation tools behave as they did before the split.
+    """
+    namespace = vars(sys.modules[package_name])
+    submodules = [
+        value
+        for value in namespace.values()
+        if isinstance(value, types.ModuleType) and value.__name__.startswith(f"{package_name}._")
+    ]
+    for submodule in submodules:
+        for name, value in vars(submodule).items():
+            if name.startswith("__"):
+                continue
+            if _is_module_level_definition(value) and value.__module__ == submodule.__name__:
+                _move_definition(value, submodule.__name__, package_name)
+            if namespace.setdefault(name, value) is not value:  # pragma: no cover # Guards future module splits
+                raise ImportError(f"{package_name}.{name} differs from {submodule.__name__}.{name}")
+
+
+def _is_module_level_definition(value: object) -> bool:
+    return isinstance(value, type | types.FunctionType | TypeVar | ParamSpec) or inspect.isfunction(
+        getattr(value, "__wrapped__", None)
+    )
+
+
+def _move_definition(definition: Any, old_module: str, new_module: str) -> None:
+    definition.__module__ = new_module
+    members = [getattr(definition, "__wrapped__", None)]
+    if isinstance(definition, type):
+        for member in vars(definition).values():
+            if isinstance(member, classmethod | staticmethod):
+                members.append(member.__func__)
+            elif isinstance(member, property):
+                members.extend((member.fget, member.fset, member.fdel))
+            elif isinstance(member, functools.cached_property | classproperty):
+                members.append(member.func)
+            else:
+                members.append(member)
+    for member in members:
+        if isinstance(member, type | types.FunctionType) and member.__module__ == old_module:
+            _move_definition(member, old_module, new_module)
 
 
 def _callable_name(call: Callable[..., object]) -> str:

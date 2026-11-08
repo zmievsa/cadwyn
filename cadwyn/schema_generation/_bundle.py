@@ -14,10 +14,7 @@ from cadwyn._utils import (
     DATACLASS_KW_ONLY,
     DATACLASS_SLOTS,
 )
-
-if TYPE_CHECKING:
-    from cadwyn.structure.versions import HeadVersion, Version
-
+from cadwyn.structure.versions import HeadVersion, Version  # noqa: TC001 # Needed by runtime annotation introspection.
 
 if TYPE_CHECKING:
     from ._enums import (

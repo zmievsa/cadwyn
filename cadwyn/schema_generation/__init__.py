@@ -1,6 +1,20 @@
 from pydantic._internal._generics import get_model_typevars_map as get_model_typevars_map
 from pydantic._internal._model_construction import unpack_lenient_weakvaluedict as unpack_lenient_weakvaluedict
 
+from cadwyn._utils import present_private_submodules_as_package
+
+from . import (
+    _annotations,
+    _bundle,
+    _config,
+    _enums,
+    _fields,
+    _generator,
+    _generics,
+    _instructions,
+    _models,
+    _references,
+)
 from ._annotation_utils import (
     _UNRESOLVED as _UNRESOLVED,
 )
@@ -73,3 +87,26 @@ from ._models import (
 from ._references import (
     _CycleCopier as _CycleCopier,
 )
+
+# Resolve annotation back-references after all defining modules have loaded, without cyclic imports.
+_annotations.SchemaGenerator = SchemaGenerator
+_annotations._CycleCopier = _CycleCopier
+_bundle._EnumWrapper = _EnumWrapper
+_bundle._PydanticModelWrapper = _PydanticModelWrapper
+_config._PydanticModelWrapper = _PydanticModelWrapper
+_enums.SchemaGenerator = SchemaGenerator
+_fields._PydanticModelWrapper = _PydanticModelWrapper
+_generator._ParentRename = _instructions._ParentRename
+_generator._PydanticModelWrapper = _PydanticModelWrapper
+_generator._ReferenceCycles = _references._ReferenceCycles
+_generics.SchemaGenerator = SchemaGenerator
+_generics._PydanticModelWrapper = _PydanticModelWrapper
+_generics._CycleCopier = _CycleCopier
+_instructions.SchemaGenerator = SchemaGenerator
+_instructions._PydanticModelWrapper = _PydanticModelWrapper
+_models.SchemaGenerator = SchemaGenerator
+_models._CycleCopier = _CycleCopier
+_references.SchemaGenerator = SchemaGenerator
+
+# This package used to be a single module. Keep its objects' __module__ and namespace as they were then.
+present_private_submodules_as_package(__name__)

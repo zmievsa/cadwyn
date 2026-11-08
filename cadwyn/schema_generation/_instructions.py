@@ -1,3 +1,4 @@
+import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
 from collections.abc import Sequence
 from typing import (
     TYPE_CHECKING,
@@ -57,8 +58,6 @@ from ._generics import (
 )
 
 if TYPE_CHECKING:
-    import collections.abc
-
     from ._generator import (
         SchemaGenerator,
     )
