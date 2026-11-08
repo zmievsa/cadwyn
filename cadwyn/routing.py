@@ -208,7 +208,9 @@ class _RootCadwynAPIRouter(APIRouter):
                 version = self._pick_websocket_version(WebSocket(scope, receive, send))
                 self.api_version_var.set(version)
 
-            if version in self.versioned_routers:
+            if not version:
+                routes = self.unversioned_routes
+            elif version in self.versioned_routers:
                 routes = self.versioned_routers[version].routes
             else:
                 routes = await self._get_routes_from_closest_suitable_version(version)

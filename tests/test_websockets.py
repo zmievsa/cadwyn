@@ -214,6 +214,32 @@ def test__unversioned_websocket__version_header_or_default__should_keep_context_
         assert socket.receive_json() is None
 
 
+def test__unversioned_websocket__empty_preselected_version__should_connect_and_preserve_context():
+    app = _app("custom_header", default=_request_default)
+    after = []
+
+    @app.websocket("/plain")
+    async def plain(websocket: WebSocket):
+        await websocket.accept()
+        await websocket.send_json(
+            {"version": app.versions.api_version_var.get(None), "scope": websocket.scope["cadwyn.api_version"]}
+        )
+        await websocket.close()
+
+    async def preselect(scope: Scope, receive: Receive, send: Send):
+        token = app.versions.api_version_var.set("")
+        try:
+            await app(scope, receive, send)
+        finally:
+            if scope["type"] == "websocket":
+                after.append(app.versions.api_version_var.get(None))
+            app.versions.api_version_var.reset(token)
+
+    with TestClient(preselect) as client, client.websocket_connect("/plain") as websocket:
+        assert websocket.receive_json() == {"version": "", "scope": ""}
+    assert after == [""]
+
+
 @pytest.mark.parametrize("preselected", [None, "2024-01-15"])
 @pytest.mark.parametrize("message", ["hello", "error"])
 def test__versioned_websocket__connection_ends__should_restore_context_even_after_waterfall_or_exception(
