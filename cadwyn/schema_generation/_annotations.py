@@ -463,10 +463,10 @@ class _AnnotationTransformer:
         if self.record_only:
             self._change_version_of_typevar_values(resolved_values)
             return param
-        if (
-            generator is not None
-            and collector.is_complete
-            and not generator.validates_models_that_differ_from_head(collector.models | collector.arg_models)
+        # Only the transformers of collectors, which only record, have no schema generator
+        assert generator is not None  # noqa: S101
+        if collector.is_complete and not generator.validates_models_that_differ_from_head(
+            collector.models | collector.arg_models
         ):
             if all(resolved is value for resolved, value in zip(resolved_values, values, strict=True)):
                 return param
@@ -474,7 +474,7 @@ class _AnnotationTransformer:
         else:
             versioned_values = self._change_version_of_typevar_values(resolved_values)
             for value in versioned_values:
-                self._check_typevar_value(param, value)
+                self._check_typevar_value(generator, param, value)
         # Runtime reconstruction uses the third-party factory dynamically; static TypeVar syntax
         # cannot express bounds, constraints, and defaults discovered at runtime.
         factory = sys.modules["typing_extensions"].TypeVar
@@ -518,7 +518,8 @@ class _AnnotationTransformer:
             )
         return value
 
-    def _check_typevar_value(self, param: typing.TypeVar, value: Any) -> None:
+    @staticmethod
+    def _check_typevar_value(generator: "SchemaGenerator", param: typing.TypeVar, value: Any) -> None:
         """Reject bounds/defaults whose copied generics still validate a changed HEAD model.
 
         Generic arguments can deliberately keep HEAD models to avoid reference cycles. Type parameters must
@@ -526,9 +527,6 @@ class _AnnotationTransformer:
         """
         from typing_inspection.typing_objects import is_typealiastype
 
-        generator = self.generator.schema_generator
-        if generator is None:
-            return
         values = [value]
         visited: set[int] = set()
         while values:

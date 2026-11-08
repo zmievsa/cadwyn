@@ -147,14 +147,16 @@ def test__router_generation__unparametrized_generic__should_keep_openapi_names_a
 
     # Item only changes in the oldest version, so nothing changes between the two newer ones
     app = create_versioned_app(version_change(schema(Item).field("extra").didnt_exist), version_change(), router=router)
+    titles_by_name = None
     for version in ("2002-01-01", "2001-01-01", "2000-01-01"):
         client = TestClient(app, headers={"x-api-version": version})
         schemas = client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
-        assert {name: value["title"] for name, value in schemas.items() if "Validation" not in name} == {
-            "Item": "Item",
-            "Page": "Page",
-            "Pair_int_TypeVar_": "Pair[int, TypeVar]",
-        }
+        version_titles_by_name = {name: value["title"] for name, value in schemas.items()}
+        # Pydantic names Pair[int, ItemT] after the repr of ItemT, which differs between Python versions
+        assert {"Item": "Item", "Page": "Page"}.items() < version_titles_by_name.items()
+        assert any(name.startswith("Pair_int_") for name in version_titles_by_name)
+        assert version_titles_by_name == (titles_by_name or version_titles_by_name)
+        titles_by_name = version_titles_by_name
         assert schemas["Page"]["description"] == "A page of items."
         assert schemas["Page"]["properties"]["items"]["items"] == {"$ref": "#/components/schemas/Item"}
         assert ("extra" in schemas["Item"]["properties"]) is (version != "2000-01-01")
