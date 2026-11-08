@@ -14557,7 +14557,7 @@ class _LazyEnumReplacementError(Exception):
     pass
 
 
-def _raise_lazy_enum_replacement_error(item: Any) -> Any:
+def _raise_lazy_enum_replacement_error(item: Any, **kwargs: Any) -> Any:
     raise _LazyEnumReplacementError
 
 
@@ -14590,7 +14590,7 @@ def test__request_body_migration__with_lazy_field_that_cannot_have_versioned_pla
 
     clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
     # Wrapped lazy items go through this one by one
-    monkeypatch.setattr(_enums, "_replace_with_head_enum_members", _raise_lazy_enum_replacement_error)
+    monkeypatch.setattr(_enums, "_to_head_values", _raise_lazy_enum_replacement_error)
 
     for version_client in clients.values():
         assert version_client.post(test_path, json={"values": payload}).json() == len(payload)
@@ -14624,7 +14624,7 @@ def test__request_body_migration__with_lazy_field_that_can_have_versioned_plain_
         return list(body.values)  # pragma: no cover # The patched replacement raises before the endpoint returns
 
     clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
-    monkeypatch.setattr(_enums, "_replace_with_head_enum_members", _raise_lazy_enum_replacement_error)
+    monkeypatch.setattr(_enums, "_to_head_values", _raise_lazy_enum_replacement_error)
 
     for version_client in clients.values():
         with pytest.raises(_LazyEnumReplacementError):
@@ -14752,6 +14752,153 @@ def test__request_body_migration__with_latest_lazy_items_from_migration__should_
 
     clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b"), migrate=migrate))
     assert clients["2000-01-01"].post(test_path, json={"values": []}).json() is True
+
+
+def _read_lazy_values(value: Any) -> Any:
+    """Return the values of the members in nested models and iterables, consuming every iterator"""
+    if isinstance(value, BaseModel):
+        return _read_lazy_values(value.values)
+    if isinstance(value, Enum):
+        return value.value
+    return [_read_lazy_values(item) for item in value]
+
+
+def _read_first_lazy_value(value: Any) -> Any:
+    """Return the value of the first member in nested models and iterables, consuming only what it needs"""
+    if isinstance(value, BaseModel):
+        return _read_first_lazy_value(value.values)
+    if isinstance(value, Enum):
+        return value.value
+    return _read_first_lazy_value(next(iter(value)))
+
+
+def _get_lazy_body_annotation(container: Any, shape: str) -> Any:
+    def lazy(item: Any) -> Any:
+        return Generator[item, None, None] if container is Generator else container[item]
+
+    if shape == "body":
+        values: Any = lazy(PlainEnum)
+        return Annotated[values, Body()]
+    if shape == "nested_container":
+        return create_model("Payload", values=(lazy(lazy(PlainEnum)), ...))
+    inner = create_model("Inner", values=(lazy(PlainEnum), ...))
+    if shape == "nested_model":
+        return create_model("Payload", values=(lazy(inner), ...))
+    return inner
+
+
+# The payloads of the shapes of lazy bodies, with the values that an endpoint reads from each of them
+_LAZY_PAYLOADS = {
+    "field": ({"values": ["a", "a"]}, ["a", "a"]),
+    "body": (["a", "a"], ["a", "a"]),
+    "nested_model": ({"values": [{"values": ["a", "a"]}, {"values": ["a"]}]}, [["a", "a"], ["a"]]),
+    "nested_container": ({"values": [["a", "a"], ["a"]]}, [["a", "a"], ["a"]]),
+}
+
+
+@pytest.mark.parametrize("instructions", [(), (enum(PlainEnum).didnt_have("b"),)], ids=["no_enum", "versioned_enum"])
+@pytest.mark.parametrize("container", [Iterable, Generator, Sequence])
+@pytest.mark.parametrize("shape", list(_LAZY_PAYLOADS))
+def test__request_body_migration__with_lazy_values_read_by_dependency_and_endpoint__each_should_get_all_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    instructions: tuple[Any, ...],
+    container: Any,
+    shape: str,
+):
+    annotation: Any = _get_lazy_body_annotation(container, shape)
+
+    def dependency(body: annotation):
+        return _read_first_lazy_value(body)
+
+    async def endpoint(body: annotation, first: Any = Depends(dependency)):
+        return {"dependency": first, "endpoint": _read_lazy_values(body)}
+
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    clients = create_versioned_clients(version_change(*instructions))
+
+    payload, values = _LAZY_PAYLOADS[shape]
+    expected = TestClient(fastapi_app).post(test_path, json=payload)
+    assert expected.json() == {"dependency": "a", "endpoint": values}
+    for version_client in clients.values():
+        response = version_client.post(test_path, json=payload)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+class ModelWithLazyValues(BaseModel):
+    values: Iterable[PlainEnum]
+
+
+def _read_no_lazy_values(body: ModelWithLazyValues) -> None:
+    return None  # pragma: no cover # Both apps override it
+
+
+def _read_first_lazy_values(body: ModelWithLazyValues) -> Any:
+    return next(iter(body.values)).value
+
+
+async def _endpoint_with_overridden_lazy_reader(
+    body: ModelWithLazyValues, first: Any = Depends(_read_no_lazy_values)
+) -> Any:
+    return {"dependency": first, "endpoint": [member.value for member in body.values]}
+
+
+def test__request_body_migration__with_lazy_values_read_by_dependency_override__each_should_get_all_as_in_fastapi(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    router.post(test_path)(_endpoint_with_overridden_lazy_reader)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(_endpoint_with_overridden_lazy_reader)
+    fastapi_app.dependency_overrides[_read_no_lazy_values] = _read_first_lazy_values
+    clients = create_versioned_clients(version_change())
+    clients["2000-01-01"].app.dependency_overrides[_read_no_lazy_values] = _read_first_lazy_values
+
+    expected = TestClient(fastapi_app).post(test_path, json={"values": ["a", "a"]})
+    assert expected.json() == {"dependency": "a", "endpoint": ["a", "a"]}
+    for version_client in clients.values():
+        response = version_client.post(test_path, json={"values": ["a", "a"]})
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+def _read_lazy_values_and_errors(values: Iterable[PlainEnum]) -> list[str]:
+    outcomes: list[str] = []
+    iterator = iter(values)
+    while True:
+        try:
+            outcomes.append(next(iterator).value)
+        except StopIteration:
+            return outcomes
+        except ValidationError:
+            outcomes.append("error")
+
+
+def test__request_body_migration__with_invalid_lazy_item_read_by_dependency_and_endpoint__each_should_get_its_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    def dependency(body: ModelWithLazyValues):
+        return _read_lazy_values_and_errors(body.values)
+
+    async def endpoint(body: ModelWithLazyValues, from_dependency: Any = Depends(dependency)):
+        return {"dependency": from_dependency, "endpoint": _read_lazy_values_and_errors(body.values)}
+
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    clients = create_versioned_clients(version_change())
+
+    payload = {"values": ["a", "invalid", "a"]}
+    expected = TestClient(fastapi_app).post(test_path, json=payload)
+    assert expected.json() == {"dependency": ["a", "error", "a"], "endpoint": ["a", "error", "a"]}
+    for version_client in clients.values():
+        response = version_client.post(test_path, json=payload)
+        assert (response.status_code, response.json()) == (expected.status_code, expected.json())
 
 
 @pytest.mark.parametrize("strict", [False, True])

@@ -111,8 +111,9 @@ async def _migrate_request(
     CURRENT_DEPENDENCY_SOLVER_VAR.set("cadwyn")
 
     form_model_lookup = _FormModelLookup(head_dependant)
-    # Request migrations got the members of the copies of enums, as they always did, but the head gets its own ones
-    body_with_head_members = versions._replace_with_head_enum_members(request_info.body, route)
+    # Request migrations got the members of the copies of enums, as they always did, but the head gets its own ones.
+    # Each param that reads the body gets its own iterator over each lazy value, as in plain FastAPI.
+    body_with_head_members = versions._to_head_values(request_info.body, route, head_dependant, head_route)
     if request_info._form is not None:
         if uploads_read_by_fastapi:
             await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
@@ -180,12 +181,14 @@ async def _migrate_request(
             head_dependant,
             head_route,
             route,
-            # The models that we replace with data can have members of copies of enums too
-            versions._replace_with_head_enum_members(
+            # The models that we replace with data can have members of copies of enums and lazy values too
+            versions._to_head_values(
                 _to_head_input(
                     route, head_dependant, head_route, request_info.body, embed_body_fields=embed_body_fields
                 ),
                 route,
+                head_dependant,
+                head_route,
             ),
             client_json_strings,
             embed_body_fields=embed_body_fields,
