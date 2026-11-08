@@ -1,3 +1,4 @@
+import functools
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
@@ -178,8 +179,11 @@ class Cadwyn(FastAPI):
                 "Set the root path on your server instead (e.g. `root_path` or your proxy's prefix)."
             )
         # An async callback would return an unawaited coroutine on every /openapi.json request
-        if iscoroutinefunction(openapi_customizer) or iscoroutinefunction(
-            getattr(openapi_customizer, "__call__", None)  # noqa: B004  # Async __call__ of callable objects
+        customizer_target = openapi_customizer
+        while isinstance(customizer_target, functools.partial):
+            customizer_target = customizer_target.func
+        if iscoroutinefunction(customizer_target) or iscoroutinefunction(
+            getattr(type(customizer_target), "__call__", None)  # noqa: B004  # Async __call__ of callable objects
         ):
             raise TypeError(
                 f"openapi_customizer must be synchronous, got the async callable {openapi_customizer!r}. "

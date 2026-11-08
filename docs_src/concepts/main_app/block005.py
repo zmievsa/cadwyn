@@ -22,8 +22,14 @@ def customize_openapi(
             ref_template="#/components/schemas/{model}"
         )
         # Nested models such as TraceSpan become components of their own
-        schemas.update(metadata_schema.pop("$defs", {}))
-        schemas["TaskMetadata"] = metadata_schema
+        new_schemas = metadata_schema.pop("$defs", {})
+        new_schemas["TaskMetadata"] = metadata_schema
+        for name, component in new_schemas.items():
+            # Never overwrite a component that endpoints already reference
+            if schemas.setdefault(name, component) != component:
+                raise ValueError(
+                    f"OpenAPI already has a different {name!r} component"
+                )
     return schema
 
 

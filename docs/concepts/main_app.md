@@ -47,7 +47,7 @@ Alternatively, pass the pagination params to `paginate()` explicitly:
 
 Pass a synchronous `openapi_customizer` callback to `Cadwyn()` to edit each version's OpenAPI document. `Cadwyn()` raises a `TypeError` if the callback is async. It receives the generated schema and the selected version as a string, or `None` for `/openapi.json?version=unversioned`. Cadwyn calls it after its own adjustments, including required version headers and servers for mounted apps or a proxy's root path, immediately before serialization.
 
-For example, add a component used by a client SDK even though no endpoint references it, only in the version that needs it. Pass `ref_template` to `model_json_schema()` and move its `$defs` into `components.schemas` so that references to nested models resolve:
+For example, add a component used by a client SDK even though no endpoint references it, only in the version that needs it. Pass `ref_template` to `model_json_schema()` and move its `$defs` into `components.schemas` so that references to nested models resolve. The example raises an error instead of overwriting a different component with the same name:
 
 ```python
 {! ./docs_src/concepts/main_app/block005.py !}
