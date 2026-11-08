@@ -1,6 +1,5 @@
 import ast
 import builtins
-import dis
 import inspect
 import sys
 import textwrap
@@ -13,7 +12,7 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from cadwyn._asts import _ReprContext, get_fancy_repr, pop_docstring_from_cls_body
-from cadwyn._utils import is_same_value, lenient_issubclass
+from cadwyn._utils import lenient_issubclass
 from cadwyn.exceptions import CadwynRenderError
 from cadwyn.schema_generation import (
     SchemaGenerator,
@@ -162,20 +161,14 @@ def _render_pydantic_model(
     if wrapper.doc != wrapper.cls.__doc__:
         docstring = [ast.Expr(ast.Constant(wrapper.doc))] if wrapper.doc else []
     config_definitions = []
-    config = wrapper.other_attributes["model_config"]
-    if config_changes := wrapper.get_config_changes(generator.model_bundle.schemas):
-        config = config | config_changes
+    if wrapper.config_changed_keys:
+        config = wrapper.other_attributes["model_config"]
+        namespace = vars(sys.modules[wrapper.cls.__module__])
         config_values = []
         for key, value in config.items():
             try:
-                namespace = vars(sys.modules[wrapper.cls.__module__])
-                if callable(value):
-                    _validate_config_callable(value, namespace, wrapper.name)
-                expression = ast.parse(_field_attribute_repr(value, lambda_keyword=key), mode="eval").body
-                if isinstance(expression, ast.Lambda):
-                    _validate_config_lambda_defaults(value, expression)
-                config_values.append(expression)
-            except Exception as error:  # User callables and reprs can fail in arbitrary ways.
+                config_values.append(_render_config_value(key, value, namespace, wrapper.cls.__name__))
+            except Exception as error:  # User reprs can fail in arbitrary ways.
                 raise CadwynRenderError(f"Cannot render config {wrapper.name}.{key}: {error}") from error
         config_definitions = [
             ast.Assign(
@@ -198,59 +191,41 @@ def _render_pydantic_model(
 
 _ALIAS_ATTRIBUTES = ("alias", "validation_alias", "serialization_alias")
 
-_CONFIG_LITERAL_TYPES = (type(None), bool, int, float, complex, str, bytes)
+_MISSING = object()
 
 
-def _validate_config_callable(value: object, namespace: dict[str, Any], model_name: str) -> None:
-    if not isinstance(value, FunctionType):
-        raise CadwynRenderError("Only Python functions can be rendered as config callables.")
-    defaults = (*(value.__defaults__ or ()), *(value.__kwdefaults__ or {}).values())
-    if any(type(default) not in _CONFIG_LITERAL_TYPES for default in defaults):
-        raise CadwynRenderError("Config callable defaults must be plain literals.")
-    module_builtins = namespace.get("__builtins__", builtins)
-    rendered_globals = getattr(module_builtins, "__dict__", module_builtins) | namespace
-    # Executing the rendered class replaces this binding, so it cannot remain the original object.
-    rendered_globals.pop(model_name, None)
-    if value.__name__ != "<lambda>" and rendered_globals.get(value.__name__) is not value:
-        raise CadwynRenderError("Cannot resolve the config function to the same object in the rendered module.")
-    for name, cell in zip(value.__code__.co_freevars, value.__closure__ or (), strict=True):
-        if name not in rendered_globals or rendered_globals[name] is not cell.cell_contents:
-            raise CadwynRenderError("Config callable has captured variables unavailable in the rendered module.")
-    original_globals = value.__builtins__ | value.__globals__
+def _render_config_value(key: str, value: Any, namespace: dict[str, Any], model_name: str) -> ast.expr:
+    expression = ast.parse(_field_attribute_repr(value, lambda_keyword=key), mode="eval").body
+    if isinstance(expression, ast.Name) and _lookup(namespace, expression.id) is not value:
+        raise CadwynRenderError(f"{expression.id!r} is a different object in the rendered module.")
+    if isinstance(expression, ast.Lambda):
+        _validate_config_lambda(value, namespace, model_name)
+    return expression
+
+
+def _validate_config_lambda(value: FunctionType, namespace: dict[str, Any], model_name: str) -> None:
+    """Make sure that the lambda's copied source means the same in the rendered module.
+
+    transform_lambda() already rejects captured variables.
+    """
+    if value.__defaults__ or value.__kwdefaults__:
+        raise CadwynRenderError("Cannot inline a config lambda with defaults. Use a named function instead.")
     codes = [value.__code__]
     while codes:
         code = codes.pop()
         codes.extend(constant for constant in code.co_consts if isinstance(constant, CodeType))
-        for instruction in dis.get_instructions(code):
-            if instruction.opname in {"LOAD_GLOBAL", "LOAD_NAME"}:
-                name = instruction.argval
-                if (
-                    name not in original_globals
-                    or name not in rendered_globals
-                    or original_globals[name] is not rendered_globals[name]
-                ):
-                    raise CadwynRenderError(
-                        f"Cannot resolve config global {name!r} to the same object in the rendered module."
-                    )
+        # co_names also has attribute names, which are missing from both namespaces unless they shadow a global
+        for name in code.co_names:
+            # The rendered module binds the model's name to the rendered model rather than to this one
+            if name == model_name or _lookup(value.__globals__, name) is not _lookup(namespace, name):
+                raise CadwynRenderError(
+                    f"Cannot inline a config lambda that uses {name!r}, which is a different object "
+                    "in the rendered module. Use a named function instead."
+                )
 
 
-def _validate_config_lambda_defaults(value: FunctionType, expression: ast.Lambda) -> None:
-    nodes = [*expression.args.defaults, *(node for node in expression.args.kw_defaults if node is not None)]
-    defaults = (
-        *(value.__defaults__ or ()),
-        *(
-            (value.__kwdefaults__ or {})[arg.arg]
-            for arg, node in zip(expression.args.kwonlyargs, expression.args.kw_defaults, strict=True)
-            if node is not None
-        ),
-    )
-    for node, default in zip(nodes, defaults, strict=True):
-        try:
-            literal = ast.literal_eval(node)
-        except (ValueError, TypeError) as error:
-            raise CadwynRenderError("Config lambda defaults must be plain literals in the source.") from error
-        if type(literal) not in _CONFIG_LITERAL_TYPES or not is_same_value(literal, default):
-            raise CadwynRenderError("Config lambda defaults differ from their source literals.")
+def _lookup(namespace: dict[str, Any], name: str) -> Any:
+    return namespace.get(name, vars(builtins).get(name, _MISSING))
 
 
 def _with_aliases_of_generated_field(attributes: dict[str, Any], generated_field: FieldInfo) -> dict[str, Any]:

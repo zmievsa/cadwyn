@@ -77,12 +77,12 @@ class AliasedModel(BaseModel):
     value: str = Field(alias="wire")
 
 
-@pytest.mark.parametrize("config", [ConfigDict(populate_by_name=False), ConfigDict(validate_by_name=False)])
 def test__schema_had_config__name_validation_disabled__should_require_alias(
     create_runtime_schemas: CreateRuntimeSchemas,
-    config: ConfigDict,
 ):
-    schemas = create_runtime_schemas(version_change(schema(AliasedModel).had(config=config)))
+    schemas = create_runtime_schemas(
+        version_change(schema(AliasedModel).had(config=ConfigDict(validate_by_name=False)))
+    )
     older = schemas["2000-01-01"][AliasedModel]
     with pytest.raises(ValidationError, match="missing"):
         older.model_validate({"value": "x"})
@@ -135,24 +135,12 @@ def test__schema_had_config__unchanged_value__should_raise_error(
         create_runtime_schemas(version_change(schema(ConfiguredModel).had(config=config)))
 
 
-@pytest.mark.parametrize(
-    "key",
-    [
-        "not_a_config_key",
-        "alias_generator",
-        "field_title_generator",
-        "model_title_generator",
-        "ignored_types",
-        "use_attribute_docstrings",
-        "protected_namespaces",
-        "defer_build",
-        "plugin_settings",
-        "schema_generator",
-        "strict",
-    ],
-)
-def test__schema_had_config__unsupported_key__should_raise_clear_error(key: str):
-    with pytest.raises(CadwynStructureError, match=rf"ConfiguredModel.*{key}.*(unknown|cannot|unsupported)"):
+@pytest.mark.parametrize("key", ["not_a_config_key", "alias_generator", "populate_by_name", "strict"])
+def test__schema_had_config__unsupported_key__should_list_supported_keys(key: str):
+    with pytest.raises(
+        CadwynStructureError,
+        match=rf'"{key}" of "ConfiguredModel".*only these config keys: arbitrary_types_allowed, extra, frozen,',
+    ):
         schema(ConfiguredModel).had(config={key: True})
 
 
@@ -296,30 +284,38 @@ def test__schema_had_config__callable_json_schema_extra__should_change_older_doc
     assert "examples" not in schemas["2001-01-01"][ConfiguredModel].model_json_schema()
 
 
-def test__schema_had_config__populate_by_name_and_explicit_flags__should_use_explicit_flags(
+def test__schema_had_config__alias_validation_enabled__should_keep_name_validation(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    class AliasOnlyModel(BaseModel):
+    class NameOnlyModel(BaseModel):
+        model_config = ConfigDict(validate_by_alias=False)
         value: str = Field(alias="wire")
 
     schemas = create_runtime_schemas(
-        version_change(
-            schema(AliasOnlyModel).had(
-                config=ConfigDict(populate_by_name=True, validate_by_alias=False),
-            )
-        )
+        version_change(schema(NameOnlyModel).had(config=ConfigDict(validate_by_alias=True)))
     )
-    older = schemas["2000-01-01"][AliasOnlyModel]
+    older = schemas["2000-01-01"][NameOnlyModel]
+    assert older.model_validate({"wire": "x"}).value == "x"
     assert older.model_validate({"value": "x"}).value == "x"
-    with pytest.raises(ValidationError, match="missing"):
-        older.model_validate({"wire": "x"})
 
 
-def test__schema_had_config__unchanged_populate_by_name__should_reject_noop(
+def test__schema_had_config__generic_name_validation_disabled__should_apply_to_parametrization(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
-    with pytest.raises(InvalidGenerationInstructionError, match=r"AliasedModel.*populate_by_name.*already"):
-        create_runtime_schemas(version_change(schema(AliasedModel).had(config=ConfigDict(populate_by_name=True))))
+    from typing import Generic, TypeVar
+
+    ValueT = TypeVar("ValueT")
+
+    class Bag(BaseModel, Generic[ValueT]):
+        # Pydantic ignores validate_by_alias=False here because of populate_by_name
+        model_config = ConfigDict(populate_by_name=True, validate_by_alias=False)
+        value: ValueT = Field(alias="wire")
+
+    schemas = create_runtime_schemas(version_change(schema(Bag).had(config=ConfigDict(validate_by_name=False))))
+    older = schemas["2000-01-01"][Bag[int]]
+    with pytest.raises(ValidationError, match="missing"):
+        older.model_validate({"value": 1})
+    assert older.model_validate({"wire": 1}).value == 1
 
 
 @pytest.mark.parametrize("parametrized", [False, True])

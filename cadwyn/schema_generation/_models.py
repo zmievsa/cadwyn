@@ -300,18 +300,21 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             fields_renamed_by_parents=fields_renamed_by_parents,
         )
 
-    def get_config_changes(self, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]") -> dict[str, Any]:
-        """Return this model's config patches, including patches of a parametrization's generic origin.
+    def get_config(self, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]") -> dict[str, Any]:
+        """Return the model's config, including the keys that instructions changed in a parametrization's origin.
 
-        Pydantic parametrizations store a snapshot of their origin's config. Only keys changed by instructions
-        follow the versioned origin; instructions on the parametrization itself take precedence.
+        Pydantic parametrizations store a snapshot of their origin's config. Instructions on the parametrization
+        itself take precedence.
         """
-        origin = self.cls.__pydantic_generic_metadata__["origin"]
-        inherited_changes = (
-            schemas[origin].get_config_changes(schemas) if origin is not None and origin in schemas else {}
-        )
         config = self.other_attributes["model_config"]
-        return inherited_changes | {key: config[key] for key in self.config_changed_keys}
+        origin = self.cls.__pydantic_generic_metadata__["origin"]
+        if origin is None or origin not in schemas:
+            return config
+        origin_wrapper = schemas[origin]
+        origin_config = origin_wrapper.other_attributes["model_config"]
+        return config | {
+            key: origin_config[key] for key in origin_wrapper.config_changed_keys - self.config_changed_keys
+        }
 
     def _get_parents(
         self, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]"
@@ -428,9 +431,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             )
 
         bases = _change_version_of_model_bases(generator, self.cls, orig_bases)
-        attributes = self.other_attributes
-        if config_changes := self.get_config_changes(generator.model_bundle.schemas):
-            attributes = attributes | {"model_config": attributes["model_config"] | config_changes}
+        attributes = self.other_attributes | {"model_config": self.get_config(generator.model_bundle.schemas)}
         model_copy = type(self.cls)(
             self.name,
             bases,

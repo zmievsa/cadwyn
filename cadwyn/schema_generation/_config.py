@@ -19,22 +19,25 @@ if TYPE_CHECKING:
     )
 
 
+_VALIDATE_BY_KEYS = frozenset({"validate_by_alias", "validate_by_name"})
+
+
 def _change_model_config(
     model: "_PydanticModelWrapper[BaseModel]",
     config_patch: pydantic.ConfigDict,
     version_change_name: str,
     schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
 ) -> None:
-    config = model.other_attributes["model_config"] | model.get_config_changes(schemas)
+    config = model.get_config(schemas).copy()
     current = ConfigWrapper(config.copy(), check=False)
     # Pydantic <2.14 fills in the validation settings here; newer versions keep an effective config separately.
     current.core_config(None)
-    if {"populate_by_name", "validate_by_alias", "validate_by_name"} & config_patch.keys():
+    changed_keys = frozenset(config_patch)
+    if _VALIDATE_BY_KEYS & changed_keys:
+        # Pydantic derives each of these flags from the other one and from populate_by_name,
+        # so we set both to keep the effective value of the one that the patch omits
         config.update(validate_by_alias=current.validate_by_alias, validate_by_name=current.validate_by_name)
-    if "populate_by_name" in config_patch:
-        # On older Pydantic releases these flags were copied into model_config at class creation. A patch of
-        # populate_by_name must update them too, while letting explicitly patched validation flags take precedence.
-        config.update(validate_by_alias=True, validate_by_name=config_patch["populate_by_name"])
+        changed_keys |= _VALIDATE_BY_KEYS
     config.update(config_patch)
     updated = ConfigWrapper(config, check=False)
     updated.core_config(None)
@@ -45,9 +48,7 @@ def _change_model_config(
                 "but it already has the value you tried to assign."
             )
     model.other_attributes["model_config"] = config
-    model.config_changed_keys |= frozenset(config_patch)
-    if {"populate_by_name", "validate_by_alias", "validate_by_name"} & config_patch.keys():
-        model.config_changed_keys |= {"validate_by_alias", "validate_by_name"}
+    model.config_changed_keys |= changed_keys
 
 
 def _get_description(docstring: Union[str, None]) -> Union[str, None]:
