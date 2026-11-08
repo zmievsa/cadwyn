@@ -27,6 +27,7 @@ from typing import (
 )
 
 import pytest
+import typing_extensions
 from pydantic import (
     AliasChoices,
     BaseModel,
@@ -3933,6 +3934,39 @@ def test__schema_field_had_name__child_of_mro_entries_base_from_getattr__should_
     old_child = schemas["2000-01-01"][Child]
     assert old_child.__bases__ == (schemas["2000-01-01"][ParentWithIntFooThatGetsRenamed],)
     assert old_child.model_validate({"old_foo": 42}).model_dump() == {"old_foo": 42}
+
+
+class ParentWithDefaultThatChanges(BaseModel):
+    value: int = 42
+
+
+@pytest.mark.parametrize("annotated", [typing.Annotated, typing_extensions.Annotated])
+def test__generate_versioned_routers__child_of_annotated_base__should_use_versioned_parent(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter, annotated: Any
+):
+    class AnnotatedChild(annotated[ParentWithDefaultThatChanges, "marker"]):
+        pass
+
+    class ExplicitChild(ParentWithDefaultThatChanges):
+        pass
+
+    @router.get("/annotated", response_model=AnnotatedChild)
+    @router.get("/explicit", response_model=ExplicitChild)
+    def empty_response() -> dict[str, object]:
+        return {}
+
+    clients = create_versioned_clients(
+        version_change(schema(ParentWithDefaultThatChanges).field("value").had(default=10))
+    )
+
+    for version, default in [("2000-01-01", 10), ("2001-01-01", 42)]:
+        client = clients[version]
+        openapi_schemas = client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
+        for path, child in [("/annotated", AnnotatedChild), ("/explicit", ExplicitChild)]:
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.json() == {"value": default}
+            assert openapi_schemas[child.__name__]["properties"]["value"]["default"] == default
 
 
 class AliasOfBases:
