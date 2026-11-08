@@ -4243,7 +4243,7 @@ def _get_lazy_enum_input_plan(
             or cls._missing_.__func__ not in (Enum._missing_.__func__, Flag._missing_.__func__)
             or cls.__eq__ is not Enum.__eq__
             or cls.__hash__ is not Enum.__hash__
-            or any(type(member.value) not in (str, int, float, bool, type(None)) for member in cls)
+            or any(type(member._value_) not in (str, int, float, bool, type(None)) for member in cls)
         ):
             return None
         return "enum", cls
