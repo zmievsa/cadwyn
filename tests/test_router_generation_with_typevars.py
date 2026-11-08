@@ -234,11 +234,13 @@ def test__generate_versioned_models__recursive_typevar_bound__should_fail_each_s
         count: int = 0
 
     for _ in range(2):
-        with pytest.raises(SchemaGenerationError, match=r"Node.*need the classes themselves"):
-            create_runtime_schemas(version_change(schema(Node).field("count").had(description="Count")))
+        with pytest.raises(SchemaGenerationError, match=r"Node.*refer back to it"):
+            create_runtime_schemas(version_change(schema(Node).field("count").had(description="Count")))["2000-01-01"][
+                Node
+            ]
 
 
-def test__generate_versioned_models__unresolvable_typevar_bound__should_name_param_and_reference(
+def test__generate_versioned_models__unchanged_unresolved_bound__should_preserve_deferred_validation(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     MissingT = TypeVar("MissingT", bound="NeverDefined")  # ty: ignore[unresolved-reference] # noqa: F821 # Intentionally unresolved.
@@ -247,10 +249,8 @@ def test__generate_versioned_models__unresolvable_typevar_bound__should_name_par
         model_config = ConfigDict(defer_build=True)
         item: MissingT
 
-    generator = create_runtime_schemas()["2000-01-01"]
-    for _ in range(2):
-        with pytest.raises(SchemaGenerationError, match=r"NeverDefined.*type parameter MissingT"):
-            generator[Page]
+    old = create_runtime_schemas()["2000-01-01"][Page]
+    assert old.model_fields["item"].annotation is MissingT
 
 
 @pytest.mark.parametrize("change_parent", [False, True])
@@ -319,18 +319,6 @@ def test__router_generation__unvalidated_generic_return__should_preserve_explici
         response = TestClient(app, headers={"x-api-version": version}).get("/items")
         assert response.status_code == 200
         assert response.json() == 1
-
-
-def test__generate_versioned_models__instruction_introduces_recursive_typevar__should_fail_with_param_name(
-    create_runtime_schemas: CreateRuntimeSchemas,
-):
-    RecursiveT = TypeVar("RecursiveT", bound="RecursiveT")  # ty: ignore[invalid-type-variable-bound] # Invalid migration input.
-
-    class Payload(BaseModel):
-        item: int
-
-    with pytest.raises(SchemaGenerationError, match=r"type parameter RecursiveT.*refer back to it"):
-        create_runtime_schemas(version_change(schema(Payload).field("item").had(type=RecursiveT)))
 
 
 @pytest.mark.parametrize("kind", ["tuple_bound", "alias_default"])

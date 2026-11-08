@@ -674,7 +674,8 @@ def _change_version_of_model_references(
     such as default factories, and the generic metadata need the classes themselves, just like the bases.
     """
     transformer = generator.annotation_transformer
-    with transformer.typevar_namespace(model):
+    transformer._model_owners.append(model)
+    try:
         with transformer.hard_position():
             versioned_field_attributes = {}
             for name, attributes in field_attributes.items():
@@ -690,14 +691,9 @@ def _change_version_of_model_references(
         versioned_annotations = transformer.change_version_of_annotation(annotations)
         with transformer.hard_position():
             generic_metadata = generator.change_version_of_generic_metadata(model)
-        # Generic[T] and the metadata must share the very same TypeVars as the copied fields. Do not inspect
-        # unused parameters: their bounds never participate in validation.
-        orig_bases = tuple(replace_types(base, transformer.typevar_copies) for base in orig_bases)
-        generic_metadata = generic_metadata.copy()
-        generic_metadata["parameters"] = tuple(
-            transformer.typevar_copies.get(param, param) for param in generic_metadata["parameters"]
-        )
         return versioned_field_attributes, orig_bases, versioned_annotations, generic_metadata
+    finally:
+        transformer._model_owners.pop()
 
 
 def _change_version_of_model_bases(
@@ -1300,6 +1296,10 @@ class _AnnotationTransformer:
         self.typevar_copies: dict[typing.TypeVar, typing.TypeVar] = {}
         self._typevars_being_copied: set[typing.TypeVar] = set()
         self._typevar_owners: list[Any] = []
+        self._model_owners: list[type[BaseModel]] = []
+        self._typevar_scope_model_depth = 0
+        self._template_position_depth = 0
+        self._typevar_fallback_depth = 0
         # Only request the models from the generator without rebuilding the annotations. This way, we can find
         # the models that an annotation refers to without failing on annotations that we cannot rebuild
         self.record_only = record_only
@@ -1516,7 +1516,12 @@ class _AnnotationTransformer:
             return annotation
         if isinstance(annotation, GenericAliasUnionArgs):
             return self._change_version_of_generic_alias(annotation)
-        elif isinstance(annotation, TypeVar):
+        elif (
+            isinstance(annotation, typing.TypeVar)
+            and self._typevar_owners
+            and not self._template_position_depth
+            and self._typevar_scope_model_depth == len(self._model_owners)
+        ):
             return self._change_version_of_typevar(annotation)
         elif is_typealiastype(annotation):
             if (
@@ -1557,11 +1562,33 @@ class _AnnotationTransformer:
             return annotation
 
     @contextlib.contextmanager
-    def typevar_namespace(self, owner: Any) -> Generator[None, None, None]:
-        self._typevar_owners.append(owner)
+    def template_position(self) -> Generator[None, None, None]:
+        """Copy type references that do not themselves validate values, without binding their TypeVars."""
+        self._template_position_depth += 1
         try:
             yield
         finally:
+            self._template_position_depth -= 1
+
+    @contextlib.contextmanager
+    def typevar_namespace(self, owner: Any) -> Generator[None, None, None]:
+        if (
+            self._typevar_owners
+            and self._typevar_owners[-1] is owner
+            and self._typevar_scope_model_depth == len(self._model_owners)
+        ):
+            yield
+            return
+        self._typevar_owners.append(owner)
+        saved_depth = self._typevar_scope_model_depth
+        self._typevar_scope_model_depth = len(self._model_owners)
+        saved_copies, saved_active = self.typevar_copies, self._typevars_being_copied
+        self.typevar_copies, self._typevars_being_copied = {}, set()
+        try:
+            yield
+        finally:
+            self.typevar_copies, self._typevars_being_copied = saved_copies, saved_active
+            self._typevar_scope_model_depth = saved_depth
             self._typevar_owners.pop()
 
     def _change_version_of_typevar(self, param: typing.TypeVar) -> typing.TypeVar:
@@ -1577,20 +1604,21 @@ class _AnnotationTransformer:
             )
         self._typevars_being_copied.add(param)
         try:
-            bound = self._version_typevar_annotation(param, param.__bound__) if param.__bound__ is not None else None
-            constraints = tuple(self._version_typevar_annotation(param, value) for value in param.__constraints__)
+            replacement_count = self._replacement_count
+            bound = None
+            constraints = ()
             default_kwargs = {}
             default = getattr(param, "__default__", None)
             has_default = getattr(param, "has_default", lambda: default is not None)()
             if has_default:
                 default_kwargs["default"] = self._version_typevar_annotation(param, default)
+            elif param.__constraints__:
+                constraints = tuple(self._version_typevar_annotation(param, value) for value in param.__constraints__)
+            elif param.__bound__ is not None:
+                bound = self._version_typevar_annotation(param, param.__bound__)
             if self.record_only:
                 return param
-            if (
-                bound == param.__bound__
-                and constraints == param.__constraints__
-                and (not has_default or default_kwargs["default"] == default)
-            ):
+            if self._replacement_count == replacement_count:
                 copied = param
             else:
                 # Runtime reconstruction uses the third-party factory dynamically; static TypeVar syntax
@@ -1613,13 +1641,11 @@ class _AnnotationTransformer:
 
     def _version_typevar_annotation(self, param: typing.TypeVar, value: Any) -> Any:
         if _contains_forward_refs(value):
-            for owner in reversed(self._typevar_owners):
-                if isinstance(owner, type) and issubclass(owner, BaseModel):
-                    value = _eval_forward_refs(value, owner)
-                else:
-                    value = _try_eval_type(value, vars(sys.modules[owner.__module__]))
-                if not _contains_forward_refs(value):
-                    break
+            owner = self._typevar_owners[-1]
+            if isinstance(owner, type) and issubclass(owner, BaseModel):
+                value = _eval_forward_refs(value, owner)
+            else:
+                value = _try_eval_type(value, vars(sys.modules[owner.__module__]))
             if _contains_forward_refs(value):
                 if self.record_only:
                     self._record_unknown_references()
@@ -1632,13 +1658,18 @@ class _AnnotationTransformer:
         if isinstance(generator, SchemaGenerator):
             collector = _ReferencedModelCollector()
             collector.annotation_transformer._typevar_owners = self._typevar_owners.copy()
+            collector.annotation_transformer._typevar_fallback_depth = self._typevar_fallback_depth + 1
             collector.annotation_transformer.change_version_of_annotation(value)
             if collector.is_complete and not any(generator._is_versioned(model) for model in collector.models):
                 # Match explicit generic arguments: unchanged models keep their identity and behavior.
                 return value
         # A TypeVar must be built before pydantic sees it, so cyclic bounds need the classes themselves.
-        with self.hard_position():
-            versioned_value = self.change_version_of_annotation(value)
+        self._typevar_fallback_depth += 1
+        try:
+            with self.hard_position():
+                versioned_value = self.change_version_of_annotation(value)
+        finally:
+            self._typevar_fallback_depth -= 1
         if not self.record_only:
             self._check_typevar_value(param, versioned_value)
         return versioned_value
@@ -1694,7 +1725,7 @@ class _AnnotationTransformer:
         try:
             with self.typevar_namespace(alias):
                 value = self.change_version_of_annotation(_get_type_alias_value(alias))
-            type_params = tuple(self.typevar_copies.get(param, param) for param in alias.__type_params__)
+                type_params = tuple(self.typevar_copies.get(param, param) for param in alias.__type_params__)
         except _TypeAliasRefersToItselfError as error:
             if error.alias is not alias:
                 raise
@@ -1713,7 +1744,10 @@ class _AnnotationTransformer:
     def _change_version_of_callable(self, annotation: Callable[..., Any], *, callable_kind: _CallableKind) -> Any:
         # Callables, such as default factories, are called with the classes themselves and their annotations are
         # not resolved by pydantic
-        with self.hard_position():
+        with (
+            self.hard_position(),
+            self.template_position() if callable_kind is _CallableKind.OTHER else contextlib.nullcontext(),
+        ):
             if type(annotation).__module__.startswith(
                 ("fastapi.", "pydantic.", "pydantic_core.", "starlette.")
             ) or isinstance(annotation, fastapi.security.base.SecurityBase):
@@ -1856,33 +1890,40 @@ class _AnnotationTransformer:
 
         origin = get_origin(annotation)
         args = get_args(annotation)
+        if origin is ClassVar or origin is collections.abc.Callable:
+            with self.template_position():
+                new_args = tuple(
+                    self._change_version_of_generic_arg(origin, index, arg) for index, arg in enumerate(args)
+                )
+            return annotation if self.record_only else _rebuild_generic_alias(annotation, new_args)
         if is_typealiastype(origin):
             # The alias value can hold a bare generic even when none of the args contains a model.
             versioned_args = self.change_version_of_annotation(args)
-            if self.record_only:
-                self.change_version_of_annotation(origin)
-                return annotation
+            if not self._typevar_fallback_depth and not _alias_value_uses_fallbacks(origin, len(args)):
+                return (
+                    annotation
+                    if self.record_only
+                    else origin[versioned_args[0] if len(versioned_args) == 1 else versioned_args]
+                )
             supplied_params = origin.__type_params__[: len(args)]
+            if self.record_only:
+                with self.typevar_namespace(origin):
+                    self.typevar_copies.update({param: param for param in supplied_params})
+                    self.change_version_of_annotation(origin)
+                return annotation
             collector = _ReferencedModelCollector()
             # Supplied arguments replace these parameters, so their bounds/defaults do not validate anything.
-            collector.annotation_transformer.typevar_copies.update({param: param for param in supplied_params})
-            collector.annotation_transformer.change_version_of_annotation(origin)
+            with collector.annotation_transformer.typevar_namespace(origin):
+                collector.annotation_transformer.typevar_copies.update({param: param for param in supplied_params})
+                collector.annotation_transformer.change_version_of_annotation(origin)
             versioned_origin = origin
             generator = self.generator.schema_generator if isinstance(self.generator, _CycleCopier) else self.generator
             if isinstance(generator, SchemaGenerator) and any(
                 generator._is_versioned(model) for model in collector.models
             ):
-                saved_copies = {
-                    param: self.typevar_copies[param] for param in supplied_params if param in self.typevar_copies
-                }
-                try:
+                with self.typevar_namespace(origin):
                     self.typevar_copies.update({param: param for param in supplied_params})
                     versioned_origin = self.change_version_of_annotation(origin)
-                finally:
-                    for param in supplied_params:
-                        self.typevar_copies.pop(param, None)
-                        if param in saved_copies:
-                            self.typevar_copies[param] = saved_copies[param]
             return versioned_origin[versioned_args[0] if len(versioned_args) == 1 else versioned_args]
         new_args = tuple(self._change_version_of_generic_arg(origin, index, arg) for index, arg in enumerate(args))
         if self.record_only:
@@ -1930,12 +1971,38 @@ class _AnnotationTransformer:
 
     def _change_version_of_type(self, annotation: type) -> type:
         if lenient_issubclass(annotation, (BaseModel, Enum)):
-            versioned_class = self.generator[annotation]
+            if (self._template_position_depth or self._is_template_reference(annotation)) and not isinstance(
+                self.generator, _ReferencedModelCollector
+            ):
+                depth = self._template_position_depth
+                self._template_position_depth = 0
+                try:
+                    if isinstance(self.generator, SchemaGenerator):
+                        versioned_class = self.generator._get_template(annotation)
+                    elif _unwrap_model(annotation) not in self.generator._forward_refs:
+                        versioned_class = self.generator.schema_generator._get_template(annotation)
+                    else:
+                        versioned_class = self.generator[annotation]
+                finally:
+                    self._template_position_depth = depth
+            else:
+                versioned_class = self.generator[annotation]
             if versioned_class is not annotation:
                 self._replacement_count += 1
             return versioned_class
         else:
             return annotation
+
+    def _is_template_reference(self, annotation: type) -> bool:
+        """Keep nested generics sharing the enclosing model's parameters as templates.
+
+        Binding Inner[T] while copying Outer[T] would prevent Outer[int] from substituting int,
+        and would inspect a bound which that concrete parametrization never validates.
+        """
+        if not self._model_owners or not _is_versionable_model(annotation) or not issubclass(annotation, BaseModel):
+            return False
+        parameters = self._model_owners[-1].__pydantic_generic_metadata__["parameters"]
+        return bool(set(parameters).intersection(annotation.__pydantic_generic_metadata__["parameters"]))
 
     @classmethod
     def _remake_endpoint_dependencies(cls, route: fastapi.routing.APIRoute) -> None:
@@ -2174,6 +2241,72 @@ def _is_versionable_model(model: Any) -> bool:
     )
 
 
+def _alias_value_uses_fallbacks(alias: Any, supplied_count: int) -> bool:
+    """Find bare validation uses hidden in an alias value, ignoring its supplied type parameters."""
+    from typing_inspection.typing_objects import is_typealiastype
+
+    ignored = frozenset(alias.__type_params__[:supplied_count])
+    pending = [(_get_type_alias_value(alias), ignored)]
+    visited: set[tuple[int, frozenset[typing.TypeVar]]] = set()
+    while pending:
+        annotation, ignored = pending.pop()
+        key = id(annotation), ignored
+        if key in visited:
+            continue
+        visited.add(key)
+        if isinstance(annotation, typing.TypeVar):
+            if annotation not in ignored:
+                return True
+        elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            pending.extend((field.annotation, ignored) for field in annotation.model_fields.values())
+        else:
+            origin = get_origin(annotation)
+            args = get_args(annotation)
+            nested = annotation if is_typealiastype(annotation) else origin
+            if is_typealiastype(nested):
+                params = nested.__type_params__
+                nested_ignored = (ignored - frozenset(params)) | frozenset(params[: len(args)])
+                pending.append((_get_type_alias_value(nested), nested_ignored))
+            pending.extend(
+                (arg, ignored)
+                for index, arg in enumerate(args)
+                if _is_type_position_in_generic(origin, index) and origin is not collections.abc.Callable
+            )
+    return False
+
+
+def _get_typevar_uses(model: type[BaseModel]) -> dict[typing.TypeVar, set[type[BaseModel]]]:
+    """Find unresolved parameters in validated fields, excluding unused generic parameters."""
+    found: dict[typing.TypeVar, set[type[BaseModel]]] = {}
+    visited = {model}
+    visited_annotations: set[tuple[int, type[BaseModel]]] = set()
+    pending = [(field.annotation, model) for field in model.model_fields.values()]
+    while pending:
+        annotation, owner = pending.pop()
+        key = id(annotation), owner
+        if key in visited_annotations:
+            continue
+        visited_annotations.add(key)
+        expanded = _get_value_of_type_alias_with_args(annotation)
+        if expanded is not _UNRESOLVED:
+            pending.append((expanded.value, owner))
+            continue
+        if isinstance(annotation, typing.TypeVar):
+            found.setdefault(annotation, set()).add(owner)
+        elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            if annotation not in visited:
+                visited.add(annotation)
+                pending.extend((field.annotation, annotation) for field in annotation.model_fields.values())
+        else:
+            origin = get_origin(annotation)
+            pending.extend(
+                (arg, owner)
+                for index, arg in enumerate(get_args(annotation))
+                if _is_type_position_in_generic(origin, index) and origin is not collections.abc.Callable
+            )
+    return found
+
+
 @final
 class _ReferencedModelCollector:
     """A generator that records the models requested from it instead of generating their copies"""
@@ -2194,6 +2327,17 @@ class _ReferencedModelCollector:
     def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
         if _is_versionable_model(model):
             self.models.add(_unwrap_model(model))
+            if (
+                isinstance(model, type)
+                and issubclass(model, BaseModel)
+                and model.__pydantic_generic_metadata__["parameters"]
+                and not self.annotation_transformer._template_position_depth
+                and not self.annotation_transformer._is_template_reference(model)
+                and model not in self.annotation_transformer._model_owners
+            ):
+                transformer = self.annotation_transformer
+                with transformer.typevar_namespace(model):
+                    transformer._record_without_cycles(model, lambda: [tuple(_get_typevar_uses(model))])
             if self.annotation_transformer.is_in_hard_position:
                 self.hard_models.add(_unwrap_model(model))
         return model
@@ -2571,6 +2715,8 @@ class _VersioningQuestion(NamedTuple):
 class SchemaGenerator:
     __slots__ = (
         "_adds_references",
+        "_bare_models",
+        "_bare_models_being_generated",
         "_changed_models",
         "_copied_cycles",
         "_cycles_behind_latest_generic_args",
@@ -2605,6 +2751,8 @@ class SchemaGenerator:
         version: str,
     ) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
+        self._bare_models: dict[type[BaseModel], type[BaseModel]] = {}
+        self._bare_models_being_generated: set[type[BaseModel]] = set()
         self.model_bundle = model_bundle
         # The renames of this version and the newer ones, which the copies of the subclasses must follow
         self._parent_renames = parent_renames
@@ -2643,9 +2791,91 @@ class SchemaGenerator:
         # Models are generated through __getitem__ so that the copies created along the way are reused
         # instead of being created again
         for model in [*self.model_bundle.schemas, *self.model_bundle.enums]:
-            self[model]
+            # Instructions describe templates too; they do not imply a bare validation use.
+            self._get_template(model)
 
     def __getitem__(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
+        if not self._changed_models or not _is_versionable_model(model) or not issubclass(model, BaseModel):
+            return self._get_template(model)
+        original = _unwrap_model(model)
+        if not original.__pydantic_generic_metadata__["parameters"]:
+            return self._get_template(model)
+        # The cache preserves the original class relationship, like concrete_models below.
+        return cast("type[_T_ANY_MODEL]", self._get_bare_model(original))
+
+    def _get_bare_model(self, original: type[BaseModel]) -> type[BaseModel]:
+        with self._lock:
+            if original in self._bare_models:
+                return self._bare_models[original]
+            if original in self._bare_models_being_generated:
+                raise SchemaGenerationError(
+                    f"Cadwyn cannot version the bare generic {original.__qualname__} because its type parameter "
+                    "fallbacks refer back to it. Use explicit type arguments."
+                )
+            self._bare_models_being_generated.add(original)
+            try:
+                parameters = original.__pydantic_generic_metadata__["parameters"]
+                template = self._get_template(original)
+                used = _get_typevar_uses(template)
+                transformer = self.annotation_transformer
+                args = []
+                for param in parameters:
+                    if param not in used:
+                        args.append(param)
+                        continue
+                    owner = self._get_typevar_owner(param, used[param])
+                    with transformer.typevar_namespace(owner):
+                        args.append(transformer._change_version_of_typevar(param))
+                if all(arg is param for arg, param in zip(args, parameters, strict=True)):
+                    self._bare_models[original] = template
+                    return template
+                # Specialize the complete source, then use the ordinary generator so instructions on nested
+                # generics are applied too. The template keeps its original parameters for concrete uses.
+                specialized = replace_types(original, dict(zip(parameters, args, strict=True)))
+                if not isinstance(specialized, type) or not issubclass(specialized, BaseModel):
+                    raise SchemaGenerationError(
+                        f"Cadwyn cannot safely parametrize the bare generic {original.__qualname__}"
+                    )
+                namespace = (unpack_lenient_weakvaluedict(original.__pydantic_parent_namespace__) or {}) | {
+                    original.__name__: original,
+                    **{param.__name__: arg for param, arg in zip(parameters, args, strict=True)},
+                }
+                specialized.__pydantic_parent_namespace__ = build_lenient_weakvaluedict(namespace)
+                specialized.model_rebuild(_types_namespace={})
+                result = self._get_template(specialized)
+                setattr(result, "__cadwyn_original_model__", original)  # noqa: B010 # Runtime marker on generated class.
+                self._bare_models[original] = result
+                return result
+            finally:
+                self._bare_models_being_generated.remove(original)
+
+    def _get_typevar_owner(self, param: typing.TypeVar, owners: set[type[BaseModel]]) -> type[BaseModel]:
+        """Choose the namespace that actually validates a parameter, rejecting incompatible bare uses."""
+        owners = {_unwrap_model(owner) for owner in owners}
+        owner = next(iter(owners))
+        default = getattr(param, "__default__", None)
+        if getattr(param, "has_default", lambda: default is not None)():
+            values = (default,)
+        else:
+            values = param.__constraints__ or (param.__bound__,)
+        for value in values:
+            if not _contains_forward_refs(value):
+                continue
+            resolved = [_eval_forward_refs(value, context) for context in owners]
+            if all(target == resolved[0] for target in resolved):
+                continue
+            collector = _ReferencedModelCollector()
+            for target in resolved:
+                collector.annotation_transformer.change_version_of_annotation(target)
+            if any(self._is_versioned(model) for model in collector.models):
+                raise SchemaGenerationError(
+                    f"Cadwyn cannot version the bare generic {owner.__qualname__}: type parameter "
+                    f"{param.__name__} resolves differently across nested model namespaces. "
+                    "Use explicit type arguments."
+                )
+        return owner
+
+    def _get_template(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
         if not _is_versionable_model(model):
             return model
         model = _unwrap_model(model)
@@ -2675,7 +2905,7 @@ class SchemaGenerator:
             return cast("type[_T_ANY_MODEL]", self.concrete_models[model])
 
     def change_version_of_base(self, base: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
-        return self[base]
+        return self._get_template(base)
 
     def dependency_differs_from_head(self, dependency: Callable[..., Any]) -> bool:
         """Whether this version's copy of the dependency could validate requests differently from the dependency.
@@ -3548,15 +3778,9 @@ def _change_version_of_generic_metadata(
     generic_metadata = model.__pydantic_generic_metadata__
     origin = generic_metadata["origin"]
     if not schema_generator._should_version_generic_args(model, generation_stack=[]):
-        if origin is not None and (
-            schema_generator._is_copied_with_its_cycle(origin)
-            or any(
-                generator.annotation_transformer.typevar_copies.get(param, param) is not param
-                for param in origin.__pydantic_generic_metadata__["parameters"]
-            )
-        ):
-            # The origin must share the copied TypeVars of its fields, or pydantic cannot substitute its args.
-            # It must also distinguish copied cyclic parametrizations from their HEAD counterparts.
+        if origin is not None and schema_generator._is_copied_with_its_cycle(origin):
+            # Pydantic identifies a parametrized generic by its origin and args, so with the head origin, the copy
+            # of e.g. TreeNode[int] would be mistaken for the head TreeNode[int] wherever both of them are used
             return {**generic_metadata, "origin": generator.change_version_of_base(origin)}
         return generic_metadata
     # Pydantic resolves the fields of a parametrized generic (such as Page[Item]) through its origin and args
