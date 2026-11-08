@@ -287,8 +287,6 @@ _PRE_SPLIT_METADATA: dict[str, dict[str, tuple[str, Union[str, None]]]] = {
         "_build_form_model_fields": ("cadwyn.structure.versions", "_build_form_model_fields"),
         "_can_be_called_with": ("cadwyn.structure.versions", "_can_be_called_with"),
         "_cant_pass_form_error": ("cadwyn.structure.versions", "_cant_pass_form_error"),
-        "_close_file_in_thread": ("cadwyn.structure.versions", "_close_file_in_thread"),
-        "_close_upload": ("cadwyn.structure.versions", "_close_upload"),
         "_copy_container_with_children": ("cadwyn.structure.versions", "_copy_container_with_children"),
         "_copy_decoded_json_string": ("cadwyn.structure.versions", "_copy_decoded_json_string"),
         "_copy_decoded_json_strings": ("cadwyn.structure.versions", "_copy_decoded_json_strings"),

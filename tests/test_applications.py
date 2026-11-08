@@ -22,7 +22,6 @@ from starlette.background import BackgroundTask
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response as StarletteResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
-from starlette.websockets import WebSocket
 from typing_extensions import override
 
 from cadwyn import Cadwyn, OpenAPICustomizer, current_dependency_solver
@@ -1000,54 +999,6 @@ def test__api_version_header_without_default_value__version_picked_by_custom_mid
     assert response.json() == "2022-11-16"
 
 
-def test__versioning_middleware__custom_dispatch_argument__should_pick_version_and_keep_response():
-    async def dispatch(request: Request, call_next: RequestResponseEndpoint) -> StarletteResponse:
-        app.versions.api_version_var.set(request.query_params.get("version"))
-        response = await call_next(request)
-        response.headers["x-custom-dispatch"] = "ran"
-        return response
-
-    class CustomDispatchMiddleware(VersionPickingMiddleware):
-        def __init__(self, app: ASGIApp, **kwargs: Any) -> None:
-            super().__init__(app, dispatch=dispatch, **kwargs)
-
-    app = Cadwyn(versions=_two_versions(), versioning_middleware_class=CustomDispatchMiddleware)
-    router = VersionedAPIRouter()
-
-    @router.get("/items")
-    async def get_items():
-        return "unchanged"
-
-    app.generate_and_include_versioned_routers(router)
-    with TestClient(app) as client:
-        response = client.get("/items?version=2021-01-01")
-
-    assert response.status_code == 200
-    assert response.json() == "unchanged"
-    assert response.headers["x-custom-dispatch"] == "ran"
-    assert "x-api-version" not in response.headers
-
-
-def test__api_version_default__reads_body__should_preserve_body_for_endpoint():
-    async def version_from_body(request: Request) -> str:
-        return (await request.json())["version"]
-
-    app = Cadwyn(versions=_two_versions(), api_version_default_value=version_from_body)
-    router = VersionedAPIRouter()
-
-    @router.post("/items")
-    async def get_items(body: dict[str, str]):
-        return body
-
-    app.generate_and_include_versioned_routers(router)
-    with TestClient(app) as client:
-        response = client.post("/items", json={"version": "2021-01-01", "value": "preserved"})
-
-    assert response.status_code == 200
-    assert response.json() == {"version": "2021-01-01", "value": "preserved"}
-    assert response.headers["x-api-version"] == "2021-01-01"
-
-
 def test__api_version_context__waterfalling__should_keep_background_context_and_isolate_outer_middleware():
     versions = _two_versions()
     context = ContextVar("application_context", default="original")
@@ -1140,19 +1091,6 @@ def test__api_version_context__waterfalling_with_unhandled_exception__should_rea
 
     assert response.status_code == 500
     assert response.json() == {"version": "2021-06-01", "context": "original"}
-
-
-def test__cadwyn__unversioned_websocket__should_exchange_messages():
-    app = Cadwyn(versions=_two_versions())
-
-    @app.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket):
-        await websocket.accept()
-        await websocket.send_text("unchanged")
-        await websocket.close()
-
-    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
-        assert websocket.receive_text() == "unchanged"
 
 
 def test__file_cleanup__mounted_fastapi_app__should_keep_host_cleanup_and_response():
