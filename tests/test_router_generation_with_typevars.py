@@ -223,21 +223,24 @@ def test__generate_versioned_models__unused_typevar_with_unresolved_bound__shoul
     assert schemas["2000-01-01"][Page].model_validate({"count": 1}).count == 1
 
 
-def test__generate_versioned_models__recursive_typevar_bound__should_fail_each_startup_attempt(
+def test__generate_versioned_models__recursive_typevar_bound__should_preserve_deferred_validation(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     NodeT = TypeVar("NodeT", bound="Node")
 
     class Node(BaseModel, Generic[NodeT]):
         model_config = ConfigDict(defer_build=True)
-        child: NodeT
+        child: Union[NodeT, None] = None
         count: int = 0
 
     for _ in range(2):
-        with pytest.raises(SchemaGenerationError, match=r"Node.*refer back to it"):
-            create_runtime_schemas(version_change(schema(Node).field("count").had(description="Count")))["2000-01-01"][
-                Node
-            ]
+        old = create_runtime_schemas(version_change(schema(Node).field("count").had(description="Count")))[
+            "2000-01-01"
+        ][Node]
+        assert old.model_validate({"child": {"count": 1}}).model_dump() == {
+            "child": {"child": None, "count": 1},
+            "count": 0,
+        }
 
 
 def test__generate_versioned_models__unchanged_unresolved_bound__should_preserve_deferred_validation(

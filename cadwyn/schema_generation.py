@@ -2824,6 +2824,14 @@ class SchemaGenerator:
                         args.append(param)
                         continue
                     owner = self._get_typevar_owner(param, used[param])
+                    collector = _ReferencedModelCollector()
+                    with collector.annotation_transformer.typevar_namespace(owner):
+                        collector.annotation_transformer.change_version_of_annotation(param)
+                    if original in collector.models:
+                        # Self-bound parameters already follow main's recursive model copying. Keep the
+                        # entire parameter unchanged, including constraints that mention other models.
+                        args.append(param)
+                        continue
                     with transformer.typevar_namespace(owner):
                         args.append(transformer._change_version_of_typevar(param))
                 if all(arg is param for arg, param in zip(args, parameters, strict=True)):

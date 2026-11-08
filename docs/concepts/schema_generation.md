@@ -81,7 +81,9 @@ Generic models used without type args, such as `Page` in the example above, use 
 
 Older versions now reject the latest shape when it differs from their own ([issue #584](https://github.com/zmievsa/cadwyn/issues/584)). Add request and response converters for the outer generic, or for the endpoint's path, wherever the nested data needs migrating; converters for the nested model do not run automatically. Affected bare generics can have different OpenAPI names, such as `Page[T]`.
 
-Quoted bounds resolve in each consuming model's namespace or the type alias's module. Cadwyn keeps generic templates and their original parameters intact, including for self-referencing generics. A bare generic whose validation fallback cannot be resolved or safely versioned raises `SchemaGenerationError`; use explicit type arguments for such a model.
+Quoted bounds resolve in each consuming model's namespace or the type alias's module. Cadwyn keeps generic templates and their original parameters intact, including for self-referencing generics. Parameters whose fallback refers back to their consuming model retain the existing recursive-model versioning behavior. A bare generic whose validation fallback cannot be resolved or safely versioned raises `SchemaGenerationError`; use explicit type arguments for such a model.
+
+TypeVar-based typed extra fields (`__pydantic_extra__` with `extra="allow"`) remain a [known limitation](../theory/design_decisions.md#known-limitations): older versions can still validate and document their latest bounds. Use a concrete annotation such as `__pydantic_extra__: dict[str, Item]` on a non-generic model instead.
 
 Some type args keep their latest models:
 
