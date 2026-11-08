@@ -180,7 +180,8 @@ async def _rewind_uploads_read_by_fastapi(
 
 
 _UPLOADS_TO_CLOSE_SCOPE_KEY = "cadwyn.uploads_to_close"
-# How long we wait for each upload to close, so that an upload that never closes can't keep the request running forever
+# How long we wait for uploads to close. It doesn't limit the close of a file on disk: Starlette runs it in a worker
+# thread that can't be cancelled
 _UPLOAD_CLOSE_TIMEOUT_SECONDS = 3
 
 

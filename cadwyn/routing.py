@@ -113,14 +113,23 @@ class _RootCadwynAPIRouter(APIRouter):
             routes = self.unversioned_routes + routes
         # FastAPI closes the uploads of its forms with this stack after the response. `VersionPickingMiddleware`
         # (a `BaseHTTPMiddleware`) cancels the request when the client disconnects, which would interrupt that, so we
-        # close them here, shielded from the cancellation. FastAPI then exits the empty stack as usual
+        # exit the stack here, shielded from the cancellation, like `async with` would. FastAPI then exits the empty
+        # stack as usual
         file_stack = scope.get("fastapi_middleware_astack")
+        if not isinstance(file_stack, AsyncExitStack):  # E.g. the router is used as an ASGI app on its own
+            await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
+            return
         try:
             await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
-        finally:
-            if isinstance(file_stack, AsyncExitStack):
-                with anyio.move_on_after(_UPLOAD_CLOSE_TIMEOUT_SECONDS, shield=True):
-                    await file_stack.aclose()
+        except BaseException as exc:
+            suppressed = False
+            with anyio.move_on_after(_UPLOAD_CLOSE_TIMEOUT_SECONDS, shield=True):
+                suppressed = await file_stack.__aexit__(type(exc), exc, exc.__traceback__)
+            if not suppressed:
+                raise
+        else:
+            with anyio.move_on_after(_UPLOAD_CLOSE_TIMEOUT_SECONDS, shield=True):
+                await file_stack.__aexit__(None, None, None)
 
     async def _handle_websocket(self, scope: Scope, receive: Receive, send: Send) -> None:
         scope.setdefault("router", self)

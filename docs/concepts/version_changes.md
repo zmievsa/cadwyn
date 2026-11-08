@@ -189,7 +189,7 @@ Cadwyn can migrate more than just request bodies.
 
 If a migration reads an uploaded file from `form`, it must `seek` the file back to where the latest version should start reading it, usually `upload.file.seek(0)`. Otherwise, the latest version gets the file as the migration left it, e.g. empty.
 
-Uploads stay open for background tasks, including the uploads that migrations add and later replace or remove. Cadwyn closes all of them after the response and its background tasks, even if the client disconnects. If a close takes longer than three seconds, Cadwyn stops waiting for it, so that upload may stay open.
+Uploads stay open for background tasks, including the uploads that migrations add and later replace or remove. Cadwyn closes all of them after the response and its background tasks, even if the client disconnects. See [known limitations](../theory/design_decisions.md#known-limitations) for closes that never finish.
 
 `ResponseInfo` has the following interfaces to migrate responses:
 

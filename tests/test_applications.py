@@ -5,7 +5,7 @@ import logging
 import re
 import threading
 import warnings
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Annotated, Any, Literal, cast
@@ -1136,6 +1136,77 @@ def test__file_cleanup__additional_fastapi_callback__should_keep_arguments_ident
     assert response.status_code == 200
     assert response.json() == "unchanged"
     assert observed == [("closed", "endpoint")]
+
+
+@pytest.mark.parametrize("route_kind", ["unversioned", "versioned"])
+@pytest.mark.parametrize(
+    ("behavior", "expected_seen", "expected_outcome"),
+    [
+        ("success", ["success"], "200"),
+        ("endpoint_error", ["ValueError"], "ValueError: endpoint failed"),
+        ("exit_suppresses", ["ValueError"], "RuntimeError: No response returned."),
+        ("exit_raises", ["ValueError"], "KeyError: 'exit failed'"),
+        ("exit_raises_on_success", ["success"], "KeyError: 'exit failed'"),
+    ],
+)
+def test__file_cleanup__context_manager_on_fastapi_file_stack__should_exit_like_in_fastapi(
+    route_kind: Literal["unversioned", "versioned"],
+    behavior: str,
+    expected_seen: list[str],
+    expected_outcome: str,
+):
+    seen: list[str] = []
+
+    @asynccontextmanager
+    async def transaction() -> AsyncGenerator[None]:
+        try:
+            yield
+        except ValueError as exc:
+            seen.append(type(exc).__name__)
+            if behavior == "exit_raises":
+                raise KeyError("exit failed") from None
+            if behavior != "exit_suppresses":
+                raise
+        else:
+            seen.append("success")
+            if behavior == "exit_raises_on_success":
+                raise KeyError("exit failed")
+
+    async def endpoint(request: Request):
+        # FastAPI's file stack is an ordinary AsyncExitStack, so apps can enter their own context managers on it
+        await request.scope["fastapi_middleware_astack"].enter_async_context(transaction())
+        if behavior in ("endpoint_error", "exit_suppresses", "exit_raises"):
+            raise ValueError("endpoint failed")
+        return "ok"
+
+    async def passthrough(request: Request, call_next: RequestResponseEndpoint) -> StarletteResponse:
+        return await call_next(request)
+
+    baseline = FastAPI()
+    baseline.add_middleware(BaseHTTPMiddleware, dispatch=passthrough)
+    baseline.get("/test")(endpoint)
+    app = Cadwyn(versions=_two_versions())
+    if route_kind == "unversioned":
+        app.get("/test")(endpoint)
+    else:
+        router = VersionedAPIRouter()
+        router.get("/test")(endpoint)
+        app.generate_and_include_versioned_routers(router)
+
+    observed: list[tuple[list[str], str]] = []
+    for target, headers in (
+        (baseline, {}),
+        (app, {"x-api-version": "2021-01-01"} if route_kind == "versioned" else {}),
+    ):
+        seen.clear()
+        try:
+            with TestClient(target) as client:
+                outcome = str(client.get("/test", headers=headers).status_code)
+        except (ValueError, RuntimeError, KeyError) as exc:
+            outcome = f"{type(exc).__name__}: {exc}"
+        observed.append((seen.copy(), outcome))
+
+    assert observed == [(expected_seen, expected_outcome)] * 2
 
 
 @pytest.mark.parametrize("group_depth", [0, 1, 2])
