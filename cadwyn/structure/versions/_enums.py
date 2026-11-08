@@ -6,7 +6,6 @@ from typing import Any, Union, cast
 
 from fastapi._compat import ModelField
 from fastapi.dependencies.models import Dependant
-from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.routing import APIRoute
 from pydantic.errors import PydanticUserError
 from pydantic_core import SchemaSerializer, SchemaValidator, core_schema
@@ -122,7 +121,7 @@ def _can_body_have_lazy_iterators(route: APIRoute, *, in_lazy_items: bool) -> bo
     try:
         result = any(
             _has_generator_schema(cast("dict[str, Any]", field._type_adapter.core_schema), in_items=in_lazy_items)
-            for field in get_flat_dependant(dependant).body_params
+            for field in _iter_body_params(dependant)
         )
     # E.g. a forward ref that is never defined, which FastAPI never resolves for routes that get no body
     except PydanticUserError:
@@ -132,6 +131,15 @@ def _can_body_have_lazy_iterators(route: APIRoute, *, in_lazy_items: bool) -> bo
 
 
 _CAN_BODY_HAVE_LAZY_ITERATORS: dict[tuple[int, bool], tuple[Dependant, bool]] = {}
+
+
+def _iter_body_params(dependant: Dependant) -> Iterator[ModelField]:
+    """Yield the body params of the dependant and of all of its sub-dependants"""
+    dependants = [dependant]
+    while dependants:
+        dependant = dependants.pop()
+        yield from dependant.body_params
+        dependants.extend(dependant.dependencies)
 
 
 def _has_generator_schema(schema: dict[str, Any], *, in_items: bool = False) -> bool:
