@@ -26,14 +26,14 @@ from cadwyn._utils import (
 )
 from cadwyn.exceptions import CadwynError, SchemaGenerationError
 
-from ._annotation_utils import (
+from ._annotation_evaluation import (
     _NO_REDEFINED_FIELDS,
     _get_annotation_with_metadata,
     _get_rebuilt_model_fields,
     _replace_forward_refs,
     _replace_in_type_positions,
 )
-from ._annotations import (
+from ._annotation_transformer import (
     _AnnotationTransformer,
     _ModelReferences,
 )
@@ -53,7 +53,7 @@ from ._models import (
 )
 
 if TYPE_CHECKING:
-    from ._generator import (
+    from ._schema_generator import (
         SchemaGenerator,
     )
 

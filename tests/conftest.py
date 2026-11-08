@@ -16,22 +16,17 @@ from typing_extensions import override
 
 from cadwyn import Cadwyn, VersionBundle, VersionedAPIRouter
 from cadwyn._utils import same_method_definition_as_in
-from cadwyn.schema_generation import (
-    SchemaGenerator,
-    _AnnotationTransformer,
-    _BareGenericCopier,
+from cadwyn.schema_generation import SchemaGenerator, generate_versioned_models
+from cadwyn.schema_generation._annotation_evaluation import _get_model_annotations, _get_model_field_names
+from cadwyn.schema_generation._annotation_transformer import _AnnotationTransformer, _ReferencedModelCollector
+from cadwyn.schema_generation._common import _is_versionable_model, _unwrap_model
+from cadwyn.schema_generation._fields import _extract_passed_field_attributes
+from cadwyn.schema_generation._models import (
     _change_version_of_model_references,
-    _CycleCopier,
-    _extract_passed_field_attributes,
     _get_head_model_references,
-    _get_model_annotations,
-    _get_model_field_names,
-    _is_versionable_model,
     _PydanticModelWrapper,
-    _ReferencedModelCollector,
-    _unwrap_model,
-    generate_versioned_models,
 )
+from cadwyn.schema_generation._references import _BareGenericCopier, _CycleCopier
 from cadwyn.structure import Version, VersionChange
 from cadwyn.structure.endpoints import AlterEndpointSubInstruction
 from cadwyn.structure.enums import AlterEnumSubInstruction

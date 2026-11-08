@@ -39,7 +39,7 @@ from cadwyn.middleware import (
 from cadwyn.route_generation import copy_route, generate_versioned_routers
 from cadwyn.routing import _RootCadwynAPIRouter
 from cadwyn.structure import VersionBundle
-from cadwyn.structure.versions import _UPLOADS_TO_CLOSE_SCOPE_KEY, _UploadsToClose
+from cadwyn.structure.versions._uploads import _UPLOADS_TO_CLOSE_SCOPE_KEY, _UploadsToClose
 
 if TYPE_CHECKING:
     from enum import Enum

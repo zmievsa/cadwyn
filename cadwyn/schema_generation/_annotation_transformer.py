@@ -44,7 +44,7 @@ from cadwyn._utils import (
 )
 from cadwyn.exceptions import SchemaGenerationError
 
-from ._annotation_utils import (
+from ._annotation_evaluation import (
     _UNRESOLVED,
     _are_same_args,
     _contains_forward_refs,
@@ -97,12 +97,12 @@ from ._generics import (
 )
 
 if TYPE_CHECKING:
-    from ._generator import (
-        SchemaGenerator,
-    )
     from ._references import (
         _BareGenericCopier,
         _CycleCopier,
+    )
+    from ._schema_generator import (
+        SchemaGenerator,
     )
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])

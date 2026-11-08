@@ -1,4 +1,5 @@
 import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
+import inspect
 from collections.abc import Sequence
 from typing import (
     TYPE_CHECKING,
@@ -12,12 +13,14 @@ from typing import (
 
 import pydantic._internal._decorators
 from pydantic import BaseModel
+from pydantic._internal._config import ConfigWrapper
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
 from cadwyn._utils import (
     Sentinel,
     get_name_of_function_wrapped_in_pydantic_validator,
+    is_same_value,
     lenient_issubclass,
 )
 from cadwyn.exceptions import InvalidGenerationInstructionError
@@ -32,15 +35,8 @@ from cadwyn.structure.schemas import (
     ValidatorExistedInstruction,
 )
 
-from ._annotation_utils import (
+from ._annotation_evaluation import (
     _get_annotations_without_evaluating,
-)
-from ._bundle import (
-    _RuntimeSchemaGenContext,
-)
-from ._config import (
-    _change_model_config,
-    _get_description,
 )
 from ._enums import (
     _apply_alter_enum_instructions,
@@ -58,11 +54,12 @@ from ._generics import (
 )
 
 if TYPE_CHECKING:
-    from ._generator import (
-        SchemaGenerator,
-    )
     from ._models import (
         _PydanticModelWrapper,
+    )
+    from ._schema_generator import (
+        SchemaGenerator,
+        _RuntimeSchemaGenContext,
     )
 
 
@@ -99,7 +96,7 @@ class _SchemaChanges(NamedTuple):
     deleted_fields: list[_DeletedField]
 
 
-def _migrate_classes(context: _RuntimeSchemaGenContext) -> _SchemaChanges:
+def _migrate_classes(context: "_RuntimeSchemaGenContext") -> _SchemaChanges:
     changes = _SchemaChanges(renames=[], deleted_fields=[])
     for version_change in context.current_version.changes:
         _apply_alter_schema_instructions(
@@ -431,6 +428,43 @@ def _change_model(
         model.doc = description
     if alter_schema_instruction.config:
         _change_model_config(model, alter_schema_instruction.config, version_change_name, schemas)
+
+
+_VALIDATE_BY_KEYS = frozenset({"validate_by_alias", "validate_by_name"})
+
+
+def _change_model_config(
+    model: "_PydanticModelWrapper[BaseModel]",
+    config_patch: pydantic.ConfigDict,
+    version_change_name: str,
+    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
+) -> None:
+    config = model.get_config(schemas).copy()
+    current = ConfigWrapper(config.copy(), check=False)
+    # Pydantic <2.14 fills in the validation settings here; newer versions keep an effective config separately.
+    current.core_config(None)
+    changed_keys = frozenset(config_patch)
+    if _VALIDATE_BY_KEYS & changed_keys:
+        # Pydantic derives each of these flags from the other one and from populate_by_name,
+        # so we set both to keep the effective value of the one that the patch omits
+        config.update(validate_by_alias=current.validate_by_alias, validate_by_name=current.validate_by_name)
+        changed_keys |= _VALIDATE_BY_KEYS
+    config.update(config_patch)
+    updated = ConfigWrapper(config, check=False)
+    updated.core_config(None)
+    for key in config_patch:
+        if is_same_value(getattr(current, key), getattr(updated, key)):
+            raise InvalidGenerationInstructionError(
+                f'You tried to change config of "{model.name}", key "{key}", in "{version_change_name}" '
+                "but it already has the value you tried to assign."
+            )
+    model.other_attributes["model_config"] = config
+    model.config_changed_keys |= changed_keys
+
+
+def _get_description(docstring: Union[str, None]) -> Union[str, None]:
+    """Return the description that pydantic generates from the docstring of a model"""
+    return inspect.cleandoc(docstring) if docstring else None
 
 
 def _add_field_to_model(

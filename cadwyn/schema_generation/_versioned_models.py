@@ -19,26 +19,19 @@ from cadwyn.structure.data import ResponseInfo
 from cadwyn.structure.schemas import (
     SchemaHadInstruction,
 )
-from cadwyn.structure.versions import (
+from cadwyn.structure.versions import (  # noqa: TC001 # Needed by runtime annotation introspection.
     HeadVersion,
     Version,
     VersionBundle,
-    _get_schema_migration_target,
-    _rescue_model_data,
 )
+from cadwyn.structure.versions._aliases import _rescue_model_data
+from cadwyn.structure.versions._migration_targets import _get_schema_migration_target
 
-from ._annotations import (
+from ._annotation_transformer import (
     _ReferencedModelCollector,
-)
-from ._bundle import (
-    _ModelBundle,
-    _RuntimeSchemaGenContext,
 )
 from ._enums import (
     _EnumWrapper,
-)
-from ._generator import (
-    SchemaGenerator,
 )
 from ._instructions import (
     _check_that_deleted_fields_are_not_inherited,
@@ -54,6 +47,11 @@ from ._models import (
 )
 from ._references import (
     _ReferenceCycles,
+)
+from ._schema_generator import (
+    SchemaGenerator,
+    _ModelBundle,
+    _RuntimeSchemaGenContext,
 )
 
 

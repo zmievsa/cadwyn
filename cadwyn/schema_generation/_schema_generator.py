@@ -1,5 +1,8 @@
-import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
+import collections
+import collections.abc  # Needed by runtime annotation introspection.
 import contextlib
+import copy
+import dataclasses
 import functools
 import inspect
 import threading
@@ -21,25 +24,25 @@ from pydantic import BaseModel
 from pydantic._internal._generics import PydanticGenericMetadata, replace_types
 
 from cadwyn._utils import (
+    DATACLASS_KW_ONLY,
+    DATACLASS_SLOTS,
     lenient_issubclass,
 )
 from cadwyn.exceptions import CadwynError, InvalidGenerationInstructionError, SchemaGenerationError
+from cadwyn.structure.versions import HeadVersion, Version  # noqa: TC001 # Needed by runtime annotation introspection.
 
-from ._annotation_utils import (
+from ._annotation_evaluation import (
     _contains_forward_refs,
     _eval_forward_refs,
     _get_annotations_without_evaluating,
     _get_typevar_fallbacks,
 )
-from ._annotations import (
+from ._annotation_transformer import (
     _AnnotationTransformer,
     _GenerationAnalysis,
     _get_models_validated_by_fields,
     _ModelReferences,
     _ReferencedModelCollector,
-)
-from ._bundle import (
-    _ModelBundle,
 )
 from ._common import (
     _T_ANY_MODEL,
@@ -94,6 +97,32 @@ if TYPE_CHECKING:
     from ._references import (
         _ReferenceCycles,
     )
+
+
+@dataclasses.dataclass(**DATACLASS_SLOTS)
+class _ModelBundle:
+    enums: dict[type[Enum], "_EnumWrapper[Enum]"]
+    schemas: dict[type[BaseModel], "_PydanticModelWrapper[BaseModel]"]
+    models_with_config_instructions: frozenset[type[BaseModel]]
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "_ModelBundle":
+        memos_of_models: dict[type[BaseModel], dict[int, Any]] = collections.defaultdict(dict)
+        result = _ModelBundle(
+            enums=copy.deepcopy(self.enums, memo),
+            schemas={
+                model: wrapper.copy_with_schemas(self.schemas, memos_of_models)
+                for model, wrapper in self.schemas.items()
+            },
+            models_with_config_instructions=self.models_with_config_instructions,
+        )
+        memo[id(self)] = result
+        return result
+
+
+@dataclasses.dataclass(**DATACLASS_SLOTS, **DATACLASS_KW_ONLY)
+class _RuntimeSchemaGenContext:
+    current_version: "Union[Version, HeadVersion]"
+    models: _ModelBundle
 
 
 class _VersioningQuestion(NamedTuple):

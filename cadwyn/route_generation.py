@@ -32,11 +32,8 @@ from cadwyn.exceptions import (
     RouterPathParamsModifiedError,
 )
 from cadwyn.middleware import APIVersionLocation  # noqa: TC001 # Needed by runtime annotation introspection.
-from cadwyn.schema_generation import (
-    _add_request_and_response_params,
-    generate_versioned_models,
-    get_models_that_routes_request,
-)
+from cadwyn.schema_generation import generate_versioned_models, get_models_that_routes_request
+from cadwyn.schema_generation._callables import _add_request_and_response_params
 from cadwyn.structure import Version, VersionBundle
 from cadwyn.structure.common import Endpoint, VersionType
 from cadwyn.structure.data import _AlterRequestByPathInstruction, _AlterResponseByPathInstruction
@@ -45,13 +42,12 @@ from cadwyn.structure.endpoints import (
     EndpointExistedInstruction,
     EndpointHadInstruction,
 )
-from cadwyn.structure.versions import (
-    VersionChange,
+from cadwyn.structure.versions import VersionChange
+from cadwyn.structure.versions._background import (
     _DroppedBackgroundTasksWarning,
     _get_hidden_background_tasks_param_name,
-    _get_request_body_target,
-    _get_schema_migration_target,
 )
+from cadwyn.structure.versions._migration_targets import _get_request_body_target, _get_schema_migration_target
 
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
