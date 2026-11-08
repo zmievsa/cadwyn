@@ -1931,6 +1931,8 @@
         <span class="n">enum</span><span class="p">(</span><span class="n">Color</span><span class="p">)</span><span class="o">.</span><span class="n">didnt_have</span><span class="p">(</span><span class="s2">&quot;blue&quot;</span><span class="p">),</span>
     <span class="p">)</span>
 </code></pre></div>
+<p>Plain enums and flags with <code>enum(...)</code> instructions can be used in supported lazy request fields such as <code>Iterable[Kind]</code> and <code>Generator[Kind, None, None]</code>. Cadwyn converts their members to the latest enum as the endpoint consumes them; unconsumed items stay unvalidated. Request migrations still see the request version's members. Conversion leaves unions with alternative branches and opaque validation paths unchanged; see <a href="../../theory/design_decisions/#known-limitations">known limitations</a>.</p>
+<p>Strict response validation still rejects latest enum members when <code>enum(...)</code> instructions create a distinct enum class for the response version, including optional fields and nested models or containers. Use <code>Field(strict=False)</code> on affected response fields or a response migration that supplies the client's own members. Cadwyn retains the previous enum schemas: custom schema hooks, unions with alternative branches, value-based enums (<code>str</code>, <code>int</code>, or <code>float</code>), and OpenAPI keep their existing behavior. Adding a normalization wrapper for strict responses can change the schemas observed by hooks, including cached nested models, so strict responses remain a known limitation.</p>
 
 
 
