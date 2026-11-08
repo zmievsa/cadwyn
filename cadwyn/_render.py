@@ -167,7 +167,7 @@ def _render_pydantic_model(
         config_values = []
         for key, value in config.items():
             try:
-                config_values.append(_render_config_value(key, value, namespace, wrapper.cls.__name__))
+                config_values.append(_render_config_value(key, value, namespace, wrapper.name))
             except Exception as error:  # User reprs can fail in arbitrary ways.
                 raise CadwynRenderError(f"Cannot render config {wrapper.name}.{key}: {error}") from error
         config_definitions = [
@@ -216,7 +216,7 @@ def _validate_config_lambda(value: FunctionType, namespace: dict[str, Any], mode
         codes.extend(constant for constant in code.co_consts if isinstance(constant, CodeType))
         # co_names also has attribute names, which are missing from both namespaces unless they shadow a global
         for name in code.co_names:
-            # The rendered module binds the model's name to the rendered model rather than to this one
+            # The rendered module binds the model's (possibly new) name to the rendered model
             if name == model_name or _lookup(value.__globals__, name) is not _lookup(namespace, name):
                 raise CadwynRenderError(
                     f"Cannot inline a config lambda that uses {name!r}, which is a different object "

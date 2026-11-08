@@ -1198,6 +1198,20 @@ def test__render_model__config_lambda_with_other_globals__should_raise_error():
         _render_config(ConfigDict(json_schema_extra=callback))
 
 
+OldRenderedConfig = str
+
+
+def test__render_model__config_lambda_using_name_of_renamed_model__should_raise_error():
+    extra = ConfigDict(json_schema_extra=lambda s: s.update({"x-title": OldRenderedConfig.__name__}))
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(name="OldRenderedConfig", config=extra))),
+        Version("2000-01-01"),
+    )
+    assert generate_versioned_models(versions)["2000-01-01"][RenderedConfig].model_json_schema()["x-title"] == "str"
+    with pytest.raises(CadwynRenderError, match=r"OldRenderedConfig\.json_schema_extra: .*'OldRenderedConfig'"):
+        render_model(RenderedConfig, versions, "2000-01-01")
+
+
 def test__render_model__config_function_without_module_binding__should_raise_error():
     def local_extra(s: dict[str, Any]) -> None:
         raise NotImplementedError
