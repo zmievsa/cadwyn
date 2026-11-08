@@ -81,7 +81,7 @@ Generic models used without type args, such as `Page` in the example above, vali
 
 Add request and response converters for the outer model, or for the endpoint's path, wherever the nested data needs migrating; converters for the nested model do not run automatically.
 
-Quoted bounds resolve in the namespace of the model that uses the parameter, or in the module of the type alias. Bounds, constraints, and defaults that refer back to the model that uses them keep the existing behavior of models that refer to themselves. Cadwyn raises `SchemaGenerationError` at startup when it cannot resolve or safely version them. That includes a generic used without type args whose typed extra fields (`__pydantic_extra__`) use a type parameter whose bound, constraints, or default change, because Pydantic versions differ in how they substitute parameters there. Use explicit type args, or a concrete annotation such as `__pydantic_extra__: dict[str, Item]`, instead.
+Quoted bounds resolve in the namespace of the model that uses the parameter, or in the module of the type alias. Bounds, constraints, and defaults that refer back to the model that uses them keep the existing behavior of models that refer to themselves. Cadwyn raises `SchemaGenerationError` at startup when it cannot resolve or safely version them. That includes a generic used without type args whose typed extra fields (`__pydantic_extra__`) use a type parameter whose bound, constraints, or default change, because Pydantic versions differ in how they substitute parameters there (see [Known limitations](../theory/design_decisions.md#known-limitations)). Use explicit type args, or a concrete annotation such as `__pydantic_extra__: dict[str, Item]`, instead.
 
 Some type args keep their latest models:
 
