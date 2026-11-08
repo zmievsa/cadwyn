@@ -42,6 +42,7 @@ from ._forms import (
     _get_form_model_lookup,
     _get_form_model_omission,
     _get_omitted_form_model_lookup,
+    _migrated_body_supplies_omitted_form_model,
     _unembed_form_model_errors,
 )
 from ._json import _ClientJsonStrings, _copy_decoded_json_strings, _encode_json_values, _get_route_json_values_plan
@@ -118,17 +119,26 @@ async def _migrate_request(
             await _rewind_uploads_read_by_fastapi(request_info._form, uploads_read_by_fastapi)
         body_for_solving = FormData(request_info._form)
     elif (  # pragma: no cover # FastAPI >= 0.158.2
-        form_model_omission is _FormModelOmission.OMITTED_NEXT_TO_OTHER_FORM_PARAMS and request_info.body is None
+        form_model_omission is _FormModelOmission.OMITTED_NEXT_TO_OTHER_FORM_PARAMS
+        and (
+            body_with_head_members is None
+            or not _migrated_body_supplies_omitted_form_model(
+                head_dependant, head_route, body_with_head_members, embed_body_fields=embed_body_fields
+            )
+        )
     ):
-        body_for_solving = await _get_form_for_omitted_form_model(request, head_dependant, head_route)
+        # The form model stays omitted, so every other param reads the form that the client would have sent
+        body_for_solving = await _get_form_for_omitted_form_model(
+            request, head_dependant, head_route, body_with_head_members, embed_body_fields=embed_body_fields
+        )
     # A body is omitted if the request had none for FastAPI, or if a migration has set it to None
     elif request_info.body is None and (request_info._body_is_assigned or body_is_omitted):
         body_for_solving = _OMITTED_BODY
     elif (  # pragma: no cover # FastAPI >= 0.158.2
         form_model_omission is _FormModelOmission.OMITTED_NEXT_TO_OTHER_FORM_PARAMS
     ):
-        # There is no model dump to restore, but the migrated body and the untouched form keys must reach
-        # every reader just as they do for a supplied form model.
+        # The migrated body supplies the form model. There is no model dump to restore, but the migrated body and the
+        # untouched form keys must reach every reader just as they do for a supplied form model.
         body_for_solving = body_with_head_members
         form_model_lookup = await _get_form_model_lookup(
             request,

@@ -5547,10 +5547,12 @@ class SchemaWithValueAddedLater(BaseModel):
     not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
     reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so form fields can't look values up in it",
 )
+@pytest.mark.parametrize("migrated_body", [None, {}], ids=["without_migration", "with_migration_without_its_fields"])
 def test__request_body_migration__with_omitted_optional_form_model_that_the_form_supplies_in_head__should_raise(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
+    migrated_body: Union[dict[str, Any], None],
 ):
     @router.post(test_path)
     async def endpoint(
@@ -5558,7 +5560,13 @@ def test__request_body_migration__with_omitted_optional_form_model_that_the_form
     ):
         return [None if body is None else body.model_dump(), from_dependency]
 
-    clients = create_versioned_clients(version_change(schema(SchemaWithValueAddedLater).field("extra").didnt_exist))
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = migrated_body
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithValueAddedLater).field("extra").didnt_exist, migrator=migrator)
+    )
     clients["2000-01-01"].app.dependency_overrides[_get_text] = _get_extra_from_form_field
 
     assert clients["2001-01-01"].post(test_path, data={"extra": "e"}).json() == [{"v": None, "extra": "e"}, "e"]
@@ -15897,11 +15905,17 @@ def test__request_body_migration__with_object_that_pydantic_doesnt_make_set_by_m
     [_get_extra_from_form_field, _get_other_form_model_and_extra_from_form],
     ids=["form_field", "form_model_and_field"],
 )
+@pytest.mark.parametrize(
+    "migrated_body",
+    [{"v": "migrated"}, {}, {"unrelated": "migrated"}, {"extra": "migrated"}],
+    ids=["form_model_fields", "empty", "unrelated_key", "key_of_other_param"],
+)
 def test__request_body_migration__with_omitted_form_model_and_other_form_readers__head_should_get_migrated_request(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
     override: Callable[..., Coroutine[Any, Any, Any]],
+    migrated_body: dict[str, Any],
 ):
     endpoint = _optional_form_model_next_to_overridden_text_dependency
     router.post(test_path)(endpoint)
@@ -15912,12 +15926,12 @@ def test__request_body_migration__with_omitted_form_model_and_other_form_readers
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
         assert request.body is None
-        request.body = {"v": "migrated"}
+        request.body = dict(migrated_body)
 
     clients = create_versioned_clients(version_change(migrator=migrator))
     clients["2000-01-01"].app.dependency_overrides[_get_text] = override
 
-    expected = TestClient(fastapi_app).post(test_path, data={"v": "migrated", "extra": "sent"})
+    expected = TestClient(fastapi_app).post(test_path, data={"extra": "sent", **migrated_body})
     assert expected.status_code == 200
     response = clients["2000-01-01"].post(test_path, data={"extra": "sent"})
     assert (response.status_code, response.json()) == (expected.status_code, expected.json())
@@ -16009,8 +16023,8 @@ def test__request_body_migration__with_unvisited_alias_also_declared_as_form_fie
 @pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
     not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
 )
-@pytest.mark.parametrize("migrated_body", ["migrated", {}, {"unrelated": "migrated"}])
-def test__request_body_migration__with_omitted_form_model_and_unusable_migration_body__should_name_param_in_error(
+@pytest.mark.parametrize("migrated_body", ["migrated", ["migrated"]])
+def test__request_body_migration__with_omitted_form_model_and_body_that_isnt_dict__should_name_param_in_error(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -16025,7 +16039,95 @@ def test__request_body_migration__with_omitted_form_model_and_unusable_migration
     clients = create_versioned_clients(version_change(migrator=migrator))
     clients["2000-01-01"].app.dependency_overrides[_get_text] = _get_extra_from_form_field
 
-    with pytest.raises(CadwynError, match=r"param `body`.*migration must supply a dict"):
+    with pytest.raises(CadwynError, match=r"param `body`.*isn't a dict"):
+        clients["2000-01-01"].post(test_path, data={"extra": "sent"})
+
+
+async def _get_any_list_from_form_field(extra: Annotated[list[Any], Form()]) -> list[Any]:
+    return extra  # pragma: no cover # FastAPI >= 0.158
+
+
+class _OverrideFormModelWithAnyList(BaseModel):
+    extra: list[Any]
+
+
+async def _get_any_list_from_form_model(other: Annotated[_OverrideFormModelWithAnyList, Form()]) -> list[Any]:
+    return other.extra  # pragma: no cover # FastAPI >= 0.158
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize(
+    "override", [_get_any_list_from_form_field, _get_any_list_from_form_model], ids=["form_field", "form_model"]
+)
+@pytest.mark.parametrize(
+    "migrated_value",
+    [["a", "b"], ("a", "b"), {"a"}, frozenset({"a"}), deque(["a", "b"]), ["a"], "a"],
+    ids=["list", "tuple", "set", "frozenset", "deque", "single_item_list", "string"],
+)
+def test__request_body_migration__with_omitted_form_model_and_migrated_collection__head_should_get_its_items(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    override: Callable[..., Coroutine[Any, Any, Any]],
+    migrated_value: Any,
+):
+    endpoint = _optional_form_model_next_to_overridden_text_dependency
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    fastapi_app.dependency_overrides[_get_text] = override
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = {"extra": migrated_value}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = override
+
+    # The client sends a collection as repeated form items
+    sent_value = migrated_value if isinstance(migrated_value, str) else list(migrated_value)
+    expected = TestClient(fastapi_app).post(test_path, data={"extra": sent_value})
+    assert expected.status_code == 200
+    response = clients["2000-01-01"].post(test_path, data={"extra": "sent"})
+    assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize(
+    ("override", "param_description"),
+    [
+        (_get_any_list_from_form_field, "`extra` of `_get_any_list_from_form_field`"),
+        (_get_any_list_from_form_model, "`other` of `_get_any_list_from_form_model`"),
+    ],
+    ids=["form_field", "form_model"],
+)
+@pytest.mark.parametrize(
+    "migrated_value",
+    [{"k": "v"}, [["a"]], [{"k": "v"}], [("a",)], [{"a"}]],
+    ids=["dict", "nested_list", "dict_in_list", "tuple_in_list", "set_in_list"],
+)
+def test__request_body_migration__with_omitted_form_model_and_nested_migrated_value__should_name_param_in_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    override: Callable[..., Coroutine[Any, Any, Any]],
+    param_description: str,
+    migrated_value: Any,
+):
+    router.post(test_path)(_optional_form_model_next_to_overridden_text_dependency)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = {"extra": migrated_value}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = override
+
+    with pytest.raises(CadwynError, match=rf"param {re.escape(param_description)}.*can't be sent as form items"):
         clients["2000-01-01"].post(test_path, data={"extra": "sent"})
 
 
