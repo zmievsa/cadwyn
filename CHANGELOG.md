@@ -9,6 +9,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Breaking
 
+- API version headers whose names contain underscores, such as `api_version_parameter_name="api_version"`, are now validated and documented under that exact name. Invalid versions get a 422 instead of being served by the latest version, and OpenAPI shows `api_version` instead of `api-version`, which Cadwyn never read: clients that sent `api-version` only worked because they got the default version. Regenerate those clients so that they send `api_version`.
 - `cadwyn render` handles `NamedTuple`, `defaultdict`, and `Counter` defaults; defaults it can't render faithfully raise `CadwynRenderError`, so use a named `Field(default_factory=...)` for them ([#590](https://github.com/zmievsa/cadwyn/issues/590)). Nonfinite floats and complex numbers render as executable `float(...)` and `complex(...)` calls.
 - In older versions, subclasses of bases supplied through `__mro_entries__` (e.g. `class Child(Alias())`) now inherit the versioned copies of the bases that Python resolved for them, like explicit subclasses do, instead of calling the hooks again and getting the latest parents ([#588](https://github.com/zmievsa/cadwyn/issues/588)). Update the migrations of such subclasses to use their older-version fields, and fix conflicting rename or deletion instructions that now fail at startup.
 - Bare generic models and unparametrized type aliases now version the models and enums used by TypeVar bounds, constraints, and defaults, so older versions reject latest-only shapes and affected generic OpenAPI names may change ([#584](https://github.com/zmievsa/cadwyn/issues/584)). Add migrations for the outer generic or endpoint where nested data changes; unsafe fallbacks raise `SchemaGenerationError`, so use explicit type arguments. TypeVar-based typed extra fields remain a known limitation; use concrete model annotations there.
@@ -62,7 +63,6 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
-- API version headers whose names contain underscores, such as `api_version_parameter_name="api_version"`, are now validated and documented under that exact name. Invalid versions get a 422 instead of being served by the latest version, and OpenAPI shows `api_version` instead of `api-version`, which Cadwyn never read; regenerate clients that send `api-version`.
 - Fixed missing runtime annotation names in version changes, schema generation, and versioned-router generation, so `typing.get_type_hints()` can inspect them ([#485](https://github.com/zmievsa/cadwyn/issues/485)).
 - Generated WebSocket routes now pick the API version from the header, path, or a constant default with the same rules as HTTP requests, and reject missing or invalid versions before accepting the connection ([#67](https://github.com/zmievsa/cadwyn/issues/67)).
 - Client disconnects no longer leave uploaded files open on unversioned routes or when a dependency fails before a versioned endpoint runs ([#594](https://github.com/zmievsa/cadwyn/issues/594)).
