@@ -153,7 +153,12 @@ def _change_version_of_model_references(
         )
         if generator.schema_generator is None:
             _change_version_of_model_bases(generator, model, orig_bases)
-        versioned_annotations = transformer.change_version_of_annotation(annotations)
+        # The TypeVars that are not the model's parameters validate values as their bounds, constraints, or defaults
+        with transformer.typevar_namespace(model):
+            transformer.typevar_copies.update(
+                {param: param for param in model.__pydantic_generic_metadata__["parameters"]}
+            )
+            versioned_annotations = transformer.change_version_of_annotation(annotations)
         with transformer.hard_position():
             generic_metadata = generator.change_version_of_generic_metadata(model)
         return versioned_field_attributes, orig_bases, versioned_annotations, generic_metadata
