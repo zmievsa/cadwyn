@@ -3,3 +3,6 @@ dirs:
 useGitIgnore: true
 timeout: 5000
 retryCount: 1
+ignorePatterns:
+  # The New Stack blocks headless browsers with a 403, although the article opens normally in a browser
+  - pattern: "^https://thenewstack\\.io/"
