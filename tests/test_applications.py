@@ -541,7 +541,7 @@ def test__get_openapi():
 @pytest.mark.parametrize("customizer_kwargs", [{}, {"openapi_customizer": None}])
 @pytest.mark.parametrize("version", ["2022-02-02", "2021-01-01", "unversioned"])
 def test__openapi_customizer__omitted_or_none__should_preserve_response_bytes(customizer_kwargs, version: str):
-    app = Cadwyn(versions=_two_versions(), root_path="/proxy", **customizer_kwargs)
+    app = Cadwyn(versions=_two_versions(), **customizer_kwargs)
 
     @app.get("/health", operation_id="health", summary="Health", response_class=Response)
     def health() -> Response:
@@ -561,7 +561,7 @@ def test__openapi_customizer__omitted_or_none__should_preserve_response_bytes(cu
         + expected_paths
         + b"}"
     )
-    with TestClient(app) as client:
+    with TestClient(app, root_path="/proxy") as client:
         response = client.get("/openapi.json", params={"version": version})
     assert response.status_code == 200
     assert response.content == expected
