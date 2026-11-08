@@ -1,3 +1,4 @@
+from cadwyn._utils import present_private_submodules_as_package
 from cadwyn.structure.common import VersionType as VersionType
 
 from . import _changes, _requests, _responses
@@ -81,3 +82,6 @@ from ._uploads import (
 _changes.VersionBundle = VersionBundle
 _requests.VersionBundle = VersionBundle
 _responses.VersionBundle = VersionBundle
+
+# This package used to be a single module. Keep its objects' __module__ and namespace as they were then.
+present_private_submodules_as_package(__name__)

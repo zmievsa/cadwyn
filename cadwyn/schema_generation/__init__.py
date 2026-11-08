@@ -1,6 +1,8 @@
 from pydantic._internal._generics import get_model_typevars_map as get_model_typevars_map
 from pydantic._internal._model_construction import unpack_lenient_weakvaluedict as unpack_lenient_weakvaluedict
 
+from cadwyn._utils import present_private_submodules_as_package
+
 from . import (
     _annotations,
     _bundle,
@@ -105,3 +107,6 @@ _instructions._PydanticModelWrapper = _PydanticModelWrapper
 _models.SchemaGenerator = SchemaGenerator
 _models._CycleCopier = _CycleCopier
 _references.SchemaGenerator = SchemaGenerator
+
+# This package used to be a single module. Keep its objects' __module__ and namespace as they were then.
+present_private_submodules_as_package(__name__)

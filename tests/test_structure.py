@@ -148,6 +148,19 @@ class TestVersionChange:
                 instructions_to_migrate_to_previous_version = []
                 dummy_attribute = "dummy attribute"
 
+    def test__non_instruction_attribute_set__with_cadwyn_object__should_name_its_public_module(self):
+        with pytest.raises(CadwynStructureError) as exc_info:
+
+            class BadChange(VersionChange):
+                description = "Invalid declaration"
+                instructions_to_migrate_to_previous_version = ()
+                extra = Version("2025-01-01")
+
+        assert str(exc_info.value) == (
+            "Found: 'extra' attribute of type '<class 'cadwyn.structure.versions.Version'>' in 'BadChange'. "
+            "Only migration instructions and schema properties are allowed in version change class body."
+        )
+
     @pytest.mark.parametrize(
         "version_change_type",
         [VersionChange, VersionChangeWithSideEffects],
