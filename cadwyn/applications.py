@@ -312,6 +312,8 @@ class Cadwyn(FastAPI):
             api_version_parameter_name=api_version_parameter_name,
             api_version_var=self.versions.api_version_var,
             api_version_format=api_version_format,
+            api_version_location=api_version_location,
+            api_version_default_value=api_version_default_value,
         )
         unversioned_router = APIRouter(**self._kwargs_to_router)
         self._add_utility_endpoints(unversioned_router)

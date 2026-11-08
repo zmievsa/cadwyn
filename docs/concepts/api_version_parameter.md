@@ -86,6 +86,18 @@ Pass `api_version_default_value` to `Cadwyn` to route the requests without the v
 
 Note that this applies to **every** request without the version header, not only to the token endpoint. `api_version_default_value` can also be an async function that takes the `Request` and returns the version.
 
+## WebSocket connections
+
+WebSocket routes included with `generate_and_include_versioned_routers()` select their version from the configured header or path parameter. Date versions use the closest earlier version when there is no exact match. Header versioning also supports a constant `api_version_default_value`.
+
+```python
+{! ./docs_src/concepts/api_version_parameter/block009.py !}
+```
+
+The selected version is available in `versions.api_version_var` before dependencies run, throughout the connection and dependency cleanup. Cadwyn restores the previous context when the connection ends. Missing, invalid, and unmatched versions close the connection before acceptance with code `1008` and an API version reason. A callable `api_version_default_value` requires an HTTP `Request`: for WebSockets, send the version explicitly or use a constant default.
+
+Routes included with `app.include_router()` keep working as unversioned WebSockets, even when a version header or default is present. A version preselected in `api_version_var` retains its routing behavior. WebSockets stay out of OpenAPI; endpoint instructions and message migrations are unsupported.
+
 ## API version parameter title and description
 
 You can pass a title and/or a description to the `Cadwyn()` constructor. It is equivalent to passing `title` and `description` to `fastapi.Path()` or `fastapi.Header()` constructors.

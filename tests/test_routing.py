@@ -82,6 +82,19 @@ def test__header_routing__websocket_scope__should_not_match():
     assert mixed_hosts_app.routes[-1].matches({"type": "websocket", "path": "/v1/"}) == (Match.NONE, {})
 
 
+def test__cadwyn_router__used_as_asgi_app__should_serve_plain_http_route():
+    app = Cadwyn(versions=VersionBundle(Version("2024-01-01")))
+
+    async def plain_route(request: Request):
+        return PlainTextResponse("unchanged")
+
+    app.add_route("/plain", plain_route, methods=["GET"])
+    with TestClient(app.router) as client:
+        response = client.get("/plain")
+    assert response.status_code == 200
+    assert response.text == "unchanged"
+
+
 def test__header_routing__invalid_date_header__should_return_422():
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "2025-40-01"})
 
