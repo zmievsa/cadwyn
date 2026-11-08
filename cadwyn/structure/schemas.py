@@ -384,44 +384,25 @@ class SchemaHadInstruction:
     config: Union[ConfigDict, None] = None
 
 
-_VERSIONABLE_CONFIG_KEYS = frozenset(
-    {
-        "extra",
-        "populate_by_name",
-        "validate_by_alias",
-        "validate_by_name",
-        "str_strip_whitespace",
-        "frozen",
-        "title",
-        "json_schema_extra",
-        "arbitrary_types_allowed",
-    }
+_VERSIONABLE_CONFIG_KEYS = (
+    "arbitrary_types_allowed",
+    "extra",
+    "frozen",
+    "json_schema_extra",
+    "str_strip_whitespace",
+    "title",
+    "validate_by_alias",
+    "validate_by_name",
 )
-_UNSAFE_CONFIG_REASONS = {
-    "alias_generator": "cannot regenerate aliases already stored on copied fields",
-    "field_title_generator": "cannot regenerate titles already stored on copied fields",
-    "model_title_generator": "cannot safely version model construction hooks",
-    "use_attribute_docstrings": "cannot recover attribute docstrings from copied classes",
-    "ignored_types": "cannot recover attributes already classified during model construction",
-    "protected_namespaces": "cannot change how existing model attributes were classified",
-    "defer_build": "cannot defer building models used to generate versioned routes",
-    "plugin_settings": "cannot safely version Pydantic plugin construction",
-    "schema_generator": "cannot safely version schema construction hooks",
-}
 
 
 def _validate_config_keys(model: type[BaseModel], config: ConfigDict) -> None:
     for key in config:
-        if key in _VERSIONABLE_CONFIG_KEYS:
-            continue
-        reason = _UNSAFE_CONFIG_REASONS.get(key)
-        if reason is None:
-            reason = (
-                "unsupported for config versioning"
-                if key in ConfigDict.__annotations__
-                else "unknown Pydantic config key"
+        if key not in _VERSIONABLE_CONFIG_KEYS:
+            raise CadwynStructureError(
+                f'Cannot version config key "{key}" of "{model.__name__}". '
+                f"Cadwyn can version only these config keys: {', '.join(_VERSIONABLE_CONFIG_KEYS)}."
             )
-        raise CadwynStructureError(f'Cannot version config of "{model.__name__}", key "{key}": {reason}.')
 
 
 @dataclass(**DATACLASS_SLOTS)

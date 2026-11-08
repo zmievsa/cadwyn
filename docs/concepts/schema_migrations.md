@@ -118,7 +118,7 @@ The following code replaces all schema name occurrences with a new one to ensure
 
 ## Change model configuration in the older version
 
-Pass `config=ConfigDict(...)` to `schema(Model).had(...)` to patch selected Pydantic config keys. Keys you omit keep their current values. The supported keys are `extra`, `populate_by_name`, `validate_by_alias`, `validate_by_name`, `str_strip_whitespace`, `frozen`, `title`, `json_schema_extra`, and `arbitrary_types_allowed`.
+Pass `config=ConfigDict(...)` to `schema(Model).had(...)` to change these Pydantic config keys in the older version: `arbitrary_types_allowed`, `extra`, `frozen`, `json_schema_extra`, `str_strip_whitespace`, `title`, `validate_by_alias`, and `validate_by_name`. Keys you omit keep their current values. Other keys, such as `populate_by_name` (use `validate_by_name` instead), raise `CadwynStructureError`, and so does a value that the key already has, including Pydantic's default. To remove a key's value, set it explicitly, e.g. `ConfigDict(json_schema_extra=None)`.
 
 For example, this older API forbids extra fields and has no `nickname` field:
 
@@ -126,19 +126,9 @@ For example, this older API forbids extra fields and has no `nickname` field:
 {! ./docs_src/concepts/schema_migrations/block013.py !}
 ```
 
-Request validation uses the client's config **before** request migrations. Sending `{"name": "Alice", "nickname": "Al"}` to the older version returns a 422, so a request migration cannot remove an unknown key to make it acceptable. Sending only `{"name": "Alice"}` succeeds: the request migration supplies the nickname for HEAD. Responses migrate **before** validation with the client's config. The response migration above removes `nickname` and `server_note` so the older version returns `{"name": "Alice"}`. Cadwyn never silently removes these keys for you; without the response migration, older response validation fails.
+Requests are validated with the client's config **before** request migrations, so sending `{"name": "Alice", "nickname": "Al"}` to the older version returns a 422. Responses migrate **before** they're validated with the client's config, so a response migration must remove the keys that the older version forbids, as `remove_newer_keys` does above.
 
-Config instructions only support **leaf models**. If a model has subclasses among the app's versioned models, an instruction changing its config fails at startup. Put the config instruction on each subclass (leaf model) instead. Pydantic stores merged configs without recording whether each setting was inherited or explicitly overridden, so Cadwyn cannot safely propagate a parent's config change. An instruction on a leaf subclass leaves its parent and siblings unchanged; unused subclasses elsewhere in your code do not prevent it.
-
-Generic parametrizations such as `Bag[Item]` and Cadwyn's generated copies do not count as user subclasses. A config patch on `Bag` also applies to its parametrizations, including the specialization used when a route accepts bare `Bag`. An instruction on a particular parametrization can override those keys for that parametrization alone. A declared subclass such as `class SpecialBag(Bag[Item])` still counts as a subclass and prevents config instructions on `Bag`.
-
-Changing `populate_by_name` also sets `validate_by_alias=True` and `validate_by_name` to its older value. Explicit `validate_by_alias` and `validate_by_name` entries in the same patch take precedence. To change those flags individually, patch them directly. At least one must remain enabled, as in Pydantic.
-
-There is no config `didnt_have` instruction: set the older value explicitly, such as `ConfigDict(frozen=False)` or `ConfigDict(json_schema_extra=None)`. Cadwyn rejects a key whose value is already the current value, including an implicit Pydantic default. An empty patch on its own is also rejected.
-
-Unknown and unsupported keys fail when the instruction is declared, with an error naming the model and key. In particular, aliases and field titles already stored on fields cannot be regenerated safely with `alias_generator` or `field_title_generator`. Model construction hooks (`model_title_generator`, `schema_generator`, and `plugin_settings`), attribute classification (`ignored_types` and `protected_namespaces`), `use_attribute_docstrings`, and `defer_build` cannot be versioned either. Config keys outside the supported list remain unchanged across versions. Enabling `arbitrary_types_allowed` permits arbitrary Python instances, but those types still need their own JSON schema support to appear in OpenAPI, as in Pydantic.
-
-You can combine `config=`, `name=`, and `description=` in one instruction. `cadwyn render` includes changed model configs. Apps without config instructions keep their existing behavior and OpenAPI.
+Config instructions work only on **leaf models**. An instruction on a model that has subclasses among the app's versioned models fails at startup, so put it on each subclass instead. Generic parametrizations such as `Bag[Item]` don't count as subclasses: an instruction on `Bag` also applies to them, and an instruction on `Bag[Item]` overrides it for that parametrization.
 
 ## Change the description of a schema in the older version
 

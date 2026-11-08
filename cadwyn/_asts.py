@@ -285,12 +285,12 @@ def _get_lambda_source_from_keyword(source: str, keyword: str) -> str:
 
     if len(found_lambdas) == 1:
         return ast.unparse(found_lambdas[0])
-    # These two errors are really hard to cover. Not sure if even possible, honestly :)
-    elif len(found_lambdas) == 0:  # pragma: no cover
+    # E.g. `EXTRA = lambda s: ...` passed as `json_schema_extra=EXTRA`
+    elif len(found_lambdas) == 0:
         raise InvalidGenerationInstructionError(
             f"No lambda found in {keyword} even though one was passed: {source}",
         )
-    else:  # pragma: no cover
+    else:  # pragma: no cover # Really hard to cover. Not sure if even possible, honestly :)
         raise InvalidGenerationInstructionError(
             f"More than one lambda found in {keyword}. This is not supported.",
         )
