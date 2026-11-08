@@ -117,8 +117,8 @@ def _render_pydantic_model(
 
     # The same fields as in the copies of the model
     field_attributes, annotations = wrapper.get_field_attributes_and_annotations(generator.model_bundle.schemas)
-    # `cadwyn render` doesn't render model_config, so we render the aliases that an alias generator gives the fields
-    # whose alias an instruction changed. We only generate the model for such fields
+    # Without config instructions `cadwyn render` omits model_config, so we render the aliases that an alias
+    # generator gives the fields whose alias an instruction changed. We only generate the model for such fields
     if wrapper.cls.model_config.get("alias_generator") is not None:
         defined_fields = wrapper.fields_renamed_by_parents | wrapper.fields
         if names := [name for name in field_attributes if defined_fields[name].keys_renamed_by_alias]:
@@ -161,7 +161,19 @@ def _render_pydantic_model(
     # We keep the docstring from the source unless an instruction changed it
     if wrapper.doc != wrapper.cls.__doc__:
         docstring = [ast.Expr(ast.Constant(wrapper.doc))] if wrapper.doc else []
-    body = field_definitions + validator_definitions + old_body
+    config_definitions = []
+    config = wrapper.other_attributes["model_config"]
+    if wrapper.config_changed:
+        config_definitions = [
+            ast.Assign(
+                targets=[ast.Name("model_config", ctx=ast.Store())],
+                value=ast.parse(
+                    _field_attribute_repr(config, vars(sys.modules[wrapper.cls.__module__])), mode="eval"
+                ).body,
+                lineno=0,
+            )
+        ]
+    body = config_definitions + field_definitions + validator_definitions + old_body
     if not docstring:
         # A string at the start of the body would become the docstring, e.g. the documentation of a ClassVar
         # whose definition we do not render, so we skip such strings

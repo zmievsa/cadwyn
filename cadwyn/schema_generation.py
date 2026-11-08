@@ -387,6 +387,7 @@ def _extract_passed_field_attributes(field_info: FieldInfo) -> dict[str, object]
 class _ModelBundle:
     enums: dict[type[Enum], "_EnumWrapper[Enum]"]
     schemas: dict[type[BaseModel], "_PydanticModelWrapper[BaseModel]"]
+    models_with_config_instructions: frozenset[type[BaseModel]]
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "_ModelBundle":
         memos_of_models: dict[type[BaseModel], dict[int, Any]] = collections.defaultdict(dict)
@@ -396,6 +397,7 @@ class _ModelBundle:
                 model: wrapper.copy_with_schemas(self.schemas, memos_of_models)
                 for model, wrapper in self.schemas.items()
             },
+            models_with_config_instructions=self.models_with_config_instructions,
         )
         memo[id(self)] = result
         return result
@@ -849,6 +851,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     validators: dict[str, Union[_PerFieldValidatorWrapper, _ValidatorWrapper]] = dataclasses.field(repr=False)
     other_attributes: dict[str, Any] = dataclasses.field(repr=False)
     annotations: dict[str, Any] = dataclasses.field(repr=False)
+    config_changed: bool = False
     fields_renamed_by_parents: Annotated[
         dict["_FieldName", PydanticFieldWrapper],
         Doc(
@@ -898,6 +901,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             validators=copy.deepcopy(self.validators),
             other_attributes=copy.deepcopy(self.other_attributes),
             annotations=copy.deepcopy(self.annotations),
+            config_changed=self.config_changed,
             fields_renamed_by_parents=fields_renamed_by_parents,
         )
 
@@ -2971,6 +2975,15 @@ class SchemaGenerator:
         The decisions are cached so the models that are defined after the generator has decided about the models
         that they refer to or inherit from do not change these decisions.
         """
+        if self.model_bundle.models_with_config_instructions:
+            for base in model.__mro__[1:]:
+                if base in self.model_bundle.models_with_config_instructions:
+                    raise InvalidGenerationInstructionError(
+                        f'Cannot version config of "{base.__name__}" because "{model.__name__}" is a subclass '
+                        "among the app's versioned models. Pydantic does not retain whether a child's config was "
+                        "inherited or explicitly overridden. Put the config instruction on each subclass "
+                        "(leaf model) instead."
+                    )
         if self._cycles_to_copy.get(model) is not None:
             # We decided to copy its cycle so we keep that decision even if the subclasses that it depended on
             # change later (see _is_versioned)
@@ -4137,6 +4150,12 @@ def _create_model_bundle(versions: "VersionBundle"):
     return _ModelBundle(
         enums={enum: _EnumWrapper(enum) for enum in versions.versioned_enums.values()},
         schemas={schema: _wrap_pydantic_model(schema) for schema in versions.versioned_schemas.values()},
+        models_with_config_instructions=frozenset(
+            instruction.schema
+            for change in versions._all_changes
+            for instruction in change.alter_schema_instructions
+            if isinstance(instruction, SchemaHadInstruction) and instruction.config
+        ),
     )
 
 
@@ -4529,6 +4548,34 @@ def _change_model(
         model.name = name
     if description is not Sentinel:
         model.doc = description
+    if alter_schema_instruction.config:
+        _change_model_config(model, alter_schema_instruction.config, version_change_name)
+
+
+def _change_model_config(
+    model: _PydanticModelWrapper[BaseModel], config_patch: pydantic.ConfigDict, version_change_name: str
+) -> None:
+    current = ConfigWrapper(model.other_attributes["model_config"].copy(), check=False)
+    # Pydantic <2.14 fills in the validation settings here; newer versions keep an effective config separately.
+    current.core_config(None)
+    config = model.other_attributes["model_config"].copy()
+    if {"populate_by_name", "validate_by_alias", "validate_by_name"} & config_patch.keys():
+        config.update(validate_by_alias=current.validate_by_alias, validate_by_name=current.validate_by_name)
+    if "populate_by_name" in config_patch:
+        # On older Pydantic releases these flags were copied into model_config at class creation. A patch of
+        # populate_by_name must update them too, while letting explicitly patched validation flags take precedence.
+        config.update(validate_by_alias=True, validate_by_name=config_patch["populate_by_name"])
+    config.update(config_patch)
+    updated = ConfigWrapper(config, check=False)
+    updated.core_config(None)
+    for key in config_patch:
+        if is_same_value(getattr(current, key), getattr(updated, key)):
+            raise InvalidGenerationInstructionError(
+                f'You tried to change config of "{model.name}", key "{key}", in "{version_change_name}" '
+                "but it already has the value you tried to assign."
+            )
+    model.other_attributes["model_config"] = config
+    model.config_changed = True
 
 
 def _get_description(docstring: Union[str, None]) -> Union[str, None]:

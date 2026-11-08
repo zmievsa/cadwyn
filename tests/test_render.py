@@ -896,3 +896,21 @@ def test__render_model__model_with_alias_generator__should_render_aliases_of_fie
     namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field}
     exec(rendered, namespace)
     assert namespace["ModelWithAliasGenerator"].model_validate({key_of_name: "x"}).name == "x"
+
+
+class RenderedConfig(BaseModel):
+    model_config = ConfigDict(title="New title")
+    value: str
+
+
+def test__render_model__schema_config_patch__should_render_older_config():
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=ConfigDict(extra="forbid")))),
+        Version("2000-01-01"),
+    )
+    namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field}
+    exec(render_model(RenderedConfig, versions, "2000-01-01"), namespace)
+    rendered = namespace["RenderedConfig"]
+    generated = generate_versioned_models(versions)["2000-01-01"][RenderedConfig]
+    assert rendered.model_config == generated.model_config
+    assert rendered.model_json_schema() == generated.model_json_schema()
