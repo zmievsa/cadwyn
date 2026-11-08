@@ -76,6 +76,92 @@ def test__generate_versioned_routers__metaclass_parent_has_overridden_forward_re
         assert response.json() == {"value": 42}
 
 
+class GenericMixin(Generic[BoolT]):
+    pass
+
+
+class MixinAddedByMetaclass:
+    pass
+
+
+class MetaclassThatAppendsMixin(type(BaseModel)):
+    def __new__(mcs, name: str, bases: tuple[type, ...], namespace: dict[str, Any], **kwargs: Any):
+        return super().__new__(mcs, name, (*bases, MixinAddedByMetaclass), namespace, **kwargs)
+
+
+class ModelWithGenericAliasBaseAndAppendingMetaclass(BaseModel, GenericMixin[int], metaclass=MetaclassThatAppendsMixin):
+    value: int = 42
+
+
+def test__schema_generation__metaclass_appends_base_to_generic_alias_bases__should_keep_bases(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(version_change())
+
+    old_model = schemas["2000-01-01"][ModelWithGenericAliasBaseAndAppendingMetaclass]
+    assert old_model.__bases__ == ModelWithGenericAliasBaseAndAppendingMetaclass.__bases__
+    assert old_model().model_dump() == {"value": 42}
+
+
+class FirstParentWithValue(BaseModel):
+    value: int = 1
+
+
+class SecondParentWithValue(BaseModel):
+    value: int = 2
+
+
+class MetaclassThatReversesModelBases(type(BaseModel)):
+    def __new__(mcs, name: str, bases: tuple[type, ...], namespace: dict[str, Any], **kwargs: Any):
+        models = tuple(base for base in bases if issubclass(base, BaseModel))
+        others = tuple(base for base in bases if not issubclass(base, BaseModel))
+        return super().__new__(mcs, name, (*reversed(models), *others), namespace, **kwargs)
+
+
+class ModelWithGenericAliasBaseAndReversingMetaclass(
+    FirstParentWithValue, SecondParentWithValue, GenericMixin[int], metaclass=MetaclassThatReversesModelBases
+):
+    pass
+
+
+def test__schema_generation__metaclass_reorders_generic_alias_bases__should_keep_bases(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(version_change())
+
+    old = schemas["2000-01-01"]
+    old_model = old[ModelWithGenericAliasBaseAndReversingMetaclass]
+    assert old_model.__bases__ == (old[SecondParentWithValue], old[FirstParentWithValue], GenericMixin)
+    assert old_model().model_dump() == {"value": 2}
+
+
+class ParentWithFooThatGetsRenamed(BaseModel):
+    foo: int
+
+
+class AliasOfParentWithFooThatGetsRenamed:
+    def __mro_entries__(self, bases: tuple[object, ...]) -> tuple[type, ...]:
+        return (ParentWithFooThatGetsRenamed,)
+
+
+class ChildOfAliasAndGenericAlias(AliasOfParentWithFooThatGetsRenamed(), GenericMixin[BoolT]):
+    pass
+
+
+def test__schema_field_had_name__child_of_mro_entries_base_and_generic_alias__should_rename_inherited_field(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(ParentWithFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    old_child = schemas["2000-01-01"][ChildOfAliasAndGenericAlias]
+    assert old_child.__bases__ == (schemas["2000-01-01"][ParentWithFooThatGetsRenamed], GenericMixin)
+    assert old_child.__parameters__ == (BoolT,)
+    assert old_child.model_validate({"old_foo": 1}).model_dump() == {"old_foo": 1}
+    assert schemas["2001-01-01"][ChildOfAliasAndGenericAlias].model_validate({"foo": 1}).model_dump() == {"foo": 1}
+
+
 ATTR_MAP: tuple[tuple[str, str], list[tuple[PossibleFieldAttributes, Any]]] = (
     ("attr", "value"),
     [

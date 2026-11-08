@@ -11,13 +11,12 @@ import re
 import subprocess
 import sys
 import tempfile
-import threading
 import time as time_module
 import typing
 from collections import OrderedDict, deque
 from collections.abc import Callable, Coroutine, Generator, Iterable, Iterator, Mapping, MutableSequence, Sequence
 from collections.abc import Set as AbstractSet
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import nullcontext
 from contextvars import ContextVar
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -28,7 +27,6 @@ from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Optional, S
 from uuid import UUID
 
 import anyio
-import anyio.to_thread
 import fastapi
 import httpx
 import pytest
@@ -5553,10 +5551,12 @@ class SchemaWithValueAddedLater(BaseModel):
     not FASTAPI_LOOKS_UP_FORM_MODELS_BY_ALIAS,
     reason="Before FastAPI 0.158.2, Cadwyn passes the dump on as it is, so form fields can't look values up in it",
 )
+@pytest.mark.parametrize("migrated_body", [None, {}], ids=["without_migration", "with_migration_without_its_fields"])
 def test__request_body_migration__with_omitted_optional_form_model_that_the_form_supplies_in_head__should_raise(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
+    migrated_body: Union[dict[str, Any], None],
 ):
     @router.post(test_path)
     async def endpoint(
@@ -5564,7 +5564,13 @@ def test__request_body_migration__with_omitted_optional_form_model_that_the_form
     ):
         return [None if body is None else body.model_dump(), from_dependency]
 
-    clients = create_versioned_clients(version_change(schema(SchemaWithValueAddedLater).field("extra").didnt_exist))
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = migrated_body
+
+    clients = create_versioned_clients(
+        version_change(schema(SchemaWithValueAddedLater).field("extra").didnt_exist, migrator=migrator)
+    )
     clients["2000-01-01"].app.dependency_overrides[_get_text] = _get_extra_from_form_field
 
     assert clients["2001-01-01"].post(test_path, data={"extra": "e"}).json() == [{"v": None, "extra": "e"}, "e"]
@@ -8393,60 +8399,7 @@ def test__form_migration__with_uploads_replaced_by_later_migrations__should_clos
     assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1), (True, 1)]
 
 
-@pytest.mark.parametrize(
-    ("mode", "expected_output"),
-    [
-        ("permanent", ["EVENT LOOP EXITED"]),
-        ("late_failure", ["EVENT LOOP EXITED", "Cadwyn couldn't close an uploaded file: late close failure"]),
-    ],
-)
-def test__uploads__permanently_blocked_close__should_exit_process_after_shutdown(
-    tmp_path: pathlib.Path, mode: str, expected_output: list[str]
-):
-    shutdown_marker = tmp_path / "shutdown"
-    with subprocess.Popen(
-        [sys.executable, "-m", "tests._resources.permanent_close", str(shutdown_marker), mode],
-        cwd=pathlib.Path(__file__).parent.parent,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    ) as process:
-        try:
-            startup_deadline = time_module.monotonic() + 30
-            while (
-                not shutdown_marker.exists() and process.poll() is None and time_module.monotonic() < startup_deadline
-            ):
-                time_module.sleep(0.01)
-            assert shutdown_marker.exists(), process.communicate(timeout=3)
-            # Startup and request cleanup have finished; a blocked close must not delay process exit.
-            stdout, stderr = process.communicate(timeout=5)
-        finally:
-            if process.poll() is None:  # pragma: no cover # Reap the child if the regression fails.
-                process.kill()
-            process.communicate()
-
-    assert process.returncode == 0, (stdout, stderr)
-    result_json, *remaining_lines = stdout.splitlines()
-    assert remaining_lines == expected_output
-    result = json.loads(result_json)
-    assert 3 <= result.pop("elapsed_seconds") < 5
-    assert result == {
-        "close_started": True,
-        "closed": [False],
-        "error": "client disconnected",
-        "logs": [
-            (
-                "Cadwyn couldn't finish closing the request's uploaded files within 3 seconds, "
-                "so some uploads may stay open"
-            )
-        ],
-    }
-    assert stderr == ""
-
-
-def test__uploads__file_close_failure__should_propagate_error_keep_context_and_log_once(
-    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
-):
+def test__uploads__file_close_failure__should_propagate_error_and_keep_context(tmp_path: pathlib.Path):
     context = ContextVar("file_close_context", default="original")
     observed: list[str] = []
     close_error = OSError("disk close failed")
@@ -8470,121 +8423,18 @@ def test__uploads__file_close_failure__should_propagate_error_keep_context_and_l
         context.set("request")
         return "unchanged"
 
-    with (
-        caplog.at_level("DEBUG", logger="cadwyn.structure.versions"),
-        pytest.raises(OSError, match="disk close failed") as exc_info,
-    ):
+    with pytest.raises(OSError, match="disk close failed") as exc_info:
         asyncio.run(_ASGIRequestDriver()(app, {}))
 
     assert exc_info.value is close_error
     assert observed == ["request"]
     assert context.get() == "original"
-    assert [record.getMessage() for record in caplog.records] == [
-        "Cadwyn couldn't close an uploaded file: disk close failed"
-    ]
 
 
 class _UploadThatNeverCloses(UploadFile):
     @override
     async def close(self) -> None:
         await anyio.sleep_forever()
-
-
-@pytest.mark.parametrize("route_kind", ["unversioned", "versioned", "failing_dependency", "migration"])
-def test__uploads__blocked_file_close__should_finish_request_and_shutdown_at_deadline(
-    tmp_path: pathlib.Path,
-    caplog: pytest.LogCaptureFixture,
-    route_kind: Literal["unversioned", "versioned", "failing_dependency", "migration"],
-):
-    release = threading.Event()
-    finished = threading.Event()
-    shutdown = threading.Event()
-    started_at: list[float] = []
-    # Release the worker even on the broken implementation, so a failing test cannot hang the suite.
-    timer = threading.Timer(6, release.set)
-
-    class BlockingFile(BufferedRandom):
-        @override
-        def close(self) -> None:
-            if not self.closed:
-                started_at.append(time_module.monotonic())
-                timer.start()
-                release.wait()
-            super().close()
-            finished.set()
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        try:
-            yield
-        finally:
-            shutdown.set()
-
-    uploads: list[UploadFile] = []
-
-    def add_blocked_file(request: RequestInfo):
-        assert request.form is not None
-        upload = UploadFile(BlockingFile(FileIO(tmp_path / "blocked.bin", "w+")), filename="blocked.bin")
-        uploads.append(upload)
-        request.form.append(("added", upload))
-
-    if route_kind == "migration":
-        change = version_change(migrator=convert_request_to_next_version_for("/test", ["POST"])(add_blocked_file))
-        bundle = VersionBundle(Version("2001-01-01", change), Version("2000-01-01"))
-    else:
-        bundle = VersionBundle(Version("2000-01-01"))
-    app = Cadwyn(versions=bundle, lifespan=lifespan)
-
-    async def replace_file(upload: UploadFile):
-        if route_kind == "migration":
-            return
-        if not isinstance(upload.file, BlockingFile):
-            await upload.close()
-            upload.file = BlockingFile(FileIO(tmp_path / "blocked.bin", "w+"))
-            uploads.append(upload)
-        if route_kind == "failing_dependency":
-            raise HTTPException(400, "Dependency failed")
-
-    router = APIRouter()
-
-    @router.post("/test", dependencies=[Depends(replace_file)])
-    async def endpoint(upload: UploadFile):
-        return "unchanged"
-
-    if route_kind == "unversioned":
-        app.include_router(router)
-    else:
-        app.generate_and_include_versioned_routers(router)
-
-    async def run_request():
-        try:
-            async with app.router.lifespan_context(app):
-                await _run_request(
-                    _ASGIRequestDriver(fail_sending="http.response.start", form_fields={"note": "unchanged"}),
-                    app,
-                    {} if route_kind == "unversioned" else {"x-api-version": "2000-01-01"},
-                    OSError,
-                )
-            assert len(started_at) == 1
-            assert time_module.monotonic() - started_at[0] < 5
-            assert shutdown.is_set()
-            assert not release.is_set()
-            assert not uploads[0].file.closed
-            expected_warning = (
-                "Cadwyn couldn't close the upload 'blocked.bin' within 3 seconds after the request, so it may stay open"
-                if route_kind == "migration"
-                else "Cadwyn couldn't finish closing the request's uploaded files within 3 seconds, "
-                "so some uploads may stay open"
-            )
-            assert [record.getMessage() for record in caplog.records] == [expected_warning]
-        finally:
-            release.set()
-            timer.cancel()
-            assert await anyio.to_thread.run_sync(finished.wait, 10)
-            for upload in uploads:
-                await upload.close()
-
-    asyncio.run(run_request())
 
 
 def test__form_migration__with_upload_that_never_closes__should_finish_the_request_and_log_it(
@@ -16081,11 +15931,17 @@ def test__request_body_migration__with_object_that_pydantic_doesnt_make_set_by_m
     [_get_extra_from_form_field, _get_other_form_model_and_extra_from_form],
     ids=["form_field", "form_model_and_field"],
 )
+@pytest.mark.parametrize(
+    "migrated_body",
+    [{"v": "migrated"}, {}, {"unrelated": "migrated"}, {"extra": "migrated"}],
+    ids=["form_model_fields", "empty", "unrelated_key", "key_of_other_param"],
+)
 def test__request_body_migration__with_omitted_form_model_and_other_form_readers__head_should_get_migrated_request(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
     override: Callable[..., Coroutine[Any, Any, Any]],
+    migrated_body: dict[str, Any],
 ):
     endpoint = _optional_form_model_next_to_overridden_text_dependency
     router.post(test_path)(endpoint)
@@ -16096,12 +15952,12 @@ def test__request_body_migration__with_omitted_form_model_and_other_form_readers
     @convert_request_to_next_version_for(test_path, ["POST"])
     def migrator(request: RequestInfo):
         assert request.body is None
-        request.body = {"v": "migrated"}
+        request.body = dict(migrated_body)
 
     clients = create_versioned_clients(version_change(migrator=migrator))
     clients["2000-01-01"].app.dependency_overrides[_get_text] = override
 
-    expected = TestClient(fastapi_app).post(test_path, data={"v": "migrated", "extra": "sent"})
+    expected = TestClient(fastapi_app).post(test_path, data={"extra": "sent", **migrated_body})
     assert expected.status_code == 200
     response = clients["2000-01-01"].post(test_path, data={"extra": "sent"})
     assert (response.status_code, response.json()) == (expected.status_code, expected.json())
@@ -16193,8 +16049,8 @@ def test__request_body_migration__with_unvisited_alias_also_declared_as_form_fie
 @pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
     not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
 )
-@pytest.mark.parametrize("migrated_body", ["migrated", {}, {"unrelated": "migrated"}])
-def test__request_body_migration__with_omitted_form_model_and_unusable_migration_body__should_name_param_in_error(
+@pytest.mark.parametrize("migrated_body", ["migrated", ["migrated"]])
+def test__request_body_migration__with_omitted_form_model_and_body_that_isnt_dict__should_name_param_in_error(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -16209,7 +16065,95 @@ def test__request_body_migration__with_omitted_form_model_and_unusable_migration
     clients = create_versioned_clients(version_change(migrator=migrator))
     clients["2000-01-01"].app.dependency_overrides[_get_text] = _get_extra_from_form_field
 
-    with pytest.raises(CadwynError, match=r"param `body`.*migration must supply a dict"):
+    with pytest.raises(CadwynError, match=r"param `body`.*isn't a dict"):
+        clients["2000-01-01"].post(test_path, data={"extra": "sent"})
+
+
+async def _get_any_list_from_form_field(extra: Annotated[list[Any], Form()]) -> list[Any]:
+    return extra  # pragma: no cover # FastAPI >= 0.158
+
+
+class _OverrideFormModelWithAnyList(BaseModel):
+    extra: list[Any]
+
+
+async def _get_any_list_from_form_model(other: Annotated[_OverrideFormModelWithAnyList, Form()]) -> list[Any]:
+    return other.extra  # pragma: no cover # FastAPI >= 0.158
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize(
+    "override", [_get_any_list_from_form_field, _get_any_list_from_form_model], ids=["form_field", "form_model"]
+)
+@pytest.mark.parametrize(
+    "migrated_value",
+    [["a", "b"], ("a", "b"), {"a"}, frozenset({"a"}), deque(["a", "b"]), ["a"], "a"],
+    ids=["list", "tuple", "set", "frozenset", "deque", "single_item_list", "string"],
+)
+def test__request_body_migration__with_omitted_form_model_and_migrated_collection__head_should_get_its_items(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    override: Callable[..., Coroutine[Any, Any, Any]],
+    migrated_value: Any,
+):
+    endpoint = _optional_form_model_next_to_overridden_text_dependency
+    router.post(test_path)(endpoint)
+    fastapi_app = fastapi.FastAPI()
+    fastapi_app.post(test_path)(endpoint)
+    fastapi_app.dependency_overrides[_get_text] = override
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = {"extra": migrated_value}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = override
+
+    # The client sends a collection as repeated form items
+    sent_value = migrated_value if isinstance(migrated_value, str) else list(migrated_value)
+    expected = TestClient(fastapi_app).post(test_path, data={"extra": sent_value})
+    assert expected.status_code == 200
+    response = clients["2000-01-01"].post(test_path, data={"extra": "sent"})
+    assert (response.status_code, response.json()) == (expected.status_code, expected.json())
+
+
+@pytest.mark.skipif(  # pragma: no cover # FastAPI >= 0.158.2
+    not FASTAPI_SUPPORTS_OPTIONAL_FORM_MODELS, reason="Before FastAPI 0.158.2, FastAPI doesn't omit form models"
+)
+@pytest.mark.parametrize(
+    ("override", "param_description"),
+    [
+        (_get_any_list_from_form_field, "`extra` of `_get_any_list_from_form_field`"),
+        (_get_any_list_from_form_model, "`other` of `_get_any_list_from_form_model`"),
+    ],
+    ids=["form_field", "form_model"],
+)
+@pytest.mark.parametrize(
+    "migrated_value",
+    [{"k": "v"}, [["a"]], [{"k": "v"}], [("a",)], [{"a"}]],
+    ids=["dict", "nested_list", "dict_in_list", "tuple_in_list", "set_in_list"],
+)
+def test__request_body_migration__with_omitted_form_model_and_nested_migrated_value__should_name_param_in_error(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    override: Callable[..., Coroutine[Any, Any, Any]],
+    param_description: str,
+    migrated_value: Any,
+):
+    router.post(test_path)(_optional_form_model_next_to_overridden_text_dependency)
+
+    @convert_request_to_next_version_for(test_path, ["POST"])
+    def migrator(request: RequestInfo):
+        request.body = {"extra": migrated_value}
+
+    clients = create_versioned_clients(version_change(migrator=migrator))
+    clients["2000-01-01"].app.dependency_overrides[_get_text] = override
+
+    with pytest.raises(CadwynError, match=rf"param {re.escape(param_description)}.*can't be sent as form items"):
         clients["2000-01-01"].post(test_path, data={"extra": "sent"})
 
 

@@ -50,9 +50,7 @@ Cadwyn generates a copy of every model for every version, except for the enums w
 
 ### Bases supplied through `__mro_entries__`
 
-Models whose bases are supplied by an object's `__mro_entries__` hook use the versioned parents when the resolved bases match the original model's bases and those parents are complete models affected by schema instructions for that version. The parents' schema instructions and the [checks for inherited fields](./schema_migrations.md#fields-that-a-schema-inherits) then apply as they do to explicit base classes. When upgrading from Cadwyn 8, update affected request and response migrations to use the corrected older-version fields.
-
-Cadwyn calls these hooks again while it copies models, possibly several times per version, so a hook must return the same bases every time and must not rely on how often it is called. Dynamically resolved, incomplete, or unmatched bases keep their previous behavior; use explicit base classes if you need schema instructions to reach those parents reliably.
+A model whose bases come from an object's `__mro_entries__` hook (e.g. `class Child(Alias())`, where `Alias()` gives `Parent`) inherits from the versioned copies of the bases that Python resolved when it created the class, just like `class Child(Parent)` does. So the schema instructions of `Parent` and of the models in its fields, and the [checks for inherited fields](./schema_migrations.md#fields-that-a-schema-inherits), apply to it in older versions too. Cadwyn doesn't call the hooks again. Typing aliases such as `Generic[T]` or `Mixin[int]` also have `__mro_entries__`, but Cadwyn resolves them as before, so they don't count as such hooks. An `Annotated[Parent, ...]` base gives `Parent`, so it inherits from the versioned copy of `Parent` too.
 
 ### Generic models
 

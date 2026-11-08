@@ -27,6 +27,7 @@ from typing import (
 )
 
 import pytest
+import typing_extensions
 from pydantic import (
     AliasChoices,
     BaseModel,
@@ -3915,6 +3916,59 @@ def test__schema_field_had_name__parent_renamed_field_that_child_of_mro_entries_
     assert list(schemas["2001-01-01"][ChildOfAliasOfParentWithIntFooThatGetsRenamed].model_fields) == ["foo"]
 
 
+def test__schema_field_had_name__child_of_mro_entries_base_from_getattr__should_rename_inherited_field(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class AliasWithHookFromGetattr:
+        def __getattr__(self, name: str) -> Any:
+            assert name == "__mro_entries__"
+            return lambda _bases: (ParentWithIntFooThatGetsRenamed,)
+
+    class Child(AliasWithHookFromGetattr()):  # ty: ignore[invalid-base]
+        pass
+
+    schemas = create_runtime_schemas(
+        version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
+    )
+
+    old_child = schemas["2000-01-01"][Child]
+    assert old_child.__bases__ == (schemas["2000-01-01"][ParentWithIntFooThatGetsRenamed],)
+    assert old_child.model_validate({"old_foo": 42}).model_dump() == {"old_foo": 42}
+
+
+class ParentWithDefaultThatChanges(BaseModel):
+    value: int = 42
+
+
+@pytest.mark.parametrize("annotated", [typing.Annotated, typing_extensions.Annotated])
+def test__generate_versioned_routers__child_of_annotated_base__should_use_versioned_parent(
+    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter, annotated: Any
+):
+    class AnnotatedChild(annotated[ParentWithDefaultThatChanges, "marker"]):
+        pass
+
+    class ExplicitChild(ParentWithDefaultThatChanges):
+        pass
+
+    @router.get("/annotated", response_model=AnnotatedChild)
+    @router.get("/explicit", response_model=ExplicitChild)
+    def empty_response() -> dict[str, object]:
+        return {}
+
+    clients = create_versioned_clients(
+        version_change(schema(ParentWithDefaultThatChanges).field("value").had(default=10))
+    )
+
+    for version, default in [("2000-01-01", 10), ("2001-01-01", 42)]:
+        client = clients[version]
+        openapi_schemas = client.get(f"/openapi.json?version={version}").json()["components"]["schemas"]
+        for path, child in [("/annotated", AnnotatedChild), ("/explicit", ExplicitChild)]:
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.json() == {"value": default}
+            assert openapi_schemas[child.__name__]["properties"]["value"]["default"] == default
+
+
 class AliasOfBases:
     def __init__(self, *bases: type) -> None:
         self.bases = bases
@@ -3923,7 +3977,41 @@ class AliasOfBases:
         return self.bases
 
 
-def test__generate_versioned_routers__mro_entries_create_fresh_bases__should_preserve_defaults_and_hook_calls(
+class ItemWithRenamedField(BaseModel):
+    new_name: int
+
+
+class ParentWithVersionedFieldModel(BaseModel):
+    item: ItemWithRenamedField
+
+
+class ExplicitChildOfParentWithVersionedFieldModel(ParentWithVersionedFieldModel):
+    pass
+
+
+class ChildOfAliasOfParentWithVersionedFieldModel(AliasOfBases(ParentWithVersionedFieldModel)):
+    pass
+
+
+@pytest.mark.parametrize(
+    "child", [ExplicitChildOfParentWithVersionedFieldModel, ChildOfAliasOfParentWithVersionedFieldModel]
+)
+def test__schema_field_had_name__field_model_of_mro_entries_parent_renamed_field__should_use_versioned_field_model(
+    create_runtime_schemas: CreateRuntimeSchemas, child: type[BaseModel]
+):
+    schemas = create_runtime_schemas(
+        version_change(schema(ItemWithRenamedField).field("new_name").had(name="old_name"))
+    )
+
+    old_child = schemas["2000-01-01"][child]
+    assert old_child.model_validate({"item": {"old_name": 1}}).model_dump() == {"item": {"old_name": 1}}
+    with pytest.raises(ValidationError):
+        old_child.model_validate({"item": {"new_name": 1}})
+    new_child = schemas["2001-01-01"][child]
+    assert new_child.model_validate({"item": {"new_name": 1}}).model_dump() == {"item": {"new_name": 1}}
+
+
+def test__generate_versioned_routers__mro_entries_create_fresh_bases__should_use_the_bases_of_the_class(
     create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
 ):
     class Factory:
@@ -3946,15 +4034,12 @@ def test__generate_versioned_routers__mro_entries_create_fresh_bases__should_pre
 
     clients = create_versioned_clients(version_change())
 
-    for version, default in [("2000-01-01", 3), ("2001-01-01", 2)]:
-        client = clients[version]
+    for version, client in clients.items():
         response = client.get("/")
         assert response.status_code == 200
-        assert response.json() == {"value": default}
+        assert response.json() == {"value": 1}
         openapi = client.get(f"/openapi.json?version={version}").json()
-        assert openapi["components"]["schemas"]["Model"]["properties"]["value"]["default"] == default
-
-    assert len(factory.models) == 3
+        assert openapi["components"]["schemas"]["Model"]["properties"]["value"]["default"] == 1
 
 
 def test__generate_versioned_routers__mro_entries_parent_has_overridden_forward_ref__should_preserve_responses(
@@ -3977,7 +4062,7 @@ def test__generate_versioned_routers__mro_entries_parent_has_overridden_forward_
         assert response.json() == {"value": 42}
 
 
-def test__generate_versioned_routers__mro_entries_shared_with_field_model__should_preserve_hook_order(
+def test__generate_versioned_routers__mro_entries_shared_with_field_model__should_use_the_bases_of_each_class(
     create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
 ):
     class Factory:
@@ -3998,12 +4083,10 @@ def test__generate_versioned_routers__mro_entries_shared_with_field_model__shoul
     router.get("/", response_model=Model)(lambda: {"child": {}})
     clients = create_versioned_clients(version_change())
 
-    for version, value, child_value in [("2000-01-01", 6, 5), ("2001-01-01", 4, 3)]:
-        response = clients[version].get("/")
+    for client in clients.values():
+        response = client.get("/")
         assert response.status_code == 200
-        assert response.json() == {"value": value, "child": {"value": child_value}}
-
-    assert factory.calls == 6
+        assert response.json() == {"value": 2, "child": {"value": 1}}
 
 
 class MixinForAlias:
@@ -4039,19 +4122,22 @@ def test__generate_versioned_routers__metaclass_changes_unversioned_mro_entries_
         assert response.json() == {"foo": 42}
 
 
-def test__generate_versioned_routers__metaclass_changes_versioned_mro_entries_bases__should_preserve_fields(
-    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
-):
-    router.get("/", response_model=ChildOfAliasWithMetaclass)(lambda: {"foo": 42})
+class ExplicitChildWithMetaclass(ParentWithIntFooThatGetsRenamed, metaclass=MixinAddingMeta):
+    pass
 
-    clients = create_versioned_clients(
+
+@pytest.mark.parametrize("model", [ExplicitChildWithMetaclass, ChildOfAliasWithMetaclass])
+def test__schema_field_had_name__metaclass_changes_versioned_mro_entries_bases__should_rename_inherited_field(
+    create_runtime_schemas: CreateRuntimeSchemas, model: type[BaseModel]
+):
+    schemas = create_runtime_schemas(
         version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
     )
 
-    for client in clients.values():
-        response = client.get("/")
-        assert response.status_code == 200
-        assert response.json() == {"foo": 42}
+    old_model = schemas["2000-01-01"][model]
+    assert old_model.__bases__ == (schemas["2000-01-01"][ParentWithIntFooThatGetsRenamed], MixinForAlias)
+    assert old_model.model_validate({"old_foo": 42}).model_dump() == {"old_foo": 42}
+    assert schemas["2001-01-01"][model].model_validate({"foo": 42}).model_dump() == {"foo": 42}
 
 
 @pytest.mark.parametrize(
@@ -4111,8 +4197,8 @@ def test__schema_field_had_name__generic_child_of_mro_entries_base__should_keep_
     assert old_child.__parameters__ == Child.__parameters__
 
 
-def test__generate_versioned_routers__mro_entries_no_longer_match_actual_bases__should_preserve_resolved_fields(
-    create_versioned_clients: CreateVersionedClients, router: VersionedAPIRouter
+def test__schema_field_had_name__mro_entries_change_after_class_creation__should_version_actual_bases(
+    create_runtime_schemas: CreateRuntimeSchemas,
 ):
     alias = AliasOfBases(ParentWithIntFooThatGetsRenamed)
 
@@ -4120,39 +4206,13 @@ def test__generate_versioned_routers__mro_entries_no_longer_match_actual_bases__
         pass
 
     alias.bases = (create_model("OtherParent", foo=(int, ...)),)
-    router.get("/", response_model=Child)(lambda: {"foo": 42})
-
-    clients = create_versioned_clients(
+    schemas = create_runtime_schemas(
         version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
     )
 
-    for client in clients.values():
-        response = client.get("/")
-        assert response.status_code == 200
-        assert response.json() == {"foo": 42}
-
-
-def test__generate_versioned_routers__mro_entries_resolution_fails__should_preserve_hook_error(
-    create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter
-):
-    class FailingAlias:
-        fail = False
-
-        def __mro_entries__(self, bases: tuple[object, ...]) -> tuple[type, ...]:
-            if self.fail:
-                raise ValueError("Cannot resolve this alias again")
-            return (ParentWithIntFooThatGetsRenamed,)
-
-    alias = FailingAlias()
-
-    class Child(alias):
-        pass
-
-    alias.fail = True
-    router.get("/", response_model=Child)(lambda: {"foo": 42})
-
-    with pytest.raises(ValueError, match="Cannot resolve this alias again"):
-        create_versioned_app(version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo")))
+    old_child = schemas["2000-01-01"][Child]
+    assert old_child.__bases__ == (schemas["2000-01-01"][ParentWithIntFooThatGetsRenamed],)
+    assert old_child.model_validate({"old_foo": 42}).model_dump() == {"old_foo": 42}
 
 
 def test__generate_versioned_routers__mro_entries_child_deletes_redeclared_field__should_fail_at_startup(

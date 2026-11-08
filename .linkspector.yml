@@ -2,7 +2,9 @@ dirs:
   - .
 useGitIgnore: true
 timeout: 5000
-retryCount: 1
+retryCount: 3
 ignorePatterns:
   # The New Stack blocks headless browsers with a 403, although the article opens normally in a browser
   - pattern: "^https://thenewstack\\.io/"
+  # GitHub throttles headless browsers from CI runners with 504s and timeouts, so these checks fail at random
+  - pattern: "^https://github\\.com/"

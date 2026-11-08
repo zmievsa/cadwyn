@@ -1,10 +1,11 @@
+import functools
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
-from inspect import iscoroutine
+from inspect import iscoroutinefunction
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Self, TypeAlias, Union, assert_never, cast, overload
+from typing import TYPE_CHECKING, Any, Optional, Self, Union, assert_never, cast, overload
 from urllib.parse import quote
 
 import fastapi
@@ -52,9 +53,6 @@ logger = getLogger(__name__)
 # FastAPI silently keeps unknown keyword arguments in `app.extra`, so we reject these ourselves. The 8.x docs told
 # apps to pass the values that turn the changelog off, which still do what they did, so we only warn about them
 _REMOVED_CHANGELOG_ARGUMENTS = {"changelog_url": None, "include_changelog_url_in_schema": False}
-
-# OpenAPI is a JSON boundary with application-defined schema fields and extensions.
-OpenAPICustomizer: TypeAlias = Callable[[dict[str, Any], Union[str, None]], dict[str, Any]]
 
 
 def _get_effective_include_in_schema(route: BaseRoute, effective_route_context: _EffectiveRouteContext | None) -> bool:
@@ -120,7 +118,7 @@ class Cadwyn(FastAPI):
         api_version_description: Optional[str] = None,
         versioning_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
         run_background_tasks_of_latest_version_dependencies: bool = False,
-        openapi_customizer: Union[OpenAPICustomizer, None] = None,
+        openapi_customizer: Union[Callable[[dict[str, Any], Union[str, None]], dict[str, Any]], None] = None,
         debug: bool = False,
         title: str = "FastAPI",
         summary: Union[str, None] = None,
@@ -179,6 +177,21 @@ class Cadwyn(FastAPI):
             raise TypeError(
                 "Cadwyn.__init__() got an unexpected keyword argument 'openapi_prefix'. Cadwyn 9.0 removed it. "
                 "Set the root path on your server instead (e.g. `root_path` or your proxy's prefix)."
+            )
+        # An async callback would return an unawaited coroutine on every /openapi.json request
+        customizer_target = openapi_customizer
+        while isinstance(customizer_target, functools.partial | staticmethod | classmethod):
+            customizer_target = (
+                customizer_target.func
+                if isinstance(customizer_target, functools.partial)
+                else customizer_target.__func__
+            )
+        if iscoroutinefunction(customizer_target) or iscoroutinefunction(
+            getattr(type(customizer_target), "__call__", None)  # noqa: B004  # Async __call__ of callable objects
+        ):
+            raise TypeError(
+                f"openapi_customizer must be synchronous, got the async callable {openapi_customizer!r}. "
+                "Define it with `def` instead of `async def`."
             )
         self.versions = versions
         self.openapi_customizer = openapi_customizer
@@ -472,12 +485,8 @@ class Cadwyn(FastAPI):
         if self.openapi_customizer is not None:
             openapi = self.openapi_customizer(openapi, version if is_versioned else None)
             if not isinstance(openapi, dict):
-                # Reject async callbacks without leaving an unawaited coroutine behind.
-                if iscoroutine(openapi):
-                    openapi.close()
                 raise TypeError(
-                    f"OpenAPI customizer {self.openapi_customizer!r} must return a dict, "
-                    f"got {type(openapi).__name__}. The callback must be synchronous."
+                    f"OpenAPI customizer {self.openapi_customizer!r} must return a dict, got {type(openapi).__name__}."
                 )
         return JSONResponse(openapi)
 

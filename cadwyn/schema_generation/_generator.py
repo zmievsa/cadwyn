@@ -121,7 +121,6 @@ class SchemaGenerator:
         "_models_copied_eagerly",
         "_parent_renames",
         "_reference_cycles",
-        "_resolved_model_bases",
         "_root_models",
         "_route_versioning_thread",
         "_version",
@@ -178,7 +177,6 @@ class SchemaGenerator:
         # Models are generated lazily (e.g. in migrate_response_body) so several threads can generate them at once
         self._lock = threading.RLock()
         self.concrete_models: dict[type[Union[BaseModel, Enum]], type[Union[BaseModel, Enum]]] = {}
-        self._resolved_model_bases: dict[type[BaseModel], tuple[type, ...]] = {}
         # Models are generated through __getitem__ so that the copies created along the way are reused
         # instead of being created again
         for model in [*self.model_bundle.schemas, *self.model_bundle.enums]:

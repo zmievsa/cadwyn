@@ -14,8 +14,7 @@ def _public_annotation_targets() -> Iterator[Any]:
     for module in (cadwyn, cadwyn.structure):
         for name in module.__all__:
             obj = getattr(module, name)
-            if inspect.isclass(obj) or inspect.isfunction(inspect.unwrap(obj)):
-                yield pytest.param(obj, id=f"{module.__name__}.{name}")
+            yield pytest.param(obj, id=f"{module.__name__}.{name}")
             if inspect.isclass(obj):
                 yield from _public_method_annotation_targets(obj, f"{module.__name__}.{name}")
     # SchemaGenerator is also part of the supported API, through cadwyn.schema_generation.

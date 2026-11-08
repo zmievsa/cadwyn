@@ -72,9 +72,6 @@ from ._uploads import (
     _UPLOADS_TO_CLOSE_SCOPE_KEY as _UPLOADS_TO_CLOSE_SCOPE_KEY,
 )
 from ._uploads import (
-    _close_upload as _close_upload,
-)
-from ._uploads import (
     _UploadsToClose as _UploadsToClose,
 )
 
