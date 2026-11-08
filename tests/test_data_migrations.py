@@ -8385,6 +8385,97 @@ def test__form_migration__with_uploads_replaced_by_later_migrations__should_clos
     assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1), (True, 1)]
 
 
+@pytest.mark.parametrize(
+    ("mode", "expected_output"),
+    [
+        ("permanent", ["EVENT LOOP EXITED"]),
+        ("late_failure", ["EVENT LOOP EXITED", "Cadwyn couldn't close an uploaded file: late close failure"]),
+    ],
+)
+def test__uploads__permanently_blocked_close__should_exit_process_after_shutdown(
+    tmp_path: pathlib.Path, mode: str, expected_output: list[str]
+):
+    shutdown_marker = tmp_path / "shutdown"
+    with subprocess.Popen(
+        [sys.executable, "-m", "tests._resources.permanent_close", str(shutdown_marker), mode],
+        cwd=pathlib.Path(__file__).parent.parent,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as process:
+        try:
+            startup_deadline = time_module.monotonic() + 30
+            while (
+                not shutdown_marker.exists() and process.poll() is None and time_module.monotonic() < startup_deadline
+            ):
+                time_module.sleep(0.01)
+            assert shutdown_marker.exists(), process.communicate(timeout=3)
+            # Startup and request cleanup have finished; a blocked close must not delay process exit.
+            stdout, stderr = process.communicate(timeout=5)
+        finally:
+            if process.poll() is None:  # pragma: no cover # Reap the child if the regression fails.
+                process.kill()
+            process.communicate()
+
+    assert process.returncode == 0, (stdout, stderr)
+    result_json, *remaining_lines = stdout.splitlines()
+    assert remaining_lines == expected_output
+    result = json.loads(result_json)
+    assert 3 <= result.pop("elapsed_seconds") < 5
+    assert result == {
+        "close_started": True,
+        "closed": [False],
+        "error": "client disconnected",
+        "logs": [
+            (
+                "Cadwyn couldn't finish closing the request's uploaded files within 3 seconds, "
+                "so some uploads may stay open"
+            )
+        ],
+    }
+    assert stderr == ""
+
+
+def test__uploads__file_close_failure__should_propagate_error_keep_context_and_log_once(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+):
+    context = ContextVar("file_close_context", default="original")
+    observed: list[str] = []
+    close_error = OSError("disk close failed")
+
+    class FailingFile(BufferedRandom):
+        @override
+        def close(self) -> None:
+            if not self.closed:  # pragma: no branch # Fixture finalization guard.
+                observed.append(context.get())
+                super().close()
+                raise close_error
+
+    async def replace_file(upload: UploadFile):
+        await upload.close()
+        upload.file = FailingFile(FileIO(tmp_path / "failed.bin", "w+"))
+
+    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+
+    @app.post("/test", dependencies=[Depends(replace_file)])
+    async def endpoint(upload: UploadFile):
+        context.set("request")
+        return "unchanged"
+
+    with (
+        caplog.at_level("DEBUG", logger="cadwyn.structure.versions"),
+        pytest.raises(OSError, match="disk close failed") as exc_info,
+    ):
+        asyncio.run(_ASGIRequestDriver()(app, {}))
+
+    assert exc_info.value is close_error
+    assert observed == ["request"]
+    assert context.get() == "original"
+    assert [record.getMessage() for record in caplog.records] == [
+        "Cadwyn couldn't close an uploaded file: disk close failed"
+    ]
+
+
 class _UploadThatNeverCloses(UploadFile):
     @override
     async def close(self) -> None:

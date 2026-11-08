@@ -25,7 +25,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import AsyncExitStack
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
@@ -48,7 +48,6 @@ from typing import (
 )
 
 import anyio
-import anyio.to_thread
 import fastapi.dependencies.utils
 from fastapi import BackgroundTasks, HTTPException, params
 from fastapi import Request as FastapiRequest
@@ -2460,12 +2459,29 @@ def _get_strict_content_type(request: FastapiRequest) -> bool:
 _UPLOADS_TO_CLOSE_SCOPE_KEY = "cadwyn.uploads_to_close"
 # How long we wait for each upload to close, so that an upload that never closes can't keep the request running forever
 _UPLOAD_CLOSE_TIMEOUT_SECONDS = 3
+_UPLOAD_CLOSE_POLL_INTERVAL_SECONDS = 0.01
 
-# AnyIO renamed this keyword in 4.1. Select it once without emitting deprecation warnings on newer releases.
-if "abandon_on_cancel" in inspect.signature(anyio.to_thread.run_sync).parameters:
-    _close_file_in_thread = functools.partial(anyio.to_thread.run_sync, abandon_on_cancel=True)
-else:  # pragma: no cover # AnyIO < 4.1; exercised in the dependency compatibility matrix
-    _close_file_in_thread = functools.partial(anyio.to_thread.run_sync, cancellable=True)
+
+async def _close_file_in_thread(close: Callable[[], None]) -> None:
+    finished = threading.Event()
+    errors: list[BaseException] = []
+
+    def run_close() -> None:
+        try:
+            close()
+        except BaseException as exc:  # noqa: BLE001 # Keep abandoned worker failures out of threading.excepthook.
+            errors.append(exc)
+            _logger.debug("Cadwyn couldn't close an uploaded file: %s", exc)
+        finally:
+            finished.set()
+
+    # A permanently blocked close must not keep Python alive after the event loop and ASGI shutdown finish.
+    threading.Thread(target=copy_context().run, args=(run_close,), daemon=True).start()
+    while not finished.is_set():  # noqa: ASYNC110 # Foreign threads cannot set an AnyIO event directly.
+        # Poll a thread-safe signal without relying on a particular event loop or AnyIO version.
+        await anyio.sleep(_UPLOAD_CLOSE_POLL_INTERVAL_SECONDS)
+    if errors:
+        raise errors[0]
 
 
 async def _close_upload(upload: UploadFile) -> None:
@@ -2473,7 +2489,7 @@ async def _close_upload(upload: UploadFile) -> None:
         getattr(upload.close, "__func__", None) in (UploadFile.close, fastapi.UploadFile.close)
         and not upload._in_memory
     ):
-        # Starlette's default thread offload shields the worker even from our cleanup deadline.
+        # Starlette's worker shields cancellation and can keep the process alive even if its wait is abandoned.
         await _close_file_in_thread(upload.file.close)
     else:
         # Keep in-memory closing and user-defined async close overrides in their original context.
