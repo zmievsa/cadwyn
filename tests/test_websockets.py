@@ -323,18 +323,19 @@ def test__versioned_websocket__openapi__should_keep_websockets_out_of_every_sche
             assert list(schema.json()["paths"]) == ["/{api_version}/ping" if location == "path" else "/ping"]
 
 
-def _http_version(client: TestClient, location: str, version: str | None) -> str | None:
+_REJECTED = "rejected"
+
+
+def _http_version(client: TestClient, location: str, version: str | None) -> str:
     path = f"/{version}/ping" if location == "path" and version is not None else "/ping"
     headers = {HEADER: version} if location == "custom_header" and version is not None else {}
     response = client.get(path, headers=headers)
-    return (
-        response.headers[HEADER if location == "custom_header" else "api_version"]
-        if response.status_code == 200
-        else None
-    )
+    if response.status_code != 200:
+        return _REJECTED
+    return response.headers[HEADER if location == "custom_header" else "api_version"]
 
 
-def _websocket_version(client: TestClient, location: str, version: str | None) -> str | None:
+def _websocket_version(client: TestClient, location: str, version: str | None) -> str:
     try:
         with _connect(client, location, version) as socket:
             picked = socket.receive_json()["context"]
@@ -342,9 +343,8 @@ def _websocket_version(client: TestClient, location: str, version: str | None) -
             socket.receive_json()
             return picked
     except WebSocketDisconnect as exc:
-        if exc.code != 1008:
-            raise
-        return None
+        # Any close code other than 1008 makes the comparison with HTTP fail
+        return _REJECTED if exc.code == 1008 else f"closed with {exc.code}"
 
 
 # Path versioning does not support default versions
@@ -368,3 +368,54 @@ def test__versioned_websocket__unknown_date_in_path__should_reject_like_http():
             connections.enter_context(client.websocket_connect("/2024-01-15/ws"))
     assert exc.value.code == 1008
     assert "API version" in exc.value.reason
+
+
+def _tenant_app(*values: str) -> Cadwyn:
+    versions = VersionBundle(*(Version(value) for value in values), api_version_var=ContextVar("websocket_version"))
+    app = Cadwyn(
+        versions=versions,
+        api_version_location="path",
+        api_version_parameter_name="api_version",
+        api_version_format="date" if values[0][0].isdigit() else "string",
+    )
+    router = VersionedAPIRouter(prefix="/{tenant}/{api_version}")
+
+    @router.websocket("/ws")
+    async def socket(websocket: WebSocket):
+        await websocket.accept()
+        await websocket.send_json(versions.api_version_var.get(None))
+        await websocket.close()
+
+    app.generate_and_include_versioned_routers(router)
+    return app
+
+
+def test__versioned_websocket__declared_version_as_tenant_in_path__should_read_version_from_its_route_position():
+    with (
+        TestClient(_tenant_app("2024-02-01", "2024-01-01")) as client,
+        client.websocket_connect("/2024-02-01/2024-01-01/ws") as socket,
+    ):
+        assert socket.receive_json() == "2024-01-01"
+
+
+@pytest.mark.parametrize(
+    ("values", "path"), [(("v2", "v1"), "/v2/bad/ws"), (("2024-02-01", "2024-01-01"), "/2024-02-01/2024-01-15/ws")]
+)
+def test__versioned_websocket__undeclared_version_next_to_declared_one__should_reject_before_accepting(
+    values: tuple[str, str], path: str
+):
+    with (
+        TestClient(_tenant_app(*values)) as client,
+        ExitStack() as connections,
+        pytest.raises(WebSocketDisconnect) as exc,
+    ):
+        connections.enter_context(client.websocket_connect(path))
+    assert exc.value.code == 1008
+
+
+def test__versioned_websocket__declared_version_in_path_without_matching_route__should_reject_like_http():
+    with TestClient(_app("path")) as client:
+        assert client.get("/2024-01-01/missing").status_code == 404
+        with ExitStack() as connections, pytest.raises(WebSocketDisconnect) as exc:
+            connections.enter_context(client.websocket_connect("/2024-01-01/missing"))
+    assert exc.value.code == 1008

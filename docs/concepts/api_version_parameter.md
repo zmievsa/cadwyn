@@ -27,7 +27,7 @@ or you can use a path parameter:
 {! ./docs_src/concepts/api_version_parameter/block005.py !}
 ```
 
-With a path parameter, add it to the paths of your versioned routes, e.g. `@router.get("/{api_version}/users")`.
+With a path parameter, add it to the paths of your versioned routes, e.g. `@router.get("/{api_version}/users")`. Cadwyn reads the version only from that parameter's position in the matched route, so other path parameters can hold version-like values: with `/{tenant}/{api_version}/users`, a request to `/2024-02-01/2024-01-01/users` uses version `2024-01-01`. Path versions must match one of your versions exactly, so path versioning doesn't [waterfall](#api-version-waterfalling): a request with any other value gets a 404. If different versions put the API version parameter in different positions and a URL matches more than one of them, Cadwyn raises a `CadwynError`.
 
 ## API version format
 
@@ -54,7 +54,7 @@ In the example above any arbitrary string is accepted as a valid version. Cadwyn
 
 ### API version waterfalling
 
-For historical reasons, date-based routing also supports waterfalling the requests to the closest earlier version of the API if the request date parameter does not match any of the versions exactly.
+For historical reasons, date-based routing with a header or a default version also supports waterfalling the requests to the closest earlier version of the API if the request date parameter does not match any of the versions exactly.
 
 If the app has two versions: 2022-01-02 and 2022-01-05, and the request date parameter is 2022-01-03, then the request will be routed to the 2022-01-02 version, as it is the closest version, but lower than the request date parameter.
 

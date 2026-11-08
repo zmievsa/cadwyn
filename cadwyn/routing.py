@@ -23,7 +23,7 @@ from typing_extensions import override
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn._utils import same_method_definition_as_in
 from cadwyn.exceptions import CadwynError
-from cadwyn.middleware import APIVersionFormat, HeaderVersionManager, URLVersionManager
+from cadwyn.middleware import APIVersionFormat, APIVersionLocation, HeaderVersionManager, URLVersionManager
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.versions import _UPLOAD_CLOSE_TIMEOUT_SECONDS
 
@@ -38,7 +38,7 @@ class _RootCadwynAPIRouter(APIRouter):
         api_version_parameter_name: str,
         api_version_var: ContextVar[Union[str, None]],
         api_version_format: APIVersionFormat,
-        api_version_manager: HeaderVersionManager | URLVersionManager,
+        api_version_location: APIVersionLocation = "custom_header",
         api_version_default_value: str | Callable[[Request], Awaitable[str]] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -48,7 +48,14 @@ class _RootCadwynAPIRouter(APIRouter):
         self.api_version_var = api_version_var
         self.unversioned_routes: list[BaseRoute] = []
         self.api_version_format = api_version_format
-        self._api_version_manager = api_version_manager
+        # VersionPickingMiddleware gets the same manager, so HTTP requests and WebSockets read the version alike
+        self.api_version_manager: HeaderVersionManager | URLVersionManager
+        if api_version_location == "path":
+            self.api_version_manager = URLVersionManager(
+                api_version_parameter_name=api_version_parameter_name, versioned_routers=self.versioned_routers
+            )
+        else:
+            self.api_version_manager = HeaderVersionManager(api_version_parameter_name=api_version_parameter_name)
         self._api_version_default_value = api_version_default_value
 
     async def _get_routes_from_closest_suitable_version(self, version: VersionType) -> list[BaseRoute]:
@@ -165,7 +172,7 @@ class _RootCadwynAPIRouter(APIRouter):
 
     def _pick_websocket_version(self, websocket: WebSocket) -> str:
         # VersionPickingMiddleware is HTTP-only, so we pick the version with the same manager and rules here
-        version = self._api_version_manager.get(websocket)
+        version = self.api_version_manager.get(websocket)
         if version is None:
             if callable(self._api_version_default_value):
                 raise CadwynError(

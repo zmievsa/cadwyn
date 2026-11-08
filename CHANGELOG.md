@@ -40,6 +40,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - Container defaults and metadata preserve subclass types and attributes; unsafe copies raise `SchemaGenerationError`. Use plain containers for versioned classes or callables, and break cycles through factories (see [Defaults](https://docs.cadwyn.dev/concepts/schema_generation/#defaults)) ([#564](https://github.com/zmievsa/cadwyn/issues/564)).
 - `had(...)` now rejects the identical current object even when it is unequal to itself, such as a shared `math.nan`. Remove the redundant instruction ([#541](https://github.com/zmievsa/cadwyn/issues/541)).
 - `schema(M).validator(M.check_a).didnt_exist` no longer removes another validator when `check_a` holds a function named like it, such as `check_b` in `check_a = field_validator("a")(check_b)`. It now removes `check_a`, or raises `CadwynStructureError` if the function backs several validators; then pass the attribute name, e.g. `schema(M).validator("check_a").didnt_exist` ([#133](https://github.com/zmievsa/cadwyn/issues/133)).
+- With path versioning, Cadwyn now reads the API version only from the `{api_version}` parameter of the matched route, not from any URL segment that equals a version, such as a tenant ID; values that aren't one of your versions get a 404 or a rejected WebSocket. Check that clients send the version in its route position. `URLVersionManager` now takes `api_version_parameter_name` and `versioned_routers` instead of `possible_version_values`.
 
 ### Added
 

@@ -2,8 +2,7 @@
 # we can simply remove waterfalling from any_string api version style.
 
 import inspect
-import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from typing import Annotated, Any, Literal, Optional, Protocol, Union
 
@@ -12,10 +11,12 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
 from starlette.requests import HTTPConnection
 from starlette.responses import Response
-from starlette.types import ASGIApp
+from starlette.routing import BaseRoute, Match, Router
+from starlette.types import ASGIApp, Scope
 from typing_extensions import override
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
+from cadwyn.exceptions import CadwynError
 from cadwyn.structure.common import VersionType
 
 
@@ -42,17 +43,56 @@ class HeaderVersionManager:
 
 
 class URLVersionManager:
-    __slots__ = ("possible_version_values", "url_version_regex")
+    """Reads the API version from the version path parameter of the route that the URL matches
 
-    def __init__(self, *, possible_version_values: set[str]) -> None:
+    Other path parameters, such as a tenant ID, can hold a value that looks like a version, so we only accept
+    a version if the route that this version's router would pick has that version in its version parameter.
+    """
+
+    __slots__ = ("api_version_path_parameter_name", "versioned_routers")
+
+    def __init__(self, *, api_version_parameter_name: str, versioned_routers: Mapping[str, Router]) -> None:
         super().__init__()
-        self.possible_version_values = possible_version_values
-        self.url_version_regex = re.compile(f"/({'|'.join(re.escape(v) for v in possible_version_values)})/")
+        self.api_version_path_parameter_name = api_version_parameter_name.replace("-", "_")
+        self.versioned_routers = versioned_routers
 
     def get(self, request: HTTPConnection) -> Union[str, None]:
-        if m := self.url_version_regex.search(request.url.path):
-            return m.group(1)
-        return None
+        scope = request.scope
+        versions = [
+            version
+            for version, router in self.versioned_routers.items()
+            if version in scope["path"] and self._get_path_version(router, scope) == version
+        ]
+        if len(versions) > 1:
+            raise CadwynError(
+                f"The path {scope['path']!r} matches routes of several API versions ({', '.join(versions)}) "
+                "with the API version in different positions, so Cadwyn can't pick one. "
+                "Keep the API version path parameter in the same position in every version."
+            )
+        return versions[0] if versions else None
+
+    def _get_path_version(self, router: Router, scope: Scope) -> Union[str, None]:
+        # The same search as in _RootCadwynAPIRouter.process_request: a full match, a partial match (405),
+        # and then a match with the trailing slash added or removed (a redirect)
+        if (child_scope := _match_route(router.routes, scope)) is None:
+            if scope["type"] != "http" or not router.redirect_slashes or scope["path"] == "/":
+                return None
+            path = scope["path"]
+            redirect_scope = {**scope, "path": path.rstrip("/") if path.endswith("/") else path + "/"}
+            if (child_scope := _match_route(router.routes, redirect_scope, redirect=True)) is None:
+                return None
+        return child_scope.get("path_params", {}).get(self.api_version_path_parameter_name)
+
+
+def _match_route(routes: Sequence[BaseRoute], scope: Scope, *, redirect: bool = False) -> Union[Scope, None]:
+    partial = None
+    for route in routes:
+        match, child_scope = route.matches(scope)
+        if match == Match.FULL or (redirect and match == Match.PARTIAL):
+            return child_scope
+        if match == Match.PARTIAL and partial is None:
+            partial = child_scope
+    return partial
 
 
 def _generate_api_version_dependency(
