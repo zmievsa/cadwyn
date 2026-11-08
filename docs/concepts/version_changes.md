@@ -189,7 +189,7 @@ Cadwyn can migrate more than just request bodies.
 
 If a migration reads an uploaded file from `form`, it must `seek` the file back to where the latest version should start reading it, usually `upload.file.seek(0)`. Otherwise, the latest version gets the file as the migration left it, e.g. empty.
 
-Uploads of versioned routes remain open through background tasks, including uploads that migrations add and later replace or remove. Once the versioned endpoint starts, Cadwyn shields cleanup from cancellation, gives each upload three seconds to close, and logs a warning on timeout; cancellation before that point and unversioned routes depend on FastAPI's cleanup.
+Uploads stay open for background tasks, including the uploads that migrations add and later replace or remove. Cadwyn closes all of them after the response and its background tasks, even if the client disconnects. See [known limitations](../theory/design_decisions.md#known-limitations) for closes that never finish.
 
 `ResponseInfo` has the following interfaces to migrate responses:
 

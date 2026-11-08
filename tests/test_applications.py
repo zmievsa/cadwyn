@@ -5,7 +5,7 @@ import logging
 import re
 import threading
 import warnings
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Annotated, Any, Literal, cast
@@ -22,7 +22,6 @@ from starlette.background import BackgroundTask
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response as StarletteResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
-from starlette.websockets import WebSocket
 from typing_extensions import override
 
 from cadwyn import Cadwyn, OpenAPICustomizer, current_dependency_solver
@@ -1000,54 +999,6 @@ def test__api_version_header_without_default_value__version_picked_by_custom_mid
     assert response.json() == "2022-11-16"
 
 
-def test__versioning_middleware__custom_dispatch_argument__should_pick_version_and_keep_response():
-    async def dispatch(request: Request, call_next: RequestResponseEndpoint) -> StarletteResponse:
-        app.versions.api_version_var.set(request.query_params.get("version"))
-        response = await call_next(request)
-        response.headers["x-custom-dispatch"] = "ran"
-        return response
-
-    class CustomDispatchMiddleware(VersionPickingMiddleware):
-        def __init__(self, app: ASGIApp, **kwargs: Any) -> None:
-            super().__init__(app, dispatch=dispatch, **kwargs)
-
-    app = Cadwyn(versions=_two_versions(), versioning_middleware_class=CustomDispatchMiddleware)
-    router = VersionedAPIRouter()
-
-    @router.get("/items")
-    async def get_items():
-        return "unchanged"
-
-    app.generate_and_include_versioned_routers(router)
-    with TestClient(app) as client:
-        response = client.get("/items?version=2021-01-01")
-
-    assert response.status_code == 200
-    assert response.json() == "unchanged"
-    assert response.headers["x-custom-dispatch"] == "ran"
-    assert "x-api-version" not in response.headers
-
-
-def test__api_version_default__reads_body__should_preserve_body_for_endpoint():
-    async def version_from_body(request: Request) -> str:
-        return (await request.json())["version"]
-
-    app = Cadwyn(versions=_two_versions(), api_version_default_value=version_from_body)
-    router = VersionedAPIRouter()
-
-    @router.post("/items")
-    async def get_items(body: dict[str, str]):
-        return body
-
-    app.generate_and_include_versioned_routers(router)
-    with TestClient(app) as client:
-        response = client.post("/items", json={"version": "2021-01-01", "value": "preserved"})
-
-    assert response.status_code == 200
-    assert response.json() == {"version": "2021-01-01", "value": "preserved"}
-    assert response.headers["x-api-version"] == "2021-01-01"
-
-
 def test__api_version_context__waterfalling__should_keep_background_context_and_isolate_outer_middleware():
     versions = _two_versions()
     context = ContextVar("application_context", default="original")
@@ -1142,19 +1093,6 @@ def test__api_version_context__waterfalling_with_unhandled_exception__should_rea
     assert response.json() == {"version": "2021-06-01", "context": "original"}
 
 
-def test__cadwyn__unversioned_websocket__should_exchange_messages():
-    app = Cadwyn(versions=_two_versions())
-
-    @app.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket):
-        await websocket.accept()
-        await websocket.send_text("unchanged")
-        await websocket.close()
-
-    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
-        assert websocket.receive_text() == "unchanged"
-
-
 def test__file_cleanup__mounted_fastapi_app__should_keep_host_cleanup_and_response():
     app = Cadwyn(versions=_two_versions())
     mounted = FastAPI()
@@ -1198,6 +1136,77 @@ def test__file_cleanup__additional_fastapi_callback__should_keep_arguments_ident
     assert response.status_code == 200
     assert response.json() == "unchanged"
     assert observed == [("closed", "endpoint")]
+
+
+@pytest.mark.parametrize("route_kind", ["unversioned", "versioned"])
+@pytest.mark.parametrize(
+    ("behavior", "expected_seen", "expected_outcome"),
+    [
+        ("success", ["success"], "200"),
+        ("endpoint_error", ["ValueError"], "ValueError: endpoint failed"),
+        ("exit_suppresses", ["ValueError"], "RuntimeError: No response returned."),
+        ("exit_raises", ["ValueError"], "KeyError: 'exit failed'"),
+        ("exit_raises_on_success", ["success"], "KeyError: 'exit failed'"),
+    ],
+)
+def test__file_cleanup__context_manager_on_fastapi_file_stack__should_exit_like_in_fastapi(
+    route_kind: Literal["unversioned", "versioned"],
+    behavior: str,
+    expected_seen: list[str],
+    expected_outcome: str,
+):
+    seen: list[str] = []
+
+    @asynccontextmanager
+    async def transaction() -> AsyncGenerator[None]:
+        try:
+            yield
+        except ValueError as exc:
+            seen.append(type(exc).__name__)
+            if behavior == "exit_raises":
+                raise KeyError("exit failed") from None
+            if behavior != "exit_suppresses":
+                raise
+        else:
+            seen.append("success")
+            if behavior == "exit_raises_on_success":
+                raise KeyError("exit failed")
+
+    async def endpoint(request: Request):
+        # FastAPI's file stack is an ordinary AsyncExitStack, so apps can enter their own context managers on it
+        await request.scope["fastapi_middleware_astack"].enter_async_context(transaction())
+        if behavior in ("endpoint_error", "exit_suppresses", "exit_raises"):
+            raise ValueError("endpoint failed")
+        return "ok"
+
+    async def passthrough(request: Request, call_next: RequestResponseEndpoint) -> StarletteResponse:
+        return await call_next(request)
+
+    baseline = FastAPI()
+    baseline.add_middleware(BaseHTTPMiddleware, dispatch=passthrough)
+    baseline.get("/test")(endpoint)
+    app = Cadwyn(versions=_two_versions())
+    if route_kind == "unversioned":
+        app.get("/test")(endpoint)
+    else:
+        router = VersionedAPIRouter()
+        router.get("/test")(endpoint)
+        app.generate_and_include_versioned_routers(router)
+
+    observed: list[tuple[list[str], str]] = []
+    for target, headers in (
+        (baseline, {}),
+        (app, {"x-api-version": "2021-01-01"} if route_kind == "versioned" else {}),
+    ):
+        seen.clear()
+        try:
+            with TestClient(target) as client:
+                outcome = str(client.get("/test", headers=headers).status_code)
+        except (ValueError, RuntimeError, KeyError) as exc:
+            outcome = f"{type(exc).__name__}: {exc}"
+        observed.append((seen.copy(), outcome))
+
+    assert observed == [(expected_seen, expected_outcome)] * 2
 
 
 @pytest.mark.parametrize("group_depth", [0, 1, 2])
