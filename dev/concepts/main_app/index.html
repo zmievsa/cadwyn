@@ -1275,6 +1275,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#customizing-openapi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Customizing OpenAPI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#custom-docs-static-assets" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1854,6 +1865,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#customizing-openapi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Customizing OpenAPI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#custom-docs-static-assets" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1948,6 +1970,43 @@
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">list_users</span><span class="p">(</span><span class="n">params</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">Depends</span><span class="p">()])</span> <span class="o">-&gt;</span> <span class="n">Page</span><span class="p">[</span><span class="n">User</span><span class="p">]:</span>
     <span class="k">return</span> <span class="n">paginate</span><span class="p">(</span><span class="n">get_users</span><span class="p">(),</span> <span class="n">params</span><span class="p">)</span>
 </code></pre></div>
+<h2 id="customizing-openapi">Customizing OpenAPI<a class="headerlink" href="#customizing-openapi" title="Permanent link">&para;</a></h2>
+<p>Pass a synchronous <code>openapi_customizer</code> callback to <code>Cadwyn()</code> to edit each version's OpenAPI document. It receives the generated schema and the selected version as a string, or <code>None</code> for <code>/openapi.json?version=unversioned</code>. Cadwyn calls it after its own adjustments, including required version headers and servers for mounted apps or a proxy's root path, immediately before serialization.</p>
+<p>For example, add a component used by a client SDK even though no endpoint references it, only in the version that needs it:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Union</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">Cadwyn</span><span class="p">,</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span><span class="p">,</span> <span class="n">VersionedAPIRouter</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TaskMetadata</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">trace_id</span><span class="p">:</span> <span class="nb">str</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">customize_openapi</span><span class="p">(</span>
+    <span class="n">schema</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">version</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+    <span class="k">if</span> <span class="n">version</span> <span class="o">==</span> <span class="s2">&quot;2024-01-01&quot;</span><span class="p">:</span>
+        <span class="n">schemas</span> <span class="o">=</span> <span class="n">schema</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;components&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">&quot;schemas&quot;</span><span class="p">,</span> <span class="p">{})</span>
+        <span class="n">schemas</span><span class="p">[</span><span class="s2">&quot;TaskMetadata&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">TaskMetadata</span><span class="o">.</span><span class="n">model_json_schema</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">schema</span>
+
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">Cadwyn</span><span class="p">(</span>
+    <span class="n">versions</span><span class="o">=</span><span class="n">VersionBundle</span><span class="p">(</span><span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2024-01-01&quot;</span><span class="p">),</span> <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2023-01-01&quot;</span><span class="p">)),</span>
+    <span class="n">openapi_customizer</span><span class="o">=</span><span class="n">customize_openapi</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">router</span> <span class="o">=</span> <span class="n">VersionedAPIRouter</span><span class="p">()</span>
+
+
+<span class="nd">@router</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/tasks&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_tasks</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="p">[</span><span class="s2">&quot;example-task&quot;</span><span class="p">]</span>
+
+
+<span class="n">app</span><span class="o">.</span><span class="n">generate_and_include_versioned_routers</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
+</code></pre></div>
+<p>Return the edited dict or a replacement dict. Any other return value, including <code>None</code>, raises a <code>TypeError</code> naming the callback; exceptions raised by the callback propagate. Each request gets a freshly generated dict, and Cadwyn does not cache customized schemas. Omitting the callback or passing <code>None</code> preserves the existing output. The callback type is available as <code>cadwyn.OpenAPICustomizer</code>.</p>
 <h2 id="custom-docs-static-assets">Custom docs static assets<a class="headerlink" href="#custom-docs-static-assets" title="Permanent link">&para;</a></h2>
 <p>By default, Swagger UI and ReDoc load JavaScript and CSS from CDNs. You can override these URLs to serve assets locally:</p>
 <div class="highlight"><pre><span></span><code><span class="n">app</span> <span class="o">=</span> <span class="n">Cadwyn</span><span class="p">(</span>
