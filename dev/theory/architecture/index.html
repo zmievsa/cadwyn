@@ -1784,6 +1784,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The path of a request">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#websocket-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WebSocket connections
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1892,6 +1909,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The path of a request">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#websocket-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WebSocket connections
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1964,7 +1998,7 @@
 </tr>
 <tr>
 <td><code>cadwyn/middleware.py</code></td>
-<td><code>VersionPickingMiddleware</code> and the version managers that read the version from a header or the path.</td>
+<td><code>VersionPickingMiddleware</code> and the version managers that read the version from a header or the path. <code>URLVersionManager</code> reads it from the version path parameter of the route that each version's router would pick, and hands that route to <code>_RootCadwynAPIRouter</code> so it isn't matched twice. If no versioned route matches, it uses the first version anywhere in the URL. The middleware picks the version of HTTP requests; <code>_RootCadwynAPIRouter</code> picks it for WebSockets with the same manager.</td>
 </tr>
 <tr>
 <td><code>cadwyn/routing.py</code></td>
@@ -2042,6 +2076,8 @@
 <li>After the response and its background tasks, <code>_RootCadwynAPIRouter</code> closes FastAPI's uploads by exiting FastAPI's file stack (<code>scope["fastapi_middleware_astack"]</code>) itself. It shields this from cancellation, because <code>VersionPickingMiddleware</code> (a <code>BaseHTTPMiddleware</code>) cancels the request when the client disconnects, which would interrupt FastAPI's own closing of the files. It passes on the request's exception, like <code>async with</code> would. Then <code>Cadwyn.__call__</code> closes the uploads that are still open, including the ones that migrations put into the form. Both stop waiting after three seconds, except for the close of a file on disk: Starlette runs it in a worker thread that can't be cancelled, so they wait until it returns.</li>
 </ol>
 <p>Migrations by schema run only when the schema is the route's body or response model itself, or a member of a union that is. For a union, the wrapper picks the member that the validated body is (<code>_get_union_member_of_body()</code>), or the member whose model the endpoint returns an object of (<code>_get_union_member_of_response()</code>). <code>_get_schema_migration_target()</code> decides what a route's migrations are looked up by. Migrations by path run for the HEAD routes that route generation linked to them. See <a href="../../concepts/version_changes/#data-migrations">Data migrations</a> for how users write migrations, and <a href="../design_decisions/#costs-of-the-architecture">Costs of the architecture</a> for what this design costs.</p>
+<h3 id="websocket-connections">WebSocket connections<a class="headerlink" href="#websocket-connections" title="Permanent link">&para;</a></h3>
+<p><code>VersionPickingMiddleware</code> is a <code>BaseHTTPMiddleware</code>, so it passes WebSocket connections through untouched. Unless something else already set <code>api_version_var</code>, <code>_RootCadwynAPIRouter</code> picks the version of a socket itself. It first tries the unversioned routes. If none matches, it reads the version with the same <code>HeaderVersionManager</code> or <code>URLVersionManager</code>, falls back to a constant <code>api_version_default_value</code>, and picks the routes with the same waterfalling as HTTP (only for header and default versions). It closes the connection with code <code>1008</code> before acceptance if there is no version, a date version is invalid, or no version's routes match. It sets <code>api_version_var</code> before the route's dependencies run and restores it after the connection ends. The route then runs only that version's dependencies and endpoint: Cadwyn doesn't wrap WebSocket endpoints, so there are no migrations and no second dependency solve.</p>
 
 
 
