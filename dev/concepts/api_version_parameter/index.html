@@ -1510,6 +1510,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#websocket-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WebSocket connections
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#api-version-parameter-title-and-description" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1943,6 +1954,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#websocket-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WebSocket connections
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#api-version-parameter-title-and-description" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2129,6 +2151,27 @@
 <span class="n">app</span><span class="o">.</span><span class="n">generate_and_include_versioned_routers</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
 </code></pre></div>
 <p>Note that this applies to <strong>every</strong> request without the version header, not only to the token endpoint. <code>api_version_default_value</code> can also be an async function that takes the <code>Request</code> and returns the version.</p>
+<h2 id="websocket-connections">WebSocket connections<a class="headerlink" href="#websocket-connections" title="Permanent link">&para;</a></h2>
+<p>WebSocket routes included with <code>generate_and_include_versioned_routers()</code> select their version from the configured header or path parameter. Date versions use the closest earlier version when there is no exact match. Header versioning also supports a constant <code>api_version_default_value</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">Cadwyn</span><span class="p">,</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span><span class="p">,</span> <span class="n">VersionedAPIRouter</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">WebSocket</span>
+
+<span class="n">versions</span> <span class="o">=</span> <span class="n">VersionBundle</span><span class="p">(</span><span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2024-02-01&quot;</span><span class="p">),</span> <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2024-01-01&quot;</span><span class="p">))</span>
+<span class="n">app</span> <span class="o">=</span> <span class="n">Cadwyn</span><span class="p">(</span><span class="n">versions</span><span class="o">=</span><span class="n">versions</span><span class="p">)</span>
+<span class="n">router</span> <span class="o">=</span> <span class="n">VersionedAPIRouter</span><span class="p">()</span>
+
+
+<span class="nd">@router</span><span class="o">.</span><span class="n">websocket</span><span class="p">(</span><span class="s2">&quot;/ws&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">websocket_endpoint</span><span class="p">(</span><span class="n">websocket</span><span class="p">:</span> <span class="n">WebSocket</span><span class="p">):</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">accept</span><span class="p">()</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">send_json</span><span class="p">({</span><span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="n">versions</span><span class="o">.</span><span class="n">api_version_var</span><span class="o">.</span><span class="n">get</span><span class="p">()})</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+
+<span class="n">app</span><span class="o">.</span><span class="n">generate_and_include_versioned_routers</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
+</code></pre></div>
+<p>The selected version is available in <code>versions.api_version_var</code> before dependencies run, throughout the connection and dependency cleanup. Cadwyn restores the previous context when the connection ends. Missing, invalid, and unmatched versions close the connection before acceptance with code <code>1008</code> and an API version reason. A callable <code>api_version_default_value</code> requires an HTTP <code>Request</code>: for WebSockets, send the version explicitly or use a constant default.</p>
+<p>Routes included with <code>app.include_router()</code> keep working as unversioned WebSockets, even when a version header or default is present. A version preselected in <code>api_version_var</code> retains its routing behavior. WebSockets stay out of OpenAPI; endpoint instructions and message migrations are unsupported.</p>
 <h2 id="api-version-parameter-title-and-description">API version parameter title and description<a class="headerlink" href="#api-version-parameter-title-and-description" title="Permanent link">&para;</a></h2>
 <p>You can pass a title and/or a description to the <code>Cadwyn()</code> constructor. It is equivalent to passing <code>title</code> and <code>description</code> to <code>fastapi.Path()</code> or <code>fastapi.Header()</code> constructors.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">Cadwyn</span><span class="p">,</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span>
