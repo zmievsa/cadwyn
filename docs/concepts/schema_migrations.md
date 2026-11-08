@@ -99,6 +99,18 @@ In multiple inheritance, such as `class D(C, B)`, `D` takes each field from its 
 {! ./docs_src/concepts/schema_migrations/block008.py [ln:1,6-13] !}
 ```
 
+Validators assigned as class attributes can be removed by their attribute name. This works for `field_validator` and `model_validator` in every mode:
+
+```python
+{! ./docs_src/concepts/schema_migrations/block012.py !}
+```
+
+In the older version, `width` can be negative, while `height` must still be positive. The name is the model attribute (`"check_width"`), rather than the function name (`"must_be_positive"`). Removing a validator registered for several fields removes that entire registration.
+
+When a function has only one registration in the model, you can also pass the model attribute or the bare function, e.g. `schema(Model).validator(Model.check_x).didnt_exist` or `schema(Model).validator(must_be_positive).didnt_exist`. Reusing the function in other models does not affect this lookup. When it has several registrations in the same model, use the attribute name as a string: attribute access can return the same function for each registration, so Cadwyn raises `CadwynStructureError` for ambiguous function references. Existing method-based instructions keep their name-based behavior.
+
+To remove an inherited validator, give the instruction to the base model that declares it; the removal applies to its subclasses too. Giving it only to a subclass that inherits the validator raises `InvalidGenerationInstructionError`, as with method-style validators. Adding validators by attribute name with `.existed` is unsupported; pass a decorated function as shown above instead.
+
 ## Rename a schema in the older version
 
 The following code replaces all schema name occurrences with a new one to ensure that the name is different in openapi.json:
