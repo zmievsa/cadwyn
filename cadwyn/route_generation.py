@@ -1,6 +1,6 @@
 import re
 from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import (
@@ -476,156 +476,97 @@ class _EndpointTransformer(Generic[_R, _WR]):
     ):
         for version_change in version.changes:
             for instruction in version_change.alter_endpoint_instructions:
-                original_routes = _get_routes(
-                    routes,
-                    instruction.endpoint_path,
-                    instruction.endpoint_methods,
-                    instruction.endpoint_func_name,
-                    is_deleted=False,
+                self._apply_endpoint_instruction(routes, instruction, version_change.__name__)
+
+    def _apply_endpoint_instruction(
+        self,
+        routes: Union[list[BaseRoute], list[APIRoute]],
+        instruction: Union[EndpointDidntExistInstruction, EndpointExistedInstruction, EndpointHadInstruction],
+        version_change_name: str,
+    ) -> None:
+        path = instruction.endpoint_path
+        selector = (path, instruction.endpoint_methods, instruction.endpoint_func_name)
+        existing_routes = _get_routes(routes, *selector, is_deleted=False)
+        deleted_routes = _get_routes(routes, *selector, is_deleted=True)
+
+        def error(methods: Iterable[str], action: str, problem: str) -> RouterGenerationError:
+            return RouterGenerationError(
+                f'Endpoint "{list(methods)} {path}" you tried to {action} in "{version_change_name}" {problem}'
+            )
+
+        # We take the methods of the routes before changing them because had(methods=...) changes them
+        if isinstance(instruction, EndpointDidntExistInstruction):
+            action, problem_of_missing_methods = "delete", "doesn't exist in a newer version"
+            if deleted_routes:
+                problem = "was already deleted in a newer version. " + _func_name_advice(
+                    "were already deleted", deleted_routes
                 )
-                methods_to_which_we_applied_changes = set()
-                methods_we_should_have_applied_changes_to = instruction.endpoint_methods.copy()
+                raise error(_get_methods(deleted_routes), action, problem)
+            changed_methods = _get_methods(existing_routes)
+            for route in existing_routes:
+                _set_route_deleted(route, deleted=True)
+        elif isinstance(instruction, EndpointExistedInstruction):
+            action, problem_of_missing_methods = "restore", "wasn't among the deleted routes"
+            if existing_routes:
+                problem = "already existed in a newer version. " + _func_name_advice("already existed", existing_routes)
+                raise error(_get_methods(existing_routes), action, problem)
+            try:
+                _validate_no_repetitions_in_routes(deleted_routes)
+            except RouteAlreadyExistsError as e:
+                problem = f"has {len(e.routes)} applicable routes that could be restored. " + _func_name_advice(
+                    "can be restored", e.routes
+                )
+                raise error(instruction.endpoint_methods, action, problem) from e
+            changed_methods = _get_methods(deleted_routes)
+            for route in deleted_routes:
+                _set_route_deleted(route, deleted=False)
+                self._forget_restored_endpoint(route, version_change_name)
+        elif isinstance(instruction, EndpointHadInstruction):
+            action, problem_of_missing_methods = "change", "doesn't exist"
+            changed_methods = _get_methods(existing_routes)
+            for route in existing_routes:
+                _apply_endpoint_had_instruction(
+                    version_change_name,
+                    instruction,
+                    route,
+                    api_version_parameter_name=self.api_version_parameter_name,
+                    api_version_location=self.api_version_location,
+                )
+        else:
+            assert_never(instruction)
+        if missing_methods := instruction.endpoint_methods - changed_methods:
+            raise error(missing_methods, action, problem_of_missing_methods)
 
-                if isinstance(instruction, EndpointDidntExistInstruction):
-                    methods_to_which_we_applied_changes = self._delete_endpoints(
-                        routes, original_routes, instruction, version_change.__name__
-                    )
-                    err = (
-                        'Endpoint "{endpoint_methods} {endpoint_path}" you tried to delete in'
-                        ' "{version_change_name}" doesn\'t exist in a newer version'
-                    )
-                elif isinstance(instruction, EndpointExistedInstruction):
-                    methods_to_which_we_applied_changes = self._restore_endpoints(
-                        routes, original_routes, instruction, version_change.__name__
-                    )
-                    err = (
-                        'Endpoint "{endpoint_methods} {endpoint_path}" you tried to restore in'
-                        ' "{version_change_name}" wasn\'t among the deleted routes'
-                    )
-                elif isinstance(instruction, EndpointHadInstruction):
-                    for original_route in original_routes:
-                        methods_to_which_we_applied_changes |= _route_methods(original_route)
-                        _apply_endpoint_had_instruction(
-                            version_change.__name__,
-                            instruction,
-                            original_route,
-                            api_version_parameter_name=self.api_version_parameter_name,
-                            api_version_location=self.api_version_location,
-                        )
-                    err = (
-                        'Endpoint "{endpoint_methods} {endpoint_path}" you tried to change in'
-                        ' "{version_change_name}" doesn\'t exist'
-                    )
-                else:
-                    assert_never(instruction)
-                method_diff = methods_we_should_have_applied_changes_to - methods_to_which_we_applied_changes
-                if method_diff:
-                    raise RouterGenerationError(
-                        err.format(
-                            endpoint_methods=list(method_diff),
-                            endpoint_path=instruction.endpoint_path,
-                            version_change_name=version_change.__name__,
-                        ),
-                    )
-
-    def _delete_endpoints(
-        self,
-        routes: Union[list[BaseRoute], list[APIRoute]],
-        original_routes: list[APIRoute | APIWebSocketRoute],
-        instruction: EndpointDidntExistInstruction,
-        version_change_name: str,
-    ) -> set[str]:
-        methods_to_which_we_applied_changes: set[str] = set()
-        deleted_routes = _get_routes(
-            routes,
-            instruction.endpoint_path,
-            instruction.endpoint_methods,
-            instruction.endpoint_func_name,
-            is_deleted=True,
+    def _forget_restored_endpoint(self, route: APIRoute | APIWebSocketRoute, version_change_name: str) -> None:
+        methods = _route_methods(route)
+        matching_routes = _get_routes(
+            self.routes_that_never_existed, route.path, methods, _callable_name(route.endpoint), is_deleted=True
         )
-        if deleted_routes:
-            method_union = set()
-            for deleted_route in deleted_routes:
-                method_union |= _route_methods(deleted_route)
-            raise RouterGenerationError(
-                f'Endpoint "{list(method_union)} {instruction.endpoint_path}" you tried to delete in '
-                f'"{version_change_name}" was already deleted in a newer version. If you really have '
-                f'two routes with the same paths and methods, please, use "endpoint(..., func_name=...)" '
-                f"to distinguish between them. Function names of endpoints that were already deleted: "
-                f"{[_callable_name(r.endpoint) for r in deleted_routes]}",
-            )
-        for original_route in original_routes:
-            methods_to_which_we_applied_changes |= _route_methods(original_route)
-            _set_route_deleted(original_route, deleted=True)
-        return methods_to_which_we_applied_changes
-
-    def _restore_endpoints(
-        self,
-        routes: Union[list[BaseRoute], list[APIRoute]],
-        original_routes: list[APIRoute | APIWebSocketRoute],
-        instruction: EndpointExistedInstruction,
-        version_change_name: str,
-    ) -> set[str]:
-        methods_to_which_we_applied_changes: set[str] = set()
-        if original_routes:
-            method_union = set()
-            for original_route in original_routes:
-                method_union |= _route_methods(original_route)
-            raise RouterGenerationError(
-                f'Endpoint "{list(method_union)} {instruction.endpoint_path}" you tried to restore in'
-                f' "{version_change_name}" already existed in a newer version. If you really have two '
-                f'routes with the same paths and methods, please, use "endpoint(..., func_name=...)" to '
-                f"distinguish between them. Function names of endpoints that already existed: "
-                f"{[_callable_name(r.endpoint) for r in original_routes]}",
-            )
-        deleted_routes = _get_routes(
-            routes,
-            instruction.endpoint_path,
-            instruction.endpoint_methods,
-            instruction.endpoint_func_name,
-            is_deleted=True,
-        )
-        try:
-            _validate_no_repetitions_in_routes(deleted_routes)
-        except RouteAlreadyExistsError as e:
-            raise RouterGenerationError(
-                f'Endpoint "{list(instruction.endpoint_methods)} {instruction.endpoint_path}" you tried to '
-                f'restore in "{version_change_name}" has {len(e.routes)} applicable routes that could '
-                f"be restored. If you really have two routes with the same paths and methods, please, use "
-                f'"endpoint(..., func_name=...)" to distinguish between them. Function names of '
-                f"endpoints that can be restored: {[_callable_name(r.endpoint) for r in e.routes]}",
-            ) from e
-        for deleted_route in deleted_routes:
-            methods_to_which_we_applied_changes |= _route_methods(deleted_route)
-            _set_route_deleted(deleted_route, deleted=False)
-
-            self._forget_restored_endpoint(deleted_route, version_change_name)
-        return methods_to_which_we_applied_changes
-
-    def _forget_restored_endpoint(self, deleted_route: APIRoute | APIWebSocketRoute, version_change_name: str) -> None:
-        routes_that_never_existed = _get_routes(
-            self.routes_that_never_existed,
-            deleted_route.path,
-            _route_methods(deleted_route),
-            _callable_name(deleted_route.endpoint),
-            is_deleted=True,
-        )
-        if len(routes_that_never_existed) == 1:
-            self.routes_that_never_existed.remove(routes_that_never_existed[0])
-        elif len(routes_that_never_existed) > 1:  # pragma: no cover
+        if len(matching_routes) > 1:  # pragma: no cover
             # I am not sure if it's possible to get to this error but I also don't want
             # to remove it because I like its clarity very much
-            matching_routes = routes_that_never_existed
             raise RouterGenerationError(
-                f'Endpoint "{list(_route_methods(deleted_route))} {deleted_route.path}" '
-                "you tried to restore "
-                f'in "{version_change_name}" has {len(matching_routes)} applicable '
-                f"routes with the same function name and path that could be restored. This can cause "
-                f"problems during version generation. Specifically, Cadwyn won't be able to warn "
-                f"you when you deleted a route and never restored it. Please, make sure that "
-                f"functions for all these routes have different names: "
+                f'Endpoint "{list(methods)} {route.path}" you tried to restore in "{version_change_name}" has '
+                f"{len(matching_routes)} applicable routes with the same function name and path that could be "
+                "restored. This can cause problems during version generation. Specifically, Cadwyn won't be able "
+                "to warn you when you deleted a route and never restored it. Please, make sure that functions for "
+                f"all these routes have different names: "
                 f"{[f'{r.endpoint.__module__}.{_callable_name(r.endpoint)}' for r in matching_routes]}",
             )
+        if matching_routes:
+            self.routes_that_never_existed.remove(matching_routes[0])
+
+
+def _get_methods(routes: Iterable[APIRoute | APIWebSocketRoute]) -> set[str]:
+    return set[str]().union(*map(_route_methods, routes))
+
+
+def _func_name_advice(routes_description: str, routes: Iterable[APIRoute | APIWebSocketRoute]) -> str:
+    return (
+        'If you really have two routes with the same paths and methods, please, use "endpoint(..., func_name=...)" '
+        f"to distinguish between them. Function names of endpoints that {routes_description}: "
+        f"{[_callable_name(route.endpoint) for route in routes]}"
+    )
 
 
 def _validate_no_repetitions_in_routes(routes: list[APIRoute | APIWebSocketRoute]):
