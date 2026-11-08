@@ -82,7 +82,8 @@ def test__cadwyn_init__removed_changelog_argument_that_turns_it_off__should_warn
 ):
     with pytest.warns(DeprecationWarning, match=f"`{argument}={value!r}` does nothing"):
         app = Cadwyn(versions=VersionBundle(Version("2022-11-16")), **{argument: value})
-    assert argument not in app.extra
+    # FastAPI 0.162 dropped `**extra` and `app.extra`; before that, unknown arguments ended up there
+    assert argument not in getattr(app, "extra", {})
     assert "/changelog" not in [cast("APIRoute", route).path for route in app.routes]
 
 
