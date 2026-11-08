@@ -10165,6 +10165,7 @@ Please follow <a href="https://keepachangelog.com/en/1.0.0/">the Keep a Changelo
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>Documented that responses are validated twice: a model object that an endpoint returns runs its validators and <code>model_post_init</code> again (<a href="https://github.com/zmievsa/cadwyn/issues/592">#592</a>).</li>
 <li>Type checkers now accept unions in <code>convert_request_to_next_version_for()</code> and <code>convert_response_to_previous_version_for()</code> (<a href="https://github.com/zmievsa/cadwyn/issues/530">#530</a>).</li>
 <li><code>had(...)</code> instructions now accept distinct values that compare equal, such as <code>True</code> and <code>1</code>, instead of rejecting real changes. Unknown objects use identity; field errors say <code>of "Model"</code> instead of <code>from "Model"</code> (see <a href="https://docs.cadwyn.dev/concepts/schema_migrations/#change-a-field-in-the-older-version">instruction comparisons</a>) (<a href="https://github.com/zmievsa/cadwyn/issues/541">#541</a>).</li>
 </ul>
