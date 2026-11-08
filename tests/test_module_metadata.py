@@ -103,7 +103,6 @@ _PRE_SPLIT_METADATA: dict[str, dict[str, tuple[str, Union[str, None]]]] = {
         "_VersioningQuestion": ("cadwyn.schema_generation", "_VersioningQuestion"),
         "_add_field_to_model": ("cadwyn.schema_generation", "_add_field_to_model"),
         "_add_request_and_response_params": ("cadwyn.schema_generation", "_add_request_and_response_params"),
-        "_alias_value_uses_fallbacks": ("cadwyn.schema_generation", "_alias_value_uses_fallbacks"),
         "_apply_alter_enum_instructions": ("cadwyn.schema_generation", "_apply_alter_enum_instructions"),
         "_apply_alter_schema_instructions": ("cadwyn.schema_generation", "_apply_alter_schema_instructions"),
         "_are_same_args": ("cadwyn.schema_generation", "_are_same_args"),

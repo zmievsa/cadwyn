@@ -458,3 +458,105 @@ class _CycleCopier:
             for name, annotation in annotations.items():
                 annotations[name] = _replace_forward_refs(annotation, copies_by_name)
         return self.copies
+
+
+@final
+class _BareGenericCopies:
+    """The copies of generics used without type args that SchemaGenerator._get_bare_model generates at once.
+
+    These copies refer to each other (e.g. `children: list["Node[T]"]` within `Node`) through forward refs that
+    pydantic resolves once all of them exist, like the copies of reference cycles.
+    """
+
+    __slots__ = "copies", "forward_refs"
+
+    def __init__(self) -> None:
+        self.forward_refs: dict[type[BaseModel], ForwardRef] = {}
+        self.copies: dict[type[BaseModel], type[BaseModel]] = {}
+
+    def add(self, model: type[BaseModel]) -> None:
+        self.forward_refs[model] = ForwardRef(f"_CadwynBareGeneric{next(_reference_cycle_member_ids)}")
+
+    def finish(self) -> None:
+        copies_by_name = {self.forward_refs[model].__forward_arg__: copy for model, copy in self.copies.items()}
+        for model_copy in self.copies.values():
+            parent_namespace = unpack_lenient_weakvaluedict(model_copy.__pydantic_parent_namespace__) or {}
+            model_copy.__pydantic_parent_namespace__ = build_lenient_weakvaluedict(parent_namespace | copies_by_name)
+        for model, model_copy in self.copies.items():
+            model_copy.model_rebuild(force=True, raise_errors=True, _types_namespace={})
+            if not model_copy.__pydantic_complete__:  # pragma: no cover # raise_errors=True raises before
+                raise SchemaGenerationError(f"Cadwyn could not build the versioned copy of {model.__qualname__}")
+        for model_copy in self.copies.values():
+            annotations = vars(model_copy)["__annotations__"]
+            for name, annotation in annotations.items():
+                annotations[name] = _replace_forward_refs(annotation, copies_by_name)
+
+
+@final
+class _BareGenericCopier:
+    """Generates the copy of a generic model used without type args, e.g. `Page` instead of `Page[Item]`.
+
+    Pydantic validates the parameters of such a model as their bounds, constraints, or defaults. So the copy is
+    generic in this version's copies of its parameters (see _AnnotationTransformer._copy_typevar) instead of the
+    original ones, which the template of the model keeps for its parametrizations, such as `Page[Item]`. The bases
+    and the nested generics that use its parameters are copies of generics used without type args too, so pydantic
+    never parametrizes anything with the copied parameters, and every copy keeps the name of its model.
+    """
+
+    __slots__ = "_bare_copies", "_model", "annotation_transformer", "model_bundle", "schema_generator"
+
+    def __init__(
+        self,
+        schema_generator: "SchemaGenerator",
+        bare_copies: _BareGenericCopies,
+        model: type[BaseModel],
+        versioned_parameters: dict[Any, Any],
+    ) -> None:
+        self.schema_generator = schema_generator
+        self.model_bundle = schema_generator.model_bundle
+        self.annotation_transformer = _AnnotationTransformer(self)
+        self.annotation_transformer.versioned_parameters = versioned_parameters
+        self._bare_copies = bare_copies
+        self._model = model
+
+    def __getitem__(self, model: type[_T_ANY_MODEL], /) -> Any:
+        if not _is_versionable_model(model) or _unwrap_model(model) not in self._bare_copies.forward_refs:
+            return self.schema_generator[model]
+        member = cast("type[BaseModel]", _unwrap_model(model))
+        if member in self._bare_copies.copies:
+            return self._bare_copies.copies[member]
+        if not self.annotation_transformer.is_in_hard_position:
+            return self._bare_copies.forward_refs[member]
+        if self.annotation_transformer.is_in_pydantic_metadata:
+            raise SchemaGenerationError(
+                f"Cadwyn cannot version the generic {member.__qualname__} used without type args because it "
+                "refers to itself in metadata that pydantic uses, which needs the class itself. Use explicit "
+                "type arguments."
+            )
+        # Like in Cadwyn 8.2.0, e.g. default factories and the metadata that pydantic ignores get the template
+        return self.schema_generator._get_template(member)
+
+    def change_version_of_base(self, base: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
+        # The bases that share the parameters of the model, e.g. `Page` of `class ItemPage(Page)`, validate them too
+        if self.annotation_transformer._is_template_reference(base):
+            return cast("type[_T_ANY_MODEL]", self[base])
+        return self.schema_generator.change_version_of_base(base)
+
+    def change_version_of_generic_metadata(self, model: type[BaseModel]) -> PydanticGenericMetadata:
+        versioned_parameters = self.annotation_transformer.versioned_parameters
+        parameters = model.__pydantic_generic_metadata__["parameters"]
+        return {
+            "origin": None,
+            "args": (),
+            "parameters": tuple(versioned_parameters.get(param, param) for param in parameters),
+        }
+
+    def _get_template(self, model: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
+        # The nested generics that share the parameters of the model, e.g. `page: Page[T]` in `Outer[T]`
+        if self.annotation_transformer._is_template_reference(model):
+            return cast("type[_T_ANY_MODEL]", self[model])
+        return self.schema_generator._get_template(model)
+
+    def copy(self) -> type[BaseModel]:
+        wrapper = self.schema_generator._get_wrapper_for_model(self._model)
+        return wrapper.generate_model_copy(self)

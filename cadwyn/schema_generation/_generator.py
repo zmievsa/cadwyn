@@ -19,7 +19,6 @@ from typing import (
 
 from pydantic import BaseModel
 from pydantic._internal._generics import PydanticGenericMetadata, replace_types
-from pydantic._internal._model_construction import build_lenient_weakvaluedict, unpack_lenient_weakvaluedict
 
 from cadwyn._utils import (
     lenient_issubclass,
@@ -30,6 +29,7 @@ from ._annotation_utils import (
     _contains_forward_refs,
     _eval_forward_refs,
     _get_annotations_without_evaluating,
+    _get_typevar_fallbacks,
 )
 from ._annotations import (
     _AnnotationTransformer,
@@ -57,6 +57,7 @@ from ._enums import (
 from ._generics import (
     _change_version_of_generic_metadata,
     _get_typevar_uses,
+    _is_parametrization,
     _is_same_parametrization,
 )
 from ._instructions import (
@@ -74,6 +75,8 @@ from ._models import (
     _wrap_pydantic_model,
 )
 from ._references import (
+    _BareGenericCopier,
+    _BareGenericCopies,
     _CycleCopier,
     _find_strongly_connected_components,
     _get_cycle_name,
@@ -106,6 +109,7 @@ class _VersioningQuestion(NamedTuple):
 class SchemaGenerator:
     __slots__ = (
         "_adds_references",
+        "_bare_copies",
         "_bare_models",
         "_bare_models_being_generated",
         "_changed_models",
@@ -129,6 +133,7 @@ class SchemaGenerator:
         "annotation_transformer",
         "concrete_models",
         "model_bundle",
+        "typevar_copies",
     )
 
     def __init__(
@@ -142,7 +147,12 @@ class SchemaGenerator:
     ) -> None:
         self.annotation_transformer = _AnnotationTransformer(self)
         self._bare_models: dict[type[BaseModel], type[BaseModel]] = {}
+        # The TypeVars whose bounds, constraints, or defaults validate this version's models, by the original TypeVar
+        # and its resolved bound, constraints, or default
+        self.typevar_copies: dict[tuple[typing.TypeVar, tuple[Any, ...]], typing.TypeVar] = {}
         self._bare_models_being_generated: set[type[BaseModel]] = set()
+        # The copies of generics used without type args that we are generating right now (see _get_bare_model)
+        self._bare_copies: Union[_BareGenericCopies, None] = None
         self.model_bundle = model_bundle
         # The renames of this version and the newer ones, which the copies of the subclasses must follow
         self._parent_renames = parent_renames
@@ -197,6 +207,11 @@ class SchemaGenerator:
         return cast("type[_T_ANY_MODEL]", self._get_bare_model(original))
 
     def _get_bare_model(self, original: type[BaseModel]) -> type[BaseModel]:
+        """Return this version's copy of a generic model used without type args, e.g. `Page` instead of `Page[Item]`.
+
+        It's the template unless the bounds, constraints, or defaults of the parameters that its fields use validate
+        other models in this version than in head (see _BareGenericCopier).
+        """
         with self._lock:
             if original in self._bare_models:
                 return self._bare_models[original]
@@ -209,57 +224,91 @@ class SchemaGenerator:
             try:
                 parameters = original.__pydantic_generic_metadata__["parameters"]
                 template = self._get_template(original)
-                used = _get_typevar_uses(template)
-                transformer = self.annotation_transformer
-                args = []
-                for param in parameters:
-                    if param not in used:
-                        args.append(param)
-                        continue
-                    owner = self._get_typevar_owner(param, used[param])
-                    collector = _ReferencedModelCollector()
-                    with collector.annotation_transformer.typevar_namespace(owner):
-                        collector.annotation_transformer.change_version_of_annotation(param)
-                    if original in collector.models:
-                        # Self-bound parameters already follow main's recursive model copying. Keep the
-                        # entire parameter unchanged, including constraints that mention other models.
-                        args.append(param)
-                        continue
-                    with transformer.typevar_namespace(owner):
-                        args.append(transformer._change_version_of_typevar(param))
+                extra_uses: set[typing.TypeVar] = set()
+                used = _get_typevar_uses(template, extra_uses=extra_uses)
+                args = [
+                    self._change_version_of_bare_parameter(param, used[param]) if param in used else param
+                    for param in parameters
+                ]
                 if all(arg is param for arg, param in zip(args, parameters, strict=True)):
                     self._bare_models[original] = template
                     return template
-                # Specialize the complete source, then use the ordinary generator so instructions on nested
-                # generics are applied too. The template keeps its original parameters for concrete uses.
-                specialized = replace_types(original, dict(zip(parameters, args, strict=True)))
-                if not isinstance(specialized, type) or not issubclass(specialized, BaseModel):
-                    raise SchemaGenerationError(
-                        f"Cadwyn cannot safely parametrize the bare generic {original.__qualname__}"
-                    )
-                namespace = (unpack_lenient_weakvaluedict(original.__pydantic_parent_namespace__) or {}) | {
-                    original.__name__: original,
-                    **{param.__name__: arg for param, arg in zip(parameters, args, strict=True)},
-                }
-                specialized.__pydantic_parent_namespace__ = build_lenient_weakvaluedict(namespace)
-                specialized.model_rebuild(_types_namespace={})
-                result = self._get_template(specialized)
-                setattr(result, "__cadwyn_original_model__", original)  # noqa: B010 # Runtime marker on generated class.
-                self._bare_models[original] = result
-                return result
+                if _is_parametrization(original):
+                    changed_extra_uses = [
+                        param.__name__
+                        for param, arg in zip(parameters, args, strict=True)
+                        if param in extra_uses and arg is not param
+                    ]
+                    if changed_extra_uses:
+                        raise SchemaGenerationError(
+                            f"Cadwyn cannot version the typed extra fields (`__pydantic_extra__`) of "
+                            f"{template.__qualname__}: the bound, constraints, or default of "
+                            f"{', '.join(changed_extra_uses)} change in version {self._version}, and Pydantic "
+                            "versions differ in how they substitute parameters there. Use explicit type arguments "
+                            "or a concrete annotation of `__pydantic_extra__`."
+                        )
+                    result = self._get_partially_parametrized_model(original, template, parameters, args)
+                    self._bare_models[original] = result
+                    return result
             finally:
                 self._bare_models_being_generated.remove(original)
+            is_outermost = self._bare_copies is None
+            bare_copies = self._bare_copies = self._bare_copies or _BareGenericCopies()
+            try:
+                bare_copies.add(original)
+                copier = _BareGenericCopier(self, bare_copies, original, dict(zip(parameters, args, strict=True)))
+                bare_copies.copies[original] = copier.copy()
+                if is_outermost:
+                    bare_copies.finish()
+                    self._bare_models |= bare_copies.copies
+            finally:
+                if is_outermost:
+                    self._bare_copies = None
+            return bare_copies.copies[original]
 
-    def _get_typevar_owner(self, param: typing.TypeVar, owners: set[type[BaseModel]]) -> type[BaseModel]:
-        """Choose the namespace that actually validates a parameter, rejecting incompatible bare uses."""
+    def _get_partially_parametrized_model(
+        self,
+        original: type[BaseModel],
+        template: type[BaseModel],
+        parameters: tuple[Any, ...],
+        args: list[Any],
+    ) -> type[BaseModel]:
+        """Return the copy of a generic that leaves some of its parameters without args, e.g. `Pair[int, T]`.
+
+        Pydantic names such a generic after its args anyway, so it's the copy of the parametrization with this
+        version's copies of the parameters, e.g. `Pair[int, T']`, under the name of the template.
+        """
+        specialized = replace_types(original, dict(zip(parameters, args, strict=True)))
+        if not isinstance(specialized, type) or not issubclass(specialized, BaseModel):
+            raise SchemaGenerationError(f"Cadwyn cannot safely parametrize the bare generic {original.__qualname__}")
+        result = self._get_template(specialized)
+        result.__name__, result.__qualname__, result.__doc__ = (
+            template.__name__,
+            template.__qualname__,
+            template.__doc__,
+        )
+        result.model_rebuild(force=True)
+        setattr(result, "__cadwyn_original_model__", original)  # noqa: B010 # Runtime marker on generated class.
+        return result
+
+    def _change_version_of_bare_parameter(self, param: typing.TypeVar, owners: set[type[BaseModel]]) -> typing.TypeVar:
+        """Return the parameter whose bound, constraints, and default validate this version's models."""
+        owner = self._get_typevar_owner(param, owners)
+        if owner is None:
+            return param
+        transformer = self.annotation_transformer
+        with transformer.typevar_namespace(owner):
+            return transformer._change_version_of_typevar(param)
+
+    def _get_typevar_owner(self, param: typing.TypeVar, owners: set[type[BaseModel]]) -> Union[type[BaseModel], None]:
+        """Choose the namespace that validates a parameter, rejecting incompatible bare uses.
+
+        Return None if its quoted fallbacks resolve to different classes for different users that are not versioned,
+        so that the copy of each user resolves them in its own namespace.
+        """
         owners = {_unwrap_model(owner) for owner in owners}
         owner = next(iter(owners))
-        default = getattr(param, "__default__", None)
-        if getattr(param, "has_default", lambda: default is not None)():
-            values = (default,)
-        else:
-            values = param.__constraints__ or (param.__bound__,)
-        for value in values:
+        for value in _get_typevar_fallbacks(param)[1]:
             if not _contains_forward_refs(value):
                 continue
             resolved = [_eval_forward_refs(value, context) for context in owners]
@@ -274,6 +323,7 @@ class SchemaGenerator:
                     f"{param.__name__} resolves differently across nested model namespaces. "
                     "Use explicit type arguments."
                 )
+            return None
         return owner
 
     def _get_template(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
@@ -324,7 +374,18 @@ class SchemaGenerator:
             return False
         collector = _ReferencedModelCollector(expands_type_aliases=True)
         collector.annotation_transformer.record_dependency(dependency)
-        models_to_visit = [*collector.models, *collector.arg_models]
+        return self.validates_models_that_differ_from_head(collector.models | collector.arg_models)
+
+    def validates_models_that_differ_from_head(
+        self, models: "collections.abc.Iterable[type[Union[BaseModel, Enum]]]"
+    ) -> bool:
+        """Whether the models validate differently in this version than in head.
+
+        See dependency_differs_from_head for what counts.
+        """
+        if not self._instructions_that_differ_from_head:
+            return False
+        models_to_visit = list(models)
         visited_models: set[type[Union[BaseModel, Enum]]] = set()
         while models_to_visit:
             model = models_to_visit.pop()

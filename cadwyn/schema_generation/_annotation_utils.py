@@ -237,6 +237,17 @@ def _replace_in_type_positions(annotation: Any, replace: Callable[[Any], Any]) -
     return _rebuild_generic_alias(annotation, new_args)
 
 
+def _get_typevar_fallbacks(param: typing.TypeVar) -> tuple[str, tuple[Any, ...]]:
+    """Return what pydantic validates a TypeVar without an arg as: its default, constraints, or bound, if any"""
+    default = getattr(param, "__default__", None)
+    # typing.TypeVar has no defaults before Python 3.13
+    if getattr(param, "has_default", lambda: default is not None)():
+        return "default", (default,)
+    if param.__constraints__:
+        return "constraints", param.__constraints__
+    return "bound", () if param.__bound__ is None else (param.__bound__,)
+
+
 def _get_extra_fields_annotation(model: type[BaseModel]) -> Any:
     """Return the annotation of `__pydantic_extra__` that types the extra fields of the model, if any"""
     for cls in model.__mro__:

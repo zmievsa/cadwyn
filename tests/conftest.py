@@ -19,6 +19,7 @@ from cadwyn._utils import same_method_definition_as_in
 from cadwyn.schema_generation import (
     SchemaGenerator,
     _AnnotationTransformer,
+    _BareGenericCopier,
     _change_version_of_model_references,
     _CycleCopier,
     _extract_passed_field_attributes,
@@ -85,8 +86,10 @@ def _check_that_reference_discovery_finds_every_model_that_copying_requests(monk
             check_that_discovery_finds_every_model_that_copying_would_request(self, model)
         return versioned_model
 
-    def generate_model_copy(self: _PydanticModelWrapper, generator: Union[SchemaGenerator, _CycleCopier]) -> Any:
-        schema_generator = generator.schema_generator if isinstance(generator, _CycleCopier) else generator
+    def generate_model_copy(
+        self: _PydanticModelWrapper, generator: Union[SchemaGenerator, _CycleCopier, _BareGenericCopier]
+    ) -> Any:
+        schema_generator = generator.schema_generator
         discovered_references = [
             # The models with instructions are always discovered through their wrappers, the others are
             # discovered in place
@@ -98,6 +101,13 @@ def _check_that_reference_discovery_finds_every_model_that_copying_requests(monk
             # The references that the generator caches for its decisions
             schema_generator._get_references(self.cls),
         ]
+        if isinstance(generator, _BareGenericCopier):
+            # The copies of generics used without type args resolve their quoted annotations, so discovery must too
+            collector = _ReferencedModelCollector()
+            versioned_parameters = generator.annotation_transformer.versioned_parameters
+            collector.annotation_transformer.versioned_parameters = versioned_parameters
+            self._change_version_of_references(collector, schema_generator.model_bundle.schemas)
+            discovered_references = [collector.get_references()]
         # Discovery does not know the references of a model whose annotations refer to names that are not
         # defined yet so the generic args that lead to it are never versioned
         complete_references = [references for references in discovered_references if references.is_complete]

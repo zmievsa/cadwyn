@@ -85,6 +85,12 @@ from ._models import (
     _PydanticModelWrapper as _PydanticModelWrapper,
 )
 from ._references import (
+    _BareGenericCopier as _BareGenericCopier,
+)
+from ._references import (
+    _BareGenericCopies as _BareGenericCopies,
+)
+from ._references import (
     _CycleCopier as _CycleCopier,
 )
 
