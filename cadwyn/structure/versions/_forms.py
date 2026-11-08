@@ -52,7 +52,7 @@ from ._compat import (
     _should_embed_body_fields,
 )
 from ._dependencies import _iter_dependants_that_fastapi_solves
-from ._requests import _dump_request_body
+from ._request_body import _dump_request_body
 from ._uploads import _get_uploads_to_close
 
 

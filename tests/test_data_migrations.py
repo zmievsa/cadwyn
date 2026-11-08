@@ -5809,7 +5809,7 @@ async def _extract_form_body_with_other_args(body_fields: Any) -> Any:  # pragma
 def test__fastapi_form_functions__when_missing_or_with_other_signature__should_be_unsupported(
     monkeypatch: pytest.MonkeyPatch, name: str, function: Any
 ):
-    import cadwyn.structure.versions as versions_module
+    from cadwyn.structure.versions import _compat as versions_module
 
     assert versions_module._get_unsupported_fastapi_functions() == []
     monkeypatch.setattr(versions_module, name, function)
