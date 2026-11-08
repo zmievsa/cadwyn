@@ -14901,6 +14901,31 @@ def test__request_body_migration__with_invalid_lazy_item_read_by_dependency_and_
         assert (response.status_code, response.json()) == (expected.status_code, expected.json())
 
 
+def _raise_body_walk_error(body: Any, **kwargs: Any) -> Any:
+    raise AssertionError("The body has no lazy values, so it must not be walked")
+
+
+def test__request_body_migration__with_several_body_params_without_lazy_values__should_not_walk_the_body(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from cadwyn.structure.versions import _bundle
+
+    @router.post(test_path)
+    async def endpoint(a: Annotated[list[int], Body()], b: Annotated[int, Body()]):
+        return sum(a) + b
+
+    clients = create_versioned_clients(version_change())
+    # Walking a large body takes as long as validating it, so bodies without lazy values skip it
+    monkeypatch.setattr(_bundle, "_to_head_values", _raise_body_walk_error)
+
+    for version_client in clients.values():
+        response = version_client.post(test_path, json={"a": [1, 2], "b": 3})
+        assert (response.status_code, response.json()) == (200, 6)
+
+
 @pytest.mark.parametrize("strict", [False, True])
 @pytest.mark.parametrize(
     ("union_mode", "fallback_first"),

@@ -5,7 +5,10 @@ from enum import Enum
 from typing import Any, Union, cast
 
 from fastapi._compat import ModelField
+from fastapi.dependencies.models import Dependant
+from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.routing import APIRoute
+from pydantic.errors import PydanticUserError
 from pydantic_core import SchemaSerializer, SchemaValidator, core_schema
 from typing_extensions import override
 
@@ -108,21 +111,27 @@ def _can_schema_make_members_of_plain_enum_copies(schema: dict[str, Any]) -> boo
 def _can_body_have_lazy_iterators(route: APIRoute, *, in_lazy_items: bool) -> bool:
     """Whether the request body of the route can have Pydantic's lazy iterators, or such iterators in their items.
 
-    We only say no when the schema of its single body param has no generator schema (in the items of a generator
-    schema), and check it once per route, so that the bodies of other routes are never walked.
+    We only say no when the schemas of all body params that FastAPI validates for the route have no generator schema
+    (in the items of a generator schema), and check them once per route, so that the bodies of other routes are never
+    walked. The route's own body field has them all too, but FastAPI never validates with it, so it can be undefined.
     """
-    if len(route.dependant.body_params) != 1:
-        return True
-    field = route.dependant.body_params[0]
-    cached = _CAN_BODY_HAVE_LAZY_ITERATORS.get((id(field), in_lazy_items))
-    if cached is not None and cached[0] is field:
+    dependant = route.dependant
+    cached = _CAN_BODY_HAVE_LAZY_ITERATORS.get((id(dependant), in_lazy_items))
+    if cached is not None and cached[0] is dependant:
         return cached[1]
-    result = _has_generator_schema(cast("dict[str, Any]", field._type_adapter.core_schema), in_items=in_lazy_items)
-    _CAN_BODY_HAVE_LAZY_ITERATORS[id(field), in_lazy_items] = field, result
+    try:
+        result = any(
+            _has_generator_schema(cast("dict[str, Any]", field._type_adapter.core_schema), in_items=in_lazy_items)
+            for field in get_flat_dependant(dependant).body_params
+        )
+    # E.g. a forward ref that is never defined, which FastAPI never resolves for routes that get no body
+    except PydanticUserError:
+        result = True
+    _CAN_BODY_HAVE_LAZY_ITERATORS[id(dependant), in_lazy_items] = dependant, result
     return result
 
 
-_CAN_BODY_HAVE_LAZY_ITERATORS: dict[tuple[int, bool], tuple[ModelField, bool]] = {}
+_CAN_BODY_HAVE_LAZY_ITERATORS: dict[tuple[int, bool], tuple[Dependant, bool]] = {}
 
 
 def _has_generator_schema(schema: dict[str, Any], *, in_items: bool = False) -> bool:
