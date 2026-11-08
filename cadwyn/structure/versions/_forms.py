@@ -129,17 +129,32 @@ async def _get_omission_of_optional_form_model(  # pragma: no cover # FastAPI >=
 
 
 async def _get_form_for_omitted_form_model(  # pragma: no cover # FastAPI >= 0.158.2
-    request: FastapiRequest, head_dependant: Dependant, head_route: APIRoute
+    request: FastapiRequest, head_dependant: Dependant, head_route: APIRoute, migrated_body: Any
 ) -> FormData:
     """Return the form for the head when its form model is omitted, but other params of the tree can read the form.
 
-    No migration has set the body, so the head gives the form model its default, and every other param the value that
-    FastAPI gives it from the form. That is only so if the form doesn't supply the form model in the head either.
+    Either no migration has set the body, or the migration has set a dict without fields of the form model, so the
+    head gives the form model its default, and every other param the value that FastAPI gives it from the form that the
+    client would have sent as the migrated request: the request's form with the keys of the migrated body. That is
+    only so if this form doesn't supply the form model in the head either.
     """
     # FastAPI has already parsed the form, so this returns its cached form without reading it again or closing it
     form = await request.form()
-    # We pass the form to the head as it is, so we close its uploads after the request like those of other forms
+    # We pass the form's uploads to the head, so we close them after the request like those of other forms
     _get_uploads_to_close(request).add(form.multi_items())
+    if migrated_body is not None:
+        virtual_form = await _get_virtual_form(request, migrated_body, None, is_migrated=True)
+        form = FormData(
+            [
+                item
+                for key in virtual_form.keys
+                for item in (
+                    [(key, migrated_body[key])]
+                    if key in migrated_body
+                    else [(key, value) for value in virtual_form.form.getlist(key)]
+                )
+            ]
+        )
     body_param = head_dependant.body_params[0]
     known_param_names = _get_known_form_param_names(head_dependant, head_route)
     if any(_form_supplies_form_model(model, form, known_param_names) for model in _get_form_models(body_param)):
@@ -151,6 +166,32 @@ async def _get_form_for_omitted_form_model(  # pragma: no cover # FastAPI >= 0.1
             "of the form model."
         )
     return form
+
+
+def _migrated_body_supplies_omitted_form_model(  # pragma: no cover # FastAPI >= 0.158.2
+    head_dependant: Dependant, head_route: APIRoute, body: Any, *, embed_body_fields: bool
+) -> bool:
+    """Return whether the body that a migration has set for an omitted form model supplies the form model in the head.
+
+    Like FastAPI does for a form, the form model stays omitted if the dict body has none of its fields. Other params
+    read the form too, so we can only pass a dict body on.
+    """
+    # We only know how the lookups of these dicts behave, while a subclass can override them
+    if type(body) not in (dict, OrderedDict, defaultdict):
+        params = _get_body_lookups(
+            head_dependant,
+            head_route,
+            set(_get_form_models(head_dependant.body_params[0])),
+            embed_body_fields=embed_body_fields,
+        )
+        raise _cant_pass_form_error(
+            params[0], "the body that the migration has set for the omitted form model isn't a dict"
+        )
+    known_param_names = _get_known_form_param_names(head_dependant, head_route)
+    return any(
+        _form_supplies_form_model(model, FormData(body), known_param_names)
+        for model in _get_form_models(head_dependant.body_params[0])
+    )
 
 
 def _form_supplies_form_model(  # pragma: no cover # FastAPI >= 0.158.2
@@ -256,20 +297,6 @@ async def _get_form_model_lookup(
     )
     if form_models:  # pragma: no cover # FastAPI >= 0.158.2
         params = _get_body_lookups(head_dependant, head_route, set(form_models), embed_body_fields=embed_body_fields)
-        if dumped_body is None and (
-            type(body) not in (dict, OrderedDict, defaultdict)
-            or not any(
-                _form_supplies_form_model(
-                    model, FormData(body), _get_known_form_param_names(head_dependant, head_route)
-                )
-                for model in form_models
-            )
-        ):
-            raise _cant_pass_form_error(
-                params[0],
-                "the migration must supply a dict with fields of the omitted form model while other params read "
-                "the form",
-            )
         lookup = _FormModelLookup(
             head_dependant,
             _get_form_model_aliases(params, own_key=False),
