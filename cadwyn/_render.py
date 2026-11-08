@@ -137,10 +137,7 @@ def _render_pydantic_model(
                 ast.AnnAssign(
                     target=ast.Name(name),
                     annotation=ast.Name(get_fancy_repr(annotations[name])),
-                    value=_generate_field_ast(
-                        _without_redundant_none_aliases(attributes, annotations[name]),
-                        vars(sys.modules[wrapper.cls.__module__]),
-                    ),
+                    value=_generate_field_ast(_without_redundant_none_aliases(attributes, annotations[name])),
                     simple=1,
                 )
             )
@@ -174,7 +171,7 @@ def _render_pydantic_model(
                 namespace = vars(sys.modules[wrapper.cls.__module__])
                 if callable(value):
                     _validate_config_callable(value, namespace, wrapper.name)
-                expression = ast.parse(_field_attribute_repr(value, namespace, lambda_keyword=key), mode="eval").body
+                expression = ast.parse(_field_attribute_repr(value, lambda_keyword=key), mode="eval").body
                 if isinstance(expression, ast.Lambda):
                     _validate_config_lambda_defaults(value, expression)
                 config_values.append(expression)
@@ -291,21 +288,20 @@ def _without_redundant_none_aliases(attributes: dict[str, Any], annotation: Any)
     }
 
 
-def _generate_field_ast(field_attributes: dict[str, Any], namespace: dict[str, Any]) -> ast.Call:
+def _generate_field_ast(field_attributes: dict[str, Any]) -> ast.Call:
     return ast.Call(
         func=ast.Name("Field"),
         args=[],
         keywords=[
             ast.keyword(
                 arg=attr,
-                value=ast.parse(_field_attribute_repr(attr_value, namespace), mode="eval").body,
+                value=ast.parse(_field_attribute_repr(attr_value), mode="eval").body,
             )
             for attr, attr_value in field_attributes.items()
         ],
     )
 
 
-def _field_attribute_repr(value: Any, namespace: dict[str, Any], *, lambda_keyword: str = "default_factory") -> str:
+def _field_attribute_repr(value: Any, *, lambda_keyword: str = "default_factory") -> str:
     context = _ReprContext(lambda_keyword=lambda_keyword)
-    context.namespace.update(namespace)
     return "type(None)" if value is type(None) else get_fancy_repr(value, context)

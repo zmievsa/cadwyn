@@ -92,7 +92,7 @@ def test__cadwyn_render__defaultdict_default__should_output_executable_source(mo
     assert counts["missing"] == 0
 
 
-def test__cadwyn_render__set_defaults__should_preserve_main_source_bytes():
+def test__cadwyn_render__set_defaults__should_render_set_reprs():
     module = "tests._resources.render.container_defaults"
     result = subprocess.run(
         [

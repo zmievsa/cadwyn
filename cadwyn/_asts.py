@@ -1,15 +1,13 @@
 import ast
-import builtins
-import contextlib
+import cmath
 import dataclasses
 import inspect
 import math
-import struct
 import sys
 from collections import Counter, OrderedDict, defaultdict
+from collections.abc import Callable
 from enum import Enum, auto
-from functools import partial
-from types import FunctionType, GenericAlias, LambdaType, MemberDescriptorType
+from types import FunctionType, GenericAlias, LambdaType
 from typing import (  # noqa: UP035
     Any,
     List,
@@ -21,14 +19,16 @@ from typing import (  # noqa: UP035
 
 import annotated_types
 
-from cadwyn._utils import PlainRepr, UnionType, is_same_value
+from cadwyn._utils import PlainRepr, UnionType
 from cadwyn.exceptions import CadwynRenderError, InvalidGenerationInstructionError
 
 _LambdaFunctionName = (lambda: None).__name__  # pragma: no branch
 NoneType = type(None)
-_BUILTIN_COLLECTION_IDS = frozenset(map(id, (list, tuple, set, frozenset)))
-_BUILTIN_CONTAINER_IDS = _BUILTIN_COLLECTION_IDS | {id(dict)}
-_STANDARD_MUTABLE_CONTAINER_IDS = frozenset(map(id, (list, set, dict, OrderedDict, Counter, defaultdict)))
+_BUILTIN_CONTAINERS = (list, tuple, set, frozenset, dict)
+_STANDARD_MUTABLE_CONTAINERS = (list, set, dict, OrderedDict, Counter, defaultdict)
+_IDENTICAL_REPRS_ERROR = (
+    "Cannot render {} whose distinct items have identical representations. Use a named default_factory instead."
+)
 
 
 # A parent type of typing._GenericAlias
@@ -48,25 +48,17 @@ if sys.version_info >= (3, 14):  # pragma: no cover
 class _ReprContext:
     active: set[int] = dataclasses.field(default_factory=set)
     mutable: dict[int, object] = dataclasses.field(default_factory=dict)
-    namespace: dict[str, Any] = dataclasses.field(default_factory=lambda: vars(builtins).copy())
     lambda_keyword: str = "default_factory"
-    constructors: set[int] = dataclasses.field(
-        default_factory=lambda: set(_BUILTIN_CONTAINER_IDS) | {id(float), id(type), id(tuple.__new__)}
-    )
 
 
 def get_fancy_repr(value: Any, context: Union[_ReprContext, None] = None) -> Any:
     if context is None:
         context = _ReprContext()
-    reference = value if isinstance(value, type | FunctionType) else type(value)
-    context.namespace.setdefault(reference.__name__, reference)
-    if isinstance(reference, type):
-        context.constructors.add(id(reference))
     if not isinstance(value, list | tuple | set | frozenset | dict):
         return _get_fancy_repr(value, context)
     if id(value) in context.active:
         raise CadwynRenderError("Cannot render recursive containers faithfully. Use a named default_factory instead.")
-    if id(type(value)) in _STANDARD_MUTABLE_CONTAINER_IDS:
+    if type(value) in _STANDARD_MUTABLE_CONTAINERS:
         if id(value) in context.mutable:
             raise CadwynRenderError(
                 "Cannot render shared mutable containers faithfully. Use a named default_factory instead."
@@ -80,9 +72,15 @@ def get_fancy_repr(value: Any, context: Union[_ReprContext, None] = None) -> Any
         context.active.remove(id(value))
 
 
+def _float_repr(value: float) -> PlainRepr:
+    return PlainRepr(repr(value) if math.isfinite(value) else f"float({str(value)!r})")
+
+
 def _get_fancy_repr(value: Any, context: _ReprContext) -> Any:
     if type(value) is float and not math.isfinite(value):
-        return PlainRepr(f"float({str(value)!r})")
+        return _float_repr(value)
+    if type(value) is complex and not cmath.isfinite(value):
+        return PlainRepr(f"complex({_float_repr(value.real)}, {_float_repr(value.imag)})")
     if isinstance(value, annotated_types.GroupedMetadata) and dataclasses.is_dataclass(value):
         return transform_grouped_metadata(value, dataclasses.fields(value), context)
     if isinstance(value, list | tuple | set | frozenset):
@@ -138,27 +136,34 @@ def transform_collection(
     context: _ReprContext,
 ) -> PlainRepr:
     cls = type(value)
-    try:
-        # Keep main's constructor and repr, including its ordering and formatting, for successful renderings.
-        items = map(partial(_container_item_repr, context=context), value)
-        return _container_repr(value, value.__class__(items), context)
-    except CadwynRenderError:
-        raise
-    except Exception as error:  # User constructors and reprs can fail in arbitrary ways.
-        if not (
-            isinstance(error, TypeError | SyntaxError)
-            and isinstance(value, tuple)
-            and cls.__bases__ == (tuple,)
-            and getattr(cls, "__slots__", None) == ()
-            and isinstance(getattr(cls, "_fields", None), tuple)
-        ):
-            raise CadwynRenderError(
-                f"Cannot render {cls.__qualname__} through its constructor and repr. "
-                "Use a named default_factory instead."
-            ) from error
-    # NamedTuple's positional constructor cannot take one iterable. Bypass it to retain the stored tuple values.
-    items_repr = tuple(_container_item_repr(item, context) for item in tuple.__iter__(value))
-    return _verify_container_repr(value, f"tuple.__new__({cls.__name__}, {items_repr!r})", context)
+    if _is_generated_namedtuple(cls):
+        # Named tuples take their fields as separate arguments rather than as one iterable
+        fields = (_container_item_repr(item, context) for item in tuple.__iter__(cast("tuple[object, ...]", value)))
+        return PlainRepr(f"{cls.__name__}({', '.join(fields)})")
+    items = [_container_item_repr(item, context) for item in value]
+    if isinstance(value, set | frozenset) and len(set(items)) != len(items):
+        raise CadwynRenderError(_IDENTICAL_REPRS_ERROR.format(cls.__qualname__))
+    expected = set(items) if isinstance(value, set | frozenset) else items
+    return _rebuild_and_repr(value, lambda: cls(iter(items)), expected)
+
+
+def _is_generated_namedtuple(cls: type) -> bool:
+    # Only the classes that namedtuple() and NamedTuple generate are known to take their fields positionally.
+    # Their subclasses can take other arguments, so they render through their constructor and repr instead.
+    return (
+        cls.__bases__ == (tuple,)
+        and isinstance(vars(cls).get("_fields"), tuple)
+        and "__new__" in vars(cls)
+        and getattr(cls.__new__, "__globals__", {}).get("_tuple_new") is tuple.__new__
+        and cls.__init__ is object.__init__
+    )
+
+
+def _mapping_repr(value: dict[object, object], context: _ReprContext) -> dict[PlainRepr, PlainRepr]:
+    mapping = {_container_item_repr(k, context): _container_item_repr(v, context) for k, v in dict.items(value)}
+    if len(mapping) != len(value):
+        raise CadwynRenderError(_IDENTICAL_REPRS_ERROR.format(type(value).__qualname__))
+    return mapping
 
 
 def transform_dict(value: dict[object, object], context: _ReprContext) -> PlainRepr:
@@ -175,98 +180,50 @@ def transform_dict(value: dict[object, object], context: _ReprContext) -> PlainR
             raise CadwynRenderError(
                 "Cannot render defaultdict factory faithfully. Use a named default_factory for the whole field instead."
             )
-        mapping = {_container_item_repr(k, context): _container_item_repr(v, context) for k, v in value.items()}
-        return _verify_container_repr(
-            value, f"defaultdict({_container_item_repr(factory, context)}, {mapping!r})", context
-        )
-    if cls is Counter and value:
-        # Counter(iterable_of_pairs) counts the pairs instead of retaining the mapping's counts.
-        mapping = {_container_item_repr(k, context): _container_item_repr(v, context) for k, v in value.items()}
-        return _verify_container_repr(value, f"Counter({mapping!r})", context)
-    items = ((_container_item_repr(k, context), _container_item_repr(v, context)) for k, v in value.items())
+        return PlainRepr(f"defaultdict({_container_item_repr(factory, context)}, {_mapping_repr(value, context)!r})")
+    if cls is Counter:
+        # Counter(iterable_of_pairs) would count the pairs, and Counter's repr would sort the counts
+        return PlainRepr(f"Counter({_mapping_repr(value, context)!r})" if value else "Counter()")
+    pairs = [(_container_item_repr(k, context), _container_item_repr(v, context)) for k, v in value.items()]
+    if len({key for key, _ in pairs}) != len(pairs):
+        raise CadwynRenderError(_IDENTICAL_REPRS_ERROR.format(cls.__qualname__))
+    return _rebuild_and_repr(value, lambda: cls(iter(pairs)), pairs)
+
+
+def _stored_items(container: object) -> object:
+    if isinstance(container, dict):
+        return list(dict.items(container))
+    if isinstance(container, list):
+        return list(list.__iter__(container))
+    if isinstance(container, tuple):
+        return list(tuple.__iter__(container))
+    if isinstance(container, set):
+        return set(set.__iter__(container))
+    return set(frozenset.__iter__(cast("frozenset[object]", container)))
+
+
+def _rebuild_and_repr(original: object, rebuild: Callable[[], object], expected: object) -> PlainRepr:
+    cls = type(original)
     try:
-        return _container_repr(value, value.__class__(items), context)
-    except CadwynRenderError:
-        raise
-    except Exception as error:  # Wrap failures of custom mapping constructors and reprs.
+        rebuilt = rebuild()
+        source = repr(rebuilt)
+        expression = ast.parse(source, mode="eval").body
+    except Exception as error:  # User constructors and reprs can fail in arbitrary ways.
         raise CadwynRenderError(
-            f"Cannot render {cls.__qualname__} faithfully through its constructor and repr. "
-            "Use a named default_factory instead."
+            f"Cannot render {cls.__qualname__} through its constructor and repr. Use a named default_factory instead."
         ) from error
-
-
-def _container_repr(original: object, rebuilt: object, context: _ReprContext) -> PlainRepr:
-    source = repr(rebuilt)
-    expression = ast.parse(source, mode="eval").body
-    if id(type(original)) not in _BUILTIN_CONTAINER_IDS and isinstance(
-        expression, ast.List | ast.Tuple | ast.Dict | ast.Set
-    ):
+    if type(rebuilt) is not cls or _stored_items(rebuilt) != expected:
+        # E.g. a Counter subclass counts the (key, value) pairs that we pass to its constructor
         raise CadwynRenderError(
-            f"Cannot render container subclass {type(original).__qualname__} as a builtin literal "
-            "without losing its type. "
+            f"Cannot render {cls.__qualname__} because its constructor doesn't keep its type and items. "
             "Use a named default_factory instead."
         )
-    if id(type(original)) not in _BUILTIN_CONTAINER_IDS and type(original) is not OrderedDict:
-        return _verify_container_repr(original, source, context)
-    return PlainRepr(source)
-
-
-def _resolve_reference(node: ast.expr, namespace: dict[str, Any]) -> Any:
-    if isinstance(node, ast.Name):
-        return namespace[node.id]
-    if isinstance(node, ast.Attribute):
-        return inspect.getattr_static(_resolve_reference(node.value, namespace), node.attr)
-    raise ValueError("Unsupported constructor expression")
-
-
-def _verify_container_repr(original: object, source: str, context: _ReprContext) -> PlainRepr:
-    try:
-        expression = ast.parse(source, mode="eval")
-        # Only execute constructors of observed values and the builtin expressions emitted above.
-        for node in ast.walk(expression):
-            if (
-                isinstance(node, ast.Call)
-                and id(_resolve_reference(node.func, context.namespace)) not in context.constructors
-            ):
-                raise ValueError("Unsupported constructor")  # noqa: TRY301 # Report all fidelity failures uniformly below.
-        restored = eval(compile(expression, "<cadwyn render>", "eval"), {"__builtins__": {}}, context.namespace)  # noqa: S307
-        if not is_same_value(_rendered_state(original, {}), _rendered_state(restored, {})):
-            raise ValueError("The representation changes the type, contents, or state")  # noqa: TRY301
-    except Exception as error:  # An unevaluable or unfaithful repr must not become a silent wrong default.
+    if cls not in _BUILTIN_CONTAINERS and isinstance(expression, ast.List | ast.Tuple | ast.Dict | ast.Set):
         raise CadwynRenderError(
-            f"Cannot render {type(original).__qualname__} faithfully. Use a named default_factory instead."
-        ) from error
+            f"Cannot render container subclass {cls.__qualname__} as a builtin literal "
+            "without losing its type. Use a named default_factory instead."
+        )
     return PlainRepr(source)
-
-
-def _rendered_state(value: Any, seen: dict[int, int]) -> Any:
-    if isinstance(value, type | FunctionType | Enum):
-        return ("identity", id(value))
-    if type(value) is float and math.isnan(value):
-        return ("nan", struct.pack("!d", value))
-    if not isinstance(value, list | tuple | dict | set | frozenset):
-        return value
-    if isinstance(value, list | dict | set):
-        if id(value) in seen:
-            return ("shared", seen[id(value)])
-        seen[id(value)] = len(seen)
-    if isinstance(value, dict):
-        contents = tuple((_rendered_state(k, seen), _rendered_state(v, seen)) for k, v in dict.items(value))
-    elif isinstance(value, set | frozenset):
-        base = set if isinstance(value, set) else frozenset
-        contents = frozenset(_rendered_state(item, seen) for item in base.__iter__(value))
-    else:
-        base = list if isinstance(value, list) else tuple
-        contents = tuple(_rendered_state(item, seen) for item in base.__iter__(value))
-    attributes = dict(getattr(value, "__dict__", {}))
-    for base in type(value).__mro__:
-        for name, descriptor in vars(base).items():
-            if isinstance(descriptor, MemberDescriptorType):
-                with contextlib.suppress(AttributeError):
-                    attributes[f"{base.__name__}.{name}"] = descriptor.__get__(value)
-    state = tuple((name, _rendered_state(item, seen)) for name, item in attributes.items())
-    factory = id(value.default_factory) if isinstance(value, defaultdict) else None
-    return (id(type(value)), contents, state, factory)
 
 
 def transform_generic_alias(value: object, context: _ReprContext) -> str:
