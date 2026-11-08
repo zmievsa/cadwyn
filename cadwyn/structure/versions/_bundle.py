@@ -37,7 +37,7 @@ from cadwyn.structure.data import (
 from ._background import _add_keyword_only_parameter, _DroppedBackgroundTasksWarning
 from ._changes import HeadVersion, IdentifierPythonPath, Version, VersionChange, get_cls_pythonpath
 from ._common import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME
-from ._enums import _replace_with_head_enum_members
+from ._enums import _can_have_members_of_plain_enum_copies, _replace_with_head_enum_members
 from ._forms import (
     _FormModelOmission,  # noqa: TC001 # Needed by runtime annotation introspection.
 )
@@ -164,8 +164,10 @@ class VersionBundle:
         """
         return any(not is_enum_looked_up_by_value(enum) for enum in self.versioned_enums.values())
 
-    def _replace_with_head_enum_members(self, body: Any) -> Any:
-        return _replace_with_head_enum_members(body) if self._has_versioned_plain_enums else body
+    def _replace_with_head_enum_members(self, body: Any, route: APIRoute) -> Any:
+        if self._has_versioned_plain_enums and _can_have_members_of_plain_enum_copies(route):
+            return _replace_with_head_enum_members(body)
+        return body
 
     def _get_closest_lesser_version(self, version: VersionType):
         for defined_version in self.version_values:

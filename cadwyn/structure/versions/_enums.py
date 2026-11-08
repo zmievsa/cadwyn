@@ -1,13 +1,46 @@
 from collections import Counter, OrderedDict, defaultdict, deque
 from enum import Enum
-from typing import Any, Union
+from typing import Any, Union, cast
 
+from fastapi._compat import ModelField
+from fastapi.routing import APIRoute
 from pydantic_core import SchemaSerializer, SchemaValidator, core_schema
 
 from cadwyn._utils import (
     get_member_with_same_value,
     is_enum_looked_up_by_value,
 )
+
+from ._core_schema import _has_matching_core_schema
+
+
+def _can_have_members_of_plain_enum_copies(route: APIRoute) -> bool:
+    """Whether the request body of the route can have members of copies of plain enums or flags.
+
+    Only the body that FastAPI validates for a single body param can have them: any other body is the client's JSON
+    or form. We check the schema of that param once per route, so that the bodies of other routes are never walked.
+    """
+    if len(route.dependant.body_params) != 1:
+        return False
+    field = route.dependant.body_params[0]
+    cached = _BODY_FIELDS_WITH_PLAIN_ENUM_COPIES.get(id(field))
+    if cached is not None and cached[0] is field:
+        return cached[1]
+    result = _has_matching_core_schema(
+        cast("dict[str, Any]", field._type_adapter.core_schema), _is_schema_of_plain_enum_copy
+    )
+    _BODY_FIELDS_WITH_PLAIN_ENUM_COPIES[id(field)] = field, result
+    return result
+
+
+_BODY_FIELDS_WITH_PLAIN_ENUM_COPIES: dict[int, tuple[ModelField, bool]] = {}
+
+
+def _is_schema_of_plain_enum_copy(schema: dict[str, Any]) -> bool:
+    if schema.get("type") != "enum":
+        return False
+    head_enum = getattr(schema.get("cls"), "__cadwyn_original_model__", None)
+    return head_enum is not None and not is_enum_looked_up_by_value(head_enum)
 
 
 def _replace_with_head_enum_members(data: Any) -> Any:

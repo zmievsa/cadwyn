@@ -14687,6 +14687,47 @@ def test__request_body_migration__with_lazy_custom_enum_lookup__should_give_head
         assert version_client.post(test_path, json={"values": ["a"]}).json() is True
 
 
+class _EnumWalkError(Exception):
+    pass
+
+
+def _raise_enum_walk_error(body: Any) -> Any:
+    raise _EnumWalkError
+
+
+@pytest.mark.parametrize("annotation", [Iterable[list[int]], list[list[int]]])
+def test__request_body_migration__with_body_that_cannot_have_versioned_plain_enums__should_skip_enum_replacement(
+    create_versioned_clients: CreateVersionedClients,
+    router: VersionedAPIRouter,
+    monkeypatch: pytest.MonkeyPatch,
+    annotation: Any,
+):
+    from cadwyn.structure.versions import _bundle
+
+    class Numbers(BaseModel):
+        values: annotation
+
+    class Enums(BaseModel):
+        values: Iterable[PlainEnum]
+
+    @router.post("/numbers")
+    async def numbers(body: Numbers):
+        return sum(sum(group) for group in body.values)
+
+    @router.post("/enums")
+    async def enums(body: Enums):
+        return list(body.values)  # pragma: no cover # The patched replacement raises before the endpoint runs
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    monkeypatch.setattr(_bundle, "_replace_with_head_enum_members", _raise_enum_walk_error)
+
+    for version_client in clients.values():
+        assert version_client.post("/numbers", json={"values": [[1, 2], [3]]}).json() == 6
+        # The route whose body can have them still replaces them, so the patch above is where the walk starts
+        with pytest.raises(_EnumWalkError):
+            version_client.post("/enums", json={"values": ["a"]})
+
+
 @pytest.mark.parametrize("pydantic_iterator", [False, True])
 def test__request_body_migration__with_latest_lazy_items_from_migration__should_keep_their_values(
     create_versioned_clients: CreateVersionedClients,

@@ -34,7 +34,12 @@ def _get_schema_shape(schema: dict[str, Any]) -> object:
 
 
 def _has_core_schema_of_types(schema: dict[str, Any], types: frozenset[str]) -> bool:
-    """Whether the core schema, its definitions, or the ones it refers to have a schema of one of the types.
+    """Whether the core schema, its definitions, or the ones it refers to have a schema of one of the types"""
+    return _has_matching_core_schema(schema, lambda node: node.get("type") in types)
+
+
+def _has_matching_core_schema(schema: dict[str, Any], matches: Callable[[dict[str, Any]], bool]) -> bool:
+    """Whether the core schema, its definitions, or the ones it refers to have a schema that matches.
 
     It's found without recursion.
     """
@@ -46,7 +51,7 @@ def _has_core_schema_of_types(schema: dict[str, Any], types: frozenset[str]) -> 
             seen.add(id(node))
             if not isinstance(node, dict):
                 stack.extend(node)
-            elif node.get("type") in types:
+            elif matches(node):
                 return True
             elif node.get("type") == "definition-ref" and node.get("schema_ref") in _CORE_SCHEMA_DEFINITIONS:
                 stack.append(_CORE_SCHEMA_DEFINITIONS[node["schema_ref"]])
