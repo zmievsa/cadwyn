@@ -40,6 +40,22 @@ Note that changing FastAPI endpoint dependencies is only going to affect the ini
 
 Also note that if some of your dependencies are added at app/router level, they **are** going to be overwritten by the instructions above. Most of the time it is rather safe, however, as all the necessary dependencies will still run on HEAD version.
 
+## WebSocket endpoint migrations
+
+Use `["WEBSOCKET"]` to select a FastAPI WebSocket route defined with `@router.websocket()`. It supports `.didnt_exist`, `.existed`, and `.had(path=..., name=..., dependencies=...)`. Mark sockets that only exist in older versions with `@router.only_exists_in_older_versions`, just like HTTP endpoints.
+
+```python
+{! ./docs_src/concepts/endpoint_migrations/block007.py !}
+```
+
+In this example, clients of `2024-02-01` connect to `/ws/general` with the `token` header. Clients of `2024-01-01` connect to `/chat/general` with `legacy-token` instead. The older version also keeps `/legacy` and has no `/notifications` socket. Both clients pass their API version in the `x-api-version` header; [path versioning and constant defaults](api_version_parameter.md#websocket-connections) also work.
+
+Unlike HTTP endpoints, WebSockets run only the dependencies of the selected version, including dependency overrides and cleanup. `.had(dependencies=...)` replaces the route's dependency list, including dependencies inherited from included routers. Dependencies declared in the endpoint signature still run. A path change must keep the same path parameter names. Use `func_name` to distinguish sockets with the same path, as in the endpoint duplicates example below.
+
+`WEBSOCKET` must be the only method in its selector, and `.had()` accepts only `path`, `name`, and `dependencies` for sockets. Other attributes and mixed HTTP/WebSocket selectors raise an error when the instruction is defined. Request and response data converters remain HTTP-only.
+
+WebSockets stay out of OpenAPI. Cadwyn does not apply schema or message migrations to WebSocket connections; handle message formats in your endpoint code. These instructions support FastAPI `APIWebSocketRoute` routes only: plain Starlette `WebSocketRoute`s (`@router.websocket_route()`), plain Starlette `Route`s, `Mount`, and static files are outside their scope.
+
 ## Dealing with endpoint duplicates
 
 Sometimes, when making advanced changes between versions, you need to rewrite your endpoint function entirely. So essentially you would have the following structure:

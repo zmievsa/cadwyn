@@ -42,6 +42,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Added
 
+- FastAPI WebSocket routes now support `endpoint("/ws", ["WEBSOCKET"])` with `.existed`, `.didnt_exist`, and `.had(path=..., name=..., dependencies=...)`. HTTP methods cannot be mixed into a WebSocket selector; data converters remain HTTP-only. Refs [#67](https://github.com/zmievsa/cadwyn/issues/67).
 - Pass `openapi_customizer` to `Cadwyn()` to customize each generated OpenAPI document with its selected version, or `None` for the unversioned document. The synchronous callback returns the edited dict or a replacement dict ([#255](https://github.com/zmievsa/cadwyn/issues/255)).
 - Pass `run_background_tasks_of_latest_version_dependencies=True` to `Cadwyn()` or `generate_versioned_routers()` to run tasks added during the latest dependency solve even when the endpoint has no `BackgroundTasks` param ([#568](https://github.com/zmievsa/cadwyn/issues/568)).
 

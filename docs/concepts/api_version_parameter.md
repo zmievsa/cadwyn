@@ -96,7 +96,7 @@ WebSocket routes included with `generate_and_include_versioned_routers()` select
 
 The selected version is available in `versions.api_version_var` before dependencies run, throughout the connection and dependency cleanup. Cadwyn restores the previous context when the connection ends. Missing, invalid, and unmatched versions close the connection before acceptance with code `1008` and an API version reason. A callable `api_version_default_value` requires an HTTP `Request`: for WebSockets, send the version explicitly or use a constant default.
 
-Routes included with `app.include_router()` keep working as unversioned WebSockets, even when a version header or default is present. A version preselected in `api_version_var` retains its routing behavior. WebSockets stay out of OpenAPI; endpoint instructions and message migrations are unsupported.
+Routes included with `app.include_router()` keep working as unversioned WebSockets, even when a version header or default is present. A version preselected in `api_version_var` retains its routing behavior. WebSockets stay out of OpenAPI. See [WebSocket endpoint migrations](endpoint_migrations.md#websocket-endpoint-migrations) for changing their routes and dependencies between versions.
 
 ## API version parameter title and description
 
