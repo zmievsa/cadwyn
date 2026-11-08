@@ -132,6 +132,59 @@ class OuterOfFactoryModels(BaseModel, Generic[_FactoryBoundT]):
     second: SecondFactoryModel[_FactoryBoundT]  # ty: ignore[invalid-type-form] # A class from a factory.
 
 
+# The bound and the constraints name both models that use the parameter
+_BoundToBothT = TypeVar("_BoundToBothT", bound=Union["BoundFirst", "BoundSecond"])
+_ConstrainedToBothT = TypeVar("_ConstrainedToBothT", "ConstrainedFirst", "ConstrainedSecond")
+
+
+class BoundFirst(BaseModel, Generic[_BoundToBothT]):
+    model_config = ConfigDict(defer_build=True)
+    name: str
+    child: Optional[_BoundToBothT] = None
+
+
+class BoundSecond(BaseModel, Generic[_BoundToBothT]):
+    model_config = ConfigDict(defer_build=True)
+    name: str
+    child: Optional[_BoundToBothT] = None
+
+
+class BoundOuterWithFirstFirst(BaseModel, Generic[_BoundToBothT]):
+    first: BoundFirst[_BoundToBothT]
+    second: BoundSecond[_BoundToBothT]
+
+
+class BoundOuterWithSecondFirst(BaseModel, Generic[_BoundToBothT]):
+    second: BoundSecond[_BoundToBothT]
+    first: BoundFirst[_BoundToBothT]
+
+
+class ConstrainedFirst(BaseModel, Generic[_ConstrainedToBothT]):
+    model_config = ConfigDict(defer_build=True)
+    name: str
+    child: Optional[_ConstrainedToBothT] = None
+
+
+class ConstrainedSecond(BaseModel, Generic[_ConstrainedToBothT]):
+    model_config = ConfigDict(defer_build=True)
+    name: str
+    child: Optional[_ConstrainedToBothT] = None
+
+
+class ConstrainedOuterWithFirstFirst(BaseModel, Generic[_ConstrainedToBothT]):
+    first: ConstrainedFirst[_ConstrainedToBothT]
+    second: ConstrainedSecond[_ConstrainedToBothT]
+
+
+class ConstrainedOuterWithSecondFirst(BaseModel, Generic[_ConstrainedToBothT]):
+    second: ConstrainedSecond[_ConstrainedToBothT]
+    first: ConstrainedFirst[_ConstrainedToBothT]
+
+
+for _model in (BoundFirst, BoundSecond, ConstrainedFirst, ConstrainedSecond):
+    _model.model_rebuild()
+
+
 class ShapeItem(BaseModel):
     name: str
 
@@ -1224,6 +1277,26 @@ def test__generate_versioned_models__bare_generic_sharing_quoted_parameter_acros
     if envelope is typevar_namespace_first.EnvelopeWithItem:
         body["item"] = {"a": "A"}
     assert old.model_validate(body).model_dump() == body
+
+
+@pytest.mark.parametrize(
+    ("outer", "first", "second"),
+    [
+        pytest.param(BoundOuterWithFirstFirst, BoundFirst, BoundSecond, id="bound"),
+        pytest.param(BoundOuterWithSecondFirst, BoundFirst, BoundSecond, id="bound_reversed"),
+        pytest.param(ConstrainedOuterWithFirstFirst, ConstrainedFirst, ConstrainedSecond, id="constraints"),
+        pytest.param(ConstrainedOuterWithSecondFirst, ConstrainedFirst, ConstrainedSecond, id="constraints_reversed"),
+    ],
+)
+def test__generate_versioned_models__fallback_naming_several_models_that_use_it__should_fail_loudly(
+    outer: Any, first: Any, second: Any, create_runtime_schemas: CreateRuntimeSchemas
+):
+    # Within the copy of each model, pydantic would resolve the name of the other one to its latest version
+    schemas = create_runtime_schemas(
+        version_change(schema(first).field("name").had(type=int), schema(second).field("name").had(type=int))
+    )
+    with pytest.raises(SchemaGenerationError, match=r"refer back to .*and also to models that change"):
+        schemas["2000-01-01"][outer]
 
 
 @pytest.mark.parametrize("outer", [AOuterWithNodeFirst, ZOuterWithItemFirst])

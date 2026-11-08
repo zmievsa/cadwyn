@@ -454,10 +454,10 @@ class _AnnotationTransformer:
     def _copy_typevar(self, param: typing.TypeVar) -> typing.TypeVar:
         """Return the TypeVar whose bound, constraints, or default validate this version's models.
 
-        The TypeVar stays the same when they refer back to every model whose fields use it, as pydantic resolves
-        such quoted references to the copy of the model, like in its other fields. When they validate the same models
-        as in head in this version, the TypeVar stays the same too, so that the models that use it keep their
-        names and behavior, unless they have forward refs that the copies of the models could not resolve.
+        The TypeVar stays the same when they refer back to the only model whose fields use it, as pydantic
+        resolves such quoted references to the copy of the model, like in its other fields. When they validate
+        the same models as in head in this version, the TypeVar stays the same too, so that the models that use
+        it keep their names and behavior.
         """
         kind, values = _get_typevar_fallbacks(param)
         resolved_values = tuple(self._resolve_typevar_value(param, value) for value in values)
@@ -468,17 +468,18 @@ class _AnnotationTransformer:
         collector.annotation_transformer._ids_being_recorded = self._ids_being_recorded
         collector.annotation_transformer._typevars_being_copied = self._typevars_being_copied
         collector.annotation_transformer._change_version_of_typevar_values(resolved_values)
-        # Pydantic resolves a quoted reference to a model to its copy only within that copy itself, so the
-        # TypeVar can stay the same only if every model whose fields use it is the model that it refers to
+        # Pydantic resolves a quoted reference to a model to its copy only within that copy itself, and every other
+        # name in the copy to its latest version. So the TypeVar can stay the same only if a single model uses it
+        # and its fallbacks refer to no other model that changes in this version than that model
         users = {_unwrap_model(user) for user in self._typevar_users[-1]}
         generator = self.generator.schema_generator
-        if all(lenient_issubclass(user, BaseModel) for user in users) and users <= collector.models:
+        user = next(iter(users)) if len(users) == 1 else None
+        if lenient_issubclass(user, BaseModel) and user in collector.models:
             other_models = (collector.models | collector.arg_models) - users
             if generator is not None and generator.validates_models_that_differ_from_head(other_models):
                 raise SchemaGenerationError(
                     f"Cadwyn cannot version type parameter {param.__name__}: its bound, constraints, or default "
-                    f"refer back to {', '.join(user.__qualname__ for user in self._typevar_users[-1])} and also "
-                    "to models that change in version "
+                    f"refer back to {user.__qualname__} and also to models that change in version "
                     f"{generator._version}. Use explicit type arguments instead."
                 )
             return param
