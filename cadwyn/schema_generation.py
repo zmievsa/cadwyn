@@ -45,7 +45,7 @@ import pydantic
 import pydantic._internal._decorators
 from fastapi import Response
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field, GetCoreSchemaHandler, RootModel
+from pydantic import BaseModel, Field, RootModel
 from pydantic._internal import _decorators
 from pydantic._internal._config import ConfigWrapper
 from pydantic._internal._decorators import (
@@ -64,7 +64,7 @@ from pydantic._internal._model_construction import build_lenient_weakvaluedict, 
 from pydantic._internal._namespace_utils import NsResolver
 from pydantic._internal._typing_extra import try_eval_type as pydantic_try_eval_type
 from pydantic.fields import ComputedFieldInfo, FieldInfo
-from pydantic_core import PydanticUndefined, core_schema
+from pydantic_core import PydanticUndefined
 from typing_extensions import (
     Doc,
     Protocol,
@@ -1512,7 +1512,6 @@ class _AnnotationTransformer:
         """callable_kind tells how FastAPI uses the annotation if it is a callable"""
         from typing_inspection.typing_objects import is_any, is_newtype, is_typealiastype
 
-        self._preserve_enums_in_schema_hooks((annotation,))
         if self._expands_type_aliases and self._record_expanded_type_alias(annotation):
             return annotation
         if isinstance(annotation, GenericAliasUnionArgs):
@@ -1551,7 +1550,6 @@ class _AnnotationTransformer:
             object.__setattr__(annotation_copy, "dependency", dependency)
             return annotation_copy
         elif isinstance(annotation, UnionType):  # pragma: no cover
-            self._preserve_enum_union_validation(get_args(annotation))
             args = tuple(self.change_version_of_annotation(a) for a in get_args(annotation))
             return annotation if self.record_only else typing.Union[args]
         elif is_any(annotation) or is_newtype(annotation):
@@ -1892,10 +1890,6 @@ class _AnnotationTransformer:
 
         origin = get_origin(annotation)
         args = get_args(annotation)
-        # Metadata hooks can inspect the schemas of their arguments, so mark them before copying those arguments.
-        self._preserve_enums_in_schema_hooks((origin, *args[1:]) if origin is Annotated else (origin,))
-        if origin in (typing.Union, types.UnionType) and len([arg for arg in args if arg is not type(None)]) > 1:
-            self._preserve_enum_union_validation(args)
         if origin is ClassVar or origin is collections.abc.Callable:
             with self.template_position():
                 new_args = tuple(
@@ -1948,30 +1942,6 @@ class _AnnotationTransformer:
                 new_args = (dependency, *new_args[1:])
             return _AnnotatedAlias(new_args[0], new_args[1:])
         return _rebuild_generic_alias(annotation, new_args)
-
-    def _preserve_enum_union_validation(self, annotations: tuple[Any, ...]) -> None:
-        if self.record_only or len([arg for arg in annotations if arg is not type(None)]) < 2:
-            return
-        generator = self.generator
-        if isinstance(generator, _CycleCopier):
-            generator = generator.schema_generator
-        if isinstance(generator, SchemaGenerator):
-            generator._preserve_enum_validation(annotations)
-
-    def _preserve_enums_in_schema_hooks(self, annotations: tuple[Any, ...]) -> None:
-        if self.record_only:
-            return
-        generator = self.generator
-        if isinstance(generator, _CycleCopier):
-            generator = generator.schema_generator
-        if (
-            isinstance(generator, SchemaGenerator)
-            and generator.model_bundle.enums
-            and any(_has_custom_core_schema_hook(annotation) for annotation in annotations)
-        ):
-            # A hook can request any enum, including one absent from its annotation. Enum copies are shared
-            # throughout the version, so retain legacy validation instead of guessing what the hook produces.
-            generator._enums_with_legacy_validation.update(generator.model_bundle.enums)
 
     def _has_dependency_that_differs_from_head(self, annotated_args: tuple[Any, ...]) -> bool:
         generator = self.generator
@@ -2752,7 +2722,6 @@ class SchemaGenerator:
         "_cycles_behind_latest_generic_args",
         "_cycles_being_copied",
         "_cycles_to_copy",
-        "_enums_with_legacy_validation",
         "_generation_analyses",
         "_has_copied_eager_cycles",
         "_instructions_that_differ_from_head",
@@ -2781,7 +2750,6 @@ class SchemaGenerator:
         parent_renames: "tuple[_ParentRename, ...]",
         version: str,
     ) -> None:
-        self._enums_with_legacy_validation: set[type[Enum]] = set()
         self.annotation_transformer = _AnnotationTransformer(self)
         self._bare_models: dict[type[BaseModel], type[BaseModel]] = {}
         self._bare_models_being_generated: set[type[BaseModel]] = set()
@@ -3649,33 +3617,6 @@ class SchemaGenerator:
 
     def _is_copied_with_its_cycle(self, model: type[BaseModel]) -> bool:
         return self._needs_copy(model) and self._get_cycle_to_copy(model) is not None
-
-    def _preserve_enum_validation(self, annotations: tuple[Any, ...]) -> None:
-        """Keep the legacy schema for enums reachable through overlapping union members.
-
-        Copies of an enum are shared by all fields of a version. Keep all their uses unchanged
-        instead of introducing extra enum classes or changing which branch of a working union accepts a value.
-        The set is also checked at validation time because another model can reveal a union after a copy exists.
-        """
-        collector = _ReferencedModelCollector(expands_type_aliases=True)
-        for annotation in annotations:
-            collector.annotation_transformer.change_version_of_annotation(annotation)
-        pending = list(collector.models | collector.arg_models | collector.base_models)
-        seen: set[type[Union[BaseModel, Enum]]] = set()
-        if not collector.is_complete:
-            self._enums_with_legacy_validation.update(self.model_bundle.enums)
-        while pending:
-            model = pending.pop()
-            if model in seen:
-                continue
-            seen.add(model)
-            if lenient_issubclass(model, Enum):
-                self._enums_with_legacy_validation.add(model)
-            else:
-                references = self._get_references(model)
-                pending.extend(references.models | references.arg_models | references.base_models)
-                if not references.is_complete:
-                    self._enums_with_legacy_validation.update(self.model_bundle.enums)
 
     def _get_references(self, model: type[Union[BaseModel, Enum]]) -> _ModelReferences:
         """Return the models that copying the model requests from this generator (reference discovery).
@@ -5104,7 +5045,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
                 if copied.name == original.name:
                     _restore_member_state(copied, original, rebuilt_head.__members__[name])
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
-        _take_head_members_by_value(model_copy, self.cls, generator._enums_with_legacy_validation)
+        _take_head_members_by_value(model_copy, self.cls)
         return model_copy
 
     def _create_enum(self, members: dict[str, Any]) -> type[_T_ENUM]:
@@ -5407,36 +5348,7 @@ def _wrap_enum_nonmember(enum_cls: type[Enum], name: str, value: Any) -> Any:
     return enum.nonmember(value)
 
 
-def _has_custom_core_schema_hook(annotation: Any) -> bool:
-    # Static lookup avoids executing a provider merely to discover whether it has a schema hook. Inspect the head
-    # of generated classes so Cadwyn's own enum hook never makes a normal enum opaque.
-    annotation = inspect.getattr_static(annotation, "__cadwyn_original_model__", annotation)
-    if isinstance(annotation, pydantic.GetPydanticSchema):
-        return True
-    hook = inspect.getattr_static(annotation, "__get_pydantic_core_schema__", None)
-    if hook is vars(BaseModel)["__get_pydantic_core_schema__"]:
-        # Decorator validators also wrap the enum schema, although the model inherits BaseModel's schema hook.
-        decorators = inspect.getattr_static(annotation, "__pydantic_decorators__")
-        return bool(
-            decorators.validators
-            or decorators.field_validators
-            or decorators.root_validators
-            or decorators.model_validators
-        )
-    if hook is not None:
-        return True
-    # A dynamic provider may expose the hook through __getattr__. EnumType's own lookup only finds enum members.
-    dynamic_lookup = inspect.getattr_static(annotation, "__getattr__", None)
-    return (
-        dynamic_lookup is not None
-        and dynamic_lookup is not vars(enum.EnumType).get("__getattr__")
-        and type(annotation).__module__ not in ("typing", "typing_extensions")
-    )
-
-
-def _take_head_members_by_value(
-    enum_copy: type[Enum], head_enum: type[Enum], enums_with_legacy_validation: set[type[Enum]]
-) -> None:
+def _take_head_members_by_value(enum_copy: type[Enum], head_enum: type[Enum]) -> None:
     """Make the copy of a plain enum or flag take the members of its head enum that have the values of its members.
 
     The responses that the endpoints return have the head members, and so do the defaults of params. Pydantic looks up
@@ -5454,33 +5366,6 @@ def _take_head_members_by_value(
         return inherited_missing(value)
 
     enum_copy._missing_ = classmethod(_missing_)  # ty: ignore[invalid-assignment]
-
-    # A class JSON-schema hook receives the schema that this hook returns. Wrapping it would change its input
-    # and its OpenAPI references. Keep these enums' previous strict behavior rather than changing working schemas.
-    if any(
-        getattr(enum_copy, name, None) is not None
-        for name in ("__get_pydantic_core_schema__", "__get_pydantic_json_schema__")
-    ):
-        return
-
-    # Strict validation never calls `_missing_`. Normalize only exact head members before the original schema,
-    # so strict fields (including ones nested in containers) still reject raw values and unrelated enum members.
-    # User-defined Pydantic hooks are a dynamic boundary; keep their schema and serializers.
-    def take_head_member(value: object) -> object:
-        if head_enum in enums_with_legacy_validation:
-            return value
-        if isinstance(value, head_enum) and (member := get_member_with_same_value(enum_copy, value)) is not None:
-            return member
-        return value
-
-    def get_schema(cls: type[Enum], source: type, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
-        schema = handler(source)
-        if head_enum in enums_with_legacy_validation:
-            return schema
-        return core_schema.no_info_before_validator_function(take_head_member, schema)
-
-    # Enum classes gain this hook at runtime; Enum's static interface doesn't declare it.
-    enum_copy.__get_pydantic_core_schema__ = classmethod(get_schema)  # ty: ignore[unresolved-attribute]  # Runtime hook.
 
 
 def _is_same_parametrization(model: type[Union[BaseModel, Enum]], generic: type[BaseModel]) -> bool:

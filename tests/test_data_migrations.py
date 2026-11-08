@@ -32,6 +32,7 @@ import anyio.to_thread
 import fastapi
 import httpx
 import pytest
+from annotated_types import GroupedMetadata
 from dirty_equals import IsList, IsPartialDict, IsStr
 from fastapi import (
     APIRouter,
@@ -14450,7 +14451,7 @@ def test__request_body_migration__with_plain_enums_in_lazy_or_sequence_fields__s
 @pytest.mark.parametrize("nested", [False, True], ids=["model", "nested_model"])
 @pytest.mark.parametrize("enum_type", [PlainEnum, PlainFlag])
 @pytest.mark.parametrize("container", [Sequence, Iterable, Generator])
-def test__response_body_migration__with_strict_plain_enum_fields__should_return_member_values(
+def test__response_body_migration__with_strict_plain_enum_fields__should_keep_legacy_validation(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -14478,11 +14479,9 @@ def test__response_body_migration__with_strict_plain_enum_fields__should_return_
     removed = "b" if enum_type is PlainEnum else "execute"
     clients = create_versioned_clients(version_change(enum(enum_type).didnt_have(removed)))
 
-    expected = {"value": member.value, "values": [member.value]}
     for version_client in clients.values():
-        response = version_client.get(test_path)
-        assert response.status_code == 200
-        assert response.json() == ({"items": [expected]} if nested else expected)
+        with pytest.raises(fastapi.exceptions.ResponseValidationError):
+            version_client.get(test_path)
 
 
 @pytest.mark.parametrize("annotation", [Iterable[PlainEnum], Generator[PlainEnum, None, None]])
@@ -14795,7 +14794,9 @@ def test__response_body_migration__with_enum_wrap_validator__should_keep_its_err
 
 
 @pytest.mark.parametrize("strict", [False, True])
-@pytest.mark.parametrize("hook_kind", ["get_pydantic_schema", "metadata", "dynamic_metadata", "wrapper"])
+@pytest.mark.parametrize(
+    "hook_kind", ["get_pydantic_schema", "metadata", "dynamic_metadata", "wrapper", "grouped", "dynamic_attribute"]
+)
 def test__response_body_migration__with_enum_union_in_core_schema_hook__should_keep_the_fallback(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
@@ -14826,6 +14827,18 @@ def test__response_body_migration__with_enum_union_in_core_schema_hook__should_k
                 return schema_hook
             raise AttributeError(name)
 
+    class Group(GroupedMetadata):
+        @override
+        def __iter__(self):
+            yield GetPydanticSchema(schema_hook)
+
+    class DynamicAttribute:
+        @override
+        def __getattribute__(self, name: str):
+            if name == "__get_pydantic_core_schema__":
+                return schema_hook
+            return object.__getattribute__(self, name)
+
     item = typing.TypeVar("item")
 
     class Wrapper(typing.Generic[item]):
@@ -14838,6 +14851,8 @@ def test__response_body_migration__with_enum_union_in_core_schema_hook__should_k
         "metadata": Annotated[PlainEnum, Metadata()],
         "dynamic_metadata": Annotated[PlainEnum, DynamicMetadata()],
         "wrapper": Wrapper[PlainEnum],
+        "grouped": Annotated[PlainEnum, Group()],
+        "dynamic_attribute": Annotated[PlainEnum, DynamicAttribute()],
     }[hook_kind]
 
     class Payload(BaseModel):
@@ -14867,6 +14882,122 @@ def test__response_body_migration__with_enum_union_in_core_schema_hook__should_k
         assert api.status_code == 200
         schemas = api.json()["components"]["schemas"]
         assert {name: schemas[name] for name in definitions} == definitions
+
+
+def test__response_body_migration__with_enum_json_schema_metadata__should_keep_its_input_schema(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    class SchemaMetadata:
+        def __get_pydantic_json_schema__(self, schema: core_schema.CoreSchema, handler: Any) -> Any:
+            result = handler(schema)
+            result["x-core-type"] = schema["type"]
+            return result
+
+    class Payload(BaseModel):
+        value: Annotated[PlainEnum, SchemaMetadata()]
+
+    @router.get(test_path, response_model=Payload)
+    async def endpoint():
+        return {"value": PlainEnum.a}
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    for version, version_client in clients.items():
+        response = version_client.get(test_path)
+        assert response.status_code == 200
+        assert response.content == b'{"value":"a"}'
+        api = version_client.get("/openapi.json", params={"version": version})
+        assert api.status_code == 200
+        assert api.json()["components"]["schemas"]["Payload"]["properties"]["value"]["x-core-type"] == "definition-ref"
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test__response_body_migration__with_cached_enum_model_in_opaque_schema__should_keep_the_legacy_schema(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+    strict: bool,
+):
+    class Item(BaseModel):
+        model_config = ConfigDict(strict=strict)
+        value: PlainEnum
+
+    def inspect_item(source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        schema: Any = handler.resolve_ref_schema(handler(source))
+        member_schema = handler.resolve_ref_schema(schema["schema"]["fields"]["value"]["schema"])
+        marker = member_schema["type"]
+        return core_schema.any_schema(serialization=core_schema.plain_serializer_function_ser_schema(lambda _: marker))
+
+    class Payload(BaseModel):
+        value: Annotated[Item, GetPydanticSchema(inspect_item)]
+
+    @router.get("/item", response_model=Item)
+    async def item_endpoint():
+        return {"value": PlainEnum.a}
+
+    @router.get(test_path, response_model=Payload)
+    async def endpoint():
+        return {"value": {"value": PlainEnum.a}}
+
+    clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
+    for version, version_client in clients.items():
+        if strict:
+            with pytest.raises(fastapi.exceptions.ResponseValidationError):
+                version_client.get("/item")
+        else:
+            assert version_client.get("/item").content == b'{"value":"a"}'
+        response = version_client.get(test_path)
+        assert response.status_code == 200
+        assert response.content == b'{"value":"enum"}'
+        assert dict(response.headers) == {
+            "content-length": "16",
+            "content-type": "application/json",
+            "x-api-version": version,
+        }
+
+
+def test__response_body_migration__with_enum_schema_descriptor__should_not_run_it_to_classify_annotations(
+    create_versioned_clients: CreateVersionedClients,
+    test_path: Literal["/test"],
+    router: VersionedAPIRouter,
+):
+    calls: list[str] = []
+
+    class SchemaProvider:
+        def __get__(self, instance: Any, owner: Any):
+            calls.append("provider")
+
+            def hook(source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+                calls.append("core_hook")
+                return handler(source)
+
+            return hook
+
+    class Kind(Enum):
+        __get_pydantic_core_schema__ = SchemaProvider()
+        a = "a"
+        b = "b"
+
+    class Payload(BaseModel):
+        value: Kind
+        provider_calls: int
+
+    @router.get(test_path, response_model=Payload)
+    async def endpoint():
+        return {"value": Kind.a, "provider_calls": calls.count("provider")}
+
+    clients = create_versioned_clients(version_change(enum(Kind).didnt_have("b")))
+    for version, version_client in clients.items():
+        response = version_client.get(test_path)
+        assert response.status_code == 200
+        assert response.content == b'{"value":"a","provider_calls":3}'
+        assert dict(response.headers) == {
+            "content-length": "32",
+            "content-type": "application/json",
+            "x-api-version": version,
+        }
+    assert calls == ["provider", "core_hook"] * 3
 
 
 @pytest.mark.parametrize("strict", [False, True])
@@ -14902,8 +15033,8 @@ def test__response_body_migration__with_enum_unions__should_preserve_wire_values
     clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
     expected = b'{"value":{"value":"a"}}' if kind == "model" and (strict or union_mode == "smart") else b'{"value":"a"}'
     for version, version_client in clients.items():
-        # Strict Enum|str keeps its previous rejection; Optional has no competing value branch and is fixed.
-        if kind == "str" and strict:
+        # Strict response validation retains main's rejection, including Optional enums.
+        if kind in ("str", "optional") and strict:
             with pytest.raises(fastapi.exceptions.ResponseValidationError):
                 version_client.get(test_path)
         else:

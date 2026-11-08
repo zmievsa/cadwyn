@@ -17,9 +17,11 @@ from pydantic import (
     Field,
     GetCoreSchemaHandler,
     GetJsonSchemaHandler,
+    PlainSerializer,
     PlainValidator,
     TypeAdapter,
     ValidationError,
+    WrapSerializer,
     WrapValidator,
 )
 from pydantic.json_schema import JsonSchemaValue
@@ -1226,6 +1228,8 @@ def test__enum_didnt_have__deferred_union_schema__should_preserve_values_after_r
         BeforeValidator(lambda value: value),
         PlainValidator(lambda value: value),
         WrapValidator(lambda value, _: value),
+        PlainSerializer(lambda value: value),
+        WrapSerializer(lambda value, handler: handler(value)),
     ],
 )
 def test__enum_didnt_have__validator_metadata__should_keep_shared_enum_validation_legacy(
@@ -1243,7 +1247,10 @@ def test__enum_didnt_have__validator_metadata__should_keep_shared_enum_validatio
         copied = models[version][Payload]
         member = EnumWithTwoMembers.foo
         data = {"opaque": member, "value": member}
-        assert copied.model_validate(data).value is models[version][EnumWithTwoMembers].foo
+        validated = copied.model_validate(data)
+        assert validated.value is models[version][EnumWithTwoMembers].foo
+        if isinstance(metadata, (PlainSerializer, WrapSerializer)):
+            assert validated.model_dump(mode="json") == {"opaque": 90, "value": 90}
         with pytest.raises(ValidationError) as exc_info:
             copied.model_validate(data, strict=True)
         assert any(error["loc"] == ("value",) for error in exc_info.value.errors())
@@ -1304,7 +1311,7 @@ def test__enum_didnt_have__custom_core_schema__should_keep_existing_validation_a
         assert adapter.json_schema() == expected
 
 
-def test__enum_didnt_have__strict_field__should_accept_only_matching_members(
+def test__enum_didnt_have__strict_field__should_keep_legacy_validation(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     class Item(BaseModel):
@@ -1316,8 +1323,10 @@ def test__enum_didnt_have__strict_field__should_accept_only_matching_members(
         copied = models[version][EnumWithTwoMembers]
         copied_item = models[version][Item]
         adapter = TypeAdapter(copied_item)
-        result = adapter.validate_python({"value": EnumWithTwoMembers.foo, "lax_value": 90})
+        result = adapter.validate_python({"value": copied.foo, "lax_value": 90})
         assert result.value is result.lax_value is copied.foo
+        with pytest.raises(ValidationError, match="Input should be an instance of EnumWithTwoMembers"):
+            adapter.validate_python({"value": EnumWithTwoMembers.foo, "lax_value": 90})
         with pytest.raises(ValidationError, match="Input should be an instance of EnumWithTwoMembers"):
             adapter.validate_python({"value": 90, "lax_value": 90})
         expected = TypeAdapter(Item).json_schema()
