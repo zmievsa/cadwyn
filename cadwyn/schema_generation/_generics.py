@@ -20,6 +20,7 @@ from cadwyn._utils import (
 
 from ._annotation_utils import (
     _eval_forward_refs,
+    _get_extra_fields_annotation,
     _is_type_position_in_generic,
 )
 
@@ -36,31 +37,42 @@ if TYPE_CHECKING:
 
 
 def _get_typevar_uses(
-    annotation: Any, ignored: frozenset[Any] = frozenset()
+    annotation: Any,
+    ignored: frozenset[Any] = frozenset(),
+    *,
+    extra_uses: Union[set[typing.TypeVar], None] = None,
 ) -> dict[typing.TypeVar, set[type[BaseModel]]]:
     """Find the TypeVars that validate values as fallbacks in the annotation, with the models whose fields use them.
 
     `ignored` holds the parameters of a type alias that its args replace. The parameters of nested aliases are
-    ignored the same way, and the TypeVars in the fields of nested models are recorded with those models.
+    ignored the same way, and the TypeVars in the fields of nested models, including their typed extra fields
+    (`__pydantic_extra__`), are recorded with those models. `extra_uses` gets the TypeVars of typed extra fields.
     """
     from typing_inspection.typing_objects import is_typealiastype
 
     found: dict[typing.TypeVar, set[type[BaseModel]]] = {}
-    pending: list[tuple[Any, Any, frozenset[Any]]] = [(annotation, None, ignored)]
+    # The annotations with their models and ignored parameters, and whether they type extra fields
+    pending: list[tuple[Any, Any, frozenset[Any], bool]] = [(annotation, None, ignored, False)]
     # Keeps the annotations alive so that their ids stay unique
-    visited: dict[tuple[int, int, frozenset[Any]], Any] = {}
+    visited: dict[tuple[int, int, frozenset[Any], bool], Any] = {}
     visited_aliases: dict[tuple[int, int, frozenset[Any]], Any] = {}
     while pending:
-        annotation, owner, ignored = pending.pop()
-        key = id(annotation), id(owner), ignored
+        annotation, owner, ignored, is_extra = pending.pop()
+        key = id(annotation), id(owner), ignored, is_extra
         if key in visited:
             continue
         visited[key] = annotation
         if isinstance(annotation, typing.TypeVar):
             if annotation not in ignored:
                 found.setdefault(annotation, set()).add(owner)
+                if is_extra and extra_uses is not None:
+                    extra_uses.add(annotation)
         elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            pending.extend((field.annotation, annotation, frozenset()) for field in annotation.model_fields.values())
+            pending.extend(
+                (field.annotation, annotation, frozenset(), False) for field in annotation.model_fields.values()
+            )
+            if annotation.model_config.get("extra") == "allow":
+                pending.append((_get_extra_fields_annotation(annotation), annotation, frozenset(), True))
         else:
             origin = get_origin(annotation)
             args = get_args(annotation)
@@ -72,10 +84,10 @@ def _get_typevar_uses(
                 alias_key = id(alias), id(owner), alias_ignored
                 if alias_key not in visited_aliases:
                     visited_aliases[alias_key] = alias
-                    pending.append((_get_type_alias_value(alias), owner, alias_ignored))
+                    pending.append((_get_type_alias_value(alias), owner, alias_ignored, is_extra))
             # The args of a type alias replace its parameters in its value
             pending.extend(
-                (arg, owner, ignored)
+                (arg, owner, ignored, is_extra)
                 for index, arg in enumerate(args)
                 if alias is origin
                 or (_is_type_position_in_generic(origin, index) and origin is not collections.abc.Callable)

@@ -29,7 +29,6 @@ from ._annotation_utils import (
     _contains_forward_refs,
     _eval_forward_refs,
     _get_annotations_without_evaluating,
-    _get_extra_fields_annotation,
     _get_typevar_fallbacks,
 )
 from ._annotations import (
@@ -225,14 +224,8 @@ class SchemaGenerator:
             try:
                 parameters = original.__pydantic_generic_metadata__["parameters"]
                 template = self._get_template(original)
-                used = _get_typevar_uses(template)
-                extra_uses = (
-                    _get_typevar_uses(_get_extra_fields_annotation(template))
-                    if template.model_config.get("extra") == "allow"
-                    else {}
-                )
-                for param in extra_uses:
-                    used.setdefault(param, set()).add(template)
+                extra_uses: set[typing.TypeVar] = set()
+                used = _get_typevar_uses(template, extra_uses=extra_uses)
                 args = [
                     self._change_version_of_bare_parameter(param, used[param]) if param in used else param
                     for param in parameters

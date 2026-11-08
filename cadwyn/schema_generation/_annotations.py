@@ -28,6 +28,8 @@ import fastapi.utils
 from pydantic import BaseModel
 from pydantic._internal._generics import PydanticGenericMetadata
 from pydantic.fields import FieldInfo
+from pydantic.functional_serializers import PlainSerializer, WrapSerializer
+from pydantic.functional_validators import AfterValidator, BeforeValidator, PlainValidator, WrapValidator
 from typing_extensions import (
     TypeVar,
     _AnnotatedAlias,
@@ -151,6 +153,8 @@ class _AnnotationTransformer:
         self._records_routes = False
         # How many positions that need the classes themselves we are in right now (see is_in_hard_position)
         self._hard_position_depth = 0
+        # How many metadata objects that pydantic uses we are in (see is_in_pydantic_metadata)
+        self._pydantic_metadata_depth = 0
         # The copies of the parameters of the model that a _BareGenericCopier copies, by the parameters
         self.versioned_parameters: dict[Any, Any] = {}
         self.change_versions_of_a_non_container_annotation = self._change_version_of_a_non_container_annotation
@@ -807,8 +811,18 @@ class _AnnotationTransformer:
     def _change_version_of_generic_arg(self, origin: Any, index: int, arg: Any) -> Any:
         if _is_type_position_in_generic(origin, index):
             return self.change_version_of_annotation(arg)
-        with self.hard_position():
-            return self.change_version_of_annotation(arg)
+        is_used_by_pydantic = origin is Annotated and _is_metadata_that_pydantic_uses(arg)
+        self._pydantic_metadata_depth += is_used_by_pydantic
+        try:
+            with self.hard_position():
+                return self.change_version_of_annotation(arg)
+        finally:
+            self._pydantic_metadata_depth -= is_used_by_pydantic
+
+    @property
+    def is_in_pydantic_metadata(self) -> bool:
+        """Whether we are versioning the metadata of Annotated that pydantic validates or builds schemas with"""
+        return self._pydantic_metadata_depth > 0
 
     def _change_version_of_type(self, annotation: type) -> type:
         if lenient_issubclass(annotation, (BaseModel, Enum)):
@@ -1101,6 +1115,26 @@ class _GenerationAnalysis(NamedTuple):
     terminates: bool
     # Whether the model or the models that it refers to have schema or enum instructions
     refers_to_changed_models: bool
+
+
+_METADATA_THAT_PYDANTIC_USES = (
+    FieldInfo,
+    AfterValidator,
+    BeforeValidator,
+    PlainValidator,
+    WrapValidator,
+    PlainSerializer,
+    WrapSerializer,
+)
+
+
+def _is_metadata_that_pydantic_uses(metadata: Any) -> bool:
+    """Whether pydantic validates or builds schemas with the metadata of Annotated, unlike e.g. `[Model]`"""
+    return (
+        isinstance(metadata, _METADATA_THAT_PYDANTIC_USES)
+        or hasattr(metadata, "__get_pydantic_core_schema__")
+        or hasattr(metadata, "__get_pydantic_json_schema__")
+    )
 
 
 def _change_version_of_alias_value(

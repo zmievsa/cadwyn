@@ -17,7 +17,16 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing_extensions import TypeAliasType, override
 from typing_extensions import TypeVar as ExtensionsTypeVar
 
-from cadwyn import RequestInfo, VersionedAPIRouter, convert_request_to_next_version_for, endpoint, enum, schema
+from cadwyn import (
+    RequestInfo,
+    ResponseInfo,
+    VersionedAPIRouter,
+    convert_request_to_next_version_for,
+    convert_response_to_previous_version_for,
+    endpoint,
+    enum,
+    schema,
+)
 from cadwyn.exceptions import SchemaGenerationError
 from tests._data import typevar_namespace_first, typevar_namespace_second
 from tests.conftest import CreateRuntimeSchemas, CreateVersionedApp, version_change
@@ -114,9 +123,9 @@ class ShapeWithClassVar(BaseModel, Generic[_ShapeT]):
     item: _ShapeT
 
 
-class ShapeWithItselfInMetadata(BaseModel, Generic[_ShapeT]):
+class ShapeWithItselfInUnusedMetadata(BaseModel, Generic[_ShapeT]):
     item: _ShapeT
-    marker: "Annotated[int, [ShapeWithItselfInMetadata]]" = 0
+    marker: "Annotated[int, [ShapeWithItselfInUnusedMetadata]]" = 0
 
 
 class AliasDefaultItem(BaseModel):
@@ -424,12 +433,78 @@ def test__generate_versioned_models__unparametrized_generic_shapes__should_valid
         old.model_validate(json.loads(json.dumps(body).replace("3}", '"latest"}').replace("1}", '"latest"}')))
 
 
-def test__generate_versioned_models__unparametrized_generic_with_itself_in_metadata__should_fail_loudly(
+def test__router_generation__unparametrized_generic_with_itself_in_unused_metadata__should_start_and_validate(
+    create_versioned_app: CreateVersionedApp,
+):
+    router = VersionedAPIRouter()
+
+    @router.post("/items", response_model=ShapeWithItselfInUnusedMetadata)
+    def exchange(body: ShapeWithItselfInUnusedMetadata) -> Any:
+        return body
+
+    @convert_request_to_next_version_for("/items", ["POST"])
+    def migrate(request: RequestInfo) -> None:
+        request.body["item"]["name"] = str(request.body["item"]["name"])
+
+    @convert_response_to_previous_version_for("/items", ["POST"])
+    def migrate_back(response: ResponseInfo) -> None:
+        response.body["item"]["name"] = int(response.body["item"]["name"])
+
+    # Pydantic ignores the metadata, as does Cadwyn 8.2.0
+    app = create_versioned_app(
+        version_change(schema(ShapeItem).field("name").had(type=int), migrate=migrate, migrate_back=migrate_back),
+        router=router,
+    )
+    old = TestClient(app, headers={"x-api-version": "2000-01-01"})
+    assert old.post("/items", json={"item": {"name": 1}, "marker": "2"}).json() == {"item": {"name": 1}, "marker": 2}
+    assert old.post("/items", json={"item": {"name": "latest"}}).status_code == 422
+
+
+@pytest.mark.filterwarnings("ignore::pydantic.warnings.PydanticDeprecatedSince211")
+def test__generate_versioned_models__unparametrized_generic_with_itself_in_used_metadata__should_fail_loudly(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
+    class Page(BaseModel, Generic[_ShapeT]):
+        item: _ShapeT
+        # Pydantic builds the schema of a model that is the metadata itself
+        marker: "Annotated[Any, Page]" = None
+
     schemas = create_runtime_schemas(version_change(schema(ShapeItem).field("name").had(type=int)))
-    with pytest.raises(SchemaGenerationError, match=r"ShapeWithItselfInMetadata.*refers to itself"):
-        schemas["2000-01-01"][ShapeWithItselfInMetadata]
+    with pytest.raises(SchemaGenerationError, match=r"Page.*refers to itself in metadata that pydantic uses"):
+        schemas["2000-01-01"][Page]
+
+
+@pytest.mark.parametrize("parametrized", [False, True])
+def test__generate_versioned_models__typed_extras_of_nested_generic__should_validate_old_model(
+    parametrized: bool, create_runtime_schemas: CreateRuntimeSchemas
+):
+    class Item(BaseModel):
+        name: str
+
+    ItemT = TypeVar("ItemT", bound=Item)
+    OtherT = TypeVar("OtherT")
+
+    class Extra(BaseModel, Generic[ItemT]):
+        model_config = ConfigDict(extra="allow")
+        __pydantic_extra__: dict[str, ItemT]  # ty: ignore[invalid-mutable-override] # Pydantic supports typed extras.
+
+    class Outer(BaseModel, Generic[OtherT, ItemT]):
+        other: OtherT
+        extras: Extra[ItemT]
+
+    old = create_runtime_schemas(version_change(schema(Item).field("name").had(type=int)))["2000-01-01"]
+    if parametrized:
+        # Pydantic versions differ in how they substitute parameters in the typed extras of parametrizations
+        with pytest.raises(SchemaGenerationError, match=r"typed extra fields.*Outer.*ItemT.*2000-01-01"):
+            old[Outer[int, ItemT]]
+    else:
+        old_outer = old[Outer]
+        body = {"other": 1, "extras": {"x": {"name": 1}}}
+        assert old_outer.model_validate(body).model_dump() == body
+        with pytest.raises(ValidationError):
+            old_outer.model_validate({"other": 1, "extras": {"x": {"name": "latest"}}})
+        item_schema = old_outer.model_json_schema()["$defs"]["Item"]
+        assert item_schema["properties"]["name"]["type"] == "integer"
 
 
 @pytest.mark.parametrize("node", [SelfBoundNode, SelfDefaultNode, NonGenericSelfBoundNode])

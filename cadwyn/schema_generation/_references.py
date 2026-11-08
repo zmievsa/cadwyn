@@ -525,13 +525,16 @@ class _BareGenericCopier:
         member = cast("type[BaseModel]", _unwrap_model(model))
         if member in self._bare_copies.copies:
             return self._bare_copies.copies[member]
-        if self.annotation_transformer.is_in_hard_position:
+        if not self.annotation_transformer.is_in_hard_position:
+            return self._bare_copies.forward_refs[member]
+        if self.annotation_transformer.is_in_pydantic_metadata:
             raise SchemaGenerationError(
                 f"Cadwyn cannot version the generic {member.__qualname__} used without type args because it "
-                "refers to itself where it needs the class itself, e.g. in a default factory. Use explicit "
+                "refers to itself in metadata that pydantic uses, which needs the class itself. Use explicit "
                 "type arguments."
             )
-        return self._bare_copies.forward_refs[member]
+        # Like in Cadwyn 8.2.0, e.g. default factories and the metadata that pydantic ignores get the template
+        return self.schema_generator._get_template(member)
 
     def change_version_of_base(self, base: type[_T_ANY_MODEL]) -> type[_T_ANY_MODEL]:
         # The bases that share the parameters of the model, e.g. `Page` of `class ItemPage(Page)`, validate them too
