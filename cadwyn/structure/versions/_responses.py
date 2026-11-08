@@ -1,6 +1,9 @@
 import functools
 import http
 import json
+from collections.abc import (
+    Callable,  # noqa: TC003 # Needed by runtime annotation introspection.
+)
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -35,10 +38,6 @@ from ._migration_targets import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import (
-        Callable,
-    )
-
     from ._bundle import VersionBundle
 
 

@@ -7,7 +7,6 @@ from collections.abc import (
     Iterator,
 )
 from typing import (
-    TYPE_CHECKING,
     Any,
     Union,
     cast,
@@ -20,9 +19,7 @@ from fastapi._compat import (
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import solve_dependencies
 from pydantic import BaseModel
-
-if TYPE_CHECKING:
-    from starlette.datastructures import FormData
+from starlette.datastructures import FormData  # noqa: TC002 # Needed by runtime annotation introspection.
 
 
 def _get_omitted_body_marker() -> Any:

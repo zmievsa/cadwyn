@@ -1,9 +1,9 @@
+import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
 import copy
 from datetime import date
 from enum import Enum
 from functools import cache
 from typing import (
-    TYPE_CHECKING,
     Any,
     Union,
 )
@@ -20,16 +20,12 @@ from cadwyn.structure.schemas import (
     SchemaHadInstruction,
 )
 from cadwyn.structure.versions import (
+    HeadVersion,
+    Version,
     VersionBundle,
     _get_schema_migration_target,
     _rescue_model_data,
 )
-
-if TYPE_CHECKING:
-    import collections.abc
-
-    from cadwyn.structure.versions import HeadVersion, Version
-
 
 from ._annotations import (
     _ReferencedModelCollector,

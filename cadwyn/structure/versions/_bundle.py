@@ -8,7 +8,6 @@ from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from enum import Enum
 from typing import (
-    TYPE_CHECKING,
     Any,
     Union,
 )
@@ -39,6 +38,10 @@ from ._background import _add_keyword_only_parameter, _DroppedBackgroundTasksWar
 from ._changes import HeadVersion, IdentifierPythonPath, Version, VersionChange, get_cls_pythonpath
 from ._common import _CADWYN_REQUEST_PARAM_NAME, _CADWYN_RESPONSE_PARAM_NAME
 from ._enums import _replace_with_head_enum_members
+from ._forms import (
+    _FormModelOmission,  # noqa: TC001 # Needed by runtime annotation introspection.
+)
+from ._json import _ClientJsonStrings  # noqa: TC001 # Needed by runtime annotation introspection.
 from ._migration_targets import (
     _get_models_of_schema,
     _get_request_body_target,
@@ -54,15 +57,9 @@ from ._responses import (
     _convert_endpoint_response_to_version,
     _migrate_response,
 )
-
-if TYPE_CHECKING:
-    from ._forms import (
-        _FormModelOmission,
-    )
-    from ._json import _ClientJsonStrings
-    from ._uploads import (
-        _UploadPositions,
-    )
+from ._uploads import (
+    _UploadPositions,  # noqa: TC001 # Needed by runtime annotation introspection.
+)
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")

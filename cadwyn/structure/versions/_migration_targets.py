@@ -1,5 +1,8 @@
+from collections.abc import (
+    Callable,  # noqa: TC003 # Needed by runtime annotation introspection.
+    Iterable,  # noqa: TC003 # Needed by runtime annotation introspection.
+)
 from typing import (
-    TYPE_CHECKING,
     Annotated,
     Any,
     NamedTuple,
@@ -23,12 +26,6 @@ from cadwyn._utils import (
 from cadwyn.exceptions import (
     CadwynError,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import (
-        Callable,
-        Iterable,
-    )
 
 
 def _get_schema_migration_key(annotation: object) -> object:

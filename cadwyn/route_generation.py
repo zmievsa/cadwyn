@@ -31,6 +31,7 @@ from cadwyn.exceptions import (
     RouterGenerationError,
     RouterPathParamsModifiedError,
 )
+from cadwyn.middleware import APIVersionLocation  # noqa: TC001 # Needed by runtime annotation introspection.
 from cadwyn.schema_generation import (
     _add_request_and_response_params,
     generate_versioned_models,
@@ -55,7 +56,6 @@ from cadwyn.structure.versions import (
 if TYPE_CHECKING:
     from fastapi.dependencies.models import Dependant
 
-    from cadwyn.middleware import APIVersionLocation
 
 _Call = TypeVar("_Call", bound=Callable[..., Any])
 _R = TypeVar("_R", bound=APIRouter)

@@ -1,3 +1,4 @@
+import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
 import itertools
 import threading
 import types
@@ -15,6 +16,7 @@ from typing import (
 from pydantic import BaseModel
 from pydantic._internal._generics import PydanticGenericMetadata
 from pydantic._internal._model_construction import build_lenient_weakvaluedict, unpack_lenient_weakvaluedict
+from pydantic.fields import FieldInfo  # noqa: TC002 # Needed by runtime annotation introspection.
 from typing_extensions import (
     TypeVar,
 )
@@ -51,10 +53,6 @@ from ._models import (
 )
 
 if TYPE_CHECKING:
-    import collections.abc
-
-    from pydantic.fields import FieldInfo
-
     from ._generator import (
         SchemaGenerator,
     )

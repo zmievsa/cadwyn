@@ -1,3 +1,4 @@
+import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
 import copy
 import dataclasses
 import functools
@@ -84,8 +85,6 @@ from ._instructions import (
 )
 
 if TYPE_CHECKING:
-    import collections.abc
-
     from ._generator import (
         SchemaGenerator,
     )

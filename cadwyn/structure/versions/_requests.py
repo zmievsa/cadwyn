@@ -1,4 +1,7 @@
 import functools
+from collections.abc import (
+    Callable,  # noqa: TC003 # Needed by runtime annotation introspection.
+)
 from contextlib import AsyncExitStack
 from typing import (
     TYPE_CHECKING,
@@ -59,10 +62,6 @@ from ._uploads import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import (
-        Callable,
-    )
-
     from ._bundle import VersionBundle
 
 

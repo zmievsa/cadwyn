@@ -1,14 +1,11 @@
+import collections.abc  # noqa: TC003 # Needed by runtime annotation introspection.
 from collections.abc import Callable
 from typing import (
-    TYPE_CHECKING,
     Any,
     Union,
 )
 
 from pydantic import BaseModel
-
-if TYPE_CHECKING:
-    import collections.abc
 
 # The keys of the core schemas whose values are not schemas, such as default values, which can be anything
 _CORE_SCHEMA_KEYS_WITHOUT_SCHEMAS = frozenset({"default", "default_factory", "expected", "metadata"})

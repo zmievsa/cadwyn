@@ -1,5 +1,6 @@
 from cadwyn.structure.common import VersionType as VersionType
 
+from . import _changes, _requests, _responses
 from ._aliases import (
     _rescue_model_data as _rescue_model_data,
 )
@@ -75,3 +76,8 @@ from ._uploads import (
 from ._uploads import (
     _UploadsToClose as _UploadsToClose,
 )
+
+# These modules refer back to the bundle in annotations. Bind it after its definition is complete.
+_changes.VersionBundle = VersionBundle
+_requests.VersionBundle = VersionBundle
+_responses.VersionBundle = VersionBundle
