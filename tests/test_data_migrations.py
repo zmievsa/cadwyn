@@ -14615,7 +14615,7 @@ def test__request_body_migration__with_complex_or_shared_lazy_aliases__should_ke
         assert version_client.post(test_path, json={}).json() == []
 
 
-def test__request_body_migration__with_other_lazy_body_reader__should_preserve_its_values(
+def test__request_body_migration__with_other_lazy_body_reader__should_give_both_head_members(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -14630,18 +14630,14 @@ def test__request_body_migration__with_other_lazy_body_reader__should_preserve_i
 
     @router.post(test_path, dependencies=[Depends(dependency)])
     async def endpoint(body: Payload):
-        with pytest.raises(ValidationError):
-            next(iter(body.values))
-        return "legacy"
+        return next(iter(body.values)) is PlainEnum.a
 
     clients = create_versioned_clients(version_change(enum(PlainEnum).didnt_have("b")))
     for version_client in clients.values():
         seen.clear()
-        assert version_client.post(test_path, json={"values": ["a", "a"]}).json() == "legacy"
-        assert seen[0] == "a"
-        assert isinstance(seen[1], Enum)
-        assert type(seen[1]) is not PlainEnum
-        assert seen[1].value == "a"
+        assert version_client.post(test_path, json={"values": ["a", "a"]}).json() is True
+        # FastAPI's own run gets the client's JSON, and Cadwyn's run gets the dump of the request version's body
+        assert seen == ["a", PlainEnum.a]
 
 
 @pytest.mark.parametrize("wrap_fields", [False, True])
@@ -14674,7 +14670,7 @@ def test__request_body_migration__with_custom_lazy_model_schema__should_keep_def
         assert version_client.post(test_path, json={}).json() == []
 
 
-def test__request_body_migration__with_lazy_custom_enum_lookup__should_preserve_its_result(
+def test__request_body_migration__with_lazy_custom_enum_lookup__should_give_head_members_without_lookup(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -14684,7 +14680,7 @@ def test__request_body_migration__with_lazy_custom_enum_lookup__should_preserve_
 
     @router.post(test_path)
     async def endpoint(body: Payload):
-        return list(body.values) == [PlainEnumWithMissing.unknown]
+        return list(body.values) == [PlainEnumWithMissing.a]
 
     clients = create_versioned_clients(version_change(enum(PlainEnumWithMissing).didnt_have("b")))
     for version_client in clients.values():
@@ -15103,9 +15099,9 @@ def test__request_body_migration__with_enum_unions__should_keep_successful_endpo
     if kind == "optional":
         expected = None
     elif kind == "model":
-        expected = "model" if lazy or strict else "latest"
+        expected = "model" if strict else "latest"
     elif not strict and union_mode == "left_to_right":
-        expected = ("generated" if kind == "any" else "a") if lazy else "latest"
+        expected = "latest"
     for version, version_client in clients.items():
         response = version_client.post(test_path, json={"value": [raw] if lazy else raw})
         assert response.status_code == 200
@@ -15119,10 +15115,6 @@ def test__request_body_migration__with_enum_unions__should_keep_successful_endpo
         value = seen.pop()
         if expected == "latest":
             assert value is PlainEnum.a
-        elif expected == "generated":
-            assert isinstance(value, Enum)
-            assert type(value) is not PlainEnum
-            assert value.value == "a"
         elif expected == "model":
             assert type(value) is SomeModel
             assert value.value == "a"

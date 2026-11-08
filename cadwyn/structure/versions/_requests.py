@@ -31,7 +31,6 @@ from ._aliases import _rescue_body
 from ._body_inputs import _to_head_input
 from ._common import _CADWYN_REQUEST_PARAM_NAME
 from ._compat import _OMITTED_BODY
-from ._enums import _to_head_lazy_enum_input
 from ._forms import (
     _body_is_in_kwargs,
     _embed_form_model,
@@ -180,14 +179,6 @@ async def _migrate_request(
             client_json_strings,
             embed_body_fields=embed_body_fields,
         )
-
-    body_for_solving = _to_head_lazy_enum_input(
-        body_for_solving,
-        head_dependant,
-        head_route,
-        enabled=versions._has_versioned_plain_enums and request_info._form is None,
-        embed_body_fields=embed_body_fields,
-    )
 
     # Remember this: if len(body_params) == 1, then route.body_schema == route.dependant.body_params[0]
     # We solve the head's dependencies exactly once, because solving them again would run the dependencies
