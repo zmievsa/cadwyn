@@ -275,6 +275,8 @@ class _EndpointTransformer(Generic[_R, _WR]):
                 # We know they are APIRoutes because of the check at the very beginning of the top loop.
                 # I.e. Because head_route is an APIRoute, both routes are  APIRoutes too
                 older_route = cast("APIRoute", older_route)
+                if _DELETED_ROUTE_TAG in older_route.tags:
+                    continue
                 # Wait.. Why do we need this code again?
                 if older_route.body_field is not None and _route_has_a_simple_body_schema(older_route):
                     annotation = older_route.body_field.field_info.annotation
