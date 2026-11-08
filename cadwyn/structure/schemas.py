@@ -1,10 +1,10 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from types import FunctionType, MethodType
+from types import MethodType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, Union, cast
 
 from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field
-from pydantic._internal._decorators import PydanticDescriptorProxy, unwrap_wrapped_function
+from pydantic._internal._decorators import Decorator, PydanticDescriptorProxy, unwrap_wrapped_function
 from pydantic.fields import FieldInfo
 
 from cadwyn._utils import (
@@ -279,13 +279,31 @@ class ValidatorDidntExistInstruction:
     name: str
 
 
-def _get_validator_names(model: type[BaseModel], func: object) -> list[str]:
+def _get_validators(model: type[BaseModel]) -> "dict[str, Decorator[Any]]":
     decorators = model.__pydantic_decorators__
+    return {
+        **decorators.validators,
+        **decorators.field_validators,
+        **decorators.root_validators,
+        **decorators.model_validators,
+    }
+
+
+def _get_validator_names(model: type[BaseModel], func: object) -> list[str]:
     return [
         name
-        for name, decorator in (decorators.field_validators | decorators.model_validators).items()
-        if _validator_functions_match(decorator.func, func)
+        for name, decorator in _get_validators(model).items()
+        if _validator_functions_match(_get_registered_callable(decorator), func)
     ]
+
+
+def _get_registered_callable(decorator: "Decorator[Any]") -> object:
+    if decorator.shim is None:
+        return decorator.func
+    # Pydantic wraps V1-style validators in a shim whose only closure cell is the registered callable
+    shim: Any = decorator.func
+    (cell,) = shim.__closure__
+    return cell.cell_contents
 
 
 def _validator_functions_match(registered: object, reference: object) -> bool:
@@ -308,6 +326,23 @@ def _raise_for_ambiguous_validator(model: type[BaseModel], names: list[str]) -> 
     )
 
 
+def _resolve_like_cadwyn_8(func: object) -> Union[_ValidatorReference, None]:
+    """Return the decorated function or validator method that Cadwyn 8 accepted, or None."""
+    func = unwrap_wrapped_function(func)
+    if isinstance(func, PydanticDescriptorProxy):
+        return func
+    owner = getattr(func, "__self__", None)
+    if (
+        isinstance(owner, type)
+        and issubclass(owner, BaseModel)
+        and any(  # pragma: no branch
+            fully_unwrap_decorator(decorator.func, decorator.shim) == func for decorator in _get_model_decorators(owner)
+        )
+    ):
+        return cast("Callable[..., object]", func)
+    return None
+
+
 @dataclass(**DATACLASS_SLOTS)
 class AlterValidatorInstructionFactory:
     schema: type[BaseModel]
@@ -317,25 +352,16 @@ class AlterValidatorInstructionFactory:
     def existed(self) -> ValidatorExistedInstruction:
         if isinstance(self.func, str):
             raise CadwynStructureError(
-                "Adding validators by attribute name is not supported. Pass a decorated validator function instead."
+                f'"{self.schema.__name__}" already has the validator "{self.func}", so it cannot be added. '
+                "Pass a validator function decorated outside the model instead."
             )
         return ValidatorExistedInstruction(self.schema, self.func)
 
     @property
     def didnt_exist(self) -> ValidatorDidntExistInstruction:
-        if isinstance(self.func, str):
-            return ValidatorDidntExistInstruction(self.schema, self.func)
-        name = get_name_of_function_wrapped_in_pydantic_validator(self.func)
-        # Preserve name-based instructions that already work, including decorated functions
-        # passed separately from the model. Resolve assigned classmethods only when needed.
-        if not isinstance(self.func, PydanticDescriptorProxy) and not any(
-            decorator.cls_var_name == name for decorator in _get_model_decorators(self.schema)
-        ):
-            names = _get_validator_names(self.schema, self.func)
-            if len(names) > 1:
-                _raise_for_ambiguous_validator(self.schema, names)
-            if names:
-                name = names[0]
+        name = (
+            self.func if isinstance(self.func, str) else get_name_of_function_wrapped_in_pydantic_validator(self.func)
+        )
         return ValidatorDidntExistInstruction(self.schema, name)
 
 
@@ -413,41 +439,24 @@ class AlterSchemaInstructionFactory:
         func: "Union[str, Callable[..., Any], classmethod[Any, Any, Any], PydanticDescriptorProxy[_ValidatorReturnT]]",
         /,
     ) -> AlterValidatorInstructionFactory:
-        # Match stored callables before unwrapping partials or descriptors. Ordinary
-        # bound Python methods retain their legacy name-based instructions.
-        names = _get_validator_names(self.schema, func)
-        if names and not (isinstance(func, MethodType) and isinstance(func.__func__, FunctionType)):
-            if len(names) > 1:
-                _raise_for_ambiguous_validator(self.schema, names)
-            return AlterValidatorInstructionFactory(self.schema, names[0])
-        func = unwrap_wrapped_function(func)
-
-        if isinstance(func, PydanticDescriptorProxy):
-            return AlterValidatorInstructionFactory(self.schema, func)
-        if hasattr(func, "__self__"):
-            owner = func.__self__
-            if (
-                isinstance(owner, type)
-                and issubclass(owner, BaseModel)
-                and any(  # pragma: no branch
-                    fully_unwrap_decorator(decorator.func, decorator.shim) == func
-                    for decorator in _get_model_decorators(owner)
-                )
-            ):
-                return AlterValidatorInstructionFactory(self.schema, cast("Callable[..., object]", func))
-
-        decorators = self.schema.__pydantic_decorators__
-        validators = decorators.field_validators | decorators.model_validators
         if isinstance(func, str):
-            if func not in validators:
+            if func not in _get_validators(self.schema):
                 raise CadwynStructureError(f'"{self.schema.__name__}" has no field or model validator named "{func}".')
             return AlterValidatorInstructionFactory(self.schema, func)
-
+        # Match the registered callable before unwrapping partials or descriptors
+        names = _get_validator_names(self.schema, func)
+        cadwyn_8_reference = _resolve_like_cadwyn_8(func)
         if len(names) == 1:
             return AlterValidatorInstructionFactory(self.schema, names[0])
         if names:
-            _raise_for_ambiguous_validator(self.schema, names)
-        raise CadwynStructureError("The passed function must be a pydantic validator")
+            # Cadwyn 8 removed the validator named after the function, so keep that choice when it is one of them
+            name = getattr(cadwyn_8_reference, "__name__", None)
+            if cadwyn_8_reference is None or name not in names:
+                _raise_for_ambiguous_validator(self.schema, names)
+            return AlterValidatorInstructionFactory(self.schema, cast("str", name))
+        if cadwyn_8_reference is None:
+            raise CadwynStructureError("The passed function must be a pydantic validator")
+        return AlterValidatorInstructionFactory(self.schema, cadwyn_8_reference)
 
     def had(
         self, *, name: str = Sentinel, description: Union[str, None] = Sentinel, config: Union[ConfigDict, None] = None
