@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from types import FunctionType, MethodType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, Union, cast
 
-from pydantic import AliasChoices, AliasPath, BaseModel, Field
+from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field
 from pydantic._internal._decorators import PydanticDescriptorProxy, unwrap_wrapped_function
 from pydantic.fields import FieldInfo
 
@@ -355,6 +355,47 @@ class SchemaHadInstruction:
     name: str = Sentinel
     # The docstring of the model (`__doc__`), which pydantic uses as its description. None means no description
     description: Union[str, None] = Sentinel
+    config: Union[ConfigDict, None] = None
+
+
+_VERSIONABLE_CONFIG_KEYS = frozenset(
+    {
+        "extra",
+        "populate_by_name",
+        "validate_by_alias",
+        "validate_by_name",
+        "str_strip_whitespace",
+        "frozen",
+        "title",
+        "json_schema_extra",
+        "arbitrary_types_allowed",
+    }
+)
+_UNSAFE_CONFIG_REASONS = {
+    "alias_generator": "cannot regenerate aliases already stored on copied fields",
+    "field_title_generator": "cannot regenerate titles already stored on copied fields",
+    "model_title_generator": "cannot safely version model construction hooks",
+    "use_attribute_docstrings": "cannot recover attribute docstrings from copied classes",
+    "ignored_types": "cannot recover attributes already classified during model construction",
+    "protected_namespaces": "cannot change how existing model attributes were classified",
+    "defer_build": "cannot defer building models used to generate versioned routes",
+    "plugin_settings": "cannot safely version Pydantic plugin construction",
+    "schema_generator": "cannot safely version schema construction hooks",
+}
+
+
+def _validate_config_keys(model: type[BaseModel], config: ConfigDict) -> None:
+    for key in config:
+        if key in _VERSIONABLE_CONFIG_KEYS:
+            continue
+        reason = _UNSAFE_CONFIG_REASONS.get(key)
+        if reason is None:
+            reason = (
+                "unsupported for config versioning"
+                if key in ConfigDict.__annotations__
+                else "unknown Pydantic config key"
+            )
+        raise CadwynStructureError(f'Cannot version config of "{model.__name__}", key "{key}": {reason}.')
 
 
 @dataclass(**DATACLASS_SLOTS)
@@ -408,8 +449,11 @@ class AlterSchemaInstructionFactory:
             _raise_for_ambiguous_validator(self.schema, names)
         raise CadwynStructureError("The passed function must be a pydantic validator")
 
-    def had(self, *, name: str = Sentinel, description: Union[str, None] = Sentinel) -> SchemaHadInstruction:
-        if name is Sentinel and description is Sentinel:
+    def had(
+        self, *, name: str = Sentinel, description: Union[str, None] = Sentinel, config: Union[ConfigDict, None] = None
+    ) -> SchemaHadInstruction:
+        """Change a schema's name, docstring, or selected model config keys in older versions."""
+        if name is Sentinel and description is Sentinel and not config:
             raise CadwynStructureError(
                 f"You must pass at least one of the arguments of schema({self.schema.__name__}).had()"
             )
@@ -419,7 +463,9 @@ class AlterSchemaInstructionFactory:
                 f"The description that you passed to schema({self.schema.__name__}).had() is blank. "
                 "Pass description=None to remove the description instead."
             )
-        return SchemaHadInstruction(schema=self.schema, name=name, description=description)
+        if config:
+            _validate_config_keys(self.schema, config)
+        return SchemaHadInstruction(schema=self.schema, name=name, description=description, config=config)
 
 
 def schema(model: type[BaseModel], /) -> AlterSchemaInstructionFactory:

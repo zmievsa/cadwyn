@@ -49,6 +49,7 @@ class _ReprContext:
     active: set[int] = dataclasses.field(default_factory=set)
     mutable: dict[int, object] = dataclasses.field(default_factory=dict)
     namespace: dict[str, Any] = dataclasses.field(default_factory=lambda: vars(builtins).copy())
+    lambda_keyword: str = "default_factory"
     constructors: set[int] = dataclasses.field(
         default_factory=lambda: set(_BUILTIN_CONTAINER_IDS) | {id(float), id(type), id(tuple.__new__)}
     )
@@ -101,7 +102,7 @@ def _get_fancy_repr(value: Any, context: _ReprContext) -> Any:
     if isinstance(value, auto):  # pragma: no cover # it works but we no longer use auto
         return transform_auto(value)
     if isinstance(value, LambdaType) and _LambdaFunctionName == value.__name__:
-        return transform_lambda(value)
+        return transform_lambda(value, context.lambda_keyword)
     if isinstance(value, FunctionType):
         return transform_function(value)
     else:
@@ -294,10 +295,12 @@ def transform_union(value: Any, context: _ReprContext) -> str:
     return "typing.Union[" + (", ".join(get_fancy_repr(a, context) for a in get_args(value))) + "]"
 
 
-def transform_lambda(value: LambdaType) -> Any:
+def transform_lambda(value: LambdaType, keyword: str = "default_factory") -> Any:
+    if keyword != "default_factory" and value.__closure__:
+        raise CadwynRenderError("Cannot inline a config lambda with captured variables. Use a named function instead.")
     # We clean source because getsource() can return only a part of the expression which
     # on its own is not a valid expression such as: "\n  .had(default_factory=lambda: 91)"
-    return _get_lambda_source_from_default_factory(inspect.getsource(value).strip(" \n\t."))
+    return _get_lambda_source_from_keyword(inspect.getsource(value).strip(" \n\t."), keyword)
 
 
 def transform_function(value: FunctionType) -> Any:
@@ -308,11 +311,19 @@ def transform_other(value: Any) -> Any:
     return PlainRepr(repr(value))
 
 
-def _get_lambda_source_from_default_factory(source: str) -> str:
+def _get_lambda_source_from_keyword(source: str, keyword: str) -> str:
+    tree = ast.parse(source)
     found_lambdas: list[ast.Lambda] = [
         node.value
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.keyword) and node.arg == "default_factory" and isinstance(node.value, ast.Lambda)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.keyword) and node.arg == keyword and isinstance(node.value, ast.Lambda)
+    ]
+    found_lambdas += [
+        value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Dict)
+        for key, value in zip(node.keys, node.values, strict=True)
+        if isinstance(key, ast.Constant) and key.value == keyword and isinstance(value, ast.Lambda)
     ]
 
     if len(found_lambdas) == 1:
@@ -320,11 +331,11 @@ def _get_lambda_source_from_default_factory(source: str) -> str:
     # These two errors are really hard to cover. Not sure if even possible, honestly :)
     elif len(found_lambdas) == 0:  # pragma: no cover
         raise InvalidGenerationInstructionError(
-            f"No lambda found in default_factory even though one was passed: {source}",
+            f"No lambda found in {keyword} even though one was passed: {source}",
         )
     else:  # pragma: no cover
         raise InvalidGenerationInstructionError(
-            "More than one lambda found in default_factory. This is not supported.",
+            f"More than one lambda found in {keyword}. This is not supported.",
         )
 
 

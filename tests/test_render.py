@@ -896,3 +896,200 @@ def test__render_model__model_with_alias_generator__should_render_aliases_of_fie
     namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field}
     exec(rendered, namespace)
     assert namespace["ModelWithAliasGenerator"].model_validate({key_of_name: "x"}).name == "x"
+
+
+class RenderedConfig(BaseModel):
+    model_config = ConfigDict(title="New title")
+    value: str
+
+
+def test__render_model__schema_config_patch__should_render_older_config():
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=ConfigDict(extra="forbid")))),
+        Version("2000-01-01"),
+    )
+    namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field}
+    exec(render_model(RenderedConfig, versions, "2000-01-01"), namespace)
+    rendered = namespace["RenderedConfig"]
+    generated = generate_versioned_models(versions)["2000-01-01"][RenderedConfig]
+    assert rendered.model_config == generated.model_config
+    assert rendered.model_json_schema() == generated.model_json_schema()
+
+
+def _make_bound_config_extra():
+    legacy = False
+
+    def bound_config_extra(s: dict[str, Any]) -> None:
+        s["x-legacy"] = not legacy
+
+    return bound_config_extra
+
+
+bound_config_extra = _make_bound_config_extra()
+
+
+def add_legacy_config_example(json_schema: dict[str, Any]) -> None:
+    json_schema["x-legacy"] = True
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ConfigDict(json_schema_extra=lambda s: s.update({"x-legacy": True})),
+        {"json_schema_extra": lambda s: s.update({"x-legacy": True})},
+        ConfigDict(json_schema_extra=add_legacy_config_example),
+        ConfigDict(json_schema_extra=bound_config_extra),
+        ConfigDict(json_schema_extra=lambda s, _m, marker=True, *, _tag=None: s.update({"x-legacy": marker})),
+        ConfigDict(json_schema_extra=lambda s: s.update({"x-legacy": all(bool(flag) for flag in [not legacy])})),
+    ],
+)
+def test__render_model__config_callable__should_preserve_json_schema(extra: ConfigDict):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=extra))),
+        Version("2000-01-01"),
+    )
+    namespace: dict[str, Any] = {"BaseModel": BaseModel, "Field": Field, **globals()}
+    exec(render_model(RenderedConfig, versions, "2000-01-01"), namespace)
+    generated = generate_versioned_models(versions)["2000-01-01"][RenderedConfig]
+    assert namespace["RenderedConfig"].model_json_schema() == generated.model_json_schema()
+    assert namespace["RenderedConfig"].model_json_schema()["x-legacy"] is True
+
+
+def test__render_model__config_lambda_without_source__should_name_model_and_key():
+    extra = eval('lambda s: s.update({"x-legacy": True})')
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=ConfigDict(json_schema_extra=extra)))),
+        Version("2000-01-01"),
+    )
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra"):
+        render_model(RenderedConfig, versions, "2000-01-01")
+
+
+def test__render_model__config_lambda_with_closure__should_name_model_and_key():
+    legacy = {"x-legacy": True}
+    extra = ConfigDict(json_schema_extra=lambda s: s.update(legacy))
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=extra))),
+        Version("2000-01-01"),
+    )
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra.*captured variables"):
+        render_model(RenderedConfig, versions, "2000-01-01")
+
+
+legacy = False
+
+
+def captured_config_default() -> ConfigDict:
+    legacy = True
+    return ConfigDict(json_schema_extra=lambda s, _m, marker=legacy: s.update({"x-legacy": marker}))
+
+
+def test__render_model__config_lambda_default_shadows_global__should_reject_instead_of_changing_value():
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=captured_config_default()))),
+        Version("2000-01-01"),
+    )
+    assert generate_versioned_models(versions)["2000-01-01"][RenderedConfig].model_json_schema()["x-legacy"] is True
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra.*default"):
+        render_model(RenderedConfig, versions, "2000-01-01")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ConfigDict(json_schema_extra=lambda s, _m, marker={}: s.update(marker)),
+        ConfigDict(json_schema_extra=lambda s, _m, *, marker={}: s.update(marker)),
+        {"json_schema_extra": len},
+    ],
+)
+def test__render_model__config_callable_with_unsafe_defaults_or_type__should_name_model_and_key(extra: ConfigDict):
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=extra))),
+        Version("2000-01-01"),
+    )
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra"):
+        render_model(RenderedConfig, versions, "2000-01-01")
+
+
+def test__render_model__config_callable_with_foreign_globals__should_reject_different_binding():
+    from types import FunctionType
+
+    prototype = ConfigDict(json_schema_extra=lambda s: s.update({"x-legacy": legacy}))["json_schema_extra"]
+    assert isinstance(prototype, FunctionType)
+    callback = FunctionType(prototype.__code__, prototype.__globals__ | {"legacy": True})
+    versions = VersionBundle(
+        Version(
+            "2001-01-01", version_change(schema(RenderedConfig).had(config=ConfigDict(json_schema_extra=callback)))
+        ),
+        Version("2000-01-01"),
+    )
+    assert generate_versioned_models(versions)["2000-01-01"][RenderedConfig].model_json_schema()["x-legacy"] is True
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra.*global.*legacy"):
+        render_model(RenderedConfig, versions, "2000-01-01")
+
+
+def test__render_model__config_function_without_module_binding__should_reject_reference():
+    def local_extra(s: dict[str, Any]) -> None:
+        raise AssertionError("The renderer must reject this function before executing it")
+
+    versions = VersionBundle(
+        Version(
+            "2001-01-01", version_change(schema(RenderedConfig).had(config=ConfigDict(json_schema_extra=local_extra)))
+        ),
+        Version("2000-01-01"),
+    )
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra.*same object"):
+        render_model(RenderedConfig, versions, "2000-01-01")
+
+
+def test__render_model__config_lambda_with_modified_defaults__should_reject_source_mismatch():
+    extra = ConfigDict(json_schema_extra=lambda s, _m, marker=True: s.update({"x-legacy": marker}))
+    from types import FunctionType
+
+    callback = extra["json_schema_extra"]
+    assert isinstance(callback, FunctionType)
+    callback.__defaults__ = (False,)
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=extra))),
+        Version("2000-01-01"),
+    )
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra.*defaults differ"):
+        render_model(RenderedConfig, versions, "2000-01-01")
+
+
+def test__render_model__config_lambda_with_reordered_kwdefaults__should_reject_source_mismatch():
+    from types import FunctionType
+
+    extra = ConfigDict(json_schema_extra=lambda s, _m, *, a=True, b=False: s.update({"x-legacy": a and not b}))
+    callback = extra["json_schema_extra"]
+    assert isinstance(callback, FunctionType)
+    callback.__kwdefaults__ = {"b": True, "a": False}
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=extra))),
+        Version("2000-01-01"),
+    )
+    assert generate_versioned_models(versions)["2000-01-01"][RenderedConfig].model_json_schema()["x-legacy"] is False
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra.*defaults differ"):
+        render_model(RenderedConfig, versions, "2000-01-01")
+
+
+def test__render_model__config_lambda_with_replaced_model_binding__should_reject_global():
+    extra = ConfigDict(json_schema_extra=lambda s: s.update({"x-title": RenderedConfig.model_config["title"]}))
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=extra))),
+        Version("2000-01-01"),
+    )
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra.*global.*RenderedConfig"):
+        render_model(RenderedConfig, versions, "2000-01-01")
+
+
+def test__render_model__config_lambda_with_matching_free_binding__should_reject_inlining_captured_state():
+    legacy = False
+    extra = ConfigDict(json_schema_extra=lambda s: s.update({"x-legacy": not legacy}))
+    versions = VersionBundle(
+        Version("2001-01-01", version_change(schema(RenderedConfig).had(config=extra))),
+        Version("2000-01-01"),
+    )
+    assert generate_versioned_models(versions)["2000-01-01"][RenderedConfig].model_json_schema()["x-legacy"] is True
+    with pytest.raises(CadwynRenderError, match=r"RenderedConfig.*json_schema_extra.*captured variables"):
+        render_model(RenderedConfig, versions, "2000-01-01")
