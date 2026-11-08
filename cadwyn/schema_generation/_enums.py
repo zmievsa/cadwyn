@@ -3,6 +3,7 @@ import enum
 import pathlib
 import types
 import uuid
+import weakref
 from collections.abc import Callable, Generator, Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum, Flag, FlagBoundary
@@ -112,42 +113,109 @@ _STDLIB_ENUM_NEWS = (
     ),
 )
 
-_UNSET_SLOT = object()
+# The value of an unset slot, or of an attribute that the member doesn't have
+_UNSET = object()
+
+_MemberStateKey = tuple[Any, ...]
+
+
+@final
+class _FactsAboutLatestEnum:
+    """What Cadwyn learns about the latest enum. It's the same in every version, so the wrapper's copies share it"""
+
+    __slots__ = "changes_after_construction", "members_with_only_their_values"
+
+    def __init__(self) -> None:
+        self.members_with_only_their_values: Union[frozenset[str], None] = None
+        self.changes_after_construction: Union[dict[str, tuple[tuple[_MemberStateKey, Any], ...]], None] = None
 
 
 @final
 class _EnumWrapper(Generic[_T_ENUM]):
-    __slots__ = "cls", "members", "name"
+    __slots__ = "_facts", "cls", "members", "name"
 
     def __init__(self, cls: type[_T_ENUM]) -> None:
         self.cls = _unwrap_model(cls)
         self.name = cls.__name__
         # `__members__` has the aliases too, in the order of the definition, so the copy defines them the same way
         self.members = {name: member.value for name, member in cls.__members__.items()}
+        self._facts = _FactsAboutLatestEnum()
 
     def __deepcopy__(self, memo: Any) -> "_EnumWrapper[_T_ENUM]":
         result = _EnumWrapper(self.cls)
         result.members = self.members.copy()
+        result._facts = self._facts
         memo[id(self)] = result
         return result
 
     def generate_model_copy(self, generator: "SchemaGenerator") -> type[_T_ENUM]:
-        has_custom_new = _has_custom_new(self.cls)
-        with self._explain_errors_of_custom_new() if has_custom_new else contextlib.nullcontext():
-            rebuilt_head = self._create_enum({name: member.value for name, member in self.cls.__members__.items()})
-        if has_custom_new:
-            self._check_that_new_recreates_the_members_from_their_values(rebuilt_head)
-        with self._explain_errors_of_custom_new() if has_custom_new else contextlib.nullcontext():
+        changes_after_construction = self._get_changes_after_construction()
+        with self._explain_errors_of_custom_new() if _has_custom_new(self.cls) else contextlib.nullcontext():
             model_copy = self._create_enum(self.members)
-        for name, original in self.cls.__members__.items():
-            if name in self.members and self.members[name] is original.value:
+        for name, changes in changes_after_construction.items():
+            # Only the unchanged members keep them. Removing the canonical member of an alias gives the alias a new
+            # name, and the alias gets the state that the constructor gives it
+            if name in self.members and self.members[name] is self.cls.__members__[name].value:
                 copied = model_copy.__members__[name]
-                # Removing the canonical member of an alias gives the alias a new name and constructor state.
-                if copied.name == original.name:
-                    _restore_member_state(copied, original, rebuilt_head.__members__[name])
+                if copied.name == name:
+                    _restore_member_state(copied, changes)
         model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
         _take_head_members_by_value(model_copy, self.cls)
         return model_copy
+
+    def _get_members_with_only_their_values(self) -> frozenset[str]:
+        if (names := self._facts.members_with_only_their_values) is None:
+            names = self._facts.members_with_only_their_values = frozenset(
+                name
+                for name, member in self.cls.__members__.items()
+                if _has_custom_new(self.cls) and _has_only_its_value(member)
+            )
+        return names
+
+    def _get_changes_after_construction(self) -> dict[str, tuple[tuple[_MemberStateKey, Any], ...]]:
+        if (changes := self._facts.changes_after_construction) is None:
+            changes = self._facts.changes_after_construction = self._find_changes_after_construction()
+        return changes
+
+    def _find_changes_after_construction(self) -> dict[str, tuple[tuple[_MemberStateKey, Any], ...]]:
+        """Return the state that the members of the enum got after the constructor made them, by member names.
+
+        We build the enum again from the values of all of its members, so its constructor makes the members with the
+        same args as in the class body. The state of the original members that differs from what the constructor
+        made was set or deleted after that, e.g. a label assigned after the class was created or by a metaclass.
+        """
+        has_custom_new = _has_custom_new(self.cls)
+        all_members = {name: member.value for name, member in self.cls.__members__.items()}
+        with self._explain_errors_of_custom_new() if has_custom_new else contextlib.nullcontext():
+            rebuilt = self._create_enum(all_members)
+        if has_custom_new:
+            self._check_that_new_recreates_the_members_from_their_values(rebuilt)
+        rebuilt_again: Union[type[_T_ENUM], None] = None
+        changes: dict[str, tuple[tuple[_MemberStateKey, Any], ...]] = {}
+        for name, original in self.cls.__members__.items():
+            if original.name != name:  # An alias. It shares the state of its canonical member
+                continue
+            original_state = _get_member_state(original)
+            constructed_state = _get_member_state(rebuilt.__members__[name])
+            member_changes: list[tuple[_MemberStateKey, Any]] = []
+            for key in dict.fromkeys([*constructed_state, *original_state]):
+                value, constructed = original_state.get(key, _UNSET), constructed_state.get(key, _UNSET)
+                if _is_same_or_interchangeable(constructed, value):
+                    continue
+                if constructed is not _UNSET:
+                    # Only an enum without a custom `__new__` gets here: the check above rejects such differences for
+                    # the others. Its constructor got the same args as in the class body, so the value was changed
+                    # after construction, unless the constructor makes a different value every time (e.g. a new
+                    # object). Then we can't tell, and the copy keeps what its constructor makes
+                    if rebuilt_again is None:
+                        rebuilt_again = self._create_enum(all_members)
+                    constructed_again = _get_member_state(rebuilt_again.__members__[name]).get(key, _UNSET)
+                    if not _is_same_or_interchangeable(constructed_again, constructed):
+                        continue
+                member_changes.append((key, value))
+            if member_changes:
+                changes[name] = tuple(member_changes)
+        return changes
 
     def _create_enum(self, members: dict[str, Any]) -> type[_T_ENUM]:
         enum_dict = Enum.__prepare__(self.name, self.cls.__bases__)
@@ -183,11 +251,11 @@ class _EnumWrapper(Generic[_T_ENUM]):
 
     def _get_member_definitions(self, members: dict[str, Any]) -> dict[str, Any]:
         original_members = self.cls.__members__
-        has_custom_new = _has_custom_new(self.cls)
+        members_with_only_their_values = self._get_members_with_only_their_values()
         definitions: dict[str, Any] = {}
         for name, value in members.items():
             if name in original_members and value is original_members[name].value:
-                if has_custom_new and _has_only_its_value(original_members[name]):
+                if name in members_with_only_their_values:
                     # We know everything about such a member, so we take its exact value instead of calling __new__
                     # with it, which can need other args (e.g. a precision that changes the exponent of a decimal)
                     definitions[name] = enum.member(_ValueOfMemberWithOnlyItsValue(value))
@@ -325,7 +393,7 @@ def _make_init_that_skips_members_with_only_their_values(enum_cls: type[Enum]) -
 
 def _has_only_its_value(member: Enum) -> bool:
     """Whether the member has no attributes or set slots, and its mixin data (e.g. its `str`) is its value"""
-    if any(value is not _UNSET_SLOT for value in _get_member_state(member).values()):
+    if any(value is not _UNSET for value in _get_member_state(member).values()):
         return False
     member_type = type(member)._member_type_  # ty: ignore[unresolved-attribute]
     return member_type is object or member_type.__eq__(member, member._value_) is True
@@ -342,7 +410,7 @@ def _is_same_member(rebuilt_member: Enum, original_member: Enum) -> bool:
         # metaclass. They are restored separately; attributes that the constructor does set must still match.
         and rebuilt_state.keys() <= original_state.keys()
         and all(
-            value is _UNSET_SLOT or _is_same_or_interchangeable(value, original_state[k])
+            value is _UNSET or _is_same_or_interchangeable(value, original_state[k])
             for k, value in rebuilt_state.items()
         )
         # E.g. the `str` that `str.__new__` got, which can differ from the value
@@ -397,20 +465,37 @@ def _is_same_timezone(rebuilt: Any, original: Any) -> bool:
     )
 
 
-def _get_member_state(member: Enum) -> dict[tuple[Any, ...], Any]:
+def _get_member_state(member: Enum) -> dict[_MemberStateKey, Any]:
     """Return the attributes of the member in its `__dict__` and in the slots of its classes, except enum internals"""
-    state: dict[tuple[Any, ...], Any] = {
+    state: dict[_MemberStateKey, Any] = {
         ("attribute", k): v for k, v in vars(member).items() if k not in _ENUM_MEMBER_INTERNAL_ATTRIBUTES
     }
-    # A subclass can declare a slot with the same name as a slot of its base, and the member has both. The copy has the
-    # same bases as the original, so we tell the slots apart by the position of their class in the MRO
-    for position, cls in enumerate(type(member).__mro__):
-        for slot_name in _get_own_slot_names(cls):
-            try:
-                state["slot", position, slot_name] = cls.__dict__[slot_name].__get__(member, type(member))
-            except AttributeError:  # The slot isn't set
-                state["slot", position, slot_name] = _UNSET_SLOT
+    for key, descriptor in _get_slots(type(member)):
+        try:
+            state[key] = descriptor.__get__(member, type(member))
+        except AttributeError:  # The slot isn't set
+            state[key] = _UNSET
     return state
+
+
+_SLOTS_BY_CLASS: "weakref.WeakKeyDictionary[type, tuple[tuple[_MemberStateKey, Any], ...]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _get_slots(cls: type) -> tuple[tuple[_MemberStateKey, Any], ...]:
+    """Return the keys of the slots of the instances of the class in their state, and the descriptors of the slots.
+
+    A subclass can declare a slot with the same name as a slot of its base, and the member has both. The copy has the
+    same bases as the original, so we tell the slots apart by the position of their class in the MRO.
+    """
+    if (slots := _SLOTS_BY_CLASS.get(cls)) is None:
+        slots = _SLOTS_BY_CLASS[cls] = tuple(
+            (("slot", position, slot_name), base.__dict__[slot_name])
+            for position, base in enumerate(cls.__mro__)
+            for slot_name in _get_own_slot_names(base)
+        )
+    return slots
 
 
 def _get_own_slot_names(cls: type) -> tuple[str, ...]:
@@ -422,21 +507,22 @@ def _get_own_slot_names(cls: type) -> tuple[str, ...]:
     )
 
 
-def _restore_member_state(copied: Enum, original: Enum, rebuilt_head: Enum) -> None:
-    """Restore only state absent from the full HEAD reconstruction, never constructor-produced state."""
-    constructed_state = _get_member_state(rebuilt_head)
-    copied_state = _get_member_state(copied)
-    for key, value in _get_member_state(original).items():
-        if (
-            constructed_state.get(key, _UNSET_SLOT) is not _UNSET_SLOT
-            or copied_state.get(key, _UNSET_SLOT) is not _UNSET_SLOT
-        ):
-            continue
+def _restore_member_state(copied: Enum, changes: tuple[tuple[_MemberStateKey, Any], ...]) -> None:
+    """Set the state that the latest member got after construction on its copy, or delete what was deleted"""
+    for key, value in changes:
         if key[0] == "attribute":
-            vars(copied)[key[1]] = value
-        elif value is not _UNSET_SLOT:
-            # Use the descriptor itself: a subclass can shadow a base's slot with a slot of the same name.
-            type(copied).__mro__[key[1]].__dict__[key[2]].__set__(copied, value)
+            if value is _UNSET:
+                vars(copied).pop(key[1], None)
+            else:
+                vars(copied)[key[1]] = value
+        else:
+            # The descriptor itself, because a subclass can shadow a slot of its base with a slot of the same name
+            descriptor = type(copied).__mro__[key[1]].__dict__[key[2]]
+            if value is not _UNSET:
+                descriptor.__set__(copied, value)
+            else:
+                with contextlib.suppress(AttributeError):  # The constructor of the version didn't set it either
+                    descriptor.__delete__(copied)
 
 
 def _wrap_enum_nonmember(enum_cls: type[Enum], name: str, value: Any) -> Any:
