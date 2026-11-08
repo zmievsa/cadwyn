@@ -1,12 +1,15 @@
 import copy
 import dataclasses
+import functools
 import inspect
 import itertools
 import reprlib
 from collections.abc import Callable
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Any,
+    ClassVar,
     NamedTuple,
     Union,
     get_args,
@@ -37,15 +40,25 @@ from cadwyn._utils import (
     DATACLASS_SLOTS,
     Sentinel,
     fully_unwrap_decorator,
+    is_same_value,
 )
 from cadwyn.exceptions import InvalidGenerationInstructionError
+from cadwyn.structure.schemas import (
+    FieldDidntHaveInstruction,
+    FieldHadInstruction,
+)
 
-from ._annotations import (
+from ._annotation_utils import (
     _copy_field_info,
 )
 from ._common import (
     _get_deep_copy_error,
 )
+
+if TYPE_CHECKING:
+    from ._models import (
+        _PydanticModelWrapper,
+    )
 
 PYDANTIC_DECORATOR_TYPE_TO_DECORATOR_MAP: dict[type[_decorators.DecoratorInfo], Callable[..., Any]] = {
     ValidatorDecoratorInfo: pydantic.validator,  # ty: ignore[deprecated]  # Preserve Pydantic v1 migrations.
@@ -339,6 +352,62 @@ def _wrap_validator(
         return _ValidatorWrapper(func=func, decorator=actual_decorator, kwargs=kwargs, is_classmethod=is_classmethod)
 
 
+def _change_field(
+    model: "_PydanticModelWrapper[BaseModel]",
+    alter_schema_instruction: FieldHadInstruction,
+    version_change_name: str,
+    defined_annotations: dict[str, Any],
+    field: PydanticFieldWrapper,
+    annotation: Union[Any, None],
+):
+    if alter_schema_instruction.type is not Sentinel:
+        if is_same_value(field.annotation, alter_schema_instruction.type) and (
+            field.type_changed_by is None
+            or issubclass(model.cls, field.type_changed_by)
+            # Another model that shares the field (e.g. a sibling) could have changed its type only for itself
+            or is_same_value(annotation, alter_schema_instruction.type)
+        ):
+            raise InvalidGenerationInstructionError(
+                f'You tried to change the type of field "{alter_schema_instruction.name}" to '
+                f'"{alter_schema_instruction.type}" from "{model.name}" in "{version_change_name}" '
+                f'but it already has type "{field.annotation}"',
+            )
+        field.annotation = alter_schema_instruction.type
+        field.type_changed_by = model.cls
+        model.annotations[alter_schema_instruction.name] = alter_schema_instruction.type
+
+    if alter_schema_instruction.new_name is not Sentinel:
+        if alter_schema_instruction.new_name == alter_schema_instruction.name:
+            raise InvalidGenerationInstructionError(
+                f'You tried to change the name of field "{alter_schema_instruction.name}" '
+                f'from "{model.name}" in "{version_change_name}" '
+                "but it already has that name.",
+            )
+        model.fields[alter_schema_instruction.new_name] = model.fields.pop(alter_schema_instruction.name)
+        model.annotations[alter_schema_instruction.new_name] = model.annotations.pop(
+            alter_schema_instruction.name,
+            defined_annotations[alter_schema_instruction.name],
+        )
+
+    for attr_name in alter_schema_instruction.field_changes.__dataclass_fields__:
+        attr_value = getattr(alter_schema_instruction.field_changes, attr_name)
+        if attr_value is not Sentinel:
+            # Another model that shares the field (e.g. a sibling) could have set the value only for itself
+            if is_same_value(field.passed_field_attributes.get(attr_name, Sentinel), attr_value) and is_same_value(
+                field.get_field_attributes(model.cls).get(attr_name, Sentinel), attr_value
+            ):
+                raise InvalidGenerationInstructionError(
+                    f'You tried to change the attribute "{attr_name}" of field '
+                    f'"{alter_schema_instruction.name}" '
+                    f'of "{model.name}" to {attr_value!r} in "{version_change_name}" '
+                    "but it already has that value.",
+                )
+            # Like Cadwyn always did, we don't change the annotation's metadata, so a constraint from it (e.g. from
+            # `Annotated[str, Field(min_length=1)]`) still wins over the new value. Changing it would make the older
+            # versions reject the requests and responses that they have always accepted whenever it is stricter.
+            field.update_attribute(name=attr_name, value=attr_value, changed_by=model.cls)
+
+
 def _change_annotated_metadata(
     annotation: Any, should_change: Callable[[Any], bool], change: Callable[[Any], Any]
 ) -> Any:
@@ -430,3 +499,69 @@ def _metadata_attribute_can_be_deleted(metadata: Any, attr_name: str) -> bool:
     if isinstance(metadata, FieldInfo) and attr_name not in _FIELD_INFO_ATTRIBUTES_REMOVED_BY_DIDNT_HAVE:
         return False
     return _metadata_has_attribute(metadata, attr_name)
+
+
+def _delete_field_attributes(
+    model: "_PydanticModelWrapper[BaseModel]",
+    alter_schema_instruction: FieldDidntHaveInstruction,
+    version_change_name: str,
+    field: PydanticFieldWrapper,
+    annotation: Any,
+) -> None:
+    for attr_name in alter_schema_instruction.attributes:
+        deleted = False
+
+        # Another model that shares the field (e.g. a sibling) could have already deleted it from the shared attributes
+        if attr_name in field.passed_field_attributes or attr_name in field.get_changed_field_attributes(model.cls):
+            deleted = True
+        # Any metadata with such an attribute counts (even if it is None) to keep accepting the same instructions
+        if get_origin(annotation) == Annotated and any(
+            _metadata_has_attribute(sub_ann, attr_name) for sub_ann in get_args(annotation)[1:]
+        ):
+            annotation = _change_annotated_metadata(
+                annotation,
+                functools.partial(_metadata_attribute_can_be_deleted, attr_name=attr_name),
+                functools.partial(_delete_metadata_attribute, attr_name=attr_name),
+            )
+            model.annotations[alter_schema_instruction.name] = annotation
+            deleted = True
+        if not deleted:
+            raise InvalidGenerationInstructionError(
+                f'You tried to delete the attribute "{attr_name}" of field "{alter_schema_instruction.name}" '
+                f'from "{model.name}" in "{version_change_name}" '
+                "but it already doesn't have that attribute.",
+            )
+        # Even if only the annotation has it because the subclasses that share the field could still have it
+        field.delete_attribute(name=attr_name, changed_by=model.cls)
+
+
+def _delete_field_from_model(model: "_PydanticModelWrapper[BaseModel]", field_name: str, version_change_name: str):
+    if field_name in model.fields:
+        model.fields.pop(field_name)
+        model.annotations.pop(field_name)
+        for validator_name, validator in model.validators.copy().items():
+            if isinstance(validator, _PerFieldValidatorWrapper) and field_name in validator.fields:
+                validator.fields.remove(field_name)
+                # TODO: This behavior doesn't feel natural
+                if not validator.fields:
+                    model.validators[validator_name].is_deleted = True
+
+    elif (
+        field_name in model.validators
+        and isinstance(model.validators[field_name], _ValidatorWrapper)
+        and hasattr(model.validators[field_name], "decorator")
+        and model.validators[field_name].decorator == pydantic.computed_field
+    ):
+        validator = model.validators[field_name]
+        model.validators[field_name].is_deleted = True
+        model.annotations.pop(field_name, None)
+    elif field_name in model.annotations and get_origin(model.annotations[field_name]) is ClassVar:
+        # Handle ClassVar fields - they exist in annotations but not in model.fields
+        model.annotations.pop(field_name)
+        # Also remove the attribute from other_attributes if it exists there
+        model.other_attributes.pop(field_name, None)
+    else:
+        raise InvalidGenerationInstructionError(
+            f'You tried to delete a field "{field_name}" from "{model.name}" '
+            f'in "{version_change_name}" but it doesn\'t have such a field.',
+        )

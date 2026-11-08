@@ -33,7 +33,7 @@ from ._common import (
 )
 
 if TYPE_CHECKING:
-    from ._models import (
+    from ._generator import (
         SchemaGenerator,
     )
 

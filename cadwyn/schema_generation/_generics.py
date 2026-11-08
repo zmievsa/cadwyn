@@ -5,19 +5,20 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Union,
+    cast,
     get_args,
     get_origin,
 )
 
 from pydantic import BaseModel
-from pydantic._internal._generics import PydanticGenericMetadata
+from pydantic._internal._generics import PydanticGenericMetadata, replace_types
 
 from cadwyn._utils import (
     _get_type_alias_value,
     lenient_issubclass,
 )
 
-from ._annotations import (
+from ._annotation_utils import (
     _UNRESOLVED,
     _eval_forward_refs,
     _get_value_of_type_alias_with_args,
@@ -25,8 +26,13 @@ from ._annotations import (
 )
 
 if TYPE_CHECKING:
-    from ._models import (
+    from ._generator import (
         SchemaGenerator,
+    )
+    from ._models import (
+        _PydanticModelWrapper,
+    )
+    from ._references import (
         _CycleCopier,
     )
 
@@ -115,6 +121,40 @@ def _change_version_of_generic_metadata(
         "args": generator.annotation_transformer.change_version_of_annotation(_eval_generic_args(model)),
         "parameters": generic_metadata["parameters"],
     }
+
+
+def _substitute_type_vars_of_inherited_annotation(
+    model: "_PydanticModelWrapper[BaseModel]",
+    schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]",
+    field_name: str,
+    annotation: Any,
+) -> Any:
+    """Substitute the type vars in the annotation of a field that the model inherits, as pydantic does.
+
+    Pydantic substitutes the type vars of the inherited fields of the parametrizations of generics (e.g. `second: U`
+    of `Pair` in `Pair[str, int]` and in `class StrIntPair(Pair[str, int])`) but not of the fields that a class
+    defines itself. So when the copy of the model defines such a field because of an instruction, it gets the
+    annotation of its parent with the type vars that the parametrizations between them substitute.
+    """
+    parent = next(parent for parent in model._get_parents(schemas) if field_name in parent.annotations).cls
+    # Like pydantic, each class inherits the field from its first base that has it. The other bases, e.g. `A[int]`
+    # in `class M(A[int], B[T])`, do not substitute its type vars even if they reuse them.
+    classes_on_the_way: list[type] = []
+    cls: type = model.cls
+    while cls is not parent:
+        classes_on_the_way.append(cls)
+        cls = next(base for base in cls.__bases__ if lenient_issubclass(base, parent))
+    # From the parametrization closest to the parent to the model itself, as pydantic substitutes them
+    for cls in reversed(classes_on_the_way):
+        origin = getattr(cls, "__pydantic_generic_metadata__", {}).get("origin")
+        if origin is not None:
+            parameters = origin.__pydantic_generic_metadata__["parameters"]
+            type_vars = dict(zip(parameters, _eval_generic_args(cast("type[BaseModel]", cls)), strict=True))
+            substituted_annotation = replace_types(annotation, type_vars)
+            # Pydantic rebuilds Annotated even without type vars in it, which would give it another cache key
+            if substituted_annotation != annotation:
+                annotation = substituted_annotation
+    return annotation
 
 
 def _is_parametrization(model: type[BaseModel]) -> bool:
