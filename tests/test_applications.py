@@ -658,6 +658,10 @@ class _AsyncCallableCustomizer:
         (_AsyncCallableCustomizer(), "_AsyncCallableCustomizer"),
         (functools.partial(_AsyncCallableCustomizer()), "_AsyncCallableCustomizer"),
         (functools.partial(functools.partial(_AsyncCallableCustomizer())), "_AsyncCallableCustomizer"),
+        (staticmethod(_async_customizer), "_async_customizer"),
+        (classmethod(_async_customizer), "_async_customizer"),
+        (functools.partial(staticmethod(_async_customizer)), "_async_customizer"),
+        (staticmethod(functools.partial(_AsyncCallableCustomizer())), "_AsyncCallableCustomizer"),
     ],
 )
 def test__openapi_customizer__async_callback__should_raise_type_error_at_startup(customizer: Any, name: str):

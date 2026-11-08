@@ -180,8 +180,12 @@ class Cadwyn(FastAPI):
             )
         # An async callback would return an unawaited coroutine on every /openapi.json request
         customizer_target = openapi_customizer
-        while isinstance(customizer_target, functools.partial):
-            customizer_target = customizer_target.func
+        while isinstance(customizer_target, functools.partial | staticmethod | classmethod):
+            customizer_target = (
+                customizer_target.func
+                if isinstance(customizer_target, functools.partial)
+                else customizer_target.__func__
+            )
         if iscoroutinefunction(customizer_target) or iscoroutinefunction(
             getattr(type(customizer_target), "__call__", None)  # noqa: B004  # Async __call__ of callable objects
         ):
