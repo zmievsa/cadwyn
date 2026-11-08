@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import FunctionType, MethodType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, Union, cast
 
 from pydantic import AliasChoices, AliasPath, BaseModel, Field
@@ -280,13 +281,33 @@ class ValidatorDidntExistInstruction:
 
 def _get_validator_names(model: type[BaseModel], func: object) -> list[str]:
     decorators = model.__pydantic_decorators__
-    # Attribute access binds classmethods, but leaves plain assigned functions unchanged.
-    function = getattr(func, "__func__", func)
     return [
         name
         for name, decorator in (decorators.field_validators | decorators.model_validators).items()
-        if getattr(decorator.func, "__func__", decorator.func) is function
+        if _validator_functions_match(decorator.func, func)
     ]
+
+
+def _validator_functions_match(registered: object, reference: object) -> bool:
+    if registered is reference:
+        return True
+    if isinstance(reference, classmethod | staticmethod):
+        return _validator_functions_match(registered, reference.__func__)
+    if not isinstance(registered, MethodType):
+        return False
+    if not isinstance(reference, MethodType):
+        return registered.__func__ is reference
+    # Pydantic rebinds class validators to each model, including inherited ones.
+    # Other bound methods must keep their instance/class identity.
+    return registered.__func__ is reference.__func__ and (
+        registered.__self__ is reference.__self__
+        or (
+            isinstance(registered.__self__, type)
+            and issubclass(registered.__self__, BaseModel)
+            and isinstance(reference.__self__, type)
+            and issubclass(reference.__self__, BaseModel)
+        )
+    )
 
 
 def _raise_for_ambiguous_validator(model: type[BaseModel], names: list[str]) -> None:
@@ -361,6 +382,13 @@ class AlterSchemaInstructionFactory:
         func: "Union[str, Callable[..., Any], classmethod[Any, Any, Any], PydanticDescriptorProxy[_ValidatorReturnT]]",
         /,
     ) -> AlterValidatorInstructionFactory:
+        # Match stored callables before unwrapping partials or descriptors. Ordinary
+        # bound Python methods retain their legacy name-based instructions.
+        names = _get_validator_names(self.schema, func)
+        if names and not (isinstance(func, MethodType) and isinstance(func.__func__, FunctionType)):
+            if len(names) > 1:
+                _raise_for_ambiguous_validator(self.schema, names)
+            return AlterValidatorInstructionFactory(self.schema, names[0])
         func = unwrap_wrapped_function(func)
 
         if isinstance(func, PydanticDescriptorProxy):
@@ -384,7 +412,6 @@ class AlterSchemaInstructionFactory:
                 raise CadwynStructureError(f'"{self.schema.__name__}" has no field or model validator named "{func}".')
             return AlterValidatorInstructionFactory(self.schema, func)
 
-        names = _get_validator_names(self.schema, func)
         if len(names) == 1:
             return AlterValidatorInstructionFactory(self.schema, names[0])
         if names:

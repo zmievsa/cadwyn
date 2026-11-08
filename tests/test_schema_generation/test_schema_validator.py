@@ -1,4 +1,5 @@
 import re
+from functools import partial, wraps
 from typing import Any, Literal
 
 import pytest
@@ -214,25 +215,182 @@ def test__validator_didnt_exist__assigned_classmethod__should_resolve_attribute_
     assert schemas["2001-01-01"][Model](x="hello").x == "HELLO"
 
 
+@pytest.mark.parametrize("other_registration", ["function", "partial"])
+def test__validator_didnt_exist__partial_registration__should_remove_partial_without_removing_underlying_function(
+    create_runtime_schemas: CreateRuntimeSchemas, other_registration: str
+):
+    def normalize(value):
+        return value + "!"
+
+    other = {"function": normalize, "partial": partial(normalize)}[other_registration]
+
+    class Model(BaseModel):
+        x: str
+        y: str
+        check_x = field_validator("x")(other)
+        check_y = field_validator("y")(partial(normalize))
+
+    schemas = create_runtime_schemas(version_change(schema(Model).validator(Model.check_y).didnt_exist))
+
+    assert schemas["2000-01-01"][Model](x="x", y="y").model_dump() == {"x": "x!", "y": "y"}
+    assert schemas["2001-01-01"][Model](x="x", y="y").model_dump() == {"x": "x!", "y": "y!"}
+
+
+@pytest.mark.parametrize("binding", ["staticmethod", "classmethod"])
+@pytest.mark.parametrize("reference", ["attribute", "descriptor"])
+def test__validator_didnt_exist__partial_in_descriptor__should_preserve_other_registration(
+    create_runtime_schemas: CreateRuntimeSchemas, binding: str, reference: str
+):
+    def normalize(value):
+        return value + "!"
+
+    def normalize_with_cls(cls, value):
+        return normalize(value)
+
+    wrapped = {
+        "staticmethod": staticmethod(partial(normalize)),
+        "classmethod": classmethod(partial(normalize_with_cls)),
+    }[binding]
+
+    class Model(BaseModel):
+        x: str
+        y: str
+        check_x = field_validator("x")(normalize)
+        check_y = field_validator("y")(wrapped)
+
+    references = {"attribute": Model.check_y, "descriptor": Model.__dict__["check_y"]}
+    schemas = create_runtime_schemas(version_change(schema(Model).validator(references[reference]).didnt_exist))
+
+    assert schemas["2000-01-01"][Model](x="x", y="y").model_dump() == {"x": "x!", "y": "y"}
+    assert schemas["2001-01-01"][Model](x="x", y="y").model_dump() == {"x": "x!", "y": "y!"}
+
+
+def test__validator_didnt_exist__wraps_decorator__should_match_wrapper_identity(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    def normalize(value):
+        return value + "!"
+
+    @wraps(normalize)
+    def decorated(value):
+        return normalize(value) + "?"
+
+    class Model(BaseModel):
+        x: str
+        y: str
+        check_x = field_validator("x")(normalize)
+        check_y = field_validator("y")(decorated)
+
+    schemas = create_runtime_schemas(version_change(schema(Model).validator(Model.check_y).didnt_exist))
+
+    assert schemas["2000-01-01"][Model](x="x", y="y").model_dump() == {"x": "x!", "y": "y"}
+    assert schemas["2001-01-01"][Model](x="x", y="y").model_dump() == {"x": "x!", "y": "y!?"}
+
+
+def test__schema_validator__unregistered_bound_instance__should_not_match_another_instance():
+    class Normalizer:
+        def __init__(self, suffix: str):
+            self.suffix = suffix
+
+        def normalize(self, value):
+            return value + self.suffix
+
+    first, second = Normalizer("!"), Normalizer("?")
+
+    class Model(BaseModel):
+        x: str
+        check_x = field_validator("x")(staticmethod(first.normalize))
+
+    assert Model(x="x").x == "x!"
+    with pytest.raises(CadwynStructureError, match="The passed function must be a pydantic validator"):
+        schema(Model).validator(second.normalize).didnt_exist
+
+
+def test__validator_didnt_exist__different_bound_classes__should_only_remove_matching_registration(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Normalizer:
+        @classmethod
+        def normalize(cls, value):
+            return value + "!"
+
+    class First(Normalizer):
+        pass
+
+    class Second(Normalizer):
+        pass
+
+    class Model(BaseModel):
+        x: str
+        y: str
+        check_x = field_validator("x")(staticmethod(First.normalize))
+        check_y = field_validator("y")(staticmethod(Second.normalize))
+
+    schemas = create_runtime_schemas(version_change(schema(Model).validator(Second.normalize).didnt_exist))
+
+    assert schemas["2000-01-01"][Model](x="x", y="y").model_dump() == {"x": "x!", "y": "y"}
+    assert schemas["2001-01-01"][Model](x="x", y="y").model_dump() == {"x": "x!", "y": "y!"}
+
+
+def test__schema_validator__unregistered_partial__should_not_match_underlying_function():
+    def normalize(value):
+        return value.upper()
+
+    class Model(BaseModel):
+        x: str
+        check_x = field_validator("x")(normalize)
+
+    assert Model(x="hello").x == "HELLO"
+    with pytest.raises(CadwynStructureError, match="The passed function must be a pydantic validator"):
+        schema(Model).validator(partial(normalize)).didnt_exist
+
+
+@pytest.mark.parametrize("binding", ["plain", "classmethod"])
+def test__schema_validator__partial_reused_in_registrations__should_require_attribute_name(binding: str):
+    def normalize(value):
+        return value + "!"
+
+    def normalize_with_cls(cls, value):
+        return normalize(value)
+
+    wrapped = {"plain": partial(normalize), "classmethod": classmethod(partial(normalize_with_cls))}[binding]
+
+    class Model(BaseModel):
+        x: str
+        y: str
+        check_x = field_validator("x")(wrapped)
+        check_y = field_validator("y")(wrapped)
+
+    assert Model(x="x", y="y").model_dump() == {"x": "x!", "y": "y!"}
+    with pytest.raises(CadwynStructureError, match='multiple validators on "Model": check_x, check_y'):
+        schema(Model).validator(Model.check_y).didnt_exist
+
+
 @pytest.mark.parametrize("reference", ["attribute", "function", "name"])
+@pytest.mark.parametrize("binding", ["plain", "classmethod"])
 def test__validator_didnt_exist__function_reused_in_models_and_inheritance__should_only_change_declaring_model_tree(
-    create_runtime_schemas: CreateRuntimeSchemas, reference: str
+    create_runtime_schemas: CreateRuntimeSchemas, reference: str, binding: str
 ):
     def normalize(value):
         return value.upper()
 
+    def normalize_with_cls(cls, value):
+        return normalize(value)
+
+    function = normalize_with_cls if binding == "classmethod" else normalize
+
     class Parent(BaseModel):
         x: str
-        normalize_x = field_validator("x")(normalize)
+        normalize_x = field_validator("x")(function)
 
     class Child(Parent):
         pass
 
     class Other(BaseModel):
         x: str
-        check_x = field_validator("x")(normalize)
+        check_x = field_validator("x")(function)
 
-    references = {"attribute": Child.normalize_x, "function": normalize, "name": "normalize_x"}
+    references = {"attribute": Child.normalize_x, "function": function, "name": "normalize_x"}
     schemas = create_runtime_schemas(version_change(schema(Parent).validator(references[reference]).didnt_exist))
 
     assert schemas["2000-01-01"][Parent](x="hello").x == "hello"
@@ -263,7 +421,7 @@ def test__validator_didnt_exist__function_reused_for_fields__should_remove_only_
 
 
 @pytest.mark.parametrize("reference", ["attribute", "function"])
-@pytest.mark.parametrize("binding", ["plain", "classmethod"])
+@pytest.mark.parametrize("binding", ["plain", "classmethod", "external_classmethod"])
 def test__validator_didnt_exist__ambiguous_function__should_require_attribute_name(reference: str, binding: str):
     def normalize(value):
         return value.upper()
@@ -271,7 +429,14 @@ def test__validator_didnt_exist__ambiguous_function__should_require_attribute_na
     def normalize_with_cls(cls, value):
         return normalize(value)
 
-    function = normalize_with_cls if binding == "classmethod" else normalize
+    class Normalizer:
+        normalize = classmethod(normalize_with_cls)
+
+    function = {
+        "plain": normalize,
+        "classmethod": normalize_with_cls,
+        "external_classmethod": staticmethod(Normalizer.normalize),
+    }[binding]
 
     class Model(BaseModel):
         x: str
@@ -302,10 +467,21 @@ def test__validator_didnt_exist__assigned_inherited_validator_on_child__should_k
     class Child(Parent):
         pass
 
+    class Sibling(Parent):
+        pass
+
     references = {"attribute": Child.normalize_x, "function": normalize, "name": "normalize_x"}
     assert Child(x="hello").x == "HELLO"
+    assert Parent(x="hello").x == "HELLO"
+    assert Sibling(x="hello").x == "HELLO"
     with pytest.raises(InvalidGenerationInstructionError, match='delete a validator "normalize_x" from "Child"'):
         create_runtime_schemas(version_change(schema(Child).validator(references[reference]).didnt_exist))
+    assert Parent(x="hello").x == "HELLO"
+    assert Sibling(x="hello").x == "HELLO"
+    unchanged = create_runtime_schemas(version_change())
+    assert unchanged["2000-01-01"][Parent](x="hello").x == "HELLO"
+    assert unchanged["2000-01-01"][Child](x="hello").x == "HELLO"
+    assert unchanged["2000-01-01"][Sibling](x="hello").x == "HELLO"
 
 
 @pytest.mark.parametrize("name", ["missing", "serialize_x"])
@@ -582,3 +758,24 @@ def test__schema_generation__with_staticmethod_field_validator__generated_model_
     assert original_foo == "hello_validated"
     assert schemas["2000-01-01"][SchemaWithStaticmethodFieldValidator](foo="hello").foo == original_foo
     assert schemas["2001-01-01"][SchemaWithStaticmethodFieldValidator](foo="hello").foo == original_foo
+
+
+def test__validator_didnt_exist__partial_with_copied_method_name__should_remove_partial_registration(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    def normalize(cls, value):
+        return value + "!"
+
+    method_validator = field_validator("x")(normalize)
+    wrapped_partial = wraps(normalize)(partial(normalize))
+
+    class Model(BaseModel):
+        x: str
+        y: str
+        normalize = method_validator
+        check_y = field_validator("y")(classmethod(wrapped_partial))
+
+    schemas = create_runtime_schemas(version_change(schema(Model).validator(Model.check_y).didnt_exist))
+
+    assert schemas["2000-01-01"][Model](x="x", y="y").model_dump() == {"x": "x!", "y": "y"}
+    assert schemas["2001-01-01"][Model](x="x", y="y").model_dump() == {"x": "x!", "y": "y!"}

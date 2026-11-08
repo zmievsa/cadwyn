@@ -109,6 +109,8 @@ In the older version, `width` can be negative, while `height` must still be posi
 
 When a function has only one registration in the model, you can also pass the model attribute or the bare function, e.g. `schema(Model).validator(Model.check_x).didnt_exist` or `schema(Model).validator(must_be_positive).didnt_exist`. Reusing the function in other models does not affect this lookup. When it has several registrations in the same model, use the attribute name as a string: attribute access can return the same function for each registration, so Cadwyn raises `CadwynStructureError` for ambiguous function references. Existing method-based instructions keep their name-based behavior.
 
+A `functools.partial` or a function wrapped with `functools.wraps` is a distinct callable: pass the actual object registered for that validator. A newly constructed equivalent partial does not identify that registration.
+
 To remove an inherited validator, give the instruction to the base model that declares it; the removal applies to its subclasses too. Giving it only to a subclass that inherits the validator raises `InvalidGenerationInstructionError`, as with method-style validators. Adding validators by attribute name with `.existed` is unsupported; pass a decorated function as shown above instead.
 
 ## Rename a schema in the older version
