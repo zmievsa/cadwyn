@@ -1,41 +1,108 @@
 from collections import Counter, OrderedDict, defaultdict, deque
-from enum import Enum, Flag
-from typing import (
-    Any,
-    Union,
-    cast,
-)
+from enum import Enum
+from typing import Any, Union, cast
 
-from fastapi._compat import (
-    ModelField,
-)
-from fastapi.dependencies.models import Dependant
+from fastapi._compat import ModelField
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
-from pydantic_core import (
-    SchemaSerializer,
-    SchemaValidator,
-    core_schema,
-)
+from pydantic_core import SchemaSerializer, SchemaValidator, core_schema
 
 from cadwyn._utils import (
     get_member_with_same_value,
     is_enum_looked_up_by_value,
 )
 
-from ._body_inputs import _do_compiled_fields_match, _InputPlan
-from ._core_schema import (
-    _CORE_SCHEMA_DEFINITIONS,
-    _CORE_SCHEMA_ERRORS,
-    _do_compiled_settings_match,
-    _get_validation_paths,
-    _has_core_schema_of_types,
-    _register_core_schema_definitions,
+from ._core_schema import _CORE_SCHEMA_DEFINITIONS, _register_core_schema_definitions
+
+
+def _can_lazy_items_be_plain_enum_copies(route: APIRoute) -> bool:
+    """Whether the request body of the route can have lazy items that are members of copies of plain enums or flags.
+
+    We only say no when the schema of its single body param is made of nothing but schemas that we know can't make
+    such members, and check it once per route, so that the lazy items of other routes are never walked.
+    """
+    if len(route.dependant.body_params) != 1:
+        return True
+    field = route.dependant.body_params[0]
+    cached = _CAN_LAZY_ITEMS_BE_PLAIN_ENUM_COPIES.get(id(field))
+    if cached is not None and cached[0] is field:
+        return cached[1]
+    result = _can_schema_make_members_of_plain_enum_copies(cast("dict[str, Any]", field._type_adapter.core_schema))
+    _CAN_LAZY_ITEMS_BE_PLAIN_ENUM_COPIES[id(field)] = field, result
+    return result
+
+
+_CAN_LAZY_ITEMS_BE_PLAIN_ENUM_COPIES: dict[int, tuple[ModelField, bool]] = {}
+# The core schemas that only make values of builtin types
+_SCHEMAS_OF_BUILTIN_VALUES = frozenset(
+    (
+        *("none", "bool", "int", "float", "decimal", "complex", "str", "bytes"),
+        *("date", "time", "datetime", "timedelta", "uuid", "url", "multi-host-url"),
+    )
 )
-from ._dependencies import _get_dependency_overrides, _iter_dependants_that_fastapi_solves
+# The keys of the child schemas of the core schemas that only make what their children make. Any other schema,
+# such as `any`, validators, or custom ones, can make anything.
+_PASS_THROUGH_SCHEMA_KEYS = {
+    **dict.fromkeys(("list", "set", "frozenset", "generator", "tuple"), ("items_schema",)),
+    "dict": ("keys_schema", "values_schema"),
+    **dict.fromkeys(
+        ("nullable", "default", "custom-error", "model", "model-field", "dataclass", "dataclass-field"), ("schema",)
+    ),
+    **dict.fromkeys(("union", "tagged-union"), ("choices",)),
+    "lax-or-strict": ("lax_schema", "strict_schema"),
+    "json-or-python": ("json_schema", "python_schema"),
+    "chain": ("steps",),
+    **dict.fromkeys(("model-fields", "dataclass-args"), ("fields",)),
+}
 
 
-def _replace_with_head_enum_members(data: Any) -> Any:
+def _can_schema_make_members_of_plain_enum_copies(schema: dict[str, Any]) -> bool:
+    stack = [_register_core_schema_definitions(schema)]
+    seen: set[int] = set()
+    while stack:
+        node = stack.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        kind = node["type"]
+        if kind in _SCHEMAS_OF_BUILTIN_VALUES:
+            continue
+        if kind == "literal":
+            if any(isinstance(value, Enum) for value in node["expected"]):
+                return True
+        elif kind == "enum":
+            head_enum = getattr(node["cls"], "__cadwyn_original_model__", None)
+            if head_enum is not None and not is_enum_looked_up_by_value(head_enum):
+                return True
+        elif kind == "definition-ref":
+            if node["schema_ref"] not in _CORE_SCHEMA_DEFINITIONS:  # pragma: no cover # Pydantic registers them all
+                return True
+            stack.append(_CORE_SCHEMA_DEFINITIONS[node["schema_ref"]])
+        elif (
+            kind not in _PASS_THROUGH_SCHEMA_KEYS
+            # Custom `__init__` and `__post_init__` run code of users
+            or node.get("custom_init")
+            or node.get("post_init")
+            # Extra values of models and dataclasses are not validated
+            or node.get("config", {}).get("extra_fields_behavior") == "allow"
+            or node.get("extra_behavior") == "allow"
+        ):
+            return True
+        else:
+            for key in _PASS_THROUGH_SCHEMA_KEYS[kind]:
+                if key not in node:
+                    # Containers without the schemas of their items take anything
+                    return True
+                child = node[key]
+                if key not in ("fields", "choices") and not isinstance(child, list):
+                    stack.append(child)
+                    continue
+                # Fields and tagged union choices are keyed, and union choices can be `(schema, label)` tuples
+                children = child.values() if isinstance(child, dict) else child
+                stack.extend(item[0] if isinstance(item, tuple) else item for item in children)
+    return False
+
+
+def _replace_with_head_enum_members(data: Any, *, wrap_lazy_iterators: bool = True) -> Any:
     """Replace each member of a copy of a plain enum or flag with the member of its head enum that has the same value.
 
     Python-mode dumps keep the members of the copies, which the head rejects for plain enums and flags. The head looks
@@ -45,15 +112,18 @@ def _replace_with_head_enum_members(data: Any) -> Any:
 
     We only walk into the containers that pydantic makes when it validates a field, and copy only the ones in which
     something below them changes, with the same types. Copying them again hashes their keys and items, which runs code
-    of users, so if a copy fails, we keep the container as it is. Anything else, such as models (a dump has none, but
-    a migration can put some into the body), iterators, or containers of other types, could run code of users or lose
-    what they hold if we iterated or copied it, so we leave it as it is. We walk depth-first without recursion, so that
+    of users, so if a copy fails, we keep the container as it is. Pydantic's own lazy iterators (of `Iterable` and
+    `Generator` fields) get wrapped unless told otherwise, so that their items are replaced only as the endpoint
+    consumes them. Anything
+    else, such as models (a dump has none, but a migration can put some into the body), other iterators, or
+    containers of other types, could run code of users or lose what they hold if we iterated or copied it, so we leave
+    it as it is. We walk depth-first without recursion, so that
     data as deep as pydantic accepts never hits the recursion limit, and we don't walk into the containers that contain
     themselves again.
     """
     children = _get_children_that_can_be_enum_members(data)
     if children is None:
-        return _replace_with_head_enum_member(data)
+        return _replace_with_head_enum_member(data, wrap_lazy_iterators=wrap_lazy_iterators)
     # Each frame is [container, iterator over its children, its children with replaced members, whether any changed]
     stack: list[list[Any]] = [[data, iter(children), [], False]]
     containers_on_stack = {id(data)}
@@ -63,7 +133,7 @@ def _replace_with_head_enum_members(data: Any) -> Any:
         if child is not _NO_CHILD:
             grandchildren = None if id(child) in containers_on_stack else _get_children_that_can_be_enum_members(child)
             if grandchildren is None:
-                replaced_child = _replace_with_head_enum_member(child)
+                replaced_child = _replace_with_head_enum_member(child, wrap_lazy_iterators=wrap_lazy_iterators)
                 frame[2].append(replaced_child)
                 frame[3] = frame[3] or replaced_child is not child
             else:
@@ -92,7 +162,9 @@ _PYDANTIC_ITERATOR_TYPES = (
 )
 
 
-def _replace_with_head_enum_member(value: Any) -> Any:
+def _replace_with_head_enum_member(value: Any, *, wrap_lazy_iterators: bool) -> Any:
+    if wrap_lazy_iterators and type(value) in _PYDANTIC_ITERATOR_TYPES:
+        return map(_replace_with_head_enum_members, value)
     if not isinstance(value, Enum):
         return value
     head_enum: Union[type[Enum], None] = getattr(type(value), "__cadwyn_original_model__", None)
@@ -100,148 +172,6 @@ def _replace_with_head_enum_member(value: Any) -> Any:
         return value
     head_member = get_member_with_same_value(head_enum, value)
     return value if head_member is None else head_member
-
-
-def _to_head_lazy_enum_input(
-    body: Any, head_dependant: Dependant, head_route: APIRoute, *, enabled: bool, embed_body_fields: bool
-) -> Any:
-    """Convert lazy members only where every body reader expects the same plain enum.
-
-    An enum inside a union can already succeed through another branch. Walking into that union, or into opaque
-    validators or Any, would change working requests. Leave these paths and user iterators as they are.
-    """
-    if (
-        not enabled
-        or embed_body_fields
-        or len(head_dependant.body_params) != 1
-        or _get_dependency_overrides(head_route)
-    ):
-        return body
-    plan = _get_lazy_enum_field_plan(head_dependant.body_params[0])
-    if plan is None or any(
-        _get_lazy_enum_field_plan(field) != plan
-        for dependant in _iter_dependants_that_fastapi_solves(head_dependant, head_route)
-        for field in dependant.body_params
-    ):
-        return body
-    try:
-        return _to_lazy_enum_input_by_plan(body, plan)
-    except RecursionError:  # pragma: no cover # Leave bodies deeper than Python's recursion limit unchanged.
-        return body
-
-
-_LAZY_ENUM_INPUT_PLANS: dict[int, tuple[ModelField, _InputPlan]] = {}
-
-
-def _get_lazy_enum_field_plan(field: ModelField) -> _InputPlan:
-    cached = _LAZY_ENUM_INPUT_PLANS.get(id(field))
-    if cached is not None and cached[0] is field:
-        return cached[1]
-    try:
-        plan = _get_lazy_enum_input_plan(cast("dict[str, Any]", field._type_adapter.core_schema))
-    except _CORE_SCHEMA_ERRORS:  # pragma: no cover # FastAPI and Pydantic don't build such schemas.
-        plan = None
-    _LAZY_ENUM_INPUT_PLANS[id(field)] = field, plan
-    return plan
-
-
-def _get_lazy_enum_input_plan(
-    schema: dict[str, Any], *, lazy_item: bool = False, visiting: frozenset[str] = frozenset()
-) -> _InputPlan:
-    schema = _register_core_schema_definitions(schema)
-    kind = schema["type"]
-    if kind == "definition-ref":
-        ref = schema["schema_ref"]
-        if ref in visiting:
-            return None
-        return _get_lazy_enum_input_plan(_CORE_SCHEMA_DEFINITIONS[ref], lazy_item=lazy_item, visiting=visiting | {ref})
-    if kind == "nullable" or (kind == "default" and schema.get("on_error", "raise") == "raise"):
-        return _get_lazy_enum_input_plan(schema["schema"], lazy_item=lazy_item, visiting=visiting)
-    # Item after-validators only run after the enum accepts the item. A validator surrounding a generator can
-    # consume it and catch its errors, so normalization there could change a request that already succeeds.
-    if kind == "function-after" and lazy_item and not _has_core_schema_of_types(schema, frozenset(("generator",))):
-        return _get_lazy_enum_input_plan(schema["schema"], lazy_item=True, visiting=visiting)
-    if kind == "enum" and lazy_item:
-        cls = schema["cls"]
-        if (
-            is_enum_looked_up_by_value(cls)
-            or cls._missing_.__func__ not in (Enum._missing_.__func__, Flag._missing_.__func__)
-            or cls.__eq__ is not Enum.__eq__
-            or cls.__hash__ is not Enum.__hash__
-            or any(type(member._value_) not in (str, int, float, bool, type(None)) for member in cls)
-        ):
-            return None
-        return "enum", cls
-    if kind in ("generator", "list", "dict"):
-        child_key = "values_schema" if kind == "dict" else "items_schema"
-        child = _get_lazy_enum_input_plan(
-            schema.get(child_key, {"type": "any"}), lazy_item=lazy_item or kind == "generator", visiting=visiting
-        )
-        return (kind, child) if child is not None else None
-    if (
-        kind == "model"
-        and not schema.get("custom_init")
-        and not schema.get("post_init")
-        and _do_compiled_settings_match(schema["cls"], schema.get("config"))
-    ):
-        inner = schema["schema"]
-        if schema.get("root_model"):
-            return _get_lazy_enum_input_plan(inner, lazy_item=lazy_item, visiting=visiting)
-        return _get_lazy_enum_model_plan(schema["cls"], inner, lazy_item=lazy_item, visiting=visiting)
-    return None
-
-
-def _get_lazy_enum_model_plan(
-    cls: type[BaseModel], inner: dict[str, Any], *, lazy_item: bool, visiting: frozenset[str]
-) -> _InputPlan:
-    if inner["type"] != "model-fields" or not _do_compiled_fields_match(cls, inner["fields"]):
-        return None
-    fields = []
-    keys_of_fields = []
-    for name, field in cls.model_fields.items():
-        paths = _get_validation_paths(cls, name, field)
-        if any(len(path) != 1 or type(path[0]) is not str for path in paths):
-            return None
-        keys = tuple(path[0] for path in paths)
-        keys_of_fields.append(set(keys))
-        child = _get_lazy_enum_input_plan(inner["fields"][name]["schema"], lazy_item=lazy_item, visiting=visiting)
-        if child is not None:
-            fields.append((keys, child))
-    if any(keys & other for index, keys in enumerate(keys_of_fields) for other in keys_of_fields[index + 1 :]):
-        return None
-    return ("fields", tuple(fields)) if fields else None
-
-
-def _to_lazy_enum_input_by_plan(data: Any, plan: tuple[Any, ...]) -> Any:
-    kind = plan[0]
-    if kind == "enum":
-        return (
-            _replace_with_head_enum_member(data)
-            if getattr(type(data), "__cadwyn_original_model__", None) is plan[1]
-            else data
-        )
-    if kind == "generator":
-        return (
-            (_to_lazy_enum_input_by_plan(item, plan[1]) for item in data)
-            if type(data) in _PYDANTIC_ITERATOR_TYPES
-            else data
-        )
-    if kind == "list" and type(data) is list:
-        children = [_to_lazy_enum_input_by_plan(item, plan[1]) for item in data]
-        return children if any(old is not new for old, new in zip(data, children, strict=True)) else data
-    if kind in ("dict", "fields") and type(data) is dict and all(type(key) is str for key in data):
-        copied = data.copy()
-        if kind == "dict":
-            for key, value in data.items():
-                copied[key] = _to_lazy_enum_input_by_plan(value, plan[1])
-        else:
-            for keys, child in plan[1]:
-                for key in keys:
-                    if key in data:
-                        copied[key] = _to_lazy_enum_input_by_plan(data[key], child)
-                        break
-        return copied if any(data[key] is not copied[key] for key in data) else data
-    return data
 
 
 def _get_children_that_can_be_enum_members(value: Any) -> Union[list[Any], None]:
