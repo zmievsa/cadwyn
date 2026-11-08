@@ -50,6 +50,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Changed
 
+- Documented that responses are validated twice: a model object that an endpoint returns runs its validators and `model_post_init` again ([#592](https://github.com/zmievsa/cadwyn/issues/592)).
 - Type checkers now accept unions in `convert_request_to_next_version_for()` and `convert_response_to_previous_version_for()` ([#530](https://github.com/zmievsa/cadwyn/issues/530)).
 - `had(...)` instructions now accept distinct values that compare equal, such as `True` and `1`, instead of rejecting real changes. Unknown objects use identity; field errors say `of "Model"` instead of `from "Model"` (see [instruction comparisons](https://docs.cadwyn.dev/concepts/schema_migrations/#change-a-field-in-the-older-version)) ([#541](https://github.com/zmievsa/cadwyn/issues/541)).
 
