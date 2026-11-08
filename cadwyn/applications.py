@@ -1,9 +1,10 @@
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from datetime import date
+from inspect import iscoroutine
 from logging import getLogger
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Self, Union, assert_never, cast, overload
+from typing import TYPE_CHECKING, Any, Optional, Self, TypeAlias, Union, assert_never, cast, overload
 from urllib.parse import quote
 
 import fastapi
@@ -51,6 +52,9 @@ logger = getLogger(__name__)
 # FastAPI silently keeps unknown keyword arguments in `app.extra`, so we reject these ourselves. The 8.x docs told
 # apps to pass the values that turn the changelog off, which still do what they did, so we only warn about them
 _REMOVED_CHANGELOG_ARGUMENTS = {"changelog_url": None, "include_changelog_url_in_schema": False}
+
+# OpenAPI is a JSON boundary with application-defined schema fields and extensions.
+OpenAPICustomizer: TypeAlias = Callable[[dict[str, Any], Union[str, None]], dict[str, Any]]
 
 
 def _get_effective_include_in_schema(route: BaseRoute, effective_route_context: _EffectiveRouteContext | None) -> bool:
@@ -116,6 +120,7 @@ class Cadwyn(FastAPI):
         api_version_description: Optional[str] = None,
         versioning_middleware_class: type[VersionPickingMiddleware] = VersionPickingMiddleware,
         run_background_tasks_of_latest_version_dependencies: bool = False,
+        openapi_customizer: Union[OpenAPICustomizer, None] = None,
         debug: bool = False,
         title: str = "FastAPI",
         summary: Union[str, None] = None,
@@ -176,6 +181,7 @@ class Cadwyn(FastAPI):
                 "Set the root path on your server instead (e.g. `root_path` or your proxy's prefix)."
             )
         self.versions = versions
+        self.openapi_customizer = openapi_customizer
         self.run_background_tasks_of_latest_version_dependencies = run_background_tasks_of_latest_version_dependencies
         self._cadwyn_initialized = False
 
@@ -461,6 +467,16 @@ class Cadwyn(FastAPI):
         # clients generated from OpenAPI keep sending the version of the document.
         if is_versioned and self._api_version_location == "custom_header" and not self._api_version_has_default_value:
             self._mark_api_version_header_as_required_in_openapi(openapi)
+        if self.openapi_customizer is not None:
+            openapi = self.openapi_customizer(openapi, version if is_versioned else None)
+            if not isinstance(openapi, dict):
+                # Reject async callbacks without leaving an unawaited coroutine behind.
+                if iscoroutine(openapi):
+                    openapi.close()
+                raise TypeError(
+                    f"OpenAPI customizer {self.openapi_customizer!r} must return a dict, "
+                    f"got {type(openapi).__name__}. The callback must be synchronous."
+                )
         return JSONResponse(openapi)
 
     def _mark_api_version_header_as_required_in_openapi(self, openapi: dict[str, Any]) -> None:
