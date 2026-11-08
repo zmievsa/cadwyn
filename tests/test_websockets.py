@@ -13,6 +13,8 @@ from starlette.websockets import WebSocketDisconnect
 from cadwyn import Cadwyn, Version, VersionBundle, VersionedAPIRouter
 from cadwyn.exceptions import CadwynError
 
+HEADER = "x-api-version"
+
 
 @pytest.fixture(params=["custom_header", "path"])
 def location(request: pytest.FixtureRequest) -> Literal["custom_header", "path"]:
@@ -30,7 +32,7 @@ def _app(
     app = Cadwyn(
         versions=versions,
         api_version_location=location,
-        api_version_parameter_name="api_version",
+        api_version_parameter_name=HEADER if location == "custom_header" else "api_version",
         api_version_format=version_format,
         api_version_default_value=default,
     )
@@ -70,17 +72,19 @@ def _app(
 
 def _connect(client: TestClient, location: str, version: str | None):
     path = f"/{version}/ws" if location == "path" and version is not None else "/ws"
-    headers = {"api_version": version} if location == "custom_header" and version is not None else {}
+    headers = {HEADER: version} if location == "custom_header" and version is not None else {}
     return client.websocket_connect(path, headers=headers)
 
 
 @pytest.mark.parametrize(
-    ("requested", "expected"),
+    ("location", "requested", "expected"),
     [
-        ("2024-02-01", "2024-02-01"),
-        ("2024-01-01", "2024-01-01"),
-        ("2024-01-15", "2024-01-01"),
-        ("2025-01-01", "2024-02-01"),
+        ("custom_header", "2024-02-01", "2024-02-01"),
+        ("custom_header", "2024-01-01", "2024-01-01"),
+        ("custom_header", "2024-01-15", "2024-01-01"),
+        ("custom_header", "2025-01-01", "2024-02-01"),
+        ("path", "2024-02-01", "2024-02-01"),
+        ("path", "2024-01-01", "2024-01-01"),
     ],
 )
 def test__versioned_websocket__header_or_path_version__should_select_version_before_dependencies(
@@ -117,8 +121,8 @@ def test__versioned_websocket__plain_starlette_socket__should_select_api_version
 
     router.add_websocket_route("/{api_version}/plain/ws" if location == "path" else "/plain/ws", plain_socket)
     app.generate_and_include_versioned_routers(router)
-    path = "/2024-01-15/plain/ws" if location == "path" else "/plain/ws"
-    with TestClient(app) as client, client.websocket_connect(path, headers={"api_version": "2024-01-15"}) as socket:
+    path = "/2024-01-01/plain/ws" if location == "path" else "/plain/ws"
+    with TestClient(app) as client, client.websocket_connect(path, headers={HEADER: "2024-01-01"}) as socket:
         assert socket.receive_json() == "2024-01-01"
 
 
@@ -169,7 +173,7 @@ def test__http__callable_default_alongside_websockets__should_keep_request_defau
         response = client.get("/ping")
     assert response.status_code == 200
     assert response.json() == "pong"
-    assert response.headers["api_version"] == "2024-01-01"
+    assert response.headers[HEADER] == "2024-01-01"
 
 
 def test__versioned_websocket__request_default_needed__should_raise_clear_unsupported_error():
@@ -317,3 +321,50 @@ def test__versioned_websocket__openapi__should_keep_websockets_out_of_every_sche
             schema = client.get(f"/openapi.json?version={version}")
             assert schema.status_code == 200
             assert list(schema.json()["paths"]) == ["/{api_version}/ping" if location == "path" else "/ping"]
+
+
+def _http_version(client: TestClient, location: str, version: str | None) -> str | None:
+    path = f"/{version}/ping" if location == "path" and version is not None else "/ping"
+    headers = {HEADER: version} if location == "custom_header" and version is not None else {}
+    response = client.get(path, headers=headers)
+    return (
+        response.headers[HEADER if location == "custom_header" else "api_version"]
+        if response.status_code == 200
+        else None
+    )
+
+
+def _websocket_version(client: TestClient, location: str, version: str | None) -> str | None:
+    try:
+        with _connect(client, location, version) as socket:
+            picked = socket.receive_json()["context"]
+            socket.send_text("bye")
+            socket.receive_json()
+            return picked
+    except WebSocketDisconnect as exc:
+        if exc.code != 1008:
+            raise
+        return None
+
+
+# Path versioning does not support default versions
+@pytest.mark.parametrize(
+    ("location", "default"), [("custom_header", None), ("custom_header", "2024-01-15"), ("path", None)]
+)
+@pytest.mark.parametrize(
+    "version", [None, "", "bad", "2024-99-01", "2000-01-01", "2024-01-01", "2024-01-15", "2024-02-01", "2025-01-01"]
+)
+def test__versioned_websocket__same_version_inputs_as_http__should_pick_the_same_version(
+    location: Literal["custom_header", "path"], default: str | None, version: str | None
+):
+    with TestClient(_app(location, default=default)) as client:
+        assert _websocket_version(client, location, version) == _http_version(client, location, version)
+
+
+def test__versioned_websocket__unknown_date_in_path__should_reject_like_http():
+    with TestClient(_app("path")) as client:
+        assert client.get("/2024-01-15/ping").status_code == 404
+        with ExitStack() as connections, pytest.raises(WebSocketDisconnect) as exc:
+            connections.enter_context(client.websocket_connect("/2024-01-15/ws"))
+    assert exc.value.code == 1008
+    assert "API version" in exc.value.reason

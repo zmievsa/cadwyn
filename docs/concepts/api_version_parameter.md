@@ -88,13 +88,15 @@ Note that this applies to **every** request without the version header, not only
 
 ## WebSocket connections
 
-WebSocket routes included with `generate_and_include_versioned_routers()` select their version from the configured header or path parameter. Date versions use the closest earlier version when there is no exact match. Header versioning also supports a constant `api_version_default_value`.
+WebSocket routes included with `generate_and_include_versioned_routers()` pick their version with the same rules as HTTP requests: from the configured header or path, and otherwise from a constant `api_version_default_value`. A date version from a header or default that has no exact match uses the closest earlier version. Path versioning accepts only the versions in your `VersionBundle`, so a socket at `/2024-01-15/ws` is rejected just as `GET /2024-01-15/users` returns a 404.
 
 ```python
 {! ./docs_src/concepts/api_version_parameter/block009.py !}
 ```
 
 The selected version is available in `versions.api_version_var` before dependencies run, throughout the connection and dependency cleanup. Cadwyn restores the previous context when the connection ends. Missing, invalid, and unmatched versions close the connection before acceptance with code `1008` and an API version reason. A callable `api_version_default_value` requires an HTTP `Request`: for WebSockets, send the version explicitly or use a constant default.
+
+A custom `versioning_middleware_class` does not run for WebSockets because it is a `BaseHTTPMiddleware`, which handles only HTTP requests. Sockets use the header or path, the default, or a version that your own ASGI middleware sets in `api_version_var` before the connection reaches Cadwyn's router. Note that browser WebSocket clients can't send custom headers, so for them use path versioning, a constant default, or such an ASGI middleware.
 
 Routes included with `app.include_router()` keep working as unversioned WebSockets, even when a version header or default is present. A version preselected in `api_version_var` retains its routing behavior. WebSockets stay out of OpenAPI. See [WebSocket endpoint migrations](endpoint_migrations.md#websocket-endpoint-migrations) for changing their routes and dependencies between versions.
 

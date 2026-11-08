@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal, Optional, Protocol, Union
 import fastapi
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, DispatchFunction, RequestResponseEndpoint
+from starlette.requests import HTTPConnection
 from starlette.responses import Response
 from starlette.types import ASGIApp
 from typing_extensions import override
@@ -36,7 +37,7 @@ class HeaderVersionManager:
         super().__init__()
         self.api_version_parameter_name = api_version_parameter_name
 
-    def get(self, request: Request) -> Union[str, None]:
+    def get(self, request: HTTPConnection) -> Union[str, None]:
         return request.headers.get(self.api_version_parameter_name)
 
 
@@ -48,7 +49,7 @@ class URLVersionManager:
         self.possible_version_values = possible_version_values
         self.url_version_regex = re.compile(f"/({'|'.join(re.escape(v) for v in possible_version_values)})/")
 
-    def get(self, request: Request) -> Union[str, None]:
+    def get(self, request: HTTPConnection) -> Union[str, None]:
         if m := self.url_version_regex.search(request.url.path):
             return m.group(1)
         return None

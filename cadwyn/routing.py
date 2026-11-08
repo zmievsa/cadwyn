@@ -23,11 +23,12 @@ from typing_extensions import override
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn._utils import same_method_definition_as_in
 from cadwyn.exceptions import CadwynError
-from cadwyn.middleware import APIVersionFormat, APIVersionLocation
+from cadwyn.middleware import APIVersionFormat, HeaderVersionManager, URLVersionManager
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.versions import _UPLOAD_CLOSE_TIMEOUT_SECONDS
 
 _logger = getLogger(__name__)
+_DATE_ADAPTER = TypeAdapter(date)
 
 
 class _RootCadwynAPIRouter(APIRouter):
@@ -37,7 +38,7 @@ class _RootCadwynAPIRouter(APIRouter):
         api_version_parameter_name: str,
         api_version_var: ContextVar[Union[str, None]],
         api_version_format: APIVersionFormat,
-        api_version_location: APIVersionLocation = "custom_header",
+        api_version_manager: HeaderVersionManager | URLVersionManager,
         api_version_default_value: str | Callable[[Request], Awaitable[str]] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -47,8 +48,7 @@ class _RootCadwynAPIRouter(APIRouter):
         self.api_version_var = api_version_var
         self.unversioned_routes: list[BaseRoute] = []
         self.api_version_format = api_version_format
-        self._api_version_location = api_version_location
-        self._api_version_path_parameter_name = api_version_parameter_name.replace("-", "_")
+        self._api_version_manager = api_version_manager
         self._api_version_default_value = api_version_default_value
 
     async def _get_routes_from_closest_suitable_version(self, version: VersionType) -> list[BaseRoute]:
@@ -164,20 +164,8 @@ class _RootCadwynAPIRouter(APIRouter):
             DEFAULT_API_VERSION_VAR.reset(default_token)
 
     def _pick_websocket_version(self, websocket: WebSocket) -> str:
-        version = None
-        if self._api_version_location == "custom_header":
-            version = websocket.headers.get(self.api_version_parameter_name)
-        else:
-            # Match the actual version parameter, including dates between declared versions.
-            # Looking for a version-like URL segment could pick an unrelated path parameter.
-            for router in self.versioned_routers.values():
-                for route in router.routes:
-                    match, child_scope = route.matches(websocket.scope)
-                    if match == Match.FULL:
-                        version = child_scope.get("path_params", {}).get(self._api_version_path_parameter_name)
-                        break
-                if version is not None:
-                    break
+        # VersionPickingMiddleware is HTTP-only, so we pick the version with the same manager and rules here
+        version = self._api_version_manager.get(websocket)
         if version is None:
             if callable(self._api_version_default_value):
                 raise CadwynError(
@@ -190,7 +178,7 @@ class _RootCadwynAPIRouter(APIRouter):
             raise WebSocketException(status.WS_1008_POLICY_VIOLATION, "Missing API version")
         if self.api_version_format == "date":
             try:
-                TypeAdapter(date).validate_python(version)
+                _DATE_ADAPTER.validate_python(version)
             except ValidationError as exc:
                 raise WebSocketException(status.WS_1008_POLICY_VIOLATION, "Invalid API version") from exc
         return version

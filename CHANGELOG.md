@@ -43,7 +43,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Added
 
-- FastAPI WebSocket routes now support `endpoint("/ws", ["WEBSOCKET"])` with `.existed`, `.didnt_exist`, and `.had(path=..., name=..., dependencies=...)`. HTTP methods cannot be mixed into a WebSocket selector; data converters remain HTTP-only. Refs [#67](https://github.com/zmievsa/cadwyn/issues/67).
+- FastAPI WebSocket routes now support `endpoint("/ws", ["WEBSOCKET"])` with `.existed`, `.didnt_exist`, and `.had(path=..., name=..., dependencies=...)` ([#67](https://github.com/zmievsa/cadwyn/issues/67)).
 - Pass `openapi_customizer` to `Cadwyn()` to customize each generated OpenAPI document with its selected version, or `None` for the unversioned document. The callback must be synchronous and return the edited dict or a replacement dict ([#255](https://github.com/zmievsa/cadwyn/issues/255)).
 - Remove a validator assigned as a model attribute, such as `check_x = field_validator("x")(func)`, with `schema(M).validator("check_x").didnt_exist` ([#133](https://github.com/zmievsa/cadwyn/issues/133)).
 - Version leaf models' Pydantic settings, including their generic parametrizations, with `schema(Model).had(config=ConfigDict(...))`; supported keys control extra fields, name and alias validation, whitespace stripping, freezing, titles, JSON schema extras, and arbitrary types. Unsupported keys and unchanged values are rejected, including in `HeadVersion`; rendering reports the model and key when a config callable's source, defaults, or bindings cannot be rendered safely ([#91](https://github.com/zmievsa/cadwyn/issues/91)).
@@ -62,7 +62,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 ### Fixed
 
 - Fixed missing runtime annotation names in version changes, schema generation, and versioned-router generation, so `typing.get_type_hints()` can inspect them ([#485](https://github.com/zmievsa/cadwyn/issues/485)).
-- Generated WebSocket routes now select the API version from headers, paths, or a constant default, including date fallback, and keep the version context through connection cleanup. Missing or invalid versions are rejected before acceptance; callable defaults require an explicit version for WebSockets, while unversioned sockets keep working with an empty preselected version. Refs [#67](https://github.com/zmievsa/cadwyn/issues/67).
+- Generated WebSocket routes now pick the API version from the header, path, or a constant default with the same rules as HTTP requests, and reject missing or invalid versions before accepting the connection ([#67](https://github.com/zmievsa/cadwyn/issues/67)).
 - Client disconnects no longer leave uploaded files open on unversioned routes or when a dependency fails before a versioned endpoint runs ([#594](https://github.com/zmievsa/cadwyn/issues/594)).
 - Plain enums and flags with `enum(...)` instructions now work in supported lazy `Iterable` and `Generator` request fields without consuming items early ([#591](https://github.com/zmievsa/cadwyn/issues/591)). Strict responses and opaque validation paths retain their previous behavior; see [known limitations](https://docs.cadwyn.dev/theory/design_decisions/#known-limitations).
 - Enum copies now preserve extra attributes and slots assigned outside construction, including metaclass-assigned labels, on unchanged members. Constructor-produced state is rebuilt for each version ([#589](https://github.com/zmievsa/cadwyn/issues/589)).
