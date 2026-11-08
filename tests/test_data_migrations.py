@@ -15132,7 +15132,7 @@ def test__request_body_migration__with_plain_enums_in_lazy_or_sequence_fields__s
 @pytest.mark.parametrize("nested", [False, True], ids=["model", "nested_model"])
 @pytest.mark.parametrize("enum_type", [PlainEnum, PlainFlag])
 @pytest.mark.parametrize("container", [Sequence, Iterable, Generator])
-def test__response_body_migration__with_strict_plain_enum_fields__should_keep_legacy_validation(
+def test__response_body_migration__with_strict_plain_enum_fields__should_keep_older_validation_and_head_parity(
     create_versioned_clients: CreateVersionedClients,
     test_path: Literal["/test"],
     router: VersionedAPIRouter,
@@ -15160,9 +15160,14 @@ def test__response_body_migration__with_strict_plain_enum_fields__should_keep_le
     removed = "b" if enum_type is PlainEnum else "execute"
     clients = create_versioned_clients(version_change(enum(enum_type).didnt_have(removed)))
 
-    for version_client in clients.values():
-        with pytest.raises(fastapi.exceptions.ResponseValidationError):
-            version_client.get(test_path)
+    with pytest.raises(fastapi.exceptions.ResponseValidationError):
+        clients["2000-01-01"].get(test_path)
+
+    plain = FastAPI()
+    plain.include_router(router)
+    response = clients["2001-01-01"].get(test_path)
+    assert response.status_code == 200
+    assert response.content == TestClient(plain).get(test_path).content
 
 
 @pytest.mark.parametrize("annotation", [Iterable[PlainEnum], Generator[PlainEnum, None, None]])
