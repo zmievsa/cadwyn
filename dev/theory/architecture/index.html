@@ -1973,8 +1973,8 @@
 </thead>
 <tbody>
 <tr>
-<td><code>cadwyn/structure/versions.py</code></td>
-<td><code>VersionChange</code>, <code>Version</code>, <code>HeadVersion</code>, and <code>VersionBundle</code>. It also runs request and response migrations during a request (<code>VersionBundle._versioned()</code> and the methods it calls).</td>
+<td><code>cadwyn/structure/versions/</code></td>
+<td><code>VersionChange</code>, <code>Version</code>, and <code>HeadVersion</code> (<code>_changes.py</code>), and <code>VersionBundle</code> (<code>_bundle.py</code>). The other submodules run request and response migrations during a request (<code>VersionBundle._versioned()</code> and the methods it calls): <code>_requests.py</code> and <code>_responses.py</code> run them, <code>_migration_targets.py</code> picks the migrations by schema, and most of the rest prepare request bodies, forms, and files for the latest version.</td>
 </tr>
 <tr>
 <td><code>cadwyn/structure/schemas.py</code>, <code>enums.py</code>, <code>endpoints.py</code></td>
@@ -1985,8 +1985,8 @@
 <td><code>RequestInfo</code>, <code>ResponseInfo</code>, and the <code>convert_request_to_next_version_for()</code> and <code>convert_response_to_previous_version_for()</code> migrations.</td>
 </tr>
 <tr>
-<td><code>cadwyn/schema_generation.py</code></td>
-<td>Copies of models and enums for every version: <code>generate_versioned_models()</code> and <code>SchemaGenerator</code>. Also <code>migrate_response_body()</code>.</td>
+<td><code>cadwyn/schema_generation/</code></td>
+<td>Copies of models and enums for every version. <code>_versioned_models.py</code> has <code>generate_versioned_models()</code> and <code>migrate_response_body()</code>, and <code>_schema_generator.py</code> has <code>SchemaGenerator</code>. <code>_models.py</code>, <code>_fields.py</code>, and <code>_enums.py</code> describe models, fields, and enums, and <code>_instructions.py</code> applies schema instructions to them. <code>_annotation_transformer.py</code> replaces models in annotations with their copies, <code>_annotation_evaluation.py</code> evaluates annotations, <code>_callables.py</code> copies endpoints and dependencies, and <code>_generics.py</code> and <code>_references.py</code> handle generics and models that refer to each other.</td>
 </tr>
 <tr>
 <td><code>cadwyn/route_generation.py</code></td>
@@ -2014,6 +2014,7 @@
 </tr>
 </tbody>
 </table>
+<p><code>cadwyn/structure/versions/</code> and <code>cadwyn/schema_generation/</code> used to be single modules. <code>present_private_submodules_as_package()</code> keeps the old <code>__module__</code> of every object in their private submodules. Their <code>__init__.py</code> files export only the public names, so Cadwyn's own code imports private names from the submodules.</p>
 <h2 id="versions-and-version-changes">Versions and version changes<a class="headerlink" href="#versions-and-version-changes" title="Permanent link">&para;</a></h2>
 <p>A <code>VersionBundle</code> lists the versions from newest to oldest, optionally after a <code>HeadVersion</code>. <code>VersionBundle.versions</code> keeps that order, and <code>VersionBundle.reversed_versions</code> goes from oldest to newest. The oldest version can't have version changes, and each version change belongs to exactly one version.</p>
 <p>The changes of a version describe how to turn that version into the previous, older one. When a <code>VersionChange</code> subclass is created, <code>VersionChange.__init_subclass__()</code> checks it and sorts its instructions by kind:</p>
@@ -2023,7 +2024,7 @@
 </ul>
 <p>Schema generation and route generation read only these sorted attributes. See <a href="../../concepts/version_changes/">Version changes</a> for how users write them.</p>
 <h2 id="schema-generation">Schema generation<a class="headerlink" href="#schema-generation" title="Permanent link">&para;</a></h2>
-<p><code>generate_versioned_models()</code> in <code>schema_generation.py</code> returns a <code>SchemaGenerator</code> for every version:</p>
+<p><code>generate_versioned_models()</code> returns a <code>SchemaGenerator</code> for every version:</p>
 <ol>
 <li>It wraps the models and enums that schema and enum instructions or request migrations by schema mention (<code>VersionBundle.versioned_schemas</code> and <code>versioned_enums</code>) into an editable description of the class: a <code>_PydanticModelWrapper</code> (fields, annotations, validators, and bases) or an <code>_EnumWrapper</code> (members). Other models are wrapped when they are first needed.</li>
 <li>It applies the <code>HeadVersion</code> instructions to these wrappers. Then it goes through the versions from newest to oldest. For each version, it saves a copy of the current wrappers in that version's <code>SchemaGenerator</code>, and then applies that version's schema and enum instructions so that the next, older version sees them.</li>
