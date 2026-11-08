@@ -1398,6 +1398,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#websocket-endpoint-migrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WebSocket endpoint migrations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#dealing-with-endpoint-duplicates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1876,6 +1887,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#websocket-endpoint-migrations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WebSocket endpoint migrations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#dealing-with-endpoint-duplicates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1967,6 +1989,78 @@
 <h3 id="warning-dependency-changes">Warning: dependency changes<a class="headerlink" href="#warning-dependency-changes" title="Permanent link">&para;</a></h3>
 <p>Note that changing FastAPI endpoint dependencies is only going to affect the initial validation. Cadwyn will run your altered dependencies for each request to the endpoint but ultimately your endpoint code is always going to use the HEAD version of your dependencies. So be careful.</p>
 <p>Also note that if some of your dependencies are added at app/router level, they <strong>are</strong> going to be overwritten by the instructions above. Most of the time it is rather safe, however, as all the necessary dependencies will still run on HEAD version.</p>
+<h2 id="websocket-endpoint-migrations">WebSocket endpoint migrations<a class="headerlink" href="#websocket-endpoint-migrations" title="Permanent link">&para;</a></h2>
+<p>Use <code>["WEBSOCKET"]</code> to select a FastAPI WebSocket route defined with <code>@router.websocket()</code>. It supports <code>.didnt_exist</code>, <code>.existed</code>, and <code>.had(path=..., name=..., dependencies=...)</code>. Mark sockets that only exist in older versions with <code>@router.only_exists_in_older_versions</code>, just like HTTP endpoints.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Cadwyn</span><span class="p">,</span>
+    <span class="n">Version</span><span class="p">,</span>
+    <span class="n">VersionBundle</span><span class="p">,</span>
+    <span class="n">VersionChange</span><span class="p">,</span>
+    <span class="n">VersionedAPIRouter</span><span class="p">,</span>
+    <span class="n">endpoint</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">Depends</span><span class="p">,</span> <span class="n">Header</span><span class="p">,</span> <span class="n">WebSocket</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">current_token</span><span class="p">(</span><span class="n">token</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Header</span><span class="p">()):</span>
+    <span class="k">return</span> <span class="n">token</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">legacy_token</span><span class="p">(</span><span class="n">legacy_token</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Header</span><span class="p">()):</span>
+    <span class="k">return</span> <span class="n">legacy_token</span>
+
+
+<span class="n">router</span> <span class="o">=</span> <span class="n">VersionedAPIRouter</span><span class="p">()</span>
+
+
+<span class="nd">@router</span><span class="o">.</span><span class="n">websocket</span><span class="p">(</span>
+    <span class="s2">&quot;/ws/</span><span class="si">{room}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;room&quot;</span><span class="p">,</span> <span class="n">dependencies</span><span class="o">=</span><span class="p">[</span><span class="n">Depends</span><span class="p">(</span><span class="n">current_token</span><span class="p">)]</span>
+<span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">room_socket</span><span class="p">(</span><span class="n">websocket</span><span class="p">:</span> <span class="n">WebSocket</span><span class="p">,</span> <span class="n">room</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">accept</span><span class="p">()</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">send_json</span><span class="p">({</span><span class="s2">&quot;room&quot;</span><span class="p">:</span> <span class="n">room</span><span class="p">})</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+
+<span class="nd">@router</span><span class="o">.</span><span class="n">websocket</span><span class="p">(</span><span class="s2">&quot;/notifications&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">notifications</span><span class="p">(</span><span class="n">websocket</span><span class="p">:</span> <span class="n">WebSocket</span><span class="p">):</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">accept</span><span class="p">()</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">send_text</span><span class="p">(</span><span class="s2">&quot;notification&quot;</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+
+<span class="nd">@router</span><span class="o">.</span><span class="n">only_exists_in_older_versions</span>
+<span class="nd">@router</span><span class="o">.</span><span class="n">websocket</span><span class="p">(</span><span class="s2">&quot;/legacy&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">legacy_socket</span><span class="p">(</span><span class="n">websocket</span><span class="p">:</span> <span class="n">WebSocket</span><span class="p">):</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">accept</span><span class="p">()</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">send_text</span><span class="p">(</span><span class="s2">&quot;legacy&quot;</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">websocket</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">UpdateSockets</span><span class="p">(</span><span class="n">VersionChange</span><span class="p">):</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;Move chat connections and their token header; replace the legacy socket.&quot;</span>
+    <span class="n">instructions_to_migrate_to_previous_version</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">endpoint</span><span class="p">(</span><span class="s2">&quot;/ws/</span><span class="si">{room}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;WEBSOCKET&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">had</span><span class="p">(</span>
+            <span class="n">path</span><span class="o">=</span><span class="s2">&quot;/chat/</span><span class="si">{room}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;chat&quot;</span><span class="p">,</span>
+            <span class="n">dependencies</span><span class="o">=</span><span class="p">[</span><span class="n">Depends</span><span class="p">(</span><span class="n">legacy_token</span><span class="p">)],</span>
+        <span class="p">),</span>
+        <span class="n">endpoint</span><span class="p">(</span><span class="s2">&quot;/notifications&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;WEBSOCKET&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">didnt_exist</span><span class="p">,</span>
+        <span class="n">endpoint</span><span class="p">(</span><span class="s2">&quot;/legacy&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;WEBSOCKET&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">existed</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">Cadwyn</span><span class="p">(</span>
+    <span class="n">versions</span><span class="o">=</span><span class="n">VersionBundle</span><span class="p">(</span>
+        <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2024-02-01&quot;</span><span class="p">,</span> <span class="n">UpdateSockets</span><span class="p">),</span> <span class="n">Version</span><span class="p">(</span><span class="s2">&quot;2024-01-01&quot;</span><span class="p">)</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+<span class="n">app</span><span class="o">.</span><span class="n">generate_and_include_versioned_routers</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
+</code></pre></div>
+<p>In this example, clients of <code>2024-02-01</code> connect to <code>/ws/general</code> with the <code>token</code> header. Clients of <code>2024-01-01</code> connect to <code>/chat/general</code> with <code>legacy-token</code> instead. The older version also keeps <code>/legacy</code> and has no <code>/notifications</code> socket. Both clients pass their API version in the <code>x-api-version</code> header; <a href="../api_version_parameter/#websocket-connections">path versioning and constant defaults</a> also work.</p>
+<p>Unlike HTTP endpoints, WebSockets run only the dependencies of the selected version, including dependency overrides and cleanup. <code>.had(dependencies=...)</code> replaces the route's dependency list, including dependencies inherited from included routers. Dependencies declared in the endpoint signature still run. A path change must keep the same path parameter names. Use <code>func_name</code> to distinguish sockets with the same path, as in the endpoint duplicates example below.</p>
+<p><code>WEBSOCKET</code> must be the only method in its selector, and <code>.had()</code> accepts only <code>path</code>, <code>name</code>, and <code>dependencies</code> for sockets. Other attributes and mixed HTTP/WebSocket selectors raise an error when the instruction is defined. Request and response data converters remain HTTP-only.</p>
+<p>WebSockets stay out of OpenAPI. Cadwyn does not apply schema or message migrations to WebSocket connections; handle message formats in your endpoint code. These instructions support FastAPI <code>APIWebSocketRoute</code> routes only: plain Starlette <code>WebSocketRoute</code>s (<code>@router.websocket_route()</code>), plain Starlette <code>Route</code>s, <code>Mount</code>, and static files are outside their scope.</p>
 <h2 id="dealing-with-endpoint-duplicates">Dealing with endpoint duplicates<a class="headerlink" href="#dealing-with-endpoint-duplicates" title="Permanent link">&para;</a></h2>
 <p>Sometimes, when making advanced changes between versions, you need to rewrite your endpoint function entirely. So essentially you would have the following structure:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Annotated</span>
