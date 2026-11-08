@@ -4,7 +4,6 @@ import dataclasses
 import functools
 import inspect
 import types
-import typing
 from enum import Enum
 from typing import (
     TYPE_CHECKING,
@@ -27,7 +26,6 @@ from pydantic._internal._generics import PydanticGenericMetadata
 from pydantic.fields import FieldInfo
 from typing_extensions import (
     Doc,
-    Protocol,
     TypeVar,
     _AnnotatedAlias,
 )
@@ -171,9 +169,11 @@ def _change_version_of_model_bases(
     original_bases = model.__dict__.get("__orig_bases__", model.__bases__)
     if "__orig_bases__" not in model.__dict__:
         return orig_bases
+    # Typing aliases such as Generic[T] or Mixin[int] resolve the same way every time, so only the other objects
+    # with __mro_entries__ are the user's hooks
     has_user_hooks = any(
         not isinstance(base, type)
-        and get_origin(base) not in (Generic, typing.Protocol, Protocol)
+        and get_origin(base) is None
         and inspect.getattr_static(base, "__mro_entries__", None) is not None
         for base in original_bases
     )
