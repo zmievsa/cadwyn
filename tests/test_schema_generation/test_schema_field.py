@@ -3920,8 +3920,7 @@ def test__schema_field_had_name__child_of_mro_entries_base_from_getattr__should_
 ):
     class AliasWithHookFromGetattr:
         def __getattr__(self, name: str) -> Any:
-            if name != "__mro_entries__":
-                raise AttributeError(name)
+            assert name == "__mro_entries__"
             return lambda _bases: (ParentWithIntFooThatGetsRenamed,)
 
     class Child(AliasWithHookFromGetattr()):  # ty: ignore[invalid-base]
