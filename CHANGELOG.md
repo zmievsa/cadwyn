@@ -39,7 +39,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 - `enum(MyEnum).had(member=auto())` now honors the enum's `_generate_next_value_`. Pass explicit values to preserve the old values ([#554](https://github.com/zmievsa/cadwyn/issues/554)).
 - Container defaults and metadata preserve subclass types and attributes; unsafe copies raise `SchemaGenerationError`. Use plain containers for versioned classes or callables, and break cycles through factories (see [Defaults](https://docs.cadwyn.dev/concepts/schema_generation/#defaults)) ([#564](https://github.com/zmievsa/cadwyn/issues/564)).
 - `had(...)` now rejects the identical current object even when it is unequal to itself, such as a shared `math.nan`. Remove the redundant instruction ([#541](https://github.com/zmievsa/cadwyn/issues/541)).
-- `schema(M).validator(M.check_a).didnt_exist` now removes the validator stored in `check_a`. Before, if `check_a` held a function named like another validator, e.g. `check_a = field_validator("a")(check_b)`, it removed `check_b` instead. A function that backs several validators, none named after it, now raises `CadwynStructureError`; pass the attribute name instead, e.g. `schema(M).validator("check_a").didnt_exist` ([#133](https://github.com/zmievsa/cadwyn/issues/133)).
+- `schema(M).validator(M.check_a).didnt_exist` no longer removes another validator when `check_a` holds a function named like it, such as `check_b` in `check_a = field_validator("a")(check_b)`. It now removes `check_a`, or raises `CadwynStructureError` if the function backs several validators; then pass the attribute name, e.g. `schema(M).validator("check_a").didnt_exist` ([#133](https://github.com/zmievsa/cadwyn/issues/133)).
 
 ### Added
 
