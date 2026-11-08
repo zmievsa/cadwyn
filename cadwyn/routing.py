@@ -1,23 +1,89 @@
 import bisect
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from functools import cached_property
 from logging import getLogger
+from types import TracebackType
 from typing import Any, Union
 
+import anyio
 from fastapi.routing import APIRouter
-from starlette.datastructures import URL
+from starlette.datastructures import URL, FormData, UploadFile
 from starlette.responses import RedirectResponse
 from starlette.routing import BaseRoute, Match
 from starlette.types import Receive, Scope, Send
-from typing_extensions import override
+from typing_extensions import ParamSpec, override
 
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn._utils import same_method_definition_as_in
 from cadwyn.middleware import APIVersionFormat
 from cadwyn.structure.common import VersionType
+from cadwyn.structure.versions import (
+    _UPLOAD_CLOSE_TIMEOUT_SECONDS,
+    _UPLOADS_TO_CLOSE_SCOPE_KEY,
+    _close_upload,
+    _UploadsToClose,
+)
 
 _logger = getLogger(__name__)
+_CallbackParams = ParamSpec("_CallbackParams")
+
+
+class _ShieldedFileStack(AsyncExitStack):
+    def __init__(self, uploads: _UploadsToClose) -> None:
+        super().__init__()
+        self._uploads = uploads
+        self._forms: list[FormData] = []
+
+    @override
+    def push_async_callback(
+        self,
+        callback: Callable[_CallbackParams, Awaitable[object]],
+        /,
+        *args: _CallbackParams.args,
+        **kwds: _CallbackParams.kwargs,
+    ) -> Callable[_CallbackParams, Awaitable[object]]:
+        form = getattr(callback, "__self__", None)
+        if (
+            isinstance(form, FormData)
+            and getattr(callback, "__func__", None) is FormData.close
+            and not args
+            and not kwds
+        ):
+            self._forms.append(form)
+            super().push_async_callback(self._close_form, form)
+        else:
+            super().push_async_callback(callback, *args, **kwds)
+        return callback
+
+    async def _close_form(self, form: FormData) -> None:
+        for _, value in form.multi_items():
+            if isinstance(value, UploadFile):
+                await _close_upload(value)
+
+    @override
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        suppressed: bool | None = False
+        with anyio.move_on_after(_UPLOAD_CLOSE_TIMEOUT_SECONDS, shield=True) as cancel_scope:
+            try:
+                suppressed = await super().__aexit__(exc_type, exc_value, traceback)
+            finally:
+                # AnyIO 3.7 can propagate an earlier native cancellation when the deadline expires.
+                if cancel_scope.cancel_called:
+                    for form in self._forms:
+                        self._uploads.defer(form.multi_items())
+                    _logger.warning(
+                        "Cadwyn couldn't finish closing the request's uploaded files within %s seconds, "
+                        "so some uploads may stay open",
+                        _UPLOAD_CLOSE_TIMEOUT_SECONDS,
+                    )
+        return suppressed
 
 
 class _RootCadwynAPIRouter(APIRouter):
@@ -93,7 +159,23 @@ class _RootCadwynAPIRouter(APIRouter):
             # We use this order because if versioned routes go first and there is a versioned route that is
             # the same as an unversioned route -- the unversioned one becomes impossible to match.
             routes = self.unversioned_routes + routes
-        await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
+        file_stack = scope.get("fastapi_middleware_astack")
+        if scope["type"] == "http" and isinstance(file_stack, AsyncExitStack):
+            # FastAPI owns this stack and uses it only for files, not yield dependencies. Drain it here, in
+            # the same task and with the same exception, shielding only its exit from middleware cancellation.
+            # FastAPI's enclosing middleware then exits the already empty stack as usual.
+            uploads: _UploadsToClose = scope.setdefault(_UPLOADS_TO_CLOSE_SCOPE_KEY, _UploadsToClose())
+            cleanup = _ShieldedFileStack(uploads)
+            try:
+                async with cleanup:
+                    cleanup.push_async_exit(file_stack)
+                    scope["fastapi_middleware_astack"] = cleanup
+                    await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
+            finally:
+                if scope.get("fastapi_middleware_astack") is cleanup:
+                    scope["fastapi_middleware_astack"] = file_stack
+        else:
+            await self.process_request(scope=scope, receive=receive, send=send, routes=routes)
 
     @cached_property
     def versions(self):

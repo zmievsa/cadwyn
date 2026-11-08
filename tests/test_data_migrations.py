@@ -11,21 +11,24 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time as time_module
 import typing
 from collections import OrderedDict, deque
 from collections.abc import Callable, Coroutine, Iterable, Iterator, Mapping, MutableSequence, Sequence
 from collections.abc import Set as AbstractSet
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import Enum, Flag, FlagBoundary, IntEnum
-from io import BytesIO, RawIOBase, StringIO, UnsupportedOperation
+from io import BufferedRandom, BytesIO, FileIO, RawIOBase, StringIO, UnsupportedOperation
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Optional, Self, Union, cast
 from uuid import UUID
 
 import anyio
+import anyio.to_thread
 import fastapi
 import httpx
 import pytest
@@ -85,6 +88,9 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import core_schema
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.formparsers import MultiPartParser
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import ClientDisconnect
 from starlette.responses import StreamingResponse
 from typing_extensions import TypeAliasType, TypedDict, override
 
@@ -8031,12 +8037,16 @@ class _ASGIRequestDriver:
         *,
         fail_sending: Optional[str] = None,
         cancel_after_first_chunk: Optional[Literal["task", "anyio_scope"]] = None,
+        form_fields: Optional[Mapping[str, str]] = None,
     ) -> None:
         self.fail_sending = fail_sending
         self.cancel_after_first_chunk = cancel_after_first_chunk
+        self.form_fields = form_fields
 
     async def __call__(self, app: Any, headers: dict[str, str]) -> None:
-        request = httpx.Request("POST", "http://test/test", headers=headers, files={"upload": _LARGE_UPLOAD})
+        request = httpx.Request(
+            "POST", "http://test/test", headers=headers, files={"upload": _LARGE_UPLOAD}, data=self.form_fields
+        )
         body = request.read()
         first_chunk_is_sent = asyncio.Event()
 
@@ -8150,6 +8160,93 @@ async def _run_request(driver: _ASGIRequestDriver, app: Any, headers: dict[str, 
     else:
         with pytest.raises(expected_error):
             await driver(app, headers)
+
+
+@pytest.mark.parametrize(
+    ("route_kind", "middleware_position"),
+    [
+        ("plain_fastapi", "none"),
+        *itertools.product(["unversioned", "failing_dependency"], ["none", "inner", "outer"]),
+    ],
+)
+@pytest.mark.parametrize("fail_sending", ["http.response.start", "http.response.body"])
+def test__uploads__disconnect_before_versioned_endpoint_wrapper__should_close_disk_backed_files(
+    route_kind: Literal["plain_fastapi", "unversioned", "failing_dependency"],
+    middleware_position: Literal["none", "inner", "outer"],
+    fail_sending: str,
+):
+    uploads: list[UploadFile] = []
+
+    async def capture_upload(upload: UploadFile) -> None:
+        uploads.append(upload)
+        if route_kind == "failing_dependency":
+            raise HTTPException(400, "Dependency failed")
+
+    async def endpoint(upload: UploadFile):
+        return {"size": upload.size}
+
+    class PassThrough(BaseHTTPMiddleware):
+        @override
+        async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+            return await call_next(request)
+
+    app = (
+        FastAPI()
+        if route_kind == "plain_fastapi"
+        else Cadwyn(
+            versions=VersionBundle(Version("2000-01-01")),
+            middleware=[Middleware(PassThrough)] if middleware_position == "inner" else None,
+        )
+    )
+    if middleware_position == "outer":
+        app.add_middleware(PassThrough)
+    router = APIRouter()
+    router.post("/test", dependencies=[Depends(capture_upload)])(endpoint)
+    if isinstance(app, Cadwyn) and route_kind == "failing_dependency":
+        app.generate_and_include_versioned_routers(router)
+    else:
+        app.include_router(router)
+
+    async def disconnect_and_check_uploads():
+        try:
+            await _run_request(
+                _ASGIRequestDriver(fail_sending=fail_sending),
+                app,
+                {"x-api-version": "2000-01-01"} if route_kind == "failing_dependency" else {},
+                OSError,
+            )
+            assert len(uploads) == 1
+            assert uploads[0].size == len(_LARGE_UPLOAD)
+            assert uploads[0].file.closed
+        finally:
+            for upload in uploads:
+                await upload.close()
+
+    asyncio.run(disconnect_and_check_uploads())
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("handler_exception", [OSError, ClientDisconnect])
+def test__uploads__send_failure_with_registered_handler__should_keep_original_oserror(
+    streaming: bool, handler_exception: type[Exception]
+):
+    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+
+    @app.exception_handler(handler_exception)
+    async def handle_disconnect(request: Request, exc: Exception):
+        raise AssertionError("A send failure must not invoke registered exception handlers")
+
+    @app.post("/test")
+    async def endpoint(upload: UploadFile):
+        if streaming:
+
+            async def chunks():
+                yield b"unchanged"
+
+            return StreamingResponse(chunks())
+        return Response(b"unchanged")
+
+    asyncio.run(_run_request(_ASGIRequestDriver(fail_sending="http.response.body"), app, {}, OSError))
 
 
 @pytest.mark.parametrize("version", ["2000-01-01", "2001-01-01"])
@@ -8288,10 +8385,198 @@ def test__form_migration__with_uploads_replaced_by_later_migrations__should_clos
     assert [(file.closed, file.close_calls) for file in files] == [(True, 1), (True, 1), (True, 1)]
 
 
+@pytest.mark.parametrize(
+    ("mode", "expected_output"),
+    [
+        ("permanent", ["EVENT LOOP EXITED"]),
+        ("late_failure", ["EVENT LOOP EXITED", "Cadwyn couldn't close an uploaded file: late close failure"]),
+    ],
+)
+def test__uploads__permanently_blocked_close__should_exit_process_after_shutdown(
+    tmp_path: pathlib.Path, mode: str, expected_output: list[str]
+):
+    shutdown_marker = tmp_path / "shutdown"
+    with subprocess.Popen(
+        [sys.executable, "-m", "tests._resources.permanent_close", str(shutdown_marker), mode],
+        cwd=pathlib.Path(__file__).parent.parent,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as process:
+        try:
+            startup_deadline = time_module.monotonic() + 30
+            while (
+                not shutdown_marker.exists() and process.poll() is None and time_module.monotonic() < startup_deadline
+            ):
+                time_module.sleep(0.01)
+            assert shutdown_marker.exists(), process.communicate(timeout=3)
+            # Startup and request cleanup have finished; a blocked close must not delay process exit.
+            stdout, stderr = process.communicate(timeout=5)
+        finally:
+            if process.poll() is None:  # pragma: no cover # Reap the child if the regression fails.
+                process.kill()
+            process.communicate()
+
+    assert process.returncode == 0, (stdout, stderr)
+    result_json, *remaining_lines = stdout.splitlines()
+    assert remaining_lines == expected_output
+    result = json.loads(result_json)
+    assert 3 <= result.pop("elapsed_seconds") < 5
+    assert result == {
+        "close_started": True,
+        "closed": [False],
+        "error": "client disconnected",
+        "logs": [
+            (
+                "Cadwyn couldn't finish closing the request's uploaded files within 3 seconds, "
+                "so some uploads may stay open"
+            )
+        ],
+    }
+    assert stderr == ""
+
+
+def test__uploads__file_close_failure__should_propagate_error_keep_context_and_log_once(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+):
+    context = ContextVar("file_close_context", default="original")
+    observed: list[str] = []
+    close_error = OSError("disk close failed")
+
+    class FailingFile(BufferedRandom):
+        @override
+        def close(self) -> None:
+            if not self.closed:  # pragma: no branch # Fixture finalization guard.
+                observed.append(context.get())
+                super().close()
+                raise close_error
+
+    async def replace_file(upload: UploadFile):
+        await upload.close()
+        upload.file = FailingFile(FileIO(tmp_path / "failed.bin", "w+"))
+
+    app = Cadwyn(versions=VersionBundle(Version("2000-01-01")))
+
+    @app.post("/test", dependencies=[Depends(replace_file)])
+    async def endpoint(upload: UploadFile):
+        context.set("request")
+        return "unchanged"
+
+    with (
+        caplog.at_level("DEBUG", logger="cadwyn.structure.versions"),
+        pytest.raises(OSError, match="disk close failed") as exc_info,
+    ):
+        asyncio.run(_ASGIRequestDriver()(app, {}))
+
+    assert exc_info.value is close_error
+    assert observed == ["request"]
+    assert context.get() == "original"
+    assert [record.getMessage() for record in caplog.records] == [
+        "Cadwyn couldn't close an uploaded file: disk close failed"
+    ]
+
+
 class _UploadThatNeverCloses(UploadFile):
     @override
     async def close(self) -> None:
         await anyio.sleep_forever()
+
+
+@pytest.mark.parametrize("route_kind", ["unversioned", "versioned", "failing_dependency", "migration"])
+def test__uploads__blocked_file_close__should_finish_request_and_shutdown_at_deadline(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    route_kind: Literal["unversioned", "versioned", "failing_dependency", "migration"],
+):
+    release = threading.Event()
+    finished = threading.Event()
+    shutdown = threading.Event()
+    started_at: list[float] = []
+    # Release the worker even on the broken implementation, so a failing test cannot hang the suite.
+    timer = threading.Timer(6, release.set)
+
+    class BlockingFile(BufferedRandom):
+        @override
+        def close(self) -> None:
+            if not self.closed:
+                started_at.append(time_module.monotonic())
+                timer.start()
+                release.wait()
+            super().close()
+            finished.set()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            yield
+        finally:
+            shutdown.set()
+
+    uploads: list[UploadFile] = []
+
+    def add_blocked_file(request: RequestInfo):
+        assert request.form is not None
+        upload = UploadFile(BlockingFile(FileIO(tmp_path / "blocked.bin", "w+")), filename="blocked.bin")
+        uploads.append(upload)
+        request.form.append(("added", upload))
+
+    if route_kind == "migration":
+        change = version_change(migrator=convert_request_to_next_version_for("/test", ["POST"])(add_blocked_file))
+        bundle = VersionBundle(Version("2001-01-01", change), Version("2000-01-01"))
+    else:
+        bundle = VersionBundle(Version("2000-01-01"))
+    app = Cadwyn(versions=bundle, lifespan=lifespan)
+
+    async def replace_file(upload: UploadFile):
+        if route_kind == "migration":
+            return
+        if not isinstance(upload.file, BlockingFile):
+            await upload.close()
+            upload.file = BlockingFile(FileIO(tmp_path / "blocked.bin", "w+"))
+            uploads.append(upload)
+        if route_kind == "failing_dependency":
+            raise HTTPException(400, "Dependency failed")
+
+    router = APIRouter()
+
+    @router.post("/test", dependencies=[Depends(replace_file)])
+    async def endpoint(upload: UploadFile):
+        return "unchanged"
+
+    if route_kind == "unversioned":
+        app.include_router(router)
+    else:
+        app.generate_and_include_versioned_routers(router)
+
+    async def run_request():
+        try:
+            async with app.router.lifespan_context(app):
+                await _run_request(
+                    _ASGIRequestDriver(fail_sending="http.response.start", form_fields={"note": "unchanged"}),
+                    app,
+                    {} if route_kind == "unversioned" else {"x-api-version": "2000-01-01"},
+                    OSError,
+                )
+            assert len(started_at) == 1
+            assert time_module.monotonic() - started_at[0] < 5
+            assert shutdown.is_set()
+            assert not release.is_set()
+            assert not uploads[0].file.closed
+            expected_warning = (
+                "Cadwyn couldn't close the upload 'blocked.bin' within 3 seconds after the request, so it may stay open"
+                if route_kind == "migration"
+                else "Cadwyn couldn't finish closing the request's uploaded files within 3 seconds, "
+                "so some uploads may stay open"
+            )
+            assert [record.getMessage() for record in caplog.records] == [expected_warning]
+        finally:
+            release.set()
+            timer.cancel()
+            assert await anyio.to_thread.run_sync(finished.wait, 10)
+            for upload in uploads:
+                await upload.close()
+
+    asyncio.run(run_request())
 
 
 def test__form_migration__with_upload_that_never_closes__should_finish_the_request_and_log_it(

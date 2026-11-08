@@ -7,19 +7,22 @@ import threading
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import Annotated, Any, Literal, cast
 
 import httpx
 import pytest
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
-from starlette.middleware.base import RequestResponseEndpoint
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response as StarletteResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette.websockets import WebSocket
 from typing_extensions import override
 
 from cadwyn import Cadwyn, current_dependency_solver
@@ -789,6 +792,232 @@ def test__api_version_header_without_default_value__version_picked_by_custom_mid
 
     assert response.status_code == 200, response.json()
     assert response.json() == "2022-11-16"
+
+
+def test__versioning_middleware__custom_dispatch_argument__should_pick_version_and_keep_response():
+    async def dispatch(request: Request, call_next: RequestResponseEndpoint) -> StarletteResponse:
+        app.versions.api_version_var.set(request.query_params.get("version"))
+        response = await call_next(request)
+        response.headers["x-custom-dispatch"] = "ran"
+        return response
+
+    class CustomDispatchMiddleware(VersionPickingMiddleware):
+        def __init__(self, app: ASGIApp, **kwargs: Any) -> None:
+            super().__init__(app, dispatch=dispatch, **kwargs)
+
+    app = Cadwyn(versions=_two_versions(), versioning_middleware_class=CustomDispatchMiddleware)
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    async def get_items():
+        return "unchanged"
+
+    app.generate_and_include_versioned_routers(router)
+    with TestClient(app) as client:
+        response = client.get("/items?version=2021-01-01")
+
+    assert response.status_code == 200
+    assert response.json() == "unchanged"
+    assert response.headers["x-custom-dispatch"] == "ran"
+    assert "x-api-version" not in response.headers
+
+
+def test__api_version_default__reads_body__should_preserve_body_for_endpoint():
+    async def version_from_body(request: Request) -> str:
+        return (await request.json())["version"]
+
+    app = Cadwyn(versions=_two_versions(), api_version_default_value=version_from_body)
+    router = VersionedAPIRouter()
+
+    @router.post("/items")
+    async def get_items(body: dict[str, str]):
+        return body
+
+    app.generate_and_include_versioned_routers(router)
+    with TestClient(app) as client:
+        response = client.post("/items", json={"version": "2021-01-01", "value": "preserved"})
+
+    assert response.status_code == 200
+    assert response.json() == {"version": "2021-01-01", "value": "preserved"}
+    assert response.headers["x-api-version"] == "2021-01-01"
+
+
+def test__api_version_context__waterfalling__should_keep_background_context_and_isolate_outer_middleware():
+    versions = _two_versions()
+    context = ContextVar("application_context", default="original")
+    observed: list[tuple[str, str | None, str]] = []
+    app = Cadwyn(versions=versions)
+    router = VersionedAPIRouter()
+
+    class ObserveContext:
+        def __init__(self, app: ASGIApp) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            async def observe_headers(message: Message) -> None:
+                if message["type"] == "http.response.start":
+                    observed.append(("headers", versions.api_version_var.get(), context.get()))
+                await send(message)
+
+            await self.app(scope, receive, observe_headers)
+            if scope["type"] == "http":
+                observed.append(("after", versions.api_version_var.get(), context.get()))
+
+    app.add_middleware(ObserveContext)
+
+    @router.get("/items")
+    async def get_items(background_tasks: BackgroundTasks):
+        context.set("endpoint")
+        observed.append(("endpoint", versions.api_version_var.get(), context.get()))
+
+        async def background():
+            context.set("background")
+            observed.append(("background", versions.api_version_var.get(), context.get()))
+
+        background_tasks.add_task(background)
+        return "ok"
+
+    app.generate_and_include_versioned_routers(router)
+    with TestClient(app) as client:
+        response = client.get("/items", headers={"x-api-version": "2021-06-01"})
+
+    assert response.json() == "ok"
+    assert response.headers["x-api-version"] == "2021-01-01"
+    assert observed == [
+        ("endpoint", "2021-01-01", "endpoint"),
+        ("headers", "2021-06-01", "original"),
+        ("background", "2021-01-01", "background"),
+        ("after", "2021-06-01", "original"),
+    ]
+
+
+@pytest.mark.parametrize("error", [HTTPException(400, "handled"), RuntimeError("unhandled")])
+def test__api_version_context__waterfalling_with_exception__should_reach_exception_handler(error: Exception):
+    versions = _two_versions()
+    app = Cadwyn(versions=versions)
+    router = VersionedAPIRouter()
+
+    @app.exception_handler(type(error))
+    async def handle_error(request: Request, exc: Exception):
+        return JSONResponse({"version": versions.api_version_var.get()})
+
+    @router.get("/items")
+    async def get_items():
+        raise error
+
+    app.generate_and_include_versioned_routers(router)
+    with TestClient(app) as client:
+        response = client.get("/items", headers={"x-api-version": "2021-06-01"})
+
+    assert response.json() == {"version": "2021-01-01"}
+    assert response.headers["x-api-version"] == "2021-01-01"
+
+
+def test__api_version_context__waterfalling_with_unhandled_exception__should_reach_server_error_handler():
+    versions = _two_versions()
+    context = ContextVar("application_context", default="original")
+    app = Cadwyn(versions=versions)
+    router = VersionedAPIRouter()
+
+    @app.exception_handler(Exception)
+    async def handle_error(request: Request, exc: Exception):
+        return JSONResponse({"version": versions.api_version_var.get(), "context": context.get()}, status_code=500)
+
+    @router.get("/items")
+    async def get_items():
+        context.set("endpoint")
+        raise RuntimeError("unhandled")
+
+    app.generate_and_include_versioned_routers(router)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/items", headers={"x-api-version": "2021-06-01"})
+
+    assert response.status_code == 500
+    assert response.json() == {"version": "2021-06-01", "context": "original"}
+
+
+def test__cadwyn__unversioned_websocket__should_exchange_messages():
+    app = Cadwyn(versions=_two_versions())
+
+    @app.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket):
+        await websocket.accept()
+        await websocket.send_text("unchanged")
+        await websocket.close()
+
+    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        assert websocket.receive_text() == "unchanged"
+
+
+def test__file_cleanup__mounted_fastapi_app__should_keep_host_cleanup_and_response():
+    app = Cadwyn(versions=_two_versions())
+    mounted = FastAPI()
+    uploads = []
+
+    @mounted.post("/test")
+    async def endpoint(upload: UploadFile):
+        uploads.append(upload)
+        return {"size": upload.size}
+
+    app.mount("/mounted", mounted)
+    body = b"x" * (2 * 1024 * 1024)
+    with TestClient(app) as client:
+        response = client.post("/mounted/test", files={"upload": body})
+
+    assert response.status_code == 200
+    assert response.json() == {"size": len(body)}
+    assert len(uploads) == 1
+    assert uploads[0].file.closed
+
+
+def test__file_cleanup__additional_fastapi_callback__should_keep_arguments_identity_and_context():
+    app = Cadwyn(versions=_two_versions())
+    context = ContextVar("cleanup_context", default="original")
+    observed: list[tuple[str, str]] = []
+
+    async def cleanup(value: str):
+        observed.append((value, context.get()))
+
+    @app.get("/test")
+    async def endpoint(request: Request):
+        context.set("endpoint")
+        # FastAPI's file stack is also an AsyncExitStack for application-registered cleanup.
+        registered = request.scope["fastapi_middleware_astack"].push_async_callback(cleanup, "closed")
+        assert registered is cleanup
+        return "unchanged"
+
+    with TestClient(app) as client:
+        response = client.get("/test")
+
+    assert response.status_code == 200
+    assert response.json() == "unchanged"
+    assert observed == [("closed", "endpoint")]
+
+
+@pytest.mark.parametrize("group_depth", [0, 1, 2])
+def test__versioning_middleware__endpoint_exception__should_keep_base_http_middleware_exception_type(group_depth: int):
+    async def passthrough(request: Request, call_next: RequestResponseEndpoint) -> StarletteResponse:
+        return await call_next(request)
+
+    baseline = FastAPI()
+    baseline.add_middleware(BaseHTTPMiddleware, dispatch=passthrough)
+    app = Cadwyn(versions=_two_versions())
+    error: Exception = ValueError("unchanged")
+    for _ in range(group_depth):
+        error = ExceptionGroup("group", [error])
+
+    async def endpoint():
+        raise error
+
+    baseline.get("/items")(endpoint)
+    app.get("/items")(endpoint)
+    observed: list[Exception] = []
+    for target in (baseline, app):
+        with TestClient(target) as client, pytest.raises((ValueError, ExceptionGroup)) as caught:
+            client.get("/items")
+        observed.append(caught.value)
+
+    assert observed[0] is observed[1]
 
 
 def test__get_openapi__nonexisting_version__should_return_404():
