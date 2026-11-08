@@ -89,6 +89,102 @@ class ReentrantPage(BaseModel, Generic[_ReentrantT]):
     name: str
 
 
+_SelfReferringT = TypeVar("_SelfReferringT", bound="MiddleSelfReferringNode")
+
+
+class MiddleSelfReferringNode(BaseModel, Generic[_SelfReferringT]):
+    child: Optional[_SelfReferringT] = None
+    name: str
+
+
+# Sorted by name, one of them comes before the node and the other after it. Their fields use the node first and last
+class AOuterWithNodeFirst(BaseModel, Generic[_SelfReferringT]):
+    node: MiddleSelfReferringNode[_SelfReferringT]
+    item: _SelfReferringT
+
+
+class ZOuterWithItemFirst(BaseModel, Generic[_SelfReferringT]):
+    item: _SelfReferringT
+    node: MiddleSelfReferringNode[_SelfReferringT]
+
+
+_FactoryBoundT = TypeVar("_FactoryBoundT", bound="FirstFactoryModel")  # ty: ignore[invalid-type-form] # A class.
+
+
+def _make_factory_model() -> Any:
+    class Model(BaseModel, Generic[_FactoryBoundT]):
+        model_config = ConfigDict(defer_build=True)
+        child: Optional[_FactoryBoundT] = None
+        name: str
+
+    return Model
+
+
+# Two models with the same module and qualname
+FirstFactoryModel = _make_factory_model()
+SecondFactoryModel = _make_factory_model()
+FirstFactoryModel.model_rebuild()
+SecondFactoryModel.model_rebuild()
+
+
+class OuterOfFactoryModels(BaseModel, Generic[_FactoryBoundT]):
+    first: FirstFactoryModel[_FactoryBoundT]  # ty: ignore[invalid-type-form] # A class from a factory.
+    second: SecondFactoryModel[_FactoryBoundT]  # ty: ignore[invalid-type-form] # A class from a factory.
+
+
+# The bound and the constraints name both models that use the parameter
+_BoundToBothT = TypeVar("_BoundToBothT", bound=Union["BoundFirst", "BoundSecond"])
+_ConstrainedToBothT = TypeVar("_ConstrainedToBothT", "ConstrainedFirst", "ConstrainedSecond")
+
+
+class BoundFirst(BaseModel, Generic[_BoundToBothT]):
+    model_config = ConfigDict(defer_build=True)
+    name: str
+    child: Optional[_BoundToBothT] = None
+
+
+class BoundSecond(BaseModel, Generic[_BoundToBothT]):
+    model_config = ConfigDict(defer_build=True)
+    name: str
+    child: Optional[_BoundToBothT] = None
+
+
+class BoundOuterWithFirstFirst(BaseModel, Generic[_BoundToBothT]):
+    first: BoundFirst[_BoundToBothT]
+    second: BoundSecond[_BoundToBothT]
+
+
+class BoundOuterWithSecondFirst(BaseModel, Generic[_BoundToBothT]):
+    second: BoundSecond[_BoundToBothT]
+    first: BoundFirst[_BoundToBothT]
+
+
+class ConstrainedFirst(BaseModel, Generic[_ConstrainedToBothT]):
+    model_config = ConfigDict(defer_build=True)
+    name: str
+    child: Optional[_ConstrainedToBothT] = None
+
+
+class ConstrainedSecond(BaseModel, Generic[_ConstrainedToBothT]):
+    model_config = ConfigDict(defer_build=True)
+    name: str
+    child: Optional[_ConstrainedToBothT] = None
+
+
+class ConstrainedOuterWithFirstFirst(BaseModel, Generic[_ConstrainedToBothT]):
+    first: ConstrainedFirst[_ConstrainedToBothT]
+    second: ConstrainedSecond[_ConstrainedToBothT]
+
+
+class ConstrainedOuterWithSecondFirst(BaseModel, Generic[_ConstrainedToBothT]):
+    second: ConstrainedSecond[_ConstrainedToBothT]
+    first: ConstrainedFirst[_ConstrainedToBothT]
+
+
+for _model in (BoundFirst, BoundSecond, ConstrainedFirst, ConstrainedSecond):
+    _model.model_rebuild()
+
+
 class ShapeItem(BaseModel):
     name: str
 
@@ -1183,6 +1279,70 @@ def test__generate_versioned_models__bare_generic_sharing_quoted_parameter_acros
     assert old.model_validate(body).model_dump() == body
 
 
+@pytest.mark.parametrize(
+    ("outer", "first", "second"),
+    [
+        pytest.param(BoundOuterWithFirstFirst, BoundFirst, BoundSecond, id="bound"),
+        pytest.param(BoundOuterWithSecondFirst, BoundFirst, BoundSecond, id="bound_reversed"),
+        pytest.param(ConstrainedOuterWithFirstFirst, ConstrainedFirst, ConstrainedSecond, id="constraints"),
+        pytest.param(ConstrainedOuterWithSecondFirst, ConstrainedFirst, ConstrainedSecond, id="constraints_reversed"),
+    ],
+)
+def test__generate_versioned_models__fallback_naming_several_models_that_use_it__should_fail_loudly(
+    outer: Any, first: Any, second: Any, create_runtime_schemas: CreateRuntimeSchemas
+):
+    # Within the copy of each model, pydantic would resolve the name of the other one to its latest version
+    schemas = create_runtime_schemas(
+        version_change(schema(first).field("name").had(type=int), schema(second).field("name").had(type=int))
+    )
+    with pytest.raises(SchemaGenerationError, match=r"refer back to .*and also to models that change"):
+        schemas["2000-01-01"][outer]
+
+
+@pytest.mark.parametrize("outer", [AOuterWithNodeFirst, ZOuterWithItemFirst])
+def test__generate_versioned_models__bare_generic_whose_nested_model_is_its_parameters_bound__should_validate_old_model(
+    outer: type[BaseModel], create_runtime_schemas: CreateRuntimeSchemas
+):
+    schemas = create_runtime_schemas(version_change(schema(MiddleSelfReferringNode).field("name").had(type=int)))
+    old = schemas["2000-01-01"][outer]
+    body = {"node": {"name": 1}, "item": {"name": 2}}
+    assert old.model_validate(body).model_dump(exclude_unset=True) == body
+    with pytest.raises(ValidationError):
+        old.model_validate({"node": {"name": 1}, "item": {"name": "latest"}})
+
+
+def test__generate_versioned_models__bare_generic_whose_nested_models_share_a_qualname__should_validate_old_model(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    schemas = create_runtime_schemas(version_change(schema(FirstFactoryModel).field("name").had(type=int)))
+    old = schemas["2000-01-01"][OuterOfFactoryModels]
+    body = {"first": {"name": 1}, "second": {"name": "second", "child": {"name": 2}}}
+    assert old.model_validate(body).model_dump(exclude_unset=True) == body
+    with pytest.raises(ValidationError):
+        old.model_validate({"first": {"name": 1}, "second": {"name": "second", "child": {"name": "latest"}}})
+
+
+def test__generate_versioned_models__bare_generic_whose_nested_model_has_no_module__should_validate_old_model(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Item(BaseModel):
+        name: str
+
+    ItemT = TypeVar("ItemT", bound=Item)
+
+    class Page(BaseModel, Generic[ItemT]):
+        item: ItemT
+
+    class Envelope(BaseModel, Generic[ItemT]):
+        page: Page[ItemT]
+        item: ItemT
+
+    Page.__module__ = None  # ty: ignore[invalid-assignment] # Some generated classes have no module.
+    old = create_runtime_schemas(version_change(schema(Item).field("name").had(type=int)))["2000-01-01"][Envelope]
+    body = {"page": {"item": {"name": 1}}, "item": {"name": 2}}
+    assert old.model_validate(body).model_dump() == body
+
+
 @pytest.mark.parametrize("changed_item", [typevar_namespace_first.Item, typevar_namespace_second.Item])
 def test__generate_versioned_models__bare_generic_sharing_changed_quoted_parameter__should_fail_loudly(
     changed_item: type[BaseModel],
@@ -1190,8 +1350,13 @@ def test__generate_versioned_models__bare_generic_sharing_changed_quoted_paramet
 ):
     field = "a" if changed_item is typevar_namespace_first.Item else "b"
     schemas = create_runtime_schemas(version_change(schema(changed_item).field(field).had(type=int)))
-    with pytest.raises(SchemaGenerationError, match=r"namespaces.*explicit type arguments"):
+    with pytest.raises(SchemaGenerationError) as exc_info:
         schemas["2000-01-01"][typevar_namespace_first.EnvelopeWithItem]
+    assert str(exc_info.value) == (
+        "Cadwyn cannot version the bare generic EnvelopeWithItem: type parameter T resolves differently across the "
+        "namespaces of tests._data.typevar_namespace_first.EnvelopeWithItem, "
+        "tests._data.typevar_namespace_second.Page. Use explicit type arguments."
+    )
 
 
 def test__router_generation__typed_extras_with_concrete_annotation__should_validate_and_document_old_model(

@@ -256,7 +256,7 @@ class SchemaGenerator:
                 extra_uses: set[typing.TypeVar] = set()
                 used = _get_typevar_uses(template, extra_uses=extra_uses)
                 args = [
-                    self._change_version_of_bare_parameter(param, used[param]) if param in used else param
+                    self._change_version_of_bare_parameter(original, param, used[param]) if param in used else param
                     for param in parameters
                 ]
                 if all(arg is param for arg, param in zip(args, parameters, strict=True)):
@@ -320,40 +320,50 @@ class SchemaGenerator:
         setattr(result, "__cadwyn_original_model__", original)  # noqa: B010 # Runtime marker on generated class.
         return result
 
-    def _change_version_of_bare_parameter(self, param: typing.TypeVar, owners: set[type[BaseModel]]) -> typing.TypeVar:
+    def _change_version_of_bare_parameter(
+        self, original: type[BaseModel], param: typing.TypeVar, owners: "collections.abc.Collection[type[BaseModel]]"
+    ) -> typing.TypeVar:
         """Return the parameter whose bound, constraints, and default validate this version's models."""
-        owner = self._get_typevar_owner(param, owners)
+        owner = self._get_typevar_owner(original, param, owners)
         if owner is None:
             return param
         transformer = self.annotation_transformer
-        with transformer.typevar_namespace(owner):
+        users = list(dict.fromkeys(_unwrap_model(owner) for owner in owners))
+        with transformer.typevar_namespace(owner, users=users):
             return transformer._change_version_of_typevar(param)
 
-    def _get_typevar_owner(self, param: typing.TypeVar, owners: set[type[BaseModel]]) -> Union[type[BaseModel], None]:
-        """Choose the namespace that validates a parameter, rejecting incompatible bare uses.
+    def _get_typevar_owner(
+        self, original: type[BaseModel], param: typing.TypeVar, owners: "collections.abc.Collection[type[BaseModel]]"
+    ) -> Union[type[BaseModel], None]:
+        """Return the model whose namespace resolves the quoted fallbacks of a parameter, rejecting incompatible uses.
 
-        Return None if its quoted fallbacks resolve to different classes for different users that are not versioned,
-        so that the copy of each user resolves them in its own namespace.
+        The owners are the models whose fields use the parameter, in the order of the fields. They must resolve its
+        fallbacks to the same classes, so it's the generic itself if it uses the parameter, or else its first nested
+        model that does. Return None if they resolve to different classes that are not versioned, so that the copy
+        of each owner resolves them in its own namespace.
         """
-        owners = {_unwrap_model(owner) for owner in owners}
-        owner = next(iter(owners))
+        owners = list(dict.fromkeys(_unwrap_model(owner) for owner in owners))
+        if original in owners:
+            owners.remove(original)
+            owners.insert(0, original)
         for value in _get_typevar_fallbacks(param)[1]:
             if not _contains_forward_refs(value):
                 continue
-            resolved = [_eval_forward_refs(value, context) for context in owners]
+            resolved = [_eval_forward_refs(value, owner) for owner in owners]
             if all(target == resolved[0] for target in resolved):
                 continue
             collector = _ReferencedModelCollector()
             for target in resolved:
                 collector.annotation_transformer.change_version_of_annotation(target)
             if any(self._is_versioned(model) for model in collector.models):
+                names = ", ".join(f"{owner.__module__}.{owner.__qualname__}" for owner in owners)
                 raise SchemaGenerationError(
-                    f"Cadwyn cannot version the bare generic {owner.__qualname__}: type parameter "
-                    f"{param.__name__} resolves differently across nested model namespaces. "
+                    f"Cadwyn cannot version the bare generic {original.__qualname__}: type parameter "
+                    f"{param.__name__} resolves differently across the namespaces of {names}. "
                     "Use explicit type arguments."
                 )
             return None
-        return owner
+        return owners[0]
 
     def _get_template(self, model: type[_T_ANY_MODEL], /) -> type[_T_ANY_MODEL]:
         if not _is_versionable_model(model):
