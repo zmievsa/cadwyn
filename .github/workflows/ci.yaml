@@ -58,13 +58,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+      - run: pip install uv
       - name: Install cadwyn with instructions from docs
-        run: sh docs_src/quickstart/setup/block001.sh
+        # In a fresh project, like a new user would
+        run: |
+          cd "$(mktemp -d)"
+          uv init --bare --quiet
+          sh "$GITHUB_WORKSPACE/docs_src/quickstart/setup/block001.sh"
       - run: |
-          pip install uv
           # Test the docs against this checkout of Cadwyn instead of its latest release,
           # including the `cadwyn` command that the docs tests run.
-          uv pip install --system --reinstall-package cadwyn . pytest coverage dirty-equals fastapi-pagination
+          uv pip install --system --reinstall-package cadwyn ".[standard]" pytest coverage dirty-equals fastapi-pagination
           coverage run -m pytest docs_src
       - name: Upload coverage results
         uses: actions/upload-artifact@v6
