@@ -136,6 +136,8 @@ Request validation uses the client's config **before** request migrations. Sendi
 
 Config instructions only support **leaf models**. If a model has subclasses among the app's versioned models, an instruction changing its config fails at startup. Put the config instruction on each subclass (leaf model) instead. Pydantic stores merged configs without recording whether each setting was inherited or explicitly overridden, so Cadwyn cannot safely propagate a parent's config change. An instruction on a leaf subclass leaves its parent and siblings unchanged; unused subclasses elsewhere in your code do not prevent it.
 
+Generic parametrizations such as `Bag[Item]` and Cadwyn's generated copies do not count as user subclasses. A config patch on `Bag` also applies to its parametrizations, including the specialization used when a route accepts bare `Bag`. An instruction on a particular parametrization can override those keys for that parametrization alone. A declared subclass such as `class SpecialBag(Bag[Item])` still counts as a subclass and prevents config instructions on `Bag`.
+
 Changing `populate_by_name` also sets `validate_by_alias=True` and `validate_by_name` to its older value. Explicit `validate_by_alias` and `validate_by_name` entries in the same patch take precedence. To change those flags individually, patch them directly. At least one must remain enabled, as in Pydantic.
 
 There is no config `didnt_have` instruction: set the older value explicitly, such as `ConfigDict(frozen=False)` or `ConfigDict(json_schema_extra=None)`. Cadwyn rejects a key whose value is already the current value, including an implicit Pydantic default. An empty patch on its own is also rejected.

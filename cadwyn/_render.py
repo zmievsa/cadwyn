@@ -163,7 +163,8 @@ def _render_pydantic_model(
         docstring = [ast.Expr(ast.Constant(wrapper.doc))] if wrapper.doc else []
     config_definitions = []
     config = wrapper.other_attributes["model_config"]
-    if wrapper.config_changed:
+    if config_changes := wrapper.get_config_changes(generator.model_bundle.schemas):
+        config = config | config_changes
         config_definitions = [
             ast.Assign(
                 targets=[ast.Name("model_config", ctx=ast.Store())],

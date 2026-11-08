@@ -316,3 +316,131 @@ def test__schema_had_config__unchanged_populate_by_name__should_reject_noop(
 ):
     with pytest.raises(InvalidGenerationInstructionError, match=r"AliasedModel.*populate_by_name.*already"):
         create_runtime_schemas(version_change(schema(AliasedModel).had(config=ConfigDict(populate_by_name=True))))
+
+
+@pytest.mark.parametrize("parametrized", [False, True])
+def test__schema_had_config__generic_route__should_version_config_and_type_arguments(
+    create_versioned_clients: CreateVersionedClients,
+    parametrized: bool,
+):
+    from typing import Generic, TypeVar
+
+    class Item(BaseModel):
+        value: str
+
+    ItemT = TypeVar("ItemT", bound=Item)
+
+    class Bag(BaseModel, Generic[ItemT]):
+        model_config = ConfigDict(extra="allow")
+        item: ItemT
+
+    model = Bag[Item] if parametrized else Bag
+    router = VersionedAPIRouter()
+
+    def echo(body: BaseModel) -> BaseModel:
+        return body
+
+    echo.__annotations__["body"] = model
+    router.post("/bags", response_model=model)(echo)
+    clients = create_versioned_clients(
+        version_change(
+            schema(Item).field("value").had(description="Older value"),
+            schema(Bag).had(config=ConfigDict(extra="forbid")),
+        ),
+        router=router,
+    )
+    older = clients["2000-01-01"]
+    newer = clients["2001-01-01"]
+    response = older.post("/bags", json={"item": {"value": "x"}})
+    assert response.status_code == 200, response.json()
+    assert response.json() == {"item": {"value": "x"}}
+    response = older.post("/bags", json={"item": {"value": "x"}, "unknown": 1})
+    assert response.status_code == 422, response.json()
+    assert response.json()["detail"][0]["type"] == "extra_forbidden"
+    response = newer.post("/bags", json={"item": {"value": "x"}, "unknown": 1})
+    assert response.status_code == 200, response.json()
+    assert response.json() == {"item": {"value": "x"}, "unknown": 1}
+    openapi = older.get("/openapi.json?version=2000-01-01").json()
+    ref = openapi["paths"]["/bags"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    bag_schema = openapi["components"]["schemas"][ref.rsplit("/", 1)[1]]
+    assert bag_schema["additionalProperties"] is False
+    item_ref = bag_schema["properties"]["item"]["$ref"]
+    item_schema = openapi["components"]["schemas"][item_ref.rsplit("/", 1)[1]]
+    assert item_schema["properties"]["value"]["description"] == "Older value"
+
+
+def test__schema_had_config__real_subclass_of_generic__should_fail_startup(
+    create_versioned_clients: CreateVersionedClients,
+):
+    from typing import Generic, TypeVar
+
+    class Item(BaseModel):
+        value: str
+
+    ItemT = TypeVar("ItemT", bound=Item)
+
+    class Bag(BaseModel, Generic[ItemT]):
+        item: ItemT
+
+    class SpecialBag(Bag[Item]):
+        pass
+
+    router = VersionedAPIRouter()
+    router.get("/bags", response_model=SpecialBag)(lambda: {"item": {"value": "x"}})
+    with pytest.raises(InvalidGenerationInstructionError, match=r"Bag.*SpecialBag.*leaf"):
+        create_versioned_clients(version_change(schema(Bag).had(config=ConfigDict(extra="forbid"))), router=router)
+
+
+def test__schema_had_config__parametrization_patch__should_override_generic_patch_only_for_that_parametrization(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    from typing import Generic, TypeVar
+
+    ValueT = TypeVar("ValueT")
+
+    class Bag(BaseModel, Generic[ValueT]):
+        model_config = ConfigDict(extra="allow")
+        item: ValueT
+        label: str
+
+    schemas = create_runtime_schemas(
+        version_change(
+            schema(Bag).had(config=ConfigDict(extra="forbid")),
+            schema(Bag[int]).had(config=ConfigDict(extra="ignore", str_strip_whitespace=True)),
+        )
+    )
+    older = schemas["2000-01-01"]
+    assert older[Bag[int]].model_validate({"item": 1, "label": " x ", "unknown": 2}).model_dump() == {
+        "item": 1,
+        "label": "x",
+    }
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        older[Bag[str]].model_validate({"item": "value", "label": " x ", "unknown": 2})
+    assert schemas["2001-01-01"][Bag[int]].model_validate({"item": 1, "label": " x ", "unknown": 2}).model_dump() == {
+        "item": 1,
+        "label": " x ",
+        "unknown": 2,
+    }
+
+
+def test__schema_had_config__parametrization_restores_newer_generic_value__should_compare_current_version(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    from typing import Generic, TypeVar
+
+    ValueT = TypeVar("ValueT")
+
+    class Bag(BaseModel, Generic[ValueT]):
+        model_config = ConfigDict(extra="allow")
+        item: ValueT
+
+    schemas = create_runtime_schemas(
+        version_change(schema(Bag[int]).had(config=ConfigDict(extra="allow"))),
+        version_change(schema(Bag).had(config=ConfigDict(extra="forbid"))),
+    )
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        schemas["2001-01-01"][Bag[int]].model_validate({"item": 1, "unknown": 2})
+    assert schemas["2000-01-01"][Bag[int]].model_validate({"item": 1, "unknown": 2}).model_dump() == {
+        "item": 1,
+        "unknown": 2,
+    }

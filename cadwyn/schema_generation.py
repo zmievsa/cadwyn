@@ -851,7 +851,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
     validators: dict[str, Union[_PerFieldValidatorWrapper, _ValidatorWrapper]] = dataclasses.field(repr=False)
     other_attributes: dict[str, Any] = dataclasses.field(repr=False)
     annotations: dict[str, Any] = dataclasses.field(repr=False)
-    config_changed: bool = False
+    config_changed_keys: frozenset[str] = frozenset()
     fields_renamed_by_parents: Annotated[
         dict["_FieldName", PydanticFieldWrapper],
         Doc(
@@ -901,9 +901,22 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             validators=copy.deepcopy(self.validators),
             other_attributes=copy.deepcopy(self.other_attributes),
             annotations=copy.deepcopy(self.annotations),
-            config_changed=self.config_changed,
+            config_changed_keys=self.config_changed_keys,
             fields_renamed_by_parents=fields_renamed_by_parents,
         )
+
+    def get_config_changes(self, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]") -> dict[str, Any]:
+        """Return this model's config patches, including patches of a parametrization's generic origin.
+
+        Pydantic parametrizations store a snapshot of their origin's config. Only keys changed by instructions
+        follow the versioned origin; instructions on the parametrization itself take precedence.
+        """
+        origin = self.cls.__pydantic_generic_metadata__["origin"]
+        inherited_changes = (
+            schemas[origin].get_config_changes(schemas) if origin is not None and origin in schemas else {}
+        )
+        config = self.other_attributes["model_config"]
+        return inherited_changes | {key: config[key] for key in self.config_changed_keys}
 
     def _get_parents(
         self, schemas: "dict[type[BaseModel], _PydanticModelWrapper[BaseModel]]"
@@ -1021,10 +1034,13 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
 
         # Keep hook execution at main's construction point, after copying field models and building fields.
         bases = _change_version_of_model_bases(generator, self.cls, orig_bases)
+        attributes = self.other_attributes
+        if config_changes := self.get_config_changes(generator.model_bundle.schemas):
+            attributes = attributes | {"model_config": attributes["model_config"] | config_changes}
         model_copy = type(self.cls)(
             self.name,
             bases,
-            self.other_attributes
+            attributes
             | orig_bases_attribute
             | per_field_validators
             | root_validators
@@ -2975,9 +2991,11 @@ class SchemaGenerator:
         The decisions are cached so the models that are defined after the generator has decided about the models
         that they refer to or inherit from do not change these decisions.
         """
-        if self.model_bundle.models_with_config_instructions:
-            for base in model.__mro__[1:]:
-                if base in self.model_bundle.models_with_config_instructions:
+        if self.model_bundle.models_with_config_instructions and lenient_issubclass(model, BaseModel):
+            original = _unwrap_model(model)
+            origin = original.__pydantic_generic_metadata__["origin"]
+            for base in original.__mro__[1:]:
+                if base in self.model_bundle.models_with_config_instructions and base is not origin:
                     raise InvalidGenerationInstructionError(
                         f'Cannot version config of "{base.__name__}" because "{model.__name__}" is a subclass '
                         "among the app's versioned models. Pydantic does not retain whether a child's config was "
@@ -4489,7 +4507,7 @@ def _apply_alter_schema_instructions(
                 )
             schema_info.validators[alter_schema_instruction.name].is_deleted = True
         elif isinstance(alter_schema_instruction, SchemaHadInstruction):
-            _change_model(schema_info, alter_schema_instruction, version_change_name)
+            _change_model(schema_info, alter_schema_instruction, version_change_name, modified_schemas)
         else:
             assert_never(alter_schema_instruction)
 
@@ -4525,6 +4543,7 @@ def _change_model(
     model: _PydanticModelWrapper[BaseModel],
     alter_schema_instruction: SchemaHadInstruction,
     version_change_name: str,
+    schemas: dict[type[BaseModel], _PydanticModelWrapper[BaseModel]],
 ):
     name = alter_schema_instruction.name
     description = alter_schema_instruction.description
@@ -4549,16 +4568,19 @@ def _change_model(
     if description is not Sentinel:
         model.doc = description
     if alter_schema_instruction.config:
-        _change_model_config(model, alter_schema_instruction.config, version_change_name)
+        _change_model_config(model, alter_schema_instruction.config, version_change_name, schemas)
 
 
 def _change_model_config(
-    model: _PydanticModelWrapper[BaseModel], config_patch: pydantic.ConfigDict, version_change_name: str
+    model: _PydanticModelWrapper[BaseModel],
+    config_patch: pydantic.ConfigDict,
+    version_change_name: str,
+    schemas: dict[type[BaseModel], _PydanticModelWrapper[BaseModel]],
 ) -> None:
-    current = ConfigWrapper(model.other_attributes["model_config"].copy(), check=False)
+    config = model.other_attributes["model_config"] | model.get_config_changes(schemas)
+    current = ConfigWrapper(config.copy(), check=False)
     # Pydantic <2.14 fills in the validation settings here; newer versions keep an effective config separately.
     current.core_config(None)
-    config = model.other_attributes["model_config"].copy()
     if {"populate_by_name", "validate_by_alias", "validate_by_name"} & config_patch.keys():
         config.update(validate_by_alias=current.validate_by_alias, validate_by_name=current.validate_by_name)
     if "populate_by_name" in config_patch:
@@ -4575,7 +4597,9 @@ def _change_model_config(
                 "but it already has the value you tried to assign."
             )
     model.other_attributes["model_config"] = config
-    model.config_changed = True
+    model.config_changed_keys |= frozenset(config_patch)
+    if {"populate_by_name", "validate_by_alias", "validate_by_name"} & config_patch.keys():
+        model.config_changed_keys |= {"validate_by_alias", "validate_by_name"}
 
 
 def _get_description(docstring: Union[str, None]) -> Union[str, None]:
