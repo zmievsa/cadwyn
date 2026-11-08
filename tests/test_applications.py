@@ -849,6 +849,24 @@ def test__get_openapi__api_version_header_without_default_value__should_be_requi
         assert client.get("/items", headers={"x-api-version": version_values[1]}).json() == []
 
 
+def test__get_openapi__api_version_header_named_with_underscore__should_document_and_require_that_header():
+    app = Cadwyn(versions=VersionBundle(Version("2023-04-14")), api_version_parameter_name="api_version")
+    router = VersionedAPIRouter()
+
+    @router.get("/items")
+    async def get_items():
+        return []
+
+    app.generate_and_include_versioned_routers(router)
+
+    assert [
+        (parameter["name"], parameter["required"])
+        for parameter in _get_api_version_parameters_from_openapi(app, "/items")["2023-04-14"]
+    ] == [("api_version", True)]
+    with TestClient(app) as client:
+        assert client.get("/items", headers={"api_version": "2023-04-14"}).json() == []
+
+
 @pytest.mark.parametrize("api_version_default_value", ["2023-04-14", _get_default_api_version])
 def test__get_openapi__api_version_header_with_default_value__should_stay_optional(
     api_version_default_value: "str | Callable[[Request], Awaitable[str]]",

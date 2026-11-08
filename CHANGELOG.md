@@ -62,6 +62,7 @@ Please follow [the Keep a Changelog standard](https://keepachangelog.com/en/1.0.
 
 ### Fixed
 
+- API version headers whose names contain underscores, such as `api_version_parameter_name="api_version"`, are now validated and documented under that exact name. Invalid versions get a 422 instead of being served by the latest version, and OpenAPI shows `api_version` instead of `api-version`, which Cadwyn never read; regenerate clients that send `api-version`.
 - Fixed missing runtime annotation names in version changes, schema generation, and versioned-router generation, so `typing.get_type_hints()` can inspect them ([#485](https://github.com/zmievsa/cadwyn/issues/485)).
 - Generated WebSocket routes now pick the API version from the header, path, or a constant default with the same rules as HTTP requests, and reject missing or invalid versions before accepting the connection ([#67](https://github.com/zmievsa/cadwyn/issues/67)).
 - Client disconnects no longer leave uploaded files open on unversioned routes or when a dependency fails before a versioned endpoint runs ([#594](https://github.com/zmievsa/cadwyn/issues/594)).

@@ -114,6 +114,25 @@ def test__header_routing__invalid_date_header__should_return_422():
     }
 
 
+@pytest.mark.parametrize("version", ["bad", "2024-99-01"])
+def test__header_routing__invalid_version_in_header_named_with_underscore__should_return_422(version: str):
+    app = Cadwyn(
+        versions=VersionBundle(Version("2024-02-01"), Version("2024-01-01")), api_version_parameter_name="api_version"
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/ping")
+    async def ping():
+        return "pong"
+
+    app.generate_and_include_versioned_routers(router)
+    with TestClient(app) as client:
+        assert client.get("/ping", headers={"api_version": "2024-01-15"}).json() == "pong"
+        response = client.get("/ping", headers={"api_version": version})
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["header", "api_version"]
+
+
 def test__header_routing__path_match_with_wrong_method__should_return_405():
     client = TestClient(mixed_hosts_app, headers={"X-API-VERSION": "2022-02-11"})
 

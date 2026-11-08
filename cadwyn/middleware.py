@@ -136,6 +136,7 @@ def _match_route(router: Router, scope: Scope) -> Union[tuple[BaseRoute, Scope, 
 
 def _generate_api_version_dependency(
     *,
+    api_version_parameter_name: str,
     api_version_pythonic_parameter_name: str,
     default_value: str,
     fastapi_depends_class: Callable[..., Any],
@@ -158,6 +159,13 @@ def _generate_api_version_dependency(
                         openapi_examples={"default": {"value": default_value}},
                         title=title,
                         description=description,
+                        # FastAPI would otherwise read and document "api-version" for a header named "api_version",
+                        # while VersionPickingMiddleware reads the header by its exact name
+                        **(
+                            {"alias": api_version_parameter_name, "convert_underscores": False}
+                            if fastapi_depends_class is fastapi.Header
+                            else {}
+                        ),
                     ),
                 ],
                 default=default_value if fastapi_depends_class != fastapi.Path else inspect.Signature.empty,
