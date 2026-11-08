@@ -5,11 +5,27 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from enum import KEEP, Enum, EnumType, Flag, FlagBoundary, IntEnum, IntFlag, StrEnum, auto, member, nonmember
 from pathlib import PurePosixPath
-from typing import Any, Self
+from typing import Annotated, Any, ForwardRef, Optional, Self, Union
 from uuid import UUID
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    GetCoreSchemaHandler,
+    GetJsonSchemaHandler,
+    PlainSerializer,
+    PlainValidator,
+    TypeAdapter,
+    ValidationError,
+    WrapSerializer,
+    WrapValidator,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import core_schema
 from typing_extensions import override
 
 from cadwyn.exceptions import (
@@ -1149,3 +1165,236 @@ def test__enum_didnt_have__metaclass_requires_class_arguments__should_keep_exist
 
     assert old.a.label == "A"
     assert old.a.value == 1
+
+
+@pytest.mark.parametrize("value", ["foo", EnumWithTwoMembers.bar, StrEnum("Other", {"foo": "foo"}).foo])
+def test__enum_didnt_have__strict_validation_of_other_values__should_reject_them(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    value: object,
+):
+    models = create_runtime_schemas(version_change(enum(EnumWithTwoMembers).didnt_have("bar")))
+    adapter = TypeAdapter(models["2000-01-01"][EnumWithTwoMembers])
+    with pytest.raises(ValidationError, match="Input should be an instance of EnumWithTwoMembers"):
+        adapter.validate_python(value, strict=True)
+
+
+def test__enum_didnt_have__union_discovered_after_enum_schema__should_preserve_existing_union_validation(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Payload(BaseModel):
+        value: Union[EnumWithTwoMembers, Any]
+
+    models = create_runtime_schemas(version_change(enum(EnumWithTwoMembers).didnt_have("bar")))
+    for version in ("2000-01-01", "2001-01-01"):
+        copied = models[version][EnumWithTwoMembers]
+        adapter = TypeAdapter(copied)
+        payload = models[version][Payload]
+        member = EnumWithTwoMembers.foo
+        assert payload.model_validate({"value": member}, strict=True).value is member
+        with pytest.raises(ValidationError, match="Input should be an instance"):
+            adapter.validate_python(member, strict=True)
+
+
+@pytest.mark.parametrize("indirect", [False, True])
+def test__enum_didnt_have__deferred_union_schema__should_preserve_values_after_rebuild(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    indirect: bool,
+):
+    unknown: Any = ForwardRef("UnknownAtGeneration")
+
+    class Deferred(BaseModel):
+        model_config = ConfigDict(defer_build=True)
+        value: unknown
+
+    alternative: Any = Deferred if indirect else unknown
+    annotation: Any = Union[EnumWithTwoMembers, alternative, Any]
+
+    class Payload(BaseModel):
+        model_config = ConfigDict(defer_build=True)
+        value: annotation
+
+    models = create_runtime_schemas(version_change(enum(EnumWithTwoMembers).didnt_have("bar")))
+    for version in ("2000-01-01", "2001-01-01"):
+        copied = models[version][Payload]
+        copied.model_rebuild(_types_namespace={"UnknownAtGeneration": Any})
+        member = EnumWithTwoMembers.foo
+        assert copied.model_validate({"value": member}, strict=True).value is member
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        AfterValidator(lambda value: value),
+        BeforeValidator(lambda value: value),
+        PlainValidator(lambda value: value),
+        WrapValidator(lambda value, _: value),
+        PlainSerializer(lambda value: value),
+        WrapSerializer(lambda value, handler: handler(value)),
+    ],
+)
+def test__enum_didnt_have__validator_metadata__should_keep_shared_enum_validation_legacy(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    metadata: Any,
+):
+    annotation: Any = Annotated[EnumWithTwoMembers, metadata]
+
+    class Payload(BaseModel):
+        opaque: annotation
+        value: EnumWithTwoMembers
+
+    models = create_runtime_schemas(version_change(enum(EnumWithTwoMembers).didnt_have("bar")))
+    for version in ("2000-01-01", "2001-01-01"):
+        copied = models[version][Payload]
+        member = EnumWithTwoMembers.foo
+        data = {"opaque": member, "value": member}
+        validated = copied.model_validate(data)
+        assert validated.value is models[version][EnumWithTwoMembers].foo
+        if isinstance(metadata, (PlainSerializer, WrapSerializer)):
+            assert validated.model_dump(mode="json") == {"opaque": 90, "value": 90}
+        with pytest.raises(ValidationError) as exc_info:
+            copied.model_validate(data, strict=True)
+        assert any(error["loc"] == ("value",) for error in exc_info.value.errors())
+
+
+def test__enum_didnt_have__union_metadata_with_unresolved_annotation__should_preserve_its_result(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    def ignored_metadata(_: Any) -> Any:
+        raise AssertionError("Pydantic must not call ignored annotation metadata")
+
+    ignored_metadata.__annotations__["return"] = "UnknownAtGeneration"
+    fallback = Annotated[Any, ignored_metadata]
+
+    class Payload(BaseModel):
+        value: Union[EnumWithTwoMembers, fallback]
+
+    models = create_runtime_schemas(version_change(enum(EnumWithTwoMembers).didnt_have("bar")))
+    for version in ("2000-01-01", "2001-01-01"):
+        copied = models[version][Payload]
+        member = EnumWithTwoMembers.foo
+        assert copied.model_validate({"value": member}, strict=True).value is member
+
+
+class EnumWithCoreSchemaHook(Enum):
+    a = "a"
+    b = "b"
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: type, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        def reject_b(member: Self) -> Self:
+            if member.name == "b":
+                raise ValueError("b is forbidden")
+            return member
+
+        return core_schema.definitions_schema(
+            core_schema.no_info_after_validator_function(reject_b, handler(source)), []
+        )
+
+
+def test__enum_didnt_have__custom_core_schema__should_keep_existing_validation_and_json_schema(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    models = create_runtime_schemas(version_change(enum(EnumWithCoreSchemaHook).had(c="c")))
+    for version in ("2000-01-01", "2001-01-01"):
+        copied = models[version][EnumWithCoreSchemaHook]
+        adapter = TypeAdapter(copied)
+        assert adapter.validate_python(EnumWithCoreSchemaHook.a) is copied.a
+        assert adapter.validate_python(copied.a, strict=True) is copied.a
+        with pytest.raises(ValidationError, match="Input should be an instance"):
+            adapter.validate_python(EnumWithCoreSchemaHook.a, strict=True)
+        with pytest.raises(ValidationError, match="b is forbidden"):
+            adapter.validate_python(EnumWithCoreSchemaHook.b)
+        # Adding a validation hook must not change the OpenAPI shape of the enum.
+        expected = TypeAdapter(EnumWithCoreSchemaHook).json_schema()
+        if version == "2000-01-01":
+            expected["enum"].append("c")
+        assert adapter.json_schema() == expected
+
+
+def test__enum_didnt_have__strict_field__should_keep_legacy_validation(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    class Item(BaseModel):
+        value: EnumWithTwoMembers = Field(strict=True)
+        lax_value: EnumWithTwoMembers
+
+    models = create_runtime_schemas(version_change(enum(EnumWithTwoMembers).didnt_have("bar")))
+    for version in ("2000-01-01", "2001-01-01"):
+        copied = models[version][EnumWithTwoMembers]
+        copied_item = models[version][Item]
+        adapter = TypeAdapter(copied_item)
+        result = adapter.validate_python({"value": copied.foo, "lax_value": 90})
+        assert result.value is result.lax_value is copied.foo
+        with pytest.raises(ValidationError, match="Input should be an instance of EnumWithTwoMembers"):
+            adapter.validate_python({"value": EnumWithTwoMembers.foo, "lax_value": 90})
+        with pytest.raises(ValidationError, match="Input should be an instance of EnumWithTwoMembers"):
+            adapter.validate_python({"value": 90, "lax_value": 90})
+        expected = TypeAdapter(Item).json_schema()
+        if version == "2000-01-01":
+            expected["$defs"]["EnumWithTwoMembers"]["enum"].remove(12)
+        assert TypeAdapter(copied_item).json_schema() == expected
+
+
+class EnumJsonSchemaMixin:
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        assert schema["type"] == "enum"
+        json_schema = handler(schema)
+        return {
+            **json_schema,
+            "enum": [member.value for member in schema["members"]],
+            "description": json_schema.get("description", "") + "customized",
+        }
+
+
+class EnumWithJsonSchemaHook(EnumJsonSchemaMixin, Enum):
+    a = "a"
+    b = "b"
+
+
+class EnumWithJsonSchemaHookInCoreMetadata(EnumJsonSchemaMixin, Enum):
+    a = "a"
+    b = "b"
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: type, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        schema = handler(source)
+        assert schema["type"] == "enum"
+        # Hooks can also be registered on the original node by a custom core schema.
+        schema.setdefault("metadata", {}).setdefault("pydantic_js_functions", []).append(
+            cls.__get_pydantic_json_schema__
+        )
+        return schema
+
+
+@pytest.mark.parametrize("original", [EnumWithJsonSchemaHook, EnumWithJsonSchemaHookInCoreMetadata])
+def test__enum_didnt_have__custom_json_schema_hook__should_keep_openapi_and_strict_validation_unchanged(
+    create_runtime_schemas: CreateRuntimeSchemas,
+    original: Any,
+):
+    class Envelope(BaseModel):
+        value: original
+        values: list[original]
+        strict_value: Optional[Annotated[original, Field(strict=True)]] = None
+
+    models = create_runtime_schemas(version_change(enum(original).didnt_have("b")))
+    for version in ("2000-01-01", "2001-01-01"):
+        copied = models[version][original]
+        expected = TypeAdapter(original).json_schema()
+        if version == "2000-01-01":
+            expected["enum"].remove("b")
+        assert TypeAdapter(copied).json_schema() == expected
+
+        expected_model = TypeAdapter(Envelope).json_schema()
+        if version == "2000-01-01":
+            expected_model["$defs"][original.__name__]["enum"].remove("b")
+        assert TypeAdapter(models[version][Envelope]).json_schema() == expected_model
+
+        # Lax validation and strict validation of the copy's own members still work as before.
+        adapter = TypeAdapter(copied)
+        assert adapter.validate_python(original.a) is copied.a
+        assert adapter.validate_python(copied.a, strict=True) is copied.a
+        with pytest.raises(ValidationError, match="Input should be an instance"):
+            adapter.validate_python(original.a, strict=True)

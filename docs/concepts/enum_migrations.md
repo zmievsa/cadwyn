@@ -35,3 +35,7 @@ Cadwyn only knows the values of the members, not the arguments that they were de
 ```python
 {! ./docs_src/concepts/enum_migrations/block003.py !}
 ```
+
+Plain enums and flags with `enum(...)` instructions can be used in supported lazy request fields such as `Iterable[Kind]` and `Generator[Kind, None, None]`. Cadwyn converts their members to the latest enum as the endpoint consumes them; unconsumed items stay unvalidated. Request migrations still see the request version's members. Conversion leaves unions with alternative branches and opaque validation paths unchanged; see [known limitations](../theory/design_decisions.md#known-limitations).
+
+Strict response validation still rejects latest enum members when `enum(...)` instructions create a distinct enum class for the response version, including optional fields and nested models or containers. Use `Field(strict=False)` on affected response fields or a response migration that supplies the client's own members. Cadwyn retains the previous enum schemas: custom schema hooks, unions with alternative branches, value-based enums (`str`, `int`, or `float`), and OpenAPI keep their existing behavior. Adding a normalization wrapper for strict responses can change the schemas observed by hooks, including cached nested models, so strict responses remain a known limitation.
