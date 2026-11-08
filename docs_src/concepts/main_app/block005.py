@@ -4,8 +4,13 @@ from cadwyn import Cadwyn, Version, VersionBundle, VersionedAPIRouter
 from pydantic import BaseModel
 
 
+class TraceSpan(BaseModel):
+    span_id: str
+
+
 class TaskMetadata(BaseModel):
     trace_id: str
+    spans: list[TraceSpan]
 
 
 def customize_openapi(
@@ -13,7 +18,12 @@ def customize_openapi(
 ) -> dict[str, Any]:
     if version == "2024-01-01":
         schemas = schema.setdefault("components", {}).setdefault("schemas", {})
-        schemas["TaskMetadata"] = TaskMetadata.model_json_schema()
+        metadata_schema = TaskMetadata.model_json_schema(
+            ref_template="#/components/schemas/{model}"
+        )
+        # Nested models such as TraceSpan become components of their own
+        schemas.update(metadata_schema.pop("$defs", {}))
+        schemas["TaskMetadata"] = metadata_schema
     return schema
 
 

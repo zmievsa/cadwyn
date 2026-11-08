@@ -45,15 +45,15 @@ Alternatively, pass the pagination params to `paginate()` explicitly:
 
 ## Customizing OpenAPI
 
-Pass a synchronous `openapi_customizer` callback to `Cadwyn()` to edit each version's OpenAPI document. It receives the generated schema and the selected version as a string, or `None` for `/openapi.json?version=unversioned`. Cadwyn calls it after its own adjustments, including required version headers and servers for mounted apps or a proxy's root path, immediately before serialization.
+Pass a synchronous `openapi_customizer` callback to `Cadwyn()` to edit each version's OpenAPI document. `Cadwyn()` raises a `TypeError` if the callback is async. It receives the generated schema and the selected version as a string, or `None` for `/openapi.json?version=unversioned`. Cadwyn calls it after its own adjustments, including required version headers and servers for mounted apps or a proxy's root path, immediately before serialization.
 
-For example, add a component used by a client SDK even though no endpoint references it, only in the version that needs it:
+For example, add a component used by a client SDK even though no endpoint references it, only in the version that needs it. Pass `ref_template` to `model_json_schema()` and move its `$defs` into `components.schemas` so that references to nested models resolve:
 
 ```python
 {! ./docs_src/concepts/main_app/block005.py !}
 ```
 
-Return the edited dict or a replacement dict. Any other return value, including `None`, raises a `TypeError` naming the callback; exceptions raised by the callback propagate. Each request gets a freshly generated dict, and Cadwyn does not cache customized schemas. Omitting the callback or passing `None` preserves the existing output. The callback type is available as `cadwyn.OpenAPICustomizer`.
+Return the edited dict or a replacement dict. Any other return value, including `None`, raises a `TypeError` naming the callback; exceptions raised by the callback propagate. Each request gets a freshly generated dict, and Cadwyn does not cache customized schemas. Omitting the callback or passing `None` preserves the existing output.
 
 ## Custom docs static assets
 

@@ -25,7 +25,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from starlette.websockets import WebSocket
 from typing_extensions import override
 
-from cadwyn import Cadwyn, OpenAPICustomizer, current_dependency_solver
+from cadwyn import Cadwyn, current_dependency_solver
 from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import VersionPickingMiddleware
 from cadwyn.route_generation import VersionedAPIRouter
@@ -539,33 +539,30 @@ def test__get_openapi():
     assert resp.status_code == 200
 
 
-@pytest.mark.parametrize("customizer_kwargs", [{}, {"openapi_customizer": None}])
 @pytest.mark.parametrize("version", ["2022-02-02", "2021-01-01", "unversioned"])
-def test__openapi_customizer__omitted_or_none__should_preserve_response_bytes(customizer_kwargs, version: str):
-    app = Cadwyn(versions=_two_versions(), **customizer_kwargs)
+def test__openapi_customizer__none__should_match_output_without_customizer(version: str):
+    def make_app(**kwargs: Any) -> Cadwyn:
+        app = Cadwyn(versions=_two_versions(), **kwargs)
+        router = VersionedAPIRouter()
 
-    @app.get("/health", operation_id="health", summary="Health", response_class=Response)
-    def health() -> Response:
-        raise NotImplementedError
+        @router.get("/items")
+        def get_items() -> list[str]:
+            raise NotImplementedError
 
-    # Captured from main before introducing the customizer, including JSON key order and whitespace.
-    expected_paths = (
-        b'{"/health":{"get":{"summary":"Health","operationId":"health",'
-        b'"responses":{"200":{"description":"Successful Response"}}}}}'
-        if version == "unversioned"
-        else b"{}"
-    )
-    expected = (
-        b'{"openapi":"3.1.0","info":{"title":"FastAPI","version":"'
-        + version.encode()
-        + b'"},"servers":[{"url":"/proxy"}],"paths":'
-        + expected_paths
-        + b"}"
-    )
-    with TestClient(app, root_path="/proxy") as client:
-        response = client.get("/openapi.json", params={"version": version})
-    assert response.status_code == 200
-    assert response.content == expected
+        @app.get("/health")
+        def health() -> str:
+            raise NotImplementedError
+
+        app.generate_and_include_versioned_routers(router)
+        return app
+
+    responses = []
+    for app in (make_app(), make_app(openapi_customizer=None)):
+        with TestClient(app, root_path="/proxy") as client:
+            responses.append(client.get("/openapi.json", params={"version": version}))
+    without_customizer, with_none = responses
+    assert without_customizer.status_code == with_none.status_code == 200
+    assert with_none.content == without_customizer.content
 
 
 @pytest.mark.parametrize(("api_version_format", "version"), [("date", "2022-02-02"), ("string", "v2")])
@@ -581,9 +578,8 @@ def test__openapi_customizer__version_selected__should_receive_version_and_final
         parameter["required"] = False
         return schema
 
-    customizer: OpenAPICustomizer = customize
     app = Cadwyn(
-        versions=VersionBundle(Version(version)), api_version_format=api_version_format, openapi_customizer=customizer
+        versions=VersionBundle(Version(version)), api_version_format=api_version_format, openapi_customizer=customize
     )
     router = VersionedAPIRouter()
 
@@ -645,13 +641,26 @@ def test__openapi_customizer__non_dict_return__should_raise_type_error_naming_ca
         client.get("/openapi.json?version=2022-02-02")
 
 
-def test__openapi_customizer__async_callback__should_raise_type_error_naming_callback():
-    async def async_customizer(schema: dict[str, Any], version: str | None) -> dict[str, Any]:
-        raise AssertionError("Async customizers must not be awaited")
+async def _async_customizer(schema: dict[str, Any], version: str | None) -> dict[str, Any]:
+    raise AssertionError("Async customizers must not be called")
 
-    app = Cadwyn(versions=_two_versions(), openapi_customizer=async_customizer)  # ty: ignore[invalid-argument-type]  # Intentionally async.
-    with TestClient(app) as client, pytest.raises(TypeError, match=r"async_customizer.*must return a dict"):
-        client.get("/openapi.json?version=2022-02-02")
+
+class _AsyncCallableCustomizer:
+    async def __call__(self, schema: dict[str, Any], version: str | None) -> dict[str, Any]:
+        raise AssertionError("Async customizers must not be called")
+
+
+@pytest.mark.parametrize(
+    ("customizer", "name"),
+    [
+        (_async_customizer, "_async_customizer"),
+        (functools.partial(_async_customizer), "_async_customizer"),
+        (_AsyncCallableCustomizer(), "_AsyncCallableCustomizer"),
+    ],
+)
+def test__openapi_customizer__async_callback__should_raise_type_error_at_startup(customizer: Any, name: str):
+    with pytest.raises(TypeError, match=rf"openapi_customizer must be synchronous.*{name}"):
+        Cadwyn(versions=_two_versions(), openapi_customizer=customizer)
 
 
 def test__openapi_customizer__callback_raises__should_propagate_exception():
