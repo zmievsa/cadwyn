@@ -1,8 +1,8 @@
 import re
 import struct
 import sys
-from collections import Counter, OrderedDict, defaultdict, namedtuple
-from collections.abc import Iterator
+from collections import Counter, OrderedDict, defaultdict, deque, namedtuple
+from collections.abc import Iterable, Iterator
 from datetime import date, datetime
 from enum import Enum
 from functools import partial
@@ -49,7 +49,62 @@ class IterablePoint(namedtuple("PointBase", "x y")):  # noqa: PYI024
 
     @override
     def __repr__(self) -> str:
-        return f"IterablePoint({tuple.__repr__(self)})"
+        return f"{type(self).__name__}({tuple.__repr__(self)})"
+
+
+class RedeclaredPoint(IterablePoint):
+    __slots__ = ()
+    _fields = PointSubclass._fields
+
+
+class SwappedIterPoint(PointSubclass):
+    __slots__ = ()
+
+    @override
+    def __iter__(self) -> Iterator[Any]:
+        return iter((self.y, self.x))
+
+
+class StatefulPoint(PointSubclass):
+    label: str
+
+
+class SwappingPoint(NamedTuple):
+    x: Any
+    y: Any
+
+    @override
+    def __iter__(self) -> Iterator[Any]:
+        return iter((self.y, self.x))
+
+    @override
+    def __getitem__(self, index: Any) -> Any:
+        return tuple.__getitem__(self, 1 - index)
+
+
+class PairCounter(Counter):
+    def __init__(self, pairs: Iterable[tuple[str, Any]] = ()) -> None:
+        super().__init__()
+        for key, count in pairs:
+            self[key] = count
+
+    @override
+    def __repr__(self) -> str:
+        return f"PairCounter({list(self.items())!r})"
+
+    @override
+    def __reduce__(self) -> Any:
+        return (type(self), (list(self.items()),))
+
+
+class InitCounter(Counter):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+
+
+class SlotCounter(Counter):
+    __slots__ = ("label",)
+    label: str
 
 
 class IncrementingPoint(namedtuple("PointBase", "x y")):  # noqa: PYI024
@@ -91,7 +146,6 @@ def evaluate_rendered_default(default: Any) -> Any:
     [
         Point(1, 2),
         EmptyPoint(),
-        PointSubclass(1, 2),
         RecursivePoint([None, int, list[int]]),
         ("one",),
         (None, int),
@@ -240,17 +294,11 @@ def test__render_model__namedtuple_with_nested_subclass__should_keep_none_value_
     assert actual.x[0] is None
 
 
-class ReprCounter(Counter):
-    @override
-    def __repr__(self) -> str:
-        return f"ReprCounter({dict(self)!r})"
-
-
-@pytest.mark.parametrize("counter_type", [Counter, MyCounter, ReprCounter])
-def test__render_model__counter_or_subclass__should_keep_type_counts_and_order(counter_type: type[Counter[str]]):
-    rendered_default = evaluate_rendered_default(counter_type(a=1, b=3, c=2))
-    assert type(rendered_default) is counter_type
-    assert list(rendered_default.items()) == [("a", 1), ("b", 3), ("c", 2)]
+def test__render_model__counter_default__should_keep_the_order_of_counts():
+    rendered_default = evaluate_rendered_default(Counter({"a": 1, "b": 3, "c": 1.0}))
+    assert type(rendered_default) is Counter
+    assert list(rendered_default.items()) == [("a", 1), ("b", 3), ("c", 1.0)]
+    assert type(rendered_default["c"]) is float
 
 
 def test__render_model__defaultdict_subclass__should_wrap_constructor_error_with_field_context():
@@ -307,10 +355,9 @@ def test__render_model__finite_float_default__should_render_its_repr():
             defaultdict(list, a=[UUID(int=1)]),
             "defaultdict(list, {'a': [UUID('00000000-0000-0000-0000-000000000001')]})",
         ),
-        (PointSubclass(1, [None, int]), "PointSubclass(1, [None, int])"),
-        (MyCounter(a=3, b=4), "MyCounter({'a': 3, 'b': 4})"),
-        (ReprCounter(a=3, b=4), "ReprCounter({'a': 3, 'b': 4})"),
         (IterablePoint([1, date(2020, 1, 1)]), "IterablePoint((1, datetime.date(2020, 1, 1)))"),
+        (RedeclaredPoint([1, 2]), "RedeclaredPoint((1, 2))"),
+        (PairCounter([("a", 1), ("b", 3)]), "PairCounter([('a', 1), ('b', 3)])"),
     ],
 )
 def test__render_model__container_with_qualified_or_custom_items__should_render_reprs_of_items(
@@ -324,9 +371,78 @@ def test__render_model__container_with_qualified_or_custom_items__should_render_
     assert rendered_default == default
 
 
-def test__render_model__namedtuple_subclass_with_own_constructor__should_fail_instead_of_changing_values():
-    with pytest.raises(CadwynRenderError, match=r"ModelWithContainerDefault.value.*IncrementingPoint.*default_factory"):
-        render_container_default(IncrementingPoint(1, 2))
+class ModelWithSwappingPointDefault(BaseModel):
+    # Instructions deep-copy their defaults, and deepcopy reads named tuples through their own __iter__
+    value: Any = SwappingPoint(1, [None, int])
+
+
+def test__render_model__namedtuple_with_own_item_access__should_render_its_stored_fields():
+    default = ModelWithSwappingPointDefault.model_fields["value"].default
+    assert list(default) == [[None, int], 1]
+    assert default[0] == [None, int]
+    rendered = render_model(ModelWithSwappingPointDefault, VersionBundle(Version("2000-01-01")), "2000-01-01")
+    assert rendered == (
+        "class ModelWithSwappingPointDefault(BaseModel):\n    value: Any = Field(default=SwappingPoint(1, [None, int]))"
+    )
+    namespace: dict[str, Any] = dict(globals())
+    exec(rendered, namespace)
+    actual = namespace["ModelWithSwappingPointDefault"].model_fields["value"].default
+    assert type(actual) is SwappingPoint
+    assert tuple.__getitem__(actual, 0) == 1
+    assert tuple.__getitem__(actual, 1) == [None, int]
+
+
+class DequeBackedList(list):
+    def __new__(cls, items: Iterable[Any] = ()) -> Any:
+        return deque(items)
+
+
+def make_deque_backed_list() -> DequeBackedList:
+    default = list.__new__(DequeBackedList)
+    list.__init__(default, [1, 2])
+    return default
+
+
+class ModelWithDequeBackedListDefault(BaseModel):
+    # Instructions deep-copy their defaults, which would already turn this one into a deque
+    value: Any = make_deque_backed_list()
+
+
+def test__render_model__subclass_whose_constructor_returns_another_type__should_fail_instead_of_changing_it():
+    with pytest.raises(CadwynRenderError, match=r"ModelWithDequeBackedListDefault.value.*DequeBackedList.*type"):
+        render_model(ModelWithDequeBackedListDefault, VersionBundle(Version("2000-01-01")), "2000-01-01")
+
+
+def make_slot_counter() -> "SlotCounter":
+    counter = SlotCounter(a=1)
+    counter.label = "keep"
+    return counter
+
+
+def make_stateful_point() -> PointSubclass:
+    point = StatefulPoint(1, 2)
+    point.label = "keep"
+    return point
+
+
+@pytest.mark.parametrize(
+    "make_default",
+    [
+        lambda: PointSubclass(1, 2),
+        lambda: IncrementingPoint(1, 2),
+        lambda: SwappedIterPoint(1, 2),
+        make_stateful_point,
+        lambda: MyCounter(a=3),
+        lambda: InitCounter({"a": 1, "b": 1.0}),
+        make_slot_counter,
+    ],
+)
+def test__render_model__subclass_whose_constructor_cannot_rebuild_it__should_fail_instead_of_changing_it(
+    make_default: Any,
+):
+    default = make_default()
+    with pytest.raises(CadwynRenderError, match=rf"ModelWithContainerDefault.value.*{type(default).__name__}"):
+        render_container_default(default)
 
 
 class SameRepr:
@@ -481,7 +597,7 @@ def test__render_model__default_with_cycle_through_namedtuple__should_fail_with_
         render_container_default(point)
 
 
-@pytest.mark.parametrize("container_type", [Counter, MyCounter, OrderedDict])
+@pytest.mark.parametrize("container_type", [Counter, OrderedDict])
 def test__render_model__container_default_with_attributes__should_fail_instead_of_losing_them(container_type: type):
     default = container_type()
     default.label = "keep"
