@@ -1,0 +1,2269 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../how_to_build_versioning_framework/">
+      
+      
+        <link rel="next" href="../architecture/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../img/logos/cadwyn_icon_transparent.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Design decisions and trade-offs - Cadwyn</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#design-decisions-and-trade-offs" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Cadwyn" class="md-header__button md-logo" aria-label="Cadwyn" data-md-component="logo">
+      
+  <img src="../../img/logos/cadwyn_icon_transparent.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Cadwyn
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Design decisions and trade-offs
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1M8 13h8v-2H8zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 5-5 5 5 0 0 0-5-5"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 8a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5M7 15a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/zmievsa/cadwyn" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Cadwyn
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../.." class="md-tabs__link">
+          
+  
+  
+    
+  
+  Home
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../quickstart/setup/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Quickstart
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../how_to/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  How to...
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concepts/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Concepts
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../home/CONTRIBUTING/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../home/CHANGELOG/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../how_we_got_here/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Theory
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Cadwyn" class="md-nav__button md-logo" aria-label="Cadwyn" data-md-component="logo">
+      
+  <img src="../../img/logos/cadwyn_icon_transparent.svg" alt="logo">
+
+    </a>
+    Cadwyn
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/zmievsa/cadwyn" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Cadwyn
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../.." class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Home
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Quickstart
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../how_to/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How to...
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How to...
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/version_with_paths_and_numbers_instead_of_headers_and_dates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Version with paths and numbers instead of headers and dates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Change OpenAPI Schemas
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Change OpenAPI Schemas
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/change_openapi_schemas/add_field/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Add a field
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/change_openapi_schemas/remove_field/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Remove a field
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/change_openapi_schemas/rename_a_field_in_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rename a field
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/change_openapi_schemas/change_field_type/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Change field type
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/change_openapi_schemas/changing_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Change field constraints or validators
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/change_openapi_schemas/change_schema_without_endpoint/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Change a schema that is not used in any endpoint
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/change_business_logic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Change business logic
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/change_endpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Change endpoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../concepts/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/methodology/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Methodology
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/beware_of_data_versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Beware of data versioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/main_app/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Main App
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/schema_generation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schema generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/version_changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Version Changes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/endpoint_migrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Endpoint migrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/enum_migrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Enum migrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/schema_migrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schema migrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/api_version_parameter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Version parameter
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../home/CONTRIBUTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../home/CHANGELOG/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theory
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Theory
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how_we_got_here/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How we got here
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how_to_build_versioning_framework/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How to build a versioning framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design decisions and trade-offs
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design decisions and trade-offs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-most-fixes-are-breaking-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why most fixes are breaking changes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#costs-of-the-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Costs of the architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decisions-already-made" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decisions already made
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rules-for-changing-cadwyn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rules for changing Cadwyn
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-most-fixes-are-breaking-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why most fixes are breaking changes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#costs-of-the-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Costs of the architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decisions-already-made" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decisions already made
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rules-for-changing-cadwyn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rules for changing Cadwyn
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="design-decisions-and-trade-offs">Design decisions and trade-offs<a class="headerlink" href="#design-decisions-and-trade-offs" title="Permanent link">&para;</a></h1>
+<p>This page lists the trade-offs Cadwyn has accepted, its known limitations, and the rules for changing it. Read it before you propose a change to Cadwyn's behavior.</p>
+<h2 id="why-most-fixes-are-breaking-changes">Why most fixes are breaking changes<a class="headerlink" href="#why-most-fixes-are-breaking-changes" title="Permanent link">&para;</a></h2>
+<p>Cadwyn's output for an older API version is a public API. Clients of apps built on Cadwyn depend on it and can't opt out of a Cadwyn upgrade. Any change to what an older version accepts, returns, or documents in OpenAPI can break them, even when the old behavior was a bug. So Cadwyn treats the OpenAPI and behavior of every version as a frozen contract, and fixing long-standing bugs made 8.0.0 a major release.</p>
+<p>The maintainer's principles follow from this:</p>
+<ol>
+<li>Existing users should almost never get breaking changes.</li>
+<li>FastAPI and Pydantic features should keep working transparently, but only as far as FastAPI and Pydantic themselves go.</li>
+<li>Every change should make Cadwyn simpler if possible. Complexity is the main long-term cost: after 8.0.0, <code>schema_generation.py</code> was about 4,000 lines and <code>structure/versions.py</code> about 2,000.</li>
+</ol>
+<p>Cadwyn doesn't aim for "pay only for what you use". Prefer one behavior and one code path for every app over special paths that only some apps take, so bugs show up for everyone and get fixed once.</p>
+<h2 id="supported-api">Supported API<a class="headerlink" href="#supported-api" title="Permanent link">&para;</a></h2>
+<p>Everything importable from <code>cadwyn</code> is supported. So are these internals, which Airflow's Task SDK builds on. Changing them is a breaking change:</p>
+<ul>
+<li><code>VersionBundle.versions</code> and <code>VersionBundle.reversed_versions</code></li>
+<li>the <code>alter_*_instructions</code> attributes of <code>VersionChange</code></li>
+<li>calling the instructions in them (<code>_AlterDataInstruction.__call__</code>) with any object that has a <code>body</code> attribute</li>
+<li><code>generate_versioned_models()</code>, and indexing its result (<code>SchemaGenerator.__getitem__</code> from <code>cadwyn.schema_generation</code>)</li>
+</ul>
+<h2 id="costs-of-the-architecture">Costs of the architecture<a class="headerlink" href="#costs-of-the-architecture" title="Permanent link">&para;</a></h2>
+<p>These follow from how Cadwyn works (see <a href="../architecture/">Architecture</a>). They aren't bugs, and changes that try to remove them are almost always rejected.</p>
+<ul>
+<li>Business logic sees only the latest version. Older versions are generated copies of the latest models, and migrations are written against the latest models.</li>
+<li>Older versions use copies of the models and of changed enums. Identity checks (<code>isinstance</code>, <code>is</code>, dicts keyed by enum members) see these copies, e.g. in the first run of a versioned dependency. Objects that can't be deep-copied, such as a validator holding a <code>threading.Lock</code>, fail when their models are versioned.</li>
+<li>Requests are validated twice: by their version's route, then, after migration, by the latest version's route. Dependencies run in both passes, so their side effects happen twice unless they check <code>current_dependency_solver</code>. Uploaded <code>bytes</code> files are held in memory twice. A model object that an endpoint returns is validated again against Cadwyn's copy of the response model, so its validators and <code>model_post_init</code> run twice, even with a single version (<a href="https://github.com/zmievsa/cadwyn/issues/592">#592</a>). Skipping that would also skip the coercion of objects built with <code>model_construct()</code> or <code>model_copy(update=...)</code>, and change the responses of apps that rely on it.</li>
+<li>Migrations run only for the schema you name: the route's body or <code>response_model</code>, or a member of a union that is (for the requests and responses that are that member). They don't run for that schema nested in other schemas or generics. Schema instructions change a schema everywhere it's used. This way each migration runs once, where it was declared.</li>
+<li>Cadwyn relies on FastAPI, Pydantic, and <code>typing</code> internals, such as <code>solve_dependencies</code>, <code>fastapi._compat</code>, FastAPI's lazily included routers, <code>FieldInfo</code> internals, and <code>typing</code>'s alias cache, so upstream minor releases can break it. The twice-daily workflow upgrades every dependency and runs the tests to catch this. It must always pass. Fix failures in Cadwyn, never by pinning or capping a dependency.</li>
+<li>Startup copies every model for every version. Copying only the changed models would be much faster, but it would change OpenAPI names and model behavior, so it isn't planned.</li>
+</ul>
+<h2 id="decisions-already-made">Decisions already made<a class="headerlink" href="#decisions-already-made" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Decision</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Generic models (<code>Page[Item]</code>)</td>
+<td>Their type args are always versioned, with no option to turn it off.</td>
+<td>User-reported bug (#416). Options double the test matrix and the code paths.</td>
+</tr>
+<tr>
+<td>Inherited fields</td>
+<td><code>schema(Child).field(...)</code> changes only <code>Child</code> and its subclasses.</td>
+<td>User-reported bug (#466).</td>
+</tr>
+<tr>
+<td>Renaming a field in a subclass while a base still has it</td>
+<td>Fails at startup, naming the base. Rename the field where it's declared, and in the same version in subclasses that changed it in newer versions.</td>
+<td>The subclass had both fields, because Pydantic models can't drop inherited fields. Not inheriting from the parent's copy would break the parent's validators and <code>isinstance</code> (#525).</td>
+</tr>
+<tr>
+<td>Renaming a field in a parent while a subclass declares it, changed it in a newer version, or gets it from another base</td>
+<td>Fails at startup, naming the subclass. Rename it in the subclass or the other base too, in the same version.</td>
+<td>The subclass had both fields. Renaming it automatically would break apps that already rename it in both, and would guess when other bases have the new name (#581).</td>
+</tr>
+<tr>
+<td><code>didnt_exist</code> for a field that a subclass declares again or changed, while a base still has it</td>
+<td>Fails at startup, naming the base. Delete it from the base in the same version.</td>
+<td>The instruction did nothing, without an error, because the subclass still inherited the base's field (#582).</td>
+</tr>
+<tr>
+<td><code>Annotated[T, Depends(f)]</code></td>
+<td>Versioned only in the versions that change the models or enums that <code>f</code> validates.</td>
+<td>Versioning it everywhere exposed copies to identity checks (#467). Missing an exotic case, such as a recursive type alias, keeps the previous behavior, which is acceptable.</td>
+</tr>
+<tr>
+<td>Converters of union members (<code>Union[A, B]</code>, <code>Optional[A]</code>)</td>
+<td>Since 9.0, they run for the member that the client's version validated, or whose model the endpoint returned. If Cadwyn can't tell the member, it fails. A migration of the whole union replaces its members' migrations in the same version change.</td>
+<td>User-reported bug (#530). Before 9.0, they never ran for unions. Running one member's migration on another's data would corrupt values. Validating responses to find the member would run their validators twice, since FastAPI validates them after the migrations.</td>
+</tr>
+<tr>
+<td>Converters inside nested models</td>
+<td>Won't do. Write the converter for the outer schema.</td>
+<td>Running nested converters by default would convert data twice in apps that already follow the docs (#468).</td>
+</tr>
+<tr>
+<td>Computed fields that return versioned models</td>
+<td>Documented limitation. Expose the data as a regular field.</td>
+<td>Every Pydantic serializer that picks a model by the value's type loses nested JSON config, changes duck-typed values, or re-wraps user exceptions (#469).</td>
+</tr>
+<tr>
+<td><code>.had(alias=...)</code> and <code>.didnt_have("alias")</code></td>
+<td>Since 9.0, they also change the validation and serialization aliases that Pydantic derived from <code>alias</code>, as <code>Field()</code> does, so the wire key matches the documented one. Data with only the old key fails (a 422 or a 500) instead of getting the field's default. 8.x only warned at startup.</td>
+<td>Clients of apps without migrations relied on the old key, so the fix waited for a major release and must fail loudly instead of losing their values (#465).</td>
+</tr>
+<tr>
+<td>Fields whose validation and serialization keys differ</td>
+<td>Fix only the requests and responses that would certainly fail ("rescue-only").</td>
+<td>Responses that passed before must not change, even if they lost a value.</td>
+</tr>
+<tr>
+<td>Self-referencing models</td>
+<td>Copied when that's safe. Otherwise, Cadwyn raises <code>SchemaGenerationError</code> at startup.</td>
+<td>A clear failure is better than serving wrong shapes.</td>
+</tr>
+<tr>
+<td>Enum defaults of omitted parameters on FastAPI before 0.148</td>
+<td>Not rewritten.</td>
+<td>It would fix a pre-existing bug on old FastAPI only, and every attempt added new edge cases.</td>
+</tr>
+<tr>
+<td><code>/changelog</code>, <code>generate_changelog()</code>, and <code>hidden()</code></td>
+<td>Removed in 9.0.</td>
+<td>Maintenance cost. Apps can generate a better changelog from their version changes themselves, e.g. with a coding agent.</td>
+</tr>
+<tr>
+<td>Options and flags</td>
+<td>Avoided in 99% of cases, and added only with the maintainer's sign-off. A breaking fix doesn't get one to ship early: it waits for a major release.</td>
+<td>Each one doubles the code paths and the tests.</td>
+</tr>
+<tr>
+<td>Minimum supported versions</td>
+<td>Raising the FastAPI minimum to drop compatibility code is fine. The Pydantic and Python minimums are raised only when unavoidable.</td>
+<td>FastAPI moves fast, and Cadwyn depends on its internals. Raising the Pydantic or Python minimum blocks more users.</td>
+</tr>
+<tr>
+<td>FastAPI before 0.137.1</td>
+<td>Not supported.</td>
+<td>Its router model is different. Supporting both doubles the routing code.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="known-limitations">Known limitations<a class="headerlink" href="#known-limitations" title="Permanent link">&para;</a></h2>
+<p>These are accepted for now. Fixing one is a separate change with its own issue.</p>
+<ul>
+<li>A partially parametrized generic model (e.g. <code>Pair[int, T]</code>) fails at startup with a <code>SchemaGenerationError</code> if its typed extra fields (<code>__pydantic_extra__</code> with <code>extra="allow"</code>) use a type parameter whose bound, constraints, or default change in a version, because Pydantic versions differ in how they substitute parameters there. Use type args for all parameters, or a concrete annotation such as <code>__pydantic_extra__: dict[str, Item]</code> (<a href="https://github.com/zmievsa/cadwyn/issues/584">#584</a>).</li>
+<li>Generic models keep the latest models in older versions when a type arg refers back to its own model through a quoted annotation, such as <code>Optional[Page["Category"]]</code> in <code>Category</code>, or uses a recursive native <code>type</code> alias. A PEP 695 generic model that refers to itself through a quoted annotation, such as <code>nxt: Optional["Wrap[X]"]</code> in <code>class Wrap[X](BaseModel)</code>, returns a 500 in every version instead of failing at startup. On Pydantic 2.14.2 and newer, this happens only when a version change alters its type arg.</li>
+<li>Recursive native <code>type</code> aliases work only if they contain nothing but builtin types (including <code>Union</code> and <code>Literal</code>) and other such aliases, like <code>type JsonData = dict[str, JsonData] | list[JsonData] | str | int | None</code>. A route that uses one with anything else in it, such as a model, an enum, a forward ref, or <code>Annotated</code>, fails with a <code>SchemaGenerationError</code> that names the alias when Cadwyn generates the route. Models in a reference cycle (e.g. <code>children: "list[Category]"</code> in <code>Category</code>) that use such an alias fail with a <code>SchemaGenerationError</code> if any version has schema or enum instructions.</li>
+<li>Enum copies unwrap enum-valued members, including values passed to <code>had()</code>: for <code>Outer.a = Inner.a</code>, the copy's value is <code>Inner.a.value</code>, and members with equal raw values become aliases.</li>
+<li>A request with a plain <code>Enum</code> or <code>Flag</code> that has <code>enum(...)</code> instructions returns a 500 if the request's version gets its members inside models that Cadwyn doesn't dump (e.g. a top-level <code>Iterable[Item]</code> body), or inside containers and iterators that pydantic doesn't make.</li>
+<li>Every param that reads the body shares a single iterator over a lazy <code>Iterable</code> or <code>Generator</code> value if it's inside a model that Cadwyn doesn't turn into data (e.g. a top-level <code>Iterable[Item]</code> body, or a <code>list[Item]</code> body in an app with dependency overrides). So a dependency that consumes its items leaves fewer of them for the endpoint, while in plain FastAPI each param gets its own iterator. Use <code>list[...]</code> for such values if more than one param reads them.</li>
+<li>A strict response model (e.g. <code>ConfigDict(strict=True)</code>) with a plain <code>Enum</code> or <code>Flag</code> that has <code>enum(...)</code> instructions returns a 500 in every version, including the latest. This includes optional fields and nested models or containers. Add <code>Field(strict=False)</code> to the enum field. In older versions, a response migration that supplies that version's enum members also works (see <a href="../../concepts/enum_migrations/#how-cadwyn-copies-enums">Enum migrations</a>). A fix would change the enum's schema and what custom schema hooks see (<a href="https://github.com/zmievsa/cadwyn/issues/605">#605</a>).</li>
+<li>Schema instructions:<ul>
+<li>Diamond inheritance takes the field from the first base, as Pydantic does.</li>
+<li>A parent's rename reaches a subclass's own changes only through single, non-generic inheritance.</li>
+<li>A parent's rename of <code>x</code> to <code>y</code> leaves both <code>x</code> and <code>y</code>, without a startup error, in a subclass that declares <code>x</code> again, if a class between them changed <code>x</code> in a newer version and deletes it in the version of the rename. For example, <code>schema(Middle).field("x").had(description=...)</code>, then <code>schema(Parent).field("x").had(name="y")</code> and <code>schema(Middle).field("x").didnt_exist</code> with <code>class Child(Middle)</code> declaring <code>x</code>.</li>
+<li><code>had(default=PydanticUndefined)</code> doesn't make a field required when its default is declared in <code>Annotated[..., Field(default=...)]</code>.</li>
+<li><code>didnt_have(...)</code> raises an <code>AttributeError</code> when the attribute is a read-only property of an <code>Annotated</code> metadata object.</li>
+<li><code>schema(Model).validator(...).existed</code> for a computed field fails on Python before 3.13.</li>
+</ul>
+</li>
+<li>Alias instructions decide from the incoming data whether it has only a field's old key (see <code>.had(alias=...)</code> in <a href="#decisions-already-made">Decisions already made</a>). So the <code>renamed_key</code> error happens even when a model validator would fill the field from other keys, e.g. a <code>model_validator(mode="before")</code> that copies a <code>compatibility_name</code> key into it.</li>
+<li>Defaults: Cadwyn swaps in the version's model classes, enum classes, and functions only inside the lists, tuples, and dicts in defaults and other field attributes (see <a href="../../concepts/schema_generation/#defaults">Defaults</a>). Elsewhere, they stay the latest ones: e.g. in sets, deques, <code>MappingProxyType</code>, a <code>defaultdict</code>'s <code>default_factory</code>, dataclass and model instances, or <code>functools.partial</code> args. Each version gets a <code>copy.deepcopy()</code> of subclasses of <code>list</code>, <code>tuple</code>, and <code>dict</code>, and of containers that contain themselves. So a custom <code>__deepcopy__</code> or <code>__reduce__</code> decides what versions share (one that returns <code>self</code> shares the whole default), a sentinel inside is a different object in every version, <code>Counter</code> loses its attributes, and some cycles through tuples lose identity.</li>
+<li><code>cadwyn render</code> renders <code>model_config</code> only for models whose config a version changes, and omits it for the rest. It renders <code>AliasChoices</code> and <code>AliasPath</code> as calls that raise a <code>TypeError</code>, and subclasses of scalars such as <code>int</code> and <code>str</code> as the base type. It raises <code>CadwynRenderError</code> for defaults it can't reproduce, such as recursive or shared mutable defaults, subclasses whose <code>repr</code> looks like a builtin container or whose constructor changes the items it's given, distinct set items or dict keys with the same <code>repr</code>, or a <code>defaultdict</code> with a lambda factory. Use a named <code>Field(default_factory=...)</code> function for these (see <a href="../../concepts/schema_generation/#rendering-schemas">Rendering schemas</a>). Other subclasses render through their constructor and <code>__repr__</code>, which must reproduce their contents and state.</li>
+<li>Class dependencies (except Pydantic models) aren't versioned.</li>
+<li>WebSocket routes select the API version and support existence, path, name, and dependency instructions, but Cadwyn doesn't migrate their schemas or messages.</li>
+<li>Streaming (generator or server-sent-event) endpoints don't work in versioned routes.</li>
+<li>Request bodies that are lists or dicts of models (e.g. <code>list[Model]</code>) pass the client's extra keys and set fields to the latest version only when Cadwyn can be sure they're right (<a href="https://github.com/zmievsa/cadwyn/issues/566">#566</a>). Roughly, both versions must have the same fields, keys, and defaults at the same place, directly in lists, dicts, or unions, with no validators that get the raw input (e.g. <code>model_validator(mode="before")</code>) and no custom <code>__init__</code>. Every latest-version param that reads the body must validate it the same way. Models in tuples, sets, or deques, root models, and all bodies in apps with <code>app.dependency_overrides</code> never qualify. Other models are read by their attributes, as before: they lose their extra keys, and all their fields count as set. A required field whose alias differs from its name returns a 500. An optional one whose model doesn't validate its serialization alias (e.g. <code>Field(default=0, alias="x", validation_alias="v")</code>) gets its default without an error.</li>
+<li>Request body models that override <code>model_dump()</code> (e.g. SQLModel models) still pass their computed fields to the latest version as input: as extra keys, or as a 500 if the model forbids extra keys. Cadwyn can't tell whether an override accepts <code>exclude_computed_fields</code> (SQLModel before 0.0.26 doesn't), so it calls it as before (#570).</li>
+<li><code>Json[...]</code> fields of request bodies (<a href="https://github.com/zmievsa/cadwyn/issues/538">#538</a>): Cadwyn encodes their values for the latest version only when it can be sure that the latest version gets what the client sent. Otherwise, the latest version parses the already parsed values again. A value that isn't a string then returns a 500 in every version, unless a migration encoded it as a JSON string. <code>Json[str]</code> returns a 500 or another string. <code>Json[Any]</code> and other types that accept several JSON types give the endpoint another value, e.g. <code>123</code> instead of <code>"123"</code>. Cadwyn encodes only the strings that the client sent and that are still at their place, including in copies made with <code>dict()</code> or <code>copy.deepcopy()</code>. It passes values as they are when:<ul>
+<li>a migration set the value as a string, or the value doesn't survive a JSON round trip (e.g. an empty string, null, a tuple, a NaN, or a dict with mixed key types). Cadwyn still encodes the client's other strings. One exception: if a migration interns the client's string with <code>sys.intern()</code> and puts equal interned JSON at the same place, Python returns the client's string object. Cadwyn then encodes it, and the endpoint gets a string instead of the parsed JSON.</li>
+<li>a migration moved or removed a client's string (e.g. by reordering a list), replaced a list, dict, or model with another type, or put keys other than strings, numbers, booleans, and null in a dict on the way to the field</li>
+<li>the body differs between the request's version and the latest one, or a latest-version dependency reads it as another type (e.g. <code>body: dict = Body()</code>)</li>
+<li>the body's schema isn't plain JSON, e.g. it has validators, serializers, <code>model_post_init</code>, computed fields, default factories other than builtin containers (e.g. <code>Field(default_factory=lambda: 1)</code> next to a <code>Json[...]</code> field returns a 500), unions with non-JSON members (e.g. models or dates), models that allow extra keys or dump to other keys, or <code>Json[...]</code> fields in tuples, in self-referencing models, or more than 8 models deep</li>
+<li>the request has no body, or, on FastAPI 0.158.2 and newer, a migration sets the body of an omitted optional form model</li>
+<li>the field is in a <code>list</code> or <code>dict</code> body that falls back (see above), or has a string value there</li>
+<li>a request migration runs and the field has a string that Python shares, such as <code>""</code> or some one-character strings (e.g. <code>"5"</code> with some pydantic-core versions, which becomes <code>5</code>)</li>
+</ul>
+</li>
+<li>Unions of form models on FastAPI 0.153.0 and newer: Cadwyn can't pass a list, set, or tuple from a validator or a migration whole to every member when one member takes that field as a single value (e.g. <code>value: Any</code>) and another as repeated values (e.g. <code>value: list[str]</code>) or as an extra field. On FastAPI 0.153.0 to 0.160.x, the body passes as it is, like in Cadwyn 8.x: a single-value field gets only the last item, and a repeated-values field gets a set or tuple as one item. If that member accepts the body, the endpoint gets a wrong value without an error, e.g. <code>["b"]</code> instead of <code>["a", "b"]</code>. On FastAPI 0.161.0 and newer, the request fails with a <code>CadwynError</code> that names the field and the members, as it does when a form model outside the union (e.g. of a dependency override) shares the body and would get a list in a list.</li>
+<li>Form models on FastAPI 0.158.2 and newer: FastAPI reads a form model and the other form params of the endpoint, its dependencies, and their overrides from one dict body. Cadwyn gives each param what FastAPI would give it for the migrated request, e.g. an <code>int</code> where the form had a string, if a migration set one.<ul>
+<li>If Cadwyn can't, the request fails with a <code>CadwynError</code> (a 500): when a param takes the whole body (e.g. <code>payload: dict = Body()</code> in an override), when another param uses the alias of an endpoint's form model that a dependency declares, or, after a migration, when a param reads a key that the form model took under another name (e.g. through <code>AliasChoices</code>) or the model's migrated body isn't a dict, and when a migration sets a key to a dict or a collection in a collection while an optional form model is omitted, since a form can't hold it. Use distinct names or aliases, or read the form from <code>Request</code>.</li>
+<li>If an optional form model was omitted and nothing else reads the form, a migrated key named like the model param counts as the embedded model. For <code>body: Annotated[Optional[MyModel], Form()] = None</code> whose model has a <code>body: str</code> field, <code>request.body = {"body": "value"}</code> fails. Set <code>request.body = {"body": {"body": "value"}}</code>.</li>
+</ul>
+</li>
+<li>Cadwyn closes uploaded files after the response, even after the client disconnects. A file close that never returns blocks the request and server shutdown. Plain FastAPI apps mounted in a Cadwyn app close their own uploads, and <code>VersionPickingMiddleware</code> interrupts that when the client disconnects, so their files stay open.</li>
+</ul>
+<h2 id="rules-for-changing-cadwyn">Rules for changing Cadwyn<a class="headerlink" href="#rules-for-changing-cadwyn" title="Permanent link">&para;</a></h2>
+<p><strong>Scope</strong></p>
+<ul>
+<li>Fix the reported bug, not its neighbors.</li>
+<li>File the bugs you find yourself as issues. Fix them only if a user reported them or they crash.</li>
+<li>Don't add unsupported features as part of a fix, such as migrations of WebSocket messages, streaming endpoints, <code>StreamingResponse</code>, or <code>FileResponse</code>.</li>
+<li>Don't widen a change during review. If a review uncovers a new problem, file it.</li>
+<li>If user code has a simple workaround and the fix in Cadwyn is complex, document the workaround instead.</li>
+<li>Rank review findings by how likely they are in real apps. A contrived case that breaks working output still gets fixed, but it shouldn't drive the design.</li>
+<li>Decide which breaking changes a major release takes when the work starts, not in the audit before the release. 8.0.0 rolled back and redesigned two fixes late (#457 and #475, #458 and #474).</li>
+</ul>
+<p><strong>What a change may alter</strong></p>
+<ul>
+<li>Compare every change against the last release, not against an idea of correct behavior.</li>
+<li>A change may alter output that is broken today: a crash, a 500, an empty or lost value. It may not alter output that works today, even if it's wrong, unless the maintainer accepts it as a breaking change with an upgrade note in the CHANGELOG.</li>
+<li>The OpenAPI of every version counts as output, including schema names.</li>
+<li>When clients rely on behavior that differs from the docs, a fix toward the docs is a breaking change. Warn at startup in the current major version, naming the model, the field, and how to keep working, and change the behavior in the next one.</li>
+</ul>
+<p><strong>How to fix</strong></p>
+<ul>
+<li>Prefer doing less. Narrow the fix, apply it only when the old path fails ("retry on failure", not an extra validation pass), or go back to the last release's code path.</li>
+<li>If every review round finds new edge cases in the same part of a fix, remove that part instead of patching it again.</li>
+<li>Don't reimplement FastAPI, Pydantic, or CPython logic. Call their functions, and evaluate annotations only where FastAPI itself does.</li>
+<li>Make safety checks allow-lists. Anything unknown takes the old behavior.</li>
+<li>Decide statically, not by the order in which models happen to be generated.</li>
+<li>Find what needs versioning and copy it in one traversal, never two that must agree. Finding must not copy, wrap, or rebuild unchanged models.</li>
+<li>Keep the user's objects as they are, and copy only what FastAPI or Pydantic would mutate. <code>deepcopy</code> doesn't isolate things: it goes through <code>typing</code>'s caches and breaks objects compared with <code>is</code>, such as FastAPI's sentinels.</li>
+<li>Caches may share structure between models or versions, but never user-visible state such as a stateful default factory.</li>
+<li>Invalid instructions or models fail at startup with an error that names the model and the field. Never fail later at request time, and never serve wrong data without an error.</li>
+<li>When you rely on a private FastAPI or Pydantic internal, check at import time that it exists, and fail with a clear error if it changed instead of falling back.</li>
+<li><code>Cadwyn()</code> accepts FastAPI's parameters and passes each of them to every router it creates.</li>
+<li>In the user docs, describe the common case and its workaround. The full list of shapes that a rule covers belongs in the tests.</li>
+</ul>
+<p><strong>How to check a change</strong></p>
+<ul>
+<li>Compare the requests and the OpenAPI of every version against the last release, installed in its own checkout or virtual environment.</li>
+<li>Run the tests on the minimum supported and the latest Pydantic, and on Python 3.11 and 3.14. Check CI on every operating system before merging: recursion and stack limits differ on Windows and macOS.</li>
+<li>Pytest puts the root of the checkout it runs from first on <code>sys.path</code>, so run a test file from the checkout that you want to test.</li>
+<li>After merging <code>main</code> into a branch, look for top-level functions that are now defined twice. The later definition wins without a warning.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../how_to_build_versioning_framework/" class="md-footer__link md-footer__link--prev" aria-label="Previous: How to build a versioning framework">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                How to build a versioning framework
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../architecture/" class="md-footer__link md-footer__link--next" aria-label="Next: Architecture">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Architecture
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Created by <a href="https://zmievsa.org">Stanislav Zmiev</a>
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://zmievsa.org" target="_blank" rel="noopener" title="Stanislav Zmiev&#39;s blog" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M351.9 280H161c2.9 64.5 17.2 123.9 37.5 167.4 11.4 24.5 23.7 41.8 35.1 52.4 11.2 10.5 18.9 12.2 22.9 12.2s11.7-1.7 22.9-12.2c11.4-10.6 23.7-28 35.1-52.4 20.3-43.5 34.6-102.9 37.5-167.4zm-191-48h190.9c-2.8-64.5-17.1-123.9-37.4-167.4-11.4-24.4-23.7-41.8-35.1-52.4C268.1 1.7 260.4 0 256.4 0s-11.7 1.7-22.9 12.2c-11.4 10.6-23.7 28-35.1 52.4-20.3 43.5-34.6 102.9-37.5 167.4m-48 0c3.5-85.6 25.6-165.1 57.9-217.3C78.7 47.3 10.9 131.2 1.5 232zM1.5 280c9.4 100.8 77.2 184.7 169.3 217.3-32.3-52.2-54.4-131.7-57.9-217.3zm398.4 0c-3.5 85.6-25.6 165.1-57.9 217.3 92.1-32.7 159.9-116.5 169.3-217.3zm111.4-48C501.9 131.2 434.1 47.3 342 14.7c32.3 52.2 54.4 131.7 57.9 217.3z"/></svg>
+    </a>
+  
+    
+    
+    
+    
+    <a href="https://x.com/zmievsa" target="_blank" rel="noopener" title="Stanislav Zmiev on X" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M357.2 48h70.6L273.6 224.2 455 464H313L201.7 318.6 74.5 464H3.8l164.9-188.5L-5.2 48h145.6l100.5 132.9zm-24.8 373.8h39.1L119.1 88h-42z"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+      <div class="md-progress" data-md-component="progress" role="progressbar"></div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.annotate", "content.code.copy", "content.tabs.link", "content.tooltips", "navigation.footer", "navigation.indexes", "navigation.instant", "navigation.instant.prefetch", "navigation.instant.progress", "navigation.path", "navigation.tabs", "navigation.tabs.sticky", "navigation.top", "navigation.tracking", "search.highlight", "search.share", "search.suggest", "toc.follow", "content.footnote.tooltips", "content.code.select"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/view-transitions.js"></script>
+      
+    
+  </body>
+</html>
