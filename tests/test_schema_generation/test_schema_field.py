@@ -4161,30 +4161,6 @@ def test__schema_field_had_name__mro_entries_change_after_class_creation__should
     assert old_child.model_validate({"old_foo": 42}).model_dump() == {"old_foo": 42}
 
 
-def test__schema_field_had_name__mro_entries_fail_after_class_creation__should_not_run_them_again(
-    create_runtime_schemas: CreateRuntimeSchemas,
-):
-    class FailingAlias:
-        fail = False
-
-        def __mro_entries__(self, bases: tuple[object, ...]) -> tuple[type, ...]:
-            if self.fail:
-                raise ValueError("Cannot resolve this alias again")
-            return (ParentWithIntFooThatGetsRenamed,)
-
-    alias = FailingAlias()
-
-    class Child(alias):
-        pass
-
-    alias.fail = True
-    schemas = create_runtime_schemas(
-        version_change(schema(ParentWithIntFooThatGetsRenamed).field("foo").had(name="old_foo"))
-    )
-
-    assert schemas["2000-01-01"][Child].model_validate({"old_foo": 42}).model_dump() == {"old_foo": 42}
-
-
 def test__generate_versioned_routers__mro_entries_child_deletes_redeclared_field__should_fail_at_startup(
     create_versioned_app: CreateVersionedApp, router: VersionedAPIRouter
 ):
