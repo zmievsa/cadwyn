@@ -177,45 +177,11 @@ def _change_version_of_model_bases(
         and inspect.getattr_static(base, "__mro_entries__", None) is not None
         for base in original_bases
     )
-    schema_generator = generator.schema_generator
-    if schema_generator is None:
-        # Discovery never runs user hooks. Only their original, actual parents may need versioning.
-        if has_user_hooks:
-            for base in model.__bases__:
-                if issubclass(base, BaseModel) and not any(base is original for original in original_bases):
-                    generator.change_version_of_base(base)
-        return model.__bases__
     if not has_user_hooks:
-        return types.resolve_bases(orig_bases)
-
-    try:
-        bases = schema_generator._resolved_model_bases[model]
-    except KeyError:
-        # Use main's inputs and run each hook once per class in this version, including the fallback path.
-        bases = types.resolve_bases(orig_bases)
-        schema_generator._resolved_model_bases[model] = bases
-    if not schema_generator._instructions_that_differ_from_head:
-        return bases
-    originals_by_copy_id = {
-        id(base_copy): original
-        for original, base_copy in zip(original_bases, orig_bases, strict=True)
-        if isinstance(original, type)
-    }
-    if len(bases) != len(model.__bases__) or any(
-        originals_by_copy_id.get(id(base), base) is not actual
-        for base, actual in zip(bases, model.__bases__, strict=True)
-    ):
-        return bases
-    # A known, complete parent with schema instructions can be replaced safely. Uncertain shapes keep main's
-    # resolved bases; no transitive discovery or speculative startup errors are needed.
+        return orig_bases if generator.schema_generator is None else types.resolve_bases(orig_bases)
+    # Python has already run the user's hooks and put their results into __bases__, so we never run them again
     return tuple(
-        generator.change_version_of_base(base)
-        if issubclass(base, BaseModel)
-        and id(base) not in originals_by_copy_id
-        and base.__pydantic_fields_complete__
-        and any(parent in schema_generator._instructions_that_differ_from_head for parent in base.__mro__)
-        else base
-        for base in bases
+        generator.change_version_of_base(base) if issubclass(base, BaseModel) else base for base in model.__bases__
     )
 
 
@@ -463,7 +429,6 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
                 _reject_keys_renamed_by_alias
             )
 
-        # Keep hook execution at main's construction point, after copying field models and building fields.
         bases = _change_version_of_model_bases(generator, self.cls, orig_bases)
         attributes = self.other_attributes
         if config_changes := self.get_config_changes(generator.model_bundle.schemas):
