@@ -120,7 +120,7 @@ class EndpointInstructionFactory:
         openapi_extra: dict[str, Any] = Sentinel,
         generate_unique_id_function: Callable[[APIRoute], str] = Sentinel,
     ) -> EndpointHadInstruction:
-        return EndpointHadInstruction(
+        instruction = EndpointHadInstruction(
             endpoint_path=self.endpoint_path,
             endpoint_methods=self.endpoint_methods,
             endpoint_func_name=self.endpoint_func_name,
@@ -145,10 +145,29 @@ class EndpointInstructionFactory:
                 generate_unique_id_function=generate_unique_id_function,
             ),
         )
+        if self.endpoint_methods == {"WEBSOCKET"}:
+            unsupported = [
+                attr
+                for attr in instruction.attributes.__dataclass_fields__
+                if attr not in {"path", "name", "dependencies"}
+                and getattr(instruction.attributes, attr) is not Sentinel
+            ]
+            if unsupported:
+                raise LintingError(
+                    "WebSocket endpoint had() supports only path, name, and dependencies; "
+                    f"unsupported attributes: {', '.join(unsupported)}."
+                )
+        elif methods is not Sentinel and "WEBSOCKET" in methods:
+            _validate_that_strings_are_valid_http_methods(methods)
+        return instruction
 
 
 def endpoint(path: str, methods: list[str], /, *, func_name: Union[str, None] = None) -> EndpointInstructionFactory:
-    _validate_that_strings_are_valid_http_methods(methods)
+    if "WEBSOCKET" in methods:
+        if set(methods) != {"WEBSOCKET"}:
+            raise LintingError("WEBSOCKET cannot be combined with HTTP methods or other methods.")
+    else:
+        _validate_that_strings_are_valid_http_methods(methods)
 
     return EndpointInstructionFactory(path, set(methods), func_name)
 

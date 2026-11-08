@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, APIWebSocketRoute
 
 
 class CadwynRenderError(Exception):
@@ -61,7 +61,7 @@ class RouteByPathConverterDoesNotApplyToAnythingError(RouterGenerationError):
 
 
 class RouteAlreadyExistsError(RouterGenerationError):
-    def __init__(self, *routes: APIRoute) -> None:
+    def __init__(self, *routes: APIRoute | APIWebSocketRoute) -> None:
         self.routes = routes
         super().__init__(f"The following routes are duplicates of each other: {routes}")
 
