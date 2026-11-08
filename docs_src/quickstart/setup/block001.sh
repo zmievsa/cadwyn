@@ -1,1 +1,1 @@
-pip install 'cadwyn[standard]'
+uv add 'cadwyn[standard]'
