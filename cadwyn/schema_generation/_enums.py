@@ -470,32 +470,32 @@ def _get_member_state(member: Enum) -> dict[_MemberStateKey, Any]:
     state: dict[_MemberStateKey, Any] = {
         ("attribute", k): v for k, v in vars(member).items() if k not in _ENUM_MEMBER_INTERNAL_ATTRIBUTES
     }
-    for key, descriptor in _get_slots(type(member)):
+    mro = type(member).__mro__
+    for key in _get_slot_keys(type(member)):
         try:
-            state[key] = descriptor.__get__(member, type(member))
+            state[key] = mro[key[1]].__dict__[key[2]].__get__(member, type(member))
         except AttributeError:  # The slot isn't set
             state[key] = _UNSET
     return state
 
 
-_SLOTS_BY_CLASS: "weakref.WeakKeyDictionary[type, tuple[tuple[_MemberStateKey, Any], ...]]" = (
-    weakref.WeakKeyDictionary()
-)
+# Only plain data: a slot descriptor refers to its class, which would keep the key of its class alive
+_SLOT_KEYS_BY_CLASS: "weakref.WeakKeyDictionary[type, tuple[_MemberStateKey, ...]]" = weakref.WeakKeyDictionary()
 
 
-def _get_slots(cls: type) -> tuple[tuple[_MemberStateKey, Any], ...]:
-    """Return the keys of the slots of the instances of the class in their state, and the descriptors of the slots.
+def _get_slot_keys(cls: type) -> tuple[_MemberStateKey, ...]:
+    """Return the keys of the slots of the instances of the class in their state: `("slot", position, name)`.
 
     A subclass can declare a slot with the same name as a slot of its base, and the member has both. The copy has the
     same bases as the original, so we tell the slots apart by the position of their class in the MRO.
     """
-    if (slots := _SLOTS_BY_CLASS.get(cls)) is None:
-        slots = _SLOTS_BY_CLASS[cls] = tuple(
-            (("slot", position, slot_name), base.__dict__[slot_name])
+    if (keys := _SLOT_KEYS_BY_CLASS.get(cls)) is None:
+        keys = _SLOT_KEYS_BY_CLASS[cls] = tuple(
+            ("slot", position, slot_name)
             for position, base in enumerate(cls.__mro__)
             for slot_name in _get_own_slot_names(base)
         )
-    return slots
+    return keys
 
 
 def _get_own_slot_names(cls: type) -> tuple[str, ...]:

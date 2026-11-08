@@ -1,4 +1,5 @@
 import dataclasses
+import gc
 import re
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta, timezone
@@ -32,6 +33,7 @@ from cadwyn.exceptions import (
     InvalidGenerationInstructionError,
     SchemaGenerationError,
 )
+from cadwyn.schema_generation import generate_versioned_models
 from cadwyn.structure import enum
 from tests.conftest import CreateRuntimeSchemas, serialize_enum, version_change
 
@@ -1267,6 +1269,29 @@ def test__enum_didnt_have__attribute_set_after_creation_that_constructor_of_vers
     models = create_runtime_schemas(version_change(enum(Ordered).didnt_have("a")))
 
     assert models["2000-01-01"][Ordered].b.first is False
+
+
+def test__generate_versioned_models__slotted_enum_after_cache_is_cleared__should_be_garbage_collected(
+    create_runtime_schemas: CreateRuntimeSchemas,
+):
+    def generate() -> None:
+        class CollectableSlottedEnum(Enum):
+            __slots__ = ("label",)
+
+            def __init__(self, value: int) -> None:
+                self.label = str(value)
+
+            a = 1
+            b = 2
+
+        create_runtime_schemas(version_change(enum(CollectableSlottedEnum).didnt_have("a")))
+
+    generate()
+    generate_versioned_models.cache_clear()
+    gc.collect()
+
+    # The enum, its copies, and the enums that Cadwyn builds again to compare their members
+    assert [o for o in gc.get_objects() if isinstance(o, EnumType) and o.__name__ == "CollectableSlottedEnum"] == []
 
 
 @pytest.mark.parametrize("value", ["foo", EnumWithTwoMembers.bar, StrEnum("Other", {"foo": "foo"}).foo])
