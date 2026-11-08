@@ -123,6 +123,15 @@ class ShapeWithClassVar(BaseModel, Generic[_ShapeT]):
     item: _ShapeT
 
 
+class _TupleWithSchemaHook(tuple):
+    """Metadata that pydantic uses and that Cadwyn copies like other tuples"""
+
+    __slots__ = ()
+
+    def __get_pydantic_core_schema__(self, source: Any, handler: Any) -> Any:
+        return handler(source)
+
+
 class ShapeWithItselfInUnusedMetadata(BaseModel, Generic[_ShapeT]):
     item: _ShapeT
     marker: "Annotated[int, [ShapeWithItselfInUnusedMetadata]]" = 0
@@ -460,14 +469,14 @@ def test__router_generation__unparametrized_generic_with_itself_in_unused_metada
     assert old.post("/items", json={"item": {"name": "latest"}}).status_code == 422
 
 
-@pytest.mark.filterwarnings("ignore::pydantic.warnings.PydanticDeprecatedSince211")
 def test__generate_versioned_models__unparametrized_generic_with_itself_in_used_metadata__should_fail_loudly(
     create_runtime_schemas: CreateRuntimeSchemas,
 ):
     class Page(BaseModel, Generic[_ShapeT]):
         item: _ShapeT
-        # Pydantic builds the schema of a model that is the metadata itself
-        marker: "Annotated[Any, Page]" = None
+        marker: "Annotated[int, _TupleWithSchemaHook((Page,))]" = 0
+
+    assert Page.model_validate({"item": {"name": "a"}, "marker": "1"}).marker == 1
 
     schemas = create_runtime_schemas(version_change(schema(ShapeItem).field("name").had(type=int)))
     with pytest.raises(SchemaGenerationError, match=r"Page.*refers to itself in metadata that pydantic uses"):
