@@ -679,7 +679,7 @@ def test__openapi_customizer__callback_raises__should_propagate_exception():
 )
 def test__openapi_customizer__request_without_document__should_not_call_customizer(url: str, status_code: int):
     def customize(schema: dict[str, Any], version: str | None) -> dict[str, Any]:
-        pytest.fail("Only served OpenAPI documents should invoke the customizer")
+        raise AssertionError("Only served OpenAPI documents should invoke the customizer")
 
     with TestClient(Cadwyn(versions=_two_versions(), openapi_customizer=customize)) as client:
         assert client.get(url).status_code == status_code
