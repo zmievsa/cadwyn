@@ -738,6 +738,7 @@ def _get_routes(
         if (
             isinstance(route, APIRoute | APIWebSocketRoute)
             and route.path.rstrip("/") == endpoint_path
+            # A WEBSOCKET selector matches only WebSocket routes, and an HTTP selector matches only HTTP routes
             and ("WEBSOCKET" in endpoint_methods) == isinstance(route, APIWebSocketRoute)
             and _route_methods(route).issubset(endpoint_methods)
             and (endpoint_func_name is None or _callable_name(route.endpoint) == endpoint_func_name)

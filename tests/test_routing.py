@@ -7,7 +7,8 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Match, NoMatchFound
 from starlette.testclient import TestClient
 
-from cadwyn import Cadwyn
+from cadwyn import Cadwyn, VersionChange, endpoint
+from cadwyn.exceptions import CadwynError
 from cadwyn.route_generation import VersionedAPIRouter
 from cadwyn.structure.versions import HeadVersion, Version, VersionBundle
 from tests._resources.app_for_testing_routing import mixed_hosts_app
@@ -225,3 +226,127 @@ def test__default_version__unversioned_route__should_take_priority_over_versione
         resp = client.get("/my_single_route")
         assert resp.status_code == 200, resp.json()
         assert resp.json() == 52
+
+
+def _path_versioned_app(*values: str, prefix: str) -> Cadwyn:
+    versions = VersionBundle(*(Version(value) for value in values))
+    app = Cadwyn(
+        versions=versions,
+        api_version_location="path",
+        api_version_parameter_name="api_version",
+        api_version_format="date" if values[0][0].isdigit() else "string",
+    )
+    router = VersionedAPIRouter(prefix=prefix)
+
+    @router.get("/ping")
+    async def ping():
+        return versions.api_version_var.get(None)
+
+    app.generate_and_include_versioned_routers(router)
+    return app
+
+
+@pytest.mark.parametrize(
+    ("prefix", "path", "expected"),
+    [
+        ("/{tenant}/{api_version}", "/2024-02-01/2024-01-01/ping", "2024-01-01"),
+        ("/{api_version}/{tenant}", "/2024-01-01/2024-02-01/ping", "2024-01-01"),
+    ],
+)
+def test__path_routing__declared_version_elsewhere_in_path__should_read_version_from_its_route_position(
+    prefix: str, path: str, expected: str
+):
+    with TestClient(_path_versioned_app("2024-02-01", "2024-01-01", prefix=prefix)) as client:
+        response = client.get(path)
+    assert response.status_code == 200
+    assert response.json() == expected
+    assert response.headers["api_version"] == expected
+
+
+@pytest.mark.parametrize(
+    ("values", "prefix", "path"),
+    [
+        (("v2", "v1"), "/{tenant}/{api_version}", "/v2/bad/ping"),
+        (("2024-02-01", "2024-01-01"), "/{tenant}/{api_version}", "/2024-02-01/2024-01-15/ping"),
+        (("2024-02-01", "2024-01-01"), "/{api_version}/{tenant}", "/bad/2024-01-01/ping"),
+    ],
+)
+def test__path_routing__undeclared_version_next_to_declared_one__should_return_404(
+    values: tuple[str, str], prefix: str, path: str
+):
+    with TestClient(_path_versioned_app(*values, prefix=prefix)) as client:
+        assert client.get(path).status_code == 404
+
+
+def test__path_routing__trailing_slash__should_redirect_within_the_version():
+    with TestClient(_path_versioned_app("2024-02-01", "2024-01-01", prefix="/{api_version}")) as client:
+        response = client.get("/2024-01-01/ping/", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "http://testserver/2024-01-01/ping"
+
+
+def test__path_routing__wrong_method__should_return_405():
+    with TestClient(_path_versioned_app("2024-02-01", "2024-01-01", prefix="/{api_version}")) as client:
+        assert client.post("/2024-01-01/ping").status_code == 405
+
+
+def test__path_routing__url_matching_version_positions_of_several_versions__should_raise_cadwyn_error():
+    class MoveVersionAfterTenant(VersionChange):
+        description = "Put the tenant before the API version"
+        instructions_to_migrate_to_previous_version = (
+            endpoint("/{api_version}/{tenant}/ping", ["GET"]).had(path="/{tenant}/{api_version}/ping"),
+        )
+
+    versions = VersionBundle(Version("2024-02-01", MoveVersionAfterTenant), Version("2024-01-01"))
+    app = Cadwyn(versions=versions, api_version_location="path", api_version_parameter_name="api_version")
+    router = VersionedAPIRouter()
+
+    @router.get("/{api_version}/{tenant}/ping")
+    async def ping(tenant: str):
+        return tenant
+
+    app.generate_and_include_versioned_routers(router)
+    with TestClient(app) as client:
+        assert client.get("/2024-02-01/acme/ping").json() == "acme"
+    with (
+        TestClient(app) as client,
+        pytest.raises(CadwynError, match=r"matches routes of several API versions \(2024-02-01, 2024-01-01\)"),
+    ):
+        client.get("/2024-02-01/2024-01-01/ping")
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "status_code", "body"),
+    [
+        ("GET", "/2024-01-01/items", 200, '"versioned"'),
+        ("GET", "/2024-01-01/missing", 404, '{"detail":"Not Found"}'),
+        ("GET", "/2024-01-01/items/", 307, ""),
+        ("POST", "/2024-01-01/missing", 404, '{"detail":"Not Found"}'),
+    ],
+)
+def test__path_routing__no_versioned_route_matches__should_keep_the_url_version_instead_of_unversioned_fallback(
+    method: str, path: str, status_code: int, body: str
+):
+    app = Cadwyn(
+        versions=VersionBundle(Version("2024-02-01"), Version("2024-01-01")),
+        api_version_location="path",
+        api_version_parameter_name="api_version",
+    )
+    router = VersionedAPIRouter()
+
+    @router.get("/{api_version}/items")
+    async def items():
+        return "versioned"
+
+    app.generate_and_include_versioned_routers(router)
+
+    @app.get("/{path:path}")
+    async def fallback(path: str):
+        return "unversioned fallback"
+
+    with TestClient(app) as client:
+        assert client.get("/about").json() == "unversioned fallback"
+        response = client.request(method, path, follow_redirects=False)
+    assert response.status_code == status_code
+    assert response.text == body
+    assert response.headers["api_version"] == "2024-01-01"

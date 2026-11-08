@@ -23,11 +23,19 @@ from typing_extensions import override
 from cadwyn._internal.context_vars import DEFAULT_API_VERSION_VAR
 from cadwyn._utils import same_method_definition_as_in
 from cadwyn.exceptions import CadwynError
-from cadwyn.middleware import APIVersionFormat, APIVersionLocation
+from cadwyn.middleware import (
+    _PATH_VERSION_MATCH_SCOPE_KEY,
+    APIVersionFormat,
+    APIVersionLocation,
+    HeaderVersionManager,
+    URLVersionManager,
+    _match_key,
+)
 from cadwyn.structure.common import VersionType
 from cadwyn.structure.versions import _UPLOAD_CLOSE_TIMEOUT_SECONDS
 
 _logger = getLogger(__name__)
+_DATE_ADAPTER = TypeAdapter(date)
 
 
 class _RootCadwynAPIRouter(APIRouter):
@@ -47,8 +55,14 @@ class _RootCadwynAPIRouter(APIRouter):
         self.api_version_var = api_version_var
         self.unversioned_routes: list[BaseRoute] = []
         self.api_version_format = api_version_format
-        self._api_version_location = api_version_location
-        self._api_version_path_parameter_name = api_version_parameter_name.replace("-", "_")
+        # VersionPickingMiddleware gets the same manager, so HTTP requests and WebSockets read the version alike
+        self.api_version_manager: HeaderVersionManager | URLVersionManager
+        if api_version_location == "path":
+            self.api_version_manager = URLVersionManager(
+                api_version_parameter_name=api_version_parameter_name, versioned_routers=self.versioned_routers
+            )
+        else:
+            self.api_version_manager = HeaderVersionManager(api_version_parameter_name=api_version_parameter_name)
         self._api_version_default_value = api_version_default_value
 
     async def _get_routes_from_closest_suitable_version(self, version: VersionType) -> list[BaseRoute]:
@@ -164,20 +178,8 @@ class _RootCadwynAPIRouter(APIRouter):
             DEFAULT_API_VERSION_VAR.reset(default_token)
 
     def _pick_websocket_version(self, websocket: WebSocket) -> str:
-        version = None
-        if self._api_version_location == "custom_header":
-            version = websocket.headers.get(self.api_version_parameter_name)
-        else:
-            # Match the actual version parameter, including dates between declared versions.
-            # Looking for a version-like URL segment could pick an unrelated path parameter.
-            for router in self.versioned_routers.values():
-                for route in router.routes:
-                    match, child_scope = route.matches(websocket.scope)
-                    if match == Match.FULL:
-                        version = child_scope.get("path_params", {}).get(self._api_version_path_parameter_name)
-                        break
-                if version is not None:
-                    break
+        # VersionPickingMiddleware is HTTP-only, so we pick the version with the same manager and rules here
+        version = self.api_version_manager.get(websocket)
         if version is None:
             if callable(self._api_version_default_value):
                 raise CadwynError(
@@ -190,7 +192,7 @@ class _RootCadwynAPIRouter(APIRouter):
             raise WebSocketException(status.WS_1008_POLICY_VIOLATION, "Missing API version")
         if self.api_version_format == "date":
             try:
-                TypeAdapter(date).validate_python(version)
+                _DATE_ADAPTER.validate_python(version)
             except ValidationError as exc:
                 raise WebSocketException(status.WS_1008_POLICY_VIOLATION, "Invalid API version") from exc
         return version
@@ -241,6 +243,17 @@ class _RootCadwynAPIRouter(APIRouter):
     async def process_request(self, scope: Scope, receive: Receive, send: Send, routes: Sequence[BaseRoute]) -> None:
         # It's a copy-paste from starlette.routing.Router
         # but in this version self.routes were replaced with routes from the function arguments
+
+        # URLVersionManager has already found the route while picking the version from the path
+        path_version_match = scope.pop(_PATH_VERSION_MATCH_SCOPE_KEY, None)
+        if (
+            path_version_match is not None
+            and path_version_match.routes is routes
+            and path_version_match.key == _match_key(scope)
+        ):
+            scope.update(path_version_match.child_scope)
+            await path_version_match.route.handle(scope, receive, send)
+            return None
 
         partial = None
         partial_scope = {}

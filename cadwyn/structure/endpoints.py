@@ -157,12 +157,18 @@ class EndpointInstructionFactory:
                     "WebSocket endpoint had() supports only path, name, and dependencies; "
                     f"unsupported attributes: {', '.join(unsupported)}."
                 )
-        elif methods is not Sentinel and "WEBSOCKET" in methods:
-            _validate_that_strings_are_valid_http_methods(methods)
+        elif methods is not Sentinel and any(method.upper() == "WEBSOCKET" for method in methods):
+            raise LintingError(
+                "had(methods=...) cannot turn an HTTP endpoint into a WebSocket one. "
+                'Select WebSocket routes with endpoint(path, ["WEBSOCKET"]) instead.'
+            )
         return instruction
 
 
 def endpoint(path: str, methods: list[str], /, *, func_name: Union[str, None] = None) -> EndpointInstructionFactory:
+    misspelled = sorted(method for method in methods if method.upper() == "WEBSOCKET" and method != "WEBSOCKET")
+    if misspelled:
+        raise LintingError(f'Use "WEBSOCKET" in uppercase to select WebSocket routes instead of {misspelled[0]!r}.')
     if "WEBSOCKET" in methods:
         if set(methods) != {"WEBSOCKET"}:
             raise LintingError("WEBSOCKET cannot be combined with HTTP methods or other methods.")

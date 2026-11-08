@@ -33,8 +33,6 @@ from cadwyn.exceptions import CadwynStructureError
 from cadwyn.middleware import (
     APIVersionFormat,
     APIVersionLocation,
-    HeaderVersionManager,
-    URLVersionManager,
     VersionPickingMiddleware,
     _generate_api_version_dependency,
 )
@@ -302,10 +300,8 @@ class Cadwyn(FastAPI):
         self.api_version_title = api_version_title
         self.api_version_description = api_version_description
         if api_version_location == "custom_header":
-            self._api_version_manager = HeaderVersionManager(api_version_parameter_name=api_version_parameter_name)
             self._api_version_fastapi_depends_class = fastapi.Header
         elif api_version_location == "path":
-            self._api_version_manager = URLVersionManager(possible_version_values=self.versions._version_values_set)
             self._api_version_fastapi_depends_class = fastapi.Path
         else:
             assert_never(api_version_location)
@@ -341,7 +337,7 @@ class Cadwyn(FastAPI):
         self.add_middleware(
             versioning_middleware_class,
             api_version_parameter_name=api_version_parameter_name,
-            api_version_manager=self._api_version_manager,
+            api_version_manager=self.router.api_version_manager,
             api_version_var=self.versions.api_version_var,
             api_version_default_value=api_version_default_value,
         )

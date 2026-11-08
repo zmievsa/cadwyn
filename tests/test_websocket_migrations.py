@@ -176,10 +176,16 @@ def test__generate_versioned_routers__websocket_had__should_build_each_versions_
             assert websocket.receive_json() == expected
 
 
-@pytest.mark.parametrize("methods", [["WEBSOCKET"], ["GET", "WEBSOCKET"]])
+@pytest.mark.parametrize("methods", [["WEBSOCKET"], ["GET", "WEBSOCKET"], ["websocket"]])
 def test__http_had__websocket_method__should_reject_at_definition(methods):
-    with pytest.raises(LintingError, match="HTTP methods are not valid: WEBSOCKET"):
+    with pytest.raises(LintingError, match=r"cannot turn an HTTP endpoint into a WebSocket one"):
         endpoint("/ws", ["GET"]).had(methods=methods)
+
+
+@pytest.mark.parametrize("methods", [["websocket"], ["WebSocket"], ["GET", "websocket"]])
+def test__endpoint__lowercase_websocket__should_suggest_uppercase_websocket(methods):
+    with pytest.raises(LintingError, match=r'Use "WEBSOCKET" in uppercase .* instead of \'(websocket|WebSocket)\''):
+        endpoint("/ws", methods)
 
 
 def test__websocket_had__included_router_dependencies__should_replace_the_inherited_list():
