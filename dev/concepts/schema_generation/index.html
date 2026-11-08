@@ -2069,11 +2069,12 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">Cadwyn</span><span class="p">,</span> <span class="n">Version</span><span class="p">,</span> <span class="n">VersionBundle</span><span class="p">,</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
 
-<span class="n">T</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;T&quot;</span><span class="p">)</span>
-
 
 <span class="k">class</span><span class="w"> </span><span class="nc">Item</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
     <span class="n">full_name</span><span class="p">:</span> <span class="nb">str</span>
+
+
+<span class="n">T</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;T&quot;</span><span class="p">,</span> <span class="n">bound</span><span class="o">=</span><span class="n">Item</span><span class="p">)</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">Page</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">,</span> <span class="n">Generic</span><span class="p">[</span><span class="n">T</span><span class="p">]):</span>
@@ -2112,6 +2113,10 @@
 </ul>
 </li>
 </ul>
+<p>Generic models used without type args, such as <code>Page</code> in the example above, use the versioned models and enums in the bounds, constraints, or defaults of parameters that their fields actually validate. The same applies to unresolved parameters in partially specialized generics and unparametrized type aliases. Fully parametrized models such as <code>Page[Item]</code> and <code>Payload[int]</code> keep their existing type-argument versioning and never version the bounds of the parameters that those arguments replace. Unused parameters keep their original behavior.</p>
+<p>Older versions now reject the latest shape when it differs from their own (<a href="https://github.com/zmievsa/cadwyn/issues/584">issue #584</a>). Add request and response converters for the outer generic, or for the endpoint's path, wherever the nested data needs migrating; converters for the nested model do not run automatically. Affected bare generics can have different OpenAPI names, such as <code>Page[T]</code>.</p>
+<p>Quoted bounds resolve in each consuming model's namespace or the type alias's module. Cadwyn keeps generic templates and their original parameters intact, including for self-referencing generics. Parameters whose fallback refers back to their consuming model retain the existing recursive-model versioning behavior. A bare generic whose validation fallback cannot be resolved or safely versioned raises <code>SchemaGenerationError</code>; use explicit type arguments for such a model.</p>
+<p>TypeVar-based typed extra fields (<code>__pydantic_extra__</code> with <code>extra="allow"</code>) remain a <a href="../../theory/design_decisions/#known-limitations">known limitation</a>: older versions can still validate and document their latest bounds. Use a concrete annotation such as <code>__pydantic_extra__: dict[str, Item]</code> on a non-generic model instead.</p>
 <p>Some type args keep their latest models:</p>
 <ul>
 <li>the args that lead back to the generic itself, e.g. <code>subcategories: Page["Category"]</code> within <code>Category</code> (see <a href="#models-that-refer-to-each-other">Models that refer to each other</a>);</li>
