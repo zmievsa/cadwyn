@@ -1190,8 +1190,13 @@ def test__generate_versioned_models__bare_generic_sharing_changed_quoted_paramet
 ):
     field = "a" if changed_item is typevar_namespace_first.Item else "b"
     schemas = create_runtime_schemas(version_change(schema(changed_item).field(field).had(type=int)))
-    with pytest.raises(SchemaGenerationError, match=r"namespaces.*explicit type arguments"):
+    with pytest.raises(SchemaGenerationError) as exc_info:
         schemas["2000-01-01"][typevar_namespace_first.EnvelopeWithItem]
+    assert str(exc_info.value) == (
+        "Cadwyn cannot version the bare generic EnvelopeWithItem: type parameter T resolves differently across the "
+        "namespaces of tests._data.typevar_namespace_first.EnvelopeWithItem, "
+        "tests._data.typevar_namespace_second.Page. Use explicit type arguments."
+    )
 
 
 def test__router_generation__typed_extras_with_concrete_annotation__should_validate_and_document_old_model(
