@@ -1,6 +1,6 @@
 import importlib.metadata
 
-from .applications import Cadwyn, OpenAPICustomizer
+from .applications import Cadwyn
 from .dependencies import current_dependency_solver
 from .route_generation import VersionedAPIRouter, generate_versioned_routers
 from .schema_generation import generate_versioned_models, migrate_response_body
@@ -23,7 +23,6 @@ __version__ = importlib.metadata.version("cadwyn")
 __all__ = [
     "Cadwyn",
     "HeadVersion",
-    "OpenAPICustomizer",
     "RequestInfo",
     "ResponseInfo",
     "Version",
