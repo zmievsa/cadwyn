@@ -721,7 +721,7 @@ class MixinWithField:
     foo: int = 0
 
 
-class LeftChildWithMixin(MixinWithField, ParentOfDiamondWithMixin):  # ty: ignore[invalid-attribute-override]  # The mixin deliberately retypes `foo`.
+class LeftChildWithMixin(MixinWithField, ParentOfDiamondWithMixin):  # ty: ignore[incompatible-attribute-override]  # The mixin deliberately retypes `foo`.
     pass
 
 
@@ -739,7 +739,7 @@ class ParentOfDiamondWithClassVar(BaseModel):
 
 
 class LeftChildWithClassVar(ParentOfDiamondWithClassVar):
-    foo: ClassVar[str] = "hidden"  # ty: ignore[invalid-attribute-override]
+    foo: ClassVar[str] = "hidden"  # ty: ignore[incompatible-attribute-override]
 
 
 class RightChildOfDiamondWithClassVar(ParentOfDiamondWithClassVar):
@@ -1084,7 +1084,7 @@ class OtherBaseWithFloatFoo(BaseModel):
 
 
 class ChildOfTwoBasesThatRedeclaresFieldThatGetsRenamed(OtherBaseWithFloatFoo, ParentWithFieldThatGetsRenamed):
-    foo: str = ""  # ty: ignore[invalid-attribute-override]
+    foo: str = ""  # ty: ignore[incompatible-attribute-override]
 
 
 def test__schema_field_had_name__parent_renamed_field_that_child_of_two_bases_redeclares__should_raise_error(
@@ -1627,7 +1627,7 @@ class ParentWithStrFoo(BaseModel):
 
 
 class ChildOfMixinAndParentWithFoo(MixinWithIntFoo, ParentWithStrFoo):
-    foo: int  # ty: ignore[invalid-attribute-override]
+    foo: int  # ty: ignore[incompatible-attribute-override]
 
 
 class MixinWithFooAnnotation:
@@ -1659,11 +1659,11 @@ class AncestorWithFoo(BaseModel):
 
 
 class ParentThatHidesFooAsClassVar(AncestorWithFoo):
-    foo: ClassVar[str]  # ty: ignore[invalid-attribute-override]
+    foo: ClassVar[str]  # ty: ignore[incompatible-attribute-override]
 
 
 class ChildThatRedeclaresFooHiddenByParent(ParentThatHidesFooAsClassVar):
-    foo: str  # ty: ignore[invalid-attribute-override]
+    foo: str  # ty: ignore[incompatible-attribute-override]
 
 
 @pytest.mark.parametrize(
@@ -1946,7 +1946,7 @@ class ParentOfChildThatRetypesFoo(BaseModel):
 
 
 class ChildThatRetypesFoo(ParentOfChildThatRetypesFoo):
-    foo: Annotated[int, Field(gt=0)] = Field(description="Child")  # ty: ignore[invalid-attribute-override]
+    foo: Annotated[int, Field(gt=0)] = Field(description="Child")  # ty: ignore[incompatible-attribute-override]
 
 
 def test__schema_field_existed_as__changelog_recipe_for_child_rename__should_keep_parent_field_and_add_child_field(
@@ -2147,7 +2147,7 @@ class Point(NamedTuple):
 
 
 def _with_source(container: _T) -> _T:
-    container.source = "config"  # ty: ignore[unresolved-attribute]
+    container.source = "config"  # ty: ignore[missing-attribute]
     return container
 
 
@@ -2187,7 +2187,7 @@ def test__schema_field__default_that_subclasses_list_tuple_or_dict__should_get_a
 class CopyMarkingList(list[Any]):
     def __deepcopy__(self, memo: dict[int, Any]) -> "CopyMarkingList":
         result = CopyMarkingList(copy.deepcopy(list(self), memo))
-        result.copied_by_its_own_hook = True  # ty: ignore[unresolved-attribute]
+        result.copied_by_its_own_hook = True  # ty: ignore[missing-attribute]
         return result
 
 
@@ -2365,7 +2365,7 @@ def test__schema_field__plain_container_default_with_versioned_model_class__shou
 
     descriptions = {}
     for version in ("2000-01-01", "2001-01-01"):
-        model_class = get_class(schemas[version][model]().foo)  # ty: ignore[unresolved-attribute]
+        model_class = get_class(schemas[version][model]().foo)  # ty: ignore[missing-attribute]
         assert model_class is schemas[version][SchemaWithOneStrField]
         descriptions[version] = model_class.model_fields["foo"].description
     assert descriptions == {"2000-01-01": "Old", "2001-01-01": None}
@@ -2429,7 +2429,7 @@ def test__schema_field__self_containing_default_with_versioned_model_class__shou
 
 def _make_list_subclass_with_lock() -> TagList:
     default = TagList([1])
-    default.lock = threading.Lock()  # ty: ignore[unresolved-attribute]
+    default.lock = threading.Lock()  # ty: ignore[missing-attribute]
     return default
 
 
@@ -3437,8 +3437,8 @@ def test__schema_that_overrides_fields_from_mro(create_runtime_schemas: CreateRu
         bar: int = Field(default=83)
 
     class SchemaThatOverridesField(ParentSchema):
-        foo: str = Field(description="What?")  # ty: ignore[invalid-attribute-override]  # Test a deliberate field type override.
-        bar: str = Field(description="What?")  # ty: ignore[invalid-attribute-override]  # Test a deliberate field type override.
+        foo: str = Field(description="What?")  # ty: ignore[incompatible-attribute-override]  # Test a deliberate field type override.
+        bar: str = Field(description="What?")  # ty: ignore[incompatible-attribute-override]  # Test a deliberate field type override.
 
     schemas = create_runtime_schemas(
         version_change(
@@ -4976,8 +4976,8 @@ def test__schema_with_classvar__add_classvar_field(create_runtime_schemas: Creat
     old_model = schemas["2000-01-01"][SchemaWithoutClassVar]
 
     assert not hasattr(latest_model, "new_config")
-    assert mid_model.new_config == "added_config"  # ty: ignore[unresolved-attribute]
-    assert old_model.new_config == "added_config"  # ty: ignore[unresolved-attribute]
+    assert mid_model.new_config == "added_config"  # ty: ignore[missing-attribute]
+    assert old_model.new_config == "added_config"  # ty: ignore[missing-attribute]
 
     assert not hasattr(latest_model, "new_config_without_value")
     assert not hasattr(mid_model, "new_config_without_value")

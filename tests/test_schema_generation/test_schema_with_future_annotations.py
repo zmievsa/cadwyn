@@ -87,7 +87,7 @@ class ParentWithFooAsQuotedClassVar(BaseModel):
 
 
 class ChildThatDeclaresFooHiddenByQuotedClassVar(ParentWithFooAsQuotedClassVar):
-    foo: str  # ty: ignore[invalid-attribute-override]
+    foo: str  # ty: ignore[incompatible-attribute-override]
 
 
 class ParentWithFooAsAliasedClassVar(BaseModel):
@@ -95,7 +95,7 @@ class ParentWithFooAsAliasedClassVar(BaseModel):
 
 
 class ChildThatDeclaresFooHiddenByAliasedClassVar(ParentWithFooAsAliasedClassVar):
-    foo: str  # ty: ignore[invalid-attribute-override]
+    foo: str  # ty: ignore[incompatible-attribute-override]
 
 
 # Pydantic warns that it will treat such a name as a field in V3, and that the child's field shadows the class var

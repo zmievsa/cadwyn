@@ -77,7 +77,7 @@ def same_method_definition_as_in(
     t: Callable[Concatenate[_SourceSelf, _P], _R],
 ) -> Callable[[Callable[..., _R]], Callable[Concatenate[object, _P], _R]]:
     def decorator(f: Callable[..., _R]) -> Callable[Concatenate[object, _P], _R]:
-        f.__signature__ = signature(t)  # ty: ignore[unresolved-attribute]
+        f.__signature__ = signature(t)  # ty: ignore[missing-attribute]
         return f
 
     return decorator

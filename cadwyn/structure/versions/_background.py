@@ -34,7 +34,7 @@ def _add_keyword_only_parameter(
     param_annotation: type,
 ):
     signature = inspect.signature(func)
-    func.__signature__ = signature.replace(  # ty: ignore[unresolved-attribute]
+    func.__signature__ = signature.replace(  # ty: ignore[missing-attribute]
         parameters=[
             *list(signature.parameters.values()),
             inspect.Parameter(param_name, kind=inspect._ParameterKind.KEYWORD_ONLY, annotation=param_annotation),

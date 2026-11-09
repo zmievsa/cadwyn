@@ -29,7 +29,7 @@ def is_regular_function(call: object) -> TypeGuard[Union[types.FunctionType, typ
 
 
 def _function_globals(call: Union[types.FunctionType, types.MethodType]) -> dict[str, Any]:
-    return call.__globals__  # ty: ignore[unresolved-attribute]  # MethodType forwards function attributes at runtime.
+    return call.__globals__  # ty: ignore[missing-union-attribute]  # MethodType forwards function attributes at runtime.
 
 
 def _get_globals(call: Any) -> dict[str, Any]:

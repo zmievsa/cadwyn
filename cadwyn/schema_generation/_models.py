@@ -464,7 +464,7 @@ class _PydanticModelWrapper(Generic[_T_PYDANTIC_MODEL]):
             __pydantic_generic_metadata__=generic_metadata,
         )
 
-        model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
+        model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[missing-attribute]
         typed_model_copy = cast("type[_T_PYDANTIC_MODEL]", model_copy)
         # Pydantic took the namespace of this function. Quoted names that are still unresolved, such as the bound
         # of a TypeVar that names a class defined in a function, resolve in the model's own namespace instead
