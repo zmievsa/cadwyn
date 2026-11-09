@@ -32,7 +32,7 @@ def make_tags_subscripting_stub_only_generic() -> StubOnlyGeneric[int]:
     return []  # ty: ignore[invalid-return-type]
 
 
-def make_tags_with_missing_attribute() -> types.DoesNotExistAtRuntime:  # ty: ignore[unresolved-attribute]
+def make_tags_with_missing_attribute() -> types.DoesNotExistAtRuntime:  # ty: ignore[missing-attribute]
     return []
 
 

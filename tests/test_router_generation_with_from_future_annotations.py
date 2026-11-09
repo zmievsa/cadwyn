@@ -602,7 +602,7 @@ class ParentWithClassVar(BaseModel):
 with pytest.warns(UserWarning, match='Field name "value" .* shadows an attribute in parent'):
 
     class ChildRedeclaringClassVarAsField(ParentWithClassVar):
-        value: Annotated[str, Field(min_length=2)] = Field()  # ty: ignore[invalid-attribute-override]
+        value: Annotated[str, Field(min_length=2)] = Field()  # ty: ignore[incompatible-attribute-override]
 
 
 @pytest.mark.filterwarnings('ignore:Field name "value" .* shadows an attribute in parent:UserWarning')

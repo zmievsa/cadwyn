@@ -159,7 +159,7 @@ class _EnumWrapper(Generic[_T_ENUM]):
                 copied = model_copy.__members__[name]
                 if copied.name == name:
                     _restore_member_state(copied, changes)
-        model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[unresolved-attribute]
+        model_copy.__cadwyn_original_model__ = self.cls  # ty: ignore[missing-attribute]
         _take_head_members_by_value(model_copy, self.cls)
         return model_copy
 
@@ -238,12 +238,12 @@ class _EnumWrapper(Generic[_T_ENUM]):
 
     def _restore_new_and_init(self, enum_copy: type[_T_ENUM]) -> None:
         """Give the copy the __new__ and __init__ of the enum, e.g. for the flags that `_missing_` creates later"""
-        new_member = self.cls._new_member_  # ty: ignore[unresolved-attribute]
-        enum_copy._new_member_ = new_member  # ty: ignore[unresolved-attribute]
+        new_member = self.cls._new_member_  # ty: ignore[missing-attribute]
+        enum_copy._new_member_ = new_member  # ty: ignore[missing-attribute]
         if "__new_member__" in self.cls.__dict__:
-            enum_copy.__new_member__ = new_member  # ty: ignore[unresolved-attribute]
+            enum_copy.__new_member__ = new_member  # ty: ignore[missing-attribute]
         else:
-            del enum_copy.__new_member__  # ty: ignore[unresolved-attribute]
+            del enum_copy.__new_member__  # ty: ignore[missing-attribute]
         if "__init__" in self.cls.__dict__:
             enum_copy.__init__ = self.cls.__dict__["__init__"]
         else:
@@ -326,9 +326,9 @@ class _EnumWrapper(Generic[_T_ENUM]):
 
 
 # The checks of the enum machinery for the names that never become members. They fail at import if they change
-_is_enum_dunder = enum._is_dunder  # ty: ignore[unresolved-attribute]
-_is_enum_sunder = enum._is_sunder  # ty: ignore[unresolved-attribute]
-_is_enum_private = enum._is_private  # ty: ignore[unresolved-attribute]
+_is_enum_dunder = enum._is_dunder  # ty: ignore[missing-attribute]
+_is_enum_sunder = enum._is_sunder  # ty: ignore[missing-attribute]
+_is_enum_private = enum._is_private  # ty: ignore[missing-attribute]
 
 _CUSTOM_NEW_ADVICE = (
     "Cadwyn only knows the values of the members, not the arguments that __new__ got. "
@@ -338,8 +338,8 @@ _CUSTOM_NEW_ADVICE = (
 
 def _has_custom_new(enum_cls: type[Enum]) -> bool:
     """Whether the enum creates its members with a `__new__` of the user's, which can need more than the values"""
-    new_member = enum_cls._new_member_  # ty: ignore[unresolved-attribute]
-    member_type_new = enum_cls._member_type_.__new__  # ty: ignore[unresolved-attribute]
+    new_member = enum_cls._new_member_  # ty: ignore[missing-attribute]
+    member_type_new = enum_cls._member_type_.__new__  # ty: ignore[missing-attribute]
     return new_member is not member_type_new and not any(new_member is new for new in _STDLIB_ENUM_NEWS)
 
 
@@ -366,8 +366,8 @@ def _get_value_of_member_with_only_its_value(args: tuple[Any, ...]) -> Union[_Va
 
 
 def _make_new_that_keeps_members_with_only_their_values(enum_cls: type[Enum]) -> Callable[..., Any]:
-    new_member = enum_cls._new_member_  # ty: ignore[unresolved-attribute]
-    member_type = enum_cls._member_type_  # ty: ignore[unresolved-attribute]
+    new_member = enum_cls._new_member_  # ty: ignore[missing-attribute]
+    member_type = enum_cls._member_type_  # ty: ignore[missing-attribute]
 
     def __new__(cls: type[Enum], *args: Any) -> Any:  # noqa: N807
         value = _get_value_of_member_with_only_its_value(args)
@@ -395,13 +395,13 @@ def _has_only_its_value(member: Enum) -> bool:
     """Whether the member has no attributes or set slots, and its mixin data (e.g. its `str`) is its value"""
     if any(value is not _UNSET for value in _get_member_state(member).values()):
         return False
-    member_type = type(member)._member_type_  # ty: ignore[unresolved-attribute]
+    member_type = type(member)._member_type_  # ty: ignore[missing-attribute]
     return member_type is object or member_type.__eq__(member, member._value_) is True
 
 
 def _is_same_member(rebuilt_member: Enum, original_member: Enum) -> bool:
     rebuilt_state, original_state = _get_member_state(rebuilt_member), _get_member_state(original_member)
-    member_type = type(original_member)._member_type_  # ty: ignore[unresolved-attribute]
+    member_type = type(original_member)._member_type_  # ty: ignore[missing-attribute]
     return (
         # E.g. not an alias of another member
         rebuilt_member.name == original_member.name

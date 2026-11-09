@@ -148,7 +148,7 @@ def _generate_api_version_dependency(
         # TODO: What do I return?
         return next(iter(kwargs.values()))
 
-    api_version_dependency.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]
+    api_version_dependency.__signature__ = inspect.Signature(  # ty: ignore[missing-attribute]
         parameters=[
             inspect.Parameter(
                 api_version_pythonic_parameter_name,

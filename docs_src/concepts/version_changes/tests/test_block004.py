@@ -21,7 +21,7 @@ class InvoiceResource(BaseModel):
 
 
 invoices = ModuleType("invoices")
-invoices.InvoiceCreateRequest = InvoiceCreateRequest  # ty: ignore[unresolved-attribute]
+invoices.InvoiceCreateRequest = InvoiceCreateRequest  # ty: ignore[missing-attribute]
 
 with pytest.MonkeyPatch.context() as monkeypatch:
     monkeypatch.setitem(sys.modules, "invoices", invoices)

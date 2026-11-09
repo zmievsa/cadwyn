@@ -2444,7 +2444,7 @@ def test__request_body_migration__with_any_dependency_override__should_stay_as_b
     with TestClient(app) as client:
         client.post(test_path, json=[{"value": 1}], headers={"x-api-version": "2000-01-01"})
         # With overrides, FastAPI builds the dependants of all dependencies again from their current signatures
-        read_items.__signature__ = inspect.signature(read_items_with_validator)  # ty: ignore[unresolved-attribute]
+        read_items.__signature__ = inspect.signature(read_items_with_validator)  # ty: ignore[missing-attribute]
         app.dependency_overrides[unrelated_dependency] = lambda: None
         response = client.post(test_path, json=[{"value": 1}], headers={"x-api-version": "2000-01-01"})
 
@@ -6212,7 +6212,7 @@ class SubclassWithModelDumpOverride(SchemaWithRequiredValidationAlias):
 
 
 class SubclassWithRetypedField(SchemaWithRequiredValidationAlias):
-    value: str = Field(default="text", alias="x", validation_alias="v")  # ty: ignore[invalid-attribute-override]
+    value: str = Field(default="text", alias="x", validation_alias="v")  # ty: ignore[incompatible-attribute-override]
 
 
 class SubclassWithFieldOnTheDumpedKey(SchemaWithRequiredValidationAlias):
@@ -10571,7 +10571,7 @@ class SchemaWithComputedFieldAndModelDumpOverrideWithoutExtraParams(BaseModel):
         return self.name.upper()
 
     @override
-    def model_dump(  # ty: ignore[invalid-method-override]
+    def model_dump(  # ty: ignore[incompatible-method-override]
         self, *, by_alias: Optional[bool] = None, exclude_unset: bool = False
     ) -> dict[str, Any]:
         return BaseModel.model_dump(self, by_alias=by_alias, exclude_unset=exclude_unset)
@@ -12907,7 +12907,7 @@ def test__request_body_migration__with_override_that_reads_the_body_later__shoul
     def get_overridden_value(**kwargs: Any) -> Any:
         return kwargs
 
-    get_overridden_value.__signature__ = inspect.signature(get_value)  # ty: ignore[unresolved-attribute]
+    get_overridden_value.__signature__ = inspect.signature(get_value)  # ty: ignore[missing-attribute]
 
     @router.post(test_path)
     async def endpoint(body: SchemaWithJsonDictOfInts, from_dependency: Annotated[Any, Depends(get_value)]):
@@ -12918,7 +12918,7 @@ def test__request_body_migration__with_override_that_reads_the_body_later__shoul
     assert clients["2000-01-01"].post(test_path, json={"data": '{"a": 1}'}).json() == {"value": 0}
 
     # FastAPI builds the override from its new signature, so it reads the body now, which we must check again
-    get_overridden_value.__signature__ = inspect.signature(_read_body_as_dict)  # ty: ignore[unresolved-attribute]
+    get_overridden_value.__signature__ = inspect.signature(_read_body_as_dict)  # ty: ignore[missing-attribute]
 
     with pytest.raises(CadwynHeadRequestValidationError) as exc_info:
         clients["2000-01-01"].post(test_path, json={"data": '{"a": "1"}'})

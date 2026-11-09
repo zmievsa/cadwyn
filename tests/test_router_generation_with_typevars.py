@@ -591,7 +591,7 @@ def test__generate_versioned_models__typed_extras_of_nested_generic__should_vali
 
     class Extra(BaseModel, Generic[ItemT]):
         model_config = ConfigDict(extra="allow")
-        __pydantic_extra__: dict[str, ItemT]  # ty: ignore[invalid-mutable-override] # Pydantic supports typed extras.
+        __pydantic_extra__: dict[str, ItemT]  # ty: ignore[incompatible-mutable-override] # Pydantic supports typed extras.
 
     class Outer(BaseModel, Generic[OtherT, ItemT]):
         other: OtherT
@@ -1367,7 +1367,7 @@ def test__router_generation__typed_extras_with_concrete_annotation__should_valid
 
     class Page(BaseModel):
         model_config = ConfigDict(extra="allow")
-        __pydantic_extra__: dict[str, Item]  # ty: ignore[invalid-mutable-override] # Pydantic supports typed extras.
+        __pydantic_extra__: dict[str, Item]  # ty: ignore[incompatible-mutable-override] # Pydantic supports typed extras.
 
     router = VersionedAPIRouter()
 
@@ -1398,7 +1398,7 @@ _TypedExtrasOtherT = TypeVar("_TypedExtrasOtherT")
 class TypedExtrasPage(BaseModel, Generic[_TypedExtrasOtherT, _TypedExtrasItemT]):
     model_config = ConfigDict(extra="allow")
     other: _TypedExtrasOtherT
-    __pydantic_extra__: dict[str, _TypedExtrasItemT]  # ty: ignore[invalid-mutable-override] # Typed extras.
+    __pydantic_extra__: dict[str, _TypedExtrasItemT]  # ty: ignore[incompatible-mutable-override] # Typed extras.
 
 
 def test__generate_versioned_models__typed_extras_with_typevar_of_unparametrized_generic__should_validate_old_model(
@@ -1430,7 +1430,7 @@ def test__generate_versioned_models__typed_extras_with_typevar_of_non_generic_mo
 
     class Page(BaseModel):
         model_config = ConfigDict(extra="allow")
-        __pydantic_extra__: dict[str, ItemT]  # ty: ignore[invalid-mutable-override, unbound-type-variable] # Pydantic supports typed extras.
+        __pydantic_extra__: dict[str, ItemT]  # ty: ignore[incompatible-mutable-override, unbound-type-variable] # Pydantic supports typed extras.
 
     old = create_runtime_schemas(version_change(schema(Item).field("name").had(type=int)))["2000-01-01"][Page]
     assert old.model_validate({"extra": {"name": 1}}).model_dump() == {"extra": {"name": 1}}

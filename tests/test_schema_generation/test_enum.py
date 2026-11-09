@@ -81,8 +81,8 @@ def test__enum_had__original_enum_has_methods__all_methods_are_preserved(
     )
     model = models["2000-01-01"][EnumWithOneMemberAndMethods]
     assert model.foo.value == 83
-    assert model.hello_member.value == 10  # ty: ignore[unresolved-attribute]
-    assert model.world_member.value == 20  # ty: ignore[unresolved-attribute]
+    assert model.hello_member.value == 10  # ty: ignore[missing-attribute]
+    assert model.world_member.value == 20  # ty: ignore[missing-attribute]
     assert model.foo._hello().value == 10
     assert model.world().value == 20
 
@@ -442,7 +442,7 @@ def test__enum_didnt_have__enum_with_nonmember_attributes__should_keep_them_as_a
     assert list(old_enum.__members__) == ["a"]
     assert old_enum.limit == 10
     assert old_enum._limit == 20
-    assert old_enum._EnumWithNonmembers__private_limit == 30  # ty: ignore[unresolved-attribute]
+    assert old_enum._EnumWithNonmembers__private_limit == 30  # ty: ignore[missing-attribute]
 
 
 class EnumWithFunctionMember(Enum):
@@ -469,7 +469,7 @@ class EnumWithCustomNewThatTakesMoreThanTheValue(Enum):
     def __new__(cls, value: int, mass: float) -> Self:
         obj = object.__new__(cls)
         obj._value_ = value
-        obj.mass = mass  # ty: ignore[unresolved-attribute]
+        obj.mass = mass  # ty: ignore[missing-attribute]
         return obj
 
     earth = (1, 5.97)
@@ -480,7 +480,7 @@ class EnumBaseWithCustomNewThatTakesMoreThanTheValue(Enum):
     def __new__(cls, value: int, mass: float) -> Self:
         obj = object.__new__(cls)
         obj._value_ = value
-        obj.mass = mass  # ty: ignore[unresolved-attribute]
+        obj.mass = mass  # ty: ignore[missing-attribute]
         return obj
 
 
@@ -520,7 +520,7 @@ class EnumWithCustomNewThatSetsAttributeFromOtherArg(Enum):
     def __new__(cls, value: int, label: str = "default") -> Self:
         obj = object.__new__(cls)
         obj._value_ = value
-        obj.label = label  # ty: ignore[unresolved-attribute]
+        obj.label = label  # ty: ignore[missing-attribute]
         return obj
 
     a = (1, "first")
@@ -551,7 +551,7 @@ class EnumWithCustomNewThatChangesTheExponentOfAttribute(Enum):
     def __new__(cls, value: int, price: str = "1.0") -> Self:
         obj = object.__new__(cls)
         obj._value_ = value
-        obj.price = Decimal(price)  # ty: ignore[unresolved-attribute]
+        obj.price = Decimal(price)  # ty: ignore[missing-attribute]
         return obj
 
     a = (1, "1.00")
@@ -562,7 +562,7 @@ class EnumWithCustomNewThatChangesTheTypeOfNestedValue(Enum):
     def __new__(cls, value: int, enabled: object = True) -> Self:
         obj = object.__new__(cls)
         obj._value_ = value
-        obj.metadata = {"enabled": enabled}  # ty: ignore[unresolved-attribute]
+        obj.metadata = {"enabled": enabled}  # ty: ignore[missing-attribute]
         return obj
 
     a = (1, 1)
@@ -579,7 +579,7 @@ class EnumWithCustomNewThatChangesFieldThatIsntCompared(Enum):
     def __new__(cls, value: int, label: str = "default") -> Self:
         obj = object.__new__(cls)
         obj._value_ = value
-        obj.tag = _TagWithLabelThatIsntCompared(value, label)  # ty: ignore[unresolved-attribute]
+        obj.tag = _TagWithLabelThatIsntCompared(value, label)  # ty: ignore[missing-attribute]
         return obj
 
     a = (1, "first")
@@ -620,7 +620,7 @@ class EnumWithCustomNewThatRecreatesMembersFromValue(Enum):
     def __new__(cls, value: int, label: "str | None" = None) -> Self:
         obj = object.__new__(cls)
         obj._value_ = value
-        obj.label = label or _LABELS[value]  # ty: ignore[unresolved-attribute]
+        obj.label = label or _LABELS[value]  # ty: ignore[missing-attribute]
         return obj
 
     a = 1
@@ -798,7 +798,7 @@ class EnumBaseWithIteratorSlotThatCustomNewSets(Enum):
     def __new__(cls, value: int, mass: float = 0) -> Self:
         obj = object.__new__(cls)
         obj._value_ = value
-        obj.mass = mass  # ty: ignore[unresolved-attribute]
+        obj.mass = mass  # ty: ignore[missing-attribute]
         return obj
 
 
@@ -1016,16 +1016,16 @@ def test__enum_didnt_have__member_attributes_set_after_creation__should_keep_the
     original: type[Enum],
 ):
     retained = next(iter(original))
-    retained.display_label = "A"  # ty: ignore[unresolved-attribute]
+    retained.display_label = "A"  # ty: ignore[missing-attribute]
     try:
         models = create_runtime_schemas(version_change(enum(original).didnt_have(list(original.__members__)[-1])))
         for version in ("2001-01-01", "2000-01-01"):
             copied = models[version][original].__members__[retained.name]
-            assert copied.display_label == "A"  # ty: ignore[unresolved-attribute]
+            assert copied.display_label == "A"  # ty: ignore[missing-attribute]
             assert copied.value is retained.value
             assert copied is not retained
     finally:
-        del retained.display_label  # ty: ignore[unresolved-attribute]
+        del retained.display_label  # ty: ignore[missing-attribute]
 
 
 class LabelMeta(EnumType):
@@ -1048,7 +1048,7 @@ def test__enum_didnt_have__member_attributes_set_by_metaclass__should_keep_the_a
     models = create_runtime_schemas(version_change(enum(LabeledEnum).didnt_have("b")))
     old_enum: Any = models["2000-01-01"][LabeledEnum]
 
-    assert old_enum.a.label == LabeledEnum.a.label == "A"  # ty: ignore[unresolved-attribute]
+    assert old_enum.a.label == LabeledEnum.a.label == "A"  # ty: ignore[missing-attribute]
 
 
 def test__enum_didnt_have__member_slots_set_after_creation__should_keep_own_and_shadowed_slots(
@@ -1084,7 +1084,7 @@ def test__enum_had__replaced_member__should_not_keep_its_old_attributes(
         a = 1
         b = 2
 
-    Kind.a.label = "A"  # ty: ignore[unresolved-attribute]
+    Kind.a.label = "A"  # ty: ignore[missing-attribute]
     models = create_runtime_schemas(version_change(enum(Kind).had(a=3)))
     old = models["2000-01-01"][Kind]
 
@@ -1103,7 +1103,7 @@ def test__enum_didnt_have__constructor_sets_member_order__should_keep_the_recons
         def __new__(cls, value: int) -> Self:
             obj = object.__new__(cls)
             obj._value_ = value
-            obj.ordinal = len(cls.__members__)  # ty: ignore[unresolved-attribute]
+            obj.ordinal = len(cls.__members__)  # ty: ignore[missing-attribute]
             return obj
 
         a = 1
@@ -1114,7 +1114,7 @@ def test__enum_didnt_have__constructor_sets_member_order__should_keep_the_recons
     old: Any = models["2000-01-01"][Ordered]
 
     assert [(m.name, m.ordinal) for m in old] == [("b", 0), ("c", 1)]
-    assert [(m.name, m.ordinal) for m in Ordered] == [("a", 0), ("b", 1), ("c", 2)]  # ty: ignore[unresolved-attribute]
+    assert [(m.name, m.ordinal) for m in Ordered] == [("a", 0), ("b", 1), ("c", 2)]  # ty: ignore[missing-attribute]
 
 
 @pytest.mark.parametrize("use_slots", [False, True])
@@ -1129,14 +1129,14 @@ def test__enum_didnt_have__constructor_omits_state_for_first_member__should_not_
             obj = object.__new__(cls)
             obj._value_ = value
             if cls.__members__:
-                obj.previous = list(cls.__members__)[-1]  # ty: ignore[unresolved-attribute]
+                obj.previous = list(cls.__members__)[-1]  # ty: ignore[missing-attribute]
             return obj
 
         a = 1
         b = 2
         c = 3
 
-    Ordered.b.display_label = "B"  # ty: ignore[unresolved-attribute]
+    Ordered.b.display_label = "B"  # ty: ignore[missing-attribute]
     models = create_runtime_schemas(version_change(enum(Ordered).didnt_have("a")))
     old: Any = models["2000-01-01"][Ordered]
 
@@ -1150,7 +1150,7 @@ def test__enum_didnt_have__metaclass_requires_class_arguments__should_keep_exist
 ):
     class Meta(EnumType):
         @override
-        def __new__(  # ty: ignore[invalid-method-override] # Python accepts required metaclass keywords.
+        def __new__(  # ty: ignore[incompatible-method-override] # Python accepts required metaclass keywords.
             mcls, cls: str, bases: tuple[type, ...], classdict: Any, *, labels: dict[str, str], **kwargs: Any
         ) -> Any:
             result: Any = super().__new__(mcls, cls, bases, classdict, **kwargs)
@@ -1225,7 +1225,7 @@ def test__enum_had__earlier_member_gets_value_of_member_with_attributes__should_
         x = 1
         a = 2
 
-    Kind.a.label = "A"  # ty: ignore[unresolved-attribute]
+    Kind.a.label = "A"  # ty: ignore[missing-attribute]
     models = create_runtime_schemas(version_change(enum(Kind).had(x=2)))
     old: Any = models["2000-01-01"][Kind]
 
