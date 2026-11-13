@@ -2027,7 +2027,7 @@
 <p>Please note that you only need a migration if it is a breaking change for your users. The scenarios below only describe "what you can do" but not "what you should do". For the "should" part, please refer to the <a href="../../how_to/change_openapi_schemas/add_field/">how-to docs</a>.</p>
 <h2 id="sqlalchemy-and-sqlmodel-classes">SQLAlchemy and SQLModel classes<a class="headerlink" href="#sqlalchemy-and-sqlmodel-classes" title="Permanent link">&para;</a></h2>
 <p>Cadwyn leaves SQLAlchemy and SQLModel classes unchanged when generating API versions. This includes SQLModel classes with or without <code>table=True</code>. You can use these classes in dependencies, request bodies, and response models where FastAPI supports them, but their schemas remain the same across API versions.</p>
-<p><code>schema(...)</code> and the schema-based forms of <code>convert_request_to_next_version_for(...)</code> and <code>convert_response_to_previous_version_for(...)</code> reject these classes with a <code>CadwynStructureError</code>. To version their API representation, define a separate Pydantic <code>BaseModel</code>.</p>
+<p><code>schema(...)</code> and the migrations by schema of <code>convert_request_to_next_version_for(...)</code> and <code>convert_response_to_previous_version_for(...)</code> reject these classes with a <code>CadwynStructureError</code>. To version their API representation, define a separate Pydantic <code>BaseModel</code>.</p>
 <h2 id="add-a-field-to-the-older-version">Add a field to the older version<a class="headerlink" href="#add-a-field-to-the-older-version" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">Field</span>
@@ -2127,11 +2127,11 @@
 <ol>
 <li>Receives a request for API version <code>V</code></li>
 <li>Validates the request using the schemas from <code>V</code></li>
-<li>Marshalls the unmarshalled request body into a raw data structure using <code>BaseModel.model_dump</code> with <strong>exclude_unset=True</strong> and without computed fields, which <code>latest</code> computes itself</li>
+<li>Marshalls the unmarshalled request body into a raw data structure using <code>BaseModel.model_dump</code> with <strong>exclude_unset=True</strong> and without computed fields, which HEAD computes itself</li>
 <li>Passes the request through all request migrations from <code>V</code> to <code>latest</code></li>
-<li>Validates the request using <code>latest</code> schemas</li>
+<li>Validates the request using HEAD schemas</li>
 </ol>
-<p>The part that causes the aforementioned problem is Cadwyn's use of <code>exclude_unset=True</code>. Unfortunately, when Cadwyn uses it, default fields are not set, so <code>latest</code> does not receive them. And if latest does not have the same defaults (for example, if the field has no default and is required in latest), then an error will occur. If Cadwyn used <code>exclude_unset=False</code>, then <code>exclude_unset</code> would lose its purpose for Cadwyn users, so giving it up is impractical. Instead, you should set all extras in step 4 in your request migrations.</p>
+<p>The part that causes the aforementioned problem is Cadwyn's use of <code>exclude_unset=True</code>. Unfortunately, when Cadwyn uses it, default fields are not set, so HEAD does not receive them. And if HEAD does not have the same defaults (for example, if the field has no default and is required in HEAD), then an error will occur. If Cadwyn used <code>exclude_unset=False</code>, then <code>exclude_unset</code> would lose its purpose for Cadwyn users, so giving it up is impractical. Instead, you should set all extras in step 4 in your request migrations.</p>
 <h3 id="fields-that-a-schema-inherits">Fields that a schema inherits<a class="headerlink" href="#fields-that-a-schema-inherits" title="Permanent link">&para;</a></h3>
 <p><code>.had(...)</code> and <code>.didnt_have(...)</code> for a field that a schema inherits change the field only in that schema and its subclasses, not in its parents or its siblings:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">cadwyn</span><span class="w"> </span><span class="kn">import</span> <span class="n">VersionChange</span><span class="p">,</span> <span class="n">schema</span>
