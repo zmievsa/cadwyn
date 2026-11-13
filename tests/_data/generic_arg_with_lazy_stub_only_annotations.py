@@ -19,7 +19,7 @@ else:
 
 
 def make_tags() -> StubOnlyGeneric[int]:
-    return []  # ty: ignore[invalid-return-type]
+    return []  # ty: ignore[invalid-explicit-return]
 
 
 class Page(BaseModel, Generic[T]):

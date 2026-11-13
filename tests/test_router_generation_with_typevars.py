@@ -983,7 +983,7 @@ def test__router_generation__unsafe_bound_not_validated_in_old_versions__should_
 
         @router.get("/items", response_model=None if usage == "ignored_return" else int)
         def get_items() -> Payload:
-            return 1  # ty: ignore[invalid-return-type] # This return annotation is deliberately ignored.
+            return 1  # ty: ignore[invalid-explicit-return] # This return annotation is deliberately ignored.
 
     app = create_versioned_app(version_change(*instructions), router=router)
     client = TestClient(app, headers={"x-api-version": "2001-01-01"})

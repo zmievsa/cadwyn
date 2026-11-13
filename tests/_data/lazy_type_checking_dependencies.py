@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 def get_limit(limit: int) -> Decimal:
-    return limit  # ty: ignore[invalid-return-type]  # The annotation is only for type checkers.
+    return limit  # ty: ignore[invalid-explicit-return]  # The annotation is only for type checkers.
 
 
 def get_limit_with_price(limit: int, price: Decimal | None = None) -> int:

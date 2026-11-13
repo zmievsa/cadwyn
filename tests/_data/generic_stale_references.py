@@ -43,12 +43,12 @@ RefOfLater = Ref[Union[Other, "Later"]]
 if KIND == "lazy_default_factory":
     # Only evaluated lazily since Python 3.14
     def make_later_id() -> Later:
-        return 1  # ty: ignore[invalid-return-type]
+        return 1  # ty: ignore[invalid-explicit-return]
 
 else:
 
     def make_later_id() -> "Later":
-        return 1  # ty: ignore[invalid-return-type]
+        return 1  # ty: ignore[invalid-explicit-return]
 
 
 class X(BaseModel):

@@ -1372,7 +1372,7 @@ def test__router_generation__function_like_dependency__should_resolve_annotation
 
 
 def get_limit_with_type_checking_only_return(limit: int) -> Decimal:
-    return limit  # ty: ignore[invalid-return-type]  # The annotation is only for type checkers.
+    return limit  # ty: ignore[invalid-explicit-return]  # The annotation is only for type checkers.
 
 
 def get_limit_with_type_checking_only_parameter(limit: int, price: Decimal | None = None) -> int:
@@ -1381,7 +1381,7 @@ def get_limit_with_type_checking_only_parameter(limit: int, price: Decimal | Non
 
 class LimitGetterWithTypeCheckingOnlyReturn:
     def __call__(self, limit: int) -> Decimal:
-        return limit  # ty: ignore[invalid-return-type]  # The annotation is only for type checkers.
+        return limit  # ty: ignore[invalid-explicit-return]  # The annotation is only for type checkers.
 
 
 limit_getter_with_type_checking_only_return = LimitGetterWithTypeCheckingOnlyReturn()
